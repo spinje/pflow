@@ -260,16 +260,135 @@ pflow yt-transcript \
   --temperature=0.9
 ```
 
-1. Engine injects `video_url` via input binding.
+#### Step 1: Engine injects `video_url` via input binding
 
-2. `yt-transcript` node:
-   - `prep()` reads `shared["video_url"]` via `input_bindings["url"]`
-   - `exec()` fetches transcript
-   - `post()` writes to `shared["raw_transcript"]` via `output_bindings["transcript"]`
+**CLI Resolution**:
+```python
+# CLI flag --url=https://youtu.be/abc123 matches input_bindings["url"] -> "video_url"
+shared = {
+    "video_url": "https://youtu.be/abc123"  # Injected from CLI
+}
+```
 
-3. `summarise-text` node:
-   - `prep()` reads `shared["raw_transcript"]` via `input_bindings["text"]`
-   - `exec()` summarizes with temperature 0.9 (CLI override)
-   - `post()` writes to `shared["article_summary"]` via `output_bindings["summary"]`
+#### Step 2: `yt-transcript` node execution
 
-4. Run-log + derived snapshot saved; caches updated.
+**Overview**:
+- `prep()` reads `shared["video_url"]` via `input_bindings["url"]`
+- `exec()` fetches transcript
+- `post()` writes to `shared["raw_transcript"]` via `output_bindings["transcript"]`
+
+**Node Setup**:
+```python
+yt_node = YTTranscript()
+yt_node.input_bindings = {"url": "video_url"}
+yt_node.output_bindings = {"transcript": "raw_transcript"}
+yt_node.config = {"language": "en"}  # Default from IR
+```
+
+**prep() execution**:
+```python
+def prep(self, shared):
+    url_key = self.input_bindings["url"]  # "video_url"
+    return shared[url_key]  # Returns "https://youtu.be/abc123"
+
+# Result: prep_data = "https://youtu.be/abc123"
+```
+
+**exec() execution**:
+```python
+def exec(self, url):
+    language = self.config.get("language", "en")  # "en"
+    return fetch_transcript(url, language)
+
+# Result: exec_result = "This is the video transcript content..."
+```
+
+**post() execution**:
+```python
+def post(self, shared, prep_data, exec_result):
+    output_key = self.output_bindings["transcript"]  # "raw_transcript"
+    shared[output_key] = exec_result
+
+# Shared store after yt-transcript node:
+shared = {
+    "video_url": "https://youtu.be/abc123",
+    "raw_transcript": "This is the video transcript content..."
+}
+```
+
+#### Step 3: `summarise-text` node execution
+
+**Overview**:
+- `prep()` reads `shared["raw_transcript"]` via `input_bindings["text"]`
+- `exec()` summarizes with temperature 0.9 (CLI override)
+- `post()` writes to `shared["article_summary"]` via `output_bindings["summary"]`
+
+**Node Setup**:
+```python
+summarise_node = SummariseText()
+summarise_node.input_bindings = {"text": "raw_transcript"}
+summarise_node.output_bindings = {"summary": "article_summary"}
+summarise_node.config = {"temperature": 0.9}  # Overridden from CLI --temperature=0.9
+```
+
+**prep() execution**:
+```python
+def prep(self, shared):
+    text_key = self.input_bindings["text"]  # "raw_transcript"
+    return shared[text_key]  # Returns "This is the video transcript content..."
+
+# Result: prep_data = "This is the video transcript content..."
+```
+
+**exec() execution**:
+```python
+def exec(self, text):
+    temperature = self.config.get("temperature", 0.7)  # 0.9 (CLI override)
+    return call_llm(text, temperature=temperature)
+
+# Result: exec_result = "Summary: The video discusses..."
+```
+
+**post() execution**:
+```python
+def post(self, shared, prep_data, exec_result):
+    output_key = self.output_bindings["summary"]  # "article_summary"
+    shared[output_key] = exec_result
+
+# Final shared store state:
+shared = {
+    "video_url": "https://youtu.be/abc123",
+    "raw_transcript": "This is the video transcript content...",
+    "article_summary": "Summary: The video discusses..."
+}
+```
+
+#### Step 4: Run-log + derived snapshot saved; caches updated
+
+**Derived Snapshot** (captures runtime overrides):
+```python
+derived_snapshot = {
+    "config_overrides": {
+        "summarise": {"temperature": 0.9}  # CLI override recorded
+    },
+    "cli_injections": {
+        "video_url": "https://youtu.be/abc123"  # CLI injection recorded
+    }
+}
+```
+
+**Complete Flow State**:
+```python
+flow_execution = {
+    "shared_store": {
+        "video_url": "https://youtu.be/abc123",
+        "raw_transcript": "This is the video transcript content...",
+        "article_summary": "Summary: The video discusses..."
+    },
+    "derived_snapshot": derived_snapshot,
+    "execution_trace": [
+        {"node": "yt-transcript", "read_keys": ["video_url"], "write_keys": ["raw_transcript"]},
+        {"node": "summarise-text", "read_keys": ["raw_transcript"], "write_keys": ["article_summary"]}
+    ]
+}
+```
