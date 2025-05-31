@@ -4,6 +4,8 @@
 
 This document defines a core architectural principle in `pflow`: the coordination of logic and memory through a hybrid model of a **shared store** and per-node **bindings**. The purpose is to enable modular, reusable, and inspectable flows without imposing rigid global schemas or brittle interfaces.
 
+This pattern is implemented using the lightweight **pocketflow framework** (100 lines of Python), leveraging its existing `params` system and flow orchestration capabilities.
+
 The mechanism is not novel in general systems design, but its application to LLM-driven, tool-integrated workflows in a CLI-native orchestration context fills a currently unaddressed need.
 
 ## Key Concepts
@@ -24,7 +26,20 @@ The mechanism is not novel in general systems design, but its application to LLM
 - **Output bindings** (`output_bindings: Dict[str, str]`) - map node output names to shared store keys for writing  
 - **Config** (`config: Dict[str, Any]`) - node-local configuration that doesn't affect shared store
 
-These provide per-execution identity and routing without mutating across the flow.
+These are stored within the pocketflow framework's existing `params` system and provide per-execution identity and routing without mutating across the flow.
+
+## Integration with pocketflow Framework
+
+Our pattern leverages the existing **pocketflow framework** which provides:
+
+- **Node base class**: `prep()`/`exec()`/`post()` execution pattern
+- **Params system**: `set_params()` method for node configuration
+- **Flow orchestration**: `>>` operator for wiring nodes
+- **Minimal overhead**: 100-line implementation with proven patterns
+
+Node classes inherit from `pocketflow.Node` and access bindings through the existing `self.params` dictionary.
+
+> **See also**: [pocketflow documentation](../pocketflow/docs/core_abstraction/communication.md) for framework details
 
 ## The Hybrid Power Pattern
 
@@ -36,9 +51,9 @@ The core innovation is the **Hybrid Power Pattern**: nodes are generic and reusa
 
 Each node is written to:
 
-1. **Expect binding definitions** like `input_bindings: {"text": "raw_transcript"}`, not hardcoded paths
+1. **Expect binding definitions** via `self.params["input_bindings"]` and `self.params["output_bindings"]`
 2. **Operate on shared values** at the dynamically specified keys
-3. **Use config for behavior** without affecting data flow
+3. **Use config for behavior** via `self.params["config"]` without affecting data flow
 
 This decouples node logic from shared memory structure. The memory schema becomes a property of the flow, not the node.
 
@@ -50,63 +65,84 @@ This decouples node logic from shared memory structure. The memory schema become
 
 The planner acts as a "compiler," selecting keys and binding parameters so nodes can cooperate without hard-coding a global schema.
 
-### Node Example
+## Static Nodes vs Generated Flows
+
+A crucial distinction in our implementation:
+
+- **Static**: Node class definitions (written by developers once)
+- **Generated**: Flow orchestration code (from IR) 
+- **Runtime**: CLI injection into shared store and config overrides
+
+### Node Example (Static - Written Once)
 
 ```python
-class Summarize(Node):
-    def __init__(self):
-        self.input_bindings = {}  # Set by IR: {"text": "raw_transcript"}
-        self.output_bindings = {} # Set by IR: {"summary": "article_summary"} 
-        self.config = {}          # Set by IR: {"temperature": 0.7}
-    
+class Summarize(Node):  # Inherits from pocketflow.Node
     def prep(self, shared):
-        # Read from shared store using the bound key
-        input_key = self.input_bindings["text"]  # "raw_transcript"
+        # Access input binding through existing params system
+        input_key = self.params["input_bindings"]["text"]  # "raw_transcript"
         return shared[input_key]
 
-    def exec(self, text):
-        temp = self.config.get("temperature", 0.7)
-        return call_llm(text, temperature=temp)
+    def exec(self, prep_res):
+        # Access config through existing params system
+        temp = self.params["config"].get("temperature", 0.7)
+        return call_llm(prep_res, temperature=temp)
 
-    def post(self, shared, _, summary):
-        # Write to shared store using the bound key
-        output_key = self.output_bindings["summary"]  # "article_summary"
-        shared[output_key] = summary
+    def post(self, shared, prep_res, exec_res):
+        # Access output binding through existing params system
+        output_key = self.params["output_bindings"]["summary"]  # "article_summary"
+        shared[output_key] = exec_res
 ```
 
-### Flow Example - Same Node, Different Flows
+### Flow Example (Generated from IR)
 
 **Flow A** (Document Processing):
 ```python
-shared = {
-    "documents": {
-        "research_paper.pdf": "Complex academic content...",
-    },
-    "summaries": {}
-}
+# Generated flow code (from IR)
+yt_node = YTTranscript()
+summarize_node = Summarize()
 
-node = Summarize()
-node.input_bindings = {"text": "documents/research_paper.pdf"}
-node.output_bindings = {"summary": "summaries/research_paper.pdf"}
-node.config = {"temperature": 0.3}  # Conservative for academic content
+# Set params from IR bindings
+yt_node.set_params({
+    "input_bindings": {"url": "video_url"},
+    "output_bindings": {"transcript": "raw_transcript"},
+    "config": {"language": "en"}
+})
+
+summarize_node.set_params({
+    "input_bindings": {"text": "raw_transcript"},
+    "output_bindings": {"summary": "article_summary"},
+    "config": {"temperature": 0.3}  # Conservative for academic content
+})
+
+# Wire the flow using pocketflow operators
+yt_node >> summarize_node
+flow = Flow(start=yt_node)
 ```
 
-**Flow B** (Video Transcript Processing):
+**Flow B** (Different Configuration):
 ```python
-shared = {
-    "video_data": {
-        "transcript": "Informal spoken content...",
-    },
-    "output": {}
-}
+# Same static node classes, different generated flow
+video_node = YTTranscript()
+summary_node = Summarize()  # Same node class!
 
-node = Summarize()  # Same node class!
-node.input_bindings = {"text": "video_data/transcript"}
-node.output_bindings = {"summary": "output/video_summary"}
-node.config = {"temperature": 0.8}  # More creative for informal content
+# Different bindings and config
+video_node.set_params({
+    "input_bindings": {"url": "source_url"},
+    "output_bindings": {"transcript": "video_data/transcript"},
+    "config": {"language": "es"}
+})
+
+summary_node.set_params({
+    "input_bindings": {"text": "video_data/transcript"},
+    "output_bindings": {"summary": "output/video_summary"},
+    "config": {"temperature": 0.8}  # More creative for informal content
+})
+
+video_node >> summary_node
+flow = Flow(start=video_node)
 ```
 
-The same `Summarize` node works in completely different contexts with different shared store schemas.
+The same `Summarize` node class works in completely different contexts with different shared store schemas.
 
 ## Shared Store Namespacing
 
@@ -173,7 +209,7 @@ Example:
 - **Validated** — schemas and flow constraints (e.g. node types, binding checks) can be enforced statically
 - **Future-proof** — IR can be converted to/from code, GUI flows, or CLI scripts without ambiguity
 
-Agents never generate node code directly. They output IR. IR is compiled or interpreted into flow objects. Flow logic lives in pre-written nodes.
+Agents never generate node code directly. They output IR. IR is compiled into flow orchestration code using `set_params()` and pocketflow's flow wiring operators. Node logic lives in pre-written static classes.
 
 ## Benefits
 
@@ -213,6 +249,14 @@ Agents never generate node code directly. They output IR. IR is compiled or inte
 - The LLM configures bindings for each node to correctly connect to the shared store layout it proposes
 - This minimizes cognitive load while maintaining transparency and modularity
 
+### Framework Integration Benefits
+
+- **Minimal overhead**: Leverages existing 100-line pocketflow framework
+- **Backward compatibility**: Existing pocketflow code works unchanged  
+- **Clean separation**: Node logic vs flow orchestration vs CLI integration
+- **Proven patterns**: Uses established `prep()`/`exec()`/`post()` model
+- **No framework modifications**: Pure pattern implementation using existing APIs
+
 ## Alternatives and Rejections
 
 ### Why not use only local config?
@@ -240,6 +284,13 @@ Agents never generate node code directly. They output IR. IR is compiled or inte
 - Agents make fewer errors when emitting structured data
 - Code generation remains possible via `pflow export` once the flow is stable
 
+### Why not modify the pocketflow framework?
+
+- Keeps framework minimal and focused
+- Leverages existing, proven patterns
+- Maintains backward compatibility
+- Pattern works within existing APIs
+
 ## Summary
 
 This design enables `pflow` to:
@@ -248,6 +299,7 @@ This design enables `pflow` to:
 - Support agent-generated or human-written flows interchangeably
 - Provide a clear, testable, and auditable execution model
 - Leverage JSON IR as the control plane for flow assembly, editing, and inspection
+- Build on the proven pocketflow framework without modifications
 
 The power is not in novelty but in fit. This pattern resolves the core tensions of AI workflow orchestration—modularity vs coordination, memory vs configuration, structure vs flexibility—using a mechanism that is minimal, expressive, and durable.
 
