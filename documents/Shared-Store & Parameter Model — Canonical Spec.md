@@ -15,7 +15,7 @@ This specification details the implementation using the **pocketflow framework**
 Our pattern leverages the lightweight **pocketflow framework** (100 lines of Python):
 
 - **Static node classes**: Inherit from `pocketflow.Node` with `prep()`/`exec()`/`post()` methods
-- **Params system**: Use `set_params()` to configure node behavior with flat config structure
+- **Params system**: Use `set_params()` to configure node behavior with flat params structure
 - **Flow orchestration**: Use `>>` operator and `Flow` class for wiring
 - **No modifications**: Pure pattern implementation using existing framework APIs
 
@@ -42,7 +42,7 @@ The **NodeAwareSharedStore** proxy enables simple node code while supporting com
 
 | Element | Role | Stored in lock-file | Part of DAG hash | Can change per run | Notes | 
 |---|---|---|---|---|---|
-| `config` | Literal per-node tunables | Defaults stored; run-time overlays in derived snapshot | ❌ | ✅ via CLI | Flat structure in `self.params` | 
+| `params` | Literal per-node tunables | Defaults stored; run-time overlays in derived snapshot | ❌ | ✅ via CLI | Flat structure in `self.params` | 
 | `mappings` | Key translation for complex flows | ✅ | ✅ (when defined) | ❌ | Optional, flow-level concern |
 | Shared store | Flow-scoped key → value memory | Values never stored | Key names yes | Populated by CLI or pipe | Reserved key `stdin` | 
 
@@ -51,7 +51,7 @@ The **NodeAwareSharedStore** proxy enables simple node code while supporting com
 | Field | Function | Affects DAG? | Overridable? | Stored? | Shared? | 
 |---|---|---|---|---|---|
 | Node interface | Natural key access | ✅ | ❌ | ✅ | ✅ | 
-| `config` | Behaviour knobs | ❌ | ✅ (`--flag`) | ✅ | ❌ | 
+| `params` | Behaviour knobs | ❌ | ✅ (`--flag`) | ✅ | ❌ | 
 | `mappings` | Complex routing | ✅ | ❌ | ✅ | ✅ | 
 
 ---
@@ -68,13 +68,13 @@ class YTTranscript(Node):  # Inherits from pocketflow.Node
     Interface:
     - Reads: shared["url"] - YouTube video URL
     - Writes: shared["transcript"] - extracted transcript text
-    - Config: language (default "en") - transcript language
+    - Params: language (default "en") - transcript language
     """
     def prep(self, shared):
         return shared["url"]  # Natural interface
     
     def exec(self, url):
-        language = self.params.get("language", "en")  # Simple config
+        language = self.params.get("language", "en")  # Simple params
         return fetch_transcript(url, language)
     
     def post(self, shared, prep_res, exec_res):
@@ -118,12 +118,12 @@ The node uses natural interface names while the proxy handles any necessary tran
     {
       "id": "fetch",
       "name": "yt-transcript",
-      "config": { "language": "en" }
+      "params": { "language": "en" }
     },
     {
       "id": "summarise",
       "name": "summarise-text",
-      "config": { "temperature": 0.7 }
+      "params": { "temperature": 0.7 }
     }
   ],
   "edges": [
@@ -149,7 +149,7 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 ### 7 · Execution pipeline & CLI resolution
 
 > **Single user rule** — *Type flags; engine decides.*\
-> Flags that match any node's natural interface are **data injections**; all others are **config overrides**.
+> Flags that match any node's natural interface are **data injections**; all others are **params overrides**.
 
 #### Updated resolution algorithm (emphasizing simplicity)
 
@@ -157,7 +157,7 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 
 2. For CLI flags matching natural shared store keys: inject directly
 
-3. For CLI flags marked as config: update node params (flat structure)
+3. For CLI flags marked as params: update node params (flat structure)
 
 4. Generate flow code that:
    - Creates proxy if IR defines mappings for node
@@ -189,12 +189,12 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
     {
       "id": "fetch",
       "name": "yt-transcript", 
-      "config": {"language": "en"}
+      "params": {"language": "en"}
     },
     {
       "id": "summarise",
       "name": "summarise-text",
-      "config": {"temperature": 0.7}
+      "params": {"temperature": 0.7}
     }
   ],
   "edges": [{"from": "fetch", "to": "summarise"}]
@@ -220,7 +220,7 @@ def create_flow():
     fetch_node = YTTranscript()
     summarize_node = SummarizeText()
     
-    # Configure nodes with IR config
+    # Configure nodes with IR params
     fetch_node.set_params({"language": "en"})
     summarize_node.set_params({"temperature": 0.9})  # CLI override
     
@@ -244,12 +244,12 @@ def run_with_cli():
     {
       "id": "fetch",
       "name": "yt-transcript", 
-      "config": {"language": "en"}
+      "params": {"language": "en"}
     },
     {
       "id": "summarise",
       "name": "summarise-text",
-      "config": {"temperature": 0.7}
+      "params": {"temperature": 0.7}
     }
   ],
   "edges": [{"from": "fetch", "to": "summarise"}],
@@ -352,11 +352,11 @@ Same node code, different shared store layouts.
 
 - **Flow-hash** = ordered nodes + mappings (when defined) + node ids/versions.
 
-- **Node cache key** (`@flow_safe`) = node-hash ⊕ effective config ⊕ SHA-256(input data).
+- **Node cache key** (`@flow_safe`) = node-hash ⊕ effective params ⊕ SHA-256(input data).
 
-- `config` changes never alter graph hash; they just create a new node-level cache entry.
+- `params` changes never alter graph hash; they just create a new node-level cache entry.
 
-- If a `config` value changes side-effect surface, the node must declare itself **impure**.
+- If a `params` value changes side-effect surface, the node must declare itself **impure**.
 
 ---
 
@@ -367,7 +367,7 @@ Same node code, different shared store layouts.
 | 1 | IR immutability — CLI cannot alter mappings or node set | Abort | 
 | 2 | Unknown CLI flag | Abort | 
 | 3 | Missing required data in shared store | Abort | 
-| 4 | `config` always overrideable via `set_params()` | Derived snapshot | 
+| 4 | `params` always overrideable via `set_params()` | Derived snapshot | 
 | 5 | `stdin` key reserved; node must handle it naturally | Abort | 
 | 6 | Mapping targets unique flow-wide | Abort | 
 | 7 | Natural interface names should be intuitive | Warning |
@@ -403,7 +403,7 @@ Same node code, different shared store layouts.
 
 - Store values are write-once unless a node explicitly overwrites; validator warns on double-write.
 
-- **Config mutability**: `config` values are runtime overrideable because they are isolated to the node and don't affect shared store data flow.
+- **Params mutability**: `params` values are runtime overrideable because they are isolated to the node and don't affect shared store data flow.
 
 - **Mapping immutability**: The mapping structure (when defined) cannot be changed without modifying the IR.
 

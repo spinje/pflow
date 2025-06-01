@@ -34,10 +34,10 @@ The fundamental insight is that **node writers shouldn't need to understand flow
 - **Performance**: Zero overhead when no mapping needed (direct pass-through)
 - **Activation**: Only when IR defines mappings for a node
 
-### 3. Config (Flat Structure)
+### 3. Params (Flat Structure)
 
-- **Config** (`config: Dict[str, Any]`) stored directly in `self.params` (flat structure)
-- Node-local configuration that doesn't affect shared store
+- **Params** (`params: Dict[str, Any]`) stored directly in `self.params` (flat structure)
+- Node-local parameters that don't affect shared store
 - Simple access via `self.params.get("temperature", 0.7)`
 
 ## Integration with pocketflow Framework
@@ -45,11 +45,11 @@ The fundamental insight is that **node writers shouldn't need to understand flow
 Our pattern leverages the existing **pocketflow framework** which provides:
 
 - **Node base class**: `prep()`/`exec()`/`post()` execution pattern
-- **Params system**: `set_params()` method for node configuration
+- **Params system**: `set_params()` method for node parameters
 - **Flow orchestration**: `>>` operator for wiring nodes
 - **Minimal overhead**: 100-line implementation with proven patterns
 
-Node classes inherit from `pocketflow.Node` and access config through the simplified `self.params` dictionary.
+Node classes inherit from `pocketflow.Node` and access params through the simplified `self.params` dictionary.
 
 > **See also**: [pocketflow documentation](../pocketflow/docs/core_abstraction/communication.md) for framework details
 
@@ -59,12 +59,12 @@ The core innovation is **standalone nodes**: nodes are generic and reusable beca
 
 - **Nodes use natural keys** — `shared["text"]`, `shared["summary"]`
 - **Proxy handles routing** — transparent mapping when needed for compatibility
-- **Config is simple** — flat structure accessible via `self.params.get("key")`
+- **Params are simple** — flat structure accessible via `self.params.get("key")`
 
 Each node is written to:
 
 1. **Use natural interfaces** via direct shared store access (`shared["text"]`)
-2. **Access config simply** via `self.params.get("key", default)`
+2. **Access params simply** via `self.params.get("key", default)`
 3. **Focus on business logic** without orchestration concerns
 
 This decouples node logic from flow orchestration. The complexity becomes a property of the flow, not the node.
@@ -83,7 +83,7 @@ A crucial distinction in our implementation:
 
 - **Static**: Node class definitions (written by developers once)
 - **Generated**: Flow orchestration code (from IR) with optional proxy setup
-- **Runtime**: CLI injection into shared store and config overrides
+- **Runtime**: CLI injection into shared store and params overrides
 
 ### Node Example (Static - Written Once)
 
@@ -94,13 +94,13 @@ class Summarize(Node):  # Inherits from pocketflow.Node
     Interface:
     - Reads: shared["text"] - input text to summarize
     - Writes: shared["summary"] - generated summary
-    - Config: temperature (default 0.7) - LLM creativity
+    - Params: temperature (default 0.7) - LLM creativity
     """
     def prep(self, shared):
         return shared["text"]  # Simple, natural access
     
     def exec(self, prep_res):
-        temp = self.params.get("temperature", 0.7)  # Flat config
+        temp = self.params.get("temperature", 0.7)  # Flat params
         return call_llm(prep_res, temperature=temp)
     
     def post(self, shared, prep_res, exec_res):
@@ -114,7 +114,7 @@ The proxy pattern makes testing intuitive and natural:
 ```python
 def test_summarize_node():
     node = Summarize()
-    node.set_params({"temperature": 0.5})  # Just config
+    node.set_params({"temperature": 0.5})  # Just params
     
     # Natural, intuitive shared store
     shared = {"text": "Long article content here..."}
@@ -170,7 +170,7 @@ else:
 # Generated flow code (from IR)
 summarize_node = Summarize()
 
-# Set params from IR config
+# Set params from IR
 summarize_node.set_params({
     "temperature": 0.3  # Conservative for academic content
 })
@@ -184,7 +184,7 @@ flow = Flow(start=summarize_node)
 # Same static node class, different generated flow
 summary_node = Summarize()  # Same node class!
 
-# Set config from IR
+# Set params from IR
 summary_node.set_params({
     "temperature": 0.8  # More creative for informal content
 })
@@ -230,7 +230,7 @@ To enable agents to plan, inspect, mutate, and reason about flows without direct
 The IR defines:
 
 - The node graph (nodes, types, identifiers)
-- Configuration for each node
+- Parameters for each node
 - Mapping definitions for complex flows (when needed)
 - Transitions between nodes
 
@@ -242,12 +242,12 @@ Example:
     {
       "id": "summarize_1", 
       "name": "Summarize",
-      "config": {"temperature": 0.7}
+      "params": {"temperature": 0.7}
     },
     {
       "id": "store_1",
       "name": "Store",
-      "config": {"format": "markdown"}
+      "params": {"format": "markdown"}
     }
   ],
   "edges": [
@@ -287,7 +287,7 @@ Agents never generate node code directly. They output IR. IR is compiled into fl
 
 - Nodes can be written once and reused in any flow
 - They use natural interfaces that are self-documenting
-- Same node, different proxy configuration = different behavior in different contexts
+- Same node, different proxy mapping = different behavior in different contexts
 
 ### Composability
 
@@ -373,4 +373,4 @@ This design enables `pflow` to:
 
 The power is in simplicity. This pattern makes node development intuitive while preserving all the flexibility needed for complex orchestration scenarios.
 
-> **For CLI usage and runtime configuration details**, see [Shared-Store & Parameter Model — Canonical Spec](./Shared-Store%20&%20Parameter%20Model%20—%20Canonical%20Spec.md)
+> **For CLI usage and runtime parameter details**, see [Shared-Store & Parameter Model — Canonical Spec](./Shared-Store%20&%20Parameter%20Model%20—%20Canonical%20Spec.md)
