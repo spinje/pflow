@@ -1,32 +1,44 @@
-# Shared Store + Bindings Design Pattern in pflow
+# Shared Store + Proxy Design Pattern in pflow
 
 ## Overview
 
-This document defines a core architectural principle in `pflow`: the coordination of logic and memory through a hybrid model of a **shared store** and per-node **bindings**. The purpose is to enable modular, reusable, and inspectable flows without imposing rigid global schemas or brittle interfaces.
+This document defines a core architectural principle in `pflow`: the coordination of logic and memory through a **shared store** with an optional **proxy layer** that enables standalone, reusable nodes without imposing binding complexity on node writers.
 
 This pattern is implemented using the lightweight **pocketflow framework** (100 lines of Python), leveraging its existing `params` system and flow orchestration capabilities.
 
-The mechanism is not novel in general systems design, but its application to LLM-driven, tool-integrated workflows in a CLI-native orchestration context fills a currently unaddressed need.
+## Node Autonomy Principle
+
+The fundamental insight is that **node writers shouldn't need to understand flow orchestration concepts**. They should write simple, testable business logic using natural key names, while flow designers handle mapping complexity at the orchestration level.
+
+### Key Benefits
+
+1. **Standalone Node Development** - Node writers use intuitive keys (`shared["text"]`)
+2. **Simplified Testing** - Natural test setup with direct key access  
+3. **Better Separation of Concerns** - Nodes focus on logic, flows handle routing
+4. **Reduced Cognitive Load** - Node writers focus on their domain expertise
+5. **More Readable Code** - `shared["text"]` beats `self.params["input_bindings"]["text"]`
 
 ## Key Concepts
 
-### 1\. Shared Store
+### 1. Shared Store
 
 - An in-memory dictionary (`shared: Dict[str, Any]`) passed through the flow.
-
-- Nodes can read from it during `prep()`, and write to it during `post()`.
-
+- Nodes read from it during `prep()`, and write to it during `post()`.
 - It serves as the coordination bus between otherwise isolated node executions.
-
 - It holds transient memory, intermediate results, configuration, error logs, and final outputs.
 
-### 2\. Bindings & Config
+### 2. NodeAwareSharedStore Proxy
 
-- **Input bindings** (`input_bindings: Dict[str, str]`) - map CLI interface names to shared store keys for reading
-- **Output bindings** (`output_bindings: Dict[str, str]`) - map node output names to shared store keys for writing  
-- **Config** (`config: Dict[str, Any]`) - node-local configuration that doesn't affect shared store
+- **Purpose**: Transparent mapping layer that enables simple node code while supporting complex flow routing
+- **Behavior**: Maps keys when mappings defined, passes through otherwise
+- **Performance**: Zero overhead when no mapping needed (direct pass-through)
+- **Activation**: Only when IR defines mappings for a node
 
-These are stored within the pocketflow framework's existing `params` system and provide per-execution identity and routing without mutating across the flow.
+### 3. Config (Flat Structure)
+
+- **Config** (`config: Dict[str, Any]`) stored directly in `self.params` (flat structure)
+- Node-local configuration that doesn't affect shared store
+- Simple access via `self.params.get("temperature", 0.7)`
 
 ## Integration with pocketflow Framework
 
@@ -37,109 +49,156 @@ Our pattern leverages the existing **pocketflow framework** which provides:
 - **Flow orchestration**: `>>` operator for wiring nodes
 - **Minimal overhead**: 100-line implementation with proven patterns
 
-Node classes inherit from `pocketflow.Node` and access bindings through the existing `self.params` dictionary.
+Node classes inherit from `pocketflow.Node` and access config through the simplified `self.params` dictionary.
 
 > **See also**: [pocketflow documentation](../pocketflow/docs/core_abstraction/communication.md) for framework details
 
-## The Hybrid Power Pattern
+## The Standalone Node Pattern
 
-The core innovation is the **Hybrid Power Pattern**: nodes are generic and reusable because they don't hardcode shared store keys. Instead:
+The core innovation is **standalone nodes**: nodes are generic and reusable because they use natural, intuitive interfaces. Instead of binding complexity:
 
-- **Bindings handle routing** — they define which keys in the shared store a node reads from and writes to
-- **Shared handles data** — it is the flow-global state where actual content, results, and intermediate memory live
-- **Config handles tunables** — node-specific parameters that don't create data dependencies
+- **Nodes use natural keys** — `shared["text"]`, `shared["summary"]`
+- **Proxy handles routing** — transparent mapping when needed for compatibility
+- **Config is simple** — flat structure accessible via `self.params.get("key")`
 
 Each node is written to:
 
-1. **Expect binding definitions** via `self.params["input_bindings"]` and `self.params["output_bindings"]`
-2. **Operate on shared values** at the dynamically specified keys
-3. **Use config for behavior** via `self.params["config"]` without affecting data flow
+1. **Use natural interfaces** via direct shared store access (`shared["text"]`)
+2. **Access config simply** via `self.params.get("key", default)`
+3. **Focus on business logic** without orchestration concerns
 
-This decouples node logic from shared memory structure. The memory schema becomes a property of the flow, not the node.
+This decouples node logic from flow orchestration. The complexity becomes a property of the flow, not the node.
 
 ### Why This Pattern Matters
 
-**Without bindings**: Nodes hardcode shared store keys → single schema change breaks every reuse → not scalable
+**Without proxy**: Nodes must understand binding indirection → complex for node writers → reduced productivity
 
-**With bindings**: Same node works in different flows with different shared store layouts → maximum reusability
+**With proxy**: Same node works in different flows with transparent mapping → maximum simplicity and reusability
 
-The planner acts as a "compiler," selecting keys and binding parameters so nodes can cooperate without hard-coding a global schema.
+The flow orchestration acts as a "compiler," handling schema mapping so nodes can focus purely on business logic.
 
 ## Static Nodes vs Generated Flows
 
 A crucial distinction in our implementation:
 
 - **Static**: Node class definitions (written by developers once)
-- **Generated**: Flow orchestration code (from IR) 
+- **Generated**: Flow orchestration code (from IR) with optional proxy setup
 - **Runtime**: CLI injection into shared store and config overrides
 
 ### Node Example (Static - Written Once)
 
 ```python
 class Summarize(Node):  # Inherits from pocketflow.Node
+    """Summarizes text content using LLM.
+    
+    Interface:
+    - Reads: shared["text"] - input text to summarize
+    - Writes: shared["summary"] - generated summary
+    - Config: temperature (default 0.7) - LLM creativity
+    """
     def prep(self, shared):
-        # Access input binding through existing params system
-        input_key = self.params["input_bindings"]["text"]  # "raw_transcript"
-        return shared[input_key]
-
+        return shared["text"]  # Simple, natural access
+    
     def exec(self, prep_res):
-        # Access config through existing params system
-        temp = self.params["config"].get("temperature", 0.7)
+        temp = self.params.get("temperature", 0.7)  # Flat config
         return call_llm(prep_res, temperature=temp)
-
+    
     def post(self, shared, prep_res, exec_res):
-        # Access output binding through existing params system
-        output_key = self.params["output_bindings"]["summary"]  # "article_summary"
-        shared[output_key] = exec_res
+        shared["summary"] = exec_res  # Direct assignment
 ```
+
+## Node Testing Simplicity
+
+The proxy pattern makes testing intuitive and natural:
+
+```python
+def test_summarize_node():
+    node = Summarize()
+    node.set_params({"temperature": 0.5})  # Just config
+    
+    # Natural, intuitive shared store
+    shared = {"text": "Long article content here..."}
+    
+    node.run(shared)
+    
+    assert "summary" in shared
+    assert len(shared["summary"]) < len(shared["text"])
+```
+
+Compare this to complex binding setup requirements in other approaches.
+
+## Progressive Complexity Examples
+
+### Level 1 - Simple Flow (Direct Access)
+
+```python
+# No mappings needed - nodes access shared store directly
+shared = {"text": "Input content"}
+
+summarize_node = Summarize()
+summarize_node.set_params({"temperature": 0.7})
+
+flow = Flow(start=summarize_node)
+flow.run(shared)  # Node accesses shared["text"] directly
+```
+
+### Level 2 - Complex Flow (Proxy Mapping)
+
+```python
+# Marketplace compatibility - proxy maps keys transparently
+shared = {"raw_transcript": "Input content"}  # Flow schema
+
+# Generated flow code handles proxy creation
+if "mappings" in ir and summarize_node.id in ir["mappings"]:
+    mappings = ir["mappings"][summarize_node.id]
+    proxy = NodeAwareSharedStore(
+        shared,
+        input_mappings={"text": "raw_transcript"},
+        output_mappings={"summary": "article_summary"}
+    )
+    summarize_node._run(proxy)  # Node still uses shared["text"]
+else:
+    summarize_node._run(shared)  # Direct access
+```
+
+**Same node code works at both levels.**
 
 ### Flow Example (Generated from IR)
 
-**Flow A** (Document Processing):
+**Flow A** (Simple - Direct Access):
 ```python
 # Generated flow code (from IR)
-yt_node = YTTranscript()
 summarize_node = Summarize()
 
-# Set params from IR bindings
-yt_node.set_params({
-    "input_bindings": {"url": "video_url"},
-    "output_bindings": {"transcript": "raw_transcript"},
-    "config": {"language": "en"}
-})
-
+# Set params from IR config
 summarize_node.set_params({
-    "input_bindings": {"text": "raw_transcript"},
-    "output_bindings": {"summary": "article_summary"},
-    "config": {"temperature": 0.3}  # Conservative for academic content
+    "temperature": 0.3  # Conservative for academic content
 })
 
 # Wire the flow using pocketflow operators
-yt_node >> summarize_node
-flow = Flow(start=yt_node)
+flow = Flow(start=summarize_node)
 ```
 
-**Flow B** (Different Configuration):
+**Flow B** (Complex - With Proxy Mapping):
 ```python
-# Same static node classes, different generated flow
-video_node = YTTranscript()
+# Same static node class, different generated flow
 summary_node = Summarize()  # Same node class!
 
-# Different bindings and config
-video_node.set_params({
-    "input_bindings": {"url": "source_url"},
-    "output_bindings": {"transcript": "video_data/transcript"},
-    "config": {"language": "es"}
-})
-
+# Set config from IR
 summary_node.set_params({
-    "input_bindings": {"text": "video_data/transcript"},
-    "output_bindings": {"summary": "output/video_summary"},
-    "config": {"temperature": 0.8}  # More creative for informal content
+    "temperature": 0.8  # More creative for informal content
 })
 
-video_node >> summary_node
-flow = Flow(start=video_node)
+# Generated proxy setup for marketplace compatibility
+if summary_node.id in ir["mappings"]:
+    proxy = NodeAwareSharedStore(
+        shared,
+        input_mappings={"text": "video_data/transcript"},
+        output_mappings={"summary": "output/video_summary"}
+    )
+    summary_node._run(proxy)
+else:
+    summary_node._run(shared)
 ```
 
 The same `Summarize` node class works in completely different contexts with different shared store schemas.
@@ -171,8 +230,8 @@ To enable agents to plan, inspect, mutate, and reason about flows without direct
 The IR defines:
 
 - The node graph (nodes, types, identifiers)
-- Binding definitions for each node
 - Configuration for each node
+- Mapping definitions for complex flows (when needed)
 - Transitions between nodes
 
 Example:
@@ -183,70 +242,81 @@ Example:
     {
       "id": "summarize_1", 
       "name": "Summarize",
-      "input_bindings": {"text": "raw_texts/doc1.txt"},
-      "output_bindings": {"summary": "summaries/doc1.txt"},
       "config": {"temperature": 0.7}
     },
     {
       "id": "store_1",
       "name": "Store",
-      "input_bindings": {"content": "summaries/doc1.txt"},
-      "output_bindings": {},
       "config": {"format": "markdown"}
     }
   ],
   "edges": [
     {"from": "summarize_1", "to": "store_1"}
-  ]
+  ],
+  "mappings": {
+    "summarize_1": {
+      "input_mappings": {"text": "raw_texts/doc1.txt"},
+      "output_mappings": {"summary": "summaries/doc1.txt"}
+    }
+  }
 }
 ```
+
+Key change: Mappings are flow-level concern in IR, nodes just declare natural interfaces.
 
 ### Why JSON IR?
 
 - **Introspectable** — agents and tools can analyze, visualize, or validate without executing code
 - **Composable** — subflows can be inserted, replaced, transformed
 - **Repairable** — if an agent makes a mistake, users or other agents can patch IR safely
-- **Validated** — schemas and flow constraints (e.g. node types, binding checks) can be enforced statically
+- **Validated** — schemas and flow constraints (e.g. node types, mapping checks) can be enforced statically
 - **Future-proof** — IR can be converted to/from code, GUI flows, or CLI scripts without ambiguity
 
 Agents never generate node code directly. They output IR. IR is compiled into flow orchestration code using `set_params()` and pocketflow's flow wiring operators. Node logic lives in pre-written static classes.
+
+## Developer Experience Benefits
+
+- **Node development is simpler** - no binding knowledge required
+- **Testing is intuitive** - natural shared store setup
+- **Debugging is clearer** - direct key access in node code
+- **Documentation is self-evident** - `shared["key"]` shows interface
 
 ## Benefits
 
 ### Reusability
 
 - Nodes can be written once and reused in any flow
-- They are blind to global memory layout
-- Same node, different bindings = different behavior in different contexts
+- They use natural interfaces that are self-documenting
+- Same node, different proxy configuration = different behavior in different contexts
 
 ### Composability
 
 - Flows can change shared schemas without rewriting nodes
 - Intermediate outputs can be forked, merged, nested
-- Planner can wire arbitrary node combinations
+- Flow orchestration can wire arbitrary node combinations
 
 ### Debuggability
 
-- A full trace of what was read and written can be reconstructed
-- `pflow trace` can be implemented via shared key logs
-- Clear separation between data routing and business logic
+- Node code is transparent (direct key access)
+- Proxy mapping is explicit in generated flow code
+- Clear separation between business logic and routing logic
 
 ### Flow-level Schema Definition
 
-- The flow is the only place where shared key layout is declared
+- The flow is the only place where mapping complexity is declared
 - This makes flows explicit interfaces: they define how memory is shaped, not nodes
 - Planners can reason about data flow without node internals
 
 ### Agent Planning Compatibility
 
-- When an LLM plans a flow, it defines the shared schema
-- It also sets bindings to tell each node how to participate in that memory contract
-- The LLM doesn't write code—it wires logic to a memory map
+- When an LLM plans a flow, it can define natural shared store schemas
+- It optionally sets up proxy mappings for marketplace compatibility
+- The LLM doesn't write code—it orchestrates simple, standalone nodes
 
 ### User-defined Flows with LLM-assisted Schema
 
-- Even when users manually define flow structure, the system can delegate shared schema construction to the LLM
-- The LLM configures bindings for each node to correctly connect to the shared store layout it proposes
+- Even when users manually define flow structure, nodes remain simple
+- The system can delegate schema mapping to flow orchestration
 - This minimizes cognitive load while maintaining transparency and modularity
 
 ### Framework Integration Benefits
@@ -259,17 +329,17 @@ Agents never generate node code directly. They output IR. IR is compiled into fl
 
 ## Alternatives and Rejections
 
-### Why not use only local config?
+### Why not force binding complexity on every node?
 
-- Large values don't belong in config
-- You lose shared observability between nodes
-- No central place to inspect data lineage
+- Node writers shouldn't need to understand flow orchestration
+- Testing becomes complex and unnatural
+- Reduces developer productivity and increases cognitive load
 
 ### Why not only use shared with hardcoded keys?
 
-- Nodes become rigid and non-reusable
-- Reuse becomes error-prone across different flows
-- Flows become tightly coupled to node internals
+- Works great for simple flows (and we support this!)
+- Proxy provides compatibility layer for complex marketplace scenarios
+- Progressive complexity model gives best of both worlds
 
 ### Why not create a central schema registry?
 
@@ -295,12 +365,12 @@ Agents never generate node code directly. They output IR. IR is compiled into fl
 
 This design enables `pflow` to:
 
-- Coordinate intelligent logic modules using simple memory contracts
-- Support agent-generated or human-written flows interchangeably
+- Write standalone, simple nodes that focus purely on business logic
+- Support both simple flows (direct access) and complex flows (proxy mapping)
 - Provide a clear, testable, and auditable execution model
 - Leverage JSON IR as the control plane for flow assembly, editing, and inspection
 - Build on the proven pocketflow framework without modifications
 
-The power is not in novelty but in fit. This pattern resolves the core tensions of AI workflow orchestration—modularity vs coordination, memory vs configuration, structure vs flexibility—using a mechanism that is minimal, expressive, and durable.
+The power is in simplicity. This pattern makes node development intuitive while preserving all the flexibility needed for complex orchestration scenarios.
 
 > **For CLI usage and runtime configuration details**, see [Shared-Store & Parameter Model — Canonical Spec](./Shared-Store%20&%20Parameter%20Model%20—%20Canonical%20Spec.md)

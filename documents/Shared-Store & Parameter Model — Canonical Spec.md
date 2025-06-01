@@ -1,12 +1,12 @@
-## Shared-Store & Parameter Model — Canonical Spec
+## Shared-Store & Proxy Model — Canonical Spec
 
 ### 1 · Purpose
 
-Define how **CLI arguments**, **IR bindings**, and the **flow-scoped shared store** interact, enabling a one-flag user model while preserving an immutable, hash-stable data-flow graph.
+Define how **CLI arguments**, **IR mappings**, and the **flow-scoped shared store** interact, enabling a one-flag user model while preserving an immutable, hash-stable data-flow graph through standalone, simple nodes.
 
-This specification details the implementation using the **pocketflow framework** and shows how generated flow code integrates with static node classes.
+This specification details the implementation using the **pocketflow framework** and shows how generated flow code integrates with static node classes using an optional proxy layer for complex routing scenarios.
 
-> **For conceptual understanding and architectural rationale**, see [Shared Store + Bindings Design Pattern](./Shared%20Store%20+%20Params%20Design%20Pattern%20in%20pflow.md)
+> **For conceptual understanding and architectural rationale**, see [Shared Store + Proxy Design Pattern](./Shared%20Store%20+%20Params%20Design%20Pattern%20in%20pflow.md)
 
 ---
 
@@ -15,7 +15,7 @@ This specification details the implementation using the **pocketflow framework**
 Our pattern leverages the lightweight **pocketflow framework** (100 lines of Python):
 
 - **Static node classes**: Inherit from `pocketflow.Node` with `prep()`/`exec()`/`post()` methods
-- **Params system**: Use `set_params()` to configure bindings and config
+- **Params system**: Use `set_params()` to configure node behavior with flat config structure
 - **Flow orchestration**: Use `>>` operator and `Flow` class for wiring
 - **No modifications**: Pure pattern implementation using existing framework APIs
 
@@ -23,74 +23,94 @@ Our pattern leverages the lightweight **pocketflow framework** (100 lines of Pyt
 
 **Framework vs Pattern**:
 - **pocketflow**: The underlying 100-line framework
-- **pflow pattern**: Our specific use of input_bindings/output_bindings/config within pocketflow's params system
+- **pflow pattern**: Our specific use of natural node interfaces with optional proxy mapping
 
 ---
 
-### 3 · Concepts & Terminology
+### 3 · Proxy-Based Mapping Architecture
+
+The **NodeAwareSharedStore** proxy enables simple node code while supporting complex flow routing:
+
+- **Direct Access**: When no mappings defined, nodes access shared store directly (zero overhead)
+- **Proxy Mapping**: When IR defines mappings, proxy transparently handles key translation
+- **Performance**: Zero overhead for simple flows, mapping only when needed
+- **Integration**: Helper class used by generated flow code, not a framework modification
+
+---
+
+### 4 · Concepts & Terminology
 
 | Element | Role | Stored in lock-file | Part of DAG hash | Can change per run | Notes | 
 |---|---|---|---|---|---|
-| `input_bindings` | Map **CLI-facing names** (`url`, `text`, `stdin`) → **shared-store keys** | ✅ | ✅ (key names) | Values injected at runtime | Declares required data | 
-| `output_bindings` | Map node outputs → store keys | ✅ | ✅ (key names) | Never | Enables downstream wiring | 
-| `config` | Literal per-node tunables | Defaults stored; run-time overlays in derived snapshot | ❌ | ✅ via CLI | Does **not** create DAG edges | 
+| `config` | Literal per-node tunables | Defaults stored; run-time overlays in derived snapshot | ❌ | ✅ via CLI | Flat structure in `self.params` | 
+| `mappings` | Key translation for complex flows | ✅ | ✅ (when defined) | ❌ | Optional, flow-level concern |
 | Shared store | Flow-scoped key → value memory | Values never stored | Key names yes | Populated by CLI or pipe | Reserved key `stdin` | 
 
-#### 3\.1 Quick-reference summary
+#### 4\.1 Quick-reference summary
 
 | Field | Function | Affects DAG? | Overridable? | Stored? | Shared? | 
 |---|---|---|---|---|---|
-| `input_bindings` | External data wires | ✅ | ✅ (`--flag`) | ✅ | ✅ | 
+| Node interface | Natural key access | ✅ | ❌ | ✅ | ✅ | 
 | `config` | Behaviour knobs | ❌ | ✅ (`--flag`) | ✅ | ❌ | 
-| `output_bindings` | Declared outputs | ✅ | ❌ | ✅ | ✅ | 
+| `mappings` | Complex routing | ✅ | ❌ | ✅ | ✅ | 
 
 ---
 
-### 4 · Node Interface Integration
+### 5 · Node Interface Integration
 
-The bindings defined in IR map to static node classes using pocketflow's `params` system:
+The simple node interface integrates with static node classes using pocketflow's `params` system:
 
 ```python
-# Node class (static, pre-written)
+# Node class (static, pre-written) - SIMPLE AND STANDALONE
 class YTTranscript(Node):  # Inherits from pocketflow.Node
+    """Fetches YouTube transcript.
+    
+    Interface:
+    - Reads: shared["url"] - YouTube video URL
+    - Writes: shared["transcript"] - extracted transcript text
+    - Config: language (default "en") - transcript language
+    """
     def prep(self, shared):
-        # Access input binding through existing params system
-        url_key = self.params["input_bindings"]["url"]  # "video_url"
-        return shared[url_key]
+        return shared["url"]  # Natural interface
     
     def exec(self, url):
-        # Access config through existing params system
-        language = self.params["config"].get("language", "en")
+        language = self.params.get("language", "en")  # Simple config
         return fetch_transcript(url, language)
     
     def post(self, shared, prep_res, exec_res):
-        # Access output binding through existing params system
-        output_key = self.params["output_bindings"]["transcript"]  # "raw_transcript"
-        shared[output_key] = exec_res
+        shared["transcript"] = exec_res  # Direct write
 
-# Generated flow code (from IR)
-node = YTTranscript()
-node.set_params({
-    "input_bindings": {"url": "video_url"},
-    "output_bindings": {"transcript": "raw_transcript"},
-    "config": {"language": "en"}
-})
+# Generated flow code handles proxy when needed
+def run_node_with_mapping(node, shared, mappings=None):
+    if mappings:
+        proxy = NodeAwareSharedStore(shared, **mappings)
+        node._run(proxy)
+    else:
+        node._run(shared)  # Direct access
 ```
 
-#### 4\.1 CLI to Shared Store Flow
+#### 5\.1 CLI to Shared Store Flow
 
 ```
 CLI Flag: --url=https://youtu.be/abc123
-Input Binding: {"url": "video_url"}
-Result: shared["video_url"] = "https://youtu.be/abc123"
-Node Access: self.params["input_bindings"]["url"] → "video_url" → shared["video_url"]
+Result: shared["url"] = "https://youtu.be/abc123"
+Node Access: shared["url"] (direct access)
 ```
 
-The CLI interface name (`url`) is separate from the internal shared store key (`video_url`), enabling consistent external interfaces while allowing flexible internal naming.
+or with mapping:
+
+```
+CLI Flag: --url=https://youtu.be/abc123
+Flow Schema: shared["video_source"] = "https://youtu.be/abc123"
+Proxy Mapping: "url" → "video_source"
+Node Access: shared["url"] (proxy maps to "video_source")
+```
+
+The node uses natural interface names while the proxy handles any necessary translation.
 
 ---
 
-### 5 · Canonical IR fragment
+### 6 · Canonical IR fragment
 
 ```json
 {
@@ -98,76 +118,82 @@ The CLI interface name (`url`) is separate from the internal shared store key (`
     {
       "id": "fetch",
       "name": "yt-transcript",
-      "input_bindings": { "url": "video_url" },
-      "output_bindings": { "transcript": "raw_transcript" },
       "config": { "language": "en" }
     },
     {
       "id": "summarise",
       "name": "summarise-text",
-      "input_bindings": { "text": "raw_transcript" },
-      "output_bindings": { "summary": "article_summary" },
       "config": { "temperature": 0.7 }
     }
   ],
   "edges": [
     {"from": "fetch", "to": "summarise"}
-  ]
+  ],
+  "mappings": {
+    "fetch": {
+      "input_mappings": {"url": "video_source"},
+      "output_mappings": {"transcript": "raw_transcript"}
+    },
+    "summarise": {
+      "input_mappings": {"text": "raw_transcript"},
+      "output_mappings": {"summary": "article_summary"}
+    }
+  }
 }
 ```
 
-Graph: `yt-transcript` ➜ `summarise-text` (wired through `raw_transcript`).
+Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy mapping).
 
 ---
 
-### 6 · Execution pipeline & CLI resolution
+### 7 · Execution pipeline & CLI resolution
 
 > **Single user rule** — *Type flags; engine decides.*\
-> Flags that match any node's `input_bindings` are **data injections**; all others are **config overrides**. A Unix pipe populates key `stdin`.
+> Flags that match any node's natural interface are **data injections**; all others are **config overrides**.
 
-#### Updated resolution algorithm
+#### Updated resolution algorithm (emphasizing simplicity)
 
-1. Parse CLI as flat `key=value`.
+1. Parse CLI as flat `key=value`
 
-2. For CLI flags matching `input_bindings`: inject into `shared_store[store_key] = value`
+2. For CLI flags matching natural shared store keys: inject directly
 
-3. For CLI flags matching `config`: update the corresponding node's params via `set_params()`
+3. For CLI flags marked as config: update node params (flat structure)
 
-4. Generate flow code with updated configurations using pocketflow APIs
+4. Generate flow code that:
+   - Creates proxy if IR defines mappings for node
+   - Uses direct access if no mappings defined
 
-5. Execute flow with populated shared store
+5. Execute flow with appropriate access pattern per node
 
 ---
 
-### 7 · CLI scenarios
+### 8 · CLI scenarios
 
-| Scenario | Command | Shared-store after injection | Derived snapshot? | 
+| Scenario | Command | Shared-store after injection | Proxy needed? | 
 |---|---|---|---|
-| Provide video URL | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc) | `{ "video_url": "`[`https://youtu.be/abc`](https://youtu.be/abc)`" }` | No | 
-| Override temperature | `pflow summarise-text --temperature=0.9` | – | Yes | 
-| Pipe text | `cat notes.txt | pflow summarise-text` | `{ "stdin": "<bytes>" }` | Yes | 
-| Chain fetch + summarise | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc)` >> summarise-text --temperature=0.9` | `{ "video_url": ..., "raw_transcript": ..., "article_summary": ... }` | Yes | 
+| Provide video URL | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc) | `{ "url": "`[`https://youtu.be/abc`](https://youtu.be/abc)`" }` | No | 
+| Override temperature | `pflow summarise-text --temperature=0.9` | – | No | 
+| Pipe text | `cat notes.txt | pflow summarise-text` | `{ "stdin": "<bytes>" }` | Maybe | 
+| Complex routing | Flow with marketplace compatibility | `{ "video_source": "...", "raw_transcript": "...", "article_summary": "..." }` | Yes | 
 
 ---
 
-### 8 · Integration Example: End-to-End Flow
+### 9 · Integration Example: End-to-End Flow
 
-#### 8.1 IR Definition
+#### 9.1 Simple Scenario (No Mappings)
+
+**IR Definition**:
 ```json
 {
   "nodes": [
     {
       "id": "fetch",
       "name": "yt-transcript", 
-      "input_bindings": {"url": "video_url"},
-      "output_bindings": {"transcript": "raw_transcript"},
       "config": {"language": "en"}
     },
     {
       "id": "summarise",
       "name": "summarise-text",
-      "input_bindings": {"text": "raw_transcript"}, 
-      "output_bindings": {"summary": "article_summary"},
       "config": {"temperature": 0.7}
     }
   ],
@@ -175,83 +201,158 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through `raw_transcript`).
 }
 ```
 
-#### 8.2 CLI Command
+**CLI Command**:
 ```bash
 pflow yt-transcript --url=https://youtu.be/abc123 >> summarise-text --temperature=0.9
 ```
 
-#### 8.3 Shared Store Population
+**Shared Store Population**:
 ```python
 shared = {
-  "video_url": "https://youtu.be/abc123"  # From CLI injection
+  "url": "https://youtu.be/abc123"  # Direct injection
 }
 ```
 
-#### 8.4 Generated Flow Code
+**Generated Flow Code**:
 ```python
-# This code is generated from IR
+# Simple scenario - direct access
 def create_flow():
-    # Instantiate static node classes
     fetch_node = YTTranscript()
     summarize_node = SummarizeText()
     
-    # Configure nodes with IR bindings
-    fetch_node.set_params({
-        "input_bindings": {"url": "video_url"},
-        "output_bindings": {"transcript": "raw_transcript"},
-        "config": {"language": "en"}
-    })
-    
-    summarize_node.set_params({
-        "input_bindings": {"text": "raw_transcript"},
-        "output_bindings": {"summary": "article_summary"},
-        "config": {"temperature": 0.9}  # Overridden by CLI
-    })
+    # Configure nodes with IR config
+    fetch_node.set_params({"language": "en"})
+    summarize_node.set_params({"temperature": 0.9})  # CLI override
     
     # Wire the flow using pocketflow operators
     fetch_node >> summarize_node
-    
     return Flow(start=fetch_node)
 
-# CLI execution
+# Direct execution
 def run_with_cli():
-    shared = {"video_url": "https://youtu.be/abc123"}  # CLI injection
+    shared = {"url": "https://youtu.be/abc123"}  # CLI injection
     flow = create_flow()
-    flow.run(shared)
+    flow.run(shared)  # Nodes access shared store directly
 ```
 
-#### 8.5 Node Execution with Bindings
+#### 9.2 Complex Scenario (With Mappings)
+
+**IR Definition**:
+```json
+{
+  "nodes": [
+    {
+      "id": "fetch",
+      "name": "yt-transcript", 
+      "config": {"language": "en"}
+    },
+    {
+      "id": "summarise",
+      "name": "summarise-text",
+      "config": {"temperature": 0.7}
+    }
+  ],
+  "edges": [{"from": "fetch", "to": "summarise"}],
+  "mappings": {
+    "fetch": {
+      "input_mappings": {"url": "video_source"},
+      "output_mappings": {"transcript": "raw_transcript"}
+    },
+    "summarise": {
+      "input_mappings": {"text": "raw_transcript"},
+      "output_mappings": {"summary": "article_summary"}
+    }
+  }
+}
+```
+
+**Shared Store Population**:
+```python
+shared = {
+  "video_source": "https://youtu.be/abc123"  # Flow schema
+}
+```
+
+**Generated Flow Code**:
+```python
+# Complex scenario - with proxy mapping
+def create_flow():
+    fetch_node = YTTranscript()
+    summarize_node = SummarizeText()
+    
+    # Configure nodes
+    fetch_node.set_params({"language": "en"})
+    summarize_node.set_params({"temperature": 0.9})
+    
+    # Wire the flow
+    fetch_node >> summarize_node
+    return Flow(start=fetch_node)
+
+def run_with_cli():
+    shared = {"video_source": "https://youtu.be/abc123"}
+    flow = create_flow()
+    
+    # Handle proxy mapping
+    for node in flow.nodes:
+        if node.id in ir.get("mappings", {}):
+            mappings = ir["mappings"][node.id]
+            proxy = NodeAwareSharedStore(
+                shared,
+                input_mappings=mappings.get("input_mappings"),
+                output_mappings=mappings.get("output_mappings")
+            )
+            node._run(proxy)
+        else:
+            node._run(shared)
+```
+
+#### 9.3 Node Execution with Natural Interfaces
 
 **Fetch Node**:
 ```python
-# prep() reads from shared["video_url"] via self.params["input_bindings"]["url"]
-# exec() processes the URL using self.params["config"]["language"]
-# post() writes result to shared["raw_transcript"] via self.params["output_bindings"]["transcript"]
+# Node always uses natural interface
+# prep() reads from shared["url"] (proxy maps to "video_source" if needed)
+# exec() processes URL using self.params.get("language")
+# post() writes to shared["transcript"] (proxy maps to "raw_transcript" if needed)
 ```
 
 **Summarise Node**:
 ```python
-# prep() reads from shared["raw_transcript"] via self.params["input_bindings"]["text"] 
-# exec() uses self.params["config"]["temperature"] = 0.9 (CLI override)
-# post() writes result to shared["article_summary"] via self.params["output_bindings"]["summary"]
+# Node always uses natural interface  
+# prep() reads from shared["text"] (proxy maps to "raw_transcript" if needed)
+# exec() uses self.params.get("temperature") = 0.9 (CLI override)
+# post() writes to shared["summary"] (proxy maps to "article_summary" if needed)
 ```
 
-#### 8.6 Final Shared Store State
+#### 9.4 Final State
+
+**Simple Scenario**:
 ```python
 shared = {
-  "video_url": "https://youtu.be/abc123",
+  "url": "https://youtu.be/abc123",
+  "transcript": "Video transcript content...",
+  "summary": "Generated summary..."
+}
+```
+
+**Complex Scenario**:
+```python
+shared = {
+  "video_source": "https://youtu.be/abc123",
   "raw_transcript": "Video transcript content...",
   "article_summary": "Generated summary..."
 }
 ```
 
+Same node code, different shared store layouts.
+
 ---
 
-### 9 · Flow identity, caching & purity
+### 10 · Flow identity, caching & purity
 
-- **Flow-hash** = ordered nodes + `input_bindings`/`output_bindings` key names + node ids/versions.
+- **Flow-hash** = ordered nodes + mappings (when defined) + node ids/versions.
 
-- **Node cache key** (`@flow_safe`) = node-hash ⊕ upstream key names ⊕ SHA-256(data) ⊕ effective `config`.
+- **Node cache key** (`@flow_safe`) = node-hash ⊕ effective config ⊕ SHA-256(input data).
 
 - `config` changes never alter graph hash; they just create a new node-level cache entry.
 
@@ -259,45 +360,44 @@ shared = {
 
 ---
 
-### 10 · Validation rules
+### 11 · Validation rules
 
 | \# | Rule | Failure action | 
 |---|---|---|
-| 1 | IR immutability — CLI cannot alter bindings or node set | Abort | 
+| 1 | IR immutability — CLI cannot alter mappings or node set | Abort | 
 | 2 | Unknown CLI flag | Abort | 
-| 3 | Missing required binding value | Abort | 
+| 3 | Missing required data in shared store | Abort | 
 | 4 | `config` always overrideable via `set_params()` | Derived snapshot | 
-| 5 | `stdin` key reserved; node must bind to it | Abort | 
-| 6 | `output_bindings` keys unique flow-wide | Abort |
-| 7 | `input_bindings` values can be populated from CLI for first nodes only | Abort |
-| 8 | `output_bindings` structure immutable (cannot be changed outside IR) | Abort |
-| 9 | Node classes must inherit from `pocketflow.Node` | Abort |
+| 5 | `stdin` key reserved; node must handle it naturally | Abort | 
+| 6 | Mapping targets unique flow-wide | Abort | 
+| 7 | Natural interface names should be intuitive | Warning |
+| 8 | Node classes must inherit from `pocketflow.Node` | Abort |
 
 ---
 
-### 11 · Best practices & rationale
+### 12 · Best practices & rationale
 
-- Use generic CLI names (`url`, `text`) → disambiguate internally (`video_url`).
+- Use intuitive CLI names (`url`, `text`) that match node natural interfaces.
 
-- Store injection for data; `config` for knobs.
+- Use proxy mappings only when marketplace compatibility requires different schemas.
 
-- All `input_bindings` treated as required unless node sets default.
+- All node interfaces treated as required unless node provides defaults.
 
 - **One-rule CLI** keeps user mental model shallow while IR guarantees auditability.
 
 - Immutable graph + mutable data enables planner reuse and deterministic replay.
 
-- **Bindings enable reusability** — same node, different flows, different shared store layouts.
+- **Natural interfaces enable simplicity** — node writers focus on business logic.
 
-- **Planner as compiler** — sets up shared schema and wires nodes via bindings without users micromanaging.
+- **Proxy enables compatibility** — same nodes work with different flow schemas.
 
 - **Static nodes, dynamic flows** — node logic is reusable, flow wiring is generated.
 
 ---
 
-### 12 · Edge cases
+### 13 · Edge cases
 
-- Planner prevents collisions when multiple nodes expose same CLI name.
+- Flow orchestration prevents collisions when multiple nodes use same natural interface names through proxy mapping.
 
 - Derived snapshots capture every override for perfect replay.
 
@@ -305,13 +405,13 @@ shared = {
 
 - **Config mutability**: `config` values are runtime overrideable because they are isolated to the node and don't affect shared store data flow.
 
-- **Binding immutability**: The binding structure itself (which CLI names map to which store keys) cannot be changed without modifying the IR.
+- **Mapping immutability**: The mapping structure (when defined) cannot be changed without modifying the IR.
 
-- **Framework compatibility**: All node classes must inherit from `pocketflow.Node` and use the params system.
+- **Framework compatibility**: All node classes must inherit from `pocketflow.Node` and use natural shared store access.
 
 ---
 
-### 13 · Appendix — full flow walk-through
+### 14 · Appendix — full flow walk-through
 
 ```bash
 pflow yt-transcript \
@@ -320,38 +420,30 @@ pflow yt-transcript \
   --temperature=0.9
 ```
 
-#### Step 1: Engine injects `video_url` via input binding
+#### Step 1: Engine populates shared store
 
 **CLI Resolution**:
 ```python
-# CLI flag --url=https://youtu.be/abc123 matches input_bindings["url"] -> "video_url"
+# CLI flag --url=https://youtu.be/abc123 goes to shared["url"]
 shared = {
-    "video_url": "https://youtu.be/abc123"  # Injected from CLI
+    "url": "https://youtu.be/abc123"  # Direct injection
 }
 ```
 
 #### Step 2: `yt-transcript` node execution
 
-**Overview**:
-- `prep()` reads `shared["video_url"]` via `self.params["input_bindings"]["url"]`
-- `exec()` fetches transcript using `self.params["config"]["language"]`
-- `post()` writes to `shared["raw_transcript"]` via `self.params["output_bindings"]["transcript"]`
-
 **Node Setup**:
 ```python
 yt_node = YTTranscript()
 yt_node.set_params({
-    "input_bindings": {"url": "video_url"},
-    "output_bindings": {"transcript": "raw_transcript"},
-    "config": {"language": "en"}  # Default from IR
+    "language": "en"  # Default from IR
 })
 ```
 
 **prep() execution**:
 ```python
 def prep(self, shared):
-    url_key = self.params["input_bindings"]["url"]  # "video_url"
-    return shared[url_key]  # Returns "https://youtu.be/abc123"
+    return shared["url"]  # Natural interface
 
 # Result: prep_data = "https://youtu.be/abc123"
 ```
@@ -359,7 +451,7 @@ def prep(self, shared):
 **exec() execution**:
 ```python
 def exec(self, url):
-    language = self.params["config"].get("language", "en")  # "en"
+    language = self.params.get("language", "en")  # "en"
     return fetch_transcript(url, language)
 
 # Result: exec_result = "This is the video transcript content..."
@@ -368,91 +460,66 @@ def exec(self, url):
 **post() execution**:
 ```python
 def post(self, shared, prep_data, exec_result):
-    output_key = self.params["output_bindings"]["transcript"]  # "raw_transcript"
-    shared[output_key] = exec_result
+    shared["transcript"] = exec_result  # Natural interface
 
 # Shared store after yt-transcript node:
 shared = {
-    "video_url": "https://youtu.be/abc123",
-    "raw_transcript": "This is the video transcript content..."
+    "url": "https://youtu.be/abc123",
+    "transcript": "This is the video transcript content..."
 }
 ```
 
 #### Step 3: `summarise-text` node execution
 
-**Overview**:
-- `prep()` reads `shared["raw_transcript"]` via `self.params["input_bindings"]["text"]`
-- `exec()` summarizes with temperature 0.9 (CLI override in `self.params["config"]`)
-- `post()` writes to `shared["article_summary"]` via `self.params["output_bindings"]["summary"]`
-
 **Node Setup**:
 ```python
 summarise_node = SummariseText()
 summarise_node.set_params({
-    "input_bindings": {"text": "raw_transcript"},
-    "output_bindings": {"summary": "article_summary"},
-    "config": {"temperature": 0.9}  # Overridden from CLI --temperature=0.9
+    "temperature": 0.9  # Overridden by CLI --temperature=0.9
 })
 ```
 
 **prep() execution**:
 ```python
 def prep(self, shared):
-    text_key = self.params["input_bindings"]["text"]  # "raw_transcript"
-    return shared[text_key]  # Returns "This is the video transcript content..."
+    return shared["text"]  # Natural interface - but wait, where's "text"?
 
-# Result: prep_data = "This is the video transcript content..."
+# This would fail in simple mode - node expects "text" but shared has "transcript"
+# Solution: Either use consistent naming OR use proxy mapping
 ```
 
-**exec() execution**:
+**Corrected Scenario**: Using consistent natural naming:
 ```python
-def exec(self, text):
-    temperature = self.params["config"].get("temperature", 0.7)  # 0.9 (CLI override)
-    return call_llm(text, temperature=temperature)
-
-# Result: exec_result = "Summary: The video discusses..."
+# Node expects "text", so either:
+# 1. Use consistent names: shared["text"] = transcript_content
+# 2. OR define mapping in IR to translate "text" → "transcript"
 ```
 
-**post() execution**:
+**With proxy mapping**:
 ```python
-def post(self, shared, prep_data, exec_result):
-    output_key = self.params["output_bindings"]["summary"]  # "article_summary"
-    shared[output_key] = exec_result
+# IR defines mapping for summarise node:
+"mappings": {
+  "summarise": {
+    "input_mappings": {"text": "transcript"}
+  }
+}
 
-# Final shared store state:
+# Generated code creates proxy:
+proxy = NodeAwareSharedStore(
+    shared,
+    input_mappings={"text": "transcript"}
+)
+summarise_node._run(proxy)  # Node accesses shared["text"], proxy maps to shared["transcript"]
+```
+
+#### Step 4: Final shared store state
+
+```python
 shared = {
-    "video_url": "https://youtu.be/abc123",
-    "raw_transcript": "This is the video transcript content...",
-    "article_summary": "Summary: The video discusses..."
+  "url": "https://youtu.be/abc123",
+  "transcript": "This is the video transcript content...",
+  "summary": "Summary: The video discusses..."
 }
 ```
 
-#### Step 4: Run-log + derived snapshot saved; caches updated
-
-**Derived Snapshot** (captures runtime overrides):
-```python
-derived_snapshot = {
-    "config_overrides": {
-        "summarise": {"temperature": 0.9}  # CLI override recorded
-    },
-    "cli_injections": {
-        "video_url": "https://youtu.be/abc123"  # CLI injection recorded
-    }
-}
-```
-
-**Complete Flow State**:
-```python
-flow_execution = {
-    "shared_store": {
-        "video_url": "https://youtu.be/abc123",
-        "raw_transcript": "This is the video transcript content...",
-        "article_summary": "Summary: The video discusses..."
-    },
-    "derived_snapshot": derived_snapshot,
-    "execution_trace": [
-        {"node": "yt-transcript", "read_keys": ["video_url"], "write_keys": ["raw_transcript"]},
-        {"node": "summarise-text", "read_keys": ["raw_transcript"], "write_keys": ["article_summary"]}
-    ]
-}
-```
+**Key insight**: Same node code works whether using direct natural naming or proxy mapping for compatibility.
