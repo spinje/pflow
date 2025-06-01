@@ -1,124 +1,189 @@
-# Proxy Pattern Update Plan: Simplifying Node Code with Optional Bindings
+# Proxy Pattern Update Plan: Making Nodes Standalone and Simple
 
 ## Overview
 
-This plan outlines how to update both documents to reflect the new **proxy-based binding approach** that makes node code maximally simple while providing optional mapping capabilities for complex marketplace scenarios.
+This plan outlines how to update both documents to reflect the new **proxy-based approach** that makes node code maximally simple and standalone by removing binding complexity from node implementations and moving it to flow orchestration where it belongs.
+
+## Key Insight: Nodes Should Be Standalone
+
+The fundamental insight is that **node writers shouldn't need to understand flow orchestration concepts**. They should write simple, testable business logic using natural key names, while flow designers handle mapping complexity at the orchestration level.
+
+---
+
+## Benefits of the Proxy Pattern
+
+### 1. Standalone Node Development
+- **Current**: Node writers must understand binding indirection (`self.params["input_bindings"]["text"]`)
+- **Proxy**: Node writers use intuitive keys (`shared["text"]`)
+
+### 2. Simplified Testing
+- **Current**: Complex test setup with binding configuration
+- **Proxy**: Natural test setup with direct key access
+
+### 3. Better Separation of Concerns
+- **Node level**: Pure business logic with natural interfaces
+- **Flow level**: Handle mapping complexity and schema compatibility
+
+### 4. Reduced Cognitive Load
+- Node writers focus on their domain (text processing, API calls, etc.)
+- Flow designers handle orchestration concerns (routing, mapping, compatibility)
+
+### 5. More Readable Code
+```python
+# Current (complex)
+input_key = self.params["input_bindings"]["text"]
+return shared[input_key]
+
+# Proxy (simple)
+return shared["text"]
+```
 
 ---
 
 ## Key Changes from Current Approach
 
-### Before (Complex)
+### Before (Complex for Node Writers)
 ```python
 class Summarize(Node):
     def prep(self, shared):
-        input_key = self.params["input_bindings"]["text"]  # Complex nesting
+        input_key = self.params["input_bindings"]["text"]  # Binding indirection
         return shared[input_key]
     
     def exec(self, prep_res):
         temp = self.params["config"].get("temperature", 0.7)  # Nested config
         return call_llm(prep_res, temperature=temp)
+    
+    def post(self, shared, prep_res, exec_res):
+        output_key = self.params["output_bindings"]["summary"]  # More indirection
+        shared[output_key] = exec_res
 ```
 
-### After (Simple)
+### After (Simple for Node Writers)
 ```python
 class Summarize(Node):
+    """Summarizes text input.
+    
+    Expects: shared["text"] - text to summarize
+    Produces: shared["summary"] - summarized text
+    Config: temperature - LLM temperature (default 0.7)
+    """
     def prep(self, shared):
-        return shared["text"]  # Simple, natural key
+        return shared["text"]  # Natural, direct access
     
     def exec(self, prep_res):
         temp = self.params.get("temperature", 0.7)  # Flat config
         return call_llm(prep_res, temperature=temp)
+    
+    def post(self, shared, prep_res, exec_res):
+        shared["summary"] = exec_res  # Simple assignment
 ```
+
+**Complexity moved to flow orchestration level** (where it belongs).
 
 ---
 
 ## 1. Design Pattern Document Updates
 
-### 1.1 Update Core Concepts Section
+### 1.1 Update Core Philosophy Section
 
-**Current Problem**: Explains complex nested binding structure
-**Solution**: Explain simple node code + optional proxy magic
-
-**New Section**: "The Proxy Pattern"
-- Nodes use natural, simple keys
-- Proxy handles mapping transparently when needed
-- Zero overhead for simple flows
-- Full power for marketplace scenarios
+**New opening**: "Node Autonomy Principle"
+- Nodes should be standalone, testable units
+- Node writers focus on business logic, not orchestration 
+- Complexity belongs at the flow level, not node level
+- Natural interfaces beat binding indirection
 
 ### 1.2 Completely Rewrite Node Examples
 
 **Remove**: All `self.params["input_bindings"]["key"]` complexity
-**Add**: Simple, clean node code examples
+**Add**: Simple, standalone node code examples with clear docstrings
 
 **New Node Example**:
 ```python
 class Summarize(Node):  # Inherits from pocketflow.Node
+    """Summarizes text content using LLM.
+    
+    Interface:
+    - Reads: shared["text"] - input text to summarize
+    - Writes: shared["summary"] - generated summary
+    - Config: temperature (default 0.7) - LLM creativity
+    """
     def prep(self, shared):
-        return shared["text"]  # Simple access with natural key
+        return shared["text"]  # Simple, natural access
     
     def exec(self, prep_res):
-        temp = self.params.get("temperature", 0.7)  # Flat config access
+        temp = self.params.get("temperature", 0.7)  # Flat config
         return call_llm(prep_res, temperature=temp)
     
     def post(self, shared, prep_res, exec_res):
-        shared["summary"] = exec_res  # Simple write with natural key
+        shared["summary"] = exec_res  # Direct assignment
 ```
 
-### 1.3 Add Progressive Complexity Examples
+### 1.3 Add NodeAwareSharedStore Explanation
 
-**Simple Flow Example**:
+**New Section**: "The NodeAwareSharedStore Proxy"
+
+**Content**:
+- Enables simple node code while supporting complex flow routing
+- Transparent mapping between node expectations and flow schema
+- Zero overhead when no mapping needed (direct pass-through)
+- Activated only when IR defines mappings for a node
+
+### 1.4 Show Testing Benefits
+
+**New Section**: "Node Testing Simplicity"
+
+**Simple Testing Example**:
 ```python
-# Simple flow - no mappings needed
-shared = {"text": "Input content", "summary": ""}
+def test_summarize_node():
+    node = Summarize()
+    node.set_params({"temperature": 0.5})  # Just config
+    
+    # Natural, intuitive shared store
+    shared = {"text": "Long article content here..."}
+    
+    node.run(shared)
+    
+    assert "summary" in shared
+    assert len(shared["summary"]) < len(shared["text"])
+```
+
+Compare to current complex binding setup requirements.
+
+### 1.5 Progressive Complexity Examples
+
+**Level 1 - Simple Flow (Direct Access)**:
+```python
+# No mappings needed - nodes access shared store directly
+shared = {"text": "Input content"}
 
 summarize_node = Summarize()
-summarize_node.set_params({"temperature": 0.7})  # Just config
+summarize_node.set_params({"temperature": 0.7})
 
 flow = Flow(start=summarize_node)
 flow.run(shared)  # Node accesses shared["text"] directly
 ```
 
-**Complex Flow Example**:
+**Level 2 - Complex Flow (Proxy Mapping)**:
 ```python
-# Marketplace flow - mappings enable compatibility
-shared = {"raw_transcript": "Input content"}
+# Marketplace compatibility - proxy maps keys transparently
+shared = {"raw_transcript": "Input content"}  # Flow schema
 
-# Proxy maps node's "text" → flow's "raw_transcript"
-node_proxy = NodeAwareSharedStore(
-    shared,
-    input_mappings={"text": "raw_transcript"},  # Use "mappings" terminology
-    output_mappings={"summary": "article_summary"}
-)
-
-summarize_node = Summarize()  # Same node code!
-summarize_node.set_params({"temperature": 0.7})
-summarize_node._run(node_proxy)  # Uses proxy instead of raw shared
+# Generated flow code handles proxy creation
+if "mappings" in ir and summarize_node.id in ir["mappings"]:
+    mappings = ir["mappings"][summarize_node.id]
+    proxy = NodeAwareSharedStore(
+        shared,
+        input_mappings={"text": "raw_transcript"},
+        output_mappings={"summary": "article_summary"}
+    )
+    summarize_node._run(proxy)  # Node still uses shared["text"]
+else:
+    summarize_node._run(shared)  # Direct access
 ```
-
-### 1.4 Add NodeAwareSharedStore Explanation
-
-**New Section**: "The NodeAwareSharedStore Proxy"
-
-**Content**:
-- How the proxy intercepts shared store access
-- Transparent mapping for input/output keys
-- Pass-through behavior when no mappings defined
-- Implementation details, benefits, and error handling
-- How it enables simple node code and marketplace compatibility
-
-### 1.5 Update Flow vs Node Distinction
-
-**Clarify**:
-- **Nodes**: Use simple, natural keys in their code
-- **Flows**: Define mappings via `input_mappings` and `output_mappings` for proxy when needed for compatibility
-- **Proxy**: Handles translation transparently
 
 ### 1.6 Update IR Format Section
 
-**Change**: Define IR for flow-level mappings
-
-**New IR Example**:
+**New IR Example with Mappings**:
 ```json
 {
   "nodes": [
@@ -127,29 +192,30 @@ summarize_node._run(node_proxy)  # Uses proxy instead of raw shared
       "name": "Summarize",
       "config": {"temperature": 0.7}
     }
-    // ... other nodes
   ],
   "edges": [
-    // ... edge definitions
+    {"from": "input", "to": "summarize_1"}
   ],
   "mappings": {
     "summarize_1": {
       "input_mappings": {"text": "raw_texts/doc1.txt"},
       "output_mappings": {"summary": "summaries/doc1.txt"}
     }
-    // ... mappings for other nodes if needed
   }
 }
 ```
 
-### 1.7 Add Debugging with Proxy Section
+Key change: Mappings are flow-level concern in IR, nodes just declare natural interfaces.
 
-**New Section**: "Debugging with the Proxy Pattern"
+### 1.7 Add Developer Experience Section
+
+**New Section**: "Developer Experience Benefits"
 
 **Content**:
-- How to interpret error messages from the proxy
-- Techniques for inspecting proxy behavior (debug mode, tools)
-- Best practices for avoiding mapping issues
+- Node development is simpler (no binding knowledge required)
+- Testing is intuitive (natural shared store setup)
+- Debugging is clearer (direct key access in node code)
+- Documentation is self-evident (shared["key"] shows interface)
 
 ---
 
@@ -161,98 +227,103 @@ summarize_node._run(node_proxy)  # Uses proxy instead of raw shared
 
 **Content**:
 - How NodeAwareSharedStore enables simple node code
-- When proxy is used vs direct access (based on `mappings` in IR)
-- Performance characteristics (zero overhead for simple flows)
-- Integration with pocketflow (extension or helper class)
+- When proxy is activated (based on IR mappings) vs direct access
+- Performance: zero overhead for simple flows, mapping only when needed
+- Integration approach with pocketflow (helper class used by generated code)
 
 ### 2.2 Update Node Interface Integration
 
-**Remove**: Complex `self.params["input_bindings"]` examples
-**Add**: Simple node interface with proxy explanation
+**Replace complex binding examples with simple interface**:
 
-**New Example**:
 ```python
-# Node class (static, pre-written) - SIMPLE
+# Node class (static, pre-written) - SIMPLE AND STANDALONE
 class YTTranscript(Node):
+    """Fetches YouTube transcript.
+    
+    Interface:
+    - Reads: shared["url"] - YouTube video URL
+    - Writes: shared["transcript"] - extracted transcript text
+    - Config: language (default "en") - transcript language
+    """
     def prep(self, shared):
-        return shared["url"]  # Natural key access
+        return shared["url"]  # Natural interface
     
     def exec(self, url):
-        language = self.params.get("language", "en")  # Flat config
+        language = self.params.get("language", "en")  # Simple config
         return fetch_transcript(url, language)
     
     def post(self, shared, prep_res, exec_res):
-        shared["transcript"] = exec_res  # Natural key write
+        shared["transcript"] = exec_res  # Direct write
 
-# Flow-level mapping (from IR's "mappings" section)
-if node_id in ir["mappings"]:
-    mappings = ir["mappings"][node_id]
-    node_proxy = NodeAwareSharedStore(
-        shared,
-        input_mappings=mappings.get("input_mappings"),
-        output_mappings=mappings.get("output_mappings")
-    )
-    node._run(node_proxy)
-else:
-    node._run(shared)  # Direct access for simple flows
+# Generated flow code handles proxy when needed
+def run_node_with_mapping(node, shared, mappings=None):
+    if mappings:
+        proxy = NodeAwareSharedStore(shared, **mappings)
+        node._run(proxy)
+    else:
+        node._run(shared)  # Direct access
 ```
 
 ### 2.3 Update CLI Resolution Algorithm
 
-**Change**: Clarify config handling and proxy creation
-
-**New Algorithm**:
-1. Parse CLI as flat `key=value`.
-2. For CLI flags matching shared store keys: inject into `shared_store[store_key] = value`.
-3. For CLI flags intended as config: update the corresponding node's `params` (flat structure). (Requires mechanism to distinguish config flags, e.g., `--config:node_id:key=value` or node-specific flags).
-4. For each node in flow (from IR):
-   - If mappings are defined in IR for this node:
-     - Create `NodeAwareSharedStore` proxy with these mappings.
-     - Pass proxy to node's execution methods.
-   - Else (no mappings defined):
-     - Pass raw shared store to node's execution methods.
-5. Execute flow.
+**New Algorithm** (emphasizing simplicity):
+1. Parse CLI as flat `key=value`
+2. For CLI flags matching natural shared store keys: inject directly
+3. For CLI flags marked as config: update node params (flat structure)
+4. Generate flow code that:
+   - Creates proxy if IR defines mappings for node
+   - Uses direct access if no mappings defined
+5. Execute flow with appropriate access pattern per node
 
 ### 2.4 Rewrite Integration Examples
 
-**Show both scenarios**: Simple (no mappings) and Complex (with mappings from IR)
+**Show both scenarios with emphasis on node simplicity**:
+
+**Simple Scenario** (no mappings):
+```python
+# Node uses natural keys, flow matches them
+shared = {"url": "https://youtu.be/abc123"}
+yt_node = YTTranscript()
+yt_node.run(shared)  # Direct access
+```
+
+**Complex Scenario** (with mappings):
+```python
+# Node still uses natural keys, proxy handles mapping
+shared = {"video_source": "https://youtu.be/abc123"}  # Flow schema
+proxy = NodeAwareSharedStore(
+    shared,
+    input_mappings={"url": "video_source"},
+    output_mappings={"transcript": "extracted_text"}
+)
+yt_node.run(proxy)  # Node still accesses shared["url"]
+```
 
 ### 2.5 Update Full Flow Walk-through
 
-**Simplify**: Remove complex binding access in node methods
-**Add**: Show how proxy intercepts and maps when mappings are defined in IR
-
-### 2.6 Clarify pocketflow Integration
-
-**New Section**: "pocketflow Framework Integration Details"
-
-**Content**:
-- Specify if `NodeAwareSharedStore` is a pocketflow extension or a helper class used by generated flow code.
-- How the flow execution logic (handling proxy vs direct) integrates with pocketflow's `Flow` class.
+**Emphasize node simplicity throughout**:
+- Show nodes using natural key access
+- Explain how proxy handles mapping transparently
+- Demonstrate that same node code works in both scenarios
 
 ---
 
-## 3. New Concepts to Introduce
+## 3. Key Philosophy Changes
 
-### 3.1 Progressive Complexity Model
+### 3.1 Complexity Allocation
 
-- **Level 1**: Simple flows with direct shared access (no `mappings` in IR)
-- **Level 2**: Complex flows with proxy mapping (defined in IR `mappings` section)
-- **Same node code works at both levels**
+**Old**: Spread binding complexity across every node
+**New**: Centralize mapping complexity at flow orchestration level
 
-### 3.2 NodeAwareSharedStore
+### 3.2 Developer Experience
 
-- **Purpose**: Transparent mapping layer
-- **Interface**: Mimics dictionary; consider full `dict` compatibility (get, pop, keys, items, etc.)
-- **Behavior**: Maps keys when mappings defined, passes through otherwise
-- **Performance**: Zero overhead when no mappings
-- **Error Handling**: Clear messages for missing keys or mapping issues
+**Old**: Node writers must understand flow orchestration concepts
+**New**: Node writers focus purely on business logic
 
-### 3.3 Flow-Level vs Node-Level Concerns
+### 3.3 Testing Philosophy
 
-- **Node level**: Business logic with natural key names and flat config in `params`
-- **Flow level**: Data routing and schema compatibility via `mappings` in IR
-- **Clear separation of concerns**
+**Old**: Complex setup with binding configuration for testing
+**New**: Simple, natural shared store setup for testing
 
 ---
 
@@ -261,70 +332,65 @@ else:
 ### 4.1 From Both Documents
 
 - All `self.params["input_bindings"]["key"]` examples
+- Complex binding indirection explanations
 - Nested config structure (`self.params["config"]["key"]`)
-- Complex three-level nesting explanations
-- Terminology: Replace "bindings" with "mappings" for clarity in proxy context
+- Arguments about why binding complexity is necessary
 
 ### 4.2 Replace With
 
-- Simple node code examples
-- Flat config access patterns
-- Progressive complexity explanation
-- Clear proxy architecture description
-- Standardized "mappings" terminology
+- Simple, standalone node code examples
+- Clear interface documentation via docstrings
+- Flat config access patterns (`self.params.get("key")`)
+- Proxy pattern explanation and benefits
+- Progressive complexity examples
 
 ---
 
 ## 5. New Validation Checklist
 
 After updates, both documents should:
-- [ ] Show nodes using natural keys (`shared["text"]`)
-- [ ] Demonstrate flat config access (`self.params.get("temperature")`)
-- [ ] Explain proxy pattern clearly using "mappings" terminology
-- [ ] Show simple flows without mappings in IR
-- [ ] Show complex flows with mappings from IR
-- [ ] Clarify zero overhead for simple cases
-- [ ] Maintain marketplace compatibility story
-- [ ] Remove all complex nesting examples
-- [ ] Define clear IR format for mappings
-- [ ] Explain pocketflow integration (extension or helper)
-- [ ] Provide robust CLI config override mechanism
-- [ ] Include debugging guidance for proxy
-- [ ] Confirm full `dict` compatibility for proxy if needed
-- [ ] Detail proxy error handling
+- [ ] Show nodes as standalone units with natural interfaces
+- [ ] Demonstrate simple testing without binding setup
+- [ ] Explain proxy pattern clearly with zero-overhead guarantee
+- [ ] Show progressive complexity (simple flows vs marketplace flows)
+- [ ] Use flat config access (`self.params.get("key")`)
+- [ ] Define clear IR format with flow-level mappings
+- [ ] Emphasize developer experience benefits
+- [ ] Remove all binding indirection from node code
+- [ ] Show proxy creation in generated flow code only
+- [ ] Maintain marketplace compatibility story via proxy
 
 ---
 
 ## 6. Implementation Priority
 
 1. **Update Design Pattern Document**
-   - Rewrite node examples to be simple
-   - Add proxy pattern explanation with "mappings"
-   - Show progressive complexity
-   - Update IR format example
-   - Add debugging section
+   - Rewrite all node examples to be simple and standalone
+   - Add proxy pattern explanation focusing on simplicity benefits
+   - Show testing advantages
+   - Add progressive complexity examples
 
 2. **Update Canonical Spec Document**
    - Add proxy architecture section
    - Update CLI resolution algorithm
    - Rewrite integration examples
    - Simplify full walk-through
-   - Clarify pocketflow integration
 
 3. **Ensure Consistency**
-   - Same node code examples in both docs
-   - Consistent proxy and "mappings" explanation
-   - Aligned terminology
+   - Same simple node code examples in both docs
+   - Consistent proxy explanation
+   - Aligned on "complexity belongs at flow level" philosophy
 
 ---
 
 ## 7. Key Messages to Emphasize
 
-- **Node code is maximally simple** - uses natural keys
-- **Complexity is opt-in** - mappings only when you need marketplace compatibility
+- **Nodes are standalone** - no orchestration knowledge required
+- **Testing is simple** - natural shared store setup
+- [ ] Complexity is opt-in - proxy only when marketplace compatibility needed
 - **Same code works everywhere** - simple and complex flows
-- **Zero overhead by default** - proxy only when needed
-- **Clear separation** - nodes focus on logic, flows handle routing via IR mappings
+- **Zero overhead by default** - direct access when possible
+- **Clear separation** - nodes focus on logic, flows handle routing
 
 ---
 
@@ -332,6 +398,8 @@ After updates, both documents should:
 
 ```python
 class NodeAwareSharedStore:
+    """Transparent proxy that enables simple node code while supporting complex routing."""
+    
     def __init__(self, shared_data, input_mappings=None, output_mappings=None):
         self.shared_data = shared_data
         self.input_mappings = input_mappings or {}
@@ -339,7 +407,7 @@ class NodeAwareSharedStore:
     
     def _map_key(self, key, is_input):
         mappings = self.input_mappings if is_input else self.output_mappings
-        return mappings.get(key, key) # Default to original key if no mapping
+        return mappings.get(key, key)  # Default to original key if no mapping
 
     def __getitem__(self, key):
         actual_key = self._map_key(key, is_input=True)
@@ -356,13 +424,11 @@ class NodeAwareSharedStore:
         actual_key = self._map_key(key, is_input=True)
         return actual_key in self.shared_data
     
-    # Consider adding other dict methods: get, pop, keys, items, values, __delitem__
-    # for full compatibility if nodes expect them.
     def get(self, key, default=None):
         try:
             return self[key]
         except KeyError:
             return default
-
 ```
+
 This proxy enables simple node code while maintaining full flexibility.
