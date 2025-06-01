@@ -1,4 +1,4 @@
-## Shared-Store & Proxy Model — Canonical Spec
+## Shared-Store & Proxy Model — CLI Runtime Specification
 
 ### 1 · Purpose
 
@@ -6,7 +6,7 @@ Define how **CLI arguments**, **IR mappings**, and the **flow-scoped shared stor
 
 This specification details the implementation using the **pocketflow framework** and shows how generated flow code integrates with static node classes using an optional proxy layer for complex routing scenarios.
 
-> **For conceptual understanding and architectural rationale**, see [Shared Store + Proxy Design Pattern](./Shared%20Store%20+%20Params%20Design%20Pattern%20in%20pflow.md)
+> **For conceptual understanding and architectural rationale**, see [Shared Store + Proxy Design Pattern](./shared-store-node-proxy-architecture.md)
 
 ---
 
