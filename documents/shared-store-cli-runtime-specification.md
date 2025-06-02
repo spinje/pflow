@@ -54,6 +54,26 @@ The **NodeAwareSharedStore** proxy enables simple node code while supporting com
 | `params` | Behaviour knobs | ❌ | ✅ (`--flag`) | ✅ | ❌ | 
 | `mappings` | Complex routing | ✅ | ❌ | ✅ | ✅ | 
 
+#### 4.2 Future Namespacing Support
+
+**MVP Implementation**: Flat key structure for shared store simplicity
+```python
+shared = {
+    "url": "https://youtu.be/abc123",
+    "transcript": "Video content..."
+}
+```
+
+**Future Feature**: Nested path-like keys for complex flows
+```python
+shared = {
+    "inputs/video_url": "https://youtu.be/abc123", 
+    "outputs/transcript": "Video content..."
+}
+```
+
+The proxy pattern will support nested key translation when this feature is implemented.
+
 ---
 
 ### 5 · Node Interface Integration
@@ -73,9 +93,9 @@ class YTTranscript(Node):  # Inherits from pocketflow.Node
     def prep(self, shared):
         return shared["url"]  # Natural interface
     
-    def exec(self, url):
+    def exec(self, prep_res):  # prep_res contains the URL
         language = self.params.get("language", "en")  # Simple params
-        return fetch_transcript(url, language)
+        return fetch_transcript(prep_res, language)
     
     def post(self, shared, prep_res, exec_res):
         shared["transcript"] = exec_res  # Direct write
@@ -83,7 +103,11 @@ class YTTranscript(Node):  # Inherits from pocketflow.Node
 # Generated flow code handles proxy when needed
 def run_node_with_mapping(node, shared, mappings=None):
     if mappings:
-        proxy = NodeAwareSharedStore(shared, **mappings)
+        proxy = NodeAwareSharedStore(
+            shared,
+            input_mappings={"url": "video_source"},
+            output_mappings={"transcript": "raw_transcript"}
+        )
         node._run(proxy)
     else:
         node._run(shared)  # Direct access
@@ -116,25 +140,23 @@ The node uses natural interface names while the proxy handles any necessary tran
 {
   "nodes": [
     {
-      "id": "fetch",
-      "name": "yt-transcript",
+      "id": "yt-transcript",
       "params": { "language": "en" }
     },
     {
-      "id": "summarise",
-      "name": "summarise-text",
+      "id": "summarise-text",
       "params": { "temperature": 0.7 }
     }
   ],
   "edges": [
-    {"from": "fetch", "to": "summarise"}
+    {"from": "yt-transcript", "to": "summarise-text"}
   ],
   "mappings": {
-    "fetch": {
+    "yt-transcript": {
       "input_mappings": {"url": "video_source"},
       "output_mappings": {"transcript": "raw_transcript"}
     },
-    "summarise": {
+    "summarise-text": {
       "input_mappings": {"text": "raw_transcript"},
       "output_mappings": {"summary": "article_summary"}
     }
@@ -187,17 +209,15 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 {
   "nodes": [
     {
-      "id": "fetch",
-      "name": "yt-transcript", 
+      "id": "yt-transcript",
       "params": {"language": "en"}
     },
     {
-      "id": "summarise",
-      "name": "summarise-text",
+      "id": "summarise-text",
       "params": {"temperature": 0.7}
     }
   ],
-  "edges": [{"from": "fetch", "to": "summarise"}]
+  "edges": [{"from": "yt-transcript", "to": "summarise-text"}]
 }
 ```
 
@@ -242,23 +262,21 @@ def run_with_cli():
 {
   "nodes": [
     {
-      "id": "fetch",
-      "name": "yt-transcript", 
+      "id": "yt-transcript",
       "params": {"language": "en"}
     },
     {
-      "id": "summarise",
-      "name": "summarise-text",
-      "params": {"temperature": 0.7}
+      "id": "summarise-text",
+      "params": {"temperature": 0.7"}
     }
   ],
-  "edges": [{"from": "fetch", "to": "summarise"}],
+  "edges": [{"from": "yt-transcript", "to": "summarise-text"}],
   "mappings": {
-    "fetch": {
+    "yt-transcript": {
       "input_mappings": {"url": "video_source"},
       "output_mappings": {"transcript": "raw_transcript"}
     },
-    "summarise": {
+    "summarise-text": {
       "input_mappings": {"text": "raw_transcript"},
       "output_mappings": {"summary": "article_summary"}
     }
@@ -298,8 +316,8 @@ def run_with_cli():
             mappings = ir["mappings"][node.id]
             proxy = NodeAwareSharedStore(
                 shared,
-                input_mappings=mappings.get("input_mappings"),
-                output_mappings=mappings.get("output_mappings")
+                input_mappings={"url": "video_source"},
+                output_mappings={"transcript": "raw_transcript"}
             )
             node._run(proxy)
         else:
@@ -450,9 +468,9 @@ def prep(self, shared):
 
 **exec() execution**:
 ```python
-def exec(self, url):
+def exec(self, prep_res):  # prep_res contains the URL
     language = self.params.get("language", "en")  # "en"
-    return fetch_transcript(url, language)
+    return fetch_transcript(prep_res, language)
 
 # Result: exec_result = "This is the video transcript content..."
 ```
@@ -499,7 +517,7 @@ def prep(self, shared):
 ```python
 # IR defines mapping for summarise node:
 "mappings": {
-  "summarise": {
+  "summarise-text": {
     "input_mappings": {"text": "transcript"}
   }
 }

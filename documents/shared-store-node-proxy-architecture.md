@@ -205,7 +205,7 @@ The same `Summarize` node class works in completely different contexts with diff
 
 ## Shared Store Namespacing
 
-Path-like keys enable organized, collision-free shared store layouts:
+**Future Feature**: Path-like keys enable organized, collision-free shared store layouts:
 
 **Key**: `"raw_texts/doc1.txt"`
 **Maps to**:
@@ -216,6 +216,8 @@ shared = {
     }
 }
 ```
+
+> **Note**: MVP implementation focuses on flat key structure. Nested namespacing will be supported in future versions for the proxy pattern.
 
 **Benefits**:
 - **Namespacing**: Clear organization of related data
@@ -240,21 +242,19 @@ Example:
 {
   "nodes": [
     {
-      "id": "summarize_1", 
-      "name": "Summarize",
+      "id": "summarize-text",
       "params": {"temperature": 0.7}
     },
     {
-      "id": "store_1",
-      "name": "Store",
+      "id": "store-markdown",
       "params": {"format": "markdown"}
     }
   ],
   "edges": [
-    {"from": "summarize_1", "to": "store_1"}
+    {"from": "summarize-text", "to": "store-markdown"}
   ],
   "mappings": {
-    "summarize_1": {
+    "summarize-text": {
       "input_mappings": {"text": "raw_texts/doc1.txt"},
       "output_mappings": {"summary": "summaries/doc1.txt"}
     }
@@ -373,4 +373,6 @@ This design enables `pflow` to:
 
 The power is in simplicity. This pattern makes node development intuitive while preserving all the flexibility needed for complex orchestration scenarios.
 
-> **For CLI usage and runtime parameter details**, see [Shared-Store & Proxy Model — CLI Runtime Specification](./shared-store-cli-runtime-specification.md)
+## See Also
+
+> **For complete CLI usage, validation rules, and runtime parameter details**, see [Shared-Store & Proxy Model — CLI Runtime Specification](./shared-store-cli-runtime-specification.md)
