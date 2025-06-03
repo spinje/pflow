@@ -2,221 +2,367 @@
 
 ---
 
-## 1 Identifier Syntax
+## 1 · Identifier Syntax
 
 ```
 <namespace>/<name>@<semver>
-
 ```
 
-Examples\
-`core/fetch_url@1.0.0` `mcp/weather.get@0.3.2` `vesperance/custom_embed@2.1.0`
+Examples:  
+`core/yt-transcript@1.0.0` `mcp/weather-get@0.3.2` `vesperance/custom-embed@2.1.0`
 
-### 1\.1 Namespace
+### 1.1 Namespace
 
 - Lower-case, dot-separated: `[a-z0-9]+(\.[a-z0-9]+)*`
+- Reserved roots: `core`, `mcp`
+- Collision isolation: identical names in different namespaces may co-exist
+- Example: `vesperance.data/extractor`
 
-- Reserved roots: `core`, `mcp`.
+### 1.2 Name
 
-- Collision isolation: identical names in different namespaces may co-exist.
+- Lower-case, hyphens allowed: `[a-z0-9-]+`
+- Should match the Python file stem
+- Consistent with pflow's kebab-case convention
 
-- Example: [`vesperance.data`](vesperance.data)`.extractor`
+### 1.3 Version
 
-### 1\.2 Name
-
-- Lower-case, underscores allowed: `[a-z0-9_]+`
-
-- Should match the Python file stem.
-
-### 1\.3 Version
-
-- Semantic versioning `MAJOR.MINOR.PATCH`.
-
-- **MAJOR** bump ⇢ breaking interface change.
-
-- **MINOR** bump ⇢ additive, backward-compatible.
-
-- **PATCH** ⇢ bug-fix only.
-
-- CLI shorthand `@1` ⇢ latest `1.x.x`.
-
-- Pre-release versions (`1.0.0-beta`) are not supported in MVP.
+- Semantic versioning `MAJOR.MINOR.PATCH`
+- **MAJOR** bump ⇢ breaking interface change
+- **MINOR** bump ⇢ additive, backward-compatible
+- **PATCH** ⇢ bug-fix only
+- CLI shorthand `@1` ⇢ latest `1.x.x`
+- Pre-release versions (`1.0.0-beta`) not supported in MVP
 
 ---
 
-## 2 Resolution Algorithm
+## 2 · Version Resolution in Planner Pipeline
 
-1. **Lock-file present** → use pinned version.
+Resolution occurs in **two phases** aligned with pflow's dual-mode operation, integrated into the planner → compiler → runtime pipeline.
 
-2. **Single version installed** → use it.
+### 2.1 Natural Language Path
 
-3. **Multiple versions**:\
-   • If CLI pins major (`@1`) → use highest `1.x.x`.\
-   • If no pin → error, prompt user to specify.
+1. **Planner Discovery**: Extract metadata from all installed node versions during registry scan
+2. **LLM Selection**: Thinking model chooses nodes AND appropriate versions from complete registry
+3. **IR Generation**: Planner embeds resolved versions in JSON IR
+4. **Runtime**: Executes with pinned versions from validated IR
 
-4. **Latest-by-default is disallowed.**
+### 2.2 CLI Pipe Path  
 
-5. **Locking** must be explicit via `pflow lock` to guarantee reproducibility.
+1. **CLI Parsing**: Extract node references with optional version hints (`yt-transcript@1.0.0`)
+2. **Planner Resolution**: Resolve ambiguous versions using version lockfile + compatibility policies
+3. **Validation**: Ensure selected versions compatible with flow requirements and shared store interfaces
+4. **IR Generation**: Generate IR with resolved versions for compiler handoff
+
+### 2.3 Resolution Policies
+
+**Version Resolution Order**:
+1. **Explicit version** (`@1.2.0`) → use exactly
+2. **Major hint** (`@1`) → use highest `1.x.x`  
+3. **Version lockfile** → use pinned version
+4. **Single version installed** → use it
+5. **Multiple versions** → abort with disambiguation prompt
+
+**No latest-by-default** - reproducibility requires explicit version management.
 
 ---
 
-## 3 File-system Layout
+## 3 · File-system Layout
 
 ```
 ~/.pflow/nodes/
   ├─ core/
-  │   └─ fetch_url/1.2.4/node.py
+  │   └─ yt-transcript/1.2.4/node.py
   ├─ mcp/
-  │   └─ weather/get/0.3.2/node.py
+  │   └─ weather-get/0.3.2/node.py
   └─ <user ns>/...
 site-packages/pflow/nodes/core/   # built-ins (read-only)
 /usr/local/share/pflow/nodes/     # system registry
 ./nodes/                          # flow-local overrides
-
 ```
 
-Search order: flow-local → user → system → built-in.
+**Search order**: flow-local → user → system → built-in
+
+**Registry Integration**: Planner scans these locations during metadata extraction to build unified registry for LLM selection and validation.
 
 ---
 
-## 4 Installation Workflows
+## 4 · Installation & Registry Integration
 
-### 4\.1 Python File
+### 4.1 Manual Node Installation
 
-```
-pflow install my_node.py
-
-```
-
-Copies to `~/.pflow/nodes/<namespace>/<name>/<version>/`.
-
-### 4\.2 MCP Server
-
-```
-pflow install-mcp https://mcp.weatherapi.com
-
+```bash
+pflow registry install my-node.py
 ```
 
-- Generates wrapper nodes for all tools exposed by the server's `/tools/list` endpoint.
+Copies to `~/.pflow/nodes/<namespace>/<name>/<version>/` and triggers metadata extraction for planner integration.
 
-- Uses MCP tool name as `<tool_namespace>.<tool_name>`.
+### 4.2 Registry Integration  
 
-- If the MCP tool exposes version metadata, it is respected; otherwise, default to `0.0.0`.
+**Unified Registry**: All nodes (manual, MCP, system) appear in single registry system used by planner for:
+- LLM metadata-driven selection
+- Version compatibility validation  
+- Natural language → node mapping
 
-- MCP nodes are installed under `mcp/<tool_namespace>/<tool_name>/<version>/`.
+> **See also**: [MCP Server Integration](./mcp-server-integration-and-security-model.md) for MCP wrapper node installation
 
-### 4\.3 Uninstall
+### 4.3 Metadata Generation for Planner
 
-```
-pflow uninstall mcp/weather.get@0.3.2
+During installation, planner-compatible metadata is extracted:
 
-```
-
----
-
-## 5 Lock-files
-
-All flows are resolved and executed through an internal JSON Intermediate Representation (IR), where all node references are fully qualified, including namespace and version. This means that even when the user writes shorthand CLI like:
-
-```
-pflow summarize >> save_file
-
-```
-
-…the system internally expands it to a version-pinned structure such as:
-
-```
+```json
 {
-  "nodes": [
-    {"id": "a", "type": "core/summarize@0.9.1", "params": {...}},
-    {"id": "b", "type": "core/save_file@1.0.0", "params": {...}}
-  ],
-  "edges": [
-    {"from": "a", "to": "b"}
-  ]
+  "id": "yt-transcript",
+  "namespace": "core", 
+  "version": "1.2.4",
+  "description": "Fetches YouTube transcript from video URL",
+  "inputs": ["url"],
+  "outputs": ["transcript"],
+  "params": {"language": "en"},
+  "actions": ["default", "video_unavailable"]
 }
-
 ```
 
-This ensures reproducibility, even if the CLI syntax is simplified.
+### 4.4 Version Validation
 
-```
-pflow lock     # emits flow.lock.json
-
-```
-
-```
-pflow lock     # emits flow.lock.json
-
-```
-
-Example:
-
-```
-{
-  "core/fetch_url": "1.2.4",
-  "mcp/weather.get": "0.3.2"
-}
-
-```
-
-Used for CI and reproducible runs. Required for version resolution without explicit CLI pinning.
+Installation validates:
+- Node inherits from `pocketflow.Node`
+- Natural interface documentation present
+- Version number follows semver
+- No conflicts with existing versions
 
 ---
 
-## 6 CLI Grammar
+## 5 · Lockfile Types and Integration
 
-> While versioned, fully-qualified node identifiers are necessary for deterministic or shared flows, most users will benefit from using simplified CLI syntax during local development. If a node name is globally unique and only one version is installed, the namespace and version can be omitted:
->
-> ```
-> pflow fetch_url --url https://example.com >> summarize >> save_file --path out.md
-> 
-> ```
->
-> This clean syntax is preferred for day-to-day use and fast prototyping. If ambiguity arises (e.g., multiple nodes with the same name), pflow will request disambiguation or suggest alternatives. Locking the resolved versions via `pflow lock` ensures that even simplified flows remain reproducible.
+### 5.1 Version Resolution Lockfile (`flow.versions.lock`)
+
+**Purpose**: Pin node versions for deterministic planning  
+**Generated by**: Planner during initial version resolution  
+**Content**: Simple version mapping
+```json
+{
+  "yt-transcript": "1.0.0",
+  "summarize-text": "2.1.0", 
+  "store-markdown": "1.5.2"
+}
+```
+**Used by**: Planner for consistent re-resolution across planning sessions
+
+### 5.2 Execution Lockfile (`flow.exec.lock`) 
+
+**Purpose**: Complete validated IR with signatures for reproducible execution  
+**Generated by**: Planner after full validation pipeline  
+**Content**: Complete JSON IR + metadata
+```json
+{
+  "ir_hash": "sha256:abc123...",
+  "node_versions": {"yt-transcript": "1.0.0", "summarize-text": "2.1.0"},
+  "signature": "valid",
+  "ir": { /* complete JSON IR */ }
+}
+```
+**Used by**: Runtime for execution with integrity verification
+
+### 5.3 Relationship
+
+Version lockfile feeds into execution lockfile generation. Version changes trigger re-planning through planner's validation pipeline.
+
+---
+
+## 6 · CLI Grammar & Planner Integration
+
+> **Integration Note**: Node versioning integrates with pflow's "Type flags; engine decides" CLI resolution. Version hints are validated by planner, not resolved independently.
 
 ```
 <flow> ::= <node> [--param value] {>> <node> [--param value]}*
 <node> ::= [<namespace>/]<name>[@<semver>]
-
 ```
 
-- If the identifier is ambiguous, pflow aborts and lists candidates.
+**Examples with Version Integration**:
 
-- Omitted version with lock-file pinned ⇒ resolved; without lock ⇒ error.
+```bash
+# Simple flow (planner resolves versions using lockfile)
+pflow yt-transcript --url=X >> summarize-text
 
-- CLI example with version pinning:
+# Explicit versioning when needed
+pflow yt-transcript@1.0.0 --url=X >> summarize-text@2.1.0
 
-   ```
-   pflow core/fetch_url@1.2.0 --url https://example.com >> core/summarize@0.9.1 >> core/save_file@1.0.0 --path out.md
-   
-   ```
+# Mixed shorthand (planner validates compatibility)
+pflow yt-transcript --url=X >> summarize-text@2
+
+# Natural language (planner selects appropriate versions)
+pflow "summarize this youtube video"
+```
+
+**Resolution through Planner**: All CLI pipes are validated through planner's dual-mode operation, ensuring version compatibility and interface validation.
 
 ---
 
-## 7 Listing & Search
+## 7 · Registry Commands
+
+```bash
+pflow registry list              # table of installed nodes with versions
+pflow registry search summarize  # fuzzy search across all registries
+pflow registry describe yt-transcript@1.0.0  # detailed node information
+pflow registry validate --all    # validate all installed nodes
+pflow registry refresh           # re-scan filesystem, update metadata
+```
+
+**Planner Integration**: Registry commands directly support planner's metadata extraction and LLM selection requirements.
+
+---
+
+## 8 · Conflict Rules & Planner Validation
+
+### 8.1 Installation Conflicts
+
+- Installing an already-present `<namespace>/<name>/<version>` without `--force` aborts
+- Different majors may coexist for compatibility
+- Planner warns if flow references conflicting major versions
+
+### 8.2 Planner Version Validation
+
+**During LLM Selection**:
+- Thinking model selects from all available versions in registry
+- Interface compatibility checked between selected versions
+- Automatic mapping generation when interfaces misalign
+
+**During CLI Validation**:
+- Version hints validated against installed versions
+- Interface compatibility enforced between pipeline stages
+- Missing versions trigger clear error messages with suggestions
+
+### 8.3 Error Reporting
+
+Version conflicts reported through planner's validation framework with actionable resolution steps.
+
+---
+
+## 9 · Architecture Integration Benefits
+
+Versioning enables robust integration with pflow's core architectural principles:
+
+**LLM Selection**: Thinking models can choose between different node versions based on:
+- Feature requirements (newer versions with enhanced capabilities)
+- Stability preferences (proven older versions for production)
+- Interface compatibility (versions that work well together)
+
+**Metadata-Driven Planning**: Version-aware metadata allows planner to:
+- Select optimal node combinations for user requirements
+- Generate appropriate proxy mappings for version compatibility
+- Validate interface alignment across different node versions
+
+**Flow Reproducibility**: Version lockfiles ensure:
+- Deterministic flow execution across environments
+- Reliable CI/CD pipeline behavior
+- Audit trails for flow evolution over time
+
+**Framework Integration**: Seamless operation with pocketflow's patterns:
+- Natural interface preservation across versions
+- Proxy mapping compatibility for marketplace flows
+- Action-based error handling consistency
+
+---
+
+## 10 · Metadata Extraction for Planner
+
+### 10.1 Planner Discovery Process
+
+1. **Filesystem Scan**: Discover all installed node versions from registry locations
+2. **Metadata Extraction**: Generate planner-compatible metadata from each version's docstring and annotations
+3. **Registry Construction**: Build in-memory registry for LLM selection and validation
+4. **Version Filtering**: Present appropriate versions to thinking model based on context
+
+### 10.2 Metadata Format Alignment
+
+**Conversion Process**: Transform namespace/version info to planner metadata schema:
+
+```python
+# From versioned node file
+class YTTranscript(Node):
+    """Fetches YouTube transcript.
+    Interface:
+    - Reads: shared["url"] - YouTube video URL
+    - Writes: shared["transcript"] - extracted transcript text
+    """
+
+# To planner metadata
+{
+  "id": "yt-transcript",
+  "namespace": "core",
+  "version": "1.0.0", 
+  "description": "Fetches YouTube transcript",
+  "inputs": ["url"],
+  "outputs": ["transcript"],
+  "natural_interface": True
+}
+```
+
+**Version Compatibility**: Metadata includes interface change indicators to support planner's compatibility validation.
+
+---
+
+## 11 · Pipeline Integration Examples
+
+### 11.1 Natural Language Path
 
 ```
-pflow list              # table of installed nodes
-pflow search summarize  # fuzzy search across all registries
+User: "summarize this youtube video"
+  ↓
+Planner Discovery: Scans all yt-transcript versions (1.0.0, 1.2.0, 2.0.0)
+  ↓  
+LLM Selection: Chooses yt-transcript@1.2.0 + summarize-text@2.1.0 (optimal compatibility)
+  ↓
+IR Generation: {"nodes": [{"id": "yt-transcript", "version": "1.2.0", ...}]}
+  ↓
+Runtime: Executes with pinned versions
+```
 
+### 11.2 CLI Pipe Path  
+
+```
+User: pflow yt-transcript@1 --url=X >> summarize-text
+  ↓
+CLI Parsing: Extract version hint "@1" for yt-transcript
+  ↓  
+Planner Resolution: Resolve "@1" to "1.2.0" (highest 1.x.x), validate with summarize-text default
+  ↓
+Validation: Check interface compatibility between yt-transcript@1.2.0 → summarize-text@2.1.0  
+  ↓
+IR Generation: Complete IR with resolved versions
+  ↓
+Runtime: Direct execution (no user verification needed for CLI path)
+```
+
+### 11.3 Version Lockfile Integration
+
+```
+Existing flow.versions.lock: {"yt-transcript": "1.0.0", "summarize-text": "2.0.0"}
+  ↓
+User: pflow yt-transcript --url=X >> summarize-text  
+  ↓
+Planner: Uses locked versions for consistency
+  ↓
+Validation: Ensures locked versions still compatible
+  ↓
+Execution: Runs with proven version combination
 ```
 
 ---
 
-## 8 Conflict Rules
+## 12 · Rationale
 
-- Installing an already-present `<namespace>/<name>/<version>` without `--force` aborts.
+**Reproducibility**: Version pinning prevents silent breakage and ensures deterministic flow execution across environments and time.
 
-- Different majors may coexist.
+**Planner Integration**: Versioned metadata enables intelligent LLM selection and validation, supporting both simple flows and complex orchestration scenarios.
 
-- Flow execution warns if two nodes in a single flow refer to different majors of the same name.
+**Namespace Isolation**: Prevents naming conflicts while supporting distributed node development and marketplace scenarios.
 
----
+**Compatibility Management**: Explicit version management allows controlled evolution of node interfaces while maintaining backward compatibility.
 
-## 9 Rationale
+**CI/CD Support**: Lockfile-based approach ensures reliable automated testing and deployment pipelines.
 
-Versioning prevents silent breakage, supports CI, and keeps agent-generated flows deterministic. Namespacing isolates responsibility and avoids collisions. Search order plus lock-files ensure portability across machines without global installs. Resolution behavior is explicit, testable, and repeatable.
+**Agent Compatibility**: Deterministic version resolution supports AI-generated flows that remain stable and auditable over time.
 
 ---
 
