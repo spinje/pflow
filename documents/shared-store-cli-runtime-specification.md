@@ -22,6 +22,7 @@ Our pattern leverages the lightweight **pocketflow framework** (100 lines of Pyt
 > **See also**: [pocketflow framework](../pocketflow/__init__.py) and [communication patterns](../pocketflow/docs/core_abstraction/communication.md)
 
 **Framework vs Pattern**:
+
 - **pocketflow**: The underlying 100-line framework
 - **pflow pattern**: Our specific use of natural node interfaces with optional proxy mapping
 
@@ -40,23 +41,24 @@ The **NodeAwareSharedStore** proxy enables simple node code while supporting com
 
 ### 4 · Concepts & Terminology
 
-| Element | Role | Stored in lock-file | Part of DAG hash | Can change per run | Notes | 
+| Element | Role | Stored in lock-file | Part of DAG hash | Can change per run | Notes |
 |---|---|---|---|---|---|
-| `params` | Literal per-node tunables | Defaults stored; run-time overlays in derived snapshot | ❌ | ✅ via CLI | Flat structure in `self.params` | 
+| `params` | Literal per-node tunables | Defaults stored; run-time overlays in derived snapshot | ❌ | ✅ via CLI | Flat structure in `self.params` |
 | `mappings` | Key translation for complex flows | ✅ | ✅ (when defined) | ❌ | Optional, flow-level concern |
-| Shared store | Flow-scoped key → value memory | Values never stored | Key names yes | Populated by CLI or pipe | Reserved key `stdin` | 
+| Shared store | Flow-scoped key → value memory | Values never stored | Key names yes | Populated by CLI or pipe | Reserved key `stdin` |
 
 #### 4\.1 Quick-reference summary
 
-| Field | Function | Affects DAG? | Overridable? | Stored? | Shared? | 
+| Field | Function | Affects DAG? | Overridable? | Stored? | Shared? |
 |---|---|---|---|---|---|
-| Node interface | Natural key access | ✅ | ❌ | ✅ | ✅ | 
-| `params` | Behaviour knobs | ❌ | ✅ (`--flag`) | ✅ | ❌ | 
-| `mappings` | Complex routing | ✅ | ❌ | ✅ | ✅ | 
+| Node interface | Natural key access | ✅ | ❌ | ✅ | ✅ |
+| `params` | Behaviour knobs | ❌ | ✅ (`--flag`) | ✅ | ❌ |
+| `mappings` | Complex routing | ✅ | ❌ | ✅ | ✅ |
 
 #### 4.2 Future Namespacing Support
 
 **MVP Implementation**: Flat key structure for shared store simplicity
+
 ```python
 shared = {
     "url": "https://youtu.be/abc123",
@@ -65,6 +67,7 @@ shared = {
 ```
 
 **Future Feature**: Nested path-like keys for complex flows
+
 ```python
 shared = {
     "inputs/video_url": "https://youtu.be/abc123", 
@@ -196,12 +199,12 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 
 ### 8 · CLI scenarios
 
-| Scenario | Command | Shared-store after injection | Proxy needed? | 
+| Scenario | Command | Shared-store after injection | Proxy needed? |
 |---|---|---|---|
-| Provide video URL | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc) | `{ "url": "`[`https://youtu.be/abc`](https://youtu.be/abc)`" }` | No | 
-| Override temperature | `pflow summarise-text --temperature=0.9` | – | No | 
-| Pipe text | `cat notes.txt | pflow summarise-text` | `{ "stdin": "<bytes>" }` | Maybe | 
-| Complex routing | Flow with marketplace compatibility | `{ "video_source": "...", "raw_transcript": "...", "article_summary": "..." }` | Yes | 
+| Provide video URL | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc) | `{ "url": "`[`https://youtu.be/abc`](https://youtu.be/abc)`" }` | No |
+| Override temperature | `pflow summarise-text --temperature=0.9` | – | No |
+| Pipe text | `cat notes.txt | pflow summarise-text` | `{ "stdin": "<bytes>" }` | Maybe |
+| Complex routing | Flow with marketplace compatibility | `{ "video_source": "...", "raw_transcript": "...", "article_summary": "..." }` | Yes |
 
 ---
 
@@ -210,6 +213,7 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 #### 9.1 Simple Scenario (No Mappings)
 
 **IR Definition**:
+
 ```json
 {
   "nodes": [
@@ -229,11 +233,13 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 ```
 
 **CLI Command**:
+
 ```bash
 pflow yt-transcript --url=https://youtu.be/abc123 >> summarise-text --temperature=0.9
 ```
 
 **Shared Store Population**:
+
 ```python
 shared = {
   "url": "https://youtu.be/abc123"  # Direct injection
@@ -241,6 +247,7 @@ shared = {
 ```
 
 **Generated Flow Code**:
+
 ```python
 # Simple scenario - direct access
 def create_flow():
@@ -265,6 +272,7 @@ def run_with_cli():
 #### 9.2 Complex Scenario (With Mappings)
 
 **IR Definition**:
+
 ```json
 {
   "nodes": [
@@ -294,6 +302,7 @@ def run_with_cli():
 ```
 
 **Shared Store Population**:
+
 ```python
 shared = {
   "video_source": "https://youtu.be/abc123"  # Flow schema
@@ -301,6 +310,7 @@ shared = {
 ```
 
 **Generated Flow Code**:
+
 ```python
 # Complex scenario - with proxy mapping
 def create_flow():
@@ -336,6 +346,7 @@ def run_with_cli():
 #### 9.3 Node Execution with Natural Interfaces
 
 **Fetch Node**:
+
 ```python
 # Node always uses natural interface
 # prep() reads from shared["url"] (proxy maps to "video_source" if needed)
@@ -344,6 +355,7 @@ def run_with_cli():
 ```
 
 **Summarise Node**:
+
 ```python
 # Node always uses natural interface  
 # prep() reads from shared["text"] (proxy maps to "raw_transcript" if needed)
@@ -354,6 +366,7 @@ def run_with_cli():
 #### 9.4 Final State
 
 **Simple Scenario**:
+
 ```python
 shared = {
   "url": "https://youtu.be/abc123",
@@ -363,6 +376,7 @@ shared = {
 ```
 
 **Complex Scenario**:
+
 ```python
 shared = {
   "video_source": "https://youtu.be/abc123",
@@ -389,14 +403,14 @@ Same node code, different shared store layouts.
 
 ### 11 · Validation rules
 
-| \# | Rule | Failure action | 
+| \# | Rule | Failure action |
 |---|---|---|
-| 1 | IR immutability — CLI cannot alter mappings or node set | Abort | 
-| 2 | Unknown CLI flag | Abort | 
-| 3 | Missing required data in shared store | Abort | 
-| 4 | `params` always overrideable via `set_params()` | Derived snapshot | 
-| 5 | `stdin` key reserved; node must handle it naturally | Abort | 
-| 6 | Mapping targets unique flow-wide | Abort | 
+| 1 | IR immutability — CLI cannot alter mappings or node set | Abort |
+| 2 | Unknown CLI flag | Abort |
+| 3 | Missing required data in shared store | Abort |
+| 4 | `params` always overrideable via `set_params()` | Derived snapshot |
+| 5 | `stdin` key reserved; node must handle it naturally | Abort |
+| 6 | Mapping targets unique flow-wide | Abort |
 | 7 | Natural interface names should be intuitive | Warning |
 | 8 | Node classes must inherit from `pocketflow.Node` | Abort |
 
@@ -450,6 +464,7 @@ pflow yt-transcript \
 #### Step 1: Engine populates shared store
 
 **CLI Resolution**:
+
 ```python
 # CLI flag --url=https://youtu.be/abc123 goes to shared["url"]
 shared = {
@@ -460,6 +475,7 @@ shared = {
 #### Step 2: `yt-transcript` node execution
 
 **Node Setup**:
+
 ```python
 yt_node = YTTranscript()
 yt_node.set_params({
@@ -468,6 +484,7 @@ yt_node.set_params({
 ```
 
 **prep() execution**:
+
 ```python
 def prep(self, shared):
     return shared["url"]  # Natural interface
@@ -476,6 +493,7 @@ def prep(self, shared):
 ```
 
 **exec() execution**:
+
 ```python
 def exec(self, prep_res):  # prep_res contains the URL
     language = self.params.get("language", "en")  # "en"
@@ -485,6 +503,7 @@ def exec(self, prep_res):  # prep_res contains the URL
 ```
 
 **post() execution**:
+
 ```python
 def post(self, shared, prep_data, exec_result):
     shared["transcript"] = exec_result  # Natural interface
@@ -499,6 +518,7 @@ shared = {
 #### Step 3: `summarise-text` node execution
 
 **Node Setup**:
+
 ```python
 summarise_node = SummariseText()
 summarise_node.set_params({
@@ -507,6 +527,7 @@ summarise_node.set_params({
 ```
 
 **prep() execution**:
+
 ```python
 def prep(self, shared):
     return shared["text"]  # Natural interface - but wait, where's "text"?
@@ -516,6 +537,7 @@ def prep(self, shared):
 ```
 
 **Corrected Scenario**: Using consistent natural naming:
+
 ```python
 # Node expects "text", so either:
 # 1. Use consistent names: shared["text"] = transcript_content
@@ -523,6 +545,7 @@ def prep(self, shared):
 ```
 
 **With proxy mapping**:
+
 ```python
 # IR defines mapping for summarise node:
 "mappings": {

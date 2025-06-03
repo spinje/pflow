@@ -71,30 +71,30 @@ The planner operates through a **validation-first approach**, performing linting
 
 ### 3.1 Natural Language Path (Full Planner)
 
-| Stage | Responsibility | Outcome | 
+| Stage | Responsibility | Outcome |
 |---|---|---|
-| **A. Node/Flow Discovery** | Extract metadata JSON from available Python classes. | Registry of nodes/flows with natural language descriptions. | 
-| **B. LLM Selection** | Use thinking model to choose nodes/flows from metadata context. | Selected building blocks (nodes and/or sub-flows). | 
-| **C. Flow Structure Generation** | Create node graph with action-based transitions. | Structural IR with conditional flow control. | 
-| **D. Structural Validation** | Lint node compatibility, action paths, reachability. | Pass → continue, Fail → retry or abort. | 
-| **E. Shared Store Modeling** | Create shared store schema, generate mappings if needed. | Compatible shared store interface design. | 
-| **F. Type/Interface Validation** | Validate shared store key compatibility between nodes. | Pass → continue, Fail → repair or retry. | 
-| **G. IR Finalization** | Generate validated JSON IR with default params. | Complete, validated IR ready for compilation. | 
-| **H. Compilation Handoff** | Pass IR to compiler for CLI syntax generation. | CLI pipe syntax for user preview. | 
-| **I. User Verification** | Show compiled CLI pipe for user approval. | User-approved flow ready for execution. | 
+| **A. Node/Flow Discovery** | Extract metadata JSON from available Python classes. | Registry of nodes/flows with natural language descriptions. |
+| **B. LLM Selection** | Use thinking model to choose nodes/flows from metadata context. | Selected building blocks (nodes and/or sub-flows). |
+| **C. Flow Structure Generation** | Create node graph with action-based transitions. | Structural IR with conditional flow control. |
+| **D. Structural Validation** | Lint node compatibility, action paths, reachability. | Pass → continue, Fail → retry or abort. |
+| **E. Shared Store Modeling** | Create shared store schema, generate mappings if needed. | Compatible shared store interface design. |
+| **F. Type/Interface Validation** | Validate shared store key compatibility between nodes. | Pass → continue, Fail → repair or retry. |
+| **G. IR Finalization** | Generate validated JSON IR with default params. | Complete, validated IR ready for compilation. |
+| **H. Compilation Handoff** | Pass IR to compiler for CLI syntax generation. | CLI pipe syntax for user preview. |
+| **I. User Verification** | Show compiled CLI pipe for user approval. | User-approved flow ready for execution. |
 | **J. Execution Handoff** | Save lockfile, hand off to shared store runtime. | Lockfile + runtime execution. |
 
 ### 3.2 CLI Pipe Syntax Path (Validation Planner)
 
-| Stage | Responsibility | Outcome | 
+| Stage | Responsibility | Outcome |
 |---|---|---|
-| **A. Syntax Parsing** | Parse CLI pipe syntax into basic node graph structure. | Node sequence + parameter extraction. | 
-| **B. Node Validation** | Verify all referenced nodes exist in registry. | Pass → continue, Fail → abort with suggestions. | 
-| **C. Structural Validation** | Lint action paths, reachability, parameter compatibility. | Pass → continue, Fail → abort with diagnostics. | 
-| **D. Shared Store Modeling** | Analyze node interfaces, create shared store schema. | Compatible shared store interface design. | 
-| **E. Mapping Generation** | Detect interface mismatches, generate mappings if needed. | Optional mappings for node compatibility. | 
-| **F. IR Finalization** | Generate validated JSON IR with CLI-specified params. | Complete, validated IR ready for execution. | 
-| **G. Execution Handoff** | Save lockfile, execute directly via shared store runtime. | Direct execution (no user verification needed). | 
+| **A. Syntax Parsing** | Parse CLI pipe syntax into basic node graph structure. | Node sequence + parameter extraction. |
+| **B. Node Validation** | Verify all referenced nodes exist in registry. | Pass → continue, Fail → abort with suggestions. |
+| **C. Structural Validation** | Lint action paths, reachability, parameter compatibility. | Pass → continue, Fail → abort with diagnostics. |
+| **D. Shared Store Modeling** | Analyze node interfaces, create shared store schema. | Compatible shared store interface design. |
+| **E. Mapping Generation** | Detect interface mismatches, generate mappings if needed. | Optional mappings for node compatibility. |
+| **F. IR Finalization** | Generate validated JSON IR with CLI-specified params. | Complete, validated IR ready for execution. |
+| **G. Execution Handoff** | Save lockfile, execute directly via shared store runtime. | Direct execution (no user verification needed). |
 
 ---
 
@@ -263,12 +263,14 @@ When generation is required, the planner uses a **thinking model** (e.g., o1-pre
 The planner generates flows using action-based transitions for conditional flow control:
 
 **Basic Transitions**:
+
 ```python
 node_a >> node_b                    # Default transition (no action needed)
 node_a - "error" >> error_handler   # Named action transition
 ```
 
 **Complex Flow Patterns**:
+
 ```python
 # Branching (default + named actions)
 validator >> processor               # Default path (e.g., validation passes)
@@ -377,6 +379,7 @@ The planner analyzes node metadata to understand natural shared store interfaces
 ```
 
 **Mapping Triggers**:
+
 - Node A outputs `"transcript"` but Node B expects `"text"`
 - Marketplace compatibility requires specific key names
 - Namespace organization needed for complex flows
@@ -448,6 +451,7 @@ elif user_intent == "technical_summary":
 | **Batch/CI** | Abort with `MISSING_INPUT` error | Fail fast with clear diagnostic |
 
 **Ambiguity Handling**:
+
 - Multiple candidate flows → Choose most recently validated
 - Still ambiguous → Interactive: ask user; Batch: abort with options
 
@@ -506,6 +510,7 @@ elif user_intent == "technical_summary":
 ### 10.2 Compiler Integration
 
 **Handoff Process**:
+
 1. Planner generates validated JSON IR
 2. Compiler converts IR → CLI syntax + executable Python code
 3. User sees CLI preview: `yt-transcript --url=X >> summarize-text`
@@ -523,6 +528,7 @@ elif user_intent == "technical_summary":
 ```
 
 **Version Consistency**:
+
 - IR hash changes if structure modified
 - Node version mismatches trigger re-validation
 - Manual Python edits break signature → re-validation required
@@ -573,6 +579,7 @@ pflow yt-transcript --url=https://youtu.be/abc123 >> summarize-text --temperatur
 ### 12.1 Shared Store Runtime Handoff
 
 **Process**:
+
 1. Planner saves validated IR to lockfile
 2. Compiler generates execution code using pocketflow patterns
 3. Runtime loads lockfile, validates signature
@@ -581,6 +588,7 @@ pflow yt-transcript --url=https://youtu.be/abc123 >> summarize-text --temperatur
 ### 12.2 pocketflow Framework Integration
 
 **Node Execution**:
+
 ```python
 # Generated runtime code
 class GeneratedFlow(Flow):
@@ -598,6 +606,7 @@ class GeneratedFlow(Flow):
 ### 12.3 NodeAwareSharedStore Proxy Usage
 
 **Automatic Proxy Setup**:
+
 ```python
 # Generated when mappings defined in IR
 for node in flow.nodes:
@@ -611,6 +620,7 @@ for node in flow.nodes:
 ### 12.4 CLI Flag Resolution at Execution
 
 **Runtime Resolution**:
+
 - Parse CLI flags into data vs. param categories
 - Inject data flags into shared store
 - Apply param flags via `set_params()` overrides
@@ -634,6 +644,7 @@ for node in flow.nodes:
 ### 13.2 Integration with Runtime Errors
 
 **Error Code Compatibility**:
+
 - Planner errors in `PLAN_*` namespace
 - Compiler errors in `COMPILE_*` namespace  
 - Runtime errors in `EXEC_*` namespace
@@ -658,6 +669,7 @@ expects 'text'.
 ### 14.1 Flow Hash Calculation
 
 **Components**:
+
 - Ordered node IDs + versions
 - Action-based transitions (edges)  
 - Mapping definitions (when present)
@@ -682,6 +694,7 @@ flow_hash = sha256(
 ### 14.3 Metadata Caching
 
 **Performance Optimizations**:
+
 - Node metadata cached until source files change
 - LLM selection responses cached by prompt similarity
 - Validation results cached by IR hash
@@ -690,6 +703,7 @@ flow_hash = sha256(
 ### 14.4 LLM Response Caching
 
 **Strategies**:
+
 - Semantic similarity matching for prompt reuse
 - Selection decision caching with confidence scores
 - Invalidation on registry updates
@@ -736,6 +750,7 @@ flow_hash = sha256(
 ### 15.2 Integration with Runtime Logging
 
 **Linked Provenance**:
+
 - Runtime logs reference planner session ID
 - Complete audit trail from prompt to execution
 - Error correlation across planner/compiler/runtime
@@ -744,6 +759,7 @@ flow_hash = sha256(
 ### 15.3 Metadata Version Tracking
 
 **Change Detection**:
+
 - Node metadata version history
 - Flow definition change tracking
 - Registry update timestamps
@@ -765,6 +781,7 @@ flow_hash = sha256(
 ### 16.2 Cache Safety Rules
 
 **Caching Prerequisites** (ALL must be true):
+
 1. Node marked `@flow_safe` (pure, no side effects)
 2. Flow origin trust level ≠ `mixed`
 3. All input data hashes match cache entry
@@ -773,6 +790,7 @@ flow_hash = sha256(
 ### 16.3 Node Registry Security
 
 **Validation Requirements**:
+
 - Nodes must inherit from `pocketflow.Node`
 - Metadata extraction from trusted sources only
 - Version pinning for production environments
@@ -781,6 +799,7 @@ flow_hash = sha256(
 ### 16.4 LLM Selection Guardrails
 
 **Safety Measures**:
+
 - Node selection limited to trusted registry
 - No arbitrary code generation by LLM
 - Structural validation catches malformed selections
@@ -803,11 +822,13 @@ flow_hash = sha256(
 ### 17.2 Performance Benchmarks
 
 **Caching Effectiveness**:
+
 - Metadata cache hit rate ≥ 95%
 - LLM response cache hit rate ≥ 60% (similar prompts)
 - Validation cache hit rate ≥ 85%
 
 **Scale Targets**:
+
 - Support ≥ 100 nodes in registry
 - Handle ≥ 20 node flows efficiently
 - Maintain performance with ≥ 10 concurrent planners
@@ -815,6 +836,7 @@ flow_hash = sha256(
 ### 17.3 Quality Metrics
 
 **Generated Flow Quality**:
+
 - Zero compilation errors from valid IR
 - Runtime execution success ≥ 98%
 - User satisfaction with CLI syntax ≥ 85%
@@ -827,6 +849,7 @@ flow_hash = sha256(
 ### 18.1 Advanced Selection Algorithms
 
 **Semantic Vector Index**:
+
 - Embedding-based node similarity matching
 - Cross-domain node relationship discovery
 - Intent clustering for common patterns
@@ -835,6 +858,7 @@ flow_hash = sha256(
 ### 18.2 Enhanced User Interfaces
 
 **Visual Flow Builder**:
+
 - Web-based drag-and-drop interface
 - Real-time validation feedback
 - Collaborative flow editing
@@ -843,6 +867,7 @@ flow_hash = sha256(
 ### 18.3 Distributed Planning
 
 **Remote Planner Services**:
+
 - Cloud-based planning for complex flows
 - Shared registry across organizations
 - Collaborative flow libraries
@@ -851,6 +876,7 @@ flow_hash = sha256(
 ### 18.4 Advanced Validation
 
 **Constraint-Driven Generation**:
+
 - Resource usage prediction and limits
 - Security policy compliance checking
 - Performance constraint satisfaction
@@ -860,7 +886,7 @@ flow_hash = sha256(
 
 ## 19 · Glossary
 
-| Term | Definition | 
+| Term | Definition |
 |---|---|
 | **Action-based transitions** | Conditional flow control using return values from node `post()` methods |
 | **JSON IR** | Intermediate Representation in JSON format containing complete flow specification |

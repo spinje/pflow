@@ -19,11 +19,11 @@ pflow uses an **opt-in purity model** rather than comprehensive side-effect enum
    Nodes may write files, make network calls, mutate external state. These are permitted but untrusted, uncacheable, and un-retryable unless the user inspects and accepts them.
 
 - **Pure (`@flow_safe`) nodes**:
-   - Are deterministic and idempotent
-   - Have no observable side effects outside the shared store
-   - Access shared store via natural interfaces (`shared["text"]`, `shared["url"]`)
-   - Are safe to retry, cache, and use in agent-generated flows
-   - Must pass validation before being accepted as `flow_safe`
+  - Are deterministic and idempotent
+  - Have no observable side effects outside the shared store
+  - Access shared store via natural interfaces (`shared["text"]`, `shared["url"]`)
+  - Are safe to retry, cache, and use in agent-generated flows
+  - Must pass validation before being accepted as `flow_safe`
 
 ### Safety Enforcement
 
@@ -60,6 +60,7 @@ All conditions must be met for caching:
 Cache key: `node_hash ⊕ effective_params ⊕ input_data_sha256`
 
 Where:
+
 - `node_hash`: Node type + version
 - `effective_params`: Runtime params from `self.params`
 - `input_data_sha256`: Hash of values from referenced shared store keys
@@ -85,6 +86,7 @@ MVP uses local filesystem: `~/.pflow/cache/<hash>.json`
 ### Retry Configuration
 
 **Built-in pocketflow Integration**:
+
 ```python
 class Node(BaseNode):
     def __init__(self, max_retries=1, wait=0):
@@ -92,6 +94,7 @@ class Node(BaseNode):
 ```
 
 **IR Structure**:
+
 ```json
 {
   "id": "fetch-url",
@@ -101,12 +104,14 @@ class Node(BaseNode):
 ```
 
 **CLI Configuration**:
+
 ```bash
 # Execution config categorized during CLI resolution
 pflow fetch_url --url=X --max_retries=3 >> summarize
 ```
 
 **Requirements**:
+
 - Only `@flow_safe` nodes can be retried
 - Same inputs and params used for all retry attempts
 - Full retry history logged in trace
@@ -115,6 +120,7 @@ pflow fetch_url --url=X --max_retries=3 >> summarize
 ### Retry Integration
 
 Retries leverage pocketflow's existing `max_retries` mechanism:
+
 - Configured via node constructor from IR `execution` field
 - Integrated with `prep()`/`exec()`/`post()` execution pattern
 - Compatible with NodeAwareSharedStore proxy when mappings defined
@@ -139,4 +145,4 @@ Retries leverage pocketflow's existing `max_retries` mechanism:
 
 When retry logic becomes default or flows are shared across users, a comprehensive side-effect declaration schema may be introduced with `scope`, `target`, and `mode` modeling for external effects.
 
-Until then: **`@flow_safe` is the contract. Everything else is opaque by design.** 
+Until then: **`@flow_safe` is the contract. Everything else is opaque by design.**

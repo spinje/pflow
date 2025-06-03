@@ -34,27 +34,33 @@ This document defines the infrastructure for extracting structured metadata from
 This metadata extraction infrastructure directly supports several core pflow systems:
 
 ### Planner Discovery Integration
+>
 > **See**: [Planner Responsibility Spec](./planner-responsibility-functionality-spec.md#node-discovery)
 
 The extraction process feeds the planner's metadata-driven selection:
+
 - Builds registry of available nodes with natural language descriptions
 - Provides interface compatibility data for validation
 - Enables LLM context generation for intelligent selection
 - Supports both natural language and CLI pipe syntax validation
 
 ### Registry Integration  
+>
 > **See**: [Node Discovery & Versioning](./node-discovery-namespacing-and-versioning.md#registry-management)
 
 Metadata extraction occurs during node installation:
+
 - `pflow registry install node.py` triggers automatic metadata extraction
 - Version changes invalidate cached metadata for re-extraction
 - Registry commands use pre-extracted metadata for rich CLI experience
 - Supports namespace and versioning requirements
 
 ### Shared Store Compatibility
+>
 > **See**: [Shared Store Pattern](./shared-store-node-proxy-architecture.md#natural-interfaces)
 
 Extracted interface data preserves natural shared store access patterns:
+
 - Documents `shared["key"]` usage from actual node code
 - Enables proxy mapping generation when needed for complex flows
 - Validates interface consistency across flow components
@@ -1112,6 +1118,7 @@ def validate_node_compatibility(selected_nodes: List[str]) -> List[str]:
 ## Dependencies and Tools
 
 ### Required Libraries
+
 ```bash
 pip install docstring-parser>=0.15    # Standard docstring parsing
 pip install rich>=13.0                # CLI formatting  
@@ -1119,6 +1126,7 @@ pip install click>=8.0                # CLI framework
 ```
 
 ### Optional Enhancements
+
 ```bash
 pip install ast-decompiler            # Enhanced code analysis
 pip install pyflakes                  # Static analysis integration
@@ -1132,10 +1140,11 @@ pip install black                     # Code formatting validation
 This metadata extraction infrastructure provides the foundation for pflow's metadata-driven planner capabilities while maintaining perfect alignment with the established static node architecture.
 
 **Key Benefits**:
+
 - **Zero architectural conflicts** - Fully aligned with source documents
 - **Production ready** - Robust parsing with comprehensive error handling
 - **Performance optimized** - Pre-extracted metadata for fast planner context
 - **Registry integrated** - Seamless workflow with node installation and versioning
 - **Validation enabled** - Code-metadata consistency checking for quality assurance
 
-The infrastructure enables intelligent flow planning while preserving the simplicity and reliability of pflow's curated node ecosystem. 
+The infrastructure enables intelligent flow planning while preserving the simplicity and reliability of pflow's curated node ecosystem.

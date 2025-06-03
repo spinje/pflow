@@ -166,6 +166,7 @@ else:
 ### Flow Example (Generated from IR)
 
 **Flow A** (Simple - Direct Access):
+
 ```python
 # Generated flow code (from IR)
 summarize_node = Summarize()
@@ -180,6 +181,7 @@ flow = Flow(start=summarize_node)
 ```
 
 **Flow B** (Complex - With Proxy Mapping):
+
 ```python
 # Same static node class, different generated flow
 summary_node = Summarize()  # Same node class!
@@ -209,6 +211,7 @@ The same `Summarize` node class works in completely different contexts with diff
 
 **Key**: `"raw_texts/doc1.txt"`
 **Maps to**:
+
 ```python
 shared = {
     "raw_texts": {
@@ -220,6 +223,7 @@ shared = {
 > **Note**: MVP implementation focuses on flat key structure. Nested namespacing will be supported in future versions for the proxy pattern.
 
 **Benefits**:
+
 - **Namespacing**: Clear organization of related data
 - **Collision avoidance**: `"inputs/doc1.txt"` vs `"outputs/doc1.txt"`
 - **Debugging**: Easy to trace data flow through nested structure
