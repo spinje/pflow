@@ -382,6 +382,7 @@ flow = Flow(start=github_search)
   "nodes": [
     {
       "id": "mcp-github-search-code",
+      "version": "1.0.0",
       "type": "mcp_wrapper",
       "params": {"max_results": 15},
       "mcp_metadata": {
@@ -392,10 +393,12 @@ flow = Flow(start=github_search)
     },
     {
       "id": "summarize-text",
+      "version": "2.1.0",
       "params": {"temperature": 0.3}
     },
     {
       "id": "mcp-slack-send-message", 
+      "version": "1.0.0",
       "type": "mcp_wrapper",
       "params": {},
       "mcp_metadata": {

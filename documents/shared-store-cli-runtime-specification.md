@@ -141,10 +141,12 @@ The node uses natural interface names while the proxy handles any necessary tran
   "nodes": [
     {
       "id": "yt-transcript",
+      "version": "1.0.0",
       "params": { "language": "en" }
     },
     {
       "id": "summarise-text",
+      "version": "2.1.0",
       "params": { "temperature": 0.7 }
     }
   ],
@@ -210,10 +212,12 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
   "nodes": [
     {
       "id": "yt-transcript",
+      "version": "1.0.0",
       "params": {"language": "en"}
     },
     {
       "id": "summarise-text",
+      "version": "2.1.0",
       "params": {"temperature": 0.7}
     }
   ],
@@ -263,10 +267,12 @@ def run_with_cli():
   "nodes": [
     {
       "id": "yt-transcript",
+      "version": "1.0.0",
       "params": {"language": "en"}
     },
     {
       "id": "summarise-text",
+      "version": "2.1.0",
       "params": {"temperature": 0.7"}
     }
   ],

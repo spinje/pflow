@@ -284,10 +284,10 @@ processor >> finalizer              # Default path when done
 ```json
 {
   "nodes": [
-    {"id": "validator", "params": {"strict": true}},
-    {"id": "processor", "params": {"batch_size": 100}},
-    {"id": "error_handler", "params": {}},
-    {"id": "finalizer", "params": {}}
+    {"id": "validator", "version": "1.2.0", "params": {"strict": true}},
+    {"id": "processor", "version": "2.0.1", "params": {"batch_size": 100}},
+    {"id": "error_handler", "version": "1.1.0", "params": {}},
+    {"id": "finalizer", "version": "1.0.0", "params": {}}
   ],
   "edges": [
     {"from": "validator", "to": "error_handler", "action": "fail"},
@@ -413,7 +413,7 @@ The planner embeds **default parameters** from node metadata into IR:
 ```json
 {
   "nodes": [
-    {"id": "summarize-text", "params": {"temperature": 0.7, "max_tokens": 150}}
+    {"id": "summarize-text", "version": "2.1.0", "params": {"temperature": 0.7, "max_tokens": 150}}
   ]
 }
 ```
@@ -477,10 +477,12 @@ elif user_intent == "technical_summary":
   "nodes": [
     {
       "id": "yt-transcript",
+      "version": "1.0.0",
       "params": {"language": "en"}
     },
     {
       "id": "summarize-text", 
+      "version": "2.1.0",
       "params": {"temperature": 0.7}
     }
   ],
