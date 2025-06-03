@@ -253,19 +253,19 @@ The planner generates flows using action-based transitions for conditional flow 
 
 **Basic Transitions**:
 ```python
-node_a >> node_b                    # Default action
-node_a - "error" >> error_handler   # Named action
+node_a >> node_b                    # Default transition (no action needed)
+node_a - "error" >> error_handler   # Named action transition
 ```
 
 **Complex Flow Patterns**:
 ```python
-# Branching
-validator - "pass" >> processor
-validator - "fail" >> error_handler
+# Branching (default + named actions)
+validator >> processor               # Default path (e.g., validation passes)
+validator - "fail" >> error_handler # Named action for failures
 
-# Loops  
-processor - "continue" >> validator
-processor - "done" >> finalizer
+# Loops with conditions
+processor - "continue" >> validator  # Loop back for more processing
+processor >> finalizer              # Default path when done
 ```
 
 ### 7.2 IR Representation
@@ -279,15 +279,15 @@ processor - "done" >> finalizer
     {"id": "finalizer", "params": {}}
   ],
   "edges": [
-    {"from": "validator", "to": "processor", "action": "pass"},
     {"from": "validator", "to": "error_handler", "action": "fail"},
+    {"from": "validator", "to": "processor"},
     {"from": "processor", "to": "validator", "action": "continue"},
     {"from": "processor", "to": "finalizer"}
   ]
 }
 ```
 
-*Note: Default actions omit the `"action"` field for cleaner IR.*
+*Note: Default transitions (node_a >> node_b) omit the `"action"` field entirely. Only named actions include the field.*
 
 ### 7.3 Flow Graph Validation
 
