@@ -209,16 +209,27 @@ class YTTranscript(Node):
 
 ## 6 · LLM Selection Process
 
-### 6.1 Thinking Model Approach
+### 6.1 Retrieval-First Strategy
 
-The planner uses a **thinking model** (e.g., o1-preview) to reason about node/flow selection:
+The planner follows a **retrieval-first approach** to maximize stability and reduce LLM non-determinism:
 
-1. **Context Loading**: All available metadata JSON loaded into LLM context
+1. **Flow Cache Search**: Check existing validated flows for semantic matches to user prompt
+2. **Exact Match**: If found, reuse existing flow (skip LLM generation entirely)
+3. **Partial Match**: Consider existing flows as sub-components
+4. **Generation Fallback**: Only use LLM when no suitable matches found
+
+This approach anchors stability by reusing proven flows rather than regenerating them.
+
+### 6.2 Thinking Model Approach  
+
+When generation is required, the planner uses a **thinking model** (e.g., o1-preview):
+
+1. **Context Loading**: All available metadata JSON loaded into LLM context  
 2. **Intent Analysis**: LLM analyzes user prompt for goals and requirements
 3. **Selection Strategy**: Choose between exact flow match, sub-flow reuse, or new composition
 4. **Reasoning**: LLM provides structured reasoning for choices
 
-### 6.2 Selection Criteria
+### 6.3 Selection Criteria
 
 | Priority | Strategy | Example |
 |---|---|---|
@@ -226,7 +237,7 @@ The planner uses a **thinking model** (e.g., o1-preview) to reason about node/fl
 | **Sub-flow Reuse** | Existing flow used as component | "transcribe and translate" → `yt-transcript` + new translation |
 | **New Composition** | Combine individual nodes | "analyze sentiment" → `extract-text` + `sentiment-analysis` |
 
-### 6.3 LLM Response Format
+### 6.4 LLM Response Format
 
 ```json
 {
@@ -237,7 +248,7 @@ The planner uses a **thinking model** (e.g., o1-preview) to reason about node/fl
 }
 ```
 
-### 6.4 Fallback Strategies
+### 6.5 Fallback Strategies
 
 - **Unknown Nodes**: Suggest closest semantic matches, request clarification
 - **Ambiguous Intent**: Present ranked options for user selection
@@ -323,9 +334,18 @@ processor >> finalizer              # Default path when done
 ### 7.3 Error Recovery
 
 - **Retry Budget**: Maximum 4 attempts per validation failure
+- **Purity Constraints**: Retries only allowed on `@flow_safe` nodes; abort otherwise
 - **Incremental Repair**: Fix specific issues rather than full regeneration
 - **Graceful Degradation**: Fall back to simpler flows when complex ones fail
 - **User Intervention**: Escalate to user when automated repair fails
+
+### 7.4 Failure Artifacts
+
+When planner exhausts retries, it produces comprehensive failure documentation:
+
+- **`.failed.lock.json`**: Partial IR with failure context for debugging
+- **`planner_log.json`**: Complete retry history and error details
+- **Error Recovery**: User can inspect failures and retry manually with modifications
 
 ---
 
@@ -418,7 +438,20 @@ elif user_intent == "technical_summary":
     params["temperature"] = 0.3
 ```
 
-### 9.4 Separation of Concerns
+### 9.4 Interactive vs Batch Mode
+
+**Missing Required Data Resolution**:
+
+| Mode | Missing shared store key | Action |
+|---|---|---|
+| **Interactive** | Prompt user for input value | Inject into shared store |
+| **Batch/CI** | Abort with `MISSING_INPUT` error | Fail fast with clear diagnostic |
+
+**Ambiguity Handling**:
+- Multiple candidate flows → Choose most recently validated
+- Still ambiguous → Interactive: ask user; Batch: abort with options
+
+### 9.5 Separation of Concerns
 
 | Concern | Owner | Responsibility |
 |---|---|---|
@@ -636,10 +669,11 @@ flow_hash = sha256(
 
 **Cache Key**: `node_hash ⊕ effective_params ⊕ input_data_sha256`
 
-- Node execution cached when `@flow_safe`
-- Param changes create new cache entries
-- Mapping changes affect input data hash
-- Cache hits accelerate repeated flows
+- **Caching Eligibility**: Node must be `@flow_safe` AND trust level ≠ `mixed`
+- **Safety Constraint**: Impure nodes never cached, regardless of other factors
+- **Param Changes**: Create new cache entries without affecting graph hash
+- **Mapping Changes**: Affect input data hash, ensuring cache correctness
+- **Trust Integration**: Cache only consulted for trusted flow origins
 
 ### 14.3 Metadata Caching
 
@@ -666,6 +700,7 @@ flow_hash = sha256(
 ```json
 {
   "session_id": "plan_2024-01-01_12:00:00_abc123",
+  "planner_run_id": "run_abc123def456",
   "prompt": "summarize this youtube video",
   "metadata": {
     "planner_version": "1.0.0",
@@ -716,13 +751,22 @@ flow_hash = sha256(
 
 ### 16.1 Flow Origin Trust Levels
 
-| Origin | Trust Level | Cache Eligible | Validation Required |
-|---|---|---|---|
-| **Planner Generated** | `trusted` | Yes (if nodes `@flow_safe`) | IR validation only |
-| **User Modified IR** | `mixed` | No | Full re-validation required |
-| **Manual Python Code** | `untrusted` | No | Complete validation + signature check |
+| Origin | Trust Level | Cache Eligible | Validation Required | Notes |
+|---|---|---|---|---|
+| **Planner (reused flow)** | `trusted` | Yes | Already validated | Proven flow, structurally identical |
+| **Planner (new flow)** | `trusted` | Yes, after first run | IR validation only | Planner provenance recorded |
+| **User Modified IR** | `mixed` | No | Full re-validation required | Requires manual `--force-cache` |
+| **Manual Python Code** | `untrusted` | No | Complete validation + signature check | Treated as untrusted until validated |
 
-### 16.2 Node Registry Security
+### 16.2 Cache Safety Rules
+
+**Caching Prerequisites** (ALL must be true):
+1. Node marked `@flow_safe` (pure, no side effects)
+2. Flow origin trust level ≠ `mixed`
+3. All input data hashes match cache entry
+4. Node version and params match cache entry
+
+### 16.3 Node Registry Security
 
 **Validation Requirements**:
 - Nodes must inherit from `pocketflow.Node`
@@ -730,7 +774,7 @@ flow_hash = sha256(
 - Version pinning for production environments
 - Signature verification for distributed registries
 
-### 16.3 LLM Selection Guardrails
+### 16.4 LLM Selection Guardrails
 
 **Safety Measures**:
 - Node selection limited to trusted registry
@@ -812,7 +856,7 @@ flow_hash = sha256(
 
 ## 19 · Glossary
 
-| Term | Definition |
+| Term | Definition | 
 |---|---|
 | **Action-based transitions** | Conditional flow control using return values from node `post()` methods |
 | **JSON IR** | Intermediate Representation in JSON format containing complete flow specification |
