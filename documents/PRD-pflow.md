@@ -207,13 +207,13 @@ shared["transcript"]    # Output: video transcript
 
 ### 2.4 Proxy Mapping for Complex Flows
 
-When natural interfaces don't align (e.g., marketplace compatibility), **proxy mappings** provide transparent translation:
+When natural interfaces don't align (e.g., marketplace compatibility), **proxy mappings** provide transparent translation. **Proxy mapping is completely optional with zero overhead when not needed**—most simple flows use direct shared store access.
 
 ```python
-# Without proxy: direct natural interface
+# Without proxy: direct natural interface (zero overhead)
 node.prep(shared)  # reads shared["text"]
 
-# With proxy: transparent key mapping  
+# With proxy: transparent key mapping (only when needed)
 proxy = NodeAwareSharedStore(
     shared,
     input_mappings={"text": "raw_content"}
@@ -233,7 +233,7 @@ node.prep(proxy)  # still reads shared["text"], proxy maps to shared["raw_conten
 }
 ```
 
-**Key Insight**: Nodes always use natural interfaces. Proxy mappings enable complex flow routing without modifying node code.
+**Key Insight**: Nodes always use natural interfaces regardless of proxy presence. Proxy mappings enable complex flow routing without modifying node code.
 
 ### 2.5 Node Safety and Purity
 
@@ -476,7 +476,7 @@ graph TD
 
 ### 3.6 Validation Framework
 
-**Comprehensive validation** occurs at multiple checkpoints:
+**Validation-first approach**: pflow validates at every stage to catch errors immediately before they can cause execution failures. **Comprehensive validation** occurs at multiple checkpoints:
 
 ```python
 # Validation stages (conceptual)
@@ -987,6 +987,8 @@ Where:
 4. Effective params match cache entry
 5. Input data hash matches cache entry
 
+**Critical**: ALL five conditions must be satisfied simultaneously—`@flow_safe` alone is not sufficient for caching.
+
 **Cache Behavior:**
 ```python
 # Cache hit: skip execution, restore results
@@ -1176,7 +1178,7 @@ pflow registry list
     "params": {"max_results": 10},
     "actions": ["default", "rate_limited", "auth_failed"]
   },
-  "purity": "impure"
+  "purity": "impure"  # MCP tools marked impure by default for security
 }
 ```
 
