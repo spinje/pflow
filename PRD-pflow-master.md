@@ -1,0 +1,1838 @@
+# Product Requirements Document: pflow CLI (Master Edition)
+
+*A shell-native engine for deterministic, memory-aware, agent-planned flows that wrap MCP tools and reusable Python nodes.*
+
+---
+
+## 1 · Vision & Strategic Positioning
+
+> **pflow** transforms natural language into explicit, replayable DAGs through a shared store pattern with optional proxy mapping.
+> 
+> Unlike chat-only agents (Claude Desktop) or heavyweight orchestration stacks (Airflow, LangChain), pflow is a **minimal, traceable, node-based runtime** built on a 100-line framework that emphasizes **structured composition** first, with agent planning and MCP interoperability as enabling layers.
+
+pflow's defining promise: a one-line natural-language prompt compiles—through a deterministic, auditable planning pipeline—into the same lock-file-backed DAG a power-user would hand-write. Intuitive intent is preserved **without** sacrificing deterministic execution, caching discipline, or traceability.
+
+**Primary differentiator** → **Shared store + natural interface pattern** with intelligent planning.  
+**Core innovation** → The execution pattern, not the framework itself.
+
+### 1.1 Strategic Differentiators
+
+| Differentiator | Description | Implementation |
+|---|---|---|
+| **Transparent Execution** | Every node's data, config, and errors are trace-logged and replayable | CLI `--trace`, JSON IR → run log schema, deterministic replay via `.lock.json` |
+| **Shared Store + Natural Interfaces** | Nodes communicate through intuitive key names (`shared["url"]`, `shared["text"]`) with zero coupling | pocketflow framework + natural key conventions |
+| **Proxy-Enabled Marketplace Compatibility** | Same nodes work in different flow schemas through transparent key mapping | `NodeAwareSharedStore` proxy pattern |
+| **Dual-Mode Planning Architecture** | Natural language and CLI pipes use same validation pipeline with different entry points | Planner handles both NL→IR and CLI→IR paths |
+| **Metadata-Driven Selection** | LLM selects nodes from extracted interface metadata, not code inspection | Docstring→JSON extraction + registry system |
+| **Deterministic Reproducibility** | Execution behavior locked across environments and time through version pinning | IR versioning, semver nodes, lockfiles, param/data separation |
+| **Opt-In Performance Optimization** | Caching and retries only for explicitly pure nodes | `@flow_safe` decorator + eligibility validation |
+| **Action-Based Flow Control** | Conditional transitions through node return values, not exceptions | `node - "error" >> handler` syntax |
+| **Unified MCP Integration** | MCP tools appear as native nodes through wrapper generation | Single registry, natural interfaces, proxy compatibility |
+| **Framework Simplicity** | 100-line execution engine with pattern-based complexity | pocketflow core + orchestration layers |
+
+### 1.2 Design Philosophy
+
+**Explicit Over Magic**  
+Nothing is implicit. All I/O, bindings, side-effects, and caching constraints are declared in the JSON IR and visible in the CLI.
+
+**Shared Store as Primary Communication**  
+Nodes communicate through a flow-scoped shared store using natural key names (`shared["url"]`, `shared["summary"]`). Params are secondary, used mainly for node configuration and batch operations.
+
+**Natural Interfaces Enable Simplicity**  
+Node authors use intuitive shared store keys. Complex flow routing handled by optional proxy mappings without node complexity.
+
+**Planning-Execution Separation**  
+Natural language is never interpreted directly. A separate, deterministic planner flow transforms NL into CLI syntax, which is then validated and compiled to executable IR.
+
+**Purity-First Safety Model**  
+All nodes are impure by default. Only explicitly marked `@flow_safe` nodes can be cached or retried. Safety is opt-in and verified.
+
+**Round-Trippable Intent**  
+All flows carry `description` metadata reflecting original user intent. Flows can be explained, searched, and reused through semantic matching.
+
+**Pattern Over Framework Innovation**  
+The 100-line pocketflow framework is stable. Innovation happens in the shared store pattern, proxy mappings, planning pipeline, and MCP integration.
+
+### 1.3 Architectural Overview
+
+```mermaid
+graph TD
+    A[User Input] --> B{Input Type?}
+    B -->|Natural Language| C[Full Planner Pipeline]
+    B -->|CLI Pipe Syntax| D[Validation Planner]
+    
+    C --> E[Metadata Registry]
+    C --> F[LLM Selection]
+    C --> G[Validation Framework]
+    
+    D --> E
+    D --> G
+    
+    G --> H[JSON IR Generation]
+    H --> I[Lockfile Creation]
+    
+    C --> J[User Verification]
+    J --> K[Runtime Execution]
+    D --> K
+    
+    K --> L[Shared Store]
+    K --> M[Node Orchestration]
+    M --> N[Proxy Mapping*]
+    
+    subgraph "pocketflow Framework"
+        O[Node.prep]
+        P[Node.exec] 
+        Q[Node.post]
+        O --> P --> Q
+    end
+    
+    M --> O
+    
+    style L fill:#e1f5fe
+    style N fill:#f3e5f5
+    style E fill:#e8f5e8
+```
+
+**Key Insight**: The planner operates in dual-mode, handling both natural language and CLI pipe inputs through the same validation and IR generation pipeline. The shared store + proxy pattern enables natural node interfaces while supporting complex flow routing when needed.
+
+---
+
+## 2 · Core Concepts
+
+### 2.1 The pocketflow Foundation
+
+pflow is built on a **100-line Python framework** that provides the execution engine:
+
+```python
+class Node(BaseNode):
+    def prep(self, shared):     # Extract data from shared store
+        pass
+    def exec(self, prep_res):   # Process data (pure business logic)
+        pass  
+    def post(self, shared, prep_res, exec_res):  # Write results back
+        pass
+
+# Natural flow syntax
+node_a >> node_b                    # Default transition
+node_a - "error" >> error_handler   # Action-based transition
+```
+
+**Framework Characteristics:**
+- **Lightweight**: Minimal abstraction over Python functions
+- **Stable**: Core execution patterns don't change
+- **Action-based**: Built-in support for conditional transitions
+- **Retry-enabled**: Configurable retry with `max_retries` parameter
+
+### 2.2 Shared Store Pattern
+
+The **shared store** is pflow's primary innovation—a flow-scoped memory that enables natural node interfaces:
+
+```python
+# Flow execution with shared store
+shared = {
+    "url": "https://youtu.be/abc123",      # CLI injection
+    "transcript": "Video content...",       # Node output
+    "summary": "Generated summary..."       # Final result
+}
+
+class YTTranscript(Node):
+    def prep(self, shared):
+        return shared["url"]  # Natural interface
+    
+    def post(self, shared, prep_res, exec_res):
+        shared["transcript"] = exec_res  # Intuitive key naming
+```
+
+**Shared Store vs. Params:**
+- **Shared Store**: Primary data flow (heap-like shared memory)
+- **Params**: Node configuration and batch identifiers (stack-like per-node)
+
+### 2.3 Natural Interfaces
+
+Nodes use **intuitive key names** that match human expectations:
+
+```python
+# Natural interface examples
+shared["url"]           # Input: web address
+shared["text"]          # Input: content to process  
+shared["query"]         # Input: search terms
+shared["summary"]       # Output: generated summary
+shared["results"]       # Output: search results
+shared["transcript"]    # Output: video transcript
+```
+
+**Benefits:**
+- **Intuitive**: Key names match domain concepts
+- **Discoverable**: Easy for LLM to understand and select
+- **Maintainable**: Self-documenting interfaces
+- **Reusable**: Same patterns across different nodes
+
+### 2.4 Proxy Mapping for Complex Flows
+
+When natural interfaces don't align (e.g., marketplace compatibility), **proxy mappings** provide transparent translation:
+
+```python
+# Without proxy: direct natural interface
+node.prep(shared)  # reads shared["text"]
+
+# With proxy: transparent key mapping  
+proxy = NodeAwareSharedStore(
+    shared,
+    input_mappings={"text": "raw_content"}
+)
+node.prep(proxy)  # still reads shared["text"], proxy maps to shared["raw_content"]
+```
+
+**JSON IR Mapping Definition:**
+```json
+{
+  "mappings": {
+    "summarize-node": {
+      "input_mappings": {"text": "raw_transcript"},
+      "output_mappings": {"summary": "article_summary"}
+    }
+  }
+}
+```
+
+**Key Insight**: Nodes always use natural interfaces. Proxy mappings enable complex flow routing without modifying node code.
+
+### 2.5 Node Safety and Purity
+
+pflow uses an **opt-in purity model** for performance and safety:
+
+```python
+from pocketflow import Node, flow_safe
+
+# Default: impure (no caching or retries)
+class SendSlackMessage(Node):
+    # May have side effects, not cacheable
+    pass
+
+# Explicit: pure (cacheable and retryable)
+@flow_safe
+class ExtractTextSummary(Node):
+    # Deterministic, no side effects
+    # Eligible for caching and retries
+    pass
+```
+
+**Safety Rules:**
+- **Impure by default**: Nodes may have side effects
+- **Explicit purity**: `@flow_safe` decorator required for optimization
+- **Validation enforced**: Cache and retry only allowed for pure nodes
+- **User confirmation**: All flows shown before execution
+
+### 2.6 Action-Based Flow Control
+
+Nodes return **action strings** for conditional flow routing:
+
+```python
+class ValidateInput(Node):
+    def post(self, shared, prep_res, exec_res):
+        if exec_res.is_valid:
+            shared["validated_data"] = exec_res.data
+            return "default"  # Continue normal flow
+        else:
+            shared["error_message"] = exec_res.error
+            return "validation_failed"  # Branch to error handler
+
+# Flow definition with conditional transitions
+validator >> processor              # Default path
+validator - "validation_failed" >> error_handler  # Error path
+```
+
+**Benefits:**
+- **Clear logic**: Explicit conditional branching
+- **Composable**: Actions can be reused across flows
+- **Debuggable**: Flow paths visible in IR and traces
+- **Flexible**: Complex error handling without exceptions
+
+### 2.7 Version Resolution and Namespacing
+
+Nodes are **versioned and namespaced** for reproducible execution:
+
+```
+<namespace>/<name>@<version>
+core/yt-transcript@1.0.0
+mcp/github-search@2.1.0
+```
+
+**Resolution Rules:**
+- **Explicit versions**: `@1.0.0` uses exact version
+- **Major hints**: `@1` uses highest `1.x.x`
+- **Lockfile pinning**: Deterministic resolution across environments
+- **No implicit latest**: Prevents silent breaking changes
+
+--- 
+
+## 3 · Planning Pipeline Architecture
+
+pflow's **planner** operates in dual-mode, handling both natural language prompts and CLI pipe syntax through a unified validation and IR generation pipeline.
+
+### 3.1 Dual-Mode Operation
+
+```mermaid
+graph TD
+    A[User Input] --> B{Input Detection}
+    
+    B -->|"summarize video"| C[Natural Language Path]
+    B -->|"yt-transcript >> summarize"| D[CLI Pipe Path]
+    
+    subgraph "Natural Language Processing"
+        C --> E[Metadata Registry Scan]
+        E --> F[LLM Selection Process]
+        F --> G[Flow Structure Generation]
+        G --> H[Validation & Mapping]
+        H --> I[User Preview Required]
+    end
+    
+    subgraph "CLI Pipe Processing"
+        D --> J[Syntax Parsing]
+        J --> K[Node Validation]
+        K --> L[Interface Analysis]
+        L --> M[Mapping Generation]
+        M --> N[Direct Execution]
+    end
+    
+    I --> O[JSON IR Generation]
+    N --> O
+    O --> P[Lockfile Creation]
+    O --> Q[Runtime Execution]
+```
+
+**Key Insight**: Both paths converge on validated JSON IR, ensuring consistent execution semantics regardless of input method.
+
+### 3.2 Natural Language Path (Full Planning)
+
+**10-Stage Process for NL → Executable Flow:**
+
+| Stage | Purpose | Input | Output |
+|-------|---------|-------|--------|
+| **Metadata Discovery** | Extract all available node interfaces | Registry scan | Node metadata JSON |
+| **LLM Context Loading** | Prepare selection context | Metadata + prompt | LLM-ready context |
+| **Node Selection** | Choose appropriate building blocks | User intent | Selected nodes list |
+| **Flow Structure** | Create graph with transitions | Node capabilities | DAG with actions |
+| **Structural Validation** | Verify graph completeness | Node graph | Validated structure |
+| **Interface Modeling** | Design shared store schema | Node interfaces | Key compatibility map |
+| **Mapping Generation** | Create proxy mappings if needed | Interface mismatches | Optional mappings |
+| **IR Generation** | Produce complete JSON IR | All components | Validated JSON IR |
+| **CLI Compilation** | Generate user-readable syntax | JSON IR | CLI preview string |
+| **User Verification** | Present for approval | CLI syntax | User confirmation |
+
+**Example NL Processing:**
+
+```
+Input: "summarize this youtube video"
+↓
+Registry Discovery: [yt-transcript, summarize-text, save-markdown, ...]
+↓  
+LLM Selection: yt-transcript@1.0.0 + summarize-text@2.1.0
+↓
+Flow Structure: yt-transcript >> summarize-text
+↓
+Interface Analysis: transcript output → text input (compatible)
+↓
+Generated CLI: pflow yt-transcript --url=$URL >> summarize-text
+↓
+User Confirmation Required
+```
+
+### 3.3 CLI Pipe Path (Validation Planning)
+
+**7-Stage Process for CLI → Validated IR:**
+
+| Stage | Purpose | Validation |
+|-------|---------|------------|
+| **Syntax Parsing** | Parse pipe syntax into components | Valid CLI grammar |
+| **Node Resolution** | Verify all nodes exist in registry | Registry lookup |
+| **Version Resolution** | Resolve semantic versions | Lockfile + semver rules |
+| **Interface Analysis** | Check shared store compatibility | Key alignment |
+| **Mapping Detection** | Generate mappings for mismatches | Automatic proxy config |
+| **IR Assembly** | Create complete JSON IR | Schema validation |
+| **Direct Execution** | Skip user verification | Immediate runtime |
+
+**Example CLI Processing:**
+
+```bash
+Input: pflow yt-transcript --url=X >> summarize-text --temperature=0.9
+↓
+Parsing: [yt-transcript{url=X}, summarize-text{temperature=0.9}]
+↓
+Validation: Both nodes exist, versions resolved
+↓
+Interface Check: transcript → text (compatible)
+↓
+IR Generation: Complete JSON with params and execution config
+↓
+Direct Runtime Execution
+```
+
+### 3.4 Metadata-Driven Selection
+
+The planner uses **extracted node metadata** rather than code inspection:
+
+```python
+# Node docstring (source)
+class YTTranscript(Node):
+    """Fetches YouTube transcript from video URL.
+    
+    Interface:
+    - Reads: shared["url"] - YouTube video URL
+    - Writes: shared["transcript"] - extracted transcript text
+    - Params: language (default "en") - transcript language
+    - Actions: "default", "video_unavailable"
+    """
+```
+
+```json
+// Generated metadata (LLM context)
+{
+  "id": "yt-transcript", 
+  "description": "Fetches YouTube transcript from video URL",
+  "inputs": ["url"],
+  "outputs": ["transcript"],
+  "params": {"language": "en"},
+  "actions": ["default", "video_unavailable"],
+  "purity": "flow_safe"
+}
+```
+
+**Benefits:**
+- **Fast planning**: JSON metadata loads instantly
+- **Rich context**: Descriptions enable semantic matching
+- **Interface validation**: Type checking without code execution
+- **Version awareness**: Multiple versions discoverable
+
+### 3.5 Retrieval-First Strategy
+
+The planner follows **retrieval-first** to maximize stability:
+
+```mermaid
+graph TD
+    A[User Prompt] --> B[Semantic Search]
+    B --> C{Existing Flow Found?}
+    
+    C -->|Yes - Exact Match| D[Reuse Validated Flow]
+    C -->|Yes - Partial Match| E[Use as Sub-Component]
+    C -->|No Match| F[Generate New Flow]
+    
+    D --> G[Skip LLM Generation]
+    E --> H[LLM Composition]
+    F --> I[Full LLM Generation]
+    
+    H --> J[Validation Pipeline]
+    I --> J
+    J --> K[User Approval]
+    
+    style D fill:#c8e6c9
+    style F fill:#ffcdd2
+    style J fill:#fff3e0
+```
+
+**Retrieval Benefits:**
+- **Stability**: Proven flows reused without regeneration
+- **Performance**: Skip LLM calls when possible
+- **Quality**: Validated flows preferred over new generation
+- **Learning**: System improves through successful flow accumulation
+
+### 3.6 Validation Framework
+
+**Comprehensive validation** occurs at multiple checkpoints:
+
+```python
+# Validation stages (conceptual)
+def validate_flow(ir_draft):
+    # 1. Structural validation
+    validate_dag_structure(ir_draft.nodes, ir_draft.edges)
+    validate_action_coverage(ir_draft.edges, ir_draft.nodes)
+    
+    # 2. Interface validation  
+    validate_shared_store_compatibility(ir_draft.nodes)
+    validate_proxy_mappings(ir_draft.mappings)
+    
+    # 3. Execution validation
+    validate_purity_constraints(ir_draft.nodes)
+    validate_retry_eligibility(ir_draft.execution)
+    
+    # 4. Schema validation
+    validate_json_schema(ir_draft)
+    validate_version_compatibility(ir_draft.metadata)
+```
+
+**Validation Errors → Automatic Retry:**
+- **LLM feedback**: Specific errors fed back to planner LLM
+- **Retry budget**: Maximum 4 attempts per planning stage
+- **Graceful degradation**: Simpler flows attempted on complex failures
+- **User escalation**: Clear diagnostics when retry budget exhausted
+
+### 3.7 Provenance and Auditability
+
+Every planned flow includes **complete provenance**:
+
+```json
+{
+  "metadata": {
+    "planner_version": "1.0.0",
+    "planner_run_id": "plan_2024-01-01_12:00:00_abc123", 
+    "llm_model": "claude-3-5-sonnet",
+    "created_at": "2024-01-01T12:00:00Z",
+    "prompt": "summarize this youtube video",
+    "retry_count": 1,
+    "retrieval_hit": false
+  }
+}
+```
+
+**Audit Trail Benefits:**
+- **Reproducibility**: Complete planning context captured
+- **Debugging**: Trace failures back to planning decisions
+- **Performance**: Monitor planning success rates and latency
+- **Evolution**: Track how prompts map to flows over time
+
+--- 
+
+## 4 · CLI Surface & Parameter Resolution
+
+pflow's CLI follows a **single resolution rule**: "Type flags; engine decides." The engine automatically categorizes CLI flags as data injection, parameter overrides, or execution configuration.
+
+### 4.1 Core CLI Commands
+
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `pflow "<natural language>"` | Natural language planning with user confirmation | `pflow "summarize this youtube video"` |
+| `pflow <node> >> <node>` | Direct CLI pipe execution | `pflow yt-transcript --url=X >> summarize` |
+| `pflow trace <run-id>` | Inspect execution details and shared store state | `pflow trace run_2024-01-01_abc123` |
+| `pflow registry list` | Show available nodes and their interfaces | `pflow registry list --filter mcp` |
+| `pflow explain <flow>` | Reverse-engineer flow description from IR/lockfile | `pflow explain my-flow.lock.json` |
+
+### 4.2 "Type Flags; Engine Decides" Algorithm
+
+The engine automatically categorizes every CLI flag using this decision tree:
+
+```mermaid
+graph TD
+    A[CLI Flag: --key=value] --> B{Matches Node Input?}
+    B -->|Yes| C[Data Injection]
+    C --> D["shared[key] = value"]
+    
+    B -->|No| E{Matches Node Param?}
+    E -->|Yes| F[Parameter Override]
+    F --> G["node.params[key] = value"]
+    
+    E -->|No| H{Matches Execution Config?}
+    H -->|Yes| I[Execution Configuration]
+    I --> J["node.execution[key] = value"]
+    
+    H -->|No| K[ERROR: Unknown Flag]
+    K --> L[Abort with Suggestions]
+    
+    style C fill:#e8f5e8
+    style F fill:#fff3e0
+    style I fill:#e3f2fd
+    style K fill:#ffcdd2
+```
+
+**Resolution Examples:**
+
+```bash
+# Data injection (shared store)
+pflow yt-transcript --url=https://youtu.be/abc123
+# Result: shared["url"] = "https://youtu.be/abc123"
+
+# Parameter override (node config)
+pflow summarize-text --temperature=0.9 
+# Result: node.params["temperature"] = 0.9
+
+# Execution configuration
+pflow fetch-data --max-retries=3 --wait=1.0
+# Result: node.execution = {"max_retries": 3, "wait": 1.0}
+
+# Pipe stdin (reserved key)
+echo "content" | pflow summarize-text
+# Result: shared["stdin"] = "content"
+```
+
+### 4.3 Natural Flag Naming
+
+CLI flags use **natural, intuitive names** that match human expectations:
+
+```bash
+# Natural data flags
+--url                # Web addresses
+--text               # Content to process
+--query              # Search terms
+--file               # File paths
+--message            # Communication content
+
+# Natural parameter flags  
+--temperature        # LLM creativity (0.0-1.0)
+--max-tokens         # Output length limits
+--language           # Language codes (en, es, fr)
+--format             # Output formats (json, markdown, csv)
+
+# Natural execution flags
+--max-retries        # Retry attempts for failures
+--timeout            # Maximum execution time
+--use-cache          # Enable result caching
+--wait               # Delay between retries
+```
+
+### 4.4 Advanced CLI Patterns
+
+**Pipe Composition:**
+```bash
+# Multi-stage pipeline
+pflow yt-transcript --url=$VIDEO >> \
+      summarize-text --temperature=0.7 >> \
+      save-markdown --file=summary.md
+
+# Conditional error handling (future)
+pflow fetch-url --url=$URL --max-retries=3 >> \
+      extract-text >> \
+      summarize-text
+```
+
+**Saved Flow References:**
+```bash
+# Reference pre-built flows by name
+pflow video-summary-pipeline --url=$VIDEO >> format-report
+
+# Flow composition
+pflow my-data-pipeline >> analysis-flow >> reporting-flow
+```
+
+**Interactive vs. Batch Mode:**
+```bash
+# Interactive: missing data prompts user
+pflow yt-transcript >> summarize-text
+# Prompt: "Please provide --url for yt-transcript"
+
+# Batch/CI: missing data fails fast  
+pflow yt-transcript >> summarize-text
+# Error: "MISSING_INPUT: --url required for yt-transcript"
+```
+
+### 4.5 CLI Parameter Categories
+
+#### Data Injection (Shared Store)
+- **Purpose**: Populate shared store with input data
+- **Scope**: Flow-wide, accessible to all nodes
+- **Persistence**: Exists for entire flow execution
+- **Examples**: `--url`, `--text`, `--query`, `--file`
+
+```bash
+pflow yt-transcript --url=https://youtu.be/abc123 >> summarize-text
+# shared["url"] available to yt-transcript
+# shared["transcript"] written by yt-transcript, read by summarize-text
+```
+
+#### Parameter Override (Node Configuration)
+- **Purpose**: Configure node behavior and algorithms
+- **Scope**: Node-specific, isolated per node
+- **Persistence**: Applied during node execution only
+- **Examples**: `--temperature`, `--max-tokens`, `--language`, `--format`
+
+```bash
+pflow summarize-text --temperature=0.9 --max-tokens=150
+# node.params = {"temperature": 0.9, "max-tokens": 150}
+# Does not affect other nodes in pipeline
+```
+
+#### Execution Configuration (Runtime Behavior)
+- **Purpose**: Control retry, caching, and execution behavior
+- **Scope**: Node-specific execution settings
+- **Persistence**: Affects how node executes, not what it computes
+- **Examples**: `--max-retries`, `--wait`, `--timeout`, `--use-cache`
+
+```bash
+pflow fetch-url --url=$URL --max-retries=3 --wait=1.0 --use-cache
+# node.execution = {"max_retries": 3, "wait": 1.0, "use_cache": true}
+# Only valid for @flow_safe nodes (cache/retry eligibility enforced)
+```
+
+### 4.6 Reserved Keywords and Special Handling
+
+**Reserved Shared Store Keys:**
+- `stdin`: Pipe input automatically injected
+- `stdout`: Reserved for final output (future)
+- `stderr`: Reserved for error context (future)
+
+**Special CLI Flags:**
+- `--trace`: Enable detailed execution logging
+- `--dry-run`: Validate without execution
+- `--planner-model`: Override LLM model for natural language planning
+- `--no-lock`: Skip lockfile generation
+- `--reset-cache`: Invalidate cache before execution
+
+### 4.7 Error Handling and User Feedback
+
+**Unknown Flag Resolution:**
+```bash
+pflow summarize-text --invalid-flag=value
+# Error: Unknown flag '--invalid-flag'
+# Suggestions: Did you mean '--temperature', '--max-tokens', or '--format'?
+# Available flags: --text (data), --temperature (param), --max-tokens (param)
+```
+
+**Missing Required Data:**
+```bash
+pflow yt-transcript >> summarize-text
+# Interactive: Prompt for --url
+# Batch: Error with clear requirements
+
+# Error: MISSING_INPUT for yt-transcript
+# Required: --url (YouTube video URL)
+# Example: pflow yt-transcript --url=https://youtu.be/abc123
+```
+
+**Validation Failures:**
+```bash
+pflow fetch-url --max-retries=5  # Only @flow_safe nodes support retries
+# Error: fetch-url is not marked @flow_safe, retry not allowed
+# Suggestion: Use --max-retries only with pure nodes
+```
+
+### 4.8 CLI Evolution and Extensibility
+
+**Natural Language Integration:**
+- CLI syntax is generated from natural language planning
+- Users learn CLI patterns through planner output
+- CLI and NL paths produce identical execution semantics
+
+**Node Discovery:**
+- `pflow registry list` shows all available flags per node
+- Help text generated from node metadata
+- New nodes automatically extend CLI surface
+
+**Future Enhancements:**
+- Flag auto-completion based on node registry
+- Interactive flag builders for complex nodes
+- Template-based CLI generation for common patterns
+
+--- 
+
+## 5 · JSON IR & Schema Governance
+
+pflow's **Intermediate Representation (IR)** is a complete JSON specification that captures executable flows with full provenance and validation.
+
+### 5.1 Document Structure
+
+```json
+{
+  "$schema": "https://pflow.dev/schemas/flow-0.1.json",
+  "ir_version": "0.1.0",
+  "metadata": {
+    "created": "2025-01-01T12:00:00Z",
+    "description": "YouTube video summary pipeline",
+    "planner_version": "1.0.0",
+    "planner_run_id": "plan_abc123",
+    "locked_nodes": {
+      "core/yt-transcript": "1.0.0",
+      "core/summarize-text": "2.1.0"
+    }
+  },
+  "nodes": [...],
+  "edges": [...],
+  "mappings": {...}
+}
+```
+
+**Key Components:**
+- **Schema URL**: Validates against formal JSON schema
+- **IR Version**: Semantic versioning for format evolution
+- **Metadata**: Complete provenance and planning context
+- **Locked Nodes**: Version pinning for reproducible execution
+- **Edges**: Action-based transitions between nodes
+- **Mappings**: Optional proxy configurations for complex routing
+
+### 5.2 Node Definitions
+
+```json
+{
+  "id": "fetch-transcript",
+  "registry_id": "core/yt-transcript", 
+  "version": "1.0.0",
+  "params": {
+    "language": "en",
+    "timeout": 30
+  },
+  "execution": {
+    "max_retries": 2,
+    "use_cache": true,
+    "wait": 1.0
+  }
+}
+```
+
+**Field Specifications:**
+- **id**: Flow-scoped unique identifier
+- **registry_id**: References node in unified registry
+- **version**: Semantic version for reproducibility
+- **params**: Node behavior configuration (never contains shared store keys)
+- **execution**: Runtime behavior (retries, caching, timing)
+
+### 5.3 Edge Definitions and Action-Based Transitions
+
+```json
+{
+  "edges": [
+    {"from": "fetch-transcript", "to": "create-summary"},
+    {"from": "fetch-transcript", "to": "error-handler", "action": "video_unavailable"},
+    {"from": "validator", "to": "processor", "action": "default"},
+    {"from": "processor", "to": "validator", "action": "continue"}
+  ]
+}
+```
+
+**Edge Rules:**
+- **Default transitions**: Omit `"action"` field (most common case)
+- **Named actions**: Enable conditional flow control
+- **DAG validation**: Cycle detection enforced
+- **Action coverage**: All declared actions must have defined transitions
+
+### 5.4 Proxy Mapping Schema
+
+```json
+{
+  "mappings": {
+    "summarize-text": {
+      "input_mappings": {"text": "raw_transcript"},
+      "output_mappings": {"summary": "article_summary"}
+    },
+    "notification-sender": {
+      "input_mappings": {"message": "article_summary", "channel": "alerts"}
+    }
+  }
+}
+```
+
+**Mapping Purpose:**
+- **Marketplace compatibility**: Same nodes work with different flow schemas
+- **Complex routing**: Enable sophisticated data flow patterns
+- **Node isolation**: Nodes always use natural interfaces
+- **Optional**: Most simple flows don't need mappings
+
+### 5.5 Validation Pipeline
+
+The IR undergoes **comprehensive validation** before execution:
+
+```mermaid
+graph TD
+    A[Draft IR] --> B[JSON Schema Validation]
+    B --> C[Version Compatibility Check]
+    C --> D[Node Registry Resolution]
+    D --> E[DAG Structure Validation]
+    E --> F[Interface Compatibility]
+    F --> G[Proxy Mapping Validation]
+    G --> H[Purity Constraint Check]
+    H --> I[Execution Config Validation]
+    I --> J[Complete Validated IR]
+    
+    B -.->|Fail| K[Schema Error]
+    C -.->|Fail| L[Version Error]
+    D -.->|Fail| M[Missing Node Error]
+    E -.->|Fail| N[Cycle Detection Error]
+    F -.->|Fail| O[Interface Mismatch]
+    G -.->|Fail| P[Mapping Error]
+    H -.->|Fail| Q[Purity Violation]
+    I -.->|Fail| R[Config Error]
+    
+    style J fill:#c8e6c9
+    style K fill:#ffcdd2
+    style L fill:#ffcdd2
+    style M fill:#ffcdd2
+    style N fill:#ffcdd2
+    style O fill:#ffcdd2
+    style P fill:#ffcdd2
+    style Q fill:#ffcdd2
+    style R fill:#ffcdd2
+```
+
+**Validation Checkpoints:**
+1. **Structural**: JSON schema compliance, DAG properties
+2. **Registry**: All nodes exist and versions resolve
+3. **Interface**: Shared store key compatibility between connected nodes
+4. **Execution**: Cache/retry configuration valid for node purity level
+5. **Mapping**: Proxy configurations syntactically correct
+
+### 5.6 Lockfile Generation
+
+Validated IR generates **lockfiles** for deterministic execution:
+
+```json
+{
+  "ir_hash": "sha256:abc123def456...",
+  "node_versions": {
+    "core/yt-transcript": "1.0.0", 
+    "core/summarize-text": "2.1.0"
+  },
+  "signature": "valid",
+  "created_by": "planner-v1.0.0",
+  "execution_ready": true
+}
+```
+
+**Lockfile Benefits:**
+- **Reproducibility**: Identical execution across environments
+- **Version stability**: No implicit upgrades or changes
+- **CI/CD integration**: Reliable automation pipelines
+- **Audit trails**: Complete execution provenance
+
+---
+
+## 6 · Runtime Behavior & Performance
+
+pflow's runtime implements **opt-in performance optimization** through explicit purity declarations and configurable execution behavior.
+
+### 6.1 Node Purity Model
+
+```python
+# Default: Impure (no optimizations)
+class SendSlackMessage(Node):
+    """Send message to Slack channel.
+    - May write to external systems
+    - Not cacheable or retryable
+    - Requires user confirmation for execution
+    """
+    pass
+
+# Explicit: Pure (eligible for optimizations)
+@flow_safe  
+class ExtractTextSummary(Node):
+    """Generate text summary using LLM.
+    - Deterministic with same inputs
+    - No external side effects
+    - Safe for caching and retries
+    """
+    pass
+```
+
+**Purity Benefits:**
+- **Caching eligible**: Results stored for expensive operations
+- **Retry safe**: Automatic retry on transient failures
+- **Performance optimization**: Skip execution on cache hit
+- **Trust verified**: User confirmation of safety claims
+
+### 6.2 Caching Strategy
+
+**Cache Key Computation:**
+```
+cache_key = node_hash ⊕ effective_params ⊕ input_data_sha256
+```
+
+Where:
+- `node_hash`: Node type + version identifier
+- `effective_params`: Runtime parameters from `node.params`
+- `input_data_sha256`: Hash of shared store values read by node
+
+**Cache Eligibility Requirements (ALL must be true):**
+1. Node marked with `@flow_safe` decorator
+2. Flow origin trust level ≠ `mixed` (user-modified IR)
+3. Node version matches cache entry
+4. Effective params match cache entry
+5. Input data hash matches cache entry
+
+**Cache Behavior:**
+```python
+# Cache hit: skip execution, restore results
+if cache_hit and node.is_flow_safe():
+    shared.update(cached_outputs)
+    return cached_action
+
+# Cache miss: execute and store
+result = node.exec(prep_data)
+cache_store(cache_key, {
+    "outputs": shared_store_changes,
+    "action": result_action,
+    "timestamp": execution_time
+})
+```
+
+### 6.3 Retry Configuration
+
+**Built-in pocketflow Integration:**
+```json
+{
+  "id": "fetch-url",
+  "execution": {
+    "max_retries": 3,
+    "wait": 1.0
+  }
+}
+```
+
+**Retry Rules:**
+- **Purity required**: Only `@flow_safe` nodes can specify retries
+- **Same inputs**: Identical prep data used for all attempts
+- **Exponential backoff**: Optional via `wait` parameter
+- **Failure logging**: Complete retry history in trace
+
+**Retry Execution Pattern:**
+```python
+for attempt in range(max_retries):
+    try:
+        return node.exec(prep_data)
+    except Exception as e:
+        if attempt == max_retries - 1:
+            raise e  # Final failure
+        if wait > 0:
+            time.sleep(wait)
+```
+
+### 6.4 Failure Semantics
+
+**Fail-Fast by Default:**
+- Any node failure aborts entire flow
+- Complete trace written including failure context
+- No downstream nodes executed after failure
+- Shared store state preserved for debugging
+
+**Error Recovery Patterns:**
+```python
+# Action-based error handling
+validator - "validation_failed" >> error_handler >> retry_validator
+fetcher - "rate_limited" >> exponential_backoff >> fetcher  
+processor - "timeout" >> timeout_handler
+```
+
+**Trace Generation:**
+```json
+{
+  "run_id": "run_2024-01-01_abc123",
+  "status": "FAILED",
+  "failure_node": "fetch-url",
+  "failure_reason": "ConnectionTimeout",
+  "shared_store_snapshot": {...},
+  "retry_attempts": 2,
+  "execution_timeline": [...]
+}
+```
+
+### 6.5 Performance Characteristics
+
+**Target Performance Metrics:**
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| **End-to-end latency** (3-node pure flow) | ≤ 2s overhead vs raw Python | Execution time comparison |
+| **Cache hit performance** | ≤ 50ms per cached node | Time to restore from cache |
+| **Planning latency** (local LLM) | ≤ 800ms average | NL prompt → validated IR |
+| **Validation speed** | ≤ 100ms for typical flows | IR validation pipeline |
+| **Registry lookup** | ≤ 10ms for metadata access | Node discovery time |
+
+**Optimization Strategies:**
+- **Metadata caching**: Registry data cached until source changes
+- **Validation caching**: IR validation results cached by hash
+- **Parallel execution**: Independent nodes can run concurrently (future)
+- **Lazy loading**: Registry data loaded on-demand
+
+### 6.6 Trust Model Integration
+
+**Flow Origin Trust Levels:**
+
+| Origin | Trust Level | Cache Eligible | Validation Required |
+|--------|-------------|----------------|-------------------|
+| **Planner (reused flow)** | `trusted` | Yes | IR validation only |
+| **Planner (new flow)** | `trusted` | Yes, after first run | Complete validation |
+| **User modified IR** | `mixed` | No | Full re-validation required |
+| **Manual Python code** | `untrusted` | No | Complete validation + manual review |
+
+**Cache Safety Integration:**
+```python
+def is_cache_eligible(node, flow_origin):
+    return (
+        node.is_flow_safe() and
+        flow_origin != "mixed" and
+        cache_entry_valid(node) and
+        input_hash_matches(node)
+    )
+```
+
+### 6.7 Observability and Debugging
+
+**Comprehensive Tracing:**
+- **Node execution timeline**: Prep/exec/post timing for each node
+- **Shared store snapshots**: State before/after each node
+- **Cache hit/miss ratios**: Performance optimization tracking
+- **Retry attempts**: Complete failure and recovery history
+- **Parameter resolution**: CLI flag → shared store/params mapping
+
+**Debug Commands:**
+```bash
+# Inspect complete execution details
+pflow trace run_2024-01-01_abc123
+
+# Show shared store evolution
+pflow trace run_2024-01-01_abc123 --shared-store
+
+# Cache analysis
+pflow trace run_2024-01-01_abc123 --cache-stats
+```
+
+--- 
+
+## 7 · MCP Integration & Unified Registry
+
+pflow integrates **Model Context Protocol (MCP)** tools as native nodes through automatic wrapper generation and unified registry management.
+
+### 7.1 Unified Registry Approach
+
+**Single Registry System** (eliminates standalone `mcp.json`):
+
+```bash
+# Unified registry commands
+pflow registry add-mcp --server github --tool search_code --command "mcp-github"
+pflow registry list --filter mcp
+pflow registry describe mcp-github-search-code
+
+# MCP nodes appear alongside manual nodes
+pflow registry list
+# core/yt-transcript@1.0.0          Fetches YouTube transcript
+# mcp/github-search-code@1.2.0      Search code in repositories via MCP  
+# core/summarize-text@2.1.0          Generate text summary using LLM
+```
+
+**Registry Entry Structure:**
+```json
+{
+  "node_id": "mcp-github-search-code",
+  "type": "mcp_wrapper",
+  "namespace": "mcp", 
+  "description": "Search code in GitHub repositories via MCP",
+  "mcp_config": {
+    "server_id": "github-server",
+    "tool_name": "search_code",
+    "transport": "stdio",
+    "command": "mcp-github",
+    "version": "1.2.0",
+    "manifest_hash": "sha256:abc123..."
+  },
+  "interface": {
+    "inputs": ["query", "language"],
+    "outputs": ["search_results"], 
+    "params": {"max_results": 10},
+    "actions": ["default", "rate_limited", "auth_failed"]
+  },
+  "purity": "impure"
+}
+```
+
+### 7.2 Wrapper Node Generation
+
+MCP tools become **indistinguishable from manual nodes**:
+
+```python
+# Generated wrapper follows complete pflow pattern
+class McpGithubSearchCode(Node):
+    """Search code in GitHub repositories via MCP.
+    
+    Interface:
+    - Reads: shared["query"] - search query string  
+    - Reads: shared["language"] - programming language filter (optional)
+    - Writes: shared["search_results"] - array of code search results
+    - Params: max_results (default 10) - maximum results to return
+    - Actions: "default", "rate_limited", "auth_failed", "resource_missing"
+    
+    MCP Source: github-server/search_code v1.2.0
+    """
+    
+    def prep(self, shared):
+        query = shared.get("query")
+        if not query:
+            raise ValueError("Missing required 'query' in shared store")
+        return {
+            "query": query,
+            "language": shared.get("language"),
+            "max_results": self.params.get("max_results", 10)
+        }
+    
+    def exec(self, prep_res):
+        try:
+            response = self._mcp_executor.call_tool("search_code", prep_res)
+            return response["results"]
+        except McpRateLimitError:
+            return "rate_limited"  # Action for flow control
+        except McpAuthError:
+            return "auth_failed"
+    
+    def post(self, shared, prep_res, exec_res):
+        if isinstance(exec_res, str):  # Action string
+            return exec_res
+        shared["search_results"] = exec_res  # Natural interface
+        return "default"
+```
+
+### 7.3 Natural Interface Mapping
+
+**MCP Schema → Natural Keys:**
+
+```python
+# MCP tool: get_weather
+# Natural interface:
+shared["location"]     # Input: city/coordinates
+shared["units"]        # Input: temperature units
+shared["weather_data"] # Output: weather information
+
+# MCP tool: send_slack_message  
+# Natural interface:
+shared["message"]      # Input: message content
+shared["channel"]      # Input: destination channel
+shared["message_id"]   # Output: sent message ID
+```
+
+**Translation Rules:**
+- MCP parameter names → direct shared store keys when intuitive
+- Complex nested parameters → flattened with natural naming
+- Single primary output per tool when possible
+- Optional parameters handled gracefully
+
+### 7.4 Action-Based Error Handling
+
+MCP wrapper nodes participate in **pflow's action-based flow control**:
+
+```bash
+# Flow with MCP error handling
+pflow mcp-github-search-code --query="auth bugs" >> summarize-text
+# Automatic transitions:
+# - "default" → continue to summarize-text
+# - "rate_limited" → could route to exponential backoff
+# - "auth_failed" → could route to credential refresh
+```
+
+**Error Action Mapping:**
+```python
+MCP_ERROR_ACTIONS = {
+    "rate_limited": "rate_limited", 
+    "unauthorized": "auth_failed",
+    "not_found": "resource_missing",
+    "timeout": "timeout",
+    "server_error": "server_error"
+}
+```
+
+### 7.5 Planner Integration
+
+**Seamless LLM Selection:**
+- MCP wrapper nodes appear in planner's metadata context
+- LLM can select MCP tools naturally during flow generation
+- Same validation pipeline applies to MCP and manual nodes
+- Proxy mappings work transparently with MCP wrappers
+
+**Example Planning:**
+```
+User: "find Python authentication bugs on GitHub and post summary to Slack"
+↓
+Planner Discovery: [mcp-github-search-code, summarize-text, mcp-slack-send, ...]
+↓  
+LLM Selection: mcp-github-search-code >> summarize-text >> mcp-slack-send
+↓
+Generated Flow: Complete action-based error handling included
+```
+
+### 7.6 Security and Transport
+
+**Supported Transports:**
+- **stdio**: Local development and trusted tools
+- **sse**: Remote HTTP servers with real-time streaming  
+- **uds**: Unix domain sockets for high-performance IPC
+- **pipe**: Windows named pipes for Windows-native communication
+
+**Security Model:**
+- **Environment variables**: Tokens and credentials via env-vars only
+- **HTTPS required**: Remote transports must use encrypted connections
+- **Host allowlist**: Optional validation of remote server certificates
+- **Impure by default**: MCP tools marked as side-effect-bearing
+
+### 7.7 CLI Integration
+
+MCP wrapper nodes follow **identical CLI patterns**:
+
+```bash
+# Same CLI resolution rules apply
+pflow mcp-github-search-code --query="test patterns" --language=python >> summarize-text
+
+# Natural pipe composition  
+echo "security vulnerability" | \
+  pflow mcp-github-search-code --language=python >> \
+  summarize-text --temperature=0.3 >> \
+  mcp-slack-send-message --channel=security-alerts
+```
+
+**MCP-Specific Registry Commands:**
+```bash
+# Add MCP server to registry
+pflow registry add-mcp --server github --tool search_code --command "mcp-github" --transport stdio
+
+# Refresh MCP tool manifests
+pflow registry refresh --mcp-server github
+
+# Validate MCP connections
+pflow registry test-mcp-connections
+```
+
+---
+
+## 8 · User Experience & Workflows
+
+pflow supports **progressive complexity** from natural language exploration to production automation pipelines.
+
+### 8.1 User Journey Progression
+
+```mermaid
+graph TD
+    A[Exploration] --> B[Learning]
+    B --> C[Iteration] 
+    C --> D[Automation]
+    D --> E[Production]
+    
+    subgraph "Exploration Phase"
+        A --> F["pflow 'summarize video'"]
+        F --> G[Planner generates CLI]
+        G --> H[User learns patterns]
+    end
+    
+    subgraph "Iteration Phase"  
+        C --> I["pflow yt-transcript >> summarize"]
+        I --> J[Parameter tuning]
+        J --> K[Flow composition]
+    end
+    
+    subgraph "Production Phase"
+        E --> L[Lockfile generation]
+        L --> M[CI/CD integration]
+        M --> N[Scheduled execution]
+    end
+    
+    style A fill:#e3f2fd
+    style C fill:#f3e5f5
+    style E fill:#e8f5e8
+```
+
+### 8.2 Exploration: Natural Language Discovery
+
+**Goal**: Discover pflow capabilities through conversational interface.
+
+```bash
+# Natural language exploration
+pflow "get the weather for Stockholm and Oslo and summarize differences"
+```
+
+**Planner Output:**
+```
+Generated flow:
+pflow mcp-weather-get --location="Stockholm" >> \
+      mcp-weather-get --location="Oslo" >> \
+      compare-weather-data >> \
+      summarize-text --temperature=0.7
+
+Execute this flow? [Y/n]
+```
+
+**Learning Outcomes:**
+- **Node discovery**: Learn about available MCP weather tools
+- **CLI patterns**: See natural parameter naming (`--location`, `--temperature`)
+- **Flow composition**: Understand pipe syntax and data flow
+- **Parameter tuning**: Observe how temperature affects output style
+
+### 8.3 Learning: CLI Pattern Absorption
+
+**Goal**: Transition from natural language to direct CLI usage.
+
+```bash
+# Direct CLI iteration based on learned patterns
+pflow mcp-weather-get --location="Stockholm" --units=metric >> \
+      summarize-text --temperature=0.5 --max-tokens=100
+
+# Parameter experimentation
+pflow yt-transcript --url=$VIDEO --language=es >> \
+      translate-text --target=en >> \
+      summarize-text --temperature=0.9
+```
+
+**Advanced Patterns:**
+```bash
+# Saved flow reuse
+pflow weather-comparison-flow --cities="Stockholm,Oslo" >> format-report
+
+# Flow composition
+pflow my-data-pipeline >> analysis-flow >> reporting-flow
+```
+
+### 8.4 Iteration: Parameter Tuning and Flow Evolution
+
+**Goal**: Refine flows for specific use cases and optimize results.
+
+**Parameter Optimization:**
+```bash
+# Temperature tuning for different content types
+pflow summarize-text --temperature=0.3  # Technical content
+pflow summarize-text --temperature=0.7  # Creative content
+pflow summarize-text --temperature=0.9  # Brainstorming
+
+# Performance optimization
+pflow fetch-data --max-retries=3 --wait=1.0 --use-cache >> process-data
+```
+
+**Flow Evolution:**
+```bash
+# Basic version
+pflow yt-transcript >> summarize-text
+
+# Enhanced with error handling (when action syntax supported)
+pflow yt-transcript >> summarize-text
+# Potential: yt-transcript - "video_unavailable" >> fallback-message
+
+# Production-ready with caching and retries
+pflow yt-transcript --max-retries=2 --use-cache >> \
+      summarize-text --use-cache >> \
+      save-markdown --file=summary.md
+```
+
+### 8.5 Automation: Lockfile and CI/CD Integration
+
+**Goal**: Create reliable, reproducible automation pipelines.
+
+**Lockfile Generation:**
+```bash
+# Generate deterministic lockfile
+pflow lock
+# Creates: flow.lock.json with pinned versions
+
+# Version-controlled flows
+git add flow.lock.json
+git commit -m "Add video summary automation"
+```
+
+**CI/CD Integration:**
+```bash
+# Automated execution in CI
+pflow run my_flow.lock.json --use-cache --batch-mode
+
+# Scheduled execution
+0 * * * * pflow run hourly_summary.lock.json --use-cache --reset-cache
+```
+
+### 8.6 Production: Monitoring and Observability
+
+**Goal**: Monitor, debug, and optimize production flows.
+
+**Execution Monitoring:**
+```bash
+# Comprehensive trace analysis
+pflow trace run_2024-01-01_abc123
+# Shows: node timeline, shared store evolution, cache hits, retry attempts
+
+# Performance analysis
+pflow trace run_2024-01-01_abc123 --cache-stats
+# Shows: cache hit ratios, performance gains, optimization opportunities
+```
+
+**Error Debugging:**
+```bash
+# Failed execution analysis
+pflow trace run_2024-01-01_def456 --failure-analysis
+# Shows: failure node, error context, shared store state at failure
+```
+
+### 8.7 Advanced Patterns and Future Features
+
+**Complex Flow Composition (Future):**
+```bash
+# Conditional branching based on data content
+pflow analyze-content >> \
+      branch-by-type >> \
+      [text-processing, image-processing, video-processing] >> \
+      merge-results
+
+# Parallel execution for independent operations
+pflow parallel-fetch --urls=$URL_LIST >> merge-data >> analyze-trends
+```
+
+**Flow Marketplace Integration (Future):**
+```bash
+# Install flows from marketplace
+pflow marketplace install video-analysis-suite
+
+# Publish flows to marketplace
+pflow marketplace publish my-flow.lock.json --description="YouTube analysis pipeline"
+```
+
+### 8.8 Support and Learning Resources
+
+**Built-in Help:**
+```bash
+# Node documentation
+pflow registry describe yt-transcript
+# Shows: interface, parameters, examples, version history
+
+# Flow explanation
+pflow explain my-flow.lock.json
+# Reverse-engineers natural language description from IR
+
+# Interactive help
+pflow --help
+pflow registry --help
+pflow trace --help
+```
+
+**Error Guidance:**
+```bash
+# Smart error messages with suggestions
+pflow yt-transcript --invalid-flag=value
+# Error: Unknown flag '--invalid-flag'
+# Did you mean: --url, --language, or --max-retries?
+# Available flags: --url (data), --language (param), --max-retries (execution)
+```
+
+--- 
+
+## 9 · MVP Acceptance Criteria
+
+These metrics define success for pflow v0.1, emphasizing reliability, performance, and user experience over feature breadth.
+
+### 9.1 Core Functionality Metrics
+
+| Metric | Target | Measurement Method |
+|--------|--------|-------------------|
+| **End-to-end flow latency** (3-node pure flow) | ≤ 2s overhead vs raw Python | Execution time comparison |
+| **Planning latency** (local LLM) | ≤ 800ms average | NL prompt → validated IR |
+| **Cache hit performance** | ≤ 50ms per cached node | Time to restore from cache |
+| **Validation accuracy** | 0 critical misses in test suite | JSON IR validation false-negative rate |
+| **CLI flag resolution** | 100% correct categorization | Data vs params vs execution flags |
+
+### 9.2 Planning System Success Rates
+
+| Metric | Target | Context |
+|--------|--------|---------|
+| **NL prompt → validated lockfile** | ≥ 95% within ≤ 4 planner retries | Default planner prompts |
+| **Retrieval hit-rate** (repeated prompts) | ≥ 90% | Semantic flow reuse |
+| **Planner generation passes validation** | ≥ 95% within retry budget | Full validation pipeline |
+| **Interface compatibility detection** | ≥ 98% | Auto-mapping generation |
+| **User approval rate** | ≥ 90% | Generated CLI previews |
+
+### 9.3 Reproducibility & Reliability
+
+| Metric | Target | Validation |
+|--------|--------|------------|
+| **Reproducibility** | Same lockfile → identical outputs | Pure nodes across machines |
+| **Version resolution** | 100% deterministic | No ambiguous resolutions |
+| **Trace correctness** | 100% accurate | Node order, params, cache & retry info |
+| **MCP wrapper generation** | ≥ 95% success rate | `/tools/list` entries wrap without edits |
+| **Registry consistency** | 0 metadata/code mismatches | Extracted metadata accuracy |
+
+### 9.4 Integration & Ecosystem
+
+| Metric | Target | Quality Gate |
+|--------|--------|-------------|
+| **Node interface compliance** | 100% | All nodes follow natural interface patterns |
+| **MCP transport coverage** | stdio, sse, uds, pipe | All major transport types supported |
+| **Documentation coverage** | 100% core features | Quick-start reproduces examples in <5 min |
+| **Error message quality** | ≥ 90% actionable | Clear next steps provided |
+| **CLI discoverable help** | 100% coverage | All commands and flags documented |
+
+### 9.5 Performance Benchmarks
+
+**System Limits (MVP):**
+- **Concurrent flows**: 10 simultaneous executions
+- **Registry size**: 100+ nodes discoverable efficiently
+- **Flow complexity**: 20 node flows without performance degradation
+- **Cache efficiency**: ≥ 95% metadata cache hit rate
+
+**User Experience Targets:**
+- **Time to first success**: <10 minutes from install to working flow
+- **Learning curve**: CLI patterns learnable through planner output
+- **Error recovery**: <3 retries average for planning failures
+
+### 9.6 Quality Gates
+
+**Pre-Release Requirements:**
+1. **All acceptance criteria met** with 7-day stability window
+2. **No critical security vulnerabilities** in MCP integration or node execution
+3. **Complete test coverage** for planning, validation, and execution pipelines
+4. **Documentation completeness** with working examples for all major features
+5. **Performance regression tests** passing consistently
+
+**Go/No-Go Criteria:**
+- Planning success rate below 90% → Block release for prompt engineering
+- Cache correctness issues → Block for trust model fixes
+- MCP integration failures → Block for security review
+- User journey breaks → Block for UX improvements
+
+---
+
+## 10 · Implementation Roadmap
+
+### 10.1 Development Phases
+
+```mermaid
+gantt
+    title pflow v0.1 Implementation Timeline
+    dateFormat  YYYY-MM-DD
+    section Foundation
+    pocketflow Integration    :done, foundation, 2024-01-01, 2024-01-15
+    Shared Store Pattern      :done, store, 2024-01-10, 2024-01-25
+    Node Registry System      :active, registry, 2024-01-20, 2024-02-05
+    
+    section Planning
+    Metadata Extraction       :planning, 2024-01-25, 2024-02-10
+    Dual-Mode Planner         :2024-02-05, 2024-02-25
+    Validation Framework      :2024-02-15, 2024-03-05
+    
+    section Runtime
+    Proxy Mapping System      :2024-02-20, 2024-03-10
+    Caching & Retry Logic     :2024-03-01, 2024-03-20
+    Performance Optimization  :2024-03-15, 2024-04-05
+    
+    section Integration
+    MCP Wrapper Generation    :2024-03-01, 2024-03-25
+    CLI Resolution Engine     :2024-03-10, 2024-04-01
+    Tracing & Observability   :2024-03-20, 2024-04-10
+```
+
+### 10.2 Phase 1: Foundation (Weeks 1-4)
+
+**pocketflow Integration & Shared Store**
+- Complete pocketflow framework assessment and minimal extensions
+- Implement shared store pattern with natural interface conventions
+- Build node registry system with metadata extraction
+- Create basic CLI parsing and flag resolution
+
+**Deliverables:**
+- Working shared store with proxy mapping capability
+- Node registry with version resolution
+- Basic CLI with "Type flags; engine decides" algorithm
+
+### 10.3 Phase 2: Planning Pipeline (Weeks 4-8)
+
+**Dual-Mode Planner Implementation**
+- Build metadata-driven node discovery system
+- Implement LLM integration for natural language planning
+- Create validation framework with retry logic
+- Develop CLI pipe syntax parsing and validation
+
+**Deliverables:**
+- Complete planning pipeline for both NL and CLI inputs
+- Validation framework with comprehensive error detection
+- JSON IR generation with full provenance
+
+### 10.4 Phase 3: Runtime & Performance (Weeks 8-12)
+
+**Execution Engine & Optimization**
+- Implement proxy mapping system for complex flows
+- Build caching system with purity-based eligibility
+- Create retry logic with exponential backoff
+- Develop comprehensive tracing and observability
+
+**Deliverables:**
+- Production-ready execution engine
+- Performance optimization with caching and retries
+- Complete observability and debugging tools
+
+### 10.5 Phase 4: MCP Integration (Weeks 10-14)
+
+**Unified Registry & Wrapper Generation**
+- Eliminate standalone MCP configuration
+- Implement automatic wrapper node generation
+- Create unified registry with MCP tool discovery
+- Build comprehensive MCP transport support
+
+**Deliverables:**
+- Complete MCP integration indistinguishable from manual nodes
+- Unified registry system with all node types
+- Security model for remote MCP tools
+
+### 10.6 Phase 5: Polish & Launch (Weeks 14-16)
+
+**User Experience & Documentation**
+- Complete CLI help system and error messages
+- Build comprehensive documentation and examples
+- Performance optimization and testing
+- User acceptance testing and feedback integration
+
+**Deliverables:**
+- Production-ready pflow CLI with complete documentation
+- Performance meeting all acceptance criteria
+- User journey validated through testing
+
+---
+
+## 11 · Risk Management & Mitigation
+
+### 11.1 Technical Risks
+
+**High Priority Risks:**
+
+| Risk | Impact | Probability | Mitigation Strategy |
+|------|--------|-------------|-------------------|
+| **Planning hallucinations** | High | Medium | Validation-first pipeline, user confirmation, retry budget |
+| **Cache poisoning** | High | Low | Strict purity validation, trust model, manual review |
+| **MCP security vulnerabilities** | High | Medium | Environment-only secrets, HTTPS requirement, allowlists |
+| **Performance degradation** | Medium | Medium | Early benchmarking, optimization focus, MVP limits |
+| **Registry corruption** | Medium | Low | Version pinning, lockfiles, registry validation |
+
+**Technical Mitigation Strategies:**
+
+**Planning Reliability:**
+- Comprehensive validation before execution prevents most hallucinations
+- User preview of generated CLI provides human oversight
+- Retry budget with structured feedback improves success rates
+- Retrieval-first strategy reduces generation dependency
+
+**Security Model:**
+- Environment variable-only credentials prevent secret leakage
+- Opt-in purity model prevents accidental side effect caching
+- User confirmation required for all flow execution
+- MCP tools marked impure by default
+
+**Performance Assurance:**
+- Early performance testing with realistic workloads
+- Cache effectiveness monitoring and optimization
+- Registry indexing for fast metadata access
+- Lazy loading to minimize startup overhead
+
+### 11.2 Product Risks
+
+**Market & Adoption Risks:**
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| **Ecosystem fragmentation** | Medium | Namespacing, strong registry UX, documentation standards |
+| **Learning curve too steep** | High | Progressive complexity, planner-generated CLI education |
+| **Node quality inconsistency** | Medium | Purity validation, manual review process, community guidelines |
+| **Competition from established tools** | Medium | Focus on unique value proposition, gradual migration paths |
+
+**User Experience Risks:**
+- **Complex natural interfaces**: Mitigated by intuitive key naming conventions
+- **CLI complexity**: Mitigated by single resolution rule and planner-generated examples
+- **Error message quality**: Comprehensive error taxonomy with actionable suggestions
+- **Documentation gaps**: User journey-driven documentation with working examples
+
+### 11.3 Operational Risks
+
+**Deployment & Maintenance:**
+
+| Risk | Mitigation |
+|------|------------|
+| **LLM service dependency** | Local model fallback, multiple provider support |
+| **Registry maintenance burden** | Automated validation, community contribution guidelines |
+| **Version compatibility issues** | Semantic versioning, lockfile discipline, migration tools |
+| **Support complexity** | Comprehensive tracing, self-diagnostic tools |
+
+**Scaling Considerations:**
+- **Registry growth**: Efficient indexing and search capabilities
+- **Planning latency**: Local LLM support, caching strategies
+- **Community management**: Clear contribution guidelines, automated testing
+
+### 11.4 Contingency Plans
+
+**Major Issue Response:**
+
+**Planning System Failure:**
+- Fallback to CLI-only mode while planning issues resolved
+- Manual flow library as interim solution
+- Community contribution of validated flows
+
+**Security Incident:**
+- Immediate disable of affected MCP transports
+- Security patch deployment with backward compatibility
+- User notification and remediation guidance
+
+**Performance Degradation:**
+- Feature flags to disable problematic optimizations
+- Graceful degradation to simpler execution modes
+- User-configurable performance vs. functionality trade-offs
+
+---
+
+## 12 · Conclusion
+
+pflow represents a **paradigm shift** in CLI automation by combining the best aspects of:
+
+- **Natural language planning** with **explicit execution**
+- **Simple node interfaces** with **complex flow routing**
+- **AI-assisted discovery** with **deterministic reproducibility**
+- **Lightweight framework** with **sophisticated orchestration**
+
+### 12.1 Key Innovations
+
+**The Shared Store + Proxy Pattern:**
+- Natural interfaces enable intuitive node development
+- Proxy mappings provide marketplace compatibility without complexity
+- Same nodes work in simple and complex flow contexts
+
+**Dual-Mode Planning Architecture:**
+- Natural language and CLI paths converge on identical execution semantics
+- Metadata-driven selection provides fast, accurate node discovery
+- Validation-first approach prevents execution errors
+
+**Framework vs. Pattern Innovation:**
+- 100-line pocketflow framework remains stable
+- Innovation happens in orchestration patterns and integrations
+- Complexity managed through clear architectural separation
+
+### 12.2 Competitive Advantages
+
+**vs. Chat-Only Agents (Claude Desktop):**
+- **Structured composition**: Reusable, versioned, auditable flows
+- **Reproducible execution**: Lockfiles enable reliable automation
+- **Performance optimization**: Caching and retry for expensive operations
+
+**vs. Heavyweight Orchestration (Airflow, LangChain):**
+- **Minimal complexity**: 100-line framework vs. massive abstractions
+- **Natural interfaces**: Intuitive shared store vs. complex bindings
+- **User-centric**: CLI-first with agent assistance vs. code-first
+
+**vs. Traditional CLI Tools:**
+- **Intelligent discovery**: LLM-assisted node selection and flow planning
+- **Natural language entry**: Conversational interface for exploration
+- **Ecosystem integration**: MCP tools as native components
+
+### 12.3 Success Metrics Alignment
+
+pflow v0.1 success will be measured by:
+
+**Technical Excellence:**
+- ≥95% planning success rate with reliable validation
+- ≤800ms planning latency enabling interactive usage
+- 0 critical validation misses ensuring execution safety
+
+**User Experience:**
+- ≥90% user approval of generated flows
+- <10 minute time-to-first-success for new users
+- Progressive complexity supporting exploration → production
+
+**Ecosystem Health:**
+- ≥95% MCP tool integration success
+- 100+ discoverable nodes in unified registry
+- Clear migration path from exploration to automation
+
+### 12.4 Long-Term Vision
+
+**pflow v0.1** establishes the foundation for:
+
+**Enterprise Adoption:**
+- Reliable automation pipelines with full audit trails
+- Performance optimization through intelligent caching
+- Security model supporting production environments
+
+**Ecosystem Growth:**
+- Marketplace for validated flows and nodes
+- Community-driven node development with quality standards
+- Integration with existing developer workflows
+
+**AI Integration Evolution:**
+- Advanced planning with constraint satisfaction
+- Automatic optimization based on execution patterns
+- Intelligent error recovery and flow adaptation
+
+**Core Philosophy Maintained:**
+- **Explicit over magic**: All behavior visible and configurable
+- **Pattern over framework**: Innovation in orchestration, not execution
+- **User agency**: Agent assistance enhances rather than replaces human control
+
+pflow delivers on the promise of **intelligent CLI automation** while preserving the transparency, reproducibility, and reliability that production systems demand.
+
+---
+
+*End of Master PRD* 
