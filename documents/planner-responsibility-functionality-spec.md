@@ -4,8 +4,12 @@
 
 ## 1 · Purpose
 
-The **planner** converts a *natural-language prompt* issued through the `pflow` CLI into a *validated, deterministic JSON IR* ready for compilation and execution.\
-Its primary goal is to give users an intuitive entry point **without sacrificing** pflow's guarantees of auditability, purity, caching, and reproducibility.
+The **planner** serves as the central validation and IR generation engine for pflow, handling **two distinct entry points**:
+
+1. **Natural Language Prompts** - Converts user intent into validated flows via LLM selection
+2. **CLI Pipe Syntax** - Validates and compiles manually written flows into complete IR
+
+Its primary goal is to ensure all flows (whether AI-generated or user-written) produce *validated, deterministic JSON IR* ready for execution **without sacrificing** pflow's guarantees of auditability, purity, caching, and reproducibility.
 
 The planner integrates seamlessly with the **shared store pattern**, generating flows that use natural node interfaces with optional proxy mappings for complex orchestration scenarios.
 
@@ -14,13 +18,14 @@ The planner integrates seamlessly with the **shared store pattern**, generating 
 ## 2 · Architectural Position
 
 ```plain
+    Natural Language Path:
              ┌─────────────┐
 Prompt  ───▶ │   CLI shim  │
              └────┬────────┘
                   │ NL string
                   ▼
              ┌─────────────┐
-             │   PLANNER   │  (pocketflow sub-DAG)
+             │   PLANNER   │  (LLM Selection + Validation)
              └────┬────────┘
                   │ JSON IR
                   ▼
@@ -35,11 +40,27 @@ Prompt  ───▶ │   CLI shim  │
              ┌─────────────┐
              │   RUNTIME   │  (Shared Store execution)
              └─────────────┘
+
+    CLI Pipe Syntax Path:
+             ┌─────────────┐
+CLI Pipe ──▶ │   CLI shim  │
+             └────┬────────┘
+                  │ Parsed syntax
+                  ▼
+             ┌─────────────┐
+             │   PLANNER   │  (Schema + Validation only)
+             └────┬────────┘
+                  │ JSON IR
+                  ▼
+             ┌─────────────┐
+             │   RUNTIME   │  (Direct execution)
+             └─────────────┘
 ```
 
 - The planner is implemented **as a normal pocketflow flow**—not hard-coded logic.
 - It generates **JSON IR** containing node graphs, action-based transitions, and shared store mappings.
-- The **compiler** converts IR to CLI syntax and executable flow code using the shared store pattern.
+- **Two entry points**: Natural language (full LLM selection) or CLI pipe syntax (validation only).
+- The **compiler** converts IR to CLI syntax (NL path) or validates existing syntax (CLI path).
 - The **runtime** executes flows using `NodeAwareSharedStore` proxy pattern when needed.
 
 ---
@@ -48,24 +69,91 @@ Prompt  ───▶ │   CLI shim  │
 
 The planner operates through a **validation-first approach**, performing linting and verification at every step to catch errors as early as possible.
 
+### 3.1 Natural Language Path (Full Planner)
+
 | Stage | Responsibility | Outcome | 
 |---|---|---|
-| **3\.1 Node/Flow Discovery** | Extract metadata JSON from available Python classes. | Registry of nodes/flows with natural language descriptions. | 
-| **3\.2 LLM Selection** | Use thinking model to choose nodes/flows from metadata context. | Selected building blocks (nodes and/or sub-flows). | 
-| **3\.3 Flow Structure Generation** | Create node graph with action-based transitions. | Structural IR with conditional flow control. | 
-| **3\.4 Structural Validation** | Lint node compatibility, action paths, reachability. | Pass → continue, Fail → retry or abort. | 
-| **3\.5 Shared Store Modeling** | Create shared store schema, generate mappings if needed. | Compatible shared store interface design. | 
-| **3\.6 Type/Interface Validation** | Validate shared store key compatibility between nodes. | Pass → continue, Fail → repair or retry. | 
-| **3\.7 IR Finalization** | Generate validated JSON IR with default params. | Complete, validated IR ready for compilation. | 
-| **3\.8 Compilation Handoff** | Pass IR to compiler for CLI syntax generation. | CLI pipe syntax for user preview. | 
-| **3\.9 User Verification** | Show compiled CLI pipe for user approval. | User-approved flow ready for execution. | 
-| **3\.10 Execution Handoff** | Save lockfile, hand off to shared store runtime. | Lockfile + runtime execution. | 
+| **A. Node/Flow Discovery** | Extract metadata JSON from available Python classes. | Registry of nodes/flows with natural language descriptions. | 
+| **B. LLM Selection** | Use thinking model to choose nodes/flows from metadata context. | Selected building blocks (nodes and/or sub-flows). | 
+| **C. Flow Structure Generation** | Create node graph with action-based transitions. | Structural IR with conditional flow control. | 
+| **D. Structural Validation** | Lint node compatibility, action paths, reachability. | Pass → continue, Fail → retry or abort. | 
+| **E. Shared Store Modeling** | Create shared store schema, generate mappings if needed. | Compatible shared store interface design. | 
+| **F. Type/Interface Validation** | Validate shared store key compatibility between nodes. | Pass → continue, Fail → repair or retry. | 
+| **G. IR Finalization** | Generate validated JSON IR with default params. | Complete, validated IR ready for compilation. | 
+| **H. Compilation Handoff** | Pass IR to compiler for CLI syntax generation. | CLI pipe syntax for user preview. | 
+| **I. User Verification** | Show compiled CLI pipe for user approval. | User-approved flow ready for execution. | 
+| **J. Execution Handoff** | Save lockfile, hand off to shared store runtime. | Lockfile + runtime execution. |
+
+### 3.2 CLI Pipe Syntax Path (Validation Planner)
+
+| Stage | Responsibility | Outcome | 
+|---|---|---|
+| **A. Syntax Parsing** | Parse CLI pipe syntax into basic node graph structure. | Node sequence + parameter extraction. | 
+| **B. Node Validation** | Verify all referenced nodes exist in registry. | Pass → continue, Fail → abort with suggestions. | 
+| **C. Structural Validation** | Lint action paths, reachability, parameter compatibility. | Pass → continue, Fail → abort with diagnostics. | 
+| **D. Shared Store Modeling** | Analyze node interfaces, create shared store schema. | Compatible shared store interface design. | 
+| **E. Mapping Generation** | Detect interface mismatches, generate mappings if needed. | Optional mappings for node compatibility. | 
+| **F. IR Finalization** | Generate validated JSON IR with CLI-specified params. | Complete, validated IR ready for execution. | 
+| **G. Execution Handoff** | Save lockfile, execute directly via shared store runtime. | Direct execution (no user verification needed). | 
 
 ---
 
-## 4 · Node/Flow Discovery & Metadata
+## 4 · Dual-Mode Operation
 
-### 4.1 Metadata Extraction
+### 4.1 Entry Point Detection
+
+The planner automatically detects the input type and routes to the appropriate processing path:
+
+```bash
+# Natural Language → Full Planner
+pflow "summarize this youtube video"
+
+# CLI Pipe Syntax → Validation Planner  
+pflow yt-transcript --url=X >> summarize-text --temperature=0.9
+```
+
+### 4.2 Shared Components
+
+Both paths utilize the same core planner infrastructure:
+
+| Component | Natural Language Path | CLI Pipe Path | Purpose |
+|---|---|---|---|
+| **Node Registry** | ✅ Used for LLM selection | ✅ Used for node validation | Metadata discovery |
+| **Shared Store Modeling** | ✅ Full schema generation | ✅ Interface analysis | Compatibility detection |
+| **Mapping Generation** | ✅ When LLM selects incompatible nodes | ✅ When CLI specifies incompatible nodes | Proxy pattern setup |
+| **Validation Framework** | ✅ Full validation suite | ✅ Structural/interface validation | Error prevention |
+| **IR Generation** | ✅ Complete JSON IR | ✅ Complete JSON IR | Execution preparation |
+
+### 4.3 Key Differences
+
+| Aspect | Natural Language Path | CLI Pipe Path |
+|---|---|---|
+| **User Input** | Free-form natural language | Structured CLI syntax |
+| **LLM Usage** | Required for node selection | Not used |
+| **User Verification** | Required (shows generated CLI) | Optional (direct execution) |
+| **Error Recovery** | LLM retry with feedback | Abort with suggestions |
+| **Compilation** | IR → CLI syntax → execution | CLI syntax → IR → execution |
+
+### 4.4 Implementation Architecture
+
+```python
+# Simplified planner entry point
+def plan_flow(user_input: str) -> JsonIR:
+    if is_natural_language(user_input):
+        return natural_language_planner(user_input)
+    elif is_cli_pipe_syntax(user_input):
+        return cli_validation_planner(user_input)
+    else:
+        raise InvalidInputError("Unknown input format")
+```
+
+**Critical Insight**: The CLI pipe path still requires the planner's validation and schema generation capabilities—it's not just deterministic compilation. Interface mismatches, mapping requirements, and shared store schema generation are essential regardless of entry point.
+
+---
+
+## 5 · Node/Flow Discovery & Metadata
+
+### 5.1 Metadata Extraction
 
 The planner discovers available building blocks by extracting metadata from Python class docstrings and annotations:
 
@@ -81,7 +169,7 @@ class YTTranscript(Node):
     """
 ```
 
-### 4.2 Node Metadata Schema
+### 5.2 Node Metadata Schema
 
 ```json
 {
@@ -96,7 +184,7 @@ class YTTranscript(Node):
 }
 ```
 
-### 4.3 Flow Metadata Schema
+### 5.3 Flow Metadata Schema
 
 ```json
 {
@@ -110,7 +198,7 @@ class YTTranscript(Node):
 }
 ```
 
-### 4.4 Registry Management
+### 5.4 Registry Management
 
 - **Discovery**: Automatic scanning of Python modules for `pocketflow.Node` subclasses
 - **Caching**: Metadata cached for performance, invalidated on code changes
@@ -119,9 +207,9 @@ class YTTranscript(Node):
 
 ---
 
-## 5 · LLM Selection Process
+## 6 · LLM Selection Process
 
-### 5.1 Thinking Model Approach
+### 6.1 Thinking Model Approach
 
 The planner uses a **thinking model** (e.g., o1-preview) to reason about node/flow selection:
 
@@ -130,7 +218,7 @@ The planner uses a **thinking model** (e.g., o1-preview) to reason about node/fl
 3. **Selection Strategy**: Choose between exact flow match, sub-flow reuse, or new composition
 4. **Reasoning**: LLM provides structured reasoning for choices
 
-### 5.2 Selection Criteria
+### 6.2 Selection Criteria
 
 | Priority | Strategy | Example |
 |---|---|---|
@@ -138,7 +226,7 @@ The planner uses a **thinking model** (e.g., o1-preview) to reason about node/fl
 | **Sub-flow Reuse** | Existing flow used as component | "transcribe and translate" → `yt-transcript` + new translation |
 | **New Composition** | Combine individual nodes | "analyze sentiment" → `extract-text` + `sentiment-analysis` |
 
-### 5.3 LLM Response Format
+### 6.3 LLM Response Format
 
 ```json
 {
@@ -149,7 +237,7 @@ The planner uses a **thinking model** (e.g., o1-preview) to reason about node/fl
 }
 ```
 
-### 5.4 Fallback Strategies
+### 6.4 Fallback Strategies
 
 - **Unknown Nodes**: Suggest closest semantic matches, request clarification
 - **Ambiguous Intent**: Present ranked options for user selection
@@ -157,9 +245,9 @@ The planner uses a **thinking model** (e.g., o1-preview) to reason about node/fl
 
 ---
 
-## 6 · Flow Structure Generation
+## 7 · Flow Structure Generation
 
-### 6.1 Action-Based Transition Syntax
+### 7.1 Action-Based Transition Syntax
 
 The planner generates flows using action-based transitions for conditional flow control:
 
@@ -180,7 +268,7 @@ processor - "continue" >> validator
 processor - "done" >> finalizer
 ```
 
-### 6.2 IR Representation
+### 7.2 IR Representation
 
 ```json
 {
@@ -201,7 +289,7 @@ processor - "done" >> finalizer
 
 *Note: Default actions omit the `"action"` field for cleaner IR.*
 
-### 6.3 Flow Graph Validation
+### 7.3 Flow Graph Validation
 
 - **Reachability**: All nodes reachable from start
 - **Completeness**: All declared actions have defined transitions
@@ -210,9 +298,9 @@ processor - "done" >> finalizer
 
 ---
 
-## 7 · Validation Framework
+## 8 · Validation Framework
 
-### 7.1 Validation-First Principle
+### 8.1 Validation-First Principle
 
 **"Early and often"** - validation occurs at every planner stage to catch errors immediately:
 
