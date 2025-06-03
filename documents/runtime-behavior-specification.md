@@ -2,9 +2,11 @@
 
 This document defines how pflow handles node execution safety, performance optimization, and error recovery through its caching, retry, and side-effect management systems.
 
+> **Note**: This document focuses on runtime behavior specifics. For architectural context, see [Shared Store + Proxy Design Pattern](./shared-store-node-proxy-architecture.md) and [CLI Runtime Specification](./shared-store-cli-runtime-specification.md).
+
 ## Side-Effect Declaration and Node Safety
 
-pflow does not require or implement a full side-effect declaration schema in its MVP. Instead, we invert the responsibility: side effects are assumed by default. The system distinguishes safe from unsafe behavior through explicit opt-in purity markers.
+pflow uses an **opt-in purity model** rather than comprehensive side-effect enumeration. This approach aligns with pflow's curated node ecosystem and user-confirmed execution model.
 
 ### Core Principle
 
@@ -18,143 +20,114 @@ pflow does not require or implement a full side-effect declaration schema in its
 
 - **Pure (`@flow_safe`) nodes**:
    - Are deterministic and idempotent
-   - Have no observable side effects outside the flow
-   - Only touch `shared` keys via declared `params`
+   - Have no observable side effects outside the shared store
+   - Access shared store via natural interfaces (`shared["text"]`, `shared["url"]`)
    - Are safe to retry, cache, and use in agent-generated flows
    - Must pass validation before being accepted as `flow_safe`
-
-- **No side-effect enumeration**\
-   Nodes do not declare `scope`, `target`, or `mode` of mutations. pflow does not attempt to predict or map real-world effects.
 
 ### Safety Enforcement
 
 - All retryable nodes must be `@flow_safe`
 - All cacheable nodes must be `@flow_safe`
+- Nodes inherit from `pocketflow.Node` and use standard `prep()`/`exec()`/`post()` pattern
 
 ### Design Rationale
 
-This approach is acceptable because:
+This approach works because:
 
-1. **pflow only allows curated nodes** (e.g., MCP wrappers), and they are by nature:
-   - Externalized
-   - Inspectable
-   - Known to the user before execution
+1. **pflow only allows curated nodes** — nodes are externalized, inspectable, and known to users
+2. **Every flow is confirmed by the user pre-run** — no hidden effects or implicit execution
+3. **Framework integration** — leverages pocketflow's existing safety patterns
 
-2. **Every flow is confirmed by the user pre-run**\
-   No hidden effects, no agent autonomy, no implicit execution.
-
-### Future Expansion Plan
-
-When:
-- Retry logic becomes default
-- Agent-generated flows are reused across users
-- Audit or policy enforcement is required
-- Flows are composed from untrusted sources
-
-Then:
-- A side-effect declaration schema may be introduced
-- It will model external effects with `scope`, `target`, `mode`
-- This will enable dry-run, plan, rollback, and consent layers
-
-Until then:
-> `@flow_safe` is the contract. Everything else is opaque by design.
-
-## Caching Strategy (MVP)
+## Caching Strategy
 
 ### Purpose
 
-Provide an **opt-in**, **node-level** caching mechanism for pure nodes, preserving correctness and modularity while enabling performance gains on expensive, deterministic operations.
+Provide **opt-in**, **node-level** caching for pure nodes, preserving correctness while enabling performance gains on expensive, deterministic operations.
+
+### Eligibility Requirements
+
+All conditions must be met for caching:
+
+1. Node marked with `@flow_safe` decorator
+2. Flow origin trust level ≠ `mixed` (per planner trust model)
+3. Node version matches cache entry
+4. Effective params match cache entry
+5. Input data hash matches cache entry
+
+### Cache Key Computation
+
+Cache key: `node_hash ⊕ effective_params ⊕ input_data_sha256`
+
+Where:
+- `node_hash`: Node type + version
+- `effective_params`: Runtime params from `self.params`
+- `input_data_sha256`: Hash of values from referenced shared store keys
 
 ### Mechanism
 
-- Nodes must be decorated with `@flow_safe` decorator to be eligible for caching.
-
-- On execution, `pflow` computes a fingerprint hash using:
-   - Node type (class name)
-   - The full `params` object (as declared in IR)
-   - Values at referenced `shared` input keys (as specified in `params`)
-   - Matching node version (`namespace/name@version`)
-
-- If a matching cache entry exists, `exec()` is skipped and both `output` and `shared` mutations are restored from cache.
-
-`@flow_safe` marks a node as deterministic, side-effect-free, and fully parameterized via declared shared keys—making it eligible for caching, retries, and safe reuse within any flow context.
-
-### Requirements
-
-- Cacheable nodes must access shared memory only via keys declared in `params`.
-- Caching is limited to pure nodes with no side effects.
-
-### CLI Interface
-
-- `--use-cache`: Enable cache lookup for cacheable nodes (default: off)
-- `--reset-cache`: Clear relevant cache entries
+- On cache hit: Skip `exec()`, restore both output and shared store mutations
+- On cache miss: Execute normally, store results for future use
+- Cache validation occurs during planner validation phase
 
 ### Storage
 
-- MVP uses local filesystem: `~/.pflow/cache/<hash>.json`
+MVP uses local filesystem: `~/.pflow/cache/<hash>.json`
 
 ## Failure and Retry Semantics
 
 ### Core Failure Behavior
 
-- All flows fail fast. If any node fails, the flow aborts.
-
-- The trace is always written, including:
-   - Node where the failure occurred.
-   - Exception or error message.
-   - Value of `params` and inputs at time of failure.
-   - Partial state of `shared` up to failure.
+- All flows fail fast — any node failure aborts the flow
+- Complete trace always written including failure context, params, and partial shared store state
+- Integration with pocketflow's existing retry mechanism via `max_retries` parameter
 
 ### Retry Configuration
 
-- No retries unless explicitly enabled on the node via a `retries` argument (integer ≥ 0). Default is 0.
-- Retried nodes use same inputs and params; no dynamic backoff or jitter in MVP.
-- Retried failures are logged with full history: attempt count, time, outcome.
-- If a node fails after all retries, flow halts with status `FAILED`. No downstream nodes are run.
-- `pflow trace` includes a failure marker and retry timeline if applicable.
-- Retries are only applicable for nodes marked with `@flow_safe` decorator.
-
-### Retry Architecture
-
-No internal retry logic inside nodes. Retry is flow-driven and node-declared only. No global retry flags in MVP.
-
-Retry must be explicit, deterministic, and localized to the flow executor. It is not part of the data model, not part of the node interface, and not allowed to mutate global state without declaration. Retry scaffolding must be compatible with future checkpointing, flow resumption, and distributed execution.
-
-### CLI Syntax and Internal Representation
-
-**From the CLI, users can specify retries like this:**
-
-```
-pflow fetch_url --url X --retries 3 >> summarize
+**Built-in pocketflow Integration**:
+```python
+class Node(BaseNode):
+    def __init__(self, max_retries=1, wait=0):
+        # Standard pocketflow retry support
 ```
 
-This is correct **at the syntax level**, and should remain supported.
-
-However, **retries are not node parameters**. Even though they appear alongside `--url`, they must be treated differently internally.
-
-- `--url` → part of the node's `params`; used inside `exec()`.
-- `--retries` → **execution directive** to the flow engine; controls how many times to wrap and retry the node on failure.
-
-Internally, `pflow` must separate these in the flow IR:
-
-```json
-{
-  "type": "FetchURL",
-  "params": { "url": "X" },
-  "exec": { "retries": 3 }
-}
+**CLI Configuration**:
+```bash
+# Retries treated as node params (aligned with CLI runtime spec)
+pflow fetch_url --url=X --max_retries=3 >> summarize
 ```
 
-Not:
+**Requirements**:
+- Only `@flow_safe` nodes can be retried
+- Same inputs and params used for all retry attempts
+- Full retry history logged in trace
+- No global retry flags — node-specific configuration only
 
-```json
-{
-  "type": "FetchURL",
-  "params": { "url": "X", "retries": 3 }
-}
-```
+### Retry Integration
 
-This preserves modularity, testability, and flow-wide introspection.
+Retries leverage pocketflow's existing `max_retries` mechanism:
+- Configured via standard `set_params()` method
+- Integrated with `prep()`/`exec()`/`post()` execution pattern
+- Compatible with NodeAwareSharedStore proxy when mappings defined
 
-**Conclusion:**\
-Retries should be configurable via CLI, but architecturally treated as **flow-level metadata**, not node configuration. Syntax unification is fine; semantic separation is required. 
+### Error Recovery
+
+- Retried failures logged with attempt count, timing, and outcome
+- After retry exhaustion: flow halts with `FAILED` status
+- No downstream nodes executed after failure
+- `pflow trace` includes failure markers and retry timeline
+
+## Integration Notes
+
+### Framework Compatibility
+
+- All runtime behaviors work within pocketflow's execution model
+- Caching and retry respect proxy mappings when defined in IR
+- Trust model validation occurs during planner phase
+- CLI parameter resolution follows established data injection vs params override pattern
+
+### Future Expansion
+
+When retry logic becomes default or flows are shared across users, a comprehensive side-effect declaration schema may be introduced with `scope`, `target`, and `mode` modeling for external effects.
+
+Until then: **`@flow_safe` is the contract. Everything else is opaque by design.** 
