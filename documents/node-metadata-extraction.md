@@ -610,7 +610,6 @@ def registry_install_with_metadata_extraction(node_file: str, namespace: str = N
 # pflow/cli/registry.py
 import click
 import json
-import yaml
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -624,17 +623,12 @@ def registry():
 
 @registry.command()
 @click.argument('python_file', type=click.Path(exists=True))
-@click.option('--format', type=click.Choice(['json', 'yaml']), default='json')
 @click.option('--output', '-o', type=click.Path(), help='Output file')
 def extract_metadata(python_file, format, output):
     """Extract metadata from Python node file."""
     extractor = PflowMetadataExtractor()
     metadata = extractor.extract_from_file(python_file)
-    
-    if format == 'json':
-        content = json.dumps(metadata, indent=2)
-    else:
-        content = yaml.dump(metadata, default_flow_style=False)
+    content = json.dumps(metadata, indent=2)
     
     if output:
         Path(output).write_text(content)
@@ -1123,14 +1117,6 @@ def validate_node_compatibility(selected_nodes: List[str]) -> List[str]:
 pip install docstring-parser>=0.15    # Standard docstring parsing
 pip install rich>=13.0                # CLI formatting  
 pip install click>=8.0                # CLI framework
-```
-
-### Optional Enhancements
-
-```bash
-pip install ast-decompiler            # Enhanced code analysis
-pip install pyflakes                  # Static analysis integration
-pip install black                     # Code formatting validation
 ```
 
 ---
