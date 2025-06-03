@@ -194,7 +194,7 @@ pflow yt-transcript --url=X >> summarize-text@2
 pflow "summarize this youtube video"
 ```
 
-**Resolution through Planner**: All CLI pipes are validated through planner's dual-mode operation, ensuring version compatibility and interface validation.
+**Resolution through Planner**: All CLI pipes are validated through planner's dual-mode operation, ensuring version compatibility and interface validation. Users can override version selection via `@version` syntax, but for major version changes the planner might need to validate compatibility and generate appropriate proxy mappings and make updates to the flow.
 
 ---
 
