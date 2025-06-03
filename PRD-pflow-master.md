@@ -147,6 +147,44 @@ class YTTranscript(Node):
 - **Shared Store**: Primary data flow (heap-like shared memory)
 - **Params**: Node configuration and batch identifiers (stack-like per-node)
 
+### 2.2.1 Visualizing Shared Store Data Flow
+
+The following diagram illustrates how data flows through the shared store during pflow execution, showcasing both direct access and proxied access for nodes, alongside node-specific parameters.
+
+```mermaid
+graph LR
+    subgraph "pflow Runtime Execution Example"
+        direction LR
+        UserInput["User Input (CLI Flags/Pipe)"] --> SharedStore_Init["Shared Store (Initial)"]
+        
+        subgraph NodeA ["Node A Execution (Direct Access)"]
+            direction TB
+            NodeAParams["Node A.params<br>(node-specific config)"]
+            SharedStore_Init -->|reads via natural interface| A_prep["A.prep()"]
+            A_prep --> A_exec["A.exec()"]
+            A_exec --> A_post["A.post()"]
+            A_post -->|writes via natural interface| SharedStore_Mid["Shared Store (After Node A)"]
+        end
+        SharedStore_Init -.-> NodeAParams
+
+
+        subgraph NodeB ["Node B Execution (via Proxy for Mapped Keys)"]
+            direction TB
+            NodeBParams["Node B.params<br>(node-specific config)"]
+            SharedStore_Mid --> Proxy["NodeAwareSharedStore Proxy<br>(Translates 'flow_key' to 'nodeB_natural_key')"]
+            Proxy --> |reads 'nodeB_natural_key'| B_prep["B.prep()"]
+            B_prep --> B_exec["B.exec()"]
+            B_exec --> B_post["B.post()"]
+            B_post --> |writes 'nodeB_natural_key'| Proxy
+            Proxy -.-> SharedStore_Final["Shared Store (After Node B)"]
+        end
+        SharedStore_Mid -.-> NodeBParams
+    end
+
+    style Proxy fill:#f3e5f5,stroke:#333,stroke-width:2px
+```
+*Caption*: Illustrative data flow showing direct shared store access (Node A) and proxied access (Node B) for key mapping, with node-specific params.
+
 ### 2.3 Natural Interfaces
 
 Nodes use **intuitive key names** that match human expectations:
@@ -489,6 +527,14 @@ Every planned flow includes **complete provenance**:
 - **Debugging**: Trace failures back to planning decisions
 - **Performance**: Monitor planning success rates and latency
 - **Evolution**: Track how prompts map to flows over time
+
+**Key Takeaways for Product Managers & Architects:**
+
+*   Dual-mode planning (NL and CLI) ensures pflow caters to both novice users seeking ease-of-use and power-users demanding explicit control, all while benefiting from the same robust validation pipeline.
+*   Rich, structured node metadata is the cornerstone of effective Natural Language planning; its quality and comprehensiveness directly impact the planner's ability to discover and correctly utilize nodes.
+*   The retrieval-first strategy for planning is a key differentiator that enhances stability, performance, and predictability over time by prioritizing proven, validated flows over LLM regeneration.
+*   Comprehensive validation at each stage of the planning pipeline is critical for de-risking AI-generated flows and ensuring that all executed flows (regardless of origin) are sound, safe, and efficient.
+*   Detailed provenance and auditability of the planning process itself are essential for debugging, continuous improvement of planning prompts/logic, and building trust in the system.
 
 --- 
 
@@ -879,6 +925,14 @@ Validated IR generates **lockfiles** for deterministic execution:
 - **CI/CD integration**: Reliable automation pipelines
 - **Audit trails**: Complete execution provenance
 
+**Key Takeaways for Product Managers & Architects:**
+
+*   The standardized JSON IR is fundamental for **interoperability and tooling**; it allows pflow to integrate with future GUI builders, visualizers, linters, and analytical tools, creating a richer ecosystem.
+*   **Reproducibility and reliability** in automated systems (like CI/CD) are directly enabled by versioned IR schemas and deterministic lockfiles, which are core to pflow's value proposition.
+*   JSON IR acts as a **stable contract** between the planning, validation, and execution phases of pflow. This decoupling simplifies system evolution, as components can be upgraded independently as long as they adhere to the IR schema.
+*   The structured nature of the IR, including detailed metadata and versioning, is crucial for **debugging, auditability, and governance**, allowing teams to understand flow history and manage changes effectively.
+*   Clear schema governance and validation rules for the IR are essential for maintaining system integrity and ensuring that all flows, whether human-authored or AI-generated, are **structurally sound and executable**.
+
 ---
 
 ## 6 · Runtime Behavior & Performance
@@ -1070,7 +1124,15 @@ pflow trace run_2024-01-01_abc123 --shared-store
 pflow trace run_2024-01-01_abc123 --cache-stats
 ```
 
---- 
+**Key Takeaways for Product Managers & Architects:**
+
+*   The **opt-in `@flow_safe` purity model** is a critical design choice that balances developer simplicity (impure by default) with the system's need for performance and reliability (explicit purity for caching/retries). Clear guidelines and validation for `@flow_safe` are essential for node developers.
+*   **Intelligent caching** significantly enhances user experience for flows with expensive, deterministic operations. This feature reinforces the value of creating and using pure, `@flow_safe` nodes.
+*   **Configurable retries** for pure nodes improve flow resilience against transient issues, which is crucial for building robust automation for critical tasks. This reduces manual intervention and increases trust in automated processes.
+*   The **fail-fast default** combined with comprehensive tracing provides a clear and debuggable system, even when complex error recovery patterns (like action-based handling) are employed.
+*   The **trust model** for flow origins is a key security and stability feature, ensuring that user-modified or untrusted flows do not compromise cache integrity or bypass necessary validations.
+
+---
 
 ## 7 · MCP Integration & Unified Registry
 
@@ -1270,6 +1332,14 @@ pflow registry refresh --mcp-server github
 # Validate MCP connections
 pflow registry test-mcp-connections
 ```
+
+**Key Takeaways for Product Managers & Architects:**
+
+*   The **unified registry** makes MCP tools first-class citizens within the pflow ecosystem, dramatically expanding pflow's out-of-the-box capabilities without requiring users to manage separate configurations or learn different integration patterns.
+*   **Natural interface mapping** for MCP tools is a significant UX win, as it allows users and planners to interact with external MCP services using the same intuitive shared store semantics as native pflow nodes, lowering the barrier to entry for using these powerful tools.
+*   Extending pflow's **action-based error handling** to MCP tools provides a consistent and robust mechanism for building resilient flows that can gracefully manage failures and conditional logic, regardless of whether the underlying node is native or an MCP wrapper.
+*   Seamless integration with the **planner** means that users can benefit from LLM-assisted discovery and composition of flows that incorporate MCP tools, making sophisticated, multi-service automations more accessible.
+*   The standardized approach to **security and transport** for MCP integration ensures that pflow can connect to a variety of external services while maintaining a consistent security posture and allowing administrators to manage egress and authentication.
 
 ---
 
@@ -1835,4 +1905,34 @@ pflow delivers on the promise of **intelligent CLI automation** while preserving
 
 ---
 
-*End of Master PRD* 
+## Appendix A: Glossary of Key Terms
+
+*   **`Action-Based Transitions`**: The mechanism for conditional flow control in pflow. Nodes can return string "actions" from their `post()` method, and these actions are used in the flow definition (e.g., `node_a - "error_condition" >> error_handler_node`) to direct execution to different subsequent nodes based on the outcome of the current node. This allows for explicit, non-exceptional branching and error handling paths.
+
+*   **`@flow_safe`**: A Python decorator applied to a `pocketflow.Node` subclass. It signifies that the node is pure, meaning it is deterministic (same inputs always produce same outputs) and idempotent (multiple identical calls have the same effect as one), and has no observable side effects outside of mutations to the `shared` store. Nodes marked `@flow_safe` are eligible for performance optimizations like caching and automated retries on failure.
+
+*   **`JSON IR (Intermediate Representation)`**: The structured JSON format that serves as the canonical definition of an executable pflow. It includes the list of nodes, their parameters, execution configurations (like retries and caching flags), the edges defining connections and action-based transitions between nodes, and any proxy mappings. The planner generates this IR, and the runtime executes it. It is designed to be machine-readable, versioned, and auditable.
+
+*   **`Lockfile`**: A file, typically named `flow.lock.json`, generated by pflow after a flow has been successfully planned and validated. It contains a hash of the validated JSON IR and explicitly pins the versions of all nodes used in the flow. This ensures deterministic and reproducible execution of the flow across different environments and times by preventing unexpected changes due to node updates or planner variations.
+
+*   **`MCP Wrapper Node`**: An automatically generated `pocketflow.Node` subclass that exposes an external tool (compatible with the Model Context Protocol) as a native pflow node. These wrappers translate the MCP tool's interface into pflow's natural interface and shared store conventions, allowing MCP tools to be seamlessly integrated into pflow flows, discovered by the planner, and orchestrated like any other node.
+
+*   **`Metadata-Driven Selection`**: The process by which the pflow planner selects appropriate nodes for a task. Instead of inspecting node source code, the planner relies on structured JSON metadata extracted from node docstrings (or provided by MCP tool manifests for wrapper nodes). This metadata describes the node's purpose, inputs, outputs, parameters, and actions, enabling fast and efficient discovery and compatibility checking.
+
+*   **`Natural Interface`**: The pflow convention for node communication, where nodes read inputs from and write outputs to the `shared` store using intuitive, human-readable key names (e.g., `shared["url"]` for a URL input, `shared["summary"]` for a summary output). This simplifies node development, as authors don't need to deal with complex data binding configurations within the node code itself.
+
+*   **`NodeAwareSharedStore (Proxy)`**: An optional mapping layer that sits between a node and the `shared` store. When a flow's IR defines input or output mappings for a node (e.g., to adapt to a different shared store schema for marketplace compatibility), this proxy transparently translates the keys. The node's code continues to use its declared natural interface keys, while the proxy ensures data is read from and written to the correct keys in the actual `shared` store as defined by the flow-level mappings.
+
+*   **`Params`**: Node-specific configuration values (e.g., `temperature` for an LLM node, `max_tokens`, `file_path`) that are passed to the node during its initialization via `self.params`. These are distinct from the primary data that flows through the `shared` store and are typically used to control the behavior or operational aspects of a node rather than being its main input/output data.
+
+*   **`Planner (Dual-Mode)`**: The core pflow component responsible for converting user intent into executable JSON IR. It operates in two modes: 1) The Natural Language Path, which uses an LLM and metadata-driven selection to generate a flow from a user prompt, and 2) The CLI Pipe Path, which parses a user-provided CLI command string, validates it, and compiles it into IR. Both paths utilize the same underlying validation and IR generation logic.
+
+*   **`pocketflow Framework`**: The underlying lightweight (approximately 100 lines of Python code) execution engine that pflow is built upon. It provides the `Node` base class, the `prep()`, `exec()`, `post()` execution lifecycle for nodes, the `>>` and `- "action" >>` operators for flow orchestration, and the basic mechanisms for handling the `shared` store and `params`.
+
+*   **`Shared Store`**: A flow-scoped, in-memory Python dictionary that serves as the primary mechanism for data communication between nodes in a pflow. Nodes read their main inputs from keys in the `shared` store (as defined by their natural interface) during their `prep()` phase and write their main outputs back to keys in the `shared` store during their `post()` phase.
+
+*   **`Unified Registry`**: The central system in pflow for discovering, managing, and versioning all available nodes. This includes manually written Python nodes and automatically generated MCP Wrapper Nodes. The planner queries this registry to find nodes based on metadata, and the runtime uses it to resolve and load specific node versions for execution.
+
+---
+
+*End of PRD*
