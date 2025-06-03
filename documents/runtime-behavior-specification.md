@@ -91,9 +91,18 @@ class Node(BaseNode):
         # Standard pocketflow retry support
 ```
 
+**IR Structure**:
+```json
+{
+  "id": "fetch-url",
+  "params": {"url": "X"},
+  "execution": {"max_retries": 3, "wait": 1.0}
+}
+```
+
 **CLI Configuration**:
 ```bash
-# Retries treated as node params (aligned with CLI runtime spec)
+# Execution config categorized during CLI resolution
 pflow fetch_url --url=X --max_retries=3 >> summarize
 ```
 
@@ -106,7 +115,7 @@ pflow fetch_url --url=X --max_retries=3 >> summarize
 ### Retry Integration
 
 Retries leverage pocketflow's existing `max_retries` mechanism:
-- Configured via standard `set_params()` method
+- Configured via node constructor from IR `execution` field
 - Integrated with `prep()`/`exec()`/`post()` execution pattern
 - Compatible with NodeAwareSharedStore proxy when mappings defined
 

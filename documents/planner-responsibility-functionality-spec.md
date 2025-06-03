@@ -478,7 +478,8 @@ elif user_intent == "technical_summary":
     {
       "id": "yt-transcript",
       "version": "1.0.0",
-      "params": {"language": "en"}
+      "params": {"language": "en"},
+      "execution": {"max_retries": 2, "wait": 1.0}
     },
     {
       "id": "summarize-text", 
@@ -588,7 +589,8 @@ class GeneratedFlow(Flow):
         self.setup_transitions(ir["edges"])
         
     def create_node(self, node_spec):
-        node = NodeRegistry.get(node_spec["id"])
+        execution_config = node_spec.get("execution", {})
+        node = NodeRegistry.get(node_spec["id"], **execution_config)
         node.set_params(node_spec["params"])
         return node
 ```

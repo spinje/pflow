@@ -142,7 +142,8 @@ The node uses natural interface names while the proxy handles any necessary tran
     {
       "id": "yt-transcript",
       "version": "1.0.0",
-      "params": { "language": "en" }
+      "params": { "language": "en" },
+      "execution": { "max_retries": 3, "wait": 1.0 }
     },
     {
       "id": "summarise-text",
@@ -183,11 +184,13 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 
 3. For CLI flags marked as params: update node params (flat structure)
 
-4. Generate flow code that:
+4. For CLI flags marked as execution config: update node execution settings
+
+5. Generate flow code that:
    - Creates proxy if IR defines mappings for node
    - Uses direct access if no mappings defined
 
-5. Execute flow with appropriate access pattern per node
+6. Execute flow with appropriate access pattern per node
 
 ---
 
