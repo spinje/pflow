@@ -1,258 +1,772 @@
 # MCP Server Integration and Security Model
 
-## 1 Scope
+## 1 · Scope
 
-A practical, end‑to‑end spec for integrating **Model Context Protocol** servers into pflow. Covers:
+A comprehensive specification for integrating **Model Context Protocol** servers into pflow as native wrapper nodes that follow the shared store + proxy pattern. This integration ensures MCP tools are indistinguishable from manually-written pflow nodes in terms of interface, behavior, and orchestration capabilities.
 
-- Transport discovery and connection for all spec‑compliant modes (`stdio`, `uds`, `pipe`, `sse`, `stream-http`).
+**Key Integration Points**:
 
-- Installation, autostart, registry persistence.
+- Natural shared store interfaces using intuitive key names
+- Full participation in JSON IR generation and flow orchestration  
+- Action-based error handling with conditional flow control
+- Unified registry system with planner-discoverable metadata
+- CLI resolution following "Type flags; engine decides" principle
+- Optional proxy mapping support for complex routing scenarios
 
-- Wrapper‑node generation and version pinning.
-
-- Authentication, scope validation, egress control.
-
-- Failure semantics, retries, caching constraints.
-
-- Examples that mirror Cursor’s documentation patterns.
+> **For architectural context**, see [Shared Store + Proxy Design Pattern](./shared-store-node-proxy-architecture.md) and [Planner Responsibility & Functionality Spec](./planner-responsibility-functionality-spec.md)
 
 ---
 
-## 2 Terminology
+## 2 · Terminology
 
-| Term | Meaning | 
+| Term | Meaning |
 |---|---|
-| **Registrar** | pflow subsystem managing installation metadata and local server lifecycles. | 
-| **Process Manager** | Part of Registrar that launches/monitors `stdio` servers. | 
-| **Registry** | JSON file `~/.pflow/mcp.json` (or project‑local `.pflow/mcp.json`) enumerating all known servers. | 
-| **Wrapper Node** | Python class auto‑generated from `/tools/list`; hard‑pins server ID, tool name, tool version, manifest hash. | 
-| **Executor** | Runtime logic inside each wrapper node that submits a tool call using the correct transport handler. | 
+| **MCP Wrapper Node** | Auto-generated pflow Node subclass that exposes MCP tool via natural shared store interface |
+| **MCP Configuration** | Server connection metadata integrated into pflow's unified registry system |
+| **MCP Executor** | Internal component handling MCP protocol communication (hidden from node interface) |
+| **Natural Interface Mapping** | Translation layer between MCP tool schemas and pflow's intuitive key conventions |
+| **Generated Node Metadata** | pflow-compatible docstring and interface specification extracted from MCP tool manifest |
 
 ---
 
-## 3 Supported Transports
+## 3 · pocketflow Framework Integration
 
-| `transport` | Typical use | Connection method | Autostart possible | Notes | 
-|---|---|---|---|---|
-| `stdio` | Local dev, high‑trust tools | Subprocess on stdin/stdout | Yes | Cursor default; OS prompt on first run (Windows/macOS). | 
-| `uds` | Linux containers | `aiohttp.UnixConnector` | Yes | Path supplied in registry. | 
-| `pipe` | Windows named‑pipes | `pywin32` client | Yes | Path `\\.\pipe\mcp‑<name>`. | 
-| `sse` | Remote or local HTTP EventStream (`/sse`) | `httpx` stream POST | No | Requires BYO deployment; real‑time chunked events. | 
-| `stream-http` | Emerging spec: single POST returning chunked JSON | `httpx` | No | Backward‑compatible with SSE wrappers—detect via header. | 
+MCP wrapper nodes leverage the lightweight **pocketflow framework** (100 lines of Python) without modifications:
 
----
-
-## 4 Registry (`mcp.json`)
-
-```json
-{
-  "servers": {
-    "local-fs": {
-      "transport": "stdio",
-      "command": "mcp-fs",
-      "args": [],
-      "env": {},
-      "autostart": true,
-      "version": "0.3.0"
-    },
-    "weather-remote": {
-      "transport": "sse",
-      "url": "https://api.weathercorp.com/sse",
-      "token_env": "PFLOW_WEATHER_TOKEN",
-      "version": "1.2.4"
-    }
-  }
-}
-
-```
-
-- FS path precedence: project `.pflow/mcp.json` → user `~/.pflow/mcp.json` → system.
-
-- Edits via CLI only (`pflow mcp add`, `pflow mcp edit`). Manual edits warned but not blocked.
-
----
-
-## 5 Registrar Commands
-
-| Command | Effect | 
-|---|---|
-| `pflow mcp add --transport sse --url https://… --name weather --token-env PFLOW_WEATHER_TOKEN` | Append entry, fetch manifest, generate wrappers. | 
-| `pflow mcp launch <name>` | For `stdio/uds/pipe` entries: spawn process, record PID, health‑probe `/server/info`. | 
-| `pflow mcp daemon` | On start, iterate registry, autostart flagged servers, restart on death. | 
-| `pflow mcp list` | Show status: online/offline, version drift, tool count. | 
-
----
-
-## 6 Wrapper Generation Algorithm
-
-1. Resolve server entry.
-
-2. Connect via chosen transport.
-
-3. Call `/tools/list`; obtain `tool`, `inputSchema`, `outputSchema`, `version`, `scopes`.
-
-4. For each tool produce:
-
-```json
-class Mcp_<tool>(Node):
-    server_id   = "weather-remote"
-    tool_name   = "get_weather"
-    tool_version = "1.2.4"
-    manifest_sha = "5c0…"
-    side_effects = ["network"]  # read‑only by default
-
-```
-
-1. Write to `~/.pflow/nodes/mcp_weather_`[`get.py`](get.py) and register.
-
-2. Add host to `~/.pflow/egress.allow` (for remote transports).
-
----
-
-## 7 Executor Logic (per transport)
+- **Node Base Class**: Inherit from `pocketflow.Node` with standard `prep()`/`exec()`/`post()` methods
+- **Params System**: Use `set_params()` to configure wrapper nodes with flat parameter structure
+- **Flow Orchestration**: Full compatibility with `>>` operator and action-based transitions
+- **No Framework Changes**: Pure pattern implementation using existing pocketflow APIs
 
 ```python
-if transport == "stdio":
-    proc = ensure_running(server)
-    proc.stdin.write(json.dumps(req)+"\n"); proc.stdin.flush()
-    resp = json.loads(proc.stdout.readline())
-elif transport == "uds":
-    async with aiohttp.ClientSession(connector=connector) as s:
-        resp = await s.post("http://unix/socket/tools/call", json=req)
-elif transport in ("sse", "stream-http"):
-    with httpx.stream("POST", server.url, json=req, headers=headers, timeout=30) as s:
-        for chunk in s.iter_text():
-            if chunk.startswith("data:"):
-                resp = json.loads(chunk[5:]); break
+# MCP wrapper nodes follow identical patterns to manual nodes
+from pocketflow import Node, flow_safe
 
+class McpGithubSearchCode(Node):  # Standard pocketflow inheritance
+    # Natural shared store interface, same as any pflow node
+    # Full action-based error handling support
+    # Compatible with proxy mappings and JSON IR
 ```
 
-- Fail if `tool_version` mismatch.
-
-- Validate `resp` against stored `outputSchema` using `pydantic`.
+> **See also**: [pocketflow framework](../pocketflow/__init__.py) for core implementation details
 
 ---
 
-## 8 Security Model
+## 4 · Registry Integration
 
-### 8\.1 Auth
+### 4.1 Unified Registry Approach
 
-- `token_env` names env var; absence aborts.
+**Eliminates**: Standalone `mcp.json` registry that conflicts with planner architecture  
+**Adopts**: Integrated MCP configuration within pflow's single registry system
 
-- stdio servers inherit env directly; remote transports send `Authorization: Bearer <token>`.
-
-### 8\.2 TLS & Pinning
-
-- `sse`/`stream-http`: refuse `http:`. CLI flag `--insecure` bypasses for dev.
-
-- Optional pin file `~/.pflow/certs/<name>.pem`; wrapper sets `verify=that_file`.
-
-### 8\.3 Scope Enforcement
-
-- Wrapper records required scopes; `/server/info` exposes token scopes. Mismatch aborts.
-
-### 8\.4 Side‑effect classification
-
-- All remote tools default to `impure`; caching disabled, retry controlled by `exec.retries`.
-
-- Mark tool as `pure` only if manifest `readonly=true` and user adds `--trust-pure` at install.
-
-### 8\.5 Egress control
-
-- Host allow‑list file; executor denies other hosts even if node attempts.
-
----
-
-## 9 Failure Semantics
-
-| Error | stdio response | sse/stream response | 
-|---|---|---|
-| Process missing | Suggest `pflow mcp launch` | n/a | 
-| Broken pipe | Restart once, then fail | n/a | 
-| TLS fail | n/a | abort | 
-| 5xx | n/a | retry if `exec.retries` set | 
-| Schema mismatch | abort flow | abort flow | 
-| Timeout | user‑configurable retry | same | 
-
----
-
-## 10 Cursor‑style Examples in pflow Syntax
-
-### 10\.1 Local Node.js stdio server
+**Registry Entry Structure**:
 
 ```json
 {
-  "servers": {
-    "gh": {
-      "transport": "stdio",
-      "command": "npx",
-      "args": ["-y", "mcp-github"],
-      "env": {"GITHUB_TOKEN": "$GITHUB_TOKEN"},
-      "autostart": true
-    }
-  }
+  "node_id": "mcp-github-search-code",
+  "type": "mcp_wrapper", 
+  "description": "Search code in GitHub repositories via MCP",
+  "mcp_config": {
+    "server_id": "github-server",
+    "tool_name": "search_code",
+    "transport": "stdio",
+    "command": "mcp-github",
+    "version": "1.2.0",
+    "manifest_hash": "sha256:abc123..."
+  },
+  "interface": {
+    "inputs": ["query", "language"],
+    "outputs": ["search_results"], 
+    "params": {"max_results": 10},
+    "actions": ["default", "rate_limited", "auth_failed"]
+  },
+  "purity": "impure"  # Most MCP tools have side effects
 }
-
 ```
 
-`pflow mcp launch gh` automatically spawns the server at runtime.
+### 4.2 Planner Integration
 
-### 10\.2 Local Python stdio server
+**Node Discovery**: MCP wrapper nodes appear alongside manually-written nodes in planner's metadata extraction  
+**LLM Selection**: Thinking models can select MCP tools naturally during flow generation  
+**Metadata Format**: Generated nodes follow pflow's docstring conventions for consistent discovery
 
-```json
-{
-  "servers": {
-    "mem": {
-      "transport": "stdio",
-      "command": "python",
-      "args": ["mcp_mem.py"],
-      "autostart": true
-    }
-  }
-}
-
-```
-
-### 10\.3 Remote SSE server
-
-```json
-{
-  "servers": {
-    "stripe": {
-      "transport": "sse",
-      "url": "https://billing.example.com/sse",
-      "token_env": "STRIPE_MCP_KEY"
-    }
-  }
-}
-
-```
-
-### Using in a flow
+### 4.3 CLI Commands
 
 ```bash
-pflow mcp_github.search_code --query "TODO" >> summarize >> mcp_stripe.create_customer
+# Registry integration (replaces mcp-specific commands)
+pflow registry add-mcp --server github --tool search_code --command "mcp-github" --transport stdio
+pflow registry list --filter mcp
+pflow registry refresh --mcp-server github  # Re-scan tools
 
+# Standard registry operations work with MCP nodes
+pflow registry describe mcp-github-search-code
+pflow registry validate --all
 ```
 
-Under the hood, wrappers route calls, validate scope, and respect transport details.
+---
+
+## 5 · Wrapper Node Generation
+
+### 5.1 Complete pflow Node Implementation
+
+Generated wrapper nodes follow the full pflow pattern with natural shared store interfaces:
+
+```python
+# Generated wrapper follows complete pflow Node pattern
+class McpGithubSearchCode(Node):
+    """Search code in GitHub repositories via MCP.
+    
+    Interface:
+    - Reads: shared["query"] - search query string  
+    - Reads: shared["language"] - programming language filter (optional)
+    - Writes: shared["search_results"] - array of code search results
+    - Params: max_results (default 10) - maximum results to return
+    - Actions: "default", "rate_limited", "auth_failed", "resource_missing"
+    
+    MCP Source: github-server/search_code v1.2.0
+    """
+    
+    # MCP metadata (used internally by executor)
+    _mcp_server_id = "github-server"
+    _mcp_tool_name = "search_code" 
+    _mcp_tool_version = "1.2.0"
+    _mcp_manifest_hash = "sha256:abc123..."
+    
+    def __init__(self):
+        super().__init__()
+        self._mcp_executor = McpExecutor(self._mcp_server_id)
+    
+    def prep(self, shared):
+        """Extract search parameters from shared store using natural keys."""
+        query = shared.get("query")
+        if not query:
+            raise ValueError("Missing required 'query' in shared store")
+        
+        return {
+            "query": query,
+            "language": shared.get("language"),  # Optional parameter
+            "max_results": self.params.get("max_results", 10)
+        }
+    
+    def exec(self, prep_res):
+        """Execute MCP tool call with action-based error handling."""
+        try:
+            response = self._mcp_executor.call_tool(
+                self._mcp_tool_name,
+                prep_res,
+                expected_version=self._mcp_tool_version
+            )
+            return response["results"]
+        except McpRateLimitError:
+            return "rate_limited"  # Action for conditional flow control
+        except McpAuthError:
+            return "auth_failed"
+        except McpResourceNotFoundError:
+            return "resource_missing"
+    
+    def post(self, shared, prep_res, exec_res):
+        """Write results to shared store or return action for flow control."""
+        if isinstance(exec_res, str):  # Action string for flow transitions
+            return exec_res
+        
+        # Natural interface - write results to intuitive key
+        shared["search_results"] = exec_res
+        return "default"
+```
+
+### 5.2 Metadata Extraction
+
+**Docstring Generation**: Convert MCP tool manifests to pflow-compatible documentation:
+
+```python
+def generate_node_docstring(mcp_tool):
+    """Convert MCP tool manifest to pflow docstring format."""
+    return f'''
+    """{mcp_tool.description}
+    
+    Interface:
+    {format_shared_store_inputs(mcp_tool.input_schema)}
+    {format_shared_store_outputs(mcp_tool.output_schema)}
+    {format_params(mcp_tool.parameters)}
+    {format_actions(mcp_tool.error_types)}
+    
+    MCP Source: {mcp_tool.server_id}/{mcp_tool.name} v{mcp_tool.version}
+    """
+    '''
+
+def format_shared_store_inputs(input_schema):
+    """Convert MCP input schema to natural shared store key documentation."""
+    lines = []
+    for param_name, param_def in input_schema.items():
+        required = " (optional)" if not param_def.get("required", True) else ""
+        lines.append(f"    - Reads: shared[\"{param_name}\"] - {param_def.description}{required}")
+    return "\n".join(lines)
+```
+
+### 5.3 Natural Key Conventions
+
+**Schema Translation Rules**:
+
+- MCP tool parameter names → direct shared store keys when intuitive
+- Complex nested parameters → flattened structure with natural naming
+- Output mapping → single primary output key per tool when possible
+
+**Examples**:
+
+```python
+# MCP tool: get_weather
+# Natural interface:
+# Inputs: shared["location"], shared["units"] 
+# Outputs: shared["weather_data"]
+
+# MCP tool: search_repositories  
+# Natural interface:
+# Inputs: shared["query"], shared["language"], shared["sort_by"]
+# Outputs: shared["repositories"]
+
+# MCP tool: send_slack_message
+# Natural interface: 
+# Inputs: shared["message"], shared["channel"]
+# Outputs: shared["message_id"]
+```
 
 ---
 
-## 11 Testing
+## 6 · Shared Store Integration
 
-- Provide mock stdio server fixture; unit tests use `PFLOW_MCP_MOCK=1` to inject a fake process.
+### 6.1 Natural Interface Design
 
-- Integration tests spin containerized SSE server and verify wrapper generation, scope mismatch handling, TLS enforcement.
+**Core Principle**: MCP wrapper nodes use the same intuitive shared store patterns as manually-written nodes.
+
+**Interface Mapping Process**:
+
+1. **Analyze MCP Tool Schema**: Extract input/output parameters from `/tools/list`
+2. **Generate Natural Keys**: Create intuitive shared store key names  
+3. **Handle Optional Parameters**: Map optional inputs to shared store with sensible defaults
+4. **Flatten Complex Outputs**: Convert nested MCP responses to flat shared store structure
+
+### 6.2 Proxy Pattern Support
+
+**Complex Flow Compatibility**: MCP wrapper nodes fully support proxy mappings for marketplace integration:
+
+```json
+{
+  "mappings": {
+    "mcp-github-search-code": {
+      "input_mappings": {
+        "query": "search_terms",
+        "language": "prog_lang_filter"
+      },
+      "output_mappings": {
+        "search_results": "github_code_matches"
+      }
+    }
+  }
+}
+```
+
+**Generated Proxy Integration**: Flow orchestration code automatically handles proxy setup:
+
+```python
+# Generated flow code handles proxy when mappings defined
+def execute_mcp_node_with_mapping(node, shared, mappings=None):
+    if mappings and node.id in mappings:
+        proxy = NodeAwareSharedStore(
+            shared,
+            input_mappings=mappings[node.id].get("input_mappings", {}),
+            output_mappings=mappings[node.id].get("output_mappings", {})
+        )
+        return node._run(proxy)  # Node uses natural interface, proxy handles translation
+    else:
+        return node._run(shared)  # Direct access when no mapping needed
+```
+
+### 6.3 CLI Resolution Integration
+
+**Follows Established Rules**: MCP wrapper nodes adhere to "Type flags; engine decides" CLI resolution:
+
+```bash
+# CLI flag matches shared store key = data injection
+pflow mcp-github-search-code --query="authentication bugs" --language="python"
+# Results in: shared["query"] = "authentication bugs", shared["language"] = "python"
+
+# CLI flag matches param name = param override  
+pflow mcp-github-search-code --max-results=20
+# Results in: params["max_results"] = 20
+
+# Complex flow with established pipe syntax
+echo "TODO comments" | pflow mcp-github-search-code --language=python >> summarize-text >> mcp-slack-send-message --channel=dev-team
+```
 
 ---
 
-## 12 Open Items for v1.1+
+## 7 · Action-Based Error Handling
 
-- PKI signature verification for manifests.
+### 7.1 MCP Error Mapping
 
-- Container image checksum pinning.
+**Replaces**: Transport-specific error handling  
+**Adopts**: pflow's action-based conditional flow control
 
-- GUI registry editor.
+```python
+class McpErrorMapper:
+    """Maps MCP protocol errors to pflow actions for flow control."""
+    
+    ERROR_ACTION_MAP = {
+        "rate_limited": "rate_limited",
+        "unauthorized": "auth_failed",
+        "forbidden": "permission_denied", 
+        "not_found": "resource_missing",
+        "timeout": "timeout",
+        "server_error": "server_error",
+        "network_error": "network_error"
+    }
+    
+    @classmethod
+    def map_error_to_action(cls, mcp_error):
+        """Convert MCP error to pflow action string."""
+        return cls.ERROR_ACTION_MAP.get(mcp_error.type, "error")
+```
 
-- Dynamic transport upgrade: transparently switch stdio→sse for team‑shared servers.
+### 7.2 Flow Integration Examples
+
+**Conditional Error Handling**: MCP wrapper nodes participate in action-based flow control:
+
+```python
+# Flow setup with comprehensive error handling
+github_search = McpGithubSearchCode()
+process_results = ProcessSearchResults()
+retry_handler = ExponentialBackoff()
+auth_refresher = RefreshGithubToken()
+error_reporter = LogError()
+
+# Primary flow path
+github_search >> process_results
+
+# Error handling paths using actions
+github_search - "rate_limited" >> retry_handler >> github_search  # Loop back after delay
+github_search - "auth_failed" >> auth_refresher >> github_search   # Refresh token and retry
+github_search - "resource_missing" >> error_reporter              # Log and continue
+github_search - "timeout" >> retry_handler                        # Standard retry logic
+
+# Generated flow supports complex error recovery patterns
+flow = Flow(start=github_search)
+```
+
+### 7.3 Transport Error Unification
+
+**All Transports**: Unified error handling regardless of MCP transport mechanism:
+
+| MCP Transport Error | pflow Action | Flow Response |
+|---|---|---|
+| `stdio` process death | `"server_error"` | Restart server or route to fallback |
+| `sse` connection timeout | `"timeout"` | Retry with exponential backoff |
+| `uds` socket error | `"network_error"` | Switch to alternative transport |
+| Rate limit (any transport) | `"rate_limited"` | Delay and retry with jitter |
+| Auth failure (any transport) | `"auth_failed"` | Refresh credentials |
+
+---
+
+## 8 · Flow Orchestration & JSON IR
+
+### 8.1 Complete IR Integration
+
+**MCP Nodes in JSON IR**: Full participation in pflow's intermediate representation:
+
+```json
+{
+  "metadata": {
+    "planner_version": "1.0.0", 
+    "created_at": "2024-01-01T12:00:00Z",
+    "prompt": "find Python authentication bugs on GitHub and post summary to Slack"
+  },
+  "nodes": [
+    {
+      "id": "mcp-github-search-code",
+      "type": "mcp_wrapper",
+      "params": {"max_results": 15},
+      "mcp_metadata": {
+        "server_id": "github-server",
+        "tool_name": "search_code", 
+        "version": "1.2.0"
+      }
+    },
+    {
+      "id": "summarize-text",
+      "params": {"temperature": 0.3}
+    },
+    {
+      "id": "mcp-slack-send-message", 
+      "type": "mcp_wrapper",
+      "params": {},
+      "mcp_metadata": {
+        "server_id": "slack-server",
+        "tool_name": "send_message",
+        "version": "2.1.0"
+      }
+    }
+  ],
+  "edges": [
+    {"from": "mcp-github-search-code", "to": "summarize-text"},
+    {"from": "mcp-github-search-code", "to": "error-handler", "action": "rate_limited"},
+    {"from": "summarize-text", "to": "mcp-slack-send-message"}
+  ],
+  "mappings": {
+    "mcp-slack-send-message": {
+      "input_mappings": {"message": "summary", "channel": "dev-team-alerts"}
+    }
+  }
+}
+```
+
+### 8.2 Planner Compatibility
+
+**LLM Selection**: Thinking models can discover and select MCP wrapper nodes naturally:
+
+```json
+{
+  "reasoning": "User wants to find GitHub issues and notify via Slack. I'll use MCP GitHub integration and Slack notification.",
+  "selection_type": "new_composition",
+  "chosen_nodes": [
+    "mcp-github-search-code",
+    "summarize-text", 
+    "mcp-slack-send-message"
+  ],
+  "flow_structure": "search → summarize → notify"
+}
+```
+
+**Validation Integration**: MCP nodes participate in planner's validation framework:
+
+- Interface compatibility checking between MCP outputs and downstream node inputs
+- Automatic mapping generation when key names don't align
+- Action-based error path validation
+
+### 8.3 Generated Flow Code
+
+**Complete Flow Generation**: Compiler produces executable Python using pocketflow patterns:
+
+```python
+# Generated flow code from JSON IR
+def create_mcp_integrated_flow():
+    # Instantiate wrapper nodes (generated classes)
+    github_search = McpGithubSearchCode()
+    summarizer = SummarizeText()  # Manual node
+    slack_sender = McpSlackSendMessage()  # Another MCP wrapper
+    
+    # Configure with IR parameters using pocketflow's set_params()
+    github_search.set_params({"max_results": 15})
+    summarizer.set_params({"temperature": 0.3})
+    slack_sender.set_params({})  # Uses defaults
+    
+    # Wire flow with action-based error handling
+    github_search >> summarizer
+    github_search - "rate_limited" >> retry_handler >> github_search
+    summarizer >> slack_sender
+    
+    return Flow(start=github_search)
+
+# Runtime execution with shared store + proxy support
+def execute_flow():
+    shared = {
+        "query": "authentication vulnerabilities",  # CLI injection
+        "language": "python",                      # CLI injection  
+        "dev-team-alerts": "#security-alerts"     # Mapped to "channel"
+    }
+    
+    flow = create_mcp_integrated_flow()
+    
+    # Handle proxy mappings when defined in IR
+    for node in flow.nodes:
+        if hasattr(node, '_mcp_tool_name') and node.id in ir.get("mappings", {}):
+            # Proxy setup handled by generated code
+            pass
+    
+    result = flow.run(shared)
+    return result
+```
+
+---
+
+## 9 · Security & Purity Model
+
+### 9.1 Flow-Safe Integration
+
+**Adopts pflow Patterns**: Use `@flow_safe` decorator instead of `side_effects` classification:
+
+```python
+from pocketflow import Node, flow_safe
+
+# Read-only MCP tools (rare but possible)
+@flow_safe  
+class McpGithubGetRepository(Node):
+    """Get repository metadata (read-only operation)."""
+    # Cacheable, can participate in pure flows
+    # Generated only when MCP manifest declares readonly=true
+
+# Default: impure tools (most MCP tools have side effects)
+class McpSlackSendMessage(Node):
+    """Send message to Slack channel (has side effects)."""
+    # No @flow_safe decorator
+    # Not cacheable, proper retry/failure handling required
+```
+
+### 9.2 Trust and Caching
+
+**Caching Rules**:
+
+- **MCP wrappers default to impure** - no caching unless explicitly marked `@flow_safe`
+- **Read-only tools**: Can be marked `@flow_safe` if MCP manifest declares `readonly=true` AND user provides `--trust-readonly` flag
+- **Cache keys**: Follow standard pflow pattern - `node_hash ⊕ effective_params ⊕ input_data_sha256`
+
+### 9.3 Authentication & Authorization
+
+**Environment Integration**:
+
+```python
+# MCP server configuration with auth
+{
+  "server_id": "github-enterprise", 
+  "transport": "sse",
+  "url": "https://api.github.internal/mcp",
+  "auth": {
+    "token_env": "GITHUB_ENTERPRISE_TOKEN",  # Required env var
+    "scopes": ["repo:read", "user:read"]     # Required OAuth scopes
+  }
+}
+```
+
+**Runtime Validation**:
+
+- Token presence validated before node execution
+- Scope compatibility checked against MCP server capabilities
+- Auth failures trigger `"auth_failed"` action for flow-based recovery
+
+### 9.4 Network Security
+
+**Egress Control**:
+
+- Generated wrapper nodes respect pflow's network policy
+- Remote MCP servers added to allowlist automatically on registration
+- Host validation performed by MCP executor before connection
+
+**TLS Requirements**:
+
+- `https://` required for remote SSE/HTTP transports
+- Certificate pinning supported via optional pin files
+- Development `--insecure` flag bypasses for local testing
+
+---
+
+## 10 · Complete Integration Examples
+
+### 10.1 Simple MCP Integration
+
+**End-to-End Workflow**:
+
+```bash
+# 1. Register MCP server in unified registry
+pflow registry add-mcp --server github --command "mcp-github" --transport stdio
+
+# 2. Wrapper nodes auto-generated and discoverable
+pflow registry list --filter github
+# mcp-github-search-code    Search code in repositories
+# mcp-github-get-repo       Get repository information  
+# mcp-github-create-issue   Create new issue
+
+# 3. Direct CLI usage with natural interface
+pflow mcp-github-search-code --query "authentication" --language "python" >> summarize-text
+
+# 4. Natural language planning automatically discovers MCP nodes
+pflow "find Python authentication bugs on GitHub and create a summary"
+# Planner selects: mcp-github-search-code >> summarize-text >> format-markdown
+```
+
+### 10.2 Complex Flow with Error Handling
+
+**Production-Ready Flow**:
+
+```python
+# Generated flow with comprehensive error handling
+search_node = McpGithubSearchCode()
+summarizer = SummarizeText()
+slack_notifier = McpSlackSendMessage()
+retry_handler = ExponentialBackoff()
+auth_refresher = RefreshGithubToken()
+
+# Primary flow path
+search_node >> summarizer >> slack_notifier
+
+# Error recovery paths
+search_node - "rate_limited" >> retry_handler >> search_node
+search_node - "auth_failed" >> auth_refresher >> search_node  
+slack_notifier - "channel_not_found" >> create_channel >> slack_notifier
+
+# Complex conditional logic
+search_node - "resource_missing" >> log_warning
+summarizer - "content_too_long" >> split_content >> summarizer
+```
+
+**CLI Execution**:
+
+```bash
+# Complex pipe with multiple MCP tools
+echo "security vulnerability" | \
+  pflow mcp-github-search-code --language python --max-results 10 >> \
+  summarize-text --temperature 0.3 >> \
+  mcp-slack-send-message --channel security-alerts
+```
+
+### 10.3 Marketplace Compatibility
+
+**Proxy Mapping for Different Flow Schemas**:
+
+```json
+{
+  "marketplace_flow": {
+    "nodes": ["mcp-github-search-code", "text-processor", "notification-sender"],
+    "mappings": {
+      "mcp-github-search-code": {
+        "input_mappings": {
+          "query": "search_terms",
+          "language": "target_language"  
+        },
+        "output_mappings": {
+          "search_results": "raw_code_data"
+        }
+      }
+    }
+  }
+}
+```
+
+**Same wrapper node, different flow context** - proxy handles all translation transparently.
+
+---
+
+## 11 · Supported Transports
+
+**Transport Implementation**: MCP executor handles all protocol details internally, wrapper nodes remain transport-agnostic.
+
+| Transport | Use Case | Connection Method | Autostart | Notes |
+|---|---|---|---|---|
+| `stdio` | Local development, trusted tools | Subprocess stdin/stdout | Yes | Default for local MCP servers |
+| `uds` | Linux containers, IPC | Unix domain socket | Yes | High-performance local communication |
+| `pipe` | Windows named pipes | Windows pipe client | Yes | Windows-native IPC mechanism |
+| `sse` | Remote HTTP servers | Server-Sent Events | No | Real-time streaming over HTTP |
+| `stream-http` | HTTP-based MCP | Chunked HTTP POST | No | Emerging standard, SSE-compatible |
+
+**Transport Selection**: Automatic based on MCP server configuration, transparent to wrapper node implementation.
+
+---
+
+## 12 · Testing & Validation
+
+### 12.1 MCP Wrapper Testing
+
+**Unit Testing**: Standard pflow node testing patterns apply:
+
+```python
+def test_mcp_github_search_node():
+    """Test MCP wrapper node like any other pflow node."""
+    # Arrange
+    node = McpGithubSearchCode()
+    node.set_params({"max_results": 5})
+    shared = {"query": "test query", "language": "python"}
+    
+    # Mock the MCP executor to avoid external calls
+    with patch.object(node._mcp_executor, 'call_tool') as mock_call:
+        mock_call.return_value = {"results": [{"name": "test.py"}]}
+        
+        # Act
+        node.run(shared)
+        
+        # Assert
+        assert "search_results" in shared
+        assert len(shared["search_results"]) == 1
+        mock_call.assert_called_once()
+```
+
+### 12.2 Integration Testing
+
+**End-to-End Validation**:
+
+- Mock MCP servers for deterministic testing
+- Transport-specific test suites for stdio/sse/uds validation
+- Error simulation for action-based flow testing
+- Proxy mapping validation with complex flow scenarios
+
+### 12.3 Registry Validation
+
+**MCP Registration Testing**:
+
+- Wrapper generation validation against known MCP tool manifests
+- Metadata extraction accuracy for planner integration
+- CLI resolution correctness for generated natural interfaces
+
+---
+
+## 13 · Migration & Compatibility
+
+### 13.1 Existing MCP Integration Migration
+
+**For Current Users**: Smooth transition from standalone MCP configuration:
+
+```bash
+# Migrate existing mcp.json to unified registry
+pflow registry migrate-mcp --from ~/.pflow/mcp.json --backup
+
+# Validate migration results
+pflow registry validate --mcp-wrappers
+pflow registry test-mcp-connections
+```
+
+### 13.2 Backward Compatibility
+
+**Deprecation Timeline**:
+
+- **Phase 1**: Both systems supported, warnings for old commands
+- **Phase 2**: Old `mcp.json` read-only, migration prompted  
+- **Phase 3**: Legacy system removed, registry-only approach
+
+### 13.3 Tool Evolution
+
+**MCP Version Management**:
+
+- Automatic wrapper regeneration when MCP tool versions change
+- Validation of breaking changes in tool interfaces
+- Graceful handling of deprecated MCP tools
+
+---
+
+## 14 · Future Enhancements
+
+### 14.1 Advanced MCP Features
+
+**Roadmap Alignment** with MCP protocol development:
+
+- **Streaming Support**: Chunked responses for large data sets
+- **Multimodal Integration**: Video/audio MCP tools as pflow nodes
+- **Agent Graphs**: MCP server composition for complex integrations
+
+### 14.2 pflow-Specific Enhancements
+
+**Enhanced Integration**:
+
+- **Visual Flow Builder**: Drag-and-drop MCP tool integration
+- **Performance Optimization**: Connection pooling for high-throughput MCP flows
+- **Marketplace Integration**: Certified MCP wrapper node distribution
+
+---
+
+## 15 · Summary
+
+This specification transforms MCP integration from a parallel subsystem into a native pflow pattern that fully embraces the shared store + proxy model. Key achievements:
+
+✅ **Pattern Consistency**: MCP wrapper nodes indistinguishable from manual nodes  
+✅ **Registry Unity**: Single discovery system includes MCP tools  
+✅ **CLI Compatibility**: Natural flag resolution following established rules  
+✅ **Flow Integration**: Complete JSON IR, proxy mapping, and action-based error handling  
+✅ **Planner Compatibility**: LLM can discover and select MCP tools naturally  
+✅ **Framework Alignment**: Pure pocketflow implementation without modifications  
+
+**Result**: Developers can use MCP tools exactly like any other pflow node, with the full power of flow orchestration, conditional error handling, and intelligent planning.
