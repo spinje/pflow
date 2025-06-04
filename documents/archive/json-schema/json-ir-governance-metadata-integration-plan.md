@@ -43,7 +43,7 @@ This document defines JSON schema governance for two key pflow artifacts:
 
 Both schemas work together to enable metadata-driven flow planning and validation.
 
-> **Architecture Context**: See [Node Metadata Strategy](./node-metadata.md) for extraction details and [Shared Store Pattern](./shared-store-node-proxy-architecture.md) for interface concepts.
+> **Architecture Context**: See [Node Metadata Strategy](./node-metadata-extraction.md) for extraction details and [Shared Store Pattern](./shared-store-node-proxy-architecture.md) for interface concepts.
 ```
 
 ### **Section 2: Registry Integration**
@@ -110,7 +110,7 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
 
 ### 2.3 Extraction and Validation
 
-- **Source**: Structured docstrings using Interface sections (see [Node Metadata](./node-metadata.md))
+- **Source**: Structured docstrings using Interface sections (see [Node Metadata](./node-metadata-extraction.md))
 - **Validation**: Extracted metadata must match actual code behavior
 - **Staleness**: Source file hash tracks when re-extraction needed
 - **Registry**: Metadata stored alongside Python files in registry structure
