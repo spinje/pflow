@@ -96,6 +96,39 @@ The planner operates through a **validation-first approach**, performing linting
 | **F. IR Finalization** | Generate validated JSON IR with CLI-specified params. | Complete, validated IR ready for execution. |
 | **G. Execution Handoff** | Save lockfile, execute directly via shared store runtime. | Direct execution (no user verification needed). |
 
+### 3.2.1 Type Shadow Store Prevalidation (CLI Path Enhancement)
+
+During CLI pipe composition, the planner maintains an ephemeral **type shadow store** for real-time compatibility checking:
+
+**Purpose:**
+- Provide immediate type compatibility feedback during interactive composition
+- Reduce planner retry cycles by catching obvious type mismatches early
+- Enable intelligent autocomplete suggestions for valid next nodes
+
+**Mechanism:**
+1. **Type Accumulation**: As nodes are added to pipe syntax, their output types are accumulated in memory
+2. **Compatibility Check**: Each candidate next node's input type requirements are validated against available types
+3. **Advisory Feedback**: Invalid compositions flagged immediately, valid options highlighted
+
+**Example Flow:**
+```bash
+yt-transcript          # Produces: transcript:str
+>> summarize           # Requires: text:str → ✓ Compatible (str available)
+>> plot-chart          # Requires: data:dataframe → ✗ Incompatible (no dataframe)
+```
+
+**Integration Points:**
+- Uses existing node metadata type declarations (no schema changes)
+- Operates before full IR compilation (lightweight validation)
+- Discarded after pipe→IR compilation (ephemeral advisory tool)
+- Complementary to full validation pipeline (not replacement)
+
+**Limitations:**
+- Type-only validation (no key name compatibility)
+- No proxy mapping awareness
+- No conditional flow logic
+- Defers to full IR validation for definitive compatibility
+
 ---
 
 ## 4 · Dual-Mode Operation
@@ -209,14 +242,33 @@ class YTTranscript(Node):
 
 ## 6 · LLM Selection Process
 
-### 6.1 Retrieval-First Strategy
+### 6.1 Enhanced Retrieval-First Strategy
 
-The planner follows a **retrieval-first approach** to maximize stability and reduce LLM non-determinism:
+The planner leverages existing flow descriptions for **LLM-powered flow discovery** and intelligent reuse:
 
-1. **Flow Cache Search**: Check existing validated flows for semantic matches to user prompt
-2. **Exact Match**: If found, reuse existing flow (skip LLM generation entirely)
-3. **Partial Match**: Consider existing flows as sub-components
-4. **Generation Fallback**: Only use LLM when no suitable matches found
+**Enhanced Discovery Process:**
+1. **Description-Based Matching**: LLM analyzes user prompt against existing flow description fields
+2. **Semantic Compatibility**: Evaluates flow purpose alignment using natural language descriptions  
+3. **Flow-as-Component Reuse**: Treats existing flows as reusable building blocks for new compositions
+4. **Intent Preservation**: Existing description fields enable rediscovery by purpose
+
+**Round-Trip Architecture Benefits:**
+- **Forward Planning**: Natural language → structured flow (enhanced with description matching)
+- **Intent Explanation**: Structured flow → existing description field (simple metadata access)
+- **Flow Discovery**: Description-based search through existing flow library
+- **Compositional Reuse**: Proven flows become components for complex workflows
+
+**Integration with Existing Systems:**
+- Uses existing `metadata.description` field in flow IR (no schema changes)
+- Enhances LLM context with flow descriptions during selection process
+- Preserves established retrieval-first approach with semantic improvements
+- Maintains compatibility with current flow cache and validation systems
+
+**Discovery Enhancement:**
+- LLM receives flow descriptions as context during node/flow selection
+- Semantic matching supplements structural flow analysis
+- Proven execution history combined with purpose alignment
+- Reduces planning overhead through intelligent flow library utilization
 
 This approach anchors stability by reusing proven flows rather than regenerating them.
 
@@ -571,6 +623,42 @@ pflow yt-transcript --url=https://youtu.be/abc123 >> summarize-text --temperatur
 - **Web Interface**: Drag-and-drop flow builder
 - **Interactive Debugging**: Step-through validation failures
 - **Parameter Wizards**: Guided param customization
+
+### 11.5 Progressive Learning Through Transparency
+
+The planner's transparent generation process serves as an **educational scaffold** for user empowerment:
+
+**Learning Stages:**
+1. **Intent Declaration**: User expresses goals in natural language
+2. **Structure Revelation**: System shows how intent translates to concrete steps
+3. **Interactive Refinement**: User can inspect, modify, and learn from generated flows
+4. **Progressive Authorship**: Users evolve from consumers to co-authors over time
+
+**Educational Mechanisms:**
+- **Visible Planning**: CLI pipe syntax shown before execution reveals planning logic
+- **Modification Capability**: Users can edit generated flows to understand cause-effect
+- **Incremental Complexity**: Simple flows build understanding for complex compositions
+- **Pattern Recognition**: Repeated exposure builds intuition for flow design
+
+**Transparency Benefits:**
+```bash
+# User Input (Intent)
+pflow "summarize this youtube video"
+
+# Generated Output (Structure Revealed)
+yt-transcript --url $VIDEO >> summarize-text --temperature=0.7
+
+# User Learning Opportunity
+# ✓ Sees video → transcript → summary decomposition
+# ✓ Understands parameter role (temperature)
+# ✓ Can modify before execution
+# ✓ Builds intuition for similar tasks
+```
+
+**Long-term Empowerment:**
+- Users gradually transition from intent declarers to flow architects
+- Natural language becomes entry point, not permanent dependency
+- System knowledge transfers to users through visible structure
 
 ---
 

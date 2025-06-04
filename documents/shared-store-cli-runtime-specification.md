@@ -453,6 +453,33 @@ Same node code, different shared store layouts.
 
 - **Static nodes, dynamic flows** — node logic is reusable, flow wiring is generated.
 
+### 12.1 Educational Design Rationale
+
+The CLI design prioritizes **learning through transparency** over automation efficiency:
+
+**Educational CLI Principles:**
+- **Show Don't Hide**: Generated flows visible as CLI pipe syntax before execution
+- **Edit Before Execute**: Users can modify generated flows to explore alternatives  
+- **Natural Progression**: Simple patterns scale to complex orchestration
+- **Transferable Knowledge**: CLI skills translate to direct flow authoring
+
+**Learning Facilitation:**
+```bash
+# Educational Flow: User sees and can modify each step
+pflow "process this data"
+# → Generated: load-csv --file data.csv >> clean-data >> analyze >> save-results
+# → User can edit: load-csv --file data.csv >> clean-data --strict >> analyze --method=detailed >> save-results --format=json
+
+# Knowledge Transfer: User eventually authors directly
+pflow load-csv --file new_data.csv >> custom-analysis >> export-dashboard
+```
+
+**Progressive Complexity:**
+- Start with natural language for immediate results
+- Graduate to CLI pipe editing for customization
+- Advance to direct flow authoring for full control
+- Develop nodes for maximum reusability
+
 ---
 
 ### 13 · Edge cases

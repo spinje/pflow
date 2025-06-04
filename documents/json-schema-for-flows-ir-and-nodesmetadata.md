@@ -99,6 +99,40 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
 - **Action Enumeration**: Lists all possible return values from node `post()` method
 - **Type Information**: Basic types (str, int, float, bool, dict, list, any)
 
+### 2.2.1 Type-Based Prevalidation Support
+
+The existing type declarations in node metadata enable **type shadow store prevalidation** during composition:
+
+**Validation Usage:**
+- `inputs.*.type` → Required types for compatibility checking
+- `outputs.*.type` → Produced types accumulated during composition
+- `required` field → Distinguishes mandatory vs optional type dependencies
+
+**Type Compatibility Rules:**
+- Node requires input type T → At least one previous node must produce type T
+- Multiple nodes producing same type → All valid sources available
+- Optional inputs (required: false) → Do not block composition if missing
+
+**Example Metadata for Type Validation:**
+```json
+{
+  "interface": {
+    "inputs": {
+      "text": {"type": "str", "required": true},      // Must be available
+      "format": {"type": "str", "required": false}   // Optional, won't block
+    },
+    "outputs": {
+      "summary": {"type": "str"}                      // Makes str available
+    }
+  }
+}
+```
+
+**Integration Notes:**
+- No additional metadata required
+- Uses existing type information for real-time feedback
+- Complements full interface validation pipeline
+
 ### 2.3 Shared Key Declaration Requirements
 
 All nodes must explicitly declare their shared store interface in metadata:

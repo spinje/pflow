@@ -346,6 +346,25 @@ Agents never generate node code directly. They output IR. IR is compiled into fl
 - **Debugging is clearer** - direct key access in node code
 - **Documentation is self-evident** - `shared["key"]` shows interface
 
+### Cognitive Traceability Benefits
+
+The round-trip cognitive architecture enhances developer experience through description-driven flow management:
+
+**Intent Preservation:**
+- Every flow carries natural language description reflecting original intent
+- Descriptions enable rediscovery of flows by purpose, not just structure
+- LLM-powered flow matching based on semantic similarity
+
+**Reusability Enhancement:**
+- Flows serve as discoverable components for new compositions
+- Natural language descriptions enable intuitive flow search
+- Proven flows become building blocks for complex workflows
+
+**Educational Transparency:**
+- Flow descriptions explain purpose and context
+- Users can understand flow intent without reading implementation details
+- Supports progressive learning from simple to complex compositions
+
 ## Benefits
 
 ### Reusability
@@ -437,6 +456,28 @@ This design enables `pflow` to:
 - Build on the proven pocketflow framework without modifications
 
 The power is in simplicity. This pattern makes node development intuitive while preserving all the flexibility needed for complex orchestration scenarios.
+
+### Educational Design Philosophy
+
+This pattern enables **progressive user empowerment** by making flow orchestration transparent and modifiable:
+
+**Learning Scaffolding:**
+- Natural interfaces make node behavior intuitive and discoverable
+- CLI pipe syntax reveals flow structure before execution
+- Proxy mappings demonstrate advanced composition techniques
+- Shared store pattern teaches data flow principles
+
+**Skill Development Pathway:**
+1. **Natural Language Users**: Express intent, learn from generated structures
+2. **CLI Pipe Authors**: Write simple flows, understand data flow
+3. **Advanced Composers**: Use proxy mappings for complex orchestration
+4. **Node Developers**: Create reusable components with natural interfaces
+
+**Educational Transparency:**
+- Every abstraction level remains visible and modifiable
+- No hidden magic prevents learning
+- Complexity introduced progressively as users advance
+- System knowledge becomes user knowledge over time
 
 ## See Also
 
