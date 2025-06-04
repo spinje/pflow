@@ -43,8 +43,11 @@ cat article.md | pflow summarize-text
 This will:
 
 1. Detect that input is piped via `stdin`.
-2. Place the piped content into the shared store under the reserved key `shared["stdin"]`. The `summarize-text` node (or the first node in the flow) is then expected to utilize this `shared["stdin"]` content for its primary text input.
-3. Execute the flow as if the content had been provided explicitly.
+2. Place the piped content into the shared store under the reserved key `shared["stdin"]`.
+3. The `summarize-text` node (or the first node in the flow) then utilizes this `shared["stdin"]` content. This can happen in a few ways:
+    *   The node itself is designed to check `shared["stdin"]` for input if its primary named input key (e.g., `shared["text"]`) is not populated.
+    *   The planner (for NL-generated flows) or CLI processing logic (for direct CLI flows) generates an Intermediate Representation (IR) that includes an explicit mapping from the node's primary input key to `shared["stdin"]`.
+4. Execute the flow as if the content had been provided through an explicitly named shared store key.
 
 ### Advanced NL-based Usage
 
@@ -54,23 +57,16 @@ Natural language planner seamlessly supports piped input:
 kubectl logs my-pod | pflow "extract errors and summarize"
 ```
 
-Here, the NL planner identifies appropriate nodes, mapping piped `stdin` into the workflow automatically.
+Here, the NL planner identifies appropriate nodes. It will generate a flow where `shared["stdin"]` is populated with the log data, and the first relevant node in the generated flow is configured (either by its design or via an IR mapping) to process the content from `shared["stdin"]`.
 
-### Explicit Usage (for Ambiguous Cases)
-
-For nodes with multiple string inputs or ambiguity:
-
-```bash
-git diff | pflow summarize-diff --diff -
-```
-
-The `-` explicitly indicates the node should consume piped input.
 
 ### Internal Implementation
 
 * **Detection:** pflow detects if `stdin` is not a TTY and has content.
-* **Mapping Logic:** Piped content is placed into `shared["stdin"]`. Nodes are generally designed to utilize `shared["stdin"]` for their primary textual input if no other specific input source is provided for that primary parameter. If a node has multiple string inputs or if the intended use of `shared["stdin"]` is ambiguous, explicit flags (e.g., using `-` as a value like `pflow my-node --target-input -`) are used to direct the `stdin` content appropriately.
-* **Trace & Cache:** Input is hashed, saved under `stdin.<hash>.txt`, and the hash is included in the trace and lockfile to ensure caching and reproducibility.
+* **Mapping Logic:** Piped content is primarily placed into `shared["stdin"]`.
+    *   **Planner-driven Mapping**: For NL-generated flows, the planner may create an explicit IR mapping from a node's input key (e.g., `text`) to `shared["stdin"]`.
+    *   **Node Convention**: Nodes can be designed to check `shared["stdin"]` as a fallback if their primary named input key is not found in the shared store.
+* **Trace & Cache:** Input from `shared["stdin"]` is hashed, its content may be saved (e.g., to a file like `stdin.<hash>.txt` for tracing purposes), and the hash is included in the trace and lockfile to ensure caching and reproducibility.
 
 ## Importance and Benefits to Users
 

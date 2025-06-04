@@ -53,6 +53,9 @@ All flows carry `description` metadata reflecting original user intent. Flows ca
 **Pattern Over Framework Innovation**  
 The 100-line pocketflow framework is stable. Innovation happens in the shared store pattern, proxy mappings, planning pipeline, and MCP integration.
 
+**Native Shell Integration**
+Input from Unix shell pipes (`stdin`) is seamlessly integrated for direct use in flows, enhancing composability with standard command-line tools.
+
 ### 1.3 Architectural Overview
 
 ```mermaid
@@ -140,7 +143,7 @@ node_a - "error" >> error_handler   # Action-based transition
 
 ### 3.2 Shared Store Pattern
 
-The **shared store** is pflow's primary innovation—a flow-scoped memory that enables natural node interfaces:
+The **shared store** is pflow's primary innovation—a flow-scoped memory that enables natural node interfaces. Piped input from the shell, for example, will populate the `shared["stdin"]` key.
 
 ```python
 # Flow execution with shared store
@@ -211,6 +214,7 @@ Nodes use **intuitive key names** that match human expectations:
 shared["url"]           # Input: web address
 shared["text"]          # Input: content to process  
 shared["query"]         # Input: search terms
+shared["stdin"]         # Input: shell input
 shared["summary"]       # Output: generated summary
 shared["results"]       # Output: search results
 shared["transcript"]    # Output: video transcript
@@ -1466,6 +1470,9 @@ graph TD
 ```bash
 # Natural language exploration
 pflow "get the weather for Stockholm and Oslo and summarize differences"
+
+# Exploration with piped input
+cat my_notes.txt | pflow "summarize this text"
 ```
 
 **Planner Output:**
@@ -1495,6 +1502,9 @@ Execute this flow? [Y/n]
 # Direct CLI iteration based on learned patterns
 pflow mcp-weather-get --location="Stockholm" --units=metric >> \
       summarize-text --temperature=0.5 --max-tokens=100
+
+# Using piped input with CLI
+echo "This is some text to be summarized." | pflow summarize-text --temperature=0.6
 
 # Parameter experimentation
 pflow yt-transcript --url=$VIDEO --language=es >> \

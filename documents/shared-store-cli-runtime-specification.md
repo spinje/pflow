@@ -45,7 +45,7 @@ The **NodeAwareSharedStore** proxy enables simple node code while supporting com
 |---|---|---|---|---|---|
 | `params` | Literal per-node tunables | Defaults stored; run-time overlays in derived snapshot | ❌ | ✅ via CLI | Flat structure in `self.params` |
 | `mappings` | Key translation for complex flows | ✅ | ✅ (when defined) | ❌ | Optional, flow-level concern |
-| Shared store | Flow-scoped key → value memory | Values never stored | Key names yes | Populated by CLI or pipe | Reserved key `stdin` |
+| Shared store | Flow-scoped key → value memory | Values never stored | Key names yes | Populated by CLI or pipe | Reserved key `stdin` (populated by shell pipe input) |
 
 #### 4\.1 Quick-reference summary
 
@@ -200,6 +200,7 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 
 #### Updated resolution algorithm (emphasizing simplicity)
 
+0. **Detect Piped Input**: If input is being piped to `pflow` via `stdin`, its content is read and placed into `shared["stdin"]`.
 1. Parse CLI as flat `key=value`
 
 2. For CLI flags matching natural shared store keys: inject directly
@@ -428,7 +429,7 @@ Same node code, different shared store layouts.
 | 2 | Unknown CLI flag | Abort |
 | 3 | Missing required data in shared store | Abort |
 | 4 | `params` always overrideable via `set_params()` | Derived snapshot |
-| 5 | `stdin` key reserved; node must handle it naturally | Abort |
+| 5 | `stdin` key reserved; node must handle it naturally. (Note: "naturally" implies either the node is designed to directly consume `shared["stdin"]` if its primary input key is not otherwise populated, or it consumes it via an IR mapping from its input key to `shared["stdin"]` orchestrated by the planner or CLI parser.) | Abort |
 | 6 | Mapping targets unique flow-wide | Abort |
 | 7 | Natural interface names should be intuitive | Warning |
 | 8 | Node classes must inherit from `pocketflow.Node` | Abort |

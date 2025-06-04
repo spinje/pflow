@@ -63,7 +63,7 @@ Where:
 
 - `node_hash`: Node type + version
 - `effective_params`: Runtime params from `self.params`
-- `input_data_sha256`: Hash of values from referenced shared store keys
+- `input_data_sha256`: Hash of values from referenced shared store keys. This includes the content of `shared["stdin"]` if the node is designed to read from it.
 
 ### Mechanism
 

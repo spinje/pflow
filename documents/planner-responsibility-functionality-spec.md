@@ -106,7 +106,7 @@ During CLI pipe composition, the planner maintains an ephemeral **type shadow st
 - Enable intelligent autocomplete suggestions for valid next nodes
 
 **Mechanism:**
-1. **Type Accumulation**: As nodes are added to pipe syntax, their output types are accumulated in memory
+1. **Type Accumulation**: As nodes are added to pipe syntax, their output types are accumulated in memory. If `stdin` is piped, `shared["stdin"]` (e.g., as type `str` or `bytes`) is considered available from the start.
 2. **Compatibility Check**: Each candidate next node's input type requirements are validated against available types
 3. **Advisory Feedback**: Invalid compositions flagged immediately, valid options highlighted
 
@@ -152,7 +152,7 @@ Both paths utilize the same core planner infrastructure:
 | Component | Natural Language Path | CLI Pipe Path | Purpose |
 |---|---|---|---|
 | **Node Registry** | ✅ Used for LLM selection | ✅ Used for node validation | Metadata discovery |
-| **Shared Store Modeling** | ✅ Full schema generation | ✅ Interface analysis | Compatibility detection |
+| **Shared Store Modeling** | ✅ Full schema generation. If `stdin` was piped, `shared["stdin"]` is considered populated. The planner ensures the first relevant node consumes this, either by node design or by generating an IR mapping (e.g. `{"input_mappings": {"<node_input_key>": "stdin"}}`). | ✅ Interface analysis. If `stdin` was piped, `shared["stdin"]` is considered populated. The planner ensures the first relevant node consumes this, either by node design or by generating an IR mapping. | Compatibility detection |
 | **Mapping Generation** | ✅ When LLM selects incompatible nodes | ✅ When CLI specifies incompatible nodes | Proxy pattern setup |
 | **Validation Framework** | ✅ Full validation suite | ✅ Structural/interface validation | Error prevention |
 | **IR Generation** | ✅ Complete JSON IR | ✅ Complete JSON IR | Execution preparation |
@@ -454,7 +454,7 @@ else:
 
 - **Flat Structure (MVP)**: `{"url": "...", "transcript": "...", "summary": "..."}`
 - **Future Nested**: `{"inputs/url": "...", "outputs/summary": "..."}`
-- **Reserved Keys**: `"stdin"` for piped input
+- **Reserved Keys**: `"stdin"` for piped input from the shell. This key will be populated by the runtime if data is piped to `pflow`.
 - **Type Consistency**: String/bytes/JSON validation
 
 ---
