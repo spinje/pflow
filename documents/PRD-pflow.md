@@ -2026,6 +2026,10 @@ pflow v0.1 success will be measured by:
 - Automatic optimization based on execution patterns
 - Intelligent error recovery and flow adaptation
 
+**Future Data Processing Enhancements:**
+
+- **JSON Field Extraction**: Potential automatic mapping of complex JSON outputs to simple node inputs (e.g., `api_response.data.content` → `shared["text"]`), though this requires careful consideration of pflow's "explicit over magic" philosophy. Alternative approaches include dedicated JSON processing nodes or enhanced planner intelligence for better mapping suggestions.
+
 **Core Philosophy Maintained:**
 
 - **Explicit over magic**: All behavior visible and configurable

@@ -533,3 +533,133 @@ This capability transforms pflow from a node orchestration tool into a **complet
 5. Integrate with CLI tracing and debugging tools
 
 This enhancement aligns perfectly with pflow's core philosophy: **complex capabilities through simple interfaces**. 
+
+## 13 · Critical Analysis & Alternative Approaches
+
+> **IMPORTANT**: This section captures critical concerns raised during design review. These insights should inform the final decision on whether to proceed with automatic JSON field extraction.
+
+### 13.1 Fundamental Concerns
+
+**Complexity Creep & Philosophy Drift:**
+
+The automatic JSON field extraction feature introduces several concerns that may violate pflow's core design principles:
+
+1. **"100-line framework" philosophy violation**: Adding a mini JSON query language significantly increases complexity beyond the minimal framework ideal
+2. **Scope expansion**: JSON processing isn't pflow's core mission (node orchestration is)
+3. **Magic vs. explicit behavior**: Moves from "explicit over magic" toward automatic, potentially opaque transformations
+4. **Implementation complexity**: Non-trivial parsing, validation, error handling, and debugging overhead
+
+**Architectural Misalignment:**
+
+- **Pattern vs. framework innovation**: This adds framework complexity rather than focusing on orchestration patterns
+- **Natural interface compromise**: Complex path syntax may reduce the intuitive nature of shared store keys
+- **Debugging complexity**: JSON path failures could be harder to diagnose than explicit node mismatches
+
+### 13.2 Alternative Approaches
+
+**Option 1: Dedicated JSON Processing Nodes**
+
+Instead of automatic extraction, provide explicit JSON manipulation nodes:
+
+```bash
+# Explicit approach - clear data flow
+pflow fetch-api-data >> extract-json-field --path="data.articles[0].content" --output-key="text" >> summarize-text
+
+# Multiple extractions
+pflow fetch-github-repo >> extract-json-field --path="description" --output-key="text" >> summarize-text
+```
+
+**Benefits:**
+- **Explicit data flow**: Clear what transformations are happening
+- **Debuggable**: Easy to inspect intermediate JSON extraction results
+- **Reusable**: JSON extraction nodes can be used in any flow
+- **Simple**: No new syntax or mapping complexity
+
+**Option 2: Enhanced Node Metadata for Better Mapping**
+
+Improve the planner's ability to suggest mappings without automatic extraction:
+
+```python
+# Enhanced node metadata with semantic hints
+class SummarizeText(Node):
+    """
+    Interface:
+    - Reads: shared["text"] - content to summarize
+    - Semantic hints: content, description, body, message, article
+    """
+```
+
+**Benefits:**
+- **Planner intelligence**: Better automatic mapping suggestions
+- **No syntax complexity**: Uses existing proxy mapping system
+- **Explicit user control**: User sees and approves all mappings
+- **Backward compatible**: No schema changes required
+
+**Option 3: External Tool Integration**
+
+Seamless integration with existing JSON processing tools:
+
+```bash
+# jq integration (future)
+pflow fetch-api-data >> jq --path=".data.articles[0].content" >> summarize-text
+
+# Or dedicated JSON transformer nodes
+pflow fetch-api-data >> json-transform --extract="data.articles[0].content" >> summarize-text
+```
+
+**Benefits:**
+- **Leverages existing tools**: jq is battle-tested and well-understood
+- **No reinvention**: Don't build what already exists
+- **Power user friendly**: jq syntax is already known by many developers
+- **Separation of concerns**: JSON processing vs. flow orchestration
+
+### 13.3 Risk Assessment
+
+**Implementation Risks:**
+
+| Risk | Automatic Extraction | Explicit Nodes | Enhanced Metadata |
+|------|---------------------|-----------------|-------------------|
+| **Complexity creep** | High | Low | Low |
+| **Debugging difficulty** | Medium-High | Low | Low |
+| **User confusion** | Medium | Low | Low |
+| **Maintenance burden** | High | Medium | Low |
+| **Philosophy violation** | High | Low | Low |
+
+**User Experience Trade-offs:**
+
+- **Automatic**: Convenient but potentially magical and hard to debug
+- **Explicit**: More verbose but clear and debuggable
+- **Enhanced metadata**: Best of both worlds - intelligent suggestions with user control
+
+### 13.4 Recommendation Reconsideration
+
+Based on this critical analysis, the automatic JSON field extraction approach may not align with pflow's core principles:
+
+**Core Philosophy Violations:**
+- **Explicit over magic**: Automatic extraction is inherently magical
+- **Simple nodes**: Adds complexity to the mapping system
+- **Minimal framework**: Expands beyond the 100-line ideal
+
+**Better Alternatives:**
+1. **Explicit JSON processing nodes** that follow natural interface patterns
+2. **Enhanced planner intelligence** for better mapping suggestions
+3. **External tool integration** leveraging existing JSON processing solutions
+
+**Decision Framework:**
+- If **simplicity and explicitness** are paramount → Choose explicit nodes
+- If **user convenience** is critical → Enhance planner suggestions
+- If **power and flexibility** are needed → Integrate external tools
+
+### 13.5 Questions for Final Decision
+
+1. **Philosophy**: Does automatic JSON extraction align with pflow's "explicit over magic" principle?
+2. **Complexity**: Is the implementation and maintenance burden justified by user convenience?
+3. **Alternatives**: Would explicit JSON processing nodes provide better long-term value?
+4. **User base**: Do target users prefer convenience or explicitness?
+5. **Scope**: Should pflow focus on orchestration or expand into data transformation?
+
+**Recommendation**: Consider abandoning automatic JSON extraction in favor of explicit JSON processing nodes that maintain pflow's core philosophy while providing clear, debuggable data transformation capabilities.
+
+---
+
+This governance document ensures both Flow IR and Node Metadata schemas align with pflow's established architecture while providing focused schema definitions for JSON validation, evolution, and metadata-driven planning capabilities. The critical analysis section preserves important design considerations for informed decision-making. 
