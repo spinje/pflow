@@ -18,6 +18,67 @@ The fundamental insight is that **node writers shouldn't need to understand flow
 4. **Reduced Cognitive Load** - Node writers focus on their domain expertise
 5. **More Readable Code** - `shared["text"]` beats `self.params["input_bindings"]["text"]`
 
+### Node Isolation and "Dumb Pipes" Philosophy
+
+**Core Isolation Principle:**
+Nodes are **dumb pipes** - isolated computation units with no awareness of other nodes or flow context.
+
+**Node Isolation Rules:**
+- **No peer awareness**: Nodes cannot inspect or reference other nodes
+- **No flow introspection**: Nodes don't know their position in flow topology  
+- **No conditional execution**: Nodes cannot skip or modify execution based on peer behavior
+- **Single responsibility**: Each node performs one well-defined transformation
+
+**Prohibited Inter-Node Dependencies:**
+```python
+# WRONG: Node aware of other nodes
+class BadNode(Node):
+    def exec(self, prep_res):
+        if "previous_node_failed" in shared:
+            return "skip"  # DON'T DO THIS
+
+# RIGHT: Flow-level conditional logic
+validator - "failed" >> error_handler
+validator - "success" >> processor
+```
+
+**Benefits of Isolation:**
+- **Composability**: Nodes work in any flow context
+- **Testability**: Nodes tested independently
+- **Reusability**: Same node used across different flows
+- **Debugging**: Clear responsibility boundaries
+- **Modularity**: Flow-level control over execution paths
+
+**Conditional Logic Location:**
+All conditional execution belongs at the **flow level** through action-based transitions, never within node internals.
+
+## Node Design Constraints
+
+### Control Flow Isolation
+Nodes must not implement complex dynamic control flow internally. All conditional logic, loops, and branching should be expressed at the flow level through action-based transitions.
+
+**Prohibited Patterns:**
+- Internal loops with dynamic exit conditions
+- Conditional branching based on shared store inspection
+- Dynamic routing logic within node execution
+
+**Correct Pattern:**
+```python
+# WRONG: Control flow in node
+class BadNode(Node):
+    def exec(self, prep_res):
+        while not condition_met():
+            result = process_data()
+            if should_branch():
+                return "special_path"
+        return "default"
+
+# RIGHT: Control flow at flow level
+node_a >> validator
+validator - "retry_needed" >> processor >> validator
+validator - "complete" >> finalizer
+```
+
 ## Key Concepts
 
 ### 1. Shared Store

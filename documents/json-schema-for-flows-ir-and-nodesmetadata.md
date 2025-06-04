@@ -99,7 +99,37 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
 - **Action Enumeration**: Lists all possible return values from node `post()` method
 - **Type Information**: Basic types (str, int, float, bool, dict, list, any)
 
-### 2.3 Extraction and Validation
+### 2.3 Shared Key Declaration Requirements
+
+All nodes must explicitly declare their shared store interface in metadata:
+
+**Required Declarations:**
+- **Input keys**: All shared store keys read during `prep()`
+- **Output keys**: All shared store keys written during `post()`
+- **Optional keys**: Keys that may or may not be present
+
+**Validation Rules:**
+- Nodes accessing undeclared shared keys trigger validation errors
+- Runtime shared store access must match declared interface
+- Flow validation checks key compatibility between connected nodes
+
+**Example Declaration:**
+```json
+{
+  "interface": {
+    "inputs": {
+      "url": {"required": true, "type": "str"},
+      "timeout": {"required": false, "type": "int", "default": 30}
+    },
+    "outputs": {
+      "transcript": {"type": "str"},
+      "metadata": {"type": "dict"}
+    }
+  }
+}
+```
+
+### 2.4 Extraction and Validation
 
 - **Source**: Structured docstrings using Interface sections (see [Node Metadata](./node-metadata.md))
 - **Validation**: Extracted metadata must match actual code behavior

@@ -146,3 +146,154 @@ Retries leverage pocketflow's existing `max_retries` mechanism:
 When retry logic becomes default or flows are shared across users, a comprehensive side-effect declaration schema may be introduced with `scope`, `target`, and `mode` modeling for external effects.
 
 Until then: **`@flow_safe` is the contract. Everything else is opaque by design.**
+
+## Flow Immutability During Execution
+
+### Static Execution Model
+Flows are immutable during execution. No runtime modification of:
+- Node composition or ordering
+- Edge definitions or action mappings
+- Shared store schema or key mappings
+- Node parameter definitions
+
+### Prohibited Runtime Mutations
+- Adding or removing nodes mid-execution
+- Changing node transitions based on data
+- Dynamic proxy mapping modifications
+- Flow topology alterations
+
+### Benefits of Static Execution
+- **Predictable behavior**: Flow execution follows predetermined path
+- **Auditability**: Complete flow structure captured in lockfile
+- **Reproducibility**: Identical flows produce identical execution patterns
+- **Debugging**: Clear execution model for trace analysis
+
+## Testing Framework
+
+### Built-in Testing Requirements
+
+pflow provides built-in testing capabilities to ensure node reliability and flow correctness:
+
+### Node Testing
+**Test Structure:**
+```python
+def test_yt_transcript_node():
+    node = YTTranscript()
+    node.set_params({"language": "en"})
+    
+    # Setup test shared store
+    shared = {"url": "https://youtu.be/test123"}
+    
+    # Execute node
+    node.run(shared)
+    
+    # Assert expected changes
+    assert "transcript" in shared
+    assert len(shared["transcript"]) > 0
+```
+
+**Test Requirements:**
+- Minimal setup (≤5 lines per test)
+- No mocks or scaffolding required
+- Test `params` and known `shared` dict
+- Assert expected shared store mutations
+
+### Flow Testing
+**Test Structure:**
+```python
+def test_video_summary_flow():
+    flow = create_video_summary_flow()
+    shared = {"url": "https://youtu.be/test123"}
+    
+    flow.run(shared)
+    
+    assert "summary" in shared
+    assert shared["summary"].startswith("Summary:")
+```
+
+### CLI Testing Interface
+```bash
+# Test individual nodes
+pflow test yt-transcript
+pflow test summarize-text
+
+# Test complete flows  
+pflow test video-summary-flow
+
+# Validate flow definitions
+pflow validate flow.json
+pflow validate my-flow.lock.json
+```
+
+### Testing Principles
+- **Behavior verification**: Ensure shared store changes match expectations
+- **Schema safety**: Validate interface compatibility
+- **Agent flow auditability**: Test AI-generated flows for correctness
+- **Minimal complexity**: Simple, direct testing without infrastructure
+
+## Future: Resilience and Recovery Features
+
+### Long-Lived Flow Resumption (Planned)
+
+**Capability Overview:**
+Support for flows that can be paused, interrupted, and resumed from checkpoints.
+
+**Implementation Approach:**
+- Serialize `shared` store state at node completion boundaries
+- Track completed nodes in execution metadata
+- Resume from last successful checkpoint on restart
+
+**CLI Interface (Planned):**
+```bash
+# Resume interrupted flow
+pflow resume job_2024-01-01_abc123
+
+# Create checkpoint-enabled flow
+pflow run my-flow.json --enable-checkpoints
+
+# List resumable flows
+pflow list --resumable
+```
+
+**Requirements for Resumability:**
+- All nodes in resumable flows must be `@flow_safe`
+- Shared store state must be serializable
+- External side effects must be idempotent or trackable
+
+### User Memory and State (Explicitly Not Supported)
+
+**Design Decision:**
+pflow does not support per-user persistent memory or cross-flow state sharing in core system.
+
+**Rationale:**
+- Breaks composability and flow isolation
+- Introduces hidden dependencies
+- Complicates reproducibility and testing
+
+**Alternative Patterns:**
+- **Explicit context injection**: Load user context via preparatory nodes
+- **External storage**: Use dedicated storage nodes for persistence
+- **Flow composition**: Chain flows that explicitly pass context
+
+**Example:**
+```bash
+# CORRECT: Explicit context loading
+pflow load-user-context --user=alice >> process-request >> save-result
+
+# WRONG: Implicit user memory (not supported)
+pflow process-request  # Would magically know about Alice
+```
+
+### Checkpointing Architecture (Future)
+
+**Technical Approach:**
+- Checkpoint creation at node completion boundaries
+- Shared store serialization to disk or external storage  
+- Node completion tracking in execution metadata
+- Resume logic that skips completed nodes and restores state
+
+**Integration with Caching:**
+- Checkpoints complement but don't replace caching
+- Cache provides performance optimization
+- Checkpoints provide failure recovery
+- Both require `@flow_safe` nodes for safety

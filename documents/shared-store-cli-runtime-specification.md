@@ -55,7 +55,26 @@ The **NodeAwareSharedStore** proxy enables simple node code while supporting com
 | `params` | Behaviour knobs | ❌ | ✅ (`--flag`) | ✅ | ❌ |
 | `mappings` | Complex routing | ✅ | ❌ | ✅ | ✅ |
 
-#### 4.2 Future Namespacing Support
+#### 4.2 Shared Store Lifecycle and Scope
+
+**Transient Per-Run Nature:**
+- Shared store exists only for single flow execution
+- No persistence between flow runs
+- Not a database, cache, or external storage layer
+- All data cleared at flow completion
+
+**Prohibited Uses:**
+- Storing configuration that should persist between runs
+- Using as application state database
+- Expecting data to survive flow restarts
+- Cross-flow data sharing
+
+**Correct Patterns:**
+- Use external storage nodes for persistence
+- Pass persistent data via CLI flags or input files
+- Use `params` for configuration that doesn't change per run
+
+#### 4.3 Future Namespacing Support
 
 **MVP Implementation**: Flat key structure for shared store simplicity
 

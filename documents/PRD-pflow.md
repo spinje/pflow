@@ -1625,6 +1625,32 @@ pflow yt-transcript --invalid-flag=value
 # Available flags: --url (data), --language (param), --max-retries (execution)
 ```
 
+### 8.9 User Mental Model
+
+**Simplified Conceptual Framework:**
+
+pflow operates on a simple mental model that abstracts away complex orchestration details:
+
+> "A flow is a sequence of steps. Each step does something with data and passes it forward. I don't need to manage how data is routed between steps—pflow handles that for me, but can show me exactly what's happening if I want to understand."
+
+**User's Conceptual Layers:**
+
+1. **Flows are pipelines** - Connect steps using `>>` like Unix pipes
+2. **Steps are generic tools** - Each expects input, produces output
+3. **System handles wiring** - Data routing managed automatically
+4. **Inspection available** - Can examine data flow when needed
+
+**What Users Don't Need to Know:**
+- Internal `shared` store mechanics
+- Key routing and mapping details
+- Memory layout and scoping
+- Flow schema construction
+
+**Progressive Disclosure:**
+- Beginners: Use natural language and generated CLI
+- Intermediate: Learn CLI patterns and composition
+- Advanced: Understand shared store and proxy patterns when needed
+
 ---
 
 ## 9 · MVP Acceptance Criteria
