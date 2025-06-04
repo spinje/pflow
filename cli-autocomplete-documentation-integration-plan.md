@@ -10,6 +10,7 @@ This document outlines a **focused and minimal** plan to integrate information a
 *   **No Schema Changes**: Avoid any modifications to JSON schemas or data structures
 *   **Minimal Footprint**: Prefer fewer, more meaningful additions over broad coverage
 *   **Standalone Value**: Each addition must enhance the existing content meaningfully
+*   **Implementation Reality**: Acknowledge this as a progressive feature that leverages existing pflow strengths
 
 ## 3. Revised Integration Points (Essential Only)
 
@@ -26,13 +27,13 @@ After careful consideration, only **two documents** need updates:
     ```markdown
     #### 4.9 CLI Autocompletion
 
-    To improve command-line usability and reduce errors, `pflow` provides interactive autocompletion.
+    `pflow` provides interactive command-line autocompletion to improve usability and reduce composition errors.
 
     *   **Setup**: `pflow completion <shell_name>` generates shell-specific completion scripts
-    *   **Scope**: Suggests node names (with namespaces/versions), flags (shared store keys vs parameters), parameter values, action names, and flow operators (`>>`, `-`)
-    *   **Integration**: Leverages the Node Registry and metadata for context-aware suggestions
+    *   **Scope**: Node names, flags, parameter values, action names, and flow operators
+    *   **Architecture**: Leverages existing Node Registry and metadata for intelligent suggestions
 
-    This feature makes `pflow` syntax discoverable directly in the terminal, particularly valuable for new users learning the CLI patterns.
+    This feature makes `pflow` syntax discoverable directly in the terminal, supporting the progressive learning philosophy.
     ```
 
 *   **Target Section**: `Appendix A: Glossary of Key Terms`
@@ -52,7 +53,7 @@ After careful consideration, only **two documents** need updates:
     ```markdown
     ### 12.2 CLI Usability Enhancement
 
-    **Interactive Autocomplete**: `pflow` supports shell autocompletion via `pflow completion <shell_name>`. This provides real-time suggestions for node names, flags (correctly distinguishing shared store keys from parameters per the "Type flags; engine decides" model), and action names, reducing composition errors and making the syntax discoverable.
+    **Interactive Autocomplete**: Autocompletion correctly distinguishes between shared store keys (for data injection) and node parameters (for behavior configuration), reinforcing the "Type flags; engine decides" resolution model. This contextual awareness helps users learn the distinction while reducing CLI composition errors.
     ```
 
 ---
