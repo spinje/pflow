@@ -1,17 +1,3 @@
-Excellent — treating the `Prompt` node as **pure** (cacheable) is fully reasonable *if* we make two key assumptions explicit:
-
-1. **The prompt input fully determines the output.**
-   No hidden randomness (e.g. sampling with `temperature > 0`) unless explicitly included in the cache key.
-
-2. **The backend and model name are part of the effective input.**
-   Because calling the same prompt on `gpt-4o` vs `claude-3-opus` can give wildly different results.
-
----
-
-Here’s the full, consolidated document:
-
----
-
 # 📄 `Prompt` Node Specification – MVP (pflow)
 
 ## Overview
@@ -71,6 +57,42 @@ else:
 
 *Lazy import is used.*
 If the selected backend is not installed or configured, a clear error will point to how to resolve it (`pip install llm` or set API keys).
+
+---
+
+## 🧠 Backend Strategy: Leveraging `llm` (Simon Willison)
+
+The default backend for the `Prompt` node is [`llm`](https://github.com/simonw/llm) by Simon Willison, an open-source CLI and Python toolkit that supports:
+
+* **Multi-provider access** (OpenAI, Anthropic, Gemini, Ollama, Groq, etc.)
+* **Built-in prompt templating and fragments**
+* **Simple config via `.llm` file or environment variables**
+* **Rich plugin ecosystem for embeddings, PDF, GitHub docs, etc.**
+
+### Why we use it
+
+We chose to build the `Prompt` node on `llm` for three reasons:
+
+1. It provides a consistent, stable interface across model providers.
+2. It removes the need for users to manage SDKs, headers, auth, and formatting.
+3. It evolves rapidly with the LLM ecosystem — adding tools, context features, and integrations faster than we could track ourselves.
+
+### What we expose in pflow
+
+For the MVP, we only expose a **deterministic, single-turn prompt interface**, even though `llm` supports chat, fragments, tools, and more.
+
+| `llm` Feature              | Exposed in `Prompt`? | Notes                                                   |
+| -------------------------- | -------------------- | ------------------------------------------------------- |
+| Multi-model support        | ✅                    | Exposed via `model` and `backend` params                |
+| Prompt execution           | ✅                    | Core feature                                            |
+| Prompt templates/fragments | ❌ (yet)              | May be integrated later                                 |
+| Tool-calling               | ❌                    | Deferred to `ToolCall` node                             |
+| Embedding                  | ❌                    | Will be part of `Embed` node                            |
+| Plugins                    | ❌                    | Not exposed directly — but used internally if installed |
+
+### Optional overrides
+
+Users can override `llm` by setting `backend="openai"` or similar. In that case, pflow will use direct SDKs (e.g. `openai`, `anthropic`) instead.
 
 ---
 
@@ -154,7 +176,5 @@ pflow "Summarize the article and write it to output.md"
 | Install behavior    | Do not install `llm` automatically — lazy-import and raise |
 | Param surface       | Keep minimal to enable clean planner integration           |
 | Output location     | Always writes `response` to shared store                   |
+| Backend flexibility | Users can override `llm` with any supported SDK            |
 
----
-
-Let me know if you'd like a markdown, JSON schema, or Mermaid diagram version of this.
