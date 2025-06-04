@@ -96,3 +96,9 @@ This feature integrates seamlessly with and reinforces the existing `pflow` arch
 * **Strengthened Adherence to Patterns:** Subtly guides users towards idiomatic `pflow` usage by suggesting standard natural interface keys and parameters.
 
 This feature is a natural extension of `pflow`'s existing architecture and directly supports its goals of user-friendliness, explicitness, and learnability.
+
+## 5. Implementation plan
+
+A phased approach to implementation, starting with core suggestions (node names, flags) and progressively adding more sophisticated contextual awareness, would be a sensible way to manage complexity and deliver value incrementally. The performance of the suggestion-generation call will be paramount.
+
+See [Cli Autocomplete Feature Implementation Details](cli-auto-complete-feature-implementation-details.md) for the implementation details.
