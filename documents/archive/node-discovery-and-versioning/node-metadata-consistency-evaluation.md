@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-After careful analysis of `node-metadata.md` against the source-of-truth documents, I identified **one major philosophical contradiction** and **several minor inconsistencies** that need resolution.
+After careful analysis of `node-metadata-extraction.md` against the source-of-truth documents, I identified **one major philosophical contradiction** and **several minor inconsistencies** that need resolution.
 
 **Overall Assessment**: While the technical approach is sound, the fundamental assumption about node generation contradicts established architecture.
 
@@ -18,7 +18,7 @@ After careful analysis of `node-metadata.md` against the source-of-truth documen
 - **"Generated": Flow orchestration code (from IR) with optional proxy setup**
 - Emphasizes reusable, standalone components developed by humans
 
-**node-metadata.md Position**:
+**node-metadata-extraction.md Position**:
 - **"Game-Changing Assumption: LLM-Generated Code"**
 - **"Our Reality: LLM generates code + documentation together → perfect consistency"**
 - **"Zero Developer Friction - LLM handles all metadata generation"**
@@ -32,11 +32,11 @@ This is a **fundamental architectural contradiction**. The source documents esta
 2. Node logic is written once and reused across flows
 3. Only flow orchestration is generated (from IR)
 
-The node-metadata.md approach assumes the opposite: that nodes themselves are LLM-generated.
+The node-metadata-extraction.md approach assumes the opposite: that nodes themselves are LLM-generated.
 
 ### Resolution Required
 
-The node-metadata.md document must be updated to reflect that:
+The node-metadata-extraction.md document must be updated to reflect that:
 - Nodes are **static, pre-written by developers**
 - LLM assistance may help with **documentation enhancement** for existing nodes
 - Metadata extraction occurs from **existing node code**, not generated code
@@ -57,7 +57,7 @@ The node-metadata.md document must be updated to reflect that:
 }
 ```
 
-**node-metadata.md** proposes:
+**node-metadata-extraction.md** proposes:
 ```json
 {
   "node": { ... },
@@ -80,7 +80,7 @@ pflow registry install
 pflow registry validate
 ```
 
-**node-metadata.md** proposes:
+**node-metadata-extraction.md** proposes:
 ```bash
 pflow metadata extract
 pflow metadata validate
@@ -101,7 +101,7 @@ Interface:
 """
 ```
 
-**node-metadata.md** proposes:
+**node-metadata-extraction.md** proposes:
 ```python
 """
 Interface:
@@ -122,7 +122,7 @@ Interface:
 
 ### 3.1 Unestablished Features
 
-**node-metadata.md** introduces features not mentioned in source documents:
+**node-metadata-extraction.md** introduces features not mentioned in source documents:
 
 1. **LLM Node Generation**: Complete node code generation
 2. **Node Enhancement**: Automatic documentation improvement
@@ -131,7 +131,7 @@ Interface:
 
 ### 3.2 Missing Integration Points
 
-**node-metadata.md** doesn't address integration with established systems:
+**node-metadata-extraction.md** doesn't address integration with established systems:
 
 1. **Version Lockfiles**: How metadata extraction relates to version management
 2. **Registry Installation**: Integration with `pflow registry install` workflow
@@ -211,7 +211,7 @@ Interface:
 
 ## 7 · Conclusion
 
-The `node-metadata.md` document provides valuable technical architecture for metadata extraction, but requires significant philosophical realignment to match established source-of-truth documents.
+The `node-metadata-extraction.md` document provides valuable technical architecture for metadata extraction, but requires significant philosophical realignment to match established source-of-truth documents.
 
 **Key Insight**: The document should focus on **extracting metadata from static nodes** rather than **generating nodes with metadata**.
 

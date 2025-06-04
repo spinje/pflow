@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This plan outlines how to split `node-metadata.md` into two focused documents while preserving valuable technical content and fixing architectural inconsistencies.
+This plan outlines how to split `node-metadata-extraction.md` into two focused documents while preserving valuable technical content and fixing architectural inconsistencies.
 
 **Target Documents**:
 1. **`node-metadata-extraction.md`** - Production-ready metadata extraction infrastructure
@@ -123,7 +123,7 @@ This document defines the infrastructure for extracting structured metadata from
 
 **Required Changes**:
 ```json
-// REMOVE (from node-metadata.md):
+// REMOVE (from node-metadata-extraction.md):
 {
   "node": { ... },
   "metadata": {
