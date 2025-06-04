@@ -97,9 +97,23 @@ graph TD
 
 ---
 
-## 2 · Core Concepts
+## 2 · Out-of-Scope for MVP
 
-### 2.1 The pocketflow Foundation
+These features are intentionally excluded from the initial release to maintain focus on core functionality and ensure a stable foundation.
+
+| Excluded Feature | Rationale |
+|------------------|-----------|
+| **Auto-generating node code** | Keeps surface area small; focus on wrapping existing MCP tools and curated core nodes |
+| **GUI authoring / YAML flows** | CLI + JSON IR are sufficient; GUI can be added as a later layer |
+| **Mid-run user interaction** | Nodes run to completion (`prep → exec → post`) with no pauses for user input |
+| **Global, implicit state** | All data lives in per-run `shared` store or explicit external side-effect nodes |
+| **CLI flow search** (`pflow search`) | First iteration exposes discovery via Python API & LLM routing; dedicated CLI search reserved for future roadmap |
+
+---
+
+## 3 · Core Concepts
+
+### 3.1 The pocketflow Foundation
 
 pflow is built on a **100-line Python framework** that provides the execution engine:
 
@@ -124,7 +138,7 @@ node_a - "error" >> error_handler   # Action-based transition
 - **Action-based**: Built-in support for conditional transitions
 - **Retry-enabled**: Configurable retry with `max_retries` parameter
 
-### 2.2 Shared Store Pattern
+### 3.2 Shared Store Pattern
 
 The **shared store** is pflow's primary innovation—a flow-scoped memory that enables natural node interfaces:
 
@@ -149,7 +163,7 @@ class YTTranscript(Node):
 - **Shared Store**: Primary data flow (heap-like shared memory)
 - **Params**: Node configuration and batch identifiers (stack-like per-node)
 
-### 2.2.1 Visualizing Shared Store Data Flow
+### 3.2.1 Visualizing Shared Store Data Flow
 
 The following diagram illustrates how data flows through the shared store during pflow execution, showcasing both direct access and proxied access for nodes, alongside node-specific parameters.
 
@@ -188,7 +202,7 @@ graph LR
 
 *Caption*: Illustrative data flow showing direct shared store access (Node A) and proxied access (Node B) for key mapping, with node-specific params.
 
-### 2.3 Natural Interfaces
+### 3.3 Natural Interfaces
 
 Nodes use **intuitive key names** that match human expectations:
 
@@ -209,7 +223,7 @@ shared["transcript"]    # Output: video transcript
 - **Maintainable**: Self-documenting interfaces
 - **Reusable**: Same patterns across different nodes
 
-### 2.4 Proxy Mapping for Complex Flows
+### 3.4 Proxy Mapping for Complex Flows
 
 When natural interfaces don't align (e.g., marketplace compatibility), **proxy mappings** provide transparent translation. **Proxy mapping is completely optional with zero overhead when not needed**—most simple flows use direct shared store access.
 
@@ -240,7 +254,7 @@ node.prep(proxy)  # still reads shared["text"], proxy maps to shared["raw_conten
 
 **Key Insight**: Nodes always use natural interfaces regardless of proxy presence. Proxy mappings enable complex flow routing without modifying node code.
 
-### 2.5 Node Safety and Purity
+### 3.5 Node Safety and Purity
 
 pflow uses an **opt-in purity model** for performance and safety:
 
@@ -267,7 +281,7 @@ class ExtractTextSummary(Node):
 - **Validation enforced**: Cache and retry only allowed for pure nodes
 - **User confirmation**: All flows shown before execution
 
-### 2.6 Action-Based Flow Control
+### 3.6 Action-Based Flow Control
 
 Nodes return **action strings** for conditional flow routing:
 
@@ -293,7 +307,7 @@ validator - "validation_failed" >> error_handler  # Error path
 - **Debuggable**: Flow paths visible in IR and traces
 - **Flexible**: Complex error handling without exceptions
 
-### 2.7 Version Resolution and Namespacing
+### 3.7 Version Resolution and Namespacing
 
 Nodes are **versioned and namespaced** for reproducible execution:
 
@@ -312,11 +326,11 @@ mcp/github-search@2.1.0
 
 ---
 
-## 3 · Planning Pipeline Architecture
+## 4 · Planning Pipeline Architecture
 
 pflow's **planner** operates in dual-mode, handling both natural language prompts and CLI pipe syntax through a unified validation and IR generation pipeline.
 
-### 3.1 Dual-Mode Operation
+### 4.1 Dual-Mode Operation
 
 ```mermaid
 graph TD
@@ -349,7 +363,7 @@ graph TD
 
 **Key Insight**: Both paths converge on validated JSON IR, ensuring consistent execution semantics regardless of input method.
 
-### 3.2 Natural Language Path (Full Planning)
+### 4.2 Natural Language Path (Full Planning)
 
 **10-Stage Process for NL → Executable Flow:**
 
@@ -384,7 +398,7 @@ Generated CLI: pflow yt-transcript --url=$URL >> summarize-text
 User Confirmation Required
 ```
 
-### 3.3 CLI Pipe Path (Validation Planning)
+### 4.3 CLI Pipe Path (Validation Planning)
 
 **7-Stage Process for CLI → Validated IR:**
 
@@ -414,7 +428,7 @@ IR Generation: Complete JSON with params and execution config
 Direct Runtime Execution
 ```
 
-### 3.4 Metadata-Driven Selection
+### 4.4 Metadata-Driven Selection
 
 The planner uses **extracted node metadata** rather than code inspection:
 
@@ -451,7 +465,7 @@ class YTTranscript(Node):
 - **Interface validation**: Type checking without code execution
 - **Version awareness**: Multiple versions discoverable
 
-### 3.5 Retrieval-First Strategy
+### 4.5 Retrieval-First Strategy
 
 The planner follows **retrieval-first** to maximize stability:
 
@@ -484,7 +498,7 @@ graph TD
 - **Quality**: Validated flows preferred over new generation
 - **Learning**: System improves through successful flow accumulation
 
-### 3.6 Validation Framework
+### 4.6 Validation Framework
 
 **Validation-first approach**: pflow validates at every stage to catch errors immediately before they can cause execution failures. **Comprehensive validation** occurs at multiple checkpoints:
 
@@ -515,7 +529,7 @@ def validate_flow(ir_draft):
 - **Graceful degradation**: Simpler flows attempted on complex failures
 - **User escalation**: Clear diagnostics when retry budget exhausted
 
-### 3.7 Provenance and Auditability
+### 4.7 Provenance and Auditability
 
 Every planned flow includes **complete provenance**:
 
@@ -550,11 +564,11 @@ Every planned flow includes **complete provenance**:
 
 ---
 
-## 4 · CLI Surface & Parameter Resolution
+## 5 · CLI Surface & Parameter Resolution
 
 pflow's CLI follows a **single resolution rule**: "Type flags; engine decides." The engine automatically categorizes CLI flags as data injection, parameter overrides, or execution configuration.
 
-### 4.1 Core CLI Commands
+### 5.1 Core CLI Commands
 
 | Command | Purpose | Example |
 |---------|---------|---------|
@@ -564,7 +578,7 @@ pflow's CLI follows a **single resolution rule**: "Type flags; engine decides." 
 | `pflow registry list` | Show available nodes and their interfaces | `pflow registry list --filter mcp` |
 | `pflow explain <flow>` | Reverse-engineer flow description from IR/lockfile | `pflow explain my-flow.lock.json` |
 
-### 4.2 "Type Flags; Engine Decides" Algorithm
+### 5.2 "Type Flags; Engine Decides" Algorithm
 
 The engine automatically categorizes every CLI flag using this decision tree:
 
@@ -611,7 +625,7 @@ echo "content" | pflow summarize-text
 # Result: shared["stdin"] = "content"
 ```
 
-### 4.3 Natural Flag Naming
+### 5.3 Natural Flag Naming
 
 CLI flags use **natural, intuitive names** that match human expectations:
 
@@ -636,7 +650,7 @@ CLI flags use **natural, intuitive names** that match human expectations:
 --wait               # Delay between retries
 ```
 
-### 4.4 Advanced CLI Patterns
+### 5.4 Advanced CLI Patterns
 
 **Pipe Composition:**
 
@@ -674,7 +688,7 @@ pflow yt-transcript >> summarize-text
 # Error: "MISSING_INPUT: --url required for yt-transcript"
 ```
 
-### 4.5 CLI Parameter Categories
+### 5.5 CLI Parameter Categories
 
 #### Data Injection (Shared Store)
 
@@ -715,7 +729,7 @@ pflow fetch-url --url=$URL --max-retries=3 --wait=1.0 --use-cache
 # Only valid for @flow_safe nodes (cache/retry eligibility enforced)
 ```
 
-### 4.6 Reserved Keywords and Special Handling
+### 5.6 Reserved Keywords and Special Handling
 
 **Reserved Shared Store Keys:**
 
@@ -731,7 +745,7 @@ pflow fetch-url --url=$URL --max-retries=3 --wait=1.0 --use-cache
 - `--no-lock`: Skip lockfile generation
 - `--reset-cache`: Invalidate cache before execution
 
-### 4.7 Error Handling and User Feedback
+### 5.7 Error Handling and User Feedback
 
 **Unknown Flag Resolution:**
 
@@ -762,7 +776,7 @@ pflow fetch-url --max-retries=5  # Only @flow_safe nodes support retries
 # Suggestion: Use --max-retries only with pure nodes
 ```
 
-### 4.8 CLI Evolution and Extensibility
+### 5.8 CLI Evolution and Extensibility
 
 **Natural Language Integration:**
 
@@ -781,7 +795,7 @@ pflow fetch-url --max-retries=5  # Only @flow_safe nodes support retries
 - Interactive flag builders for complex nodes
 - Template-based CLI generation for common patterns
 
-### 4.9 CLI Autocompletion
+### 5.9 CLI Autocompletion
 
 `pflow` provides interactive command-line autocompletion to improve usability and reduce composition errors.
 
@@ -793,7 +807,7 @@ This feature makes `pflow` syntax discoverable directly in the terminal, support
 
 ---
 
-## 5 · JSON IR & Schema Governance
+## 6 · JSON IR & Schema Governance
 
 pflow's **Intermediate Representation (IR)** is a complete JSON specification that captures executable flows with full provenance and validation.
 
@@ -976,7 +990,7 @@ Validated IR generates **lockfiles** for deterministic execution:
 
 ---
 
-## 6 · Runtime Behavior & Performance
+## 7 · Runtime Behavior & Performance
 
 pflow's runtime implements **opt-in performance optimization** through explicit purity declarations and configurable execution behavior.
 
@@ -1192,7 +1206,7 @@ pflow trace run_2024-01-01_abc123 --cache-stats
 
 ---
 
-## 7 · MCP Integration & Unified Registry
+## 8 · MCP Integration & Unified Registry
 
 pflow integrates **Model Context Protocol (MCP)** tools as native nodes through automatic wrapper generation and unified registry management.
 
@@ -1409,7 +1423,7 @@ pflow registry test-mcp-connections
 
 ---
 
-## 8 · User Experience & Workflows
+## 9 · User Experience & Workflows
 
 pflow supports **progressive complexity** from natural language exploration to production automation pipelines.
 
@@ -1662,7 +1676,7 @@ pflow operates on a simple mental model that abstracts away complex orchestratio
 
 ---
 
-## 9 · MVP Acceptance Criteria
+## 10 · MVP Acceptance Criteria
 
 These metrics define success for pflow v0.1, emphasizing reliability, performance, and user experience over feature breadth.
 
@@ -1740,9 +1754,9 @@ These metrics define success for pflow v0.1, emphasizing reliability, performanc
 
 ---
 
-## 10 · Implementation Roadmap
+## 11 · Implementation Roadmap
 
-### 10.1 Development Phases
+### 11.1 Development Phases
 
 ```mermaid
 gantt
@@ -1846,9 +1860,9 @@ gantt
 
 ---
 
-## 11 · Risk Management & Mitigation
+## 12 · Risk Management & Mitigation
 
-### 11.1 Technical Risks
+### 12.1 Technical Risks
 
 **High Priority Risks:**
 
@@ -1883,7 +1897,7 @@ gantt
 - Registry indexing for fast metadata access
 - Lazy loading to minimize startup overhead
 
-### 11.2 Product Risks
+### 12.2 Product Risks
 
 **Market & Adoption Risks:**
 
@@ -1901,7 +1915,7 @@ gantt
 - **Error message quality**: Comprehensive error taxonomy with actionable suggestions
 - **Documentation gaps**: User journey-driven documentation with working examples
 
-### 11.3 Operational Risks
+### 12.3 Operational Risks
 
 **Deployment & Maintenance:**
 
@@ -1918,7 +1932,7 @@ gantt
 - **Planning latency**: Local LLM support, caching strategies
 - **Community management**: Clear contribution guidelines, automated testing
 
-### 11.4 Contingency Plans
+### 12.4 Contingency Plans
 
 **Major Issue Response:**
 
@@ -1942,7 +1956,7 @@ gantt
 
 ---
 
-## 12 · Conclusion
+## 13 · Conclusion
 
 pflow represents a **paradigm shift** in CLI automation by combining the best aspects of:
 
@@ -1951,7 +1965,7 @@ pflow represents a **paradigm shift** in CLI automation by combining the best as
 - **AI-assisted discovery** with **deterministic reproducibility**
 - **Lightweight framework** with **sophisticated orchestration**
 
-### 12.1 Key Innovations
+### 13.1 Key Innovations
 
 **The Shared Store + Proxy Pattern:**
 
@@ -1971,7 +1985,7 @@ pflow represents a **paradigm shift** in CLI automation by combining the best as
 - Innovation happens in orchestration patterns and integrations
 - Complexity managed through clear architectural separation
 
-### 12.2 Competitive Advantages
+### 13.2 Competitive Advantages
 
 **vs. Chat-Only Agents (Claude Desktop):**
 
@@ -1991,7 +2005,7 @@ pflow represents a **paradigm shift** in CLI automation by combining the best as
 - **Natural language entry**: Conversational interface for exploration
 - **Ecosystem integration**: MCP tools as native components
 
-### 12.3 Success Metrics Alignment
+### 13.3 Success Metrics Alignment
 
 pflow v0.1 success will be measured by:
 
@@ -2013,7 +2027,7 @@ pflow v0.1 success will be measured by:
 - 100+ discoverable nodes in unified registry
 - Clear migration path from exploration to automation
 
-### 12.4 Long-Term Vision
+### 13.4 Long-Term Vision
 
 **pflow v0.1** establishes the foundation for:
 
