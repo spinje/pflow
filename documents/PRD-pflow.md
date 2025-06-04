@@ -778,9 +778,18 @@ pflow fetch-url --max-retries=5  # Only @flow_safe nodes support retries
 
 **Future Enhancements:**
 
-- Flag auto-completion based on node registry
 - Interactive flag builders for complex nodes
 - Template-based CLI generation for common patterns
+
+### 4.9 CLI Autocompletion
+
+`pflow` provides interactive command-line autocompletion to improve usability and reduce composition errors.
+
+*   **Setup**: `pflow completion <shell_name>` generates shell-specific completion scripts
+*   **Scope**: Node names, flags, parameter values, action names, and flow operators
+*   **Architecture**: Leverages existing Node Registry and metadata for intelligent suggestions
+
+This feature makes `pflow` syntax discoverable directly in the terminal, supporting the progressive learning philosophy.
 
 ---
 
@@ -2043,6 +2052,8 @@ pflow delivers on the promise of **intelligent CLI automation** while preserving
 ## Appendix A: Glossary of Key Terms
 
 - **`Action-Based Transitions`**: The mechanism for conditional flow control in pflow. Nodes can return string "actions" from their `post()` method, and these actions are used in the flow definition (e.g., `node_a - "error_condition" >> error_handler_node`) to direct execution to different subsequent nodes based on the outcome of the current node. This allows for explicit, non-exceptional branching and error handling paths.
+
+- **`CLI Autocomplete`**: Interactive command-line completion providing real-time suggestions for nodes, flags, and syntax. Enabled via `pflow completion <shell_name>`.
 
 - **`@flow_safe`**: A Python decorator applied to a `pocketflow.Node` subclass. It signifies that the node is pure, meaning it is deterministic (same inputs always produce same outputs) and idempotent (multiple identical calls have the same effect as one), and has no observable side effects outside of mutations to the `shared` store. Nodes marked `@flow_safe` are eligible for performance optimizations like caching and automated retries on failure.
 

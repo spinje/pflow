@@ -453,6 +453,10 @@ Same node code, different shared store layouts.
 
 - **Static nodes, dynamic flows** — node logic is reusable, flow wiring is generated.
 
+### 12.2 CLI Usability Enhancement
+
+**Interactive Autocomplete**: Autocompletion correctly distinguishes between shared store keys (for data injection) and node parameters (for behavior configuration), reinforcing the "Type flags; engine decides" resolution model. This contextual awareness helps users learn the distinction while reducing CLI composition errors.
+
 ### 12.1 Educational Design Rationale
 
 The CLI design prioritizes **learning through transparency** over automation efficiency:
