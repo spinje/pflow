@@ -1,8 +1,8 @@
 # pflow
 
-**Turn expensive, one-off AI workflows into permanent, instant CLI commands.**
+**Turn expensive, one-off AI prompts into permanent, instant CLI commands.**
 
-What takes an AI agent 2 minutes and $1.00 to figure out *every time*, pflow figures out once, then runs in 2 seconds for free, forever.
+Workflows that take an AI agent 2 minutes and $1.00 to figure out *every time*, pflow figures out once, then runs in 2 seconds for free, forever.
 
 ```bash
 # First time: AI plans your workflow (30 seconds)
@@ -16,7 +16,7 @@ $ pflow analyze-churn
 
 ## What is pflow?
 
-Have you ever asked an AI agent to perform a multi-step task, like analyzing data from two different APIs? It works, but it's slow and you pay for the same reasoning every single time.
+Have you ever asked an AI agent to perform a multi-step task, like analyzing data from two different APIs? It works, but it's slow and you pay for the same reasoning every single time. You could ask the agent to write a script, but then you're stuck maintaining boilerplate code, and chaining multiple scripts together is a nightmare.
 
 **`pflow` fixes this.**
 
@@ -28,15 +28,15 @@ It turns your ideas into your own personal, reusable toolchain.
 
 This is not just another AI wrapper. `pflow` fundamentally changes the economics and speed of AI-driven automation.
 
-1. **PLAN (First Run):** You describe a complex workflow. `pflow` uses AI to intelligently select, chain, and map the right tools, creating a deterministic plan. (*This is the only time you pay in time and tokens.*)
+1.  **PLAN (First Run):** You describe a complex workflow. `pflow` uses AI to intelligently select, chain, and map the right tools, creating a deterministic plan. (*This is the only time you pay in time and tokens.*)
 
-2. **COMPILE (Automatic):** `pflow` saves this plan as a reproducible, version-locked artifact. It is now a permanent part of your toolkit.
+2.  **COMPILE (Automatic):** `pflow` saves this plan as a reproducible, version-locked artifact. It is now a permanent part of your toolkit.
 
-3. **EXECUTE (Every Subsequent Run):** You run your new command by name. It executes instantly with no AI, no planning, and no cost, giving you the exact same result, every time.
+3.  **EXECUTE (Every Subsequent Run):** You run your new command by name. It executes instantly with no AI, no planning, and no cost, giving you the exact same result, every time.
 
 ## Quick Start
 
-### 1. Your First Flow
+### 1\. Your First Flow
 
 ```bash
 # Install pflow
@@ -47,7 +47,7 @@ pflow "check my github PRs and summarize them for standup"
 
 # pflow generates and shows you the workflow:
 # → fetch-github-prs --state=open >> llm "summarize for standup"
-# 
+#
 # Run this flow? [Y/n] y
 ✅ Flow saved as 'standup-prep'
 
@@ -55,7 +55,7 @@ pflow "check my github PRs and summarize them for standup"
 pflow standup-prep
 ```
 
-### 2. Build Complex Workflows
+### 2\. Build Complex Workflows
 
 ```bash
 # Chain multiple tools together
@@ -65,7 +65,7 @@ pflow "fetch aws costs, analyze by service, create report, send to slack"
 # → aws-costs --period=7d >> analyze-costs >> create-markdown >> slack-send --channel=ops
 ```
 
-### 3. Integrate Everything
+### 3\. Integrate Everything
 
 ```bash
 # Use existing tools as building blocks
@@ -79,52 +79,63 @@ kubectl logs my-pod | pflow check-for-errors >> notify-if-critical
 
 `pflow` is for you if you've ever felt the pain in the "messy middle" of automation:
 
-* Your task is **too complex for a simple CLI pipe**, involving multiple tools, APIs, and data transformations.
-* Your workflow is **too ad-hoc and exploratory for a production orchestrator** like Airflow or Prefect.
-* You find yourself **asking an AI agent to write the same kind of script** over and over.
-* You have a dozen different CLI tools and wish you could **combine them with a single command.**
+  * Your task is **too complex for a simple CLI pipe**, involving multiple tools, APIs, and data transformations.
+  * Your workflow is **too ad-hoc and exploratory for a production orchestrator** like Airflow or Prefect.
+  * You find yourself **asking an AI agent to write the same kind of script** over and over.
+  * You have a dozen different CLI tools and wish you could **combine them with a single command.**
 
 `pflow` is designed to automate the automators.
 
 ## Why use `pflow`?
 
+The real competition for `pflow` isn't just the AI chat window—it's the `.py` script you ask an AI to write. Here's why a `pflow` flow is a better artifact.
+
+| Feature | AI-Generated `script.py` | `pflow` Flow |
+| :--- | :--- | :--- |
+| **Boilerplate** | Full of `argparse`, `requests`, and auth code you have to maintain. | **Zero boilerplate.** Nodes are pure logic. |
+| **Composability**| Hard. Chaining two scripts requires manual edits and plumbing. | **Native.** `flow1 >> flow2` just works. |
+| **Discoverability**| A messy folder of scripts (`do-thing.py`, `analysis_v2_final.py`). | Ask `pflow` what it can do in plain English. |
+| **Maintenance** | An API changes? You hunt down and fix 10 different scripts. | An API changes? You update **one node.** |
+
+Why is it better than letting an AI agent call tools and mcp servers for you?
+
 | Feature | Without `pflow` | With `pflow` |
 | :--- | :--- | :--- |
-| **Speed** | 2-5 minutes per run (agent re-thinks every time) | **\~2 seconds** (after one-time plan) |
-| **Cost** | \~$0.10 per run (paying for LLM reasoning) | **Free** (after one-time plan) |
+| **Speed** | 1-5 minutes per run (agent re-thinks every time) | **\~2 seconds** (after one-time plan) |
+| **Cost** | \~$0.10-2.00 per run (paying for LLM reasoning) | **Free** (after one-time plan) |
 | **Reliability** | Non-deterministic; agent might change its mind | **100% Deterministic**; same input, same output |
 | **Workflow** | Copy-paste from a chat log; hard to share | A shareable command: `pflow my-flow` |
 
 ## How It Works
 
-`pflow` captures your intent and compiles it into a reliable tool ready to be used by you, your AI agents, or your team either as a simple CLI command or invoked by using natural language.
+`pflow` captures your intent and compiles it into a reliable tool, ready to be used by you, your team, or even other AI agents. Use as a simple CLI command or invoked by using natural language.
 
 ```mermaid
 graph TD
-    subgraph "Your Terminal"
-        A[You: "pflow 'do a complex thing'"]
-    end
-    
-    subgraph "pflow: Plan Once"
-        B(AI Planner)
-        C(Node Registry)
-        D(Validation Engine)
-        B -- Queries --> C
-        B -- Generates --> D
-    end
+    subgraph "Your Terminal"
+        A[You: "pflow 'do a complex thing'"]
+    end
 
-    subgraph "pflow: Compile"
-        E[Saved CLI Command<br>(Deterministic Lockfile)]
-    end
+    subgraph "pflow: Plan Once"
+        B(AI Planner)
+        C(Node Registry)
+        D(Validation Engine)
+        B -- Queries --> C
+        B -- Generates --> D
+    end
 
-    subgraph "pflow: Run Forever"
-        F[Instant Execution Engine]
-    end
+    subgraph "pflow: Compile"
+        E[Saved CLI Command<br>(Deterministic Lockfile)]
+    end
 
-    A -- First Run --> B
-    D -- Creates --> E
-    A -- Subsequent Runs --> F
-    E -- Informs --> F
+    subgraph "pflow: Run Forever"
+        F[Instant Execution Engine]
+    end
+
+    A -- First Run --> B
+    D -- Creates --> E
+    A -- Subsequent Runs --> F
+    E -- Informs --> F
 ```
 
 ## Installation
@@ -196,9 +207,9 @@ An agent can use `pflow` to build reliable tools, drastically reducing errors an
 
 ## Community
 
-* **Discord**: [Join our community](https://discord.gg/pflow)
-* **Examples**: [pflow-examples](https://github.com/pflow/examples)
-* **Nodes**: [pflow-registry](https://github.com/pflow/registry)
+  * **Discord**: [Join our community](https://discord.gg/pflow)
+  * **Examples**: [pflow-examples](https://github.com/pflow/examples)
+  * **Nodes**: [pflow-registry](https://github.com/pflow/registry)
 
 ## Contributing
 
