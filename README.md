@@ -1,6 +1,6 @@
 # pflow
 
-**Turn expensive AI workflows into instant CLI commands.** 
+**Turn expensive AI workflows into instant CLI commands.**
 
 What takes Claude Code 5 minutes and $2 to run, pflow runs in 2 seconds for free.
 
@@ -64,20 +64,24 @@ kubectl logs my-pod | pflow check-for-errors >> notify-if-critical
 ## Why pflow?
 
 ### ⚡ 100x Faster than AI Agents
+
 - **Claude Code**: 5 minutes per run → **pflow**: 2 seconds after first run
 - **ChatGPT plugins**: $2 per complex workflow → **pflow**: Free after first run
 
 ### 🔒 Deterministic and Shareable
+
 - Same input = same output, every time
 - Share workflows with your team: `pflow install teammate/standup-prep`
 - Version control your automations
 
 ### 🧩 Composable Building Blocks
+
 - Integrate any tool via MCP (Model Context Protocol)
 - Chain with Unix pipes
 - Combine with existing CLIs like `llm`, `jq`, `grep`
 
 ### 🎯 Perfect for Daily Developer Tasks
+
 - Morning standup prep
 - Production debugging  
 - Cross-system analysis
@@ -113,24 +117,28 @@ pflow completion bash >> ~/.bashrc
 ## Real-World Examples
 
 ### Daily Standup Automation
+
 ```bash
 pflow "check my PRs, check team's PRs, summarize slack since yesterday, format for standup"
 # Runs in 3 seconds, saves 15 minutes daily
 ```
 
 ### Production Debugging
+
 ```bash
 pflow "fetch datadog errors, correlate with recent deploys, check related PRs"
 # Complex investigation in seconds
 ```
 
 ### Customer Analysis
+
 ```bash
 pflow "get stripe failed payments, match with hubspot contacts, draft outreach emails"
 # Multi-system workflow without writing code
 ```
 
 ### Report Generation
+
 ```bash
 pflow "analyze last week's API usage, calculate costs, compare to budget, create report"
 # Scheduled in cron, runs in seconds
@@ -139,19 +147,25 @@ pflow "analyze last week's API usage, calculate costs, compare to budget, create
 ## Ecosystem
 
 ### 🔌 MCP Integration
+
 Access any MCP-compatible tool:
+
 ```bash
 pflow registry add-mcp github slack stripe
 ```
 
 ### 🤖 Works with `llm`
+
 Use Simon Willison's `llm` CLI as a node:
+
 ```bash
 pflow fetch-data >> llm "analyze trends" >> create-report
 ```
 
 ### 🚀 Claude Code Compatible
+
 pflow can execute any workflow Claude Code can, but:
+
 - 100x faster after first run
 - Deterministic results
 - No repeated API costs
