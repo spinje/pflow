@@ -1,8 +1,8 @@
 # pflow
 
-**Turn expensive AI workflows into instant CLI commands.**
+**Turn expensive, one-off AI workflows into permanent, instant CLI commands.**
 
-What takes Claude Code 5 minutes and $2 to run, pflow runs in 2 seconds for free.
+What takes an AI agent 2 minutes and $1.00 to figure out *every time*, pflow figures out once, then runs in 2 seconds for free, forever.
 
 ```bash
 # First time: AI plans your workflow (30 seconds)
@@ -16,9 +16,23 @@ $ pflow analyze-churn
 
 ## What is pflow?
 
-pflow is a **workflow compiler for AI agents**. It takes complex, multi-step automations that AI agents can do slowly and expensively, and transforms them into fast, deterministic CLI commands you can run instantly.
+Have you ever asked an AI agent to perform a multi-step task, like analyzing data from two different APIs? It works, but it's slow and you pay for the same reasoning every single time.
 
-Think of it as "Claude Code, but 100x faster and infinitely reusable."
+**`pflow` fixes this.**
+
+`pflow` is a **workflow compiler**. It lets you describe a complex task in plain English *once*. An AI planner figures out the steps, connects the tools, and saves the result as a permanent, lightning-fast CLI command.
+
+It turns your ideas into your own personal, reusable toolchain.
+
+## The `pflow` Difference: Plan Once, Run Forever
+
+This is not just another AI wrapper. `pflow` fundamentally changes the economics and speed of AI-driven automation.
+
+1. **PLAN (First Run):** You describe a complex workflow. `pflow` uses AI to intelligently select, chain, and map the right tools, creating a deterministic plan. (*This is the only time you pay in time and tokens.*)
+
+2. **COMPILE (Automatic):** `pflow` saves this plan as a reproducible, version-locked artifact. It is now a permanent part of your toolkit.
+
+3. **EXECUTE (Every Subsequent Run):** You run your new command by name. It executes instantly with no AI, no planning, and no cost, giving you the exact same result, every time.
 
 ## Quick Start
 
@@ -61,44 +75,56 @@ cat error.log | pflow "extract errors, find related code, suggest fixes" >> fixe
 kubectl logs my-pod | pflow check-for-errors >> notify-if-critical
 ```
 
-## Why pflow?
+## Who is `pflow` for?
 
-### ⚡ 100x Faster than AI Agents
+`pflow` is for you if you've ever felt the pain in the "messy middle" of automation:
 
-- **Claude Code**: 5 minutes per run → **pflow**: 2 seconds after first run
-- **ChatGPT plugins**: $2 per complex workflow → **pflow**: Free after first run
+* Your task is **too complex for a simple CLI pipe**, involving multiple tools, APIs, and data transformations.
+* Your workflow is **too ad-hoc and exploratory for a production orchestrator** like Airflow or Prefect.
+* You find yourself **asking an AI agent to write the same kind of script** over and over.
+* You have a dozen different CLI tools and wish you could **combine them with a single command.**
 
-### 🔒 Deterministic and Shareable
+`pflow` is designed to automate the automators.
 
-- Same input = same output, every time
-- Share workflows with your team: `pflow install teammate/standup-prep`
-- Version control your automations
+## Why use `pflow`?
 
-### 🧩 Composable Building Blocks
-
-- Integrate any tool via MCP (Model Context Protocol)
-- Chain with Unix pipes
-- Combine with existing CLIs like `llm`, `jq`, `grep`
-
-### 🎯 Perfect for Daily Developer Tasks
-
-- Morning standup prep
-- Production debugging  
-- Cross-system analysis
-- API integration workflows
-- Report generation
+| Feature | Without `pflow` | With `pflow` |
+| :--- | :--- | :--- |
+| **Speed** | 2-5 minutes per run (agent re-thinks every time) | **\~2 seconds** (after one-time plan) |
+| **Cost** | \~$0.10 per run (paying for LLM reasoning) | **Free** (after one-time plan) |
+| **Reliability** | Non-deterministic; agent might change its mind | **100% Deterministic**; same input, same output |
+| **Workflow** | Copy-paste from a chat log; hard to share | A shareable command: `pflow my-flow` |
 
 ## How It Works
 
-1. **Describe** your workflow in natural language
-2. **pflow generates** a reusable pipeline (one-time AI cost)
-3. **Run instantly** forever (no AI needed)
+`pflow` captures your intent and compiles it into a reliable tool ready to be used by you, your AI agents, or your team either as a simple CLI command or invoked by using natural language.
 
 ```mermaid
-graph LR
-    A[Natural Language] -->|First Run| B[AI Plans Flow]
-    B --> C[Saved Pipeline]
-    C -->|Every Run After| D[Instant Execution]
+graph TD
+    subgraph "Your Terminal"
+        A[You: "pflow 'do a complex thing'"]
+    end
+    
+    subgraph "pflow: Plan Once"
+        B(AI Planner)
+        C(Node Registry)
+        D(Validation Engine)
+        B -- Queries --> C
+        B -- Generates --> D
+    end
+
+    subgraph "pflow: Compile"
+        E[Saved CLI Command<br>(Deterministic Lockfile)]
+    end
+
+    subgraph "pflow: Run Forever"
+        F[Instant Execution Engine]
+    end
+
+    A -- First Run --> B
+    D -- Creates --> E
+    A -- Subsequent Runs --> F
+    E -- Informs --> F
 ```
 
 ## Installation
@@ -119,22 +145,22 @@ pflow completion bash >> ~/.bashrc
 ### Daily Standup Automation
 
 ```bash
+# Build a tool that does your morning prep in 3 seconds instead of 15 minutes
 pflow "check my PRs, check team's PRs, summarize slack since yesterday, format for standup"
-# Runs in 3 seconds, saves 15 minutes daily
 ```
 
 ### Production Debugging
 
 ```bash
-pflow "fetch datadog errors, correlate with recent deploys, check related PRs"
-# Complex investigation in seconds
+# Create a reusable "first response" tool for incidents
+pflow "fetch datadog errors for service 'api', correlate with recent deploys, check related PRs for 'breaking change' labels"
 ```
 
-### Customer Analysis
+### Multi-System Analysis
 
 ```bash
-pflow "get stripe failed payments, match with hubspot contacts, draft outreach emails"
-# Multi-system workflow without writing code
+# Build a tool to answer complex business questions without writing a script
+pflow "get stripe failed payments for last month, match with hubspot contacts, draft outreach emails for users on 'Pro' plan"
 ```
 
 ### Report Generation
@@ -144,11 +170,13 @@ pflow "analyze last week's API usage, calculate costs, compare to budget, create
 # Scheduled in cron, runs in seconds
 ```
 
-## Ecosystem
+## Ecosystem: Plays Well With Others
+
+`pflow` doesn't replace your favorite tools—it orchestrates them.
 
 ### 🔌 MCP Integration
 
-Access any MCP-compatible tool:
+Access any MCP-compatible tool as a native `pflow` node.
 
 ```bash
 pflow registry add-mcp github slack stripe
@@ -159,40 +187,31 @@ pflow registry add-mcp github slack stripe
 Use Simon Willison's `llm` CLI as a node:
 
 ```bash
-pflow fetch-data >> llm "analyze trends" >> create-report
+pflow fetch-data >> llm "analyze trends in this data" >> create-report
 ```
 
-### 🚀 Claude Code Compatible
+### 🚀 A Supercharger for Claude Code & other Agents
 
-pflow can execute any workflow Claude Code can, but:
-
-- 100x faster after first run
-- Deterministic results
-- No repeated API costs
+An agent can use `pflow` to build reliable tools, drastically reducing errors and making its own work reusable. `pflow` provides the stable, structured "API" that free-running agents need.
 
 ## Community
 
-- **Discord**: [Join our community](https://discord.gg/pflow)
-- **Examples**: [pflow-examples](https://github.com/pflow/examples)
-- **Nodes**: [pflow-registry](https://github.com/pflow/registry)
+* **Discord**: [Join our community](https://discord.gg/pflow)
+* **Examples**: [pflow-examples](https://github.com/pflow/examples)
+* **Nodes**: [pflow-registry](https://github.com/pflow/registry)
 
 ## Contributing
 
-We'd love your help making pflow better!
+We are actively building the future of developer automation. Come help\!
 
 ```bash
-# Clone the repo
 git clone https://github.com/pflow/pflow
 cd pflow
-
-# Install in development mode
 pip install -e ".[dev]"
-
-# Run tests
 pytest
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See our [CONTRIBUTING.md](https://www.google.com/search?q=CONTRIBUTING.md) for guidelines.
 
 ## Learn More
 
@@ -204,4 +223,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 **pflow** is open source (MIT licensed) and built on the simple idea that AI should help you create tools, not be the tool you run every time.
 
-Transform your expensive AI workflows into instant CLI commands. [Get started now](#quick-start).
+*Don't just run prompts. Build permanent tools* and transform your expensive AI workflows into instant CLI commands. [Get started now](#quick-start).
