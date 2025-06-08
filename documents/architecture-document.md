@@ -1,0 +1,693 @@
+# pflow CLI Architecture Document
+
+## 1. Executive Summary
+
+pflow is a workflow compiler that transforms natural language or CLI pipe syntax into permanent, deterministic, and lightning-fast CLI commands. Unlike traditional AI agents that re-compute solutions on every run, pflow follows a "Plan Once, Run Forever" philosophy - capturing user intent once and compiling it into reproducible workflows.
+
+### Core Value Proposition
+
+- **First Run**: AI plans your workflow (30 seconds, ~$0.10-2.00)
+- **Every Run After**: Instant execution (2 seconds, free)
+
+### Key Innovation
+
+The system's primary innovation is the **Shared Store + Natural Interface Pattern** - a design that enables nodes to be written as simple, standalone components using intuitive key names (`shared["text"]`, `shared["url"]`), while complex flow routing is handled transparently at the orchestration level through an optional proxy layer.
+
+### MVP Focus
+
+This document describes the architecture for pflow v0.1 MVP, which prioritizes:
+- Local-first CLI execution
+- Manual node composition via CLI pipe syntax
+- Simple shared store pattern implementation
+- Deterministic, reproducible execution
+
+Features explicitly deferred to post-MVP include natural language planning, conditional transitions, async execution, and cloud deployment capabilities.
+
+## 2. System Overview & Architecture
+
+### 2.1 High-Level Architecture
+
+```mermaid
+graph TD
+    subgraph "User Interface Layer"
+        CLI[CLI Interface]
+        PIPE[Shell Pipe Input]
+    end
+    
+    subgraph "Planning & Validation Layer"
+        PARSER[CLI Parser]
+        PLANNER[Dual-Mode Planner]
+        VALIDATOR[Validation Framework]
+    end
+    
+    subgraph "Execution Layer"
+        RUNTIME[Runtime Engine]
+        PROXY[NodeAwareSharedStore Proxy]
+        CACHE[Cache System]
+    end
+    
+    subgraph "Storage Layer"
+        REGISTRY[Node Registry]
+        LOCKFILE[Lockfiles]
+        SHARED[Shared Store]
+    end
+    
+    subgraph "Foundation"
+        PFLOW[pocketflow Framework]
+    end
+    
+    CLI --> PARSER
+    PIPE --> PARSER
+    PARSER --> PLANNER
+    PLANNER --> VALIDATOR
+    VALIDATOR --> RUNTIME
+    RUNTIME --> PROXY
+    RUNTIME --> CACHE
+    PROXY --> SHARED
+    RUNTIME --> PFLOW
+    PLANNER --> REGISTRY
+    VALIDATOR --> LOCKFILE
+```
+
+### 2.2 Component Responsibilities
+
+- **CLI Interface**: Handles user input, flag parsing, and output presentation
+- **Planner**: Validates flows and generates JSON IR (supports both NL and CLI paths, though MVP focuses on CLI)
+- **Runtime Engine**: Executes validated flows using the pocketflow framework
+- **Node Registry**: Manages discoverable nodes and their metadata
+- **Shared Store**: Flow-scoped memory for inter-node communication
+- **Proxy Layer**: Optional transparent key mapping for complex flows
+
+### 2.3 Foundation: pocketflow Framework
+
+The entire system is built on a 100-line Python framework that provides:
+- Node lifecycle management (`prep()`, `exec()`, `post()`)
+- Flow orchestration via `>>` operator
+- Built-in retry mechanism for fault tolerance
+- Action-based transitions (deferred to post-MVP)
+
+## 3. Core Design Patterns & Principles
+
+### 3.1 Design Philosophy
+
+1. **Explicit Over Magic**: All behavior is visible and auditable
+2. **Pattern Over Framework Innovation**: Innovation happens in orchestration patterns, not the execution engine
+3. **Natural Interfaces Enable Simplicity**: Nodes use intuitive key names without orchestration knowledge
+4. **Planning-Execution Separation**: Intent capture is separate from deterministic execution
+5. **Purity-First Safety Model**: Nodes are impure by default; optimization is opt-in via `@flow_safe`
+6. **Progressive Complexity**: Simple flows need no mappings; complex flows use transparent proxy
+
+### 3.2 The Shared Store Pattern
+
+The shared store is a flow-scoped dictionary that serves as the primary communication mechanism between nodes:
+
+```python
+# Simple, natural interface in node code
+class YTTranscript(Node):
+    def prep(self, shared):
+        return shared["url"]  # Natural key access
+    
+    def post(self, shared, prep_res, exec_res):
+        shared["transcript"] = exec_res  # Direct write
+```
+
+### 3.3 Node Autonomy Principle
+
+Nodes are "dumb pipes" - isolated computation units with:
+- No awareness of other nodes or flow context
+- No flow introspection capabilities
+- Single, well-defined responsibility
+- Natural interface using intuitive key names
+
+### 3.4 Proxy Pattern for Complex Flows
+
+When natural interfaces don't align, the `NodeAwareSharedStore` proxy provides transparent translation:
+
+```python
+# Node always uses natural interface
+node.prep(shared)  # Reads shared["text"]
+
+# With proxy mapping (only when needed)
+proxy = NodeAwareSharedStore(
+    shared,
+    input_mappings={"text": "raw_content"}
+)
+node.prep(proxy)  # Still reads "text", proxy maps to "raw_content"
+```
+
+## 4. MVP Scope Definition
+
+### 4.1 Included in MVP
+
+**Core Functionality:**
+- CLI pipe syntax execution (`pflow node1 >> node2`)
+- Manual node composition and parameter passing
+- Shared store with direct access pattern
+- Basic node types (prompt, transform, read_file)
+- Shell pipe integration (`cat file | pflow summarize`)
+- JSON IR generation and validation
+- Deterministic execution with lockfiles
+- Simple caching for `@flow_safe` nodes
+- Basic error handling and tracing
+
+**User Experience:**
+- "Type flags; engine decides" CLI resolution
+- Comprehensive execution traces
+- Clear error messages with suggestions
+
+### 4.2 Excluded from MVP
+
+**Post-MVP (v2.0):**
+- Natural language planning with LLM
+- Conditional transitions (`node - "fail" >> handler`)
+- CLI autocomplete with shadow store suggestions
+- Async nodes and flows
+- Complex error recovery patterns
+
+**Future Cloud Platform (v3.0):**
+- Multi-user authentication
+- Remote node discovery from MCP servers
+- Namespaced/versioned node resolution
+- Cloud execution and job queues
+- Web UI and dashboards
+- Interactive prompting for missing inputs
+
+## 5. Component Architecture
+
+### 5.1 CLI Layer
+
+#### 5.1.1 CLI Resolution Algorithm
+
+The CLI follows a single rule: **"Type flags; engine decides"**
+
+```mermaid
+graph TD
+    A[CLI Flag: --key=value] --> B{Matches Node Input?}
+    B -->|Yes| C[Data Injection to shared store]
+    B -->|No| D{Matches Node Param?}
+    D -->|Yes| E[Parameter Override]
+    D -->|No| F{Matches Execution Config?}
+    F -->|Yes| G[Execution Configuration]
+    F -->|No| H[ERROR: Unknown Flag]
+```
+
+#### 5.1.2 CLI Command Structure
+
+```bash
+# Basic syntax
+pflow <node> [--flags] >> <node> [--flags]
+
+# Examples
+pflow yt-transcript --url=VIDEO >> summarize-text --temperature=0.7
+cat article.md | pflow summarize-text --max-tokens=150
+```
+
+#### 5.1.3 Shell Pipe Integration
+
+When input is piped via stdin:
+1. Content is automatically placed in `shared["stdin"]`
+2. First node can consume this data naturally or via IR mapping
+3. Piped content is hashed and included in execution traces
+
+### 5.2 Planning & Validation Pipeline
+
+#### 5.2.1 Dual-Mode Planner
+
+The planner operates in two modes (though MVP focuses on CLI path):
+
+**CLI Pipe Path (MVP Priority):**
+1. Parse CLI syntax into components
+2. Validate all nodes exist in registry
+3. Check interface compatibility
+4. Generate mappings if needed
+5. Create validated JSON IR
+6. Direct execution (no user confirmation needed)
+
+**Natural Language Path (Post-MVP):**
+1. Extract metadata from registry
+2. LLM selects appropriate nodes
+3. Generate flow structure
+4. Validate and create mappings
+5. Show CLI preview for user approval
+
+#### 5.2.2 JSON IR Structure
+
+```json
+{
+  "$schema": "https://pflow.dev/schemas/flow-0.1.json",
+  "ir_version": "0.1.0",
+  "metadata": {
+    "created": "2025-01-01T12:00:00Z",
+    "description": "YouTube video summary pipeline",
+    "planner_version": "1.0.0"
+  },
+  "nodes": [
+    {
+      "id": "fetch-transcript",
+      "registry_id": "core/yt-transcript",
+      "version": "1.0.0",
+      "params": {"language": "en"},
+      "execution": {"max_retries": 2, "wait": 1.0}
+    }
+  ],
+  "edges": [
+    {"from": "fetch-transcript", "to": "summarize"}
+  ],
+  "mappings": {
+    "summarize": {
+      "input_mappings": {"text": "transcript"}
+    }
+  }
+}
+```
+
+### 5.3 Node System & Registry
+
+#### 5.3.1 Node Structure
+
+All nodes inherit from `pocketflow.Node`:
+
+```python
+class SummarizeText(Node):
+    """Summarizes text content.
+    
+    Interface:
+    - Reads: shared["text"] - input text to summarize
+    - Writes: shared["summary"] - generated summary
+    - Params: temperature (default 0.7), max_tokens (default 150)
+    """
+    
+    def prep(self, shared):
+        return shared["text"]
+    
+    def exec(self, prep_res):
+        temp = self.params.get("temperature", 0.7)
+        tokens = self.params.get("max_tokens", 150)
+        return call_llm(prep_res, temperature=temp, max_tokens=tokens)
+    
+    def post(self, shared, prep_res, exec_res):
+        shared["summary"] = exec_res
+        return "default"
+```
+
+#### 5.3.2 Node Metadata
+
+Extracted from docstrings and stored as JSON:
+
+```json
+{
+  "id": "summarize-text",
+  "description": "Summarizes text content",
+  "inputs": ["text"],
+  "outputs": ["summary"],
+  "params": {
+    "temperature": {"type": "float", "default": 0.7},
+    "max_tokens": {"type": "int", "default": 150}
+  },
+  "purity": "flow_safe"
+}
+```
+
+#### 5.3.3 Registry Structure
+
+```
+~/.pflow/registry/
+├── nodes/
+│   ├── core/
+│   │   ├── yt-transcript/
+│   │   │   ├── node.py
+│   │   │   └── metadata.json
+│   │   └── summarize-text/
+│   │       ├── node.py
+│   │       └── metadata.json
+│   └── custom/
+└── index.json
+```
+
+### 5.4 Execution Engine
+
+#### 5.4.1 Execution Flow
+
+1. Load validated IR and lockfile
+2. Instantiate nodes from registry
+3. Configure nodes with params
+4. Set up proxy mappings if defined
+5. Execute flow using pocketflow orchestration
+6. Handle retries for `@flow_safe` nodes
+7. Write comprehensive trace
+
+#### 5.4.2 Runtime Integration
+
+```python
+# Generated execution code
+def execute_flow(ir, shared):
+    # Create nodes
+    nodes = {}
+    for node_spec in ir["nodes"]:
+        node_class = registry.get(node_spec["registry_id"])
+        node = node_class()
+        node.set_params(node_spec["params"])
+        nodes[node_spec["id"]] = node
+    
+    # Wire flow
+    for edge in ir["edges"]:
+        nodes[edge["from"]] >> nodes[edge["to"]]
+    
+    # Execute with proxy if needed
+    for node_id, node in nodes.items():
+        if node_id in ir.get("mappings", {}):
+            proxy = NodeAwareSharedStore(
+                shared,
+                **ir["mappings"][node_id]
+            )
+            node._run(proxy)
+        else:
+            node._run(shared)
+```
+
+## 6. Data Flow & State Management
+
+### 6.1 Shared Store Lifecycle
+
+The shared store is:
+- Created fresh for each flow execution
+- Populated by CLI data injection and node outputs
+- Accessible to all nodes in the flow
+- Destroyed after flow completion
+- Never persisted between runs
+
+### 6.2 Data Flow Example
+
+```bash
+# CLI command
+pflow yt-transcript --url=VIDEO >> summarize-text
+```
+
+**Step 1: CLI Resolution**
+```python
+shared = {"url": "VIDEO"}  # From --url flag
+```
+
+**Step 2: First Node Execution**
+```python
+# yt-transcript node
+prep: url = shared["url"]
+exec: transcript = fetch_transcript(url)
+post: shared["transcript"] = transcript
+```
+
+**Step 3: Second Node Execution**
+```python
+# summarize-text node (with proxy mapping)
+# IR defines: {"input_mappings": {"text": "transcript"}}
+prep: text = shared["text"]  # Proxy maps to shared["transcript"]
+exec: summary = summarize(text)
+post: shared["summary"] = summary
+```
+
+**Final State:**
+```python
+shared = {
+    "url": "VIDEO",
+    "transcript": "...",
+    "summary": "..."
+}
+```
+
+### 6.3 Parameter vs Data Distinction
+
+- **Shared Store**: Primary data flow between nodes
+- **Params**: Node configuration that doesn't flow between nodes
+- **Execution Config**: Runtime behavior (retries, caching)
+
+## 7. Integration Points
+
+### 7.1 Shell Integration
+
+Native support for Unix pipes:
+- Detect non-TTY stdin with content
+- Place content in `shared["stdin"]`
+- First node consumes via natural interface or mapping
+- Full compatibility with standard Unix tools
+
+### 7.2 MCP Integration (Post-MVP Foundation)
+
+MCP tools will be wrapped as native pflow nodes:
+- Auto-generate Node subclasses from MCP manifests
+- Translate MCP schemas to natural interfaces
+- Full participation in validation and orchestration
+- Unified registry for all node types
+
+### 7.3 Future CLI Autocomplete
+
+Foundation for dynamic suggestions:
+- Parse command context on TAB press
+- Query registry for available nodes/flags
+- Leverage metadata for intelligent suggestions
+- Support discovery of natural interfaces
+
+## 8. Security & Trust Model
+
+### 8.1 Node Purity Model
+
+**Default: Impure**
+- Nodes may have side effects
+- Not cacheable or retryable
+- Require user confirmation
+
+**Opt-in: Pure (`@flow_safe`)**
+- Deterministic and idempotent
+- No external side effects
+- Eligible for caching and retries
+- Must pass validation
+
+### 8.2 Trust Levels
+
+| Origin | Trust Level | Cache Eligible |
+|--------|-------------|----------------|
+| Planner (reused flow) | trusted | Yes |
+| Planner (new flow) | trusted | Yes (after first run) |
+| User modified IR | mixed | No |
+| Manual Python code | untrusted | No |
+
+### 8.3 Security Principles
+
+- Environment variables for sensitive data
+- No credentials in IR or lockfiles
+- User confirmation for all executions
+- Explicit side-effect declaration via `@flow_safe`
+
+## 9. Performance & Optimization
+
+### 9.1 Caching Strategy
+
+**Cache Key Computation:**
+```
+cache_key = node_hash ⊕ effective_params ⊕ input_data_sha256
+```
+
+**Eligibility (ALL required):**
+1. Node marked `@flow_safe`
+2. Trust level ≠ mixed
+3. Version and params match
+4. Input data hash matches
+
+### 9.2 Performance Targets (MVP)
+
+| Metric | Target | Notes |
+|--------|--------|-------|
+| 3-node flow overhead | ≤ 2s vs raw Python | Execution overhead |
+| Cache hit performance | ≤ 50ms per node | Cache restoration |
+| Validation speed | ≤ 100ms | IR validation |
+| Registry lookup | ≤ 10ms | Metadata access |
+
+### 9.3 Optimization Strategies
+
+- Lazy loading of registry metadata
+- Validation result caching
+- Minimal node instantiation overhead
+- Efficient shared store operations
+
+## 10. Testing & Validation Strategy
+
+### 10.1 Node Testing Pattern
+
+```python
+def test_summarize_node():
+    # Simple, natural test setup
+    node = SummarizeText()
+    node.set_params({"temperature": 0.5})
+    
+    shared = {"text": "Long content..."}
+    node.run(shared)
+    
+    assert "summary" in shared
+    assert len(shared["summary"]) < len(shared["text"])
+```
+
+### 10.2 Flow Testing
+
+```python
+def test_video_summary_flow():
+    flow = create_video_summary_flow()
+    shared = {"url": "https://youtu.be/test"}
+    
+    flow.run(shared)
+    
+    assert "summary" in shared
+```
+
+### 10.3 Validation Framework
+
+- JSON schema validation for IR
+- Node interface compatibility checking
+- Execution configuration validation
+- Comprehensive error reporting
+
+## 11. Development Roadmap & Implementation Priorities
+
+### 11.1 Phase 1: Foundation (Current MVP Focus)
+- ✅ pocketflow integration
+- ✅ Basic shared store implementation
+- 🔄 Node registry system
+- 🔄 CLI parsing and resolution
+- 🔄 JSON IR generation
+
+### 11.2 Phase 2: Core Execution
+- Proxy mapping system
+- Basic caching for pure nodes
+- Retry logic integration
+- Comprehensive tracing
+
+### 11.3 Phase 3: Polish
+- Error messages and suggestions
+- Performance optimization
+- Documentation and examples
+- Testing framework
+
+### 11.4 Post-MVP Phases
+- Natural language planning
+- Conditional transitions
+- MCP integration
+- CLI autocomplete
+- Cloud deployment
+
+## 12. Future Extensibility
+
+### 12.1 Planned Extensions (Post-MVP)
+
+**Natural Language Planning:**
+- LLM-driven node selection
+- Semantic flow matching
+- User approval workflow
+
+**Advanced Flow Control:**
+- Action-based transitions
+- Conditional execution paths
+- Complex error recovery
+
+**Enhanced Developer Experience:**
+- CLI autocomplete
+- Visual flow builder
+- Interactive debugging
+
+### 12.2 Architecture Extensibility Points
+
+- Plugin system for custom nodes
+- Alternative execution engines
+- Custom proxy implementations
+- Extended metadata schemas
+- Cloud execution adapters
+
+## 13. Technical Decisions & Rationale
+
+### 13.1 Why pocketflow?
+
+- Minimal, proven 100-line framework
+- Natural flow syntax (`>>` operator)
+- Built-in retry mechanism
+- No heavy abstractions
+- Enables focus on patterns over framework
+
+### 13.2 Why Shared Store + Proxy?
+
+- **Simplicity**: Nodes remain simple with natural interfaces
+- **Flexibility**: Complex routing without node changes
+- **Testability**: Direct, intuitive testing
+- **Composability**: Same nodes work in different contexts
+- **Progressive**: No proxy needed for simple flows
+
+### 13.3 Why JSON IR?
+
+- Machine-readable and validatable
+- Version-controlled flow definitions
+- Clean separation of planning and execution
+- Enables future GUI tools
+- Supports structural analysis and transformation
+
+### 13.4 Why "Type Flags; Engine Decides"?
+
+- Single, simple mental model
+- No complex flag categorization for users
+- Natural progression from exploration to mastery
+- Consistent with Unix philosophy
+- Reduces cognitive load
+
+### 13.5 Why Opt-in Purity?
+
+- Safe by default (assumes side effects)
+- Explicit optimization points
+- Clear contract for caching/retries
+- Matches real-world node behavior
+- Enables trust model integration
+
+## Appendices
+
+### A. Glossary
+
+- **Shared Store**: Flow-scoped dictionary for inter-node communication
+- **Natural Interface**: Intuitive key names nodes use (e.g., `shared["text"]`)
+- **Proxy Mapping**: Transparent key translation for flow compatibility
+- **JSON IR**: Intermediate Representation defining executable flows
+- **@flow_safe**: Decorator marking pure, cacheable nodes
+- **Dual-Mode Planner**: Handles both NL and CLI input paths
+
+### B. File Structure
+
+```
+pflow/
+├── cli/              # CLI interface and parsing
+├── planner/          # Validation and IR generation
+├── runtime/          # Execution engine
+├── registry/         # Node discovery and metadata
+├── nodes/            # Built-in node implementations
+├── pocketflow/       # Core framework (100 lines)
+└── tests/            # Test suite
+```
+
+### C. Example Flows
+
+**Simple Flow:**
+```bash
+pflow read-file --path=data.csv >> transform-csv >> save-json --output=result.json
+```
+
+**With Proxy Mapping:**
+```json
+{
+  "mappings": {
+    "transform-csv": {
+      "input_mappings": {"data": "file_content"}
+    }
+  }
+}
+```
+
+**With Shell Pipe:**
+```bash
+kubectl logs my-pod | pflow extract-errors >> summarize >> slack-notify --channel=ops
+```
+
+---
+
+*This architectural document defines the pflow CLI v0.1 MVP. It prioritizes simplicity, deterministic execution, and a clear path to future extensibility while maintaining focus on delivering a working system quickly.*
