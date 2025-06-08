@@ -18,7 +18,7 @@ $ pflow analyze-churn
 
 Have you ever asked an AI agent to perform a multi-step task, like analyzing data from two different APIs? It works, but it's slow and you pay for the same reasoning every single time. You could ask the agent to write a script, but then you're stuck maintaining boilerplate code, and chaining multiple scripts together is a nightmare.
 
-**`pflow` fixes this.**
+**`pflow` fixes this. Say goodbye to boilerplate and glue code.**
 
 `pflow` is a **workflow compiler**. It lets you describe a complex task in plain English *once*. An AI planner figures out the steps, connects the tools, and saves the result as a permanent, lightning-fast CLI command.
 
@@ -96,6 +96,8 @@ The real competition for `pflow` isn't just the AI chat window—it's the `.py` 
 | **Composability**| Hard. Chaining two scripts requires manual edits and plumbing. | **Native.** `flow1 >> flow2` just works. |
 | **Discoverability**| A messy folder of scripts (`do-thing.py`, `analysis_v2_final.py`). | Ask `pflow` what it can do in plain English. |
 | **Maintenance** | An API changes? You hunt down and fix 10 different scripts. | An API changes? You update **one node.** |
+
+> No more hunting through a dark forest of scripts for that `analysis_final_v2.py`
 
 Why is it better than letting an AI agent call tools and mcp servers for you?
 
