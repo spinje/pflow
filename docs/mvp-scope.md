@@ -1,5 +1,44 @@
 # MVP Scope
 
+## ✅ MVP CLI Goals
+
+Claude must prioritize features that enable a local developer to:
+
+- Compose and run flows using `pflow` CLI
+- Define simple nodes (like `prompt`, `transform`, `read_file`)
+- Store intermediate data in a shared store
+- Use shell pipe syntax for stdin/stdout integration
+
+The system must be:
+
+- Pure Python
+- Single-machine
+- Stateless
+
+---
+
+## ❌ Excluded from MVP (Do *Not* Build Yet)
+
+These are part of version 2.0 of pflow, post MVP:
+
+- Conditional transitions (e.g. `node - "fail" >> error_handler`)
+- LLM-based natural language planning
+- CLI autocomplete and shadow-store suggestions
+- async nodes and flows
+
+These are part of the future cloud platform, pflow 3.0:
+
+- Authentication, multi-user access
+- Remote node discovery (e.g. from MCP servers)
+- Namespaced and versioned node resolution (like `core/summarize@1.2.0`)
+- Secure MCP authentication and permissions
+- Cloud execution, job queues, and async scheduling
+- Web UI or dashboards
+- Interactive prompting for missing shared inputs
+- IR mutation tools (e.g. repair, diff, version upgrades)
+
+These can be mocked or scaffolded, but **not implemented** now.
+
 ## MVP Components (What we're building now)
 
 - Core Foundation - pocketflow integration, shared store, proxy pattern

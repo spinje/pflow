@@ -4,17 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+We are building a modular, CLI-first system called `pflow`.
+
 pflow is a workflow compiler that transforms natural language and CLI pipe syntax into permanent, deterministic CLI commands. It follows a "Plan Once, Run Forever" philosophy - capturing user intent once and compiling it into reproducible workflows that run instantly without AI overhead.
+
+The goal is to enable local execution of intelligent workflows with the **minimal viable set of features**. This MVP will later evolve into a scalable cloud-native service.
+
+**Core Principle**: Fight complexity at every step. Build minimal, purposeful components that extend without rewrites.
 
 ### Core Architecture
 
 pflow is built on the **PocketFlow** framework (100-line Python library in `pocketflow/__init__.py`) using the **Shared Store + Natural Interface Pattern**:
 
 - **Nodes**: Self-contained tasks (`prep()` → `exec()` → `post()`) that communicate through a shared store using intuitive keys (`shared["text"]`, `shared["url"]`)
-- **Flows**: Orchestrate nodes into workflows using the pocketflow framework with `>>` operator chaining. This syntax will be used both for the python code and the CLI.
-- **CLI**: Primary interface for composing and executing flows with pipe syntax or natural language.
-- **Registry**: Discovery system for available nodes and their capabilities. Used by both the CLI through auto-completion and the LLM planner.
-- **Planner**: LLM-based planner for parsing natural language and creating a flow from it.
+- **Flows**: Orchestrate nodes into workflows using the pocketflow framework with `>>` operator chaining
+- **CLI**: Primary interface for composing and executing flows with pipe syntax
+- **Registry**: Discovery system for available nodes and their capabilities
+- **Shared Store**: In-memory dictionary for inter-node communication, keeping data handling separate from computation logic
 
 ### Development Commands
 
@@ -29,21 +35,42 @@ make test                      # Run all tests with pytest
 make check                     # Run all quality checks (lint, type check, etc.)
 ```
 
-### Key Constraints & Design Principles
+### Design Constraints & MVP Scope
 
-**MVP First**: This is pflow v0.1 MVP focused on local-first CLI execution. Features like natural language planning, conditional transitions, async execution, and cloud deployment are explicitly deferred to post-MVP versions.
+**MVP Requirements** (0.1 - local-first CLI):
+- Compose and run flows using `pflow` CLI
+- Define simple nodes (`prompt`, `transform`, `read_file`)
+- Store intermediate data in shared store
+- Use shell pipe syntax for stdin/stdout integration
+- Pure Python, single-machine, stateless
+- Logging and tracing for debugging
 
-**PocketFlow Foundation**: Always consider the PocketFlow framework (`pocketflow/__init__.py`) as the primary solution before suggesting other frameworks. The CLI itself should leverage PocketFlow patterns when possible.
+**MVP Features** (1.0 - Natural language user input):
+- LLM-based natural language planning
+- CLI autocomplete and shadow-store suggestions
 
-**Shared Store Pattern**: Nodes communicate through a flow-scoped shared store using natural key names (`shared["text"]`, `shared["data"]`). This enables loose coupling and composability.
+**Excluded from MVP** (v2.0+):
+- Conditional transitions (`node - "fail" >> error_handler`)
+- Async nodes and flows
+- Advanced caching and error handling
 
-**Deterministic Execution**: Every workflow must be reproducible across environments through version pinning, lockfiles, and clear data/parameter separation.
+**Future Cloud Platform** (v3.0+):
+- Authentication, multi-user access
+- Remote node discovery (MCP servers)
+- Namespaced/versioned node resolution
+- Cloud execution, job queues
+- Web UI, interactive prompting
 
-**Zero Boilerplate Philosophy**: Nodes focus purely on business logic; orchestration complexity handled by the framework.
+**Key Principles**:
+- **PocketFlow Foundation**: Always consider `pocketflow/__init__.py` first
+- **Shared Store Pattern**: Natural key names enable loose coupling
+- **Deterministic Execution**: Reproducible via lockfiles and version pinning
+- **Zero Boilerplate**: Nodes focus on business logic only
+- **Observability**: Clear logging and step-by-step traceability
 
 ### Technology Stack
 
-**Core Dependencies**:
+**Core Dependencies** (discuss before adding others):
 - `click` - CLI framework (more flexible than Typer)
 - `pydantic` - IR/metadata validation
 - `llm` - Simon Willison's LLM CLI integration
@@ -53,6 +80,8 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - `pytest` - Testing framework
 - `mypy` - Type checking
 - `ruff` - Linting and formatting
+- `pre-commit` - Git hooks
+- `mkdocs` - Documentation
 
 ### Architecture Components
 
@@ -90,25 +119,53 @@ pflow/
 └── CLAUDE.md             # This file
 ```
 
-### Development Guidelines
+### Claude's Operating Guidelines
 
-1. **Start Small**: Build minimal, purposeful components that can be extended later
-2. **MVP Focus**: Only implement features required for local CLI workflow execution
-3. **Test Everything**: Write comprehensive tests for each component (`make test`)
-4. **Document Decisions**: Include rationale for architectural choices
-5. **Leverage PocketFlow**: Use the framework's patterns throughout the codebase
-6. **Natural Interfaces**: Use intuitive shared store keys for node communication
-7. **Follow Code Quality**: Run `make check` before committing
+**Reasoning-First Approach**: Every code generation task must:
+1. Be part of MVP (unless explicitly requested by the user)
+2. Include rationale of *why* the task is needed
+3. Specify *how* it fits into current architecture
+4. Use consistent patterns (shared store, simple IO, single responsibility)
+5. Avoid introducing abstractions not yet justified
+6. Write comprehensive tests and documentation before, during and after working on the task.
 
-### Key Design Patterns
+**Key Questions** for every task:
+- **Purpose**: Why is this needed?
+- **MVP vs. Future**: Does this belong in v0.1?
+- **Dependencies**: What does this require?
+- **Why Now**: Why implement this step?
+- **Documentation**: What documentation and existing code do I need to read to understand the problem space fully?
 
-**Shared Store + Proxy Pattern**: The central innovation enabling both simple direct access and complex routed scenarios
+**Development Standards**:
+- Start small, build minimal components
+- Test everything that makes sense to test
+- Document decisions and tradeoffs
+- Run `make check` before committing
+- Create `CLAUDE.md` files in each directory
+- Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/` directory.
 
-**Dual-Mode Planning**: CLI pipe syntax (`pflow node1 >> node2`) and natural language planning (post-MVP)
+### Documentation Resources
 
-**Progressive Complexity**: Same node code works in both simple and complex orchestration scenarios
+**Extensive Markdown Documentation** should be leveraged by Claude:
 
-**Opt-In Purity Model**: Default impure nodes with `@flow_safe` decorator for cacheable pure nodes
+**Project Documentation**:
+- `docs/`: Comprehensive specifications (PRD, architecture, implementation details)
+- `docs/core-nodes/`: Specifications for essential built-in nodes
+- Individual `CLAUDE.md` files in each directory for component-specific guidance
+
+**PocketFlow Documentation**:
+- `pocketflow/CLAUDE.md`: Complete reference for available documentation and cookbook examples
+- `pocketflow/docs/guide.md`: Guide to using PocketFlow (partial relevance for CLI tool)
+- `pocketflow/docs/core_abstraction/`: Documentation on Node, Flow, Shared Store
+- `pocketflow/docs/design_pattern/`: Workflow, Agent, RAG, Map Reduce patterns
+- `pocketflow/cookbook/`: Examples and tutorials for custom nodes and flows
+
+**PocketFlow Core Components**:
+- **Node**: Basic building block with `prep()`, `exec()`, `post()` lifecycle
+- **Flow**: Orchestrator connecting nodes using action strings for transitions
+- **Shared Store**: In-memory dictionary for inter-node communication
+- **Batch**: Components for data-intensive tasks (BatchNode, BatchFlow)
+- **Async & Parallel**: Advanced components (excluded from MVP)
 
 ### Current State
 
