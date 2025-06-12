@@ -148,10 +148,35 @@ pflow/
 
 **Extensive Markdown Documentation** should be leveraged by Claude:
 
-**Project Documentation**:
-- `docs/`: Comprehensive specifications (PRD, architecture, implementation details)
-- `docs/core-nodes/`: Specifications for essential built-in nodes
-- Individual `CLAUDE.md` files in each directory for component-specific guidance
+**Project Documentation** (always read relevant docs before coding):
+
+**Core Architecture**:
+- `docs/PRD-pflow.md`: Master product requirements and complete architectural vision
+- `docs/architecture-document.md`: MVP-focused architecture document
+- `docs/mvp-scope.md`: Clear MVP boundaries - what to build vs. exclude
+
+**Core Patterns**:
+- `docs/shared-store-node-proxy-architecture.md`: Fundamental shared store + proxy pattern
+- `docs/shared-store-cli-runtime-specification.md`: CLI integration and shared store management
+- `docs/json-schema-for-flows-ir-and-nodesmetadata.md`: JSON IR and metadata schemas
+
+**Implementation Specs**:
+- `docs/planner-responsibility-functionality-spec.md`: Dual-mode planner (CLI + natural language)
+- `docs/runtime-behavior-specification.md`: Execution engine, caching, error handling
+- `docs/node-discovery-namespacing-and-versioning.md`: Registry system and version management
+- `docs/component-inventory.md`: Complete MVP vs v2.0 component breakdown
+
+**Core Nodes**:
+- `docs/core-nodes/llm-prompt-core-node-spec.md`: LLM/prompt node specification
+- `docs/implementation-details/node-metadata-extraction.md`: Metadata extraction system
+
+**Shell Integration**:
+- `docs/shell-pipe-native-integration.md`: Unix pipe support and stdin handling
+- `docs/user_stories_and_node_design.md`: Real-world usage patterns
+
+**Future Features**:
+- `docs/cli-autocomplete-spec.md`: CLI autocomplete (v2.0)
+- `docs/future-version/`: LLM-assisted development and advanced features (v3.0)
 
 **PocketFlow Documentation**:
 - `pocketflow/CLAUDE.md`: Complete reference for available documentation and cookbook examples
