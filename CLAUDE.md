@@ -168,15 +168,21 @@ pflow/
 
 **Core Nodes**:
 - `docs/core-nodes/llm-prompt-core-node-spec.md`: LLM/prompt node specification
+- `docs/core-nodes/claude-code-core-node-spec.md`: Claude Code integration specification
 - `docs/implementation-details/node-metadata-extraction.md`: Metadata extraction system
+
 
 **Shell Integration**:
 - `docs/shell-pipe-native-integration.md`: Unix pipe support and stdin handling
 - `docs/user_stories_and_node_design.md`: Real-world usage patterns
 
 **Future Features**:
-- `docs/cli-autocomplete-spec.md`: CLI autocomplete (v2.0)
-- `docs/future-version/`: LLM-assisted development and advanced features (v3.0)
+- `docs/cli-autocomplete-spec.md`: CLI autocomplete specification (v2.0)
+- `docs/implementation-details/cli-auto-complete-feature-implementation-details.md`: Detailed CLI autocomplete implementation (v2.0)
+- `docs/mcp-server-integrationa-and-security-model.md`: MCP server integration (v2.0)
+- `docs/future-version/future-llm-node-generation.md`: LLM-assisted node development (v3.0)
+- `docs/future-version/json-field-extraction-specification.md`: Advanced JSON field extraction (v3.0)
+
 
 **PocketFlow Documentation**:
 - `pocketflow/CLAUDE.md`: Complete reference for available documentation and cookbook examples
