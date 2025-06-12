@@ -1,8 +1,12 @@
-# 🧠 Claude System Alignment Plan
+# CLAUDE.md - 🧠 Claude System Alignment Plan
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 🌐 Vision Summary
 
-We are building a modular, CLI-first system called `pflow`. The goal is to enable local execution of intelligent workflows with the **minimal viable set of features**. This MVP will later evolve into a **scalable cloud-native service**.
+We are building a modular, CLI-first system called `pflow`. pflow is a workflow compiler that transforms natural language into permanent, deterministic CLI commands. It follows a "Plan Once, Run Forever" philosophy - capturing user intent once and compiling it into reproducible workflows that run instantly without AI planning overhead.
+
+The goal is to enable local execution of intelligent workflows with the **minimal viable set of features**. This MVP will later evolve into a **scalable cloud-native service**.
 
 > Our core principle: **Fight complexity at every step**. Build minimal, purposeful components that can be extended later without requiring rewrites.
 
@@ -15,8 +19,8 @@ We are building a modular, CLI-first system called `pflow`. The goal is to enabl
 3. **Defer non-critical features** (e.g., version resolution, purity semantics, caching, error handling, conditional transitions)
 4. **Keep Claude explainable** – each task has a purpose
 5. **Design for layering** – CLI now, cloud infra later
-6. **Prioritize observability** – clear logging and step-by-step traceability must be baked in to every flow, node, and CLI interaction. Debugging must be intuitive for humans, not just machines so the user can evaluate the system every step of the way.
-7. **Leverage Pocketflow** – The 100 line python “library” should underpin both the capabilities of pflow and be leveraged for building the pflow cli itself. This could include using it as a FSM to handle internal cli state or anything else. Always consider pocketflow as a possible solution before suggesting other frameworks.
+6. **Observability**: All flows, nodes, and CLI interactions must have clear logging and step-by-step traceability for human debugging.
+7. **PocketFlow Foundation**: Always consider the PocketFlow framework (`pocketflow/__init__.py`) as the primary solution before suggesting other frameworks. The CLI itself should leverage PocketFlow patterns when possible.
 
 ---
 
@@ -83,15 +87,23 @@ This means that for every task you should ask yourself hard questions and reflec
 
 ## 📚 Available documentation
 
-This project heavily utilizes markdown documentation for documenting everything. This documentation should be leveraged by Claude as much as possible. The documentation includes information about `pflow` - the system we are building, the PocketFlow framework. Note that `pocketflow` is a separate project that we are heavily utilizing as a foundation for building `pflow`. They sound similar, but it is crucial to understand that `pflow` is a CLI tool that uses the PocketFlow framework by leveraging its 100 lines of python code found in `pocketflow/__init__.py`.
+This project heavily utilizes markdown documentation for documenting everything. This documentation should be leveraged by Claude as much as possible. The documentation includes extensive information about `pflow` - the system we are building, the PocketFlow framework. Note that `pocketflow` is a separate project that we are heavily utilizing as a foundation for building `pflow`. They sound similar, but it is crucial to understand that `pflow` is a CLI tool that uses the PocketFlow framework by leveraging its 100 lines of python code found in `pocketflow/__init__.py`.
+
+### Documentation Structure
+
+The project uses extensive markdown documentation:
+
+- `documents/`: Comprehensive specifications including PRD, architecture document, and implementation details
+- `documents/core-nodes/`: Specifications for essential built-in nodes
+- `pocketflow/docs/`: PocketFlow framework documentation and examples
+- Individual `CLAUDE.md` files in each directory for component-specific guidance
 
 ### PocketFlow
 
-PocketFlow is a minimalist, 100-line Python framework for building LLM applications. It's designed to be lightweight, expressive, and simple enough for AI agents to use for code generation. The core idea is to model complex LLM workflows as a **Graph** of operations that communicate through a **Shared Store**.
+pflow is built on the **PocketFlow** framework (100-line Python library in `pocketflow/__init__.py`) using the **Shared Store + Natural Interface Pattern**:
 
-The Pocketflow framework also provides extensive documentation, which Claude should leverage to understand the system and its components. The documentation is available in the `pocketflow/` directory and includes:
+The Pocketflow framework also provides extensive documentation, which Claude should leverage to understand the system and its components. The documentation is available in the `pocketflow/docs` directory and includes:
 
-- **`pocketflow/__init__.py`**: The core framework code.
 - **`pocketflow/CLAUDE.md`**: A complete reference for all the available documentation and cookbook examples, read this if you need to find something specific about PocketFlow.
 - **`´pocketflow/docs/guide.md`**: A guide to using PocketFlow, including how to build LLM applications with it. Note that all information in this file might not be relevant since we are not building an LLM application per se, but rather a CLI tool that extends the PocketFlow framework to allow users to build workflows and pipelines using the PocketFlow framework more easily.
 - **`pocketflow/docs/core_abstraction`**: Contains documentation on the core abstractions of PocketFlow, including `Node`, `Flow`, `Shared Store`, and more.
@@ -153,31 +165,11 @@ We will also create a comprehensive testing system for the project. This testing
 
 > Write tests for everything that it makes sense to test. Note: We are not waiting for the MVP to be complete before we start writing tests. We will write tests for the code as we write it and sometimes even before the code is written if it makes sense to do so.
 
-## MVP Scope
+## Core dependencies
+* click - CLI framework (more flexible than Typer)
+* pydantic - IR/metadata validation
+* llm - Simon W simple prompts native integration
 
-### MVP Components (What we're building now)
+Do **not use** any other dependencies before discussing with user.
 
-- Core Foundation - pocketflow integration, shared store, proxy pattern
-- CLI Interface - Basic commands, pipe syntax parser, shell integration
-- Node System - Registry, metadata, and essential built-in nodes
-- Planning & Validation - CLI path only (no LLM yet, that comes in version 2.0)
-- Execution Engine - Synchronous runtime with basic caching
-- Observability - Tracing and logging for debugging
-- Storage - Lockfiles and local filesystem
-- Testing - Basic test framework
-- Documentation - Built-in help system
-
-### Critical MVP Dependencies
-
-10 absolutely essential components that MUST be in MVP for pflow to deliver on its core promises:
-
-- pocketflow framework
-- Shared store pattern (included in pocketflow)
-- CLI pipe syntax
-- Node registry
-- JSON IR
-- Validation
-- Tracing
-- Shell pipes
-- Error reporting
-- Lockfiles
+The codebase is currently in early development with the foundation (PocketFlow integration) and documentation infrastructure in place. The next phase involves implementing the core CLI interface and node registry system.
