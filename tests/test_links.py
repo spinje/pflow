@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def test_markdown_links_exist():
-    docs_dir = Path(__file__).resolve().parent.parent / "documents"
+    docs_dir = Path(__file__).resolve().parent.parent / "docs"
     pattern = re.compile(r"\[[^\]]+\]\((?!https?://)([^)]+)\)")
     broken_links = []
 
