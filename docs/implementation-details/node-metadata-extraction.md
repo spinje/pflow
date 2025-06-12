@@ -35,7 +35,7 @@ This metadata extraction infrastructure directly supports several core pflow sys
 
 ### Planner Discovery Integration
 >
-> **See**: [Planner Responsibility Spec](./planner-responsibility-functionality-spec.md#node-discovery)
+> **See**: [Planner Responsibility Spec](../planner-responsibility-functionality-spec.md#node-discovery)
 
 The extraction process feeds the planner's metadata-driven selection:
 
@@ -46,7 +46,7 @@ The extraction process feeds the planner's metadata-driven selection:
 
 ### Registry Integration
 >
-> **See**: [Node Discovery & Versioning](./node-discovery-namespacing-and-versioning.md#registry-management)
+> **See**: [Node Discovery & Versioning](../node-discovery-namespacing-and-versioning.md#registry-management)
 
 Metadata extraction occurs during node installation:
 
@@ -57,7 +57,7 @@ Metadata extraction occurs during node installation:
 
 ### Shared Store Compatibility
 >
-> **See**: [Shared Store Pattern](./shared-store-node-proxy-architecture.md#natural-interfaces)
+> **See**: [Shared Store Pattern](../shared-store-node-proxy-architecture.md#natural-interfaces)
 
 Extracted interface data preserves natural shared store access patterns:
 

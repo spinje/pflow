@@ -105,7 +105,7 @@ Copies to `~/.pflow/nodes/<namespace>/<name>/<version>/` and triggers metadata e
 - Version compatibility validation
 - Natural language → node mapping
 
-> **See also**: [MCP Server Integration](./mcp-server-integration-and-security-model.md) for MCP wrapper node installation
+> **See also**: [MCP Server Integration](./mcp-server-integrationa-and-security-model.md) for MCP wrapper node installation
 
 ### 4.3 Metadata Generation for Planner
 

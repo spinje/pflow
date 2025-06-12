@@ -7,7 +7,7 @@ This document defines JSON schema governance for two key pflow artifacts:
 
 Both schemas work together to enable metadata-driven flow planning and validation.
 
-> **Architecture Context**: See [Node Metadata Strategy](./node-metadata-extraction.md) for extraction details and [Shared Store Pattern](./shared-store-node-proxy-architecture.md) for interface concepts.
+> **Architecture Context**: See [Node Metadata Strategy](implementation-details/node-metadata-extraction.md) for extraction details and [Shared Store Pattern](./shared-store-node-proxy-architecture.md) for interface concepts.
 
 ---
 
@@ -165,7 +165,7 @@ All nodes must explicitly declare their shared store interface in metadata:
 
 ### 2.4 Extraction and Validation
 
-- **Source**: Structured docstrings using Interface sections (see [Node Metadata](./node-metadata-extraction.md))
+- **Source**: Structured docstrings using Interface sections (see [Node Metadata](implementation-details/node-metadata-extraction.md))
 - **Validation**: Extracted metadata must match actual code behavior
 - **Staleness**: Source file hash tracks when re-extraction needed
 - **Registry**: Metadata stored alongside Python files in registry structure
@@ -547,7 +547,7 @@ This dual schema system integrates with pflow's complete architecture:
 - **Node Registry**: [Versioning and discovery](./node-discovery-namespacing-and-versioning.md)
 - **Runtime Behavior**: [Caching, retry, and side-effect management](./runtime-behavior-specification.md)
 - **Framework Integration**: [pocketflow execution patterns](../pocketflow/__init__.py)
-- **Node Metadata Strategy**: [Extraction and documentation](./node-metadata-extraction.md)
+- **Node Metadata Strategy**: [Extraction and documentation](implementation-details/node-metadata-extraction.md)
 
 ---
 
