@@ -30,7 +30,7 @@ dev = [
     "tox-uv>=1.11.3",
     "deptry>=0.23.0",
     "mypy>=0.991",
-    
+
     "ruff>=0.11.5",
     "mkdocs>=1.4.2",
     "mkdocs-material>=8.5.10",
@@ -61,6 +61,7 @@ testpaths = ["tests"]
 target-version = "py39"
 line-length = 120
 fix = true
+exclude = ["pocketflow"]
 
 [tool.ruff.lint]
 select = [
@@ -107,5 +108,3 @@ ignore = [
 
 [tool.ruff.format]
 preview = true
-
-

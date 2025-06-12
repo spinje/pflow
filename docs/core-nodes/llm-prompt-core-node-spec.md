@@ -177,4 +177,3 @@ pflow "Summarize the article and write it to output.md"
 | Param surface       | Keep minimal to enable clean planner integration           |
 | Output location     | Always writes `response` to shared store                   |
 | Backend flexibility | Users can override `llm` with any supported SDK            |
-

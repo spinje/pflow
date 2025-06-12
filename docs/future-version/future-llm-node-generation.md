@@ -1,7 +1,7 @@
 # Future: LLM-Assisted Node Development
 
-> **Status**: Future Feature - Not part of MVP architecture  
-> **Dependencies**: Requires node-metadata-extraction infrastructure  
+> **Status**: Future Feature - Not part of MVP architecture
+> **Dependencies**: Requires node-metadata-extraction infrastructure
 > **Integration**: Builds on established static node ecosystem
 
 ## Overview
@@ -16,14 +16,14 @@ This document outlines planned LLM-assisted capabilities for node development, b
 
 ### The Future Development Workflow
 
-**Current Reality** (MVP): Developers write static nodes, metadata extracted automatically  
-**Future Enhancement**: LLM assists in node creation and documentation improvement  
+**Current Reality** (MVP): Developers write static nodes, metadata extracted automatically
+**Future Enhancement**: LLM assists in node creation and documentation improvement
 **Architectural Preservation**: Static nodes remain the foundation, LLM provides intelligent assistance
 
 ### Game-Changing Potential: LLM + Documentation Consistency
 
-**Future Problem**: Developer writes code → manually adds metadata → potential sync issues  
-**Future Solution**: LLM generates code + documentation together → perfect consistency  
+**Future Problem**: Developer writes code → manually adds metadata → potential sync issues
+**Future Solution**: LLM generates code + documentation together → perfect consistency
 **Implementation**: Built on metadata extraction infrastructure from `node-metadata-extraction.md`
 
 ### Key Future Benefits
@@ -43,18 +43,18 @@ This document outlines planned LLM-assisted capabilities for node development, b
 ```python
 class FutureLLMNodeGenerator:
     """Future LLM-assisted node generation and enhancement."""
-    
+
     def __init__(self, llm_client, metadata_extractor):
         self.llm = llm_client
         self.extractor = metadata_extractor  # Uses extraction infrastructure
         self.system_prompt = self._load_system_prompt()
-    
+
     def generate_node(self, requirements: str, style: str = "comprehensive") -> str:
         """Generate complete node with structured docstring."""
-        
+
         user_prompt = f"""
         Create a pflow Node for: {requirements}
-        
+
         Style: {style}
         Requirements:
         - Follow the exact Interface section format from existing nodes
@@ -64,57 +64,57 @@ class FutureLLMNodeGenerator:
         - Consider edge cases and error conditions
         - Inherit from pocketflow.Node
         - Use natural shared["key"] interfaces
-        
+
         Generate working Python code with complete implementation.
         """
-        
+
         return self.llm.generate(self.system_prompt + "\n\n" + user_prompt)
-    
+
     def enhance_existing_node(self, node_code: str) -> str:
         """Add comprehensive documentation to existing node."""
-        
+
         prompt = f"""
         Analyze this pflow node and enhance its documentation:
-        
+
         {node_code}
-        
+
         Tasks:
         1. Analyze the actual code behavior
         2. Create complete Interface section matching the code
         3. Add usage examples
         4. Document error handling
         5. Keep existing code unchanged
-        
+
         Ensure the Interface section accurately reflects:
         - shared["key"] accesses in prep() → Inputs
-        - shared["key"] assignments in post() → Outputs  
+        - shared["key"] assignments in post() → Outputs
         - self.params.get() calls → Parameters with defaults
         - return values in post() → Actions
         """
-        
+
         return self.llm.generate(prompt)
-    
+
     def suggest_interface_improvements(self, node_code: str) -> List[str]:
         """Suggest improvements to node interfaces."""
-        
+
         # Analyze existing ecosystem
         ecosystem_patterns = self._analyze_ecosystem_patterns()
-        
+
         prompt = f"""
         Analyze this node and suggest interface improvements based on ecosystem patterns:
-        
+
         {node_code}
-        
+
         Ecosystem patterns:
         {ecosystem_patterns}
-        
+
         Suggest improvements for:
         - More intuitive shared store key names
         - Better parameter organization
         - Enhanced error handling
         - Consistency with ecosystem conventions
         """
-        
+
         return self.llm.generate_suggestions(prompt)
 ```
 
@@ -135,7 +135,7 @@ def generate_node(requirements, style, output):
     """Generate new node using LLM assistance."""
     generator = FutureLLMNodeGenerator()
     node_code = generator.generate_node(requirements, style)
-    
+
     if output:
         Path(output).write_text(node_code)
         click.echo(f"Node generated: {output}")
@@ -149,12 +149,12 @@ def generate_node(requirements, style, output):
 def enhance_documentation(python_file, output):
     """Enhance existing node with comprehensive documentation."""
     generator = FutureLLMNodeGenerator()
-    
+
     with open(python_file) as f:
         original_code = f.read()
-    
+
     enhanced_code = generator.enhance_existing_node(original_code)
-    
+
     output_path = output or python_file
     Path(output_path).write_text(enhanced_code)
     click.echo(f"Enhanced documentation written to {output_path}")
@@ -164,12 +164,12 @@ def enhance_documentation(python_file, output):
 def suggest_improvements(python_file):
     """Suggest interface and design improvements."""
     generator = FutureLLMNodeGenerator()
-    
+
     with open(python_file) as f:
         node_code = f.read()
-    
+
     suggestions = generator.suggest_interface_improvements(node_code)
-    
+
     click.echo("🤖 LLM Suggestions for improvement:")
     for suggestion in suggestions:
         click.echo(f"  • {suggestion}")
@@ -181,15 +181,15 @@ def suggest_improvements(python_file):
 
 ### Building on Metadata Extraction
 
-**Foundation**: Uses `node-metadata-extraction.md` infrastructure  
-**Enhancement**: LLM generates nodes that work seamlessly with extraction  
+**Foundation**: Uses `node-metadata-extraction.md` infrastructure
+**Enhancement**: LLM generates nodes that work seamlessly with extraction
 **Validation**: Generated nodes pass same validation as manually written ones
 
 ### Preservation of Static Node Principles
 
-**Static Ecosystem**: Generated nodes become part of static, curated library  
-**Human Review**: All LLM-generated nodes require developer review and approval  
-**Quality Control**: Generated nodes must pass same standards as manual nodes  
+**Static Ecosystem**: Generated nodes become part of static, curated library
+**Human Review**: All LLM-generated nodes require developer review and approval
+**Quality Control**: Generated nodes must pass same standards as manual nodes
 **Registry Integration**: Generated nodes installed through standard `pflow registry install`
 
 ### Future Workflow Integration
@@ -198,22 +198,22 @@ def suggest_improvements(python_file):
 # Future enhanced workflow
 def future_node_development_workflow():
     """Enhanced development workflow with LLM assistance."""
-    
+
     # 1. LLM assists with initial generation
     llm_code = generate_node("transcribe youtube video")
-    
+
     # 2. Developer reviews and refines
     reviewed_code = developer_review(llm_code)
-    
+
     # 3. Standard metadata extraction (current infrastructure)
     metadata = extract_metadata(reviewed_code)
-    
+
     # 4. Standard registry installation
     install_status = registry_install(reviewed_code, metadata)
-    
+
     # 5. Integration with planner (current architecture)
     planner_integration = add_to_registry(metadata)
-    
+
     return "Node ready for use in flows"
 ```
 
@@ -244,9 +244,9 @@ def future_node_development_workflow():
 
 ### Human Review Process
 
-**Mandatory Review**: All LLM-generated nodes require human approval  
-**Quality Gates**: Must pass same validation as manually written nodes  
-**Testing Requirements**: Generated nodes must include test cases  
+**Mandatory Review**: All LLM-generated nodes require human approval
+**Quality Gates**: Must pass same validation as manually written nodes
+**Testing Requirements**: Generated nodes must include test cases
 **Documentation Standards**: Must meet established documentation requirements
 
 ---
@@ -260,31 +260,31 @@ You are a pflow node generator. Create Node classes with this exact format:
 
 class NodeName(Node):
     """Brief description of what the node does.
-    
+
     Detailed explanation of behavior, use cases, and important notes.
-    
+
     Interface:
     - Reads: shared["key"] - description
-    - Writes: shared["key"] - description  
+    - Writes: shared["key"] - description
     - Params: param_name (default value) - description
     - Actions: action_name - when this occurs
-        
+
     Examples:
         Example description:
             shared["input"] = "value"
             params = {"param": "value"}
-            
+
     Performance:
         - Timing information if relevant
         - Memory usage notes
     """
-    
+
     def prep(self, shared):
         # Implementation that reads from shared store
-        
+
     def exec(self, prep_res):
         # Implementation with self.params.get() calls
-        
+
     def post(self, shared, prep_res, exec_res):
         # Implementation with shared assignments and action returns
 
@@ -303,23 +303,23 @@ CRITICAL REQUIREMENTS:
 
 ### Advanced LLM Capabilities
 
-**Multi-Modal Generation**: Support for nodes that handle different data types  
-**Domain-Specific Generation**: Specialized prompts for different use cases  
-**Ecosystem Learning**: LLM learns from existing node patterns  
+**Multi-Modal Generation**: Support for nodes that handle different data types
+**Domain-Specific Generation**: Specialized prompts for different use cases
+**Ecosystem Learning**: LLM learns from existing node patterns
 **Interactive Refinement**: Conversational node improvement
 
 ### Integration Enhancements
 
-**IDE Integration**: Plugin support for popular development environments  
-**Testing Generation**: Automatic test case creation for generated nodes  
-**Documentation Sites**: Automatic rich documentation generation  
+**IDE Integration**: Plugin support for popular development environments
+**Testing Generation**: Automatic test case creation for generated nodes
+**Documentation Sites**: Automatic rich documentation generation
 **Performance Optimization**: LLM suggests performance improvements
 
 ### Quality Improvements
 
-**Static Analysis Integration**: Automated code quality checking  
-**Security Scanning**: Automated security vulnerability detection  
-**Performance Profiling**: Automatic performance characteristic detection  
+**Static Analysis Integration**: Automated code quality checking
+**Security Scanning**: Automated security vulnerability detection
+**Performance Profiling**: Automatic performance characteristic detection
 **Ecosystem Impact Analysis**: Understanding of generated node effects
 
 ---
@@ -336,7 +336,7 @@ CRITICAL REQUIREMENTS:
 - Interface suggestion system
 - Quality validation automation
 
-### Phase 3: Advanced Features  
+### Phase 3: Advanced Features
 - Multi-modal node generation
 - Ecosystem pattern learning
 - Advanced quality assurance
@@ -352,16 +352,16 @@ CRITICAL REQUIREMENTS:
 
 ### Code Generation Safety
 
-**Sandboxed Execution**: Generated code runs in isolated environments  
-**Human Verification**: All generated nodes require manual review  
-**Static Analysis**: Automated security and quality scanning  
+**Sandboxed Execution**: Generated code runs in isolated environments
+**Human Verification**: All generated nodes require manual review
+**Static Analysis**: Automated security and quality scanning
 **Audit Trails**: Complete provenance tracking for generated nodes
 
 ### Trust Model Integration
 
-**Generated Node Classification**: Clear marking of LLM-assisted nodes  
-**Quality Metrics**: Transparency about generation vs manual creation  
-**Community Review**: Peer review processes for shared nodes  
+**Generated Node Classification**: Clear marking of LLM-assisted nodes
+**Quality Metrics**: Transparency about generation vs manual creation
+**Community Review**: Peer review processes for shared nodes
 **Version Control**: Detailed history of modifications and improvements
 
 ---
@@ -376,4 +376,4 @@ This future vision builds carefully on pflow's established static node architect
 - Ecosystem consistency maintained and improved
 - No compromise to pflow's core architectural principles
 
-The future is bright for LLM-assisted development that respects and enhances the solid foundation established in the MVP architecture. 
+The future is bright for LLM-assisted development that respects and enhances the solid foundation established in the MVP architecture.

@@ -18,7 +18,7 @@ The documents use fundamentally different terminology for the same concepts:
 
 **Canonical Spec** uses:
 - `input_bindings` - maps CLI names to shared store keys
-- `output_bindings` - maps node outputs to store keys  
+- `output_bindings` - maps node outputs to store keys
 - `config` - literal per-node tunables
 
 ### Impact
@@ -183,7 +183,7 @@ The gap between flow definition (what developers write) and flow execution (what
 
 6. **Establish naming conventions** - Provide clear guidelines for shared store key naming.
 
-7. **Create integration examples** - Show end-to-end examples that demonstrate both the programming model and CLI usage together. 
+7. **Create integration examples** - Show end-to-end examples that demonstrate both the programming model and CLI usage together.
 
 ## Path forward
 

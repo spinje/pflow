@@ -13,7 +13,7 @@ The fundamental insight is that **node writers shouldn't need to understand flow
 ### Key Benefits
 
 1. **Standalone Node Development** - Node writers use intuitive keys (`shared["text"]`)
-2. **Simplified Testing** - Natural test setup with direct key access  
+2. **Simplified Testing** - Natural test setup with direct key access
 3. **Better Separation of Concerns** - Nodes focus on logic, flows handle routing
 4. **Reduced Cognitive Load** - Node writers focus on their domain expertise
 5. **More Readable Code** - `shared["text"]` beats `self.params["input_bindings"]["text"]`
@@ -25,7 +25,7 @@ Nodes are **dumb pipes** - isolated computation units with no awareness of other
 
 **Node Isolation Rules:**
 - **No peer awareness**: Nodes cannot inspect or reference other nodes
-- **No flow introspection**: Nodes don't know their position in flow topology  
+- **No flow introspection**: Nodes don't know their position in flow topology
 - **No conditional execution**: Nodes cannot skip or modify execution based on peer behavior
 - **Single responsibility**: Each node performs one well-defined transformation
 
@@ -151,7 +151,7 @@ A crucial distinction in our implementation:
 ```python
 class Summarize(Node):  # Inherits from pocketflow.Node
     """Summarizes text content using LLM.
-    
+
     Interface:
     - Reads: shared["text"] - input text to summarize
     - Writes: shared["summary"] - generated summary
@@ -159,11 +159,11 @@ class Summarize(Node):  # Inherits from pocketflow.Node
     """
     def prep(self, shared):
         return shared["text"]  # Simple, natural access
-    
+
     def exec(self, prep_res):
         temp = self.params.get("temperature", 0.7)  # Flat params
         return call_llm(prep_res, temperature=temp)
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["summary"] = exec_res  # Direct assignment
 ```
@@ -176,12 +176,12 @@ The proxy pattern makes testing intuitive and natural:
 def test_summarize_node():
     node = Summarize()
     node.set_params({"temperature": 0.5})  # Just params
-    
+
     # Natural, intuitive shared store
     shared = {"text": "Long article content here..."}
-    
+
     node.run(shared)
-    
+
     assert "summary" in shared
     assert len(shared["summary"]) < len(shared["text"])
 ```
@@ -406,7 +406,7 @@ The round-trip cognitive architecture enhances developer experience through desc
 ### Framework Integration Benefits
 
 - **Minimal overhead**: Leverages existing 100-line pocketflow framework
-- **Backward compatibility**: Existing pocketflow code works unchanged  
+- **Backward compatibility**: Existing pocketflow code works unchanged
 - **Clean separation**: Node logic vs flow orchestration vs CLI integration
 - **Proven patterns**: Uses established `prep()`/`exec()`/`post()` model
 - **No framework modifications**: Pure pattern implementation using existing APIs

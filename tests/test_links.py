@@ -14,7 +14,7 @@ def test_markdown_links_exist():
             path_str = link.split("#", 1)[0].strip()
             if not path_str:
                 continue
-            resolved = (md_file.parent / path_str)
+            resolved = md_file.parent / path_str
             if not resolved.exists():
                 broken_links.append(f"{md_file}:{link}")
 

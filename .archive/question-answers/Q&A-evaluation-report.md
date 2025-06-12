@@ -13,9 +13,9 @@ After thorough analysis of the Q&A document against the seven source documents, 
 
 **Source Documents State (Shared Store Architecture):**
 > "Nodes communicate through intuitive key names (`shared["url"]`, `shared["text"]`) with zero coupling"
-> 
+>
 > Example: `shared["url"]  # Natural interface`
-> 
+>
 > ```python
 > def prep(self, shared):
 >     return shared["url"]  # Natural interface
@@ -123,7 +123,7 @@ def prep(self, shared):
 **Option B:** Move to parameterized access as Q&A suggests
 ```python
 def prep(self, shared):
-    input_key = self.params["input_key"] 
+    input_key = self.params["input_key"]
     return shared[input_key]  # Parameterized access
 ```
 
@@ -148,4 +148,4 @@ def prep(self, shared):
 
 While the Q&A document provides valuable insights and fills important gaps, it contains a critical contradiction regarding the natural interface pattern that is fundamental to pflow's architecture. This must be resolved before proceeding with implementation, as it affects the core design pattern that enables pflow's simplicity and composability benefits.
 
-The non-contradictory information from the Q&A should be integrated into the main documentation to provide a more complete picture of pflow's constraints and capabilities. 
+The non-contradictory information from the Q&A should be integrated into the main documentation to provide a more complete picture of pflow's constraints and capabilities.

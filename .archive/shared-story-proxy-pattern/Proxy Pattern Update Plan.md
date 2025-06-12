@@ -48,11 +48,11 @@ class Summarize(Node):
     def prep(self, shared):
         input_key = self.params["input_bindings"]["text"]  # Binding indirection
         return shared[input_key]
-    
+
     def exec(self, prep_res):
         temp = self.params["config"].get("temperature", 0.7)  # Nested config
         return call_llm(prep_res, temperature=temp)
-    
+
     def post(self, shared, prep_res, exec_res):
         output_key = self.params["output_bindings"]["summary"]  # More indirection
         shared[output_key] = exec_res
@@ -62,18 +62,18 @@ class Summarize(Node):
 ```python
 class Summarize(Node):
     """Summarizes text input.
-    
+
     Expects: shared["text"] - text to summarize
     Produces: shared["summary"] - summarized text
     Config: temperature - LLM temperature (default 0.7)
     """
     def prep(self, shared):
         return shared["text"]  # Natural, direct access
-    
+
     def exec(self, prep_res):
         temp = self.params.get("temperature", 0.7)  # Flat config
         return call_llm(prep_res, temperature=temp)
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["summary"] = exec_res  # Simple assignment
 ```
@@ -88,7 +88,7 @@ class Summarize(Node):
 
 **New opening**: "Node Autonomy Principle"
 - Nodes should be standalone, testable units
-- Node writers focus on business logic, not orchestration 
+- Node writers focus on business logic, not orchestration
 - Complexity belongs at the flow level, not node level
 - Natural interfaces beat binding indirection
 
@@ -101,7 +101,7 @@ class Summarize(Node):
 ```python
 class Summarize(Node):  # Inherits from pocketflow.Node
     """Summarizes text content using LLM.
-    
+
     Interface:
     - Reads: shared["text"] - input text to summarize
     - Writes: shared["summary"] - generated summary
@@ -109,11 +109,11 @@ class Summarize(Node):  # Inherits from pocketflow.Node
     """
     def prep(self, shared):
         return shared["text"]  # Simple, natural access
-    
+
     def exec(self, prep_res):
         temp = self.params.get("temperature", 0.7)  # Flat config
         return call_llm(prep_res, temperature=temp)
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["summary"] = exec_res  # Direct assignment
 ```
@@ -137,12 +137,12 @@ class Summarize(Node):  # Inherits from pocketflow.Node
 def test_summarize_node():
     node = Summarize()
     node.set_params({"temperature": 0.5})  # Just config
-    
+
     # Natural, intuitive shared store
     shared = {"text": "Long article content here..."}
-    
+
     node.run(shared)
-    
+
     assert "summary" in shared
     assert len(shared["summary"]) < len(shared["text"])
 ```
@@ -188,7 +188,7 @@ else:
 {
   "nodes": [
     {
-      "id": "summarize_1", 
+      "id": "summarize_1",
       "name": "Summarize",
       "config": {"temperature": 0.7}
     }
@@ -239,7 +239,7 @@ Key change: Mappings are flow-level concern in IR, nodes just declare natural in
 # Node class (static, pre-written) - SIMPLE AND STANDALONE
 class YTTranscript(Node):
     """Fetches YouTube transcript.
-    
+
     Interface:
     - Reads: shared["url"] - YouTube video URL
     - Writes: shared["transcript"] - extracted transcript text
@@ -247,11 +247,11 @@ class YTTranscript(Node):
     """
     def prep(self, shared):
         return shared["url"]  # Natural interface
-    
+
     def exec(self, url):
         language = self.params.get("language", "en")  # Simple config
         return fetch_transcript(url, language)
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["transcript"] = exec_res  # Direct write
 
@@ -399,12 +399,12 @@ After updates, both documents should:
 ```python
 class NodeAwareSharedStore:
     """Transparent proxy that enables simple node code while supporting complex routing."""
-    
+
     def __init__(self, shared_data, input_mappings=None, output_mappings=None):
         self.shared_data = shared_data
         self.input_mappings = input_mappings or {}
         self.output_mappings = output_mappings or {}
-    
+
     def _map_key(self, key, is_input):
         mappings = self.input_mappings if is_input else self.output_mappings
         return mappings.get(key, key)  # Default to original key if no mapping
@@ -419,11 +419,11 @@ class NodeAwareSharedStore:
     def __setitem__(self, key, value):
         actual_key = self._map_key(key, is_input=False)
         self.shared_data[actual_key] = value
-    
+
     def __contains__(self, key):
         actual_key = self._map_key(key, is_input=True)
         return actual_key in self.shared_data
-    
+
     def get(self, key, default=None):
         try:
             return self[key]

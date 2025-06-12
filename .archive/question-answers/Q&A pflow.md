@@ -84,7 +84,7 @@ Clean and easy way to manually create, debug and reuse flows.
 
 
 
-Generating nodes on the fly is very interesting but it will be something I experiment after building an mvp, and will probably use an external tool like claude code as a plugin for generating each node (infusing claude code with the right documentation for creating pocketflow code. One other interesting thing I can do here is first generate the ideal workflow (including nodes that does not exist yet) then create the missing nodes in parallell using claude code. 
+Generating nodes on the fly is very interesting but it will be something I experiment after building an mvp, and will probably use an external tool like claude code as a plugin for generating each node (infusing claude code with the right documentation for creating pocketflow code. One other interesting thing I can do here is first generate the ideal workflow (including nodes that does not exist yet) then create the missing nodes in parallell using claude code.
 
 ## Phase 2: Architectural Tension Points
 
@@ -227,7 +227,7 @@ We  want the power of effectful system, but with the auditability of pure one. T
 
 
 
-a. Generate new Nodes? 
+a. Generate new Nodes?
 
 To start it would only be able to generate wrappers for mcp servers (this could probably even be done deterministically and not even needing an llm to power it)
 

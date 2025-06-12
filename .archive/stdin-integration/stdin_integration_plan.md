@@ -110,4 +110,4 @@ This document outlines the plan to consistently integrate the concepts from `she
 6.  **Implement changes in `runtime-behavior-specification.md`**: Mention caching.
 7.  **Review all updated documents** for consistency and clarity regarding `stdin` integration.
 
-This plan prioritizes establishing `shared["stdin"]` as the canonical way piped input enters the `pflow` system and then detailing how various parts of the system (CLI, planner, runtime) interact with this. 
+This plan prioritizes establishing `shared["stdin"]` as the canonical way piped input enters the `pflow` system and then detailing how various parts of the system (CLI, planner, runtime) interact with this.

@@ -36,7 +36,7 @@ def exec(self, prep_res):  # Generic prep_res parameter
 
 **Runtime Spec includes, Architecture Doc missing**:
 - Detailed CLI resolution algorithm (Section 7)
-- Comprehensive validation rules (Section 11) 
+- Comprehensive validation rules (Section 11)
 - Flow identity, caching & purity mechanisms (Section 10)
 - Edge cases and error handling (Section 13)
 - Complete end-to-end execution walkthrough (Section 14)
@@ -136,4 +136,4 @@ Both documents use consistent core terminology but with slight variations:
 1. Update Architecture Doc to use `prep_res` in `exec()` method examples
 2. Add namespacing section to Runtime Spec or clarify when each pattern applies
 3. Create cross-reference table showing which document covers which aspects
-4. Standardize on single IR node naming convention across both documents 
+4. Standardize on single IR node naming convention across both documents

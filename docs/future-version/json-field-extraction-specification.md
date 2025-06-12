@@ -88,10 +88,10 @@ JSON field extraction builds on pflow's established architecture without requiri
 ```json
 {
   "input_mappings": {
-    "text": "response.content",           
-    "count": "response.metadata.total",  
-    "active": "response.config.enabled", 
-    "items": "response.data[*]"          
+    "text": "response.content",
+    "count": "response.metadata.total",
+    "active": "response.config.enabled",
+    "items": "response.data[*]"
   }
 }
 ```
@@ -118,7 +118,7 @@ JSON field extraction builds on pflow's established architecture without requiri
       "type": "object",
       "schema": {
         "name": "string",
-        "description": "string", 
+        "description": "string",
         "topics": "array",
         "language": "string",
         "stats": {
@@ -229,7 +229,7 @@ Node: fetch-github-repo
 ├─ Extraction: repo_data.description → "Code editor redefined for cloud"
 └─ Mapped to: shared["text"]
 
-Node: summarize-text  
+Node: summarize-text
 ├─ Input: shared["text"] = "Code editor redefined for cloud"
 └─ Output: shared["summary"] = "Microsoft VSCode is a modern..."
 ```
@@ -249,7 +249,7 @@ class NodeAwareSharedStore:
         self.input_mappings = input_mappings or {}
         self.output_mappings = output_mappings or {}
         self.json_extractor = JsonPathExtractor()
-    
+
     def __getitem__(self, key):
         if key in self.input_mappings:
             path = self.input_mappings[key]
@@ -258,7 +258,7 @@ class NodeAwareSharedStore:
             else:
                 return self.shared[path]
         return self.shared[key]
-    
+
     def _is_json_path(self, path):
         return '.' in path or '[' in path or '|' in path
 ```
@@ -273,7 +273,7 @@ class JsonPathExtractor:
         """Extract value using JSON path with fallbacks and type conversion."""
         # Handle fallback chains (path1|path2|default)
         paths = path.split('|')
-        
+
         for json_path in paths:
             try:
                 result = self._extract_single_path(data, json_path.strip())
@@ -281,10 +281,10 @@ class JsonPathExtractor:
                     return result
             except (KeyError, IndexError, TypeError):
                 continue
-                
+
         # All paths failed, return None or default
         return paths[-1] if len(paths) > 1 else None
-    
+
     def _extract_single_path(self, data, path):
         """Extract single JSON path: obj.field[0].subfield"""
         # Implementation for dot notation, array indexing, etc.
@@ -303,7 +303,7 @@ class JsonPathExtractor:
       "type": "object",
       "extractable_fields": {
         "content": "data.content",
-        "title": "metadata.title", 
+        "title": "metadata.title",
         "author": "author.name",
         "tags": "tags[*]"
       }
@@ -434,7 +434,7 @@ pflow fetch-api >> summarize-text
 pflow "get weather for Stockholm and summarize the conditions"
 # Learns: API JSON → natural text extraction
 
-# Learning phase  
+# Learning phase
 pflow weather-api --city=Stockholm >> summarize-text
 # Sees: automatic field mapping in trace
 
@@ -460,12 +460,12 @@ def test_json_extraction():
             "metadata": {"title": "Test"}
         }
     }
-    
+
     proxy = NodeAwareSharedStore(
-        shared, 
+        shared,
         input_mappings={"text": "api_response.data.content"}
     )
-    
+
     assert proxy["text"] == "test content"
 ```
 
@@ -479,12 +479,12 @@ def test_planner_json_mapping():
     api_node_metadata = {
         "outputs": {"response": {"schema": {"data": {"content": "string"}}}}
     }
-    
-    # Mock text processing node with simple input  
+
+    # Mock text processing node with simple input
     text_node_metadata = {
         "inputs": {"text": {"type": "string"}}
     }
-    
+
     mappings = planner.generate_mappings(api_node_metadata, text_node_metadata)
     assert mappings["input_mappings"]["text"] == "response.data.content"
 ```
@@ -504,7 +504,7 @@ def test_planner_json_mapping():
 ### 11.2 Gradual Enhancement
 
 **Phase 1**: Basic JSON path support in proxy mappings
-**Phase 2**: Planner integration for automatic detection  
+**Phase 2**: Planner integration for automatic detection
 **Phase 3**: Advanced CLI syntax and debugging tools
 **Phase 4**: Performance optimization and caching
 
@@ -532,7 +532,7 @@ This capability transforms pflow from a node orchestration tool into a **complet
 4. Add comprehensive testing framework
 5. Integrate with CLI tracing and debugging tools
 
-This enhancement aligns perfectly with pflow's core philosophy: **complex capabilities through simple interfaces**. 
+This enhancement aligns perfectly with pflow's core philosophy: **complex capabilities through simple interfaces**.
 
 ## 13 · Critical Analysis & Alternative Approaches
 
@@ -662,4 +662,4 @@ Based on this critical analysis, the automatic JSON field extraction approach ma
 
 ---
 
-This governance document ensures both Flow IR and Node Metadata schemas align with pflow's established architecture while providing focused schema definitions for JSON validation, evolution, and metadata-driven planning capabilities. The critical analysis section preserves important design considerations for informed decision-making. 
+This governance document ensures both Flow IR and Node Metadata schemas align with pflow's established architecture while providing focused schema definitions for JSON validation, evolution, and metadata-driven planning capabilities. The critical analysis section preserves important design considerations for informed decision-making.

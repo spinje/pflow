@@ -7,7 +7,7 @@ A comprehensive specification for integrating **Model Context Protocol** servers
 **Key Integration Points**:
 
 - Natural shared store interfaces using intuitive key names
-- Full participation in JSON IR generation and flow orchestration  
+- Full participation in JSON IR generation and flow orchestration
 - Action-based error handling with conditional flow control
 - Unified registry system with planner-discoverable metadata
 - CLI resolution following "Type flags; engine decides" principle
@@ -56,7 +56,7 @@ class McpGithubSearchCode(Node):  # Standard pocketflow inheritance
 
 ### 4.1 Unified Registry Approach
 
-**Eliminates**: Standalone `mcp.json` registry that conflicts with planner architecture  
+**Eliminates**: Standalone `mcp.json` registry that conflicts with planner architecture
 **Adopts**: Integrated MCP configuration within pflow's single registry system
 
 **Registry Entry Structure**:
@@ -64,7 +64,7 @@ class McpGithubSearchCode(Node):  # Standard pocketflow inheritance
 ```json
 {
   "node_id": "mcp-github-search-code",
-  "type": "mcp_wrapper", 
+  "type": "mcp_wrapper",
   "description": "Search code in GitHub repositories via MCP",
   "mcp_config": {
     "server_id": "github-server",
@@ -76,7 +76,7 @@ class McpGithubSearchCode(Node):  # Standard pocketflow inheritance
   },
   "interface": {
     "inputs": ["query", "language"],
-    "outputs": ["search_results"], 
+    "outputs": ["search_results"],
     "params": {"max_results": 10},
     "actions": ["default", "rate_limited", "auth_failed"]
   },
@@ -86,8 +86,8 @@ class McpGithubSearchCode(Node):  # Standard pocketflow inheritance
 
 ### 4.2 Planner Integration
 
-**Node Discovery**: MCP wrapper nodes appear alongside manually-written nodes in planner's metadata extraction  
-**LLM Selection**: Thinking models can select MCP tools naturally during flow generation  
+**Node Discovery**: MCP wrapper nodes appear alongside manually-written nodes in planner's metadata extraction
+**LLM Selection**: Thinking models can select MCP tools naturally during flow generation
 **Metadata Format**: Generated nodes follow pflow's docstring conventions for consistent discovery
 
 ### 4.3 CLI Commands
@@ -115,39 +115,39 @@ Generated wrapper nodes follow the full pflow pattern with natural shared store 
 # Generated wrapper follows complete pflow Node pattern
 class McpGithubSearchCode(Node):
     """Search code in GitHub repositories via MCP.
-    
+
     Interface:
-    - Reads: shared["query"] - search query string  
+    - Reads: shared["query"] - search query string
     - Reads: shared["language"] - programming language filter (optional)
     - Writes: shared["search_results"] - array of code search results
     - Params: max_results (default 10) - maximum results to return
     - Actions: "default", "rate_limited", "auth_failed", "resource_missing"
-    
+
     MCP Source: github-server/search_code v1.2.0
     """
-    
+
     # MCP metadata (used internally by executor)
     _mcp_server_id = "github-server"
-    _mcp_tool_name = "search_code" 
+    _mcp_tool_name = "search_code"
     _mcp_tool_version = "1.2.0"
     _mcp_manifest_hash = "sha256:abc123..."
-    
+
     def __init__(self):
         super().__init__()
         self._mcp_executor = McpExecutor(self._mcp_server_id)
-    
+
     def prep(self, shared):
         """Extract search parameters from shared store using natural keys."""
         query = shared.get("query")
         if not query:
             raise ValueError("Missing required 'query' in shared store")
-        
+
         return {
             "query": query,
             "language": shared.get("language"),  # Optional parameter
             "max_results": self.params.get("max_results", 10)
         }
-    
+
     def exec(self, prep_res):
         """Execute MCP tool call with action-based error handling."""
         try:
@@ -163,12 +163,12 @@ class McpGithubSearchCode(Node):
             return "auth_failed"
         except McpResourceNotFoundError:
             return "resource_missing"
-    
+
     def post(self, shared, prep_res, exec_res):
         """Write results to shared store or return action for flow control."""
         if isinstance(exec_res, str):  # Action string for flow transitions
             return exec_res
-        
+
         # Natural interface - write results to intuitive key
         shared["search_results"] = exec_res
         return "default"
@@ -183,13 +183,13 @@ def generate_node_docstring(mcp_tool):
     """Convert MCP tool manifest to pflow docstring format."""
     return f'''
     """{mcp_tool.description}
-    
+
     Interface:
     {format_shared_store_inputs(mcp_tool.input_schema)}
     {format_shared_store_outputs(mcp_tool.output_schema)}
     {format_params(mcp_tool.parameters)}
     {format_actions(mcp_tool.error_types)}
-    
+
     MCP Source: {mcp_tool.server_id}/{mcp_tool.name} v{mcp_tool.version}
     """
     '''
@@ -216,16 +216,16 @@ def format_shared_store_inputs(input_schema):
 ```python
 # MCP tool: get_weather
 # Natural interface:
-# Inputs: shared["location"], shared["units"] 
+# Inputs: shared["location"], shared["units"]
 # Outputs: shared["weather_data"]
 
-# MCP tool: search_repositories  
+# MCP tool: search_repositories
 # Natural interface:
 # Inputs: shared["query"], shared["language"], shared["sort_by"]
 # Outputs: shared["repositories"]
 
 # MCP tool: send_slack_message
-# Natural interface: 
+# Natural interface:
 # Inputs: shared["message"], shared["channel"]
 # Outputs: shared["message_id"]
 ```
@@ -241,7 +241,7 @@ def format_shared_store_inputs(input_schema):
 **Interface Mapping Process**:
 
 1. **Analyze MCP Tool Schema**: Extract input/output parameters from `/tools/list`
-2. **Generate Natural Keys**: Create intuitive shared store key names  
+2. **Generate Natural Keys**: Create intuitive shared store key names
 3. **Handle Optional Parameters**: Map optional inputs to shared store with sensible defaults
 4. **Flatten Complex Outputs**: Convert nested MCP responses to flat shared store structure
 
@@ -290,7 +290,7 @@ def execute_mcp_node_with_mapping(node, shared, mappings=None):
 pflow mcp-github-search-code --query="authentication bugs" --language="python"
 # Results in: shared["query"] = "authentication bugs", shared["language"] = "python"
 
-# CLI flag matches param name = param override  
+# CLI flag matches param name = param override
 pflow mcp-github-search-code --max-results=20
 # Results in: params["max_results"] = 20
 
@@ -304,23 +304,23 @@ echo "TODO comments" | pflow mcp-github-search-code --language=python >> summari
 
 ### 7.1 MCP Error Mapping
 
-**Replaces**: Transport-specific error handling  
+**Replaces**: Transport-specific error handling
 **Adopts**: pflow's action-based conditional flow control
 
 ```python
 class McpErrorMapper:
     """Maps MCP protocol errors to pflow actions for flow control."""
-    
+
     ERROR_ACTION_MAP = {
         "rate_limited": "rate_limited",
         "unauthorized": "auth_failed",
-        "forbidden": "permission_denied", 
+        "forbidden": "permission_denied",
         "not_found": "resource_missing",
         "timeout": "timeout",
         "server_error": "server_error",
         "network_error": "network_error"
     }
-    
+
     @classmethod
     def map_error_to_action(cls, mcp_error):
         """Convert MCP error to pflow action string."""
@@ -375,7 +375,7 @@ flow = Flow(start=github_search)
 ```json
 {
   "metadata": {
-    "planner_version": "1.0.0", 
+    "planner_version": "1.0.0",
     "created_at": "2024-01-01T12:00:00Z",
     "prompt": "find Python authentication bugs on GitHub and post summary to Slack"
   },
@@ -387,7 +387,7 @@ flow = Flow(start=github_search)
       "params": {"max_results": 15},
       "mcp_metadata": {
         "server_id": "github-server",
-        "tool_name": "search_code", 
+        "tool_name": "search_code",
         "version": "1.2.0"
       }
     },
@@ -397,7 +397,7 @@ flow = Flow(start=github_search)
       "params": {"temperature": 0.3}
     },
     {
-      "id": "mcp-slack-send-message", 
+      "id": "mcp-slack-send-message",
       "version": "1.0.0",
       "type": "mcp_wrapper",
       "params": {},
@@ -431,7 +431,7 @@ flow = Flow(start=github_search)
   "selection_type": "new_composition",
   "chosen_nodes": [
     "mcp-github-search-code",
-    "summarize-text", 
+    "summarize-text",
     "mcp-slack-send-message"
   ],
   "flow_structure": "search → summarize → notify"
@@ -455,35 +455,35 @@ def create_mcp_integrated_flow():
     github_search = McpGithubSearchCode()
     summarizer = SummarizeText()  # Manual node
     slack_sender = McpSlackSendMessage()  # Another MCP wrapper
-    
+
     # Configure with IR parameters using pocketflow's set_params()
     github_search.set_params({"max_results": 15})
     summarizer.set_params({"temperature": 0.3})
     slack_sender.set_params({})  # Uses defaults
-    
+
     # Wire flow with action-based error handling
     github_search >> summarizer
     github_search - "rate_limited" >> retry_handler >> github_search
     summarizer >> slack_sender
-    
+
     return Flow(start=github_search)
 
 # Runtime execution with shared store + proxy support
 def execute_flow():
     shared = {
         "query": "authentication vulnerabilities",  # CLI injection
-        "language": "python",                      # CLI injection  
+        "language": "python",                      # CLI injection
         "dev-team-alerts": "#security-alerts"     # Mapped to "channel"
     }
-    
+
     flow = create_mcp_integrated_flow()
-    
+
     # Handle proxy mappings when defined in IR
     for node in flow.nodes:
         if hasattr(node, '_mcp_tool_name') and node.id in ir.get("mappings", {}):
             # Proxy setup handled by generated code
             pass
-    
+
     result = flow.run(shared)
     return result
 ```
@@ -500,7 +500,7 @@ def execute_flow():
 from pocketflow import Node, flow_safe
 
 # Read-only MCP tools (rare but possible)
-@flow_safe  
+@flow_safe
 class McpGithubGetRepository(Node):
     """Get repository metadata (read-only operation)."""
     # Cacheable, can participate in pure flows
@@ -528,7 +528,7 @@ class McpSlackSendMessage(Node):
 ```python
 # MCP server configuration with auth
 {
-  "server_id": "github-enterprise", 
+  "server_id": "github-enterprise",
   "transport": "sse",
   "url": "https://api.github.internal/mcp",
   "auth": {
@@ -573,7 +573,7 @@ pflow registry add-mcp --server github --command "mcp-github" --transport stdio
 # 2. Wrapper nodes auto-generated and discoverable
 pflow registry list --filter github
 # mcp-github-search-code    Search code in repositories
-# mcp-github-get-repo       Get repository information  
+# mcp-github-get-repo       Get repository information
 # mcp-github-create-issue   Create new issue
 
 # 3. Direct CLI usage with natural interface
@@ -601,7 +601,7 @@ search_node >> summarizer >> slack_notifier
 
 # Error recovery paths
 search_node - "rate_limited" >> retry_handler >> search_node
-search_node - "auth_failed" >> auth_refresher >> search_node  
+search_node - "auth_failed" >> auth_refresher >> search_node
 slack_notifier - "channel_not_found" >> create_channel >> slack_notifier
 
 # Complex conditional logic
@@ -631,7 +631,7 @@ echo "security vulnerability" | \
       "mcp-github-search-code": {
         "input_mappings": {
           "query": "search_terms",
-          "language": "target_language"  
+          "language": "target_language"
         },
         "output_mappings": {
           "search_results": "raw_code_data"
@@ -675,14 +675,14 @@ def test_mcp_github_search_node():
     node = McpGithubSearchCode()
     node.set_params({"max_results": 5})
     shared = {"query": "test query", "language": "python"}
-    
+
     # Mock the MCP executor to avoid external calls
     with patch.object(node._mcp_executor, 'call_tool') as mock_call:
         mock_call.return_value = {"results": [{"name": "test.py"}]}
-        
+
         # Act
         node.run(shared)
-        
+
         # Assert
         assert "search_results" in shared
         assert len(shared["search_results"]) == 1
@@ -728,7 +728,7 @@ pflow registry test-mcp-connections
 **Deprecation Timeline**:
 
 - **Phase 1**: Both systems supported, warnings for old commands
-- **Phase 2**: Old `mcp.json` read-only, migration prompted  
+- **Phase 2**: Old `mcp.json` read-only, migration prompted
 - **Phase 3**: Legacy system removed, registry-only approach
 
 ### 13.3 Tool Evolution
@@ -765,11 +765,11 @@ pflow registry test-mcp-connections
 
 This specification transforms MCP integration from a parallel subsystem into a native pflow pattern that fully embraces the shared store + proxy model. Key achievements:
 
-✅ **Pattern Consistency**: MCP wrapper nodes indistinguishable from manual nodes  
-✅ **Registry Unity**: Single discovery system includes MCP tools  
-✅ **CLI Compatibility**: Natural flag resolution following established rules  
-✅ **Flow Integration**: Complete JSON IR, proxy mapping, and action-based error handling  
-✅ **Planner Compatibility**: LLM can discover and select MCP tools naturally  
-✅ **Framework Alignment**: Pure pocketflow implementation without modifications  
+✅ **Pattern Consistency**: MCP wrapper nodes indistinguishable from manual nodes
+✅ **Registry Unity**: Single discovery system includes MCP tools
+✅ **CLI Compatibility**: Natural flag resolution following established rules
+✅ **Flow Integration**: Complete JSON IR, proxy mapping, and action-based error handling
+✅ **Planner Compatibility**: LLM can discover and select MCP tools naturally
+✅ **Framework Alignment**: Pure pocketflow implementation without modifications
 
 **Result**: Developers can use MCP tools exactly like any other pflow node, with the full power of flow orchestration, conditional error handling, and intelligent planning.

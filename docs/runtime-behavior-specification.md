@@ -180,13 +180,13 @@ pflow provides built-in testing capabilities to ensure node reliability and flow
 def test_yt_transcript_node():
     node = YTTranscript()
     node.set_params({"language": "en"})
-    
+
     # Setup test shared store
     shared = {"url": "https://youtu.be/test123"}
-    
+
     # Execute node
     node.run(shared)
-    
+
     # Assert expected changes
     assert "transcript" in shared
     assert len(shared["transcript"]) > 0
@@ -204,9 +204,9 @@ def test_yt_transcript_node():
 def test_video_summary_flow():
     flow = create_video_summary_flow()
     shared = {"url": "https://youtu.be/test123"}
-    
+
     flow.run(shared)
-    
+
     assert "summary" in shared
     assert shared["summary"].startswith("Summary:")
 ```
@@ -217,7 +217,7 @@ def test_video_summary_flow():
 pflow test yt-transcript
 pflow test summarize-text
 
-# Test complete flows  
+# Test complete flows
 pflow test video-summary-flow
 
 # Validate flow definitions
@@ -288,7 +288,7 @@ pflow process-request  # Would magically know about Alice
 
 **Technical Approach:**
 - Checkpoint creation at node completion boundaries
-- Shared store serialization to disk or external storage  
+- Shared store serialization to disk or external storage
 - Node completion tracking in execution metadata
 - Resume logic that skips completed nodes and restores state
 

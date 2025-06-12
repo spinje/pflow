@@ -12,7 +12,7 @@
 
 pflow's defining promise: a one-line natural-language prompt compiles—through a deterministic, auditable planning pipeline—into the same lock-file-backed DAG a power-user would hand-write. Intuitive intent is preserved **without** sacrificing deterministic execution, caching discipline, or traceability.
 
-**Primary differentiator** → **Shared store + natural interface pattern** with intelligent planning.  
+**Primary differentiator** → **Shared store + natural interface pattern** with intelligent planning.
 **Core innovation** → The execution pattern, not the framework itself.
 
 ### 1.1 Strategic Differentiators
@@ -32,25 +32,25 @@ pflow's defining promise: a one-line natural-language prompt compiles—through 
 
 ### 1.2 Design Philosophy
 
-**Explicit Over Magic**  
+**Explicit Over Magic**
 Nothing is implicit. All I/O, bindings, side-effects, and caching constraints are declared in the JSON IR and visible in the CLI.
 
-**Shared Store as Primary Communication**  
+**Shared Store as Primary Communication**
 Nodes communicate through a flow-scoped shared store using natural key names (`shared["url"]`, `shared["summary"]`). Params are secondary, used mainly for node configuration and batch operations.
 
-**Natural Interfaces Enable Simplicity**  
+**Natural Interfaces Enable Simplicity**
 Node authors use intuitive shared store keys. Complex flow routing handled by optional proxy mappings without node complexity.
 
-**Planning-Execution Separation**  
+**Planning-Execution Separation**
 Natural language is never interpreted directly. A separate, deterministic planner flow transforms NL into CLI syntax, which is then validated and compiled to executable IR.
 
-**Purity-First Safety Model**  
+**Purity-First Safety Model**
 All nodes are impure by default. Only explicitly marked `@flow_safe` nodes can be cached or retried. Safety is opt-in and verified.
 
-**Round-Trippable Intent**  
+**Round-Trippable Intent**
 All flows carry `description` metadata reflecting original user intent. Flows can be explained, searched, and reused through semantic matching.
 
-**Pattern Over Framework Innovation**  
+**Pattern Over Framework Innovation**
 The 100-line pocketflow framework is stable. Innovation happens in the shared store pattern, proxy mappings, planning pipeline, and MCP integration.
 
 **Native Shell Integration**
@@ -63,34 +63,34 @@ graph TD
     A[User Input] --> B{Input Type?}
     B -->|Natural Language| C[Full Planner Pipeline]
     B -->|CLI Pipe Syntax| D[Validation Planner]
-    
+
     C --> E[Metadata Registry]
     C --> F[LLM Selection]
     C --> G[Validation Framework]
-    
+
     D --> E
     D --> G
-    
+
     G --> H[JSON IR Generation]
     H --> I[Lockfile Creation]
-    
+
     C --> J[User Verification]
     J --> K[Runtime Execution]
     D --> K
-    
+
     K --> L[Shared Store]
     K --> M[Node Orchestration]
     M --> N[Proxy Mapping*]
-    
+
     subgraph "pocketflow Framework"
         O[Node.prep]
-        P[Node.exec] 
+        P[Node.exec]
         Q[Node.post]
         O --> P --> Q
     end
-    
+
     M --> O
-    
+
     style L fill:#e1f5fe
     style N fill:#f3e5f5
     style E fill:#e8f5e8
@@ -125,7 +125,7 @@ class Node(BaseNode):
     def prep(self, shared):     # Extract data from shared store
         pass
     def exec(self, prep_res):   # Process data (pure business logic)
-        pass  
+        pass
     def post(self, shared, prep_res, exec_res):  # Write results back
         pass
 
@@ -156,7 +156,7 @@ shared = {
 class YTTranscript(Node):
     def prep(self, shared):
         return shared["url"]  # Natural interface
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["transcript"] = exec_res  # Intuitive key naming
 ```
@@ -175,7 +175,7 @@ graph LR
     subgraph "pflow Runtime Execution Example"
         direction LR
         UserInput["User Input (CLI Flags/Pipe)"] --> SharedStore_Init["Shared Store (Initial)"]
-        
+
         subgraph NodeA ["Node A Execution (Direct Access)"]
             direction TB
             NodeAParams["Node A.params<br>(node-specific config)"]
@@ -212,7 +212,7 @@ Nodes use **intuitive key names** that match human expectations:
 ```python
 # Natural interface examples
 shared["url"]           # Input: web address
-shared["text"]          # Input: content to process  
+shared["text"]          # Input: content to process
 shared["query"]         # Input: search terms
 shared["stdin"]         # Input: shell input
 shared["summary"]       # Output: generated summary
@@ -339,10 +339,10 @@ pflow's **planner** operates in dual-mode, handling both natural language prompt
 ```mermaid
 graph TD
     A[User Input] --> B{Input Detection}
-    
+
     B -->|"summarize video"| C[Natural Language Path]
     B -->|"yt-transcript >> summarize"| D[CLI Pipe Path]
-    
+
     subgraph "Natural Language Processing"
         C --> E[Metadata Registry Scan]
         E --> F[LLM Selection Process]
@@ -350,7 +350,7 @@ graph TD
         G --> H[Validation & Mapping]
         H --> I[User Preview Required]
     end
-    
+
     subgraph "CLI Pipe Processing"
         D --> J[Syntax Parsing]
         J --> K[Node Validation]
@@ -358,7 +358,7 @@ graph TD
         L --> M[Mapping Generation]
         M --> N[Direct Execution]
     end
-    
+
     I --> O[JSON IR Generation]
     N --> O
     O --> P[Lockfile Creation]
@@ -390,7 +390,7 @@ graph TD
 Input: "summarize this youtube video"
 ↓
 Registry Discovery: [yt-transcript, summarize-text, save-markdown, ...]
-↓  
+↓
 LLM Selection: yt-transcript@1.0.0 + summarize-text@2.1.0
 ↓
 Flow Structure: yt-transcript >> summarize-text
@@ -440,7 +440,7 @@ The planner uses **extracted node metadata** rather than code inspection:
 # Node docstring (source)
 class YTTranscript(Node):
     """Fetches YouTube transcript from video URL.
-    
+
     Interface:
     - Reads: shared["url"] - YouTube video URL
     - Writes: shared["transcript"] - extracted transcript text
@@ -452,7 +452,7 @@ class YTTranscript(Node):
 ```json
 // Generated metadata (LLM context)
 {
-  "id": "yt-transcript", 
+  "id": "yt-transcript",
   "description": "Fetches YouTube transcript from video URL",
   "inputs": ["url"],
   "outputs": ["transcript"],
@@ -477,19 +477,19 @@ The planner follows **retrieval-first** to maximize stability:
 graph TD
     A[User Prompt] --> B[Semantic Search]
     B --> C{Existing Flow Found?}
-    
+
     C -->|Yes - Exact Match| D[Reuse Validated Flow]
     C -->|Yes - Partial Match| E[Use as Sub-Component]
     C -->|No Match| F[Generate New Flow]
-    
+
     D --> G[Skip LLM Generation]
     E --> H[LLM Composition]
     F --> I[Full LLM Generation]
-    
+
     H --> J[Validation Pipeline]
     I --> J
     J --> K[User Approval]
-    
+
     style D fill:#c8e6c9
     style F fill:#ffcdd2
     style J fill:#fff3e0
@@ -512,15 +512,15 @@ def validate_flow(ir_draft):
     # 1. Structural validation
     validate_dag_structure(ir_draft.nodes, ir_draft.edges)
     validate_action_coverage(ir_draft.edges, ir_draft.nodes)
-    
-    # 2. Interface validation  
+
+    # 2. Interface validation
     validate_shared_store_compatibility(ir_draft.nodes)
     validate_proxy_mappings(ir_draft.mappings)
-    
+
     # 3. Execution validation
     validate_purity_constraints(ir_draft.nodes)
     validate_retry_eligibility(ir_draft.execution)
-    
+
     # 4. Schema validation
     validate_json_schema(ir_draft)
     validate_version_compatibility(ir_draft.metadata)
@@ -541,7 +541,7 @@ Every planned flow includes **complete provenance**:
 {
   "metadata": {
     "planner_version": "1.0.0",
-    "planner_run_id": "plan_2024-01-01_12:00:00_abc123", 
+    "planner_run_id": "plan_2024-01-01_12:00:00_abc123",
     "llm_model": "claude-3-5-sonnet",
     "created_at": "2024-01-01T12:00:00Z",
     "prompt": "summarize this youtube video",
@@ -591,18 +591,18 @@ graph TD
     A[CLI Flag: --key=value] --> B{Matches Node Input?}
     B -->|Yes| C[Data Injection]
     C --> D["shared[key] = value"]
-    
+
     B -->|No| E{Matches Node Param?}
     E -->|Yes| F[Parameter Override]
     F --> G["node.params[key] = value"]
-    
+
     E -->|No| H{Matches Execution Config?}
     H -->|Yes| I[Execution Configuration]
     I --> J["node.execution[key] = value"]
-    
+
     H -->|No| K[ERROR: Unknown Flag]
     K --> L[Abort with Suggestions]
-    
+
     style C fill:#e8f5e8
     style F fill:#fff3e0
     style I fill:#e3f2fd
@@ -617,7 +617,7 @@ pflow yt-transcript --url=https://youtu.be/abc123
 # Result: shared["url"] = "https://youtu.be/abc123"
 
 # Parameter override (node config)
-pflow summarize-text --temperature=0.9 
+pflow summarize-text --temperature=0.9
 # Result: node.params["temperature"] = 0.9
 
 # Execution configuration
@@ -641,7 +641,7 @@ CLI flags use **natural, intuitive names** that match human expectations:
 --file               # File paths
 --message            # Communication content
 
-# Natural parameter flags  
+# Natural parameter flags
 --temperature        # LLM creativity (0.0-1.0)
 --max-tokens         # Output length limits
 --language           # Language codes (en, es, fr)
@@ -687,7 +687,7 @@ pflow my-data-pipeline >> analysis-flow >> reporting-flow
 pflow yt-transcript >> summarize-text
 # Prompt: "Please provide --url for yt-transcript"
 
-# Batch/CI: missing data fails fast  
+# Batch/CI: missing data fails fast
 pflow yt-transcript >> summarize-text
 # Error: "MISSING_INPUT: --url required for yt-transcript"
 ```
@@ -851,7 +851,7 @@ pflow's **Intermediate Representation (IR)** is a complete JSON specification th
 ```json
 {
   "id": "fetch-transcript",
-  "registry_id": "core/yt-transcript", 
+  "registry_id": "core/yt-transcript",
   "version": "1.0.0",
   "params": {
     "language": "en",
@@ -931,7 +931,7 @@ graph TD
     G --> H[Purity Constraint Check]
     H --> I[Execution Config Validation]
     I --> J[Complete Validated IR]
-    
+
     B -.->|Fail| K[Schema Error]
     C -.->|Fail| L[Version Error]
     D -.->|Fail| M[Missing Node Error]
@@ -940,7 +940,7 @@ graph TD
     G -.->|Fail| P[Mapping Error]
     H -.->|Fail| Q[Purity Violation]
     I -.->|Fail| R[Config Error]
-    
+
     style J fill:#c8e6c9
     style K fill:#ffcdd2
     style L fill:#ffcdd2
@@ -968,7 +968,7 @@ Validated IR generates **lockfiles** for deterministic execution:
 {
   "ir_hash": "sha256:abc123def456...",
   "node_versions": {
-    "core/yt-transcript": "1.0.0", 
+    "core/yt-transcript": "1.0.0",
     "core/summarize-text": "2.1.0"
   },
   "signature": "valid",
@@ -1011,7 +1011,7 @@ class SendSlackMessage(Node):
     pass
 
 # Explicit: Pure (eligible for optimizations)
-@flow_safe  
+@flow_safe
 class ExtractTextSummary(Node):
     """Generate text summary using LLM.
     - Deterministic with same inputs
@@ -1117,7 +1117,7 @@ for attempt in range(max_retries):
 ```python
 # Action-based error handling
 validator - "validation_failed" >> error_handler >> retry_validator
-fetcher - "rate_limited" >> exponential_backoff >> fetcher  
+fetcher - "rate_limited" >> exponential_backoff >> fetcher
 processor - "timeout" >> timeout_handler
 ```
 
@@ -1227,7 +1227,7 @@ pflow registry describe mcp-github-search-code
 # MCP nodes appear alongside manual nodes
 pflow registry list
 # core/yt-transcript@1.0.0          Fetches YouTube transcript
-# mcp/github-search-code@1.2.0      Search code in repositories via MCP  
+# mcp/github-search-code@1.2.0      Search code in repositories via MCP
 # core/summarize-text@2.1.0          Generate text summary using LLM
 ```
 
@@ -1237,7 +1237,7 @@ pflow registry list
 {
   "node_id": "mcp-github-search-code",
   "type": "mcp_wrapper",
-  "namespace": "mcp", 
+  "namespace": "mcp",
   "description": "Search code in GitHub repositories via MCP",
   "mcp_config": {
     "server_id": "github-server",
@@ -1249,7 +1249,7 @@ pflow registry list
   },
   "interface": {
     "inputs": ["query", "language"],
-    "outputs": ["search_results"], 
+    "outputs": ["search_results"],
     "params": {"max_results": 10},
     "actions": ["default", "rate_limited", "auth_failed"]
   },
@@ -1265,17 +1265,17 @@ MCP tools become **indistinguishable from manual nodes**:
 # Generated wrapper follows complete pflow pattern
 class McpGithubSearchCode(Node):
     """Search code in GitHub repositories via MCP.
-    
+
     Interface:
-    - Reads: shared["query"] - search query string  
+    - Reads: shared["query"] - search query string
     - Reads: shared["language"] - programming language filter (optional)
     - Writes: shared["search_results"] - array of code search results
     - Params: max_results (default 10) - maximum results to return
     - Actions: "default", "rate_limited", "auth_failed", "resource_missing"
-    
+
     MCP Source: github-server/search_code v1.2.0
     """
-    
+
     def prep(self, shared):
         query = shared.get("query")
         if not query:
@@ -1285,7 +1285,7 @@ class McpGithubSearchCode(Node):
             "language": shared.get("language"),
             "max_results": self.params.get("max_results", 10)
         }
-    
+
     def exec(self, prep_res):
         try:
             response = self._mcp_executor.call_tool("search_code", prep_res)
@@ -1294,7 +1294,7 @@ class McpGithubSearchCode(Node):
             return "rate_limited"  # Action for flow control
         except McpAuthError:
             return "auth_failed"
-    
+
     def post(self, shared, prep_res, exec_res):
         if isinstance(exec_res, str):  # Action string
             return exec_res
@@ -1313,7 +1313,7 @@ shared["location"]     # Input: city/coordinates
 shared["units"]        # Input: temperature units
 shared["weather_data"] # Output: weather information
 
-# MCP tool: send_slack_message  
+# MCP tool: send_slack_message
 # Natural interface:
 shared["message"]      # Input: message content
 shared["channel"]      # Input: destination channel
@@ -1344,7 +1344,7 @@ pflow mcp-github-search-code --query="auth bugs" >> summarize-text
 
 ```python
 MCP_ERROR_ACTIONS = {
-    "rate_limited": "rate_limited", 
+    "rate_limited": "rate_limited",
     "unauthorized": "auth_failed",
     "not_found": "resource_missing",
     "timeout": "timeout",
@@ -1367,7 +1367,7 @@ MCP_ERROR_ACTIONS = {
 User: "find Python authentication bugs on GitHub and post summary to Slack"
 ↓
 Planner Discovery: [mcp-github-search-code, summarize-text, mcp-slack-send, ...]
-↓  
+↓
 LLM Selection: mcp-github-search-code >> summarize-text >> mcp-slack-send
 ↓
 Generated Flow: Complete action-based error handling included
@@ -1378,7 +1378,7 @@ Generated Flow: Complete action-based error handling included
 **Supported Transports:**
 
 - **stdio**: Local development and trusted tools
-- **sse**: Remote HTTP servers with real-time streaming  
+- **sse**: Remote HTTP servers with real-time streaming
 - **uds**: Unix domain sockets for high-performance IPC
 - **pipe**: Windows named pipes for Windows-native communication
 
@@ -1397,7 +1397,7 @@ MCP wrapper nodes follow **identical CLI patterns**:
 # Same CLI resolution rules apply
 pflow mcp-github-search-code --query="test patterns" --language=python >> summarize-text
 
-# Natural pipe composition  
+# Natural pipe composition
 echo "security vulnerability" | \
   pflow mcp-github-search-code --language=python >> \
   summarize-text --temperature=0.3 >> \
@@ -1436,28 +1436,28 @@ pflow supports **progressive complexity** from natural language exploration to p
 ```mermaid
 graph TD
     A[Exploration] --> B[Learning]
-    B --> C[Iteration] 
+    B --> C[Iteration]
     C --> D[Automation]
     D --> E[Production]
-    
+
     subgraph "Exploration Phase"
         A --> F["pflow 'summarize video'"]
         F --> G[Planner generates CLI]
         G --> H[User learns patterns]
     end
-    
-    subgraph "Iteration Phase"  
+
+    subgraph "Iteration Phase"
         C --> I["pflow yt-transcript >> summarize"]
         I --> J[Parameter tuning]
         J --> K[Flow composition]
     end
-    
+
     subgraph "Production Phase"
         E --> L[Lockfile generation]
         L --> M[CI/CD integration]
         M --> N[Scheduled execution]
     end
-    
+
     style A fill:#e3f2fd
     style C fill:#f3e5f5
     style E fill:#e8f5e8
@@ -1776,17 +1776,17 @@ gantt
     pocketflow Integration    :done, foundation, 2024-01-01, 2024-01-15
     Shared Store Pattern      :done, store, 2024-01-10, 2024-01-25
     Node Registry System      :active, registry, 2024-01-20, 2024-02-05
-    
+
     section Planning
     Metadata Extraction       :planning, 2024-01-25, 2024-02-10
     Dual-Mode Planner         :2024-02-05, 2024-02-25
     Validation Framework      :2024-02-15, 2024-03-05
-    
+
     section Runtime
     Proxy Mapping System      :2024-02-20, 2024-03-10
     Caching & Retry Logic     :2024-03-01, 2024-03-20
     Performance Optimization  :2024-03-15, 2024-04-05
-    
+
     section Integration
     MCP Wrapper Generation    :2024-03-01, 2024-03-25
     CLI Resolution Engine     :2024-03-10, 2024-04-01

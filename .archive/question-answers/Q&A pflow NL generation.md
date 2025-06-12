@@ -114,7 +114,7 @@ pflow "summarize this video and save it as summary.md"
 
    ```bash
    yt-transcript --url $VIDEO >> summarize >> write-file --path summary.md
-   
+
    ```
 
 ### 1\.2 Type Shadow Store Prevalidation
@@ -175,13 +175,13 @@ pflow "summarize this video and save it as summary.md"
 
 ## 3\. **Persistence and File Artifacts**
 
-| Situation | Behavior | 
+| Situation | Behavior |
 |---|---|
-| Ad-hoc NL prompt | Ephemeral temp lock-file: `.pflow/tmp/<hash>.lock.json` | 
-| Prompt with `--slug my_flow` | Lock file: `my_flow.lock.json` in working dir | 
-| With `--save-pipe my_flow.pipe` | Pipe string also saved | 
-| With `--no-lock` | IR held in memory only | 
-| On valid execution | Run logs saved under `.pflow/logs/<run-id>.json` | 
+| Ad-hoc NL prompt | Ephemeral temp lock-file: `.pflow/tmp/<hash>.lock.json` |
+| Prompt with `--slug my_flow` | Lock file: `my_flow.lock.json` in working dir |
+| With `--save-pipe my_flow.pipe` | Pipe string also saved |
+| With `--no-lock` | IR held in memory only |
+| On valid execution | Run logs saved under `.pflow/logs/<run-id>.json` |
 
 - Every valid IR produces a **lock file** unless suppressed.
 

@@ -66,7 +66,7 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
     },
     "outputs": {
       "transcript": {
-        "type": "str", 
+        "type": "str",
         "description": "Extracted transcript text"
       }
     },
@@ -95,7 +95,7 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
 ### 2.2 Interface Declaration Rules
 
 - **Natural Interfaces**: Inputs/outputs use `shared["key"]` patterns from docstrings
-- **Params Structure**: Maps to `self.params.get("key", default)` usage in code  
+- **Params Structure**: Maps to `self.params.get("key", default)` usage in code
 - **Action Enumeration**: Lists all possible return values from node `post()` method
 - **Type Information**: Basic types (str, int, float, bool, dict, list, any)
 
@@ -178,7 +178,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 
 ```json
 {
-  "id": "fetch-transcript", 
+  "id": "fetch-transcript",
   "registry_id": "core/yt-transcript",
   "version": "1.0.0",
   "params": {
@@ -254,7 +254,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
   "mappings": {
     "summarize-text": {
       "input_mappings": {"text": "raw_transcript"},
-      "output_mappings": {"summary": "article_summary"}  
+      "output_mappings": {"summary": "article_summary"}
     },
     "store-result": {
       "input_mappings": {"content": "article_summary"}
@@ -321,14 +321,14 @@ IR enables caching through `execution.use_cache` field with validation rules:
 ### 9.1 Node Metadata Validation (Registry Phase)
 
 1. **Extraction Validation**: Docstring → metadata consistency
-2. **Code Analysis**: Static analysis of actual shared["key"] usage  
+2. **Code Analysis**: Static analysis of actual shared["key"] usage
 3. **Interface Verification**: Documented vs actual interface matching
 4. **Staleness Check**: Source hash validation for re-extraction needs
 
 ### 9.2 Flow IR Validation (Composition Phase)
 
 1. **JSON Structure**: Parse → strict no-comments
-2. **Schema Validation**: `$schema` + `ir_version` compatibility check  
+2. **Schema Validation**: `$schema` + `ir_version` compatibility check
 3. **Registry Resolution**: All referenced nodes exist in [registry](./node-discovery-namespacing-and-versioning.md)
 4. **Graph Analysis**: Cycle detection including action-based transition paths
 5. **Interface Compatibility**: Input/output key alignment between connected nodes
@@ -354,7 +354,7 @@ Flow failing any step is rejected before execution with comprehensive diagnostic
 **Version Compatibility:**
 
 - **Minor IR additions**: New optional fields allowed; unknown optional fields ignored but preserved
-- **Major IR bump**: Engine refuses to run; user must upgrade `pflow`  
+- **Major IR bump**: Engine refuses to run; user must upgrade `pflow`
 - **Deprecation Process**: Features flagged two minor versions before removal
 
 **Extension Compatibility:**
@@ -366,7 +366,7 @@ Flow failing any step is rejected before execution with comprehensive diagnostic
 **Node Metadata Schema Versioning:**
 
 - **metadata_schema_version**: Track metadata format evolution
-- **Backward Compatibility**: Older metadata formats supported during transitions  
+- **Backward Compatibility**: Older metadata formats supported during transitions
 - **Migration Tools**: Automatic upgrade utilities for schema changes
 
 ---
@@ -401,7 +401,7 @@ Flow failing any step is rejected before execution with comprehensive diagnostic
 ### 12.1 Node Metadata Management
 
 ```bash
-# Extract metadata from Python file  
+# Extract metadata from Python file
 pflow registry extract node.py --output metadata.json
 
 # Validate code/metadata consistency
@@ -420,7 +420,7 @@ pflow registry list --format table
 # Validate flow IR against registry
 pflow validate flow.ir.json
 
-# Check interface compatibility 
+# Check interface compatibility
 pflow validate flow.ir.json --check-interfaces
 
 # Generate missing proxy mappings
@@ -455,9 +455,9 @@ Fast planner context generation using pre-extracted metadata:
 ```python
 def build_llm_context(available_nodes: List[str]) -> str:
     """Load pre-extracted metadata for instant LLM context."""
-    metadata_files = [f"registry/nodes/{node}/metadata.json" 
+    metadata_files = [f"registry/nodes/{node}/metadata.json"
                      for node in available_nodes]
-    
+
     # Instant JSON loading vs Python parsing
     interfaces = [json.load(open(f)) for f in metadata_files]
     return format_for_llm(interfaces)
@@ -481,7 +481,7 @@ def build_llm_context(available_nodes: List[str]) -> str:
 
 ```json
 {
-  "$schema": "https://pflow.dev/schemas/flow-0.1.json", 
+  "$schema": "https://pflow.dev/schemas/flow-0.1.json",
   "ir_version": "0.1.0",
   "metadata": {
     "created": "2025-01-01T12:00:00Z",
@@ -497,7 +497,7 @@ def build_llm_context(available_nodes: List[str]) -> str:
     {
       "id": "fetch-transcript",
       "registry_id": "core/yt-transcript",
-      "version": "1.0.0", 
+      "version": "1.0.0",
       "params": {"language": "en"},
       "execution": {"max_retries": 2, "wait": 1.0}
     },
@@ -542,7 +542,7 @@ def build_llm_context(available_nodes: List[str]) -> str:
 This dual schema system integrates with pflow's complete architecture:
 
 - **Shared Store Pattern**: [Natural interfaces and proxy mappings](./shared-store-node-proxy-architecture.md)
-- **Planner Validation**: [Dual-mode operation and IR generation](./planner-responsibility-functionality-spec.md)  
+- **Planner Validation**: [Dual-mode operation and IR generation](./planner-responsibility-functionality-spec.md)
 - **CLI Resolution**: [Parameter injection and override rules](./shared-store-cli-runtime-specification.md)
 - **Node Registry**: [Versioning and discovery](./node-discovery-namespacing-and-versioning.md)
 - **Runtime Behavior**: [Caching, retry, and side-effect management](./runtime-behavior-specification.md)

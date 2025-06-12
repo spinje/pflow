@@ -89,7 +89,7 @@ shared = {
 
 ```python
 shared = {
-    "inputs/video_url": "https://youtu.be/abc123", 
+    "inputs/video_url": "https://youtu.be/abc123",
     "outputs/transcript": "Video content..."
 }
 ```
@@ -106,7 +106,7 @@ The simple node interface integrates with static node classes using pocketflow's
 # Node class (static, pre-written) - SIMPLE AND STANDALONE
 class YTTranscript(Node):  # Inherits from pocketflow.Node
     """Fetches YouTube transcript.
-    
+
     Interface:
     - Reads: shared["url"] - YouTube video URL
     - Writes: shared["transcript"] - extracted transcript text
@@ -114,11 +114,11 @@ class YTTranscript(Node):  # Inherits from pocketflow.Node
     """
     def prep(self, shared):
         return shared["url"]  # Natural interface
-    
+
     def exec(self, prep_res):  # prep_res contains the URL
         language = self.params.get("language", "en")  # Simple params
         return fetch_transcript(prep_res, language)
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["transcript"] = exec_res  # Direct write
 
@@ -273,11 +273,11 @@ shared = {
 def create_flow():
     fetch_node = YTTranscript()
     summarize_node = SummarizeText()
-    
+
     # Configure nodes with IR params
     fetch_node.set_params({"language": "en"})
     summarize_node.set_params({"temperature": 0.9})  # CLI override
-    
+
     # Wire the flow using pocketflow operators
     fetch_node >> summarize_node
     return Flow(start=fetch_node)
@@ -336,11 +336,11 @@ shared = {
 def create_flow():
     fetch_node = YTTranscript()
     summarize_node = SummarizeText()
-    
+
     # Configure nodes
     fetch_node.set_params({"language": "en"})
     summarize_node.set_params({"temperature": 0.9})
-    
+
     # Wire the flow
     fetch_node >> summarize_node
     return Flow(start=fetch_node)
@@ -348,7 +348,7 @@ def create_flow():
 def run_with_cli():
     shared = {"video_source": "https://youtu.be/abc123"}
     flow = create_flow()
-    
+
     # Handle proxy mapping
     for node in flow.nodes:
         if node.id in ir.get("mappings", {}):
@@ -377,7 +377,7 @@ def run_with_cli():
 **Summarise Node**:
 
 ```python
-# Node always uses natural interface  
+# Node always uses natural interface
 # prep() reads from shared["text"] (proxy maps to "raw_transcript" if needed)
 # exec() uses self.params.get("temperature") = 0.9 (CLI override)
 # post() writes to shared["summary"] (proxy maps to "article_summary" if needed)
@@ -464,7 +464,7 @@ The CLI design prioritizes **learning through transparency** over automation eff
 
 **Educational CLI Principles:**
 - **Show Don't Hide**: Generated flows visible as CLI pipe syntax before execution
-- **Edit Before Execute**: Users can modify generated flows to explore alternatives  
+- **Edit Before Execute**: Users can modify generated flows to explore alternatives
 - **Natural Progression**: Simple patterns scale to complex orchestration
 - **Transferable Knowledge**: CLI skills translate to direct flow authoring
 

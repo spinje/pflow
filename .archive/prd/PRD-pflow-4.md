@@ -16,17 +16,17 @@ Agentic planning and MCP integration are enablers—not the core.
 
 ### 1\.1 Strategic Differentiators
 
-| Differentiator | Description | Implementation Hooks | 
+| Differentiator | Description | Implementation Hooks |
 |---|---|---|
-| **Transparent Execution** | Every node’s data, config, and errors are trace-logged and replayable. | CLI `--trace`, IR → run log schema, deterministic replay via `.lock.json`. | 
-| **Composable Intelligence** | Complex automations built from simple, reusable nodes or subflows. | Pipe CLI grammar (`>>`), flows-as-nodes, validated IR DAGs with typed keys. | 
-| **Deterministic Reproducibility** | Execution behavior is locked across environments and time. | IR versioning, semver-pinned nodes, lock-files, input-bindings/param split. | 
-| **Caching & Efficiency Control** | Reuse of expensive results is always opt-in and safe. | `@flow_safe` nodes + CLI-level cache flags; content-keyed node-level caching. | 
-| **Fine-grained Resilience** | Only safe nodes are retried; all failure points are logged, typed, and recoverable. | Retry logic scoped to pure nodes; retry contracts in flow IR. | 
-| **NL ↔ Flow Round-Tripping** | Natural-language prompts compile to pipe syntax → IR → lock-file, then back to NL for explain or search. No structural loss at any stage. | Deterministic planner flow, shadow-store pre-validator, pipe-to-IR compiler, `description` field on flows, future `--explain` command. | 
-| **Planner–Executor Separation** | NL is interpreted via a deterministic subflow that outputs pipe syntax → IR, validated before execution. | Planner flow emits pipes, validated with shadow store + compiler; provenance recorded. | 
-| **Cognitive Middleware Alignment** | Flows externalize semantic context for agents and users to re-enter thought processes. | Shared store memory model; `description` used for flow retrieval; composable flow IRs. | 
-| **Vendor-Neutral Modularity** | No hard binding to any LLM or backend service. | MCP wrappers; semver namespacing; pluggable local or remote back-ends. | 
+| **Transparent Execution** | Every node’s data, config, and errors are trace-logged and replayable. | CLI `--trace`, IR → run log schema, deterministic replay via `.lock.json`. |
+| **Composable Intelligence** | Complex automations built from simple, reusable nodes or subflows. | Pipe CLI grammar (`>>`), flows-as-nodes, validated IR DAGs with typed keys. |
+| **Deterministic Reproducibility** | Execution behavior is locked across environments and time. | IR versioning, semver-pinned nodes, lock-files, input-bindings/param split. |
+| **Caching & Efficiency Control** | Reuse of expensive results is always opt-in and safe. | `@flow_safe` nodes + CLI-level cache flags; content-keyed node-level caching. |
+| **Fine-grained Resilience** | Only safe nodes are retried; all failure points are logged, typed, and recoverable. | Retry logic scoped to pure nodes; retry contracts in flow IR. |
+| **NL ↔ Flow Round-Tripping** | Natural-language prompts compile to pipe syntax → IR → lock-file, then back to NL for explain or search. No structural loss at any stage. | Deterministic planner flow, shadow-store pre-validator, pipe-to-IR compiler, `description` field on flows, future `--explain` command. |
+| **Planner–Executor Separation** | NL is interpreted via a deterministic subflow that outputs pipe syntax → IR, validated before execution. | Planner flow emits pipes, validated with shadow store + compiler; provenance recorded. |
+| **Cognitive Middleware Alignment** | Flows externalize semantic context for agents and users to re-enter thought processes. | Shared store memory model; `description` used for flow retrieval; composable flow IRs. |
+| **Vendor-Neutral Modularity** | No hard binding to any LLM or backend service. | MCP wrappers; semver namespacing; pluggable local or remote back-ends. |
 
 ### 1\.2 Design Philosophy
 
@@ -85,12 +85,12 @@ Round-trip guarantee: *prompt → pipe → IR → lock-file → run-log → NL-s
 
 ## 2 Out-of-Scope for MVP
 
-| Excluded | Rationale | 
+| Excluded | Rationale |
 |---|---|
-| Auto-generating node code | Keeps surface small; focus on wrapping existing MCP tools and curated core nodes. | 
-| GUI authoring / YAML flows | CLI + JSON IR are sufficient; GUI can be a later layer. | 
-| Mid-run user interaction | Nodes run to completion (`prep → exec → post`) with no pauses. | 
-| Global, implicit state | All data lives in per-run `shared` or explicit external side-effect nodes. | 
+| Auto-generating node code | Keeps surface small; focus on wrapping existing MCP tools and curated core nodes. |
+| GUI authoring / YAML flows | CLI + JSON IR are sufficient; GUI can be a later layer. |
+| Mid-run user interaction | Nodes run to completion (`prep → exec → post`) with no pauses. |
+| Global, implicit state | All data lives in per-run `shared` or explicit external side-effect nodes. |
 
 ---
 
@@ -174,13 +174,13 @@ Governed by the spec in *JSON IR [Governance.md](Governance.md)* — includes sc
 
 ### 4\.4 NL → Flow Guarantees
 
-| Guarantee | Mechanism | 
+| Guarantee | Mechanism |
 |---|---|
-| Structural soundness before execution | Shadow‑store pass + full validator gates | 
-| Provenance recorded | `planner_version`, `planner_run_id`, origin tag \`{planner | 
-| Reproducibility of accepted flows | Lock‑file produced on first successful run; subsequent runs skip planner | 
-| Safe caching/retry | Only `@flow_safe` nodes eligible **and** run‑log origin =`planner`; other origins require `--force-cache` | 
-| Failure transparency | Planner retry exhaustion emits `.failed.lock.json` + `planner_log.json` | 
+| Structural soundness before execution | Shadow‑store pass + full validator gates |
+| Provenance recorded | `planner_version`, `planner_run_id`, origin tag \`{planner |
+| Reproducibility of accepted flows | Lock‑file produced on first successful run; subsequent runs skip planner |
+| Safe caching/retry | Only `@flow_safe` nodes eligible **and** run‑log origin =`planner`; other origins require `--force-cache` |
+| Failure transparency | Planner retry exhaustion emits `.failed.lock.json` + `planner_log.json` |
 
 ---
 
@@ -210,15 +210,15 @@ Governed by the spec in *JSON IR [Governance.md](Governance.md)* — includes sc
 
 ## 6 CLI Surface (initial)
 
-| Command | Purpose |  | 
+| Command | Purpose |  |
 |---|---|---|
-| `pflow <node>[args] >> <node>[args]` | Run explicit chain. |  | 
-| `pflow "<natural instruction>"` | Calls the planner; prints proposed pipe; executes only after `--yes` or interactive confirmation. |  | 
-| `pflow trace <run-id>` | Inspect DAG, params, shared snapshots, cache hits, retries, failures. |  | 
-| `pflow list` | Show installed nodes (name, version, flow_safe, side-effect flag). |  | 
-| `pflow lock` | Emit lock-file for deterministic CI runs. |  | 
-| \`pflow test <node | flow>\` | Run validation suite. | 
-| `pflow mcp ...` | Manage MCP registry & server lifecycle. |  | 
+| `pflow <node>[args] >> <node>[args]` | Run explicit chain. |  |
+| `pflow "<natural instruction>"` | Calls the planner; prints proposed pipe; executes only after `--yes` or interactive confirmation. |  |
+| `pflow trace <run-id>` | Inspect DAG, params, shared snapshots, cache hits, retries, failures. |  |
+| `pflow list` | Show installed nodes (name, version, flow_safe, side-effect flag). |  |
+| `pflow lock` | Emit lock-file for deterministic CI runs. |  |
+| \`pflow test <node | flow>\` | Run validation suite. |
+| `pflow mcp ...` | Manage MCP registry & server lifecycle. |  |
 
 ---
 
@@ -286,7 +286,7 @@ Governed by the spec in *JSON IR [Governance.md](Governance.md)* — includes sc
 
    ```
    pflow "get the weather for Stockholm and Oslo and summarize differences"
-   
+
    ```
 
    → Agent proposes CLI chain; user confirms.
@@ -296,7 +296,7 @@ Governed by the spec in *JSON IR [Governance.md](Governance.md)* — includes sc
    ```
    pflow mcp install-mcp https://api.weathercorp.com
    pflow weather.get --city Stockholm --retries 2 >> summarize >> save_file --path wx.md
-   
+
    ```
 
 3. **Hardening**
@@ -304,29 +304,29 @@ Governed by the spec in *JSON IR [Governance.md](Governance.md)* — includes sc
    ```
    pflow lock
    git add flow.lock.json
-   
+
    ```
 
 4. **Automation**
 
    ```
    0 * * * * pflow run my_hourly_flow.lock.json --use-cache
-   
+
    ```
 
 ---
 
 ## 12 MVP Acceptance Criteria
 
-| Metric | Target | 
+| Metric | Target |
 |---|---|
-| End-to-end flow latency (3-node pure flow) | ≤ 2 s overhead vs raw Python | 
-| `pflow trace` correctness | 100 % node order, param, cache & retry info | 
-| JSON IR validation false-negative rate | 0 critical misses in test suite | 
-| Reproducibility | Same lock-file → identical outputs across machines (pure nodes) | 
-| MCP wrapper generation | ≥ 95 % of `/tools/list` entries wrap without manual edits | 
-| Docs | Quick-start (<5 min) reproduces “weather summary” example | 
-| NL-prompt → validated lock-file success rate (planner default prompts) | ≥ 95 % within ≤ 3 planner retries | 
+| End-to-end flow latency (3-node pure flow) | ≤ 2 s overhead vs raw Python |
+| `pflow trace` correctness | 100 % node order, param, cache & retry info |
+| JSON IR validation false-negative rate | 0 critical misses in test suite |
+| Reproducibility | Same lock-file → identical outputs across machines (pure nodes) |
+| MCP wrapper generation | ≥ 95 % of `/tools/list` entries wrap without manual edits |
+| Docs | Quick-start (<5 min) reproduces “weather summary” example |
+| NL-prompt → validated lock-file success rate (planner default prompts) | ≥ 95 % within ≤ 3 planner retries |
 
 ---
 
@@ -350,12 +350,12 @@ Governed by the spec in *JSON IR [Governance.md](Governance.md)* — includes sc
 
 ## 14 Open Risks
 
-| Risk | Mitigation | 
+| Risk | Mitigation |
 |---|---|
-| Ecosystem fragmentation (many near-identical nodes). | Namespacing + search/registry UX + strong docs. | 
-| Agent flow-planning hallucinations. | Human confirmation, IR validation gate. | 
-| Security of remote MCP tokens. | Env-var only in MVP; secret store on roadmap. | 
-| Cache poisoning for “pure” nodes accidentally impure. | Manual code review before `@flow_safe`; tooling lint. | 
+| Ecosystem fragmentation (many near-identical nodes). | Namespacing + search/registry UX + strong docs. |
+| Agent flow-planning hallucinations. | Human confirmation, IR validation gate. |
+| Security of remote MCP tokens. | Env-var only in MVP; secret store on roadmap. |
+| Cache poisoning for “pure” nodes accidentally impure. | Manual code review before `@flow_safe`; tooling lint. |
 
 ---
 

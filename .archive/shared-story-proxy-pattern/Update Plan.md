@@ -15,7 +15,7 @@ This plan outlines the specific changes needed to align both documents with the 
 - Update the Node Example section to show proper binding usage
 - Update the Flow Example section to use new IR format
 
-### 1.2 Node Interface Clarification  
+### 1.2 Node Interface Clarification
 **Change**: Update the node example to show how bindings work with `prep()`/`exec()`/`post()`
 
 **New Node Example**:
@@ -23,9 +23,9 @@ This plan outlines the specific changes needed to align both documents with the 
 class Summarize(Node):
     def __init__(self):
         self.input_bindings = {}  # Set by IR: {"text": "raw_transcript"}
-        self.output_bindings = {} # Set by IR: {"summary": "article_summary"} 
+        self.output_bindings = {} # Set by IR: {"summary": "article_summary"}
         self.config = {}          # Set by IR: {"temperature": 0.7}
-    
+
     def prep(self, shared):
         # Read from shared store using the bound key
         input_key = self.input_bindings["text"]  # "raw_transcript"
@@ -49,7 +49,7 @@ class Summarize(Node):
 {
   "nodes": [
     {
-      "id": "summarize_1", 
+      "id": "summarize_1",
       "name": "Summarize",
       "input_bindings": {"text": "raw_texts/doc1.txt"},
       "output_bindings": {"summary": "summaries/doc1.txt"},
@@ -107,7 +107,7 @@ class Summarize(Node):
 **Change**: Ensure all IR examples use consistent format matching Design Pattern
 
 **Updates**:
-- Change `"type"` to `"name"` 
+- Change `"type"` to `"name"`
 - Remove any `"params"` references
 - Ensure `input_bindings`/`output_bindings`/`config` structure is consistent
 
@@ -125,7 +125,7 @@ Node Access: self.input_bindings["url"] → "video_url" → shared["video_url"]
 ### 2.4 Add Integration Examples
 **New Section**: End-to-end examples showing:
 1. IR definition
-2. CLI command  
+2. CLI command
 3. Shared store population
 4. Node execution with bindings
 5. Final shared store state
@@ -149,7 +149,7 @@ Node Access: self.input_bindings["url"] → "video_url" → shared["video_url"]
 - Runtime configuration
 - Implementation specifications
 
-### 3.2 Canonical Spec Document  
+### 3.2 Canonical Spec Document
 **Add**: References to Design Pattern for:
 - Conceptual understanding
 - Architectural rationale
@@ -183,7 +183,7 @@ After updates, both documents should:
 
 In both documents, ensure these concepts are clear:
 - **Bindings enable reusability** - Same node, different flows, different shared store layouts
-- **Planner as compiler** - Sets up shared schema and wires nodes via bindings  
+- **Planner as compiler** - Sets up shared schema and wires nodes via bindings
 - **CLI interface vs internal keys** - External names (url) vs internal keys (video_url)
 - **Three-part model** - input_bindings (routing in), output_bindings (routing out), config (local tunables)
-- **Shared store as coordination bus** - Flow-global memory with flexible schema 
+- **Shared store as coordination bus** - Flow-global memory with flexible schema

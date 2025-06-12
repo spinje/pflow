@@ -72,7 +72,7 @@ This document outlines planned LLM-assisted capabilities for node development, b
 
 **Content to Transfer**:
 - Sections 1-2 ("Executive Summary", "Why This Approach Wins") → Rewrite for future context
-- Section 4 ("LLM Integration Strategy") → Move entirely  
+- Section 4 ("LLM Integration Strategy") → Move entirely
 - `LLMNodeGenerator` class → Move to future doc
 - CLI commands for generation/enhancement → Move to future doc
 - All references to "LLM generates code + documentation"
@@ -95,8 +95,8 @@ This document outlines planned LLM-assisted capabilities for node development, b
 ## Executive Summary
 
 **Chosen Approach**: Structured docstring parsing with hybrid extraction
-**Primary Format**: Interface sections in Python docstrings  
-**Parsing Strategy**: `docstring_parser` + custom regex for pflow-specific sections  
+**Primary Format**: Interface sections in Python docstrings
+**Parsing Strategy**: `docstring_parser` + custom regex for pflow-specific sections
 **Purpose**: Enable metadata-driven planner selection from static node library
 
 This document defines the infrastructure for extracting structured metadata from developer-written pflow nodes to support the planner's discovery and validation capabilities.
@@ -164,7 +164,7 @@ pflow registry refresh-metadata  # Bulk re-extraction
 ```
 
 **Implementation Steps**:
-1. Update section 5 ("CLI Integration") 
+1. Update section 5 ("CLI Integration")
 2. Modify all CLI examples throughout document
 3. Integrate with established registry command structure from source docs
 4. Remove standalone metadata command group
@@ -178,7 +178,7 @@ pflow registry refresh-metadata  # Bulk re-extraction
 """
 Interface:
 - Reads: shared["text"] - input text to summarize
-- Writes: shared["summary"] - generated summary  
+- Writes: shared["summary"] - generated summary
 - Params: temperature (default 0.7) - LLM creativity
 """
 ```
@@ -221,7 +221,7 @@ The extraction process feeds the planner's metadata-driven selection:
 - Provides interface compatibility data for validation
 - Enables LLM context generation for intelligent selection
 
-### Registry Integration  
+### Registry Integration
 > **See**: [Node Discovery & Versioning](./node-discovery-namespacing-and-versioning.md#registry-management)
 
 Metadata extraction occurs during node installation:
@@ -247,7 +247,7 @@ Extracted interface data preserves natural shared store access patterns:
 1. **Purpose & Architecture Integration** (new)
 2. **Docstring Format Standard** (updated from section 3)
 3. **Extraction Implementation** (updated from section 3)
-4. **Registry Integration** (updated from section 6) 
+4. **Registry Integration** (updated from section 6)
 5. **CLI Commands** (updated from section 5)
 6. **Performance & Caching** (from section 12)
 7. **Schema Definitions** (aligned with json-schema doc)
@@ -271,24 +271,24 @@ Extracted interface data preserves natural shared store access patterns:
 # Example: Extracting from existing node
 class ExistingYTTranscript(Node):
     """Fetches YouTube transcript from video URL.
-    
+
     Interface:
-    - Reads: shared["url"] - YouTube video URL  
+    - Reads: shared["url"] - YouTube video URL
     - Writes: shared["transcript"] - extracted transcript text
     - Params: language (default "en") - transcript language
     """
     def prep(self, shared):
         return shared["url"]
-    
+
     def exec(self, prep_res):
         language = self.params.get("language", "en")
         return fetch_transcript(prep_res, language)
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["transcript"] = exec_res
 
 # Extraction process
-extractor = PflowMetadataExtractor() 
+extractor = PflowMetadataExtractor()
 metadata = extractor.extract_metadata(ExistingYTTranscript)
 # Result: Complete metadata JSON for planner use
 ```
@@ -370,7 +370,7 @@ metadata = extractor.extract_metadata(ExistingYTTranscript)
 - Move LLM-related content
 - Reframe as future feature
 
-**Phase 2** (Refactor Current Document): **4-6 hours**  
+**Phase 2** (Refactor Current Document): **4-6 hours**
 - Update introduction and positioning
 - Fix schema, CLI, format inconsistencies
 - Add source document integration
@@ -434,4 +434,4 @@ metadata = extractor.extract_metadata(ExistingYTTranscript)
 
 ---
 
-This plan provides a clear path to resolve the philosophical contradictions while preserving all valuable technical content and establishing a solid foundation for future LLM-assisted capabilities. 
+This plan provides a clear path to resolve the philosophical contradictions while preserving all valuable technical content and establishing a solid foundation for future LLM-assisted capabilities.

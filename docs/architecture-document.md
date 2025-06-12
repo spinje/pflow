@@ -33,29 +33,29 @@ graph TD
         CLI[CLI Interface]
         PIPE[Shell Pipe Input]
     end
-    
+
     subgraph "Planning & Validation Layer"
         PARSER[CLI Parser]
         PLANNER[Dual-Mode Planner]
         VALIDATOR[Validation Framework]
     end
-    
+
     subgraph "Execution Layer"
         RUNTIME[Runtime Engine]
         PROXY[NodeAwareSharedStore Proxy]
         CACHE[Cache System]
     end
-    
+
     subgraph "Storage Layer"
         REGISTRY[Node Registry]
         LOCKFILE[Lockfiles]
         SHARED[Shared Store]
     end
-    
+
     subgraph "Foundation"
         PFLOW[pocketflow Framework]
     end
-    
+
     CLI --> PARSER
     PIPE --> PARSER
     PARSER --> PLANNER
@@ -106,7 +106,7 @@ The shared store is a flow-scoped dictionary that serves as the primary communic
 class YTTranscript(Node):
     def prep(self, shared):
         return shared["url"]  # Natural key access
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["transcript"] = exec_res  # Direct write
 ```
@@ -270,21 +270,21 @@ All nodes inherit from `pocketflow.Node`:
 ```python
 class SummarizeText(Node):
     """Summarizes text content.
-    
+
     Interface:
     - Reads: shared["text"] - input text to summarize
     - Writes: shared["summary"] - generated summary
     - Params: temperature (default 0.7), max_tokens (default 150)
     """
-    
+
     def prep(self, shared):
         return shared["text"]
-    
+
     def exec(self, prep_res):
         temp = self.params.get("temperature", 0.7)
         tokens = self.params.get("max_tokens", 150)
         return call_llm(prep_res, temperature=temp, max_tokens=tokens)
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["summary"] = exec_res
         return "default"
@@ -348,11 +348,11 @@ def execute_flow(ir, shared):
         node = node_class()
         node.set_params(node_spec["params"])
         nodes[node_spec["id"]] = node
-    
+
     # Wire flow
     for edge in ir["edges"]:
         nodes[edge["from"]] >> nodes[edge["to"]]
-    
+
     # Execute with proxy if needed
     for node_id, node in nodes.items():
         if node_id in ir.get("mappings", {}):
@@ -517,10 +517,10 @@ def test_summarize_node():
     # Simple, natural test setup
     node = SummarizeText()
     node.set_params({"temperature": 0.5})
-    
+
     shared = {"text": "Long content..."}
     node.run(shared)
-    
+
     assert "summary" in shared
     assert len(shared["summary"]) < len(shared["text"])
 ```
@@ -531,9 +531,9 @@ def test_summarize_node():
 def test_video_summary_flow():
     flow = create_video_summary_flow()
     shared = {"url": "https://youtu.be/test"}
-    
+
     flow.run(shared)
-    
+
     assert "summary" in shared
 ```
 

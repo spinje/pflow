@@ -91,7 +91,7 @@ pflow mcp_github.search_code --query "TODO" >> summarize >> mcp_stripe.create_cu
 # Source of Truth expects:
 class YTTranscript(Node):
     """Fetches YouTube transcript.
-    
+
     Interface:
     - Reads: shared["url"] - YouTube video URL
     - Writes: shared["transcript"] - extracted transcript text
@@ -123,23 +123,23 @@ class YTTranscript(Node):
    ```python
    class McpGithubSearchCode(Node):
        """Search code in GitHub repositories via MCP.
-       
+
        Interface:
        - Reads: shared["query"] - search query string
        - Writes: shared["search_results"] - found code snippets
        - Params: max_results (default 10) - maximum results to return
        """
-       
+
        def prep(self, shared):
            return shared["query"]
-       
+
        def exec(self, prep_res):
            max_results = self.params.get("max_results", 10)
            return self.mcp_executor.call_tool("search_code", {
                "query": prep_res,
                "max_results": max_results
            })
-       
+
        def post(self, shared, prep_res, exec_res):
            shared["search_results"] = exec_res
    ```
@@ -170,4 +170,4 @@ class YTTranscript(Node):
 
 The MCP integration document introduces a parallel architecture that doesn't fully align with pflow's established patterns. While the core concept of wrapping MCP tools as pflow nodes is sound, the implementation needs significant adjustments to maintain consistency with the shared store pattern, CLI resolution rules, and flow orchestration framework.
 
-**Priority**: Address wrapper node generation and shared store integration first, as these are fundamental to pflow's architecture. The registry and CLI resolution issues should be resolved before implementation to avoid creating incompatible patterns. 
+**Priority**: Address wrapper node generation and shared store integration first, as these are fundamental to pflow's architecture. The registry and CLI resolution issues should be resolved before implementation to avoid creating incompatible patterns.

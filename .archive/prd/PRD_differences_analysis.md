@@ -36,7 +36,7 @@ The three PRD versions show an evolution of the pflow CLI specification with the
 
 - **NL ↔ Flow Round-Tripping** implementation details vary:
   - PRD-pflow.md: "future `--explain` command"
-  - PRD-pflow-2.md: "future `--explain` command"  
+  - PRD-pflow-2.md: "future `--explain` command"
   - PRD-pflow-3.md: "`description` metadata" (no mention of future command)
 
 ### 3. Design Philosophy

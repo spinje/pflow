@@ -61,4 +61,4 @@ The `shell-pipe-native-integration.md` document generally aligns well with the c
 
 ## Conclusion
 
-The integration of shell pipes is a valuable feature for `pflow`. To ensure clarity and consistency across all documentation, it is recommended to revise the description of the *default* handling of piped input in `shell-pipe-native-integration.md` to clearly state that `shared["stdin"]` is the key populated with the piped content. Any subsequent use of this content by a node's specific named input parameter should be explained as either a node's capability to read from `shared["stdin"]` or an explicit mapping in the IR. 
+The integration of shell pipes is a valuable feature for `pflow`. To ensure clarity and consistency across all documentation, it is recommended to revise the description of the *default* handling of piped input in `shell-pipe-native-integration.md` to clearly state that `shared["stdin"]` is the key populated with the piped content. Any subsequent use of this content by a node's specific named input parameter should be explained as either a node's capability to read from `shared["stdin"]` or an explicit mapping in the IR.

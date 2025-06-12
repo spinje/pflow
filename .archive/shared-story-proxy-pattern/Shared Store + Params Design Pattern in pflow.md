@@ -23,7 +23,7 @@ The mechanism is not novel in general systems design, but its application to LLM
 ### 2\. Bindings & Config
 
 - **Input bindings** (`input_bindings: Dict[str, str]`) - map CLI interface names to shared store keys for reading
-- **Output bindings** (`output_bindings: Dict[str, str]`) - map node output names to shared store keys for writing  
+- **Output bindings** (`output_bindings: Dict[str, str]`) - map node output names to shared store keys for writing
 - **Config** (`config: Dict[str, Any]`) - node-local configuration that doesn't affect shared store
 
 These are stored within the pocketflow framework's existing `params` system and provide per-execution identity and routing without mutating across the flow.
@@ -70,7 +70,7 @@ The planner acts as a "compiler," selecting keys and binding parameters so nodes
 A crucial distinction in our implementation:
 
 - **Static**: Node class definitions (written by developers once)
-- **Generated**: Flow orchestration code (from IR) 
+- **Generated**: Flow orchestration code (from IR)
 - **Runtime**: CLI injection into shared store and config overrides
 
 ### Node Example (Static - Written Once)
@@ -181,7 +181,7 @@ Example:
 {
   "nodes": [
     {
-      "id": "summarize_1", 
+      "id": "summarize_1",
       "name": "Summarize",
       "input_bindings": {"text": "raw_texts/doc1.txt"},
       "output_bindings": {"summary": "summaries/doc1.txt"},
@@ -252,7 +252,7 @@ Agents never generate node code directly. They output IR. IR is compiled into fl
 ### Framework Integration Benefits
 
 - **Minimal overhead**: Leverages existing 100-line pocketflow framework
-- **Backward compatibility**: Existing pocketflow code works unchanged  
+- **Backward compatibility**: Existing pocketflow code works unchanged
 - **Clean separation**: Node logic vs flow orchestration vs CLI integration
 - **Proven patterns**: Uses established `prep()`/`exec()`/`post()` model
 - **No framework modifications**: Pure pattern implementation using existing APIs

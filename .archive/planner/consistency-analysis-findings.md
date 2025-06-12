@@ -1,9 +1,9 @@
 # Consistency Analysis: Planner vs Shared Store Specifications
 
-**Date**: Current Analysis  
+**Date**: Current Analysis
 **Documents Analyzed**:
 - `planner-responsibility-functionality-spec.md`
-- `shared-store-cli-runtime-specification.md` 
+- `shared-store-cli-runtime-specification.md`
 - `shared-store-node-proxy-architecture.md`
 
 ---
@@ -27,7 +27,7 @@ This analysis identifies **critical inconsistencies** between the planner specif
 
 **Shared Store Specs Use**:
 - `params` - for all node behavior settings (flat structure)
-- `mappings` - for key translation in proxy pattern  
+- `mappings` - for key translation in proxy pattern
 - Shared store keys - for data flow between nodes
 
 **Impact**: **BLOCKING** - These represent completely different mental models for how node parameters work.
@@ -124,7 +124,7 @@ Shared Store: self.params.get("temperature", 0.7) → flat params access
 
 **Planner Validation Rules**:
 1. Shadow type check (bindings only)
-2. Pipe→IR compiler must succeed  
+2. Pipe→IR compiler must succeed
 3. IR lint (schema, syntax)
 4. Purity / side-effect compliance
 5. Namespace & semver resolution
@@ -233,4 +233,4 @@ The planner spec assumes a **binding-centric model** where parameters are explic
 
 ---
 
-*End of Analysis* 
+*End of Analysis*

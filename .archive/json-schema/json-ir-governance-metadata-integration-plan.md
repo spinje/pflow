@@ -75,7 +75,7 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
     },
     "outputs": {
       "transcript": {
-        "type": "str", 
+        "type": "str",
         "description": "Extracted transcript text"
       }
     },
@@ -104,7 +104,7 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
 ### 2.2 Interface Declaration Rules
 
 - **Natural Interfaces**: Inputs/outputs use `shared["key"]` patterns from docstrings
-- **Params Structure**: Maps to `self.params.get("key", default)` usage in code  
+- **Params Structure**: Maps to `self.params.get("key", default)` usage in code
 - **Action Enumeration**: Lists all possible return values from node `post()` method
 - **Type Information**: Basic types (str, int, float, bool, dict, list, any)
 
@@ -126,7 +126,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 
 ```json
 {
-  "id": "fetch-transcript", 
+  "id": "fetch-transcript",
   "registry_id": "core/yt-transcript",
   "version": "1.0.0",
   "params": {
@@ -156,7 +156,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 ### 8.1 Node Metadata Validation (Registry Phase)
 
 1. **Extraction Validation**: Docstring → metadata consistency
-2. **Code Analysis**: Static analysis of actual shared["key"] usage  
+2. **Code Analysis**: Static analysis of actual shared["key"] usage
 3. **Interface Verification**: Documented vs actual interface matching
 4. **Staleness Check**: Source hash validation for re-extraction needs
 
@@ -184,7 +184,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 ### 12.1 Node Metadata Management
 
 ```bash
-# Extract metadata from Python file  
+# Extract metadata from Python file
 pflow registry extract node.py --output metadata.json
 
 # Validate code/metadata consistency
@@ -203,7 +203,7 @@ pflow registry list --format table
 # Validate flow IR against registry
 pflow validate flow.ir.json
 
-# Check interface compatibility 
+# Check interface compatibility
 pflow validate flow.ir.json --check-interfaces
 
 # Generate missing proxy mappings
@@ -246,9 +246,9 @@ pflow validate flow.ir.json --suggest-mappings
 # Fast planner context generation
 def build_llm_context(available_nodes: List[str]) -> str:
     """Load pre-extracted metadata for instant LLM context."""
-    metadata_files = [f"registry/nodes/{node}/metadata.json" 
+    metadata_files = [f"registry/nodes/{node}/metadata.json"
                      for node in available_nodes]
-    
+
     # Instant JSON loading vs Python parsing
     interfaces = [json.load(open(f)) for f in metadata_files]
     return format_for_llm(interfaces)
@@ -281,7 +281,7 @@ def build_llm_context(available_nodes: List[str]) -> str:
 ### **Phase 2: Flow IR Integration**
 
 1. **Update Node Object Schema** to reference registry metadata
-2. **Enhance Validation Pipeline** with two-phase approach  
+2. **Enhance Validation Pipeline** with two-phase approach
 3. **Add Interface Compatibility** validation using metadata
 4. **Integrate Mapping Generation** based on interface mismatches
 
@@ -304,7 +304,7 @@ def build_llm_context(available_nodes: List[str]) -> str:
 ### 14.1 Node Metadata Schema Versioning
 
 - **metadata_schema_version**: Track metadata format evolution
-- **Backward Compatibility**: Older metadata formats supported during transitions  
+- **Backward Compatibility**: Older metadata formats supported during transitions
 - **Migration Tools**: Automatic upgrade utilities for schema changes
 
 ### 14.2 Flow IR Schema Coordination
@@ -330,7 +330,7 @@ def build_llm_context(available_nodes: List[str]) -> str:
 - [ ] Validation pipeline includes metadata consistency checking
 - [ ] Performance optimization through pre-extracted metadata
 
-### **Flow IR Enhancement**  
+### **Flow IR Enhancement**
 - [ ] Node references use registry IDs for metadata resolution
 - [ ] Interface validation uses extracted metadata for compatibility
 - [ ] Proxy mapping generation integrated with interface definitions
@@ -360,4 +360,4 @@ The enhanced JSON IR Governance document will successfully integrate node metada
 4. **Validation**: Two-phase validation ensures both code consistency and flow compatibility
 5. **CLI Excellence**: Rich metadata-driven commands for developers and users
 
-This integration maintains the focused scope of JSON IR governance while adding essential node metadata capabilities that enable metadata-driven flow planning and validation. 
+This integration maintains the focused scope of JSON IR governance while adding essential node metadata capabilities that enable metadata-driven flow planning and validation.

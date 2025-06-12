@@ -141,7 +141,7 @@ The planner automatically detects the input type and routes to the appropriate p
 # Natural Language → Full Planner
 pflow "summarize this youtube video"
 
-# CLI Pipe Syntax → Validation Planner  
+# CLI Pipe Syntax → Validation Planner
 pflow yt-transcript --url=X >> summarize-text --temperature=0.9
 ```
 
@@ -193,7 +193,7 @@ The planner discovers available building blocks by extracting metadata from Pyth
 ```python
 class YTTranscript(Node):
     """Fetches YouTube transcript.
-    
+
     Interface:
     - Reads: shared["url"] - YouTube video URL
     - Writes: shared["transcript"] - extracted transcript text
@@ -209,7 +209,7 @@ class YTTranscript(Node):
   "id": "yt-transcript",
   "description": "Fetches YouTube transcript from video URL",
   "inputs": ["url"],
-  "outputs": ["transcript"], 
+  "outputs": ["transcript"],
   "params": {"language": "en"},
   "actions": ["default", "video_unavailable"],
   "purity": "flow_safe",
@@ -248,7 +248,7 @@ The planner leverages existing flow descriptions for **LLM-powered flow discover
 
 **Enhanced Discovery Process:**
 1. **Description-Based Matching**: LLM analyzes user prompt against existing flow description fields
-2. **Semantic Compatibility**: Evaluates flow purpose alignment using natural language descriptions  
+2. **Semantic Compatibility**: Evaluates flow purpose alignment using natural language descriptions
 3. **Flow-as-Component Reuse**: Treats existing flows as reusable building blocks for new compositions
 4. **Intent Preservation**: Existing description fields enable rediscovery by purpose
 
@@ -272,11 +272,11 @@ The planner leverages existing flow descriptions for **LLM-powered flow discover
 
 This approach anchors stability by reusing proven flows rather than regenerating them.
 
-### 6.2 Thinking Model Approach  
+### 6.2 Thinking Model Approach
 
 When generation is required, the planner uses a **thinking model** (e.g., o1-preview):
 
-1. **Context Loading**: All available metadata JSON loaded into LLM context  
+1. **Context Loading**: All available metadata JSON loaded into LLM context
 2. **Intent Analysis**: LLM analyzes user prompt for goals and requirements
 3. **Selection Strategy**: Choose between exact flow match, sub-flow reuse, or new composition
 4. **Reasoning**: LLM provides structured reasoning for choices
@@ -478,7 +478,7 @@ The planner embeds **default parameters** from node metadata into IR:
 **No parameter resolution during planning** - all CLI flag handling deferred to runtime:
 
 - CLI flags matching shared store keys → data injection
-- CLI flags matching param names → param overrides  
+- CLI flags matching param names → param overrides
 - Single-rule resolution: "Type flags; engine decides"
 
 ### 9.3 Future: Planning-Time Customization
@@ -489,7 +489,7 @@ The planner embeds **default parameters** from node metadata into IR:
 # Future: context-aware param adjustment
 if user_intent == "creative_writing":
     params["temperature"] = 0.9
-elif user_intent == "technical_summary":  
+elif user_intent == "technical_summary":
     params["temperature"] = 0.3
 ```
 
@@ -538,7 +538,7 @@ elif user_intent == "technical_summary":
       "execution": {"max_retries": 2, "wait": 1.0}
     },
     {
-      "id": "summarize-text", 
+      "id": "summarize-text",
       "version": "2.1.0",
       "params": {"temperature": 0.7}
     }
@@ -683,7 +683,7 @@ class GeneratedFlow(Flow):
     def __init__(self, ir):
         self.nodes = [self.create_node(n) for n in ir["nodes"]]
         self.setup_transitions(ir["edges"])
-        
+
     def create_node(self, node_spec):
         execution_config = node_spec.get("execution", {})
         node = NodeRegistry.get(node_spec["id"], **execution_config)
@@ -734,7 +734,7 @@ for node in flow.nodes:
 **Error Code Compatibility**:
 
 - Planner errors in `PLAN_*` namespace
-- Compiler errors in `COMPILE_*` namespace  
+- Compiler errors in `COMPILE_*` namespace
 - Runtime errors in `EXEC_*` namespace
 - Consistent error format across all stages
 
@@ -743,8 +743,8 @@ for node in flow.nodes:
 ```
 🔍 Planning Failed: Interface Mismatch
 
-The 'yt-transcript' node outputs 'transcript' but 'summarize-text' 
-expects 'text'. 
+The 'yt-transcript' node outputs 'transcript' but 'summarize-text'
+expects 'text'.
 
 ✅ Auto-fix: Generated mapping to connect these nodes
 ⚡ Retry: Attempting flow generation with mapping...
@@ -759,7 +759,7 @@ expects 'text'.
 **Components**:
 
 - Ordered node IDs + versions
-- Action-based transitions (edges)  
+- Action-based transitions (edges)
 - Mapping definitions (when present)
 - Shared store schema
 
@@ -821,7 +821,7 @@ flow_hash = sha256(
       "flows_found": 8
     },
     {
-      "stage": "llm_selection", 
+      "stage": "llm_selection",
       "duration_ms": 1200,
       "reasoning": "Exact match with video-summary-pipeline",
       "selected": ["yt-transcript", "summarize-text"]

@@ -25,7 +25,7 @@ def exec(self, url):
     language = self.params.get("language", "en")
     return fetch_transcript(url, language)
 
-# AFTER:  
+# AFTER:
 def exec(self, prep_res):  # prep_res contains the URL
     language = self.params.get("language", "en")
     return fetch_transcript(prep_res, language)
@@ -54,7 +54,7 @@ proxy = NodeAwareSharedStore(
 )
 ```
 
-#### A3. IR Simplification 
+#### A3. IR Simplification
 
 **Location**: Section 6 "Canonical IR fragment" (lines ~95-115)
 **Change**: Remove `name` field, keep only `id` with kebab-case
@@ -91,7 +91,7 @@ shared = {
 **Future Feature**: Nested path-like keys for complex flows
 ```python
 shared = {
-    "inputs/video_url": "https://youtu.be/abc123", 
+    "inputs/video_url": "https://youtu.be/abc123",
     "outputs/transcript": "Video content..."
 }
 ```
@@ -113,7 +113,7 @@ def exec(self, prep_res):
 
 # AFTER: (already correct, keep as-is)
 def exec(self, prep_res):
-    temp = self.params.get("temperature", 0.7)  
+    temp = self.params.get("temperature", 0.7)
     return call_llm(prep_res, temperature=temp)
 ```
 
@@ -124,7 +124,7 @@ def exec(self, prep_res):
 ```json
 # BEFORE:
 {
-  "id": "summarize_1", 
+  "id": "summarize_1",
   "name": "Summarize",
   "params": {"temperature": 0.7}
 }
@@ -138,7 +138,7 @@ def exec(self, prep_res):
 
 #### B3. Cross-Reference Addition
 
-**Location**: End of document 
+**Location**: End of document
 **Change**: Add reference to runtime specification
 ```markdown
 ## See Also
@@ -177,11 +177,11 @@ shared = {
 - "natural interfaces" → "natural interfaces" (plural, when referring to multiple)
 - "natural keys" → "natural interface keys" (for clarity)
 
-#### C2. Method Reference Consistency  
+#### C2. Method Reference Consistency
 
 **Both files**: Ensure method references use consistent format
 - `prep()` method (with parentheses)
-- `exec()` method  
+- `exec()` method
 - `post()` method
 
 ## Implementation Sequence
@@ -191,7 +191,7 @@ shared = {
 2. Standardize proxy creation pattern to explicit mappings
 3. Update IR examples to remove `name` field
 
-### Phase 2: Clarifications (Medium Priority)  
+### Phase 2: Clarifications (Medium Priority)
 4. Add MVP/future notes for namespacing
 5. Add cross-references between documents
 6. Update flow examples to match new IR format
@@ -205,7 +205,7 @@ shared = {
 
 After updates, verify:
 - [ ] All `exec(self, prep_res)` signatures consistent
-- [ ] All proxy examples use explicit mapping dictionaries  
+- [ ] All proxy examples use explicit mapping dictionaries
 - [ ] All IR examples use kebab-case `id` fields only
 - [ ] MVP/future distinction clear for namespacing
 - [ ] Cross-references work between documents
@@ -227,4 +227,4 @@ After updates, verify:
 **Future Compatibility**:
 - MVP flat keys work with current implementation
 - Nested namespacing path clearly defined
-- IR structure ready for tooling ecosystem 
+- IR structure ready for tooling ecosystem

@@ -43,7 +43,7 @@ python -m pytest tests/test_links.py::test_markdown_links_exist
 ### Architecture Components
 
 **Core Foundation**: PocketFlow integration, shared store, proxy pattern for marketplace compatibility
-**CLI Interface**: Commands, pipe syntax parser, shell integration  
+**CLI Interface**: Commands, pipe syntax parser, shell integration
 **Node System**: Registry, metadata extraction, built-in nodes (read_file, transform, prompt)
 **Execution Engine**: Synchronous runtime with basic caching (purity-based)
 **Storage**: Lockfiles, local filesystem, JSON IR format

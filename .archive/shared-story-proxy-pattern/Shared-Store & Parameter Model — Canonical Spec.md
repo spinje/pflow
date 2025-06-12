@@ -29,20 +29,20 @@ Our pattern leverages the lightweight **pocketflow framework** (100 lines of Pyt
 
 ### 3 · Concepts & Terminology
 
-| Element | Role | Stored in lock-file | Part of DAG hash | Can change per run | Notes | 
+| Element | Role | Stored in lock-file | Part of DAG hash | Can change per run | Notes |
 |---|---|---|---|---|---|
-| `input_bindings` | Map **CLI-facing names** (`url`, `text`, `stdin`) → **shared-store keys** | ✅ | ✅ (key names) | Values injected at runtime | Declares required data | 
-| `output_bindings` | Map node outputs → store keys | ✅ | ✅ (key names) | Never | Enables downstream wiring | 
-| `config` | Literal per-node tunables | Defaults stored; run-time overlays in derived snapshot | ❌ | ✅ via CLI | Does **not** create DAG edges | 
-| Shared store | Flow-scoped key → value memory | Values never stored | Key names yes | Populated by CLI or pipe | Reserved key `stdin` | 
+| `input_bindings` | Map **CLI-facing names** (`url`, `text`, `stdin`) → **shared-store keys** | ✅ | ✅ (key names) | Values injected at runtime | Declares required data |
+| `output_bindings` | Map node outputs → store keys | ✅ | ✅ (key names) | Never | Enables downstream wiring |
+| `config` | Literal per-node tunables | Defaults stored; run-time overlays in derived snapshot | ❌ | ✅ via CLI | Does **not** create DAG edges |
+| Shared store | Flow-scoped key → value memory | Values never stored | Key names yes | Populated by CLI or pipe | Reserved key `stdin` |
 
 #### 3\.1 Quick-reference summary
 
-| Field | Function | Affects DAG? | Overridable? | Stored? | Shared? | 
+| Field | Function | Affects DAG? | Overridable? | Stored? | Shared? |
 |---|---|---|---|---|---|
-| `input_bindings` | External data wires | ✅ | ✅ (`--flag`) | ✅ | ✅ | 
-| `config` | Behaviour knobs | ❌ | ✅ (`--flag`) | ✅ | ❌ | 
-| `output_bindings` | Declared outputs | ✅ | ❌ | ✅ | ✅ | 
+| `input_bindings` | External data wires | ✅ | ✅ (`--flag`) | ✅ | ✅ |
+| `config` | Behaviour knobs | ❌ | ✅ (`--flag`) | ✅ | ❌ |
+| `output_bindings` | Declared outputs | ✅ | ❌ | ✅ | ✅ |
 
 ---
 
@@ -57,12 +57,12 @@ class YTTranscript(Node):  # Inherits from pocketflow.Node
         # Access input binding through existing params system
         url_key = self.params["input_bindings"]["url"]  # "video_url"
         return shared[url_key]
-    
+
     def exec(self, url):
         # Access config through existing params system
         language = self.params["config"].get("language", "en")
         return fetch_transcript(url, language)
-    
+
     def post(self, shared, prep_res, exec_res):
         # Access output binding through existing params system
         output_key = self.params["output_bindings"]["transcript"]  # "raw_transcript"
@@ -141,12 +141,12 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through `raw_transcript`).
 
 ### 7 · CLI scenarios
 
-| Scenario | Command | Shared-store after injection | Derived snapshot? | 
+| Scenario | Command | Shared-store after injection | Derived snapshot? |
 |---|---|---|---|
-| Provide video URL | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc) | `{ "video_url": "`[`https://youtu.be/abc`](https://youtu.be/abc)`" }` | No | 
-| Override temperature | `pflow summarise-text --temperature=0.9` | – | Yes | 
-| Pipe text | `cat notes.txt | pflow summarise-text` | `{ "stdin": "<bytes>" }` | Yes | 
-| Chain fetch + summarise | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc)` >> summarise-text --temperature=0.9` | `{ "video_url": ..., "raw_transcript": ..., "article_summary": ... }` | Yes | 
+| Provide video URL | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc) | `{ "video_url": "`[`https://youtu.be/abc`](https://youtu.be/abc)`" }` | No |
+| Override temperature | `pflow summarise-text --temperature=0.9` | – | Yes |
+| Pipe text | `cat notes.txt | pflow summarise-text` | `{ "stdin": "<bytes>" }` | Yes |
+| Chain fetch + summarise | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc)` >> summarise-text --temperature=0.9` | `{ "video_url": ..., "raw_transcript": ..., "article_summary": ... }` | Yes |
 
 ---
 
@@ -158,7 +158,7 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through `raw_transcript`).
   "nodes": [
     {
       "id": "fetch",
-      "name": "yt-transcript", 
+      "name": "yt-transcript",
       "input_bindings": {"url": "video_url"},
       "output_bindings": {"transcript": "raw_transcript"},
       "config": {"language": "en"}
@@ -166,7 +166,7 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through `raw_transcript`).
     {
       "id": "summarise",
       "name": "summarise-text",
-      "input_bindings": {"text": "raw_transcript"}, 
+      "input_bindings": {"text": "raw_transcript"},
       "output_bindings": {"summary": "article_summary"},
       "config": {"temperature": 0.7}
     }
@@ -194,23 +194,23 @@ def create_flow():
     # Instantiate static node classes
     fetch_node = YTTranscript()
     summarize_node = SummarizeText()
-    
+
     # Configure nodes with IR bindings
     fetch_node.set_params({
         "input_bindings": {"url": "video_url"},
         "output_bindings": {"transcript": "raw_transcript"},
         "config": {"language": "en"}
     })
-    
+
     summarize_node.set_params({
         "input_bindings": {"text": "raw_transcript"},
         "output_bindings": {"summary": "article_summary"},
         "config": {"temperature": 0.9}  # Overridden by CLI
     })
-    
+
     # Wire the flow using pocketflow operators
     fetch_node >> summarize_node
-    
+
     return Flow(start=fetch_node)
 
 # CLI execution
@@ -231,7 +231,7 @@ def run_with_cli():
 
 **Summarise Node**:
 ```python
-# prep() reads from shared["raw_transcript"] via self.params["input_bindings"]["text"] 
+# prep() reads from shared["raw_transcript"] via self.params["input_bindings"]["text"]
 # exec() uses self.params["config"]["temperature"] = 0.9 (CLI override)
 # post() writes result to shared["article_summary"] via self.params["output_bindings"]["summary"]
 ```
@@ -261,14 +261,14 @@ shared = {
 
 ### 10 · Validation rules
 
-| \# | Rule | Failure action | 
+| \# | Rule | Failure action |
 |---|---|---|
-| 1 | IR immutability — CLI cannot alter bindings or node set | Abort | 
-| 2 | Unknown CLI flag | Abort | 
-| 3 | Missing required binding value | Abort | 
-| 4 | `config` always overrideable via `set_params()` | Derived snapshot | 
-| 5 | `stdin` key reserved; node must bind to it | Abort | 
-| 6 | `output_bindings` keys unique flow-wide | Abort | 
+| 1 | IR immutability — CLI cannot alter bindings or node set | Abort |
+| 2 | Unknown CLI flag | Abort |
+| 3 | Missing required binding value | Abort |
+| 4 | `config` always overrideable via `set_params()` | Derived snapshot |
+| 5 | `stdin` key reserved; node must bind to it | Abort |
+| 6 | `output_bindings` keys unique flow-wide | Abort |
 | 7 | `input_bindings` values can be populated from CLI for first nodes only | Abort |
 | 8 | `output_bindings` structure immutable (cannot be changed outside IR) | Abort |
 | 9 | Node classes must inherit from `pocketflow.Node` | Abort |

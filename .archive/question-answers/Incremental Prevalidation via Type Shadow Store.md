@@ -120,11 +120,11 @@ The type shadow store is ephemeral and advisory:
 
 #### **Position in Architecture**
 
-| Layer | Role | 
+| Layer | Role |
 |---|---|
-| Type Shadow Store | Realtime assist; type-only checks | 
-| Pipe-to-IR Compiler | Generates full key wiring, param mapping | 
-| Lint & Execution Validator | Validates semantics, purity, and structure | 
+| Type Shadow Store | Realtime assist; type-only checks |
+| Pipe-to-IR Compiler | Generates full key wiring, param mapping |
+| Lint & Execution Validator | Validates semantics, purity, and structure |
 
 ---
 

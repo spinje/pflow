@@ -55,7 +55,7 @@ graph LR
     subgraph "pflow Runtime Execution Example"
         direction LR
         UserInput["User Input (CLI Flags/Pipe)"] --> SharedStore_Init["Shared Store (Initial)"]
-        
+
         subgraph NodeA ["Node A Execution (Direct Access)"]
             direction TB
             NodeAParams["Node A.params<br>(node-specific config)"]
@@ -138,4 +138,4 @@ After all enhancements are implemented, a full read-through of `PRD-pflow-master
 *   Smooth flow and integration of new visual and summary elements.
 *   Overall clarity and impact for the target audience.
 
---- 
+---

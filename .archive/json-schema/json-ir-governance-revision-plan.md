@@ -232,7 +232,7 @@ IR enables caching through `execution.use_cache` field. Validation rules:
     },
     {
       "id": "create-summary",
-      "version": "2.1.0", 
+      "version": "2.1.0",
       "params": {"temperature": 0.7},
       "execution": {"use_cache": true}
     }
@@ -273,7 +273,7 @@ IR enables caching through `execution.use_cache` field. Validation rules:
 
 ### Remove: Redundant Architecture Descriptions
 **Rationale**: Covered comprehensively in other specifications
-**Examples**: 
+**Examples**:
 - Node interface patterns (defer to shared store docs)
 - Planner operation details (defer to planner spec)
 - Runtime behavior details (defer to runtime spec)
@@ -349,4 +349,4 @@ The revised JSON IR Governance document will be considered successful when:
 
 ---
 
-This revision plan ensures the JSON IR Governance document becomes a focused, non-contradictory specification that properly integrates with pflow's established architecture while maintaining its unique role in IR schema governance. 
+This revision plan ensures the JSON IR Governance document becomes a focused, non-contradictory specification that properly integrates with pflow's established architecture while maintaining its unique role in IR schema governance.

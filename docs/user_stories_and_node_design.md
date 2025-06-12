@@ -1,4 +1,4 @@
-# This architectural approach aligns with MCP's design philosophy and reduces cognitive overhead. 
+# This architectural approach aligns with MCP's design philosophy and reduces cognitive overhead.
 
 ## Revised User Stories with General Nodes
 
@@ -105,21 +105,21 @@ list-prs  create-issue  get-commits  merge-pr  ...
 ```
 class GitHubNode(Node):
     """GitHub API operations.
-    
+
     Actions:
     - list-prs: List pull requests
     - create-issue: Create new issue
     - get-commits: Get commit history
-    
+
     Interface:
     - Reads: shared["action"] - which GitHub operation
     - Reads: shared["params"] - action-specific parameters
     - Writes: shared["result"] - operation result
     """
-    
+
     def exec(self, prep_res):
         action = self.params.get("action")
-        
+
         if action == "list-prs":
             return self.list_pull_requests()
         elif action == "create-issue":

@@ -76,7 +76,7 @@ The node-metadata-extraction.md document must be updated to reflect that:
 **Source Documents** establish:
 ```bash
 pflow registry list
-pflow registry install  
+pflow registry install
 pflow registry validate
 ```
 
@@ -144,17 +144,17 @@ Interface:
 
 ### 4.1 Technical Architecture
 
-✅ **Framework Integration**: Correctly uses `pocketflow.Node` inheritance  
-✅ **Natural Interfaces**: Aligns with `shared["key"]` pattern  
-✅ **Proxy Compatibility**: Works with NodeAwareSharedStore mapping  
-✅ **JSON Schema**: Generally compatible with established IR schema  
+✅ **Framework Integration**: Correctly uses `pocketflow.Node` inheritance
+✅ **Natural Interfaces**: Aligns with `shared["key"]` pattern
+✅ **Proxy Compatibility**: Works with NodeAwareSharedStore mapping
+✅ **JSON Schema**: Generally compatible with established IR schema
 
 ### 4.2 Implementation Quality
 
-✅ **Parsing Strategy**: `docstring_parser` + custom regex is technically sound  
-✅ **Error Handling**: Robust extraction with fallbacks  
-✅ **Performance**: Pre-extracted JSON for fast planner context  
-✅ **Validation**: Code-metadata consistency checking  
+✅ **Parsing Strategy**: `docstring_parser` + custom regex is technically sound
+✅ **Error Handling**: Robust extraction with fallbacks
+✅ **Performance**: Pre-extracted JSON for fast planner context
+✅ **Validation**: Code-metadata consistency checking
 
 ---
 
@@ -197,7 +197,7 @@ Interface:
 2. Position LLM as documentation assistant, not code generator
 3. Update all examples to show extraction from existing code
 
-### Phase 2: Technical Harmonization  
+### Phase 2: Technical Harmonization
 1. Adopt schema structure from json-schema source document
 2. Integrate CLI commands into existing `registry` namespace
 3. Align docstring format with shared-store-node-proxy-architecture.md
@@ -219,6 +219,6 @@ Once corrected, this approach would provide excellent support for the planner's 
 
 ---
 
-**Confidence Level**: High - contradictions are clear and actionable  
-**Priority**: High - philosophical misalignment affects core architecture  
-**Effort**: Medium - requires rewriting sections but preserving technical details 
+**Confidence Level**: High - contradictions are clear and actionable
+**Priority**: High - philosophical misalignment affects core architecture
+**Effort**: Medium - requires rewriting sections but preserving technical details

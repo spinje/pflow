@@ -1,7 +1,7 @@
 # Node Discovery Documentation - Contradiction Analysis
 
-**Date**: Current Analysis  
-**Source Documents**: `shared-store-node-proxy-architecture.md`, `planner-responsibility-functionality-spec.md`, `shared-store-cli-runtime-specification.md`  
+**Date**: Current Analysis
+**Source Documents**: `shared-store-node-proxy-architecture.md`, `planner-responsibility-functionality-spec.md`, `shared-store-cli-runtime-specification.md`
 **Target Document**: `node-discovery-namespacing-and-versioning.md`
 
 ---
@@ -42,12 +42,12 @@ The node discovery document contains **several significant contradictions** with
 
 ### 2. **Node Naming Convention Conflict** - HIGH
 
-**Source Documents**: 
+**Source Documents**:
 - Use kebab-case: `yt-transcript`, `summarize-text`, `store-markdown`
 - CLI examples: `pflow yt-transcript --url=X >> summarize-text`
 
 **Node Discovery Document**:
-- Uses snake_case: `fetch_url`, `summarize`, `save_file`  
+- Uses snake_case: `fetch_url`, `summarize`, `save_file`
 - CLI examples: `pflow fetch_url --url https://example.com >> summarize >> save_file`
 
 **Impact**: Inconsistent naming makes examples non-functional and creates confusion about the canonical format.
@@ -195,4 +195,4 @@ The node discovery document introduces valuable versioning and namespacing conce
 
 The documents appear to have been written independently without cross-referencing, resulting in incompatible assumptions about system architecture and data flow.
 
-**Recommendation**: Update the node discovery document to integrate with the planner pipeline and resolve IR schema conflicts before proceeding with implementation. 
+**Recommendation**: Update the node discovery document to integrate with the planner pipeline and resolve IR schema conflicts before proceeding with implementation.

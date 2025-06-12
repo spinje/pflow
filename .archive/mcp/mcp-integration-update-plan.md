@@ -79,37 +79,37 @@ This document outlines a comprehensive plan to update the MCP Server Integration
 # Generated wrapper follows full pflow Node pattern
 class McpGithubSearchCode(Node):
     """Search code in GitHub repositories via MCP.
-    
+
     Interface:
-    - Reads: shared["query"] - search query string  
+    - Reads: shared["query"] - search query string
     - Reads: shared["language"] - programming language filter (optional)
     - Writes: shared["search_results"] - array of code search results
     - Params: max_results (default 10) - maximum results to return
     - Actions: "default", "rate_limited", "auth_failed"
     """
-    
+
     # MCP metadata (used internally)
     _mcp_server_id = "github-server"
-    _mcp_tool_name = "search_code" 
+    _mcp_tool_name = "search_code"
     _mcp_tool_version = "1.2.0"
     _mcp_manifest_hash = "sha256:abc123..."
-    
+
     def __init__(self):
         super().__init__()
         self._mcp_executor = McpExecutor(self._mcp_server_id)
-    
+
     def prep(self, shared):
         """Extract search parameters from shared store."""
         query = shared.get("query")
         if not query:
             raise ValueError("Missing required 'query' in shared store")
-        
+
         return {
             "query": query,
             "language": shared.get("language"),  # Optional
             "max_results": self.params.get("max_results", 10)
         }
-    
+
     def exec(self, prep_res):
         """Execute MCP tool call."""
         try:
@@ -123,12 +123,12 @@ class McpGithubSearchCode(Node):
             return "rate_limited"  # Action-based error handling
         except McpAuthError:
             return "auth_failed"
-    
+
     def post(self, shared, prep_res, exec_res):
         """Write results to shared store or return action."""
         if isinstance(exec_res, str):  # Action string
             return exec_res
-        
+
         shared["search_results"] = exec_res
         return "default"
 ```
@@ -143,10 +143,10 @@ class McpGithubSearchCode(Node):
    ```python
    # MCP tool: get_weather
    # Natural interface:
-   # Inputs: shared["location"], shared["units"] 
+   # Inputs: shared["location"], shared["units"]
    # Outputs: shared["weather_data"]
-   
-   # MCP tool: search_code  
+
+   # MCP tool: search_code
    # Natural interface:
    # Inputs: shared["query"], shared["language"]
    # Outputs: shared["search_results"]
@@ -185,7 +185,7 @@ class McpGithubSearchCode(Node):
    # CLI flag matches shared store key = data injection
    pflow mcp-github-search-code --query="TODO" --language="python"
    # Results in: shared["query"] = "TODO", shared["language"] = "python"
-   
+
    # CLI flag matches param name = param override
    pflow mcp-github-search-code --max-results=20
    # Results in: params["max_results"] = 20
@@ -209,7 +209,7 @@ def map_mcp_errors_to_actions(self, mcp_error):
     """Map MCP errors to pflow actions."""
     error_mapping = {
         "rate_limited": "rate_limited",
-        "unauthorized": "auth_failed", 
+        "unauthorized": "auth_failed",
         "not_found": "resource_missing",
         "timeout": "timeout",
         "server_error": "server_error"
@@ -263,13 +263,13 @@ search_node - "auth_failed" >> refresh_token     # Handle auth issues
 def generate_node_docstring(mcp_tool):
     return f'''
     """{mcp_tool.description}
-    
+
     Interface:
     {format_inputs(mcp_tool.input_schema)}
     {format_outputs(mcp_tool.output_schema)}
     {format_params(mcp_tool.parameters)}
     {format_actions(mcp_tool.error_types)}
-    
+
     MCP Source: {mcp_tool.server_id}/{mcp_tool.name} v{mcp_tool.version}
     """
     '''
@@ -302,12 +302,12 @@ class McpSlackSendMessage(Node):
    ```python
    # 1. Install MCP server
    pflow registry add-mcp --server github --command "mcp-github" --transport stdio
-   
+
    # 2. Auto-generated wrapper appears in registry
    # 3. Available in planner's node discovery
    # 4. Usable in CLI flows
    pflow mcp-github-search-code --query "authentication" >> summarize-text
-   
+
    # 5. Participates in JSON IR generation
    # 6. Supports proxy mappings for complex flows
    ```
@@ -316,7 +316,7 @@ class McpSlackSendMessage(Node):
    ```bash
    # Natural language planner can select MCP nodes
    pflow "find Python authentication bugs on GitHub and summarize them"
-   
+
    # Generates IR with MCP nodes:
    # mcp-github-search-code >> summarize-text >> format-markdown
    ```
@@ -370,4 +370,4 @@ class McpSlackSendMessage(Node):
 - Shared-Store CLI Runtime Specification (for CLI resolution rules)
 - pocketflow framework documentation (for Node patterns)
 
-This plan ensures MCP integration becomes a natural extension of pflow's architecture rather than a parallel system. 
+This plan ensures MCP integration becomes a natural extension of pflow's architecture rather than a parallel system.

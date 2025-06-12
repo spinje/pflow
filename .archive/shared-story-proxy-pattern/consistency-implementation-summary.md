@@ -64,7 +64,7 @@ This document summarizes the implementation of the consistency resolution plan a
 ## Validation Checklist Results
 
 - [x] All `exec(self, prep_res)` signatures consistent
-- [x] All proxy examples use explicit mapping dictionaries  
+- [x] All proxy examples use explicit mapping dictionaries
 - [x] All IR examples use kebab-case `id` fields only
 - [x] MVP/future distinction clear for namespacing
 - [x] Cross-references work between documents
@@ -111,4 +111,4 @@ This document summarizes the implementation of the consistency resolution plan a
 - **Progressive complexity preserved** - simple flows remain simple, complex flows well-supported
 - **Framework integration unchanged** - leverages existing pocketflow APIs
 
-The consistency resolution has been successfully implemented across both documents, creating a unified and coherent specification for the shared store and proxy pattern. 
+The consistency resolution has been successfully implemented across both documents, creating a unified and coherent specification for the shared store and proxy pattern.

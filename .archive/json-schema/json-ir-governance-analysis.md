@@ -11,7 +11,7 @@ The JSON IR Governance document contains **fundamental contradictions** with the
 ### 1. Fundamental Shared Store Architecture Violation
 
 **Source of Truth** (shared-store-node-proxy-architecture.md):
-- Nodes use **natural interfaces**: `shared["text"]`, `shared["url"]` 
+- Nodes use **natural interfaces**: `shared["text"]`, `shared["url"]`
 - "Node writers shouldn't need to understand flow orchestration concepts"
 - Keys are accessed directly: `return shared["text"]` in `prep()`, `shared["summary"] = result` in `post()`
 
@@ -28,7 +28,7 @@ The JSON IR Governance document contains **fundamental contradictions** with the
 ```json
 {
   "id": "yt-transcript",
-  "version": "1.0.0", 
+  "version": "1.0.0",
   "params": {"temperature": 0.7},
   "execution": {"max_retries": 2, "wait": 1.0}
 }
@@ -192,4 +192,4 @@ All IR examples should use consistent field names:
 
 ## Conclusion
 
-The JSON IR Governance document requires **substantial revision** to align with pflow's established architecture. The current version contradicts core design principles and would lead to incompatible implementations. Priority should be given to correcting the shared store pattern representation and standardizing IR field schemas. 
+The JSON IR Governance document requires **substantial revision** to align with pflow's established architecture. The current version contradicts core design principles and would lead to incompatible implementations. Priority should be given to correcting the shared store pattern representation and standardizing IR field schemas.

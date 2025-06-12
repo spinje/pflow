@@ -364,4 +364,4 @@ From analyzing the actual pocketflow framework (`__init__.py` and `communication
 - Use diagrams and examples to clarify abstract concepts
 - Provide clear references to detailed implementation specs
 
-This plan provides a roadmap for creating a PM/architect-focused master PRD that makes every important pflow concept crystal clear while maintaining the right balance of product vision and technical specification. 
+This plan provides a roadmap for creating a PM/architect-focused master PRD that makes every important pflow concept crystal clear while maintaining the right balance of product vision and technical specification.

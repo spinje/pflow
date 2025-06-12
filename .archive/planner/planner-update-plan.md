@@ -1,6 +1,6 @@
 # Planner Specification Update Plan
 
-**Date**: Current Planning Session  
+**Date**: Current Planning Session
 **Objective**: Completely rewrite `planner-responsibility-functionality-spec.md` to be consistent with shared store specifications and integrate new architectural insights
 
 ---
@@ -19,7 +19,7 @@ The current planner specification uses incompatible terminology and architectura
 ## Key Architectural Changes
 
 ### 1. **Pipeline Restructure**
-**Old**: `Prompt → Planner → Execution DAG`  
+**Old**: `Prompt → Planner → Execution DAG`
 **New**: `Prompt → Planner (JSON IR) → Compiler (CLI + Code) → Runtime (Shared Store)`
 
 ### 2. **Terminology Migration**
@@ -39,14 +39,14 @@ The current planner specification uses incompatible terminology and architectura
 ## Detailed Section-by-Section Update Plan
 
 ### Section 1: Purpose
-**Status**: Minor updates needed  
+**Status**: Minor updates needed
 **Changes**:
 - Keep core purpose: NL prompt → validated, deterministic flow
 - Update terminology: Remove "pipe" references, add "JSON IR"
 - Emphasize integration with shared store pattern
 
-### Section 2: Architectural Position  
-**Status**: Complete rewrite needed  
+### Section 2: Architectural Position
+**Status**: Complete rewrite needed
 **New Content**:
 ```
 Prompt → LLM Selection → IR Generation → Validation → Compilation → Execution
@@ -57,7 +57,7 @@ Prompt → LLM Selection → IR Generation → Validation → Compilation → Ex
 - Emphasize planner as pocketflow flow itself
 
 ### Section 3: Core Responsibilities
-**Status**: Complete restructure needed  
+**Status**: Complete restructure needed
 **New Stages**:
 1. **Node/Flow Discovery** - Extract metadata JSON from Python classes
 2. **LLM Selection** - Use thinking model to choose nodes/flows from metadata
@@ -203,14 +203,14 @@ Prompt → LLM Selection → IR Generation → Validation → Compilation → Ex
 # Planner Responsibility & Functionality Spec
 
 ## 1 · Purpose
-## 2 · Architectural Position  
+## 2 · Architectural Position
 ## 3 · Core Responsibilities
 ## 4 · Node/Flow Discovery & Metadata
 ## 5 · LLM Selection Process
 ## 6 · Flow Structure Generation
 ## 7 · Validation Framework
 ## 8 · Shared Store Integration
-## 9 · Parameter and CLI Integration  
+## 9 · Parameter and CLI Integration
 ## 10 · IR Schema and Compilation
 ## 11 · User Experience Flow
 ## 12 · Integration with Runtime
@@ -285,4 +285,4 @@ Prompt → LLM Selection → IR Generation → Validation → Compilation → Ex
 
 ---
 
-*End of Update Plan* 
+*End of Update Plan*

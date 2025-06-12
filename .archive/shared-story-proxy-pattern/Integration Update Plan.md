@@ -114,11 +114,11 @@ class YTTranscript(Node):  # Inherits from pocketflow.Node
     def prep(self, shared):
         url_key = self.params["input_bindings"]["url"]  # "video_url"
         return shared[url_key]
-    
+
     def exec(self, url):
         language = self.params["config"].get("language", "en")
         return fetch_transcript(url, language)
-    
+
     def post(self, shared, prep_res, exec_res):
         output_key = self.params["output_bindings"]["transcript"]  # "raw_transcript"
         shared[output_key] = exec_res
@@ -143,33 +143,33 @@ def create_flow():
     # Instantiate static node classes
     fetch_node = YTTranscript()
     summarize_node = SummarizeText()
-    
+
     # Configure nodes with IR bindings
     fetch_node.set_params({
         "input_bindings": {"url": "video_url"},
         "output_bindings": {"transcript": "raw_transcript"},
         "config": {"language": "en"}
     })
-    
+
     summarize_node.set_params({
         "input_bindings": {"text": "raw_transcript"},
         "output_bindings": {"summary": "article_summary"},
         "config": {"temperature": 0.7}  # Will be overridden by CLI
     })
-    
+
     # Wire the flow using pocketflow operators
     fetch_node >> summarize_node
-    
+
     return Flow(start=fetch_node)
 
 # CLI execution
 def run_with_cli():
     shared = {"video_url": "https://youtu.be/abc123"}  # CLI injection
     flow = create_flow()
-    
+
     # Handle config override (implementation detail)
     # Override temperature to 0.9 for summarize_node
-    
+
     flow.run(shared)
 ```
 
@@ -205,7 +205,7 @@ def run_with_cli():
 
 ### 3.2 Framework vs Pattern
 
-**Clarify**: 
+**Clarify**:
 - **pocketflow**: The underlying 100-line framework
 - **pflow pattern**: Our specific use of input_bindings/output_bindings/config within pocketflow's params system
 
@@ -232,7 +232,7 @@ After updates, both documents should:
    - Add framework integration section
    - Clarify static vs generated code
 
-2. **Update Canonical Spec Document**  
+2. **Update Canonical Spec Document**
    - Show generated flow code examples
    - Update CLI resolution algorithm
    - Add framework context
@@ -257,7 +257,7 @@ While updating implementation details, preserve these core concepts:
 ## 7. Framework Benefits to Highlight
 
 - **Minimal overhead**: Leverages existing 100-line framework
-- **Backward compatibility**: Existing pocketflow code works unchanged  
+- **Backward compatibility**: Existing pocketflow code works unchanged
 - **Clean separation**: Node logic vs flow orchestration vs CLI integration
 - **Proven patterns**: Uses established `prep()`/`exec()`/`post()` model
-- **No framework modifications**: Pure pattern implementation using existing APIs 
+- **No framework modifications**: Pure pattern implementation using existing APIs

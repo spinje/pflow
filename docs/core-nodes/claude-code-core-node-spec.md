@@ -146,4 +146,3 @@ The flow writer can chain diff review nodes or git-commit nodes afterwards.
 | API change in claude-code    | Version pin (`>=0.3.0,<0.4.0`) embedded in node metadata; planner warns on mismatch. |
 | Large stdout hangs           | `timeout` param; size cap in post().                                                 |
 | Security (running tools)     | User must list `allowed_tools`.                                                      |
-

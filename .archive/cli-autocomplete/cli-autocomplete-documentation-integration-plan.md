@@ -74,4 +74,4 @@ This focused approach adds CLI autocomplete documentation only in the two most r
 1. **PRD** - Where all product features should be documented
 2. **CLI Runtime Spec** - Where CLI user experience enhancements belong
 
-This maintains the principle of adding necessary information without over-documenting or creating redundancy across multiple files. 
+This maintains the principle of adding necessary information without over-documenting or creating redundancy across multiple files.
