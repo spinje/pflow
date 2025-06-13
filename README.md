@@ -145,12 +145,6 @@ graph TD
 ```bash
 # Install via pip
 pip install pflow
-
-# Install with MCP support
-pip install "pflow[mcp]"
-
-# Enable shell completion
-pflow completion bash >> ~/.bashrc
 ```
 
 ## Real-World Examples
@@ -220,8 +214,8 @@ We are actively building the future of developer automation. Come help\!
 ```bash
 git clone https://github.com/pflow/pflow
 cd pflow
-pip install -e ".[dev]"
-pytest
+make install
+make test
 ```
 
 See our [CONTRIBUTING.md](https://www.google.com/search?q=CONTRIBUTING.md) for guidelines.
