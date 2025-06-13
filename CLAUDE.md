@@ -111,31 +111,32 @@ pflow/
 │   ├── __init__.py       # Currently empty - CLI entry point to be added
 │   └── foo.py            # Placeholder - to be replaced with core modules
 ├── docs/                  # Comprehensive project specifications
-│   ├── **PRD-pflow.md**                      # **CORE: Product requirements document**
-│   ├── **architecture-document.md**          # **CORE: Complete system architecture**
-│   ├── **mvp-scope.md**                      # **CORE: Clear MVP boundaries**
-│   ├── **action-based-node-architecture.md** # **CORE: Action-based node design**
-│   ├── shared-store-node-proxy-architecture.md # Shared store + proxy pattern
-│   ├── shared-store-cli-runtime-specification.md # CLI integration and runtime
-│   ├── json-schema-for-flows-ir-and-nodesmetadata.md # JSON IR and metadata schemas
-│   ├── planner-responsibility-functionality-spec.md # Dual-mode planner (CLI + NL)
-│   ├── runtime-behavior-specification.md # Execution engine and caching
-│   ├── node-discovery-namespacing-and-versioning.md # Registry system
-│   ├── component-inventory.md # Complete MVP vs v2.0 breakdown
-│   ├── shell-pipe-native-integration.md # Unix pipe support
-│   ├── cli-autocomplete-spec.md # CLI autocomplete (v2.0)
-│   ├── mcp-server-integrationa-and-security-model.md # MCP integration (v2.0)
-│   ├── core-nodes/        # Platform node specifications
-│   │   ├── github-platform-node-spec.md
-│   │   ├── claude-platform-node-spec.md
-│   │   ├── ci-platform-node-spec.md
-│   │   └── llm-prompt-core-node-spec.md
-│   ├── implementation-details/ # Implementation specifics
-│   │   ├── node-metadata-extraction.md
-│   │   └── cli-auto-complete-feature-implementation-details.md
-│   └── future-version/    # Post-MVP features
-│       ├── future-llm-node-generation.md
-│       └── json-field-extraction-specification.md
+│   ├── **prd.md**                     # **CORE: Product requirements document**
+│   ├── **architecture.md**            # **CORE: Complete system architecture**
+│   ├── **mvp-scope.md**               # **CORE: Clear MVP boundaries**
+│   ├── **action-nodes.md**            # **CORE: Action-based platform node design**
+│   ├── shared-store.md               # Shared store + proxy pattern
+│   ├── cli-runtime.md                # CLI integration and shared store runtime
+│   ├── schemas.md                    # JSON IR and metadata schemas
+│   ├── planner.md                    # Dual-mode planner (CLI + natural language)
+│   ├── runtime.md                    # Execution engine, caching, safety
+│   ├── registry.md                   # Node discovery, namespacing, versioning
+│   ├── components.md                 # Complete MVP vs v2.0 breakdown
+│   ├── shell-pipes.md                # Unix pipe support and stdin handling
+│   ├── autocomplete.md               # CLI autocomplete specification (v2.0)
+│   ├── mcp-integration.md            # MCP server integration (v2.0)
+│   ├── workflow-analysis.md          # Technical analysis of AI workflow inefficiencies
+│   ├── core-nodes/                   # Platform node specifications
+│   │   ├── github-node.md
+│   │   ├── claude-node.md
+│   │   ├── ci-node.md
+│   │   └── llm-node.md
+│   ├── implementation-details/       # Implementation specifics
+│   │   ├── metadata-extraction.md
+│   │   └── autocomplete-impl.md
+│   └── future-version/              # Post-MVP features
+│       ├── llm-node-gen.md
+│       └── json-extraction.md
 ├── todo/                  # Implementation planning
 │   ├── implementation-roadmap.md  # High-level roadmap
 │   └── mvp-implementation-plan.md # Detailed task breakdown
@@ -179,37 +180,36 @@ pflow/
 **Project Documentation** (always read relevant docs before coding):
 
 **Core Architecture**:
-- `docs/PRD-pflow.md`: Master product requirements and complete architectural vision
-- `docs/architecture-document.md`: MVP-focused architecture document
+- `docs/prd.md`: Master product requirements and complete architectural vision
+- `docs/architecture.md`: MVP-focused architecture document
 - `docs/mvp-scope.md`: Clear MVP boundaries - what to build vs. exclude
 
 **Core Patterns**:
-- `docs/shared-store-node-proxy-architecture.md`: Fundamental shared store + proxy pattern
-- `docs/shared-store-cli-runtime-specification.md`: CLI integration and shared store management
-- `docs/json-schema-for-flows-ir-and-nodesmetadata.md`: JSON IR and metadata schemas
+- `docs/shared-store.md`: Fundamental shared store + proxy pattern
+- `docs/cli-runtime.md`: CLI integration and shared store management
+- `docs/schemas.md`: JSON IR and metadata schemas
 
 **Implementation Specs**:
-- `docs/planner-responsibility-functionality-spec.md`: Dual-mode planner (CLI + natural language)
-- `docs/runtime-behavior-specification.md`: Execution engine, caching, error handling
-- `docs/node-discovery-namespacing-and-versioning.md`: Registry system and version management
-- `docs/component-inventory.md`: Complete MVP vs v2.0 component breakdown
+- `docs/planner.md`: Dual-mode planner (CLI + natural language)
+- `docs/runtime.md`: Execution engine, caching, error handling
+- `docs/registry.md`: Registry system and version management
+- `docs/components.md`: Complete MVP vs v2.0 component breakdown
 
 **Core Nodes**:
-- `docs/core-nodes/llm-prompt-core-node-spec.md`: LLM/prompt node specification
-- `docs/core-nodes/claude-code-core-node-spec.md`: Claude Code integration specification
-- `docs/implementation-details/node-metadata-extraction.md`: Metadata extraction system
-
+- `docs/core-nodes/llm-node.md`: LLM/prompt node specification
+- `docs/core-nodes/claude-node.md`: Claude Code integration specification
+- `docs/implementation-details/metadata-extraction.md`: Metadata extraction system
 
 **Shell Integration**:
-- `docs/shell-pipe-native-integration.md`: Unix pipe support and stdin handling
-- `docs/user_stories_and_node_design.md`: Real-world usage patterns
+- `docs/shell-pipes.md`: Unix pipe support and stdin handling
+- `docs/workflow-analysis.md`: Technical analysis of AI workflow inefficiencies
 
 **Future Features**:
-- `docs/cli-autocomplete-spec.md`: CLI autocomplete specification (v2.0)
-- `docs/implementation-details/cli-auto-complete-feature-implementation-details.md`: Detailed CLI autocomplete implementation (v2.0)
-- `docs/mcp-server-integrationa-and-security-model.md`: MCP server integration (v2.0)
-- `docs/future-version/future-llm-node-generation.md`: LLM-assisted node development (v3.0)
-- `docs/future-version/json-field-extraction-specification.md`: Advanced JSON field extraction (v3.0)
+- `docs/autocomplete.md`: CLI autocomplete specification (v2.0)
+- `docs/implementation-details/autocomplete-impl.md`: Detailed CLI autocomplete implementation (v2.0)
+- `docs/mcp-integration.md`: MCP server integration (v2.0)
+- `docs/future-version/llm-node-gen.md`: LLM-assisted node development (v3.0)
+- `docs/future-version/json-extraction.md`: Advanced JSON field extraction (v3.0)
 
 
 **PocketFlow Documentation**:
