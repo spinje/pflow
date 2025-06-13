@@ -18,16 +18,16 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-[project.urls]
-Homepage = "https://spinje.github.io/pflow/"
-Repository = "https://github.com/spinje/pflow"
-Documentation = "https://spinje.github.io/pflow/"
-
 dependencies = [
     "click",          # CLI framework (more flexible than Typer)
     "pydantic",       # IR/metadata validation
     "llm>=0.26",      # Simon W simple prompts native integration
 ]
+
+[project.urls]
+Homepage = "https://spinje.github.io/pflow/"
+Repository = "https://github.com/spinje/pflow"
+Documentation = "https://spinje.github.io/pflow/"
 # Skip for MVP: puremagic, python-ulid (nice-to-haves)
 
 [dependency-groups]
@@ -67,7 +67,7 @@ testpaths = ["tests"]
 target-version = "py39"
 line-length = 120
 fix = true
-exclude = ["pocketflow"]
+exclude = ["pocketflow/*"]
 
 [tool.ruff.lint]
 select = [
