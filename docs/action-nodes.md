@@ -198,8 +198,9 @@ slack --action=send --channel=deploys --message="Staging deployment complete"
 
 **2. Parameter Complexity**
 - Different actions require different parameter sets
+- Some parameters available for all actions within a node (e.g., `--extra-prompt` for claude node)
 - Example: `github --action=create-issue` needs `--title` and `--body`, while `github --action=list-prs` needs `--state` and `--limit`
-- **Mitigation**: Action-specific help and validation
+- **Mitigation**: Clear parameter availability mapping and action-specific help
 
 **3. Error Message Clarity**
 - Need clear indication of which specific action failed within a platform node
@@ -216,18 +217,29 @@ slack --action=send --channel=deploys --message="Staging deployment complete"
 ## Implementation Strategy
 
 ### Metadata Schema Updates
-Action-based nodes require enhanced metadata:
+Action-based nodes require enhanced metadata with parameter availability mapping:
 ```json
 {
   "id": "github",
   "type": "platform",
   "description": "GitHub API operations",
+  "global_params": {
+    "token": {"type": "string", "description": "GitHub API token", "available_for_all_actions": true}
+  },
   "actions": {
     "get-issue": {
       "description": "Retrieve issue details by number",
       "inputs": ["repo", "issue"],
       "outputs": ["issue"],
-      "params": {"repo": "string", "issue": "integer"}
+      "params": {"repo": "string", "issue": "integer"},
+      "available_params": ["token", "repo", "issue"]
+    },
+    "create-issue": {
+      "description": "Create new issue",
+      "inputs": ["repo"],
+      "outputs": ["issue"],
+      "params": {"repo": "string", "title": "string", "body": "string"},
+      "available_params": ["token", "repo", "title", "body"]
     }
   }
 }

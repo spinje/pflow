@@ -30,8 +30,11 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 
 ## ✅ MVP Core Features (v0.1)
 
-### 1. Natural Language Planning Engine
+### 1. Natural Language Planning Engine (MVP - Built After Core Infrastructure)
 **Purpose**: Transform natural language descriptions into deterministic CLI workflows
+
+**Build Dependencies**: CLI runtime, node registry, metadata extraction system
+**Implementation Order**: Core infrastructure first, then NL planning capabilities
 
 **Requirements**:
 - **Input**: `pflow "analyze github issue, search codebase, implement fix, test"`
@@ -54,9 +57,10 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 **Action-Based Node Architecture Benefits**:
 - **Cognitive Load Reduction**: ~6 platform nodes vs ~30+ specific function nodes
 - **Natural Grouping**: All GitHub operations through one `github` node
-- **MCP Alignment**: Direct 1:1 mapping with MCP server tool patterns
 - **Easier Discovery**: `pflow describe github` shows all available actions
 - **Flexible Extension**: Add actions without breaking existing workflows
+- **Action-Specific Parameters**: Parameters clearly defined per action, with some global parameters available across all actions (e.g., extra prompts for claude node)
+- **Parameter Transparency**: Clear mapping of which parameters are available for each action
 - **Natural shared store interfaces**: (`shared["issue"]`, `shared["code"]`, `shared["test_results"]`)
 - **Impure by default**: Realistic for development workflows
 
@@ -97,7 +101,7 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 - **CLI autocomplete**: Type-ahead suggestions for faster composition
 - **Shadow store**: Real-time compatibility feedback during composition
 - **Interactive prompts**: Asking for missing inputs during execution
-- **MCP server integration**: Remote tool discovery and execution
+- **MCP node integration**: MCP server tool wrapping and execution (moved to v2.0)
 
 ### Deferred to v3.0 (Cloud Platform)
 - **Multi-user authentication**: Team workflows and permissions

@@ -80,12 +80,14 @@ This document provides a comprehensive inventory of all components and subsystem
 
 #### 3.2 Node Metadata System
 
-- **Purpose**: Structured interface definitions for action-based nodes
+- **Purpose**: Structured interface definitions for action-based platform nodes
 - **Components**:
   - Docstring parser for interface extraction
   - JSON metadata schema with action definitions
   - Input/output key definitions per action
-  - Action-specific parameter specifications with defaults
+  - Action-specific parameter specifications (some params may be available for all actions)
+  - Global parameter definitions (e.g., extra prompts for claude node across all actions)
+  - Parameter availability mapping per action
   - Purity annotations (`@flow_safe`)
   - Action discovery and validation
 
@@ -102,16 +104,18 @@ This document provides a comprehensive inventory of all components and subsystem
 
 ### 4. Planning & Validation
 
-#### 4.1 CLI Path Planner (MVP Focus)
+#### 4.1 Dual-Mode Planner (MVP - Built After Core Infrastructure)
 
-- **Purpose**: Validate and compile CLI syntax to IR
+- **Purpose**: Support both CLI and natural language input (NL dependent on registry/metadata)
 - **Components**:
-  - CLI syntax parser
+  - CLI syntax parser (build first)
+  - Natural language processing (build after CLI + registry + metadata)
   - Node existence validation
   - Interface compatibility checking
   - Basic mapping generation
   - IR assembly
-  - Direct execution path (no user confirmation)
+  - Direct execution path for CLI (no user confirmation)
+  - User approval workflow for natural language flows
 
 #### 4.2 Validation Framework
 
@@ -248,40 +252,9 @@ This document provides a comprehensive inventory of all components and subsystem
 
 ## Version 2.0 Components
 
-### 1. Natural Language Planning
+### 1. Advanced Flow Control
 
-#### 1.1 LLM Integration
-
-- **Purpose**: Convert natural language to flows
-- **Components**:
-  - LLM model integration (Claude/GPT)
-  - Prompt engineering system
-  - Context window management
-  - Token usage tracking
-
-#### 1.2 Full Planner Implementation
-
-- **Purpose**: Intelligent flow generation
-- **Components**:
-  - Metadata context loader
-  - Semantic node selection
-  - Flow structure generation
-  - Retry with feedback loop
-  - User approval workflow
-  - CLI preview generation
-
-#### 1.3 Retrieval System
-
-- **Purpose**: Reuse existing flows
-- **Components**:
-  - Flow description indexing
-  - Semantic similarity search
-  - Flow library management
-  - Sub-flow composition
-
-### 2. Advanced Flow Control
-
-#### 2.1 Action-Based Transitions
+#### 1.1 Action-Based Transitions
 
 - **Purpose**: Conditional execution paths
 - **Components**:
@@ -290,7 +263,7 @@ This document provides a comprehensive inventory of all components and subsystem
   - Multiple transition paths
   - Action validation
 
-#### 2.2 Error Recovery Patterns
+#### 1.2 Error Recovery Patterns
 
 - **Purpose**: Sophisticated failure handling
 - **Components**:
@@ -299,9 +272,9 @@ This document provides a comprehensive inventory of all components and subsystem
   - Fallback flows
   - Partial failure recovery
 
-### 3. MCP Integration
+### 2. MCP Integration
 
-#### 3.1 MCP Wrapper Generation
+#### 2.1 MCP Wrapper Generation
 
 - **Purpose**: Integrate external tools
 - **Components**:
@@ -310,7 +283,7 @@ This document provides a comprehensive inventory of all components and subsystem
   - Natural interface mapping
   - Error action mapping
 
-#### 3.2 MCP Transport Support
+#### 2.2 MCP Transport Support
 
 - **Purpose**: Connect to MCP servers
 - **Components**:
@@ -319,7 +292,7 @@ This document provides a comprehensive inventory of all components and subsystem
   - Unix domain sockets
   - Named pipes (Windows)
 
-#### 3.3 MCP Security
+#### 2.3 MCP Security
 
 - **Purpose**: Secure tool integration
 - **Components**:

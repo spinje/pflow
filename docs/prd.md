@@ -1,6 +1,6 @@
 # Product Requirements Document: pflow CLI (Master Edition)
 
-*A shell-native engine for deterministic, memory-aware, agent-planned flows that wrap MCP tools and reusable Python nodes.*
+*A shell-native engine for deterministic, memory-aware, agent-planned flows using reusable Python nodes with future MCP integration.*
 
 ---
 
@@ -27,7 +27,7 @@ pflow's defining promise: a one-line natural-language prompt compiles—through 
 | **Deterministic Reproducibility** | Execution behavior locked across environments and time through version pinning | IR versioning, semver nodes, lockfiles, param/data separation |
 | **Opt-In Performance Optimization** | Caching and retries only for explicitly pure nodes | `@flow_safe` decorator + eligibility validation |
 | **Action-Based Flow Control** | Conditional transitions through node return values, not exceptions | `node - "error" >> handler` syntax |
-| **Unified MCP Integration** | MCP tools appear as native nodes through wrapper generation | Single registry, natural interfaces, proxy compatibility |
+| **Future MCP Integration** | MCP tools will appear as native nodes through wrapper generation (v2.0) | Single registry design, natural interfaces, proxy compatibility |
 | **Framework Simplicity** | 100-line execution engine with pattern-based complexity | pocketflow core + orchestration layers |
 
 ### 1.2 Design Philosophy

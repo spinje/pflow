@@ -21,7 +21,7 @@ This document describes the architecture for pflow v0.1 MVP, which prioritizes:
 - Simple shared store pattern implementation
 - Deterministic, reproducible execution
 
-Features explicitly deferred to post-MVP include natural language planning, conditional transitions, async execution, and cloud deployment capabilities.
+Natural language planning is included in MVP scope but will be built after core infrastructure is established, as it depends on the registry, metadata extraction, and CLI runtime components. Features explicitly deferred to post-MVP include conditional transitions, async execution, and cloud deployment capabilities.
 
 ## 2. System Overview & Architecture
 
@@ -72,7 +72,7 @@ graph TD
 ### 2.2 Component Responsibilities
 
 - **CLI Interface**: Handles user input, flag parsing, and output presentation
-- **Planner**: Validates flows and generates JSON IR (supports both NL and CLI paths, though MVP focuses on CLI)
+- **Planner**: Validates flows and generates JSON IR (supports both NL and CLI paths; NL planning included in MVP but built after CLI infrastructure)
 - **Runtime Engine**: Executes validated flows using the pocketflow framework
 - **Node Registry**: Manages discoverable nodes and their metadata
 - **Shared Store**: Flow-scoped memory for inter-node communication
