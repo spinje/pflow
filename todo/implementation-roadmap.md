@@ -34,14 +34,15 @@ This document provides a high-level roadmap for implementing the AI-assisted dev
 **Success Criteria**:
 ```bash
 pflow "analyze github issue 1234 and run tests"
-# Generates and executes a working 2-3 node workflow
+# Generates: github --action=get-issue --issue=1234 >> claude --action=analyze >> ci --action=run-tests
+# Executes successfully end-to-end
 ```
 
 ### Phase 2: Core Value Demonstration (Weeks 3-4)
 **Goal**: Demonstrate clear superiority over slash commands
 
 **Priority 1 (Must Have)**:
-- Complete developer node set (github, claude-code, testing, linting)
+- Complete platform node set with actions (github, claude, ci, git, file, shell)
 - Workflow reuse with parameters (`pflow saved-workflow --param=value`)
 - Performance optimization (sub-second planning, 2-5s execution)
 - Basic execution tracing for debugging
@@ -59,6 +60,7 @@ pflow "analyze github issue 1234 and run tests"
 ```bash
 # Workflow generation and reuse
 pflow "fix github issue, test, create PR"
+# → Generates: github --action=get-issue >> claude --action=implement >> ci --action=run-tests >> github --action=create-pr
 # → Saves as 'fix-issue' workflow
 pflow fix-issue --issue=1234 --severity=critical
 # → Executes in 2-5s with full traceability

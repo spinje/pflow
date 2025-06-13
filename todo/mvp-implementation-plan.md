@@ -126,59 +126,82 @@ Target transformation:
 
 ---
 
-## 📋 Phase 3: Developer Nodes (Weeks 5-6)
+## 📋 Phase 3: Action-Based Platform Nodes (Weeks 5-6)
 
-### 3.1 GitHub Integration Node
+### 3.1 GitHub Platform Node
 - [ ] **GitHub node implementation** (`src/pflow/nodes/github.py`)
-  - Actions: `view`, `create`, `comment`, `close` for issues
-  - Actions: `list-prs`, `create-pr`, `merge-pr` for pull requests
-  - Natural interface: `shared["repo"]`, `shared["issue"]`, `shared["pr"]`
+  - Action dispatch pattern with `self.params.get("action")`
+  - Actions: `get-issue`, `create-issue`, `list-prs`, `create-pr`, `get-files`, `merge-pr`, `add-comment`
+  - Natural interface: `shared["repo"]`, `shared["issue"]`, `shared["pr"]`, `shared["files"]`
+  - Action-specific parameter handling
 - [ ] **GitHub API integration**
   - PyGithub or requests-based implementation
   - Authentication via environment variables
   - Error handling for API failures and rate limits
 - [ ] **GitHub node tests**
-  - Mock GitHub API responses
-  - Test all supported actions
+  - Mock GitHub API responses for each action
+  - Test action dispatch and parameter routing
   - Integration tests with real GitHub API (optional)
 
-### 3.2 Claude Code Integration Nodes
-- [ ] **claude-analyze node** (`src/pflow/nodes/claude_analyze.py`)
-  - One-shot analysis with focused context
-  - Natural interface: `shared["code"]` → `shared["analysis"]`
-  - Integration with headless claude-code CLI
-- [ ] **claude-implement node** (`src/pflow/nodes/claude_implement.py`)
-  - Code implementation with specific instructions
-  - Natural interface: `shared["requirements"]` → `shared["code"]`
-  - Dry-run support and safety measures
-- [ ] **Claude Code node tests**
-  - Mock claude-code CLI responses
-  - Test safety measures and error handling
-  - Validate output formats and interfaces
+### 3.2 Claude Platform Node
+- [ ] **Claude node implementation** (`src/pflow/nodes/claude.py`)
+  - Action dispatch pattern with multiple AI capabilities
+  - Actions: `analyze`, `implement`, `review`, `explain`, `refactor`
+  - Natural interface: `shared["code"]`, `shared["prompt"]` → `shared["result"]`
+  - Integration with headless claude-code CLI for implement action
+- [ ] **Action-specific implementations**
+  - `analyze`: Code analysis and understanding
+  - `implement`: Code generation and implementation
+  - `review`: Code review and suggestions
+  - `explain`: Code explanation and documentation
+- [ ] **Claude node tests**
+  - Mock claude-code CLI responses per action
+  - Test action dispatch and safety measures
+  - Validate output formats for each action
 
-### 3.3 Development Tool Nodes
-- [ ] **run-tests node** (`src/pflow/nodes/run_tests.py`)
-  - Support multiple test frameworks (pytest, npm test, etc.)
+### 3.3 CI Platform Node
+- [ ] **CI node implementation** (`src/pflow/nodes/ci.py`)
+  - Action dispatch for continuous integration operations
+  - Actions: `run-tests`, `get-status`, `trigger-build`, `get-logs`
   - Natural interface: `shared["test_command"]` → `shared["test_results"]`
-  - Exit code handling and result parsing
-- [ ] **lint node** (`src/pflow/nodes/lint.py`)
-  - Support multiple linters (eslint, ruff, etc.)
-  - Natural interface: `shared["lint_command"]` → `shared["lint_results"]`
+  - Support multiple CI systems (GitHub Actions, local, etc.)
+- [ ] **Framework detection and execution**
+  - Auto-detect test frameworks (pytest, npm test, etc.)
+  - Handle different exit codes and result formats
   - Configuration file detection and handling
-- [ ] **git-commit node** (`src/pflow/nodes/git_commit.py`)
-  - Automatic commit message generation
-  - Natural interface: `shared["changes"]` → `shared["commit_hash"]`
-  - Safety checks and confirmation prompts
+- [ ] **CI node tests**
+  - Mock test framework responses
+  - Test action dispatch for different CI operations
+  - Error handling for failed tests and builds
 
-### 3.4 Shell Integration
-- [ ] **shell-exec node** (`src/pflow/nodes/shell_exec.py`)
-  - Execute arbitrary shell commands safely
+### 3.4 Git Platform Node
+- [ ] **Git node implementation** (`src/pflow/nodes/git.py`)
+  - Action dispatch for git operations
+  - Actions: `commit`, `push`, `create-branch`, `merge`, `status`
+  - Natural interface: `shared["changes"]` → `shared["commit_hash"]`
+  - Automatic commit message generation for commit action
+- [ ] **Git operations implementation**
+  - Safety checks and confirmation prompts
+  - Branch management and merging
+  - Status reporting and change detection
+- [ ] **Git node tests**
+  - Mock git commands and responses
+  - Test action dispatch and safety measures
+  - Integration tests with real git repositories
+
+### 3.5 File and Shell Platform Nodes
+- [ ] **File node implementation** (`src/pflow/nodes/file.py`)
+  - Actions: `read`, `write`, `copy`, `move`, `delete`
+  - Natural interface: `shared["file_path"]`, `shared["content"]`
+  - Safety checks for destructive operations
+- [ ] **Shell node implementation** (`src/pflow/nodes/shell.py`)
+  - Actions: `exec`, `pipe`, `background`
   - Natural interface: `shared["command"]` → `shared["output"]`
-  - Timeout handling and error reporting
-- [ ] **Shell integration tests**
-  - Test command execution and output capture
-  - Error handling for failed commands
-  - Security considerations and input validation
+  - Timeout handling and security considerations
+- [ ] **File and Shell tests**
+  - Test action dispatch and parameter handling
+  - Safety and security validation
+  - Error handling for filesystem operations
 
 ---
 

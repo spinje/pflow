@@ -19,8 +19,8 @@ pflow MVP solves the specific problem of slash command inefficiency by enabling 
 /project:fix-github-issue 1234  # 30-90s, variable approach, token waste
 
 # pflow solution: Natural language → deterministic workflow
-pflow "get github issue, analyze it, search codebase, implement fix, test, lint, create PR"
-# Generates: gh-issue-view >> claude-analyze >> claude-search >> claude-implement >> run-tests >> lint >> create-pr
+pflow "get github issue, analyze it, implement fix, test, and create PR"
+# Generates: github --action=get-issue --issue=1234 >> claude --action=analyze --prompt="understand this issue" >> claude --action=implement --prompt="create fix" >> ci --action=run-tests >> git --action=commit --message="Fix issue 1234" >> github --action=create-pr --title="Fix for issue 1234"
 
 # Subsequent runs: Instant, predictable, token-efficient
 pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
@@ -43,19 +43,22 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 ### 2. Developer-Focused Node Registry
 **Purpose**: Provide nodes specifically designed for AI-assisted development workflows
 
-**Core Developer Nodes** (MVP essential):
-- **`gh-issue` (GitHub Issues)**: `--action=view|create|comment|close`
-- **`claude-analyze`**: One-shot analysis with context (text → insights)
-- **`claude-implement`**: Code implementation with focused context
-- **`run-tests`**: Execute test suites with different frameworks
-- **`lint`**: Code quality checks (eslint, ruff, etc.)
-- **`git-commit`**: Create commits with generated messages
-- **Shell integration nodes**: Direct shell command execution
+**Core Platform Nodes** (MVP essential):
+- **`github`** - actions: `get-issue`, `create-issue`, `list-prs`, `create-pr`, `get-files`, `merge-pr`, `add-comment`
+- **`claude`** - actions: `analyze`, `implement`, `review`, `explain`, `refactor`
+- **`ci`** - actions: `run-tests`, `get-status`, `trigger-build`, `get-logs`
+- **`git`** - actions: `commit`, `push`, `create-branch`, `merge`, `status`
+- **`file`** - actions: `read`, `write`, `copy`, `move`, `delete`
+- **`shell`** - actions: `exec`, `pipe`, `background`
 
-**Node Design Pattern**:
-- General nodes with actions (e.g., `gh-issue --action=view` vs specific `gh-issue-view`)
-- Natural shared store interfaces (`shared["issue"]`, `shared["code"]`, `shared["test_results"]`)
-- Impure by default (realistic for development workflows)
+**Action-Based Node Architecture Benefits**:
+- **Cognitive Load Reduction**: ~6 platform nodes vs ~30+ specific function nodes
+- **Natural Grouping**: All GitHub operations through one `github` node
+- **MCP Alignment**: Direct 1:1 mapping with MCP server tool patterns
+- **Easier Discovery**: `pflow describe github` shows all available actions
+- **Flexible Extension**: Add actions without breaking existing workflows
+- **Natural shared store interfaces**: (`shared["issue"]`, `shared["code"]`, `shared["test_results"]`)
+- **Impure by default**: Realistic for development workflows
 
 ### 3. CLI Execution & Workflow Management
 **Purpose**: Execute workflows with parameters and manage reusable definitions
@@ -110,7 +113,7 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 **These 8 components must work together for MVP success**:
 
 1. **Natural Language Planner**: The core differentiator - transforms descriptions into CLI workflows
-2. **Developer Node Registry**: `gh-issue`, `claude-analyze`, `claude-implement`, `run-tests`, `lint`
+2. **Action-Based Node Registry**: Platform nodes (`github`, `claude`, `ci`, `git`, `file`, `shell`) with action dispatch
 3. **CLI Workflow Engine**: Execute saved workflows with parameters (`pflow fix-issue --issue=1234`)
 4. **JSON IR System**: Capture complete workflow definitions with provenance
 5. **Validation Pipeline**: Ensure generated workflows are sound and executable
@@ -131,11 +134,11 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 ### Technical Benchmarks
 - **Planning Latency**: ≤800ms average for natural language → validated IR
 - **Execution Speed**: ≤2s overhead vs raw Python for 3-node flows
-- **Registry Scale**: Support ≥50 developer-focused nodes efficiently
+- **Registry Scale**: Support 6-10 platform nodes with 5-10 actions each efficiently
 - **Flow Complexity**: Handle 10-node workflows without performance degradation
 
 ### Capabilities Demonstrated
-- **Natural Language Processing**: `pflow "fix this issue, test it, create PR"`
+- **Natural Language Processing**: `pflow "fix this issue, test it, create PR"` → `github --action=get-issue >> claude --action=implement >> ci --action=run-tests >> github --action=create-pr`
 - **Workflow Reuse**: `pflow fix-issue --issue=1234 --severity=critical`
 - **Developer Integration**: Works with existing GitHub/testing/linting workflows
 - **Slash Command Migration**: Existing `.claude/commands/*.md` can be transformed naturally

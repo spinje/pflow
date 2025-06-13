@@ -80,24 +80,25 @@ This document provides a comprehensive inventory of all components and subsystem
 
 #### 3.2 Node Metadata System
 
-- **Purpose**: Structured interface definitions
+- **Purpose**: Structured interface definitions for action-based nodes
 - **Components**:
   - Docstring parser for interface extraction
-  - JSON metadata schema
-  - Input/output key definitions
-  - Parameter specifications with defaults
+  - JSON metadata schema with action definitions
+  - Input/output key definitions per action
+  - Action-specific parameter specifications with defaults
   - Purity annotations (`@flow_safe`)
+  - Action discovery and validation
 
-#### 3.3 Built-in Nodes (MVP Set)
+#### 3.3 Built-in Platform Nodes (MVP Set)
 
-- **Purpose**: Core functionality
-- **Required Nodes**:
-  - `read-file` - File input
-  - `write-file` - File output
-  - `transform` - Basic data transformation
-  - `prompt` - LLM interaction
-  - `summarize-text` - Text summarization
-  - Basic data processing nodes
+- **Purpose**: Action-based platform functionality
+- **Required Platform Nodes**:
+  - `github` - actions: `get-issue`, `create-issue`, `list-prs`, `create-pr`, `get-files`, `merge-pr`
+  - `claude` - actions: `analyze`, `implement`, `review`, `explain`, `refactor`
+  - `ci` - actions: `run-tests`, `get-status`, `trigger-build`, `get-logs`
+  - `git` - actions: `commit`, `push`, `create-branch`, `merge`, `status`
+  - `file` - actions: `read`, `write`, `copy`, `move`, `delete`
+  - `shell` - actions: `exec`, `pipe`, `background`
 
 ### 4. Planning & Validation
 

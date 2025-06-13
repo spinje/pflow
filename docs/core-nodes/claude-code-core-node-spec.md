@@ -1,4 +1,6 @@
-# ClaudeCode Core Node Spec
+# ClaudeCode Core Node Spec (Legacy - See Updated Architecture)
+
+> **Note**: This specification represents an earlier, coarse-grained approach. The current MVP uses an **action-based platform node architecture** where Claude Code functionality is integrated into the `claude` platform node with an `implement` action. See `claude-platform-node-spec.md` for the updated approach that reduces cognitive load and aligns with MCP patterns.
 
 Below is a focused evaluation plus a **mini-spec** for a *single, minimal* `ClaudeCode` core node that just “fires-and-forgets” a prompt+context to the headless **claude-code** CLI.  It assumes the MVP already has the pure-cached `Prompt` node described earlier.
 
