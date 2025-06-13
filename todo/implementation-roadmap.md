@@ -38,6 +38,8 @@ pflow "analyze github issue 1234 and run tests"
 # Executes successfully end-to-end
 ```
 
+**Critical Requirement**: When users provide similar natural language descriptions with different parameters (e.g., different issue numbers), pflow should intelligently **reuse the existing workflow definition** rather than regenerating from scratch. This pattern recognition is essential for achieving the "Plan Once, Run Forever" efficiency gains.
+
 ### Phase 2: Core Value Demonstration (Weeks 3-4)
 **Goal**: Demonstrate clear superiority over slash commands
 
