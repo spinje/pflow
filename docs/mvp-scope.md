@@ -1,67 +1,268 @@
-# MVP Scope
+# MVP Scope: AI-Assisted Development Workflow Compiler
 
-## ✅ MVP CLI Goals
+## 🎯 Core Vision
 
-Claude must prioritize features that enable a local developer to:
+**"Transform AI-assisted development workflows from inefficient slash commands into deterministic, reusable CLI workflows"**
 
-- Compose and run flows using `pflow` CLI
-- Define simple nodes (like `prompt`, `transform`, `read_file`)
-- Store intermediate data in a shared store
-- Use shell pipe syntax for stdin/stdout integration
+pflow MVP solves the specific problem of slash command inefficiency by enabling developers to:
 
-The system must be:
+1. **Plan Once, Run Forever**: Capture AI workflow logic once, execute deterministically afterward
+2. **Eliminate Token Waste**: Stop spending 1000-2000 tokens on orchestration logic every execution
+3. **Enable Predictable Execution**: Replace variable 30-90s slash command runs with consistent 2-5s workflow execution
+4. **Improve Observability**: Get step-by-step execution traces instead of conversation logs
 
-- Pure Python
-- Single-machine
-- Stateless
+### Target Use Case Example
+
+```bash
+# Current inefficiency: Claude Code slash command
+# Every run requires full reasoning and orchestration
+/project:fix-github-issue 1234  # 30-90s, variable approach, token waste
+
+# pflow solution: Natural language → deterministic workflow
+pflow "get github issue, analyze it, search codebase, implement fix, test, lint, create PR"
+# Generates: gh-issue-view >> claude-analyze >> claude-search >> claude-implement >> run-tests >> lint >> create-pr
+
+# Subsequent runs: Instant, predictable, token-efficient
+pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
+```
 
 ---
 
-## ❌ Excluded from MVP (Do *Not* Build Yet)
+## ✅ MVP Core Features (v0.1)
 
-These are part of version 2.0 of pflow, post MVP:
+### 1. Natural Language Planning Engine
+**Purpose**: Transform natural language descriptions into deterministic CLI workflows
 
-- Conditional transitions (e.g. `node - "fail" >> error_handler`)
-- LLM-based natural language planning
-- CLI autocomplete and shadow-store suggestions
-- async nodes and flows
+**Requirements**:
+- **Input**: `pflow "analyze github issue, search codebase, implement fix, test"`
+- **Output**: Deterministic CLI workflow using developer-focused nodes
+- **LLM Integration**: Use thinking models (o1-preview/Claude) for intelligent node selection
+- **Metadata-Driven**: Select nodes based on extracted interface metadata, not code inspection
+- **User Verification**: Show generated CLI workflow for approval before execution
 
-These are part of the future cloud platform, pflow 3.0:
+### 2. Developer-Focused Node Registry
+**Purpose**: Provide nodes specifically designed for AI-assisted development workflows
 
-- Authentication, multi-user access
-- Remote node discovery (e.g. from MCP servers)
-- Namespaced and versioned node resolution (like `core/summarize@1.2.0`)
-- Secure MCP authentication and permissions
-- Cloud execution, job queues, and async scheduling
-- Web UI or dashboards
-- Interactive prompting for missing shared inputs
-- IR mutation tools (e.g. repair, diff, version upgrades)
+**Core Developer Nodes** (MVP essential):
+- **`gh-issue` (GitHub Issues)**: `--action=view|create|comment|close`
+- **`claude-analyze`**: One-shot analysis with context (text → insights)
+- **`claude-implement`**: Code implementation with focused context
+- **`run-tests`**: Execute test suites with different frameworks
+- **`lint`**: Code quality checks (eslint, ruff, etc.)
+- **`git-commit`**: Create commits with generated messages
+- **Shell integration nodes**: Direct shell command execution
 
-These can be mocked or scaffolded, but **not implemented** now.
+**Node Design Pattern**:
+- General nodes with actions (e.g., `gh-issue --action=view` vs specific `gh-issue-view`)
+- Natural shared store interfaces (`shared["issue"]`, `shared["code"]`, `shared["test_results"]`)
+- Impure by default (realistic for development workflows)
 
-## MVP Components (What we're building now)
+### 3. CLI Execution & Workflow Management
+**Purpose**: Execute workflows with parameters and manage reusable definitions
 
-- Core Foundation - pocketflow integration, shared store, proxy pattern
-- CLI Interface - Basic commands, pipe syntax parser, shell integration
-- Node System - Registry, metadata, and essential built-in nodes
-- Planning & Validation - CLI path only (no LLM yet, that comes in version 2.0)
-- Execution Engine - Synchronous runtime with basic caching
-- Observability - Tracing and logging for debugging
-- Storage - Lockfiles and local filesystem
-- Testing - Basic test framework
-- Documentation - Built-in help system
+**CLI Commands**:
+- `pflow "natural language"` - Generate workflow from description
+- `pflow <saved-workflow> --params` - Execute saved workflow with parameters
+- `pflow registry list` - Show available nodes and capabilities
+- `pflow trace <run-id>` - Detailed execution debugging
 
-## Critical MVP Dependencies
+**Workflow Storage**:
+- Save generated workflows with meaningful names (`fix-issue`, `deploy-staging`)
+- Parameterized execution with CLI overrides
+- Lockfile generation for reproducible execution
 
-10 absolutely essential components that MUST be in MVP for pflow to deliver on its core promises:
+### 4. Foundation Infrastructure
+**Purpose**: Core systems enabling the workflow compiler
 
-- pocketflow framework
-- Shared store pattern (included in pocketflow)
-- CLI pipe syntax
-- Node registry
-- JSON IR
-- Validation
-- Tracing
-- Shell pipes
-- Error reporting
-- Lockfiles
+**pocketflow Integration**:
+- Use existing 100-line framework for execution
+- Natural shared store pattern with intuitive keys
+- `>>` operator for flow composition
+- Built-in retry for appropriate nodes
+
+**JSON IR & Validation**:
+- Complete workflow definitions with full provenance
+- Validation pipeline ensuring generated workflows are executable
+- Schema governance for consistency and evolution
+
+---
+
+## ❌ Explicitly Excluded from MVP
+
+### Deferred to v2.0 (Post-MVP)
+- **Conditional transitions**: `node - "fail" >> error_handler` (pocketflow supports this, but adds complexity)
+- **CLI autocomplete**: Type-ahead suggestions for faster composition
+- **Shadow store**: Real-time compatibility feedback during composition
+- **Interactive prompts**: Asking for missing inputs during execution
+- **MCP server integration**: Remote tool discovery and execution
+
+### Deferred to v3.0 (Cloud Platform)
+- **Multi-user authentication**: Team workflows and permissions
+- **Web UI**: Visual flow builder and dashboard
+- **Distributed execution**: Cloud job queues and scheduling
+- **Advanced caching**: Distributed cache and warming strategies
+- **Marketplace**: Flow sharing and discovery platform
+
+---
+
+## 🔑 Critical MVP Dependencies
+
+**These 8 components must work together for MVP success**:
+
+1. **Natural Language Planner**: The core differentiator - transforms descriptions into CLI workflows
+2. **Developer Node Registry**: `gh-issue`, `claude-analyze`, `claude-implement`, `run-tests`, `lint`
+3. **CLI Workflow Engine**: Execute saved workflows with parameters (`pflow fix-issue --issue=1234`)
+4. **JSON IR System**: Capture complete workflow definitions with provenance
+5. **Validation Pipeline**: Ensure generated workflows are sound and executable
+6. **Shared Store Runtime**: Natural key-based communication between nodes
+7. **Execution Tracing**: Step-by-step debugging superior to conversation logs
+8. **Workflow Storage**: Save/load named workflows for reuse
+
+---
+
+## 📊 Success Criteria
+
+### Primary Value Metrics
+- **Efficiency Gain**: 10x improvement over slash commands (tokens + time)
+- **Planning Success**: ≥95% of common development workflows generate valid CLI flows
+- **User Adoption**: ≥90% approval rate for generated workflows
+- **Execution Reliability**: ≥98% successful execution of valid workflows
+
+### Technical Benchmarks
+- **Planning Latency**: ≤800ms average for natural language → validated IR
+- **Execution Speed**: ≤2s overhead vs raw Python for 3-node flows
+- **Registry Scale**: Support ≥50 developer-focused nodes efficiently
+- **Flow Complexity**: Handle 10-node workflows without performance degradation
+
+### Capabilities Demonstrated
+- **Natural Language Processing**: `pflow "fix this issue, test it, create PR"`
+- **Workflow Reuse**: `pflow fix-issue --issue=1234 --severity=critical`
+- **Developer Integration**: Works with existing GitHub/testing/linting workflows
+- **Slash Command Migration**: Existing `.claude/commands/*.md` can be transformed naturally
+
+---
+
+## 🎯 End Goal Capability
+
+By MVP completion, developers should be able to:
+
+1. **Describe any common development workflow** in natural language
+2. **Get a deterministic, reusable CLI tool** that executes consistently
+3. **Replace inefficient slash commands** with fast, predictable workflows
+4. **Debug execution issues** with clear step-by-step traces
+5. **Share workflows** across team members via saved definitions
+
+**The MVP enables this transformation**:
+```bash
+# From: Inefficient, variable, token-heavy slash commands
+/project:fix-github-issue 1234
+
+# To: Efficient, predictable, reusable workflows
+pflow fix-issue --issue=1234
+```
+
+This focused scope delivers immediate value to developers frustrated with slash command inefficiencies while building the foundation for expanded workflow automation in future versions.
+
+---
+
+## 🛠 Implementation Phases
+
+### Phase 1: Foundation (Weeks 1-2)
+**Goal**: Core infrastructure supporting the AI-assisted development workflow vision
+
+- **pocketflow Integration**: Leverage existing 100-line framework
+- **Basic Shared Store**: Natural key-based communication (`shared["issue"]`, `shared["code"]`)
+- **Simple CLI Parser**: Handle natural language input and basic workflow execution
+- **Node Registry Structure**: Discovery system for developer-focused nodes
+
+### Phase 2: Natural Language Planning (Weeks 3-4)
+**Goal**: Core differentiator - transform descriptions into workflows
+
+- **LLM Integration**: Connect to thinking models for intelligent node selection
+- **Metadata-Driven Selection**: Extract and use node interface descriptions
+- **Workflow Generation**: Natural language → CLI syntax transformation
+- **User Verification**: Show generated workflows for approval
+
+### Phase 3: Developer Nodes (Weeks 5-6)
+**Goal**: Essential nodes for AI-assisted development workflows
+
+- **GitHub Integration**: `gh-issue` node with view/create/comment actions
+- **Claude Code Integration**: `claude-analyze` and `claude-implement` nodes
+- **Development Tools**: `run-tests`, `lint`, `git-commit` nodes
+- **Shell Integration**: Direct command execution capabilities
+
+### Phase 4: Workflow Management (Weeks 7-8)
+**Goal**: Save, reuse, and execute workflows efficiently
+
+- **Workflow Storage**: Save generated workflows with meaningful names
+- **Parameterized Execution**: `pflow fix-issue --issue=1234`
+- **JSON IR System**: Complete workflow definitions with provenance
+- **Execution Tracing**: Step-by-step debugging and observability
+
+---
+
+## 🧪 Validation Strategy
+
+### Technical Validation
+- **Unit Tests**: Every node tested with realistic development scenarios
+- **Integration Tests**: End-to-end workflow generation and execution
+- **Performance Benchmarks**: Planning latency and execution speed metrics
+- **Error Handling**: Comprehensive failure scenarios and recovery
+
+### User Validation
+- **Developer Workflows**: Test with real GitHub issues, code analysis, testing scenarios
+- **Slash Command Comparison**: Side-by-side efficiency demonstrations
+- **Workflow Reuse**: Verify saved workflows work across different contexts
+- **Team Sharing**: Test workflow portability between developers
+
+---
+
+## 📈 Measuring Success
+
+### Immediate Value Metrics
+1. **Time Savings**: Developers save 30-90s per workflow execution
+2. **Cost Reduction**: 10x reduction in LLM tokens for repeated workflows
+3. **Consistency**: Same workflow produces same results across executions
+4. **Observability**: Clear execution traces vs. conversation logs
+
+### Adoption Indicators
+1. **Workflow Creation**: Developers successfully generate workflows from natural language
+2. **Workflow Reuse**: Saved workflows used multiple times per week
+3. **Team Sharing**: Workflows shared and adopted across development teams
+4. **Slash Command Replacement**: Developers prefer pflow over existing slash commands
+
+### Technical Health
+1. **Planning Success Rate**: ≥95% of reasonable requests generate valid workflows
+2. **Execution Reliability**: ≥98% of valid workflows execute successfully
+3. **Performance**: Sub-second planning, 2-5s execution for typical workflows
+4. **Error Recovery**: Clear diagnostics when workflows fail
+
+---
+
+## 🎯 MVP Acceptance Criteria
+
+**The MVP is complete when developers can successfully**:
+
+1. **Generate workflows from natural language**:
+   ```bash
+   pflow "analyze this github issue and suggest a fix"
+   # → Generates: gh-issue --action=view >> claude-analyze >> claude-implement
+   ```
+
+2. **Execute saved workflows with parameters**:
+   ```bash
+   pflow analyze-issue --issue=1234 --repo=myproject
+   ```
+
+3. **Get better observability than slash commands**:
+   ```bash
+   pflow trace run_2024-01-01_abc123
+   # Shows: Step 1: gh-issue ✓ (0.2s), Step 2: claude-analyze ✓ (3.1s), etc.
+   ```
+
+4. **Achieve 10x efficiency improvement** over equivalent slash commands in terms of:
+   - Execution time (consistent 2-5s vs variable 30-90s)
+   - Token usage (minimal overhead vs 1000-2000 tokens per run)
+   - Reliability (deterministic vs variable approaches)
+
+**When these criteria are met, pflow MVP delivers transformational value to AI-assisted development workflows.**

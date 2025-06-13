@@ -204,8 +204,9 @@ The codebase is in early development with:
 - ✅ PocketFlow framework integrated
 - ✅ Comprehensive documentation infrastructure
 - ✅ Development tooling and testing setup
-- ⏳ Create an overview plan for the MVP in `todo/mvp-scope.md` (<- We are here)
-- ⏳ Create a detailed todo list with tasks and subtasks based on the plan
+- ✅ Create an overview roadmap for the MVP in `todo/implementation-roadmap.md`
+- ✅ Create a detailed todo list with tasks and subtasks in `todo/mvp-implementation-plan.md` based on the roadmap
+- ⏳ Carefully review the implementation plan and make sure it is complete and accurate (<- We are here)
 - ⏳ Start implementing features for the MVP using the todo list one by one
 
 ### Next Development Phase
