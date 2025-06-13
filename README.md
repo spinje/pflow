@@ -46,7 +46,7 @@ pip install pflow
 pflow "check my github PRs and summarize them for standup"
 
 # pflow generates and shows you the workflow:
-# → fetch-github-prs --state=open >> llm "summarize for standup"
+# → github --action=list-prs --state=open >> llm --prompt="summarize for standup"
 #
 # Run this flow? [Y/n] y
 ✅ Flow saved as 'standup-prep'
@@ -62,7 +62,7 @@ pflow standup-prep
 pflow "fetch aws costs, analyze by service, create report, send to slack"
 
 # See the generated pipeline:
-# → aws-costs --period=7d >> analyze-costs >> create-markdown >> slack-send --channel=ops
+# → aws --action=get-costs --period=7d >> claude --action=analyze --prompt="analyze by service" >> file --action=write --format=markdown >> slack --action=send --channel=ops
 ```
 
 ### 3\. Integrate Everything
@@ -72,7 +72,7 @@ pflow "fetch aws costs, analyze by service, create report, send to slack"
 cat error.log | pflow "extract errors, find related code, suggest fixes" >> fixes.md
 
 # Combine with any CLI tool
-kubectl logs my-pod | pflow check-for-errors >> notify-if-critical
+kubectl logs my-pod | pflow "check for errors and notify if critical"
 ```
 
 ## Who is `pflow` for?
@@ -181,11 +181,12 @@ pflow "analyze last week's API usage, calculate costs, compare to budget, create
 
 `pflow` doesn't replace your favorite tools—it orchestrates them.
 
-### 🔌 MCP Integration
+### 🔌 Future MCP Integration (v2.0)
 
-Access any MCP-compatible tool as a native `pflow` node.
+Planned: Access MCP-compatible tools as native `pflow` nodes.
 
 ```bash
+# Coming in v2.0:
 pflow registry add-mcp github slack stripe
 ```
 
@@ -194,7 +195,7 @@ pflow registry add-mcp github slack stripe
 Use Simon Willison's `llm` CLI as a node:
 
 ```bash
-pflow fetch-data >> llm "analyze trends in this data" >> create-report
+pflow file --action=read --path=data.csv >> llm --prompt="analyze trends in this data" >> file --action=write --path=report.md
 ```
 
 ### 🚀 A Supercharger for Claude Code & other Agents

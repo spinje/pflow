@@ -14,18 +14,18 @@ Target transformation:
 
 ---
 
-## 📋 Phase 1: Foundation (Weeks 1-2)
+## 📋 Phase 1: Core Infrastructure (Weeks 1-2)
 
 ### 1.1 Project Structure Setup
 - [ ] **Create main CLI entry point** (`src/pflow/cli.py`)
   - Basic click-based CLI framework
-  - Handle natural language input detection
-  - Route to appropriate handlers
+  - Simple `--key=value` flag parsing (no sophisticated categorization)
+  - Route to workflow execution handlers
 - [ ] **Set up core package structure**
   - `src/pflow/core/` - Core runtime components
-  - `src/pflow/planning/` - Natural language planning engine
-  - `src/pflow/nodes/` - Built-in developer nodes
   - `src/pflow/registry/` - Node discovery and metadata
+  - `src/pflow/nodes/` - Built-in platform nodes
+  - `src/pflow/planning/` - Natural language planning (Phase 4)
 - [ ] **Integration with pocketflow**
   - Import and verify pocketflow framework works
   - Create base classes that extend pocketflow patterns
@@ -40,20 +40,21 @@ Target transformation:
   - Transparent key mapping when needed
   - Zero overhead when no mappings defined
   - Integration with pocketflow node execution
-- [ ] **Basic CLI flag resolution** (`src/pflow/core/cli_resolver.py`)
-  - "Type flags; engine decides" algorithm
-  - Data injection vs params vs execution config
-  - Shell pipe input detection and handling
+- [ ] **Simple CLI flag resolution** (`src/pflow/core/cli_resolver.py`)
+  - Basic `--key=value` parsing without sophisticated categorization
+  - Manual parameter specification required
+  - Shell pipe input detection and `shared["stdin"]` handling
 
 ### 1.3 Simple Node Registry
 - [ ] **Registry structure** (`src/pflow/registry/`)
-  - File-based node discovery
+  - Simple file-based node discovery (no versioning in MVP)
   - Metadata extraction from docstrings
   - Basic indexing for fast lookups
-- [ ] **Node metadata schema**
-  - JSON schema for node interface definitions
-  - Input/output key specifications
-  - Action definitions and parameter schemas
+- [ ] **Complete JSON IR system** (`src/pflow/core/ir_schema.py`)
+  - Full schema with proxy mapping support
+  - Node specifications with action dispatch
+  - Edge definitions and mapping specifications
+  - Provenance tracking and metadata inclusion
 - [ ] **Registry CLI commands**
   - `pflow registry list` - Show available nodes
   - `pflow registry describe <node>` - Show node details
@@ -70,59 +71,50 @@ Target transformation:
 
 ---
 
-## 📋 Phase 2: Natural Language Planning (Weeks 3-4)
+## 📋 Phase 2: Metadata & Registry Systems (Weeks 3-4)
 
-### 2.1 LLM Integration Infrastructure
-- [ ] **LLM client abstraction** (`src/pflow/planning/llm_client.py`)
-  - Support for multiple models (Claude, OpenAI o1)
-  - Thinking model integration for complex reasoning
-  - Token usage tracking and optimization
-- [ ] **Prompt engineering system** (`src/pflow/planning/prompts.py`)
-  - Node selection prompts with metadata context
-  - Workflow generation prompts
-  - Error recovery and retry prompts
-- [ ] **Model configuration**
-  - Environment variable setup for API keys
-  - Model selection logic (default to Claude Sonnet)
-  - Fallback strategies for model failures
+### 2.1 Comprehensive Metadata Extraction
+- [ ] **Docstring parsing system** (`src/pflow/registry/metadata_extractor.py`)
+  - Full `docstring_parser` + custom regex implementation
+  - Parse Interface sections with action-specific parameters
+  - Extract inputs, outputs, params, actions per action
+  - Support both simple and structured Interface formats
+- [ ] **Action-specific parameter mapping**
+  - Parameter availability mapping per action
+  - Global parameters available across all actions
+  - Validation of parameter consistency
+- [ ] **JSON metadata generation**
+  - Schema-compliant metadata for each node
+  - Source hash computation for staleness detection
+  - Extraction timestamp and version tracking
 
-### 2.2 Metadata-Driven Node Selection
-- [ ] **Metadata extraction system** (`src/pflow/planning/metadata_extractor.py`)
-  - Parse node docstrings for interface definitions
-  - Extract inputs, outputs, params, actions
-  - Generate JSON metadata for LLM context
-- [ ] **Node selection engine** (`src/pflow/planning/node_selector.py`)
-  - Load available node metadata into LLM context
-  - Intelligent node selection based on user intent
-  - Validation of selected nodes and compatibility
-- [ ] **Selection validation**
-  - Verify selected nodes exist in registry
-  - Check interface compatibility between nodes
-  - Generate error messages for invalid selections
+### 2.2 Enhanced Registry Infrastructure
+- [ ] **Metadata indexing system** (`src/pflow/registry/index.py`)
+  - Fast lookups by node ID and capabilities
+  - Interface compatibility analysis
+  - Action discovery and validation
+- [ ] **Registry CLI commands** (`src/pflow/cli/registry.py`)
+  - `pflow registry list` - Show platform nodes with actions
+  - `pflow registry describe <node>` - Detailed node information
+  - Rich formatting with action-specific parameters
+- [ ] **Metadata validation**
+  - Verify extracted metadata against actual code
+  - Consistency checking for interface definitions
+  - Error reporting for metadata mismatches
 
-### 2.3 Workflow Generation
-- [ ] **Flow structure generator** (`src/pflow/planning/flow_generator.py`)
-  - Natural language → node sequence transformation
-  - Basic linear workflows (A >> B >> C)
-  - Parameter inference and default value assignment
-- [ ] **CLI syntax compiler** (`src/pflow/planning/cli_compiler.py`)
-  - JSON IR → CLI pipe syntax conversion
-  - Natural parameter naming for user readability
-  - User-friendly workflow previews
-- [ ] **User verification system**
-  - Show generated CLI workflow for approval
-  - Allow parameter modifications before execution
-  - Save approved workflows with meaningful names
-
-### 2.4 Planning Pipeline Integration
-- [ ] **End-to-end planning flow** (`src/pflow/planning/planner.py`)
-  - Natural language input → validated workflow
-  - Error handling and retry logic
-  - Integration with workflow storage
-- [ ] **Planning tests**
-  - Test common development workflow descriptions
-  - Validate generated CLI syntax
-  - Error recovery scenarios
+### 2.3 Interface Compatibility System
+- [ ] **Compatibility analysis** (`src/pflow/core/compatibility.py`)
+  - Shared store key matching between nodes
+  - Type validation for interface connections
+  - Proxy mapping generation for mismatches
+- [ ] **Validation framework**
+  - Pre-execution workflow validation
+  - Parameter type checking
+  - Action availability verification
+- [ ] **Registry integration tests**
+  - Test metadata extraction from real nodes
+  - Validate registry CLI operations
+  - Interface compatibility validation scenarios
 
 ---
 
@@ -205,64 +197,63 @@ Target transformation:
 
 ---
 
-## 📋 Phase 4: Workflow Management (Weeks 7-8)
+## 📋 Phase 4: Natural Language Planning (Weeks 7-8)
 
-### 4.1 JSON IR System
-- [ ] **IR schema definition** (`src/pflow/core/ir_schema.py`)
-  - Complete JSON schema for workflow definitions
-  - Node specifications with params and execution config
-  - Edge definitions and mapping specifications
-- [ ] **IR generation and validation** (`src/pflow/core/ir_generator.py`)
-  - Convert planning output to validated JSON IR
-  - Schema validation and error reporting
-  - Provenance tracking and metadata inclusion
-- [ ] **IR serialization and storage**
-  - Save/load IR definitions
-  - Version compatibility checking
-  - Migration support for schema updates
+### 4.1 LLM Integration Infrastructure
+- [ ] **LLM client abstraction** (`src/pflow/planning/llm_client.py`)
+  - Support for thinking models (Claude, OpenAI o1)
+  - Token usage tracking and optimization
+  - Error handling and retry logic
+- [ ] **Prompt engineering system** (`src/pflow/planning/prompts.py`)
+  - Node selection prompts with metadata context
+  - Workflow generation prompts using extracted metadata
+  - Error recovery and retry prompts
+- [ ] **Model configuration**
+  - Environment variable setup for API keys
+  - Model selection logic (default to Claude Sonnet)
+  - Fallback strategies for model failures
 
-### 4.2 Workflow Storage and Execution
+### 4.2 Metadata-Driven Planning
+- [ ] **Planning context builder** (`src/pflow/planning/context_builder.py`)
+  - Load available node metadata into LLM context
+  - Generate compact, LLM-optimized descriptions
+  - Include action-specific parameter information
+- [ ] **Node selection engine** (`src/pflow/planning/node_selector.py`)
+  - Intelligent node selection based on user intent
+  - Use extracted metadata for compatibility checking
+  - Validation of selected nodes and interfaces
+- [ ] **Workflow generation** (`src/pflow/planning/flow_generator.py`)
+  - Natural language → action-based CLI syntax compilation
+  - Parameter inference using metadata
+  - Basic linear workflows (A >> B >> C)
+
+### 4.3 User Approval & Workflow Storage
+- [ ] **User verification system** (`src/pflow/planning/approval.py`)
+  - Show generated CLI workflow for approval
+  - Allow parameter modifications before execution
+  - Clear presentation of action-based syntax
 - [ ] **Workflow storage system** (`src/pflow/core/workflow_storage.py`)
-  - Save workflows with meaningful names
+  - Save approved workflows with meaningful names
   - Local filesystem storage (~/.pflow/workflows/)
-  - Workflow discovery and listing
-- [ ] **Parameterized execution** (`src/pflow/core/executor.py`)
-  - Load saved workflows with parameter overrides
-  - CLI flag resolution and shared store population
-  - Integration with pocketflow execution engine
-- [ ] **Lockfile generation** (`src/pflow/core/lockfile.py`)
-  - Generate deterministic lockfiles for reproducibility
-  - Version pinning and hash validation
-  - Signature verification for modified workflows
+  - Workflow discovery and reuse
+- [ ] **Pattern recognition**
+  - Intelligent reuse of existing workflow definitions
+  - Parameter extraction for similar requests
+  - "Plan Once, Run Forever" optimization
 
-### 4.3 Execution Tracing and Observability
-- [ ] **Execution tracing system** (`src/pflow/core/tracer.py`)
-  - Step-by-step execution logging
-  - Node input/output capture
-  - Performance metrics and timing
-- [ ] **Trace analysis and debugging** (`src/pflow/core/trace_analyzer.py`)
-  - `pflow trace <run-id>` command implementation
-  - Error correlation and debugging aids
-  - Performance analysis and bottleneck identification
-- [ ] **Observability dashboard** (CLI-based)
-  - Execution history and statistics
-  - Performance trends and optimization suggestions
-  - Error patterns and resolution guidance
-
-### 4.4 End-to-End Integration
-- [ ] **Complete CLI integration** (`src/pflow/cli.py`)
-  - Natural language workflow generation
-  - Saved workflow execution
-  - Registry management commands
-  - Tracing and debugging commands
-- [ ] **Integration tests**
-  - End-to-end workflow generation and execution
-  - Real GitHub and development tool integration
-  - Performance benchmarking against slash commands
-- [ ] **Documentation and examples**
-  - User guide with real development scenarios
-  - Example workflows for common tasks
-  - Troubleshooting guide and FAQ
+### 4.4 End-to-End Integration & Validation
+- [ ] **Complete planning pipeline** (`src/pflow/planning/planner.py`)
+  - Natural language input → validated workflow
+  - Integration with metadata systems
+  - Performance optimization (≤800ms planning latency)
+- [ ] **Planning validation tests**
+  - Test common development workflow descriptions
+  - Validate generated action-based CLI syntax
+  - Success rate measurement (≥95% target)
+- [ ] **User acceptance testing**
+  - Real developer workflow scenarios
+  - Approval rate measurement (≥90% target)
+  - Performance benchmarking vs slash commands
 
 ---
 
@@ -273,18 +264,18 @@ Target transformation:
   - Shared store functionality
   - CLI flag resolution
   - Node registry operations
-- [ ] **Planning tests** (Phase 2)
-  - LLM integration and prompt engineering
-  - Node selection and validation
-  - Workflow generation and compilation
+- [ ] **Metadata tests** (Phase 2)
+  - Docstring parsing and extraction
+  - Registry operations and indexing
+  - Interface compatibility validation
 - [ ] **Node tests** (Phase 3)
   - Each developer node functionality
   - Error handling and edge cases
   - Integration with external services
-- [ ] **Workflow tests** (Phase 4)
-  - IR generation and validation
-  - Workflow storage and execution
-  - Tracing and observability
+- [ ] **Planning tests** (Phase 4)
+  - LLM integration and prompt engineering
+  - Natural language workflow generation
+  - User approval and workflow storage
 
 ### Integration Tests
 - [ ] **End-to-end workflow tests**
@@ -346,7 +337,7 @@ Target transformation:
 1. **Generate workflows from natural language**:
    ```bash
    pflow "analyze this github issue and suggest a fix"
-   # → Generates: gh-issue --action=view >> claude-analyze >> claude-implement
+   # → Generates: github --action=get-issue >> claude --action=analyze >> claude --action=implement
    ```
 
 2. **Execute saved workflows with parameters**:
@@ -357,7 +348,7 @@ Target transformation:
 3. **Get better observability than slash commands**:
    ```bash
    pflow trace run_2024-01-01_abc123
-   # Shows: Step 1: gh-issue ✓ (0.2s), Step 2: claude-analyze ✓ (3.1s), etc.
+   # Shows: Step 1: github --action=get-issue ✓ (0.2s), Step 2: claude --action=analyze ✓ (3.1s), etc.
    ```
 
 4. **Achieve 10x efficiency improvement** over equivalent slash commands in terms of:
@@ -373,10 +364,12 @@ Target transformation:
 
 ### Key Architectural Decisions
 1. **Use pocketflow as foundation** - Leverage existing 100-line framework
-2. **Impure nodes by default** - Realistic for development workflows
-3. **General nodes with actions** - Reduce cognitive load vs specific nodes
-4. **Natural shared store interfaces** - Intuitive key names for simplicity
-5. **Metadata-driven planning** - Fast node selection without code inspection
+2. **Action-based platform nodes** - Reduce cognitive load vs function-specific nodes
+3. **Dependencies-first build order** - Infrastructure before natural language planning
+4. **Simple flag parsing in MVP** - Basic `--key=value` without sophisticated categorization
+5. **Comprehensive metadata extraction** - Rich docstring parsing for planning
+6. **Complete IR with proxy mappings** - Future extensibility built-in
+7. **Natural shared store interfaces** - Intuitive key names for simplicity
 
 ### Critical Dependencies
 1. **LLM access** - Claude/OpenAI API keys for planning

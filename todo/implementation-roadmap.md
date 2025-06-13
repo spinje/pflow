@@ -13,18 +13,19 @@ This document provides a high-level roadmap for implementing the AI-assisted dev
 
 ## 🗺 Development Roadmap
 
-### Phase 1: Minimum Viable Foundation (Weeks 1-2)
-**Goal**: Prove core concept with simplest possible implementation
+### Phase 1: Core Infrastructure Foundation (Weeks 1-2)
+**Goal**: Build robust foundation systems required for all other features
 
 **Priority 1 (Must Have)**:
-- Basic CLI that accepts natural language input
-- Simple LLM integration (Claude/OpenAI) for node selection
-- 3 essential developer nodes: `gh-issue`, `claude-analyze`, `run-tests`
-- Basic workflow generation and execution
+- CLI runtime with simple flag parsing (`--key=value` format)
+- Shared store implementation with natural interface pattern
+- Basic file-based node registry (no versioning in MVP)
+- pocketflow framework integration
+- JSON IR system with proxy mapping support
 
 **Priority 2 (Should Have)**:
-- Workflow storage with meaningful names
-- Basic shared store implementation
+- NodeAwareSharedStore proxy for complex routing
+- Basic workflow storage and execution
 - Simple error handling and validation
 
 **Priority 3 (Nice to Have)**:
@@ -33,86 +34,93 @@ This document provides a high-level roadmap for implementing the AI-assisted dev
 
 **Success Criteria**:
 ```bash
-pflow "analyze github issue 1234 and run tests"
-# Generates: github --action=get-issue --issue=1234 >> claude --action=analyze >> ci --action=run-tests
-# Executes successfully end-to-end
+# Manual CLI workflow execution works
+pflow github --action=get-issue --issue=1234 >> claude --action=analyze >> ci --action=run-tests
+# Executes with proper shared store communication and proxy mapping
 ```
 
 **Critical Requirement**: When users provide similar natural language descriptions with different parameters (e.g., different issue numbers), pflow should intelligently **reuse the existing workflow definition** rather than regenerating from scratch. This pattern recognition is essential for achieving the "Plan Once, Run Forever" efficiency gains.
 
-### Phase 2: Core Value Demonstration (Weeks 3-4)
-**Goal**: Demonstrate clear superiority over slash commands
+### Phase 2: Metadata & Registry Systems (Weeks 3-4)
+**Goal**: Build intelligent metadata extraction and registry capabilities
 
 **Priority 1 (Must Have)**:
-- Complete platform node set with actions (github, claude, ci, git, file, shell)
-- Workflow reuse with parameters (`pflow saved-workflow --param=value`)
-- Performance optimization (sub-second planning, 2-5s execution)
-- Basic execution tracing for debugging
+- Comprehensive docstring parsing system (`docstring_parser` + custom regex)
+- Action-specific parameter mapping and metadata extraction
+- Enhanced registry with metadata indexing and fast lookups
+- Node interface compatibility validation
 
 **Priority 2 (Should Have)**:
-- JSON IR system for workflow definitions
-- Lockfile generation for reproducibility
-- Registry system with node discovery
+- Registry CLI commands (`pflow registry list`, `pflow registry describe`)
+- Metadata-driven validation framework
+- Node discovery and interface analysis
 
 **Priority 3 (Nice to Have)**:
-- Advanced error recovery
-- Workflow sharing between developers
+- Registry optimization and caching
+- Advanced metadata validation
 
 **Success Criteria**:
 ```bash
-# Workflow generation and reuse
-pflow "fix github issue, test, create PR"
-# → Generates: github --action=get-issue >> claude --action=implement >> ci --action=run-tests >> github --action=create-pr
-# → Saves as 'fix-issue' workflow
-pflow fix-issue --issue=1234 --severity=critical
-# → Executes in 2-5s with full traceability
+# Registry operations work with rich metadata
+pflow registry list  # Shows action-based platform nodes
+pflow registry describe github  # Shows all actions and parameters
+# Metadata extraction from docstrings provides rich interface definitions
 ```
 
-### Phase 3: Production Ready (Weeks 5-6)
-**Goal**: MVP ready for real developer adoption
+### Phase 3: Action-Based Platform Nodes (Weeks 5-6)
+**Goal**: Implement core development workflow nodes with action dispatch
 
 **Priority 1 (Must Have)**:
-- Comprehensive testing and validation
-- Real-world scenario testing with actual GitHub repositories
-- Performance benchmarking vs slash commands
-- User documentation and examples
+- `github` node: `get-issue`, `create-issue`, `list-prs`, `create-pr`, `get-files`, `merge-pr`
+- `claude` node: `analyze`, `implement`, `review`, `explain`, `refactor`
+- `ci` node: `run-tests`, `get-status`, `trigger-build`, `get-logs`
+- `git` node: `commit`, `push`, `create-branch`, `merge`, `status`
+- `file` node: `read`, `write`, `copy`, `move`, `delete`
+- `shell` node: `exec`, `pipe`, `background`
 
 **Priority 2 (Should Have)**:
-- Advanced node configurations and parameters
-- Better error messages and debugging tools
-- Workflow import/export capabilities
+- Action-specific parameter handling with global parameters
+- Comprehensive error handling and action-based error flows
+- Integration testing with real external services
 
 **Priority 3 (Nice to Have)**:
-- Team collaboration features
-- Basic CLI autocomplete
+- Advanced node configurations
+- Performance optimization
 
 **Success Criteria**:
-- ≥95% planning success rate for common developer workflows
-- ≥90% user approval rate for generated workflows
-- 10x efficiency improvement demonstrated vs slash commands
+```bash
+# All platform nodes work with action dispatch
+pflow github --action=get-issue --issue=1234 >> claude --action=analyze --prompt="understand this"
+# Action-specific parameters and error handling work correctly
+```
 
-### Phase 4: Ecosystem Integration (Weeks 7-8)
-**Goal**: Seamless integration with existing developer workflows
+### Phase 4: Natural Language Planning (Weeks 7-8)
+**Goal**: Add intelligent natural language workflow generation on top of solid foundation
 
 **Priority 1 (Must Have)**:
-- Slash command migration utilities
-- Integration with common development tools
-- Comprehensive workflow library for common tasks
-- Performance monitoring and optimization
+- LLM integration for thinking models (Claude/OpenAI o1)
+- Metadata-driven node selection using extracted interface definitions
+- Natural language to CLI workflow compilation
+- User approval workflow for generated plans
 
 **Priority 2 (Should Have)**:
-- Advanced workflow composition
-- Better observability and analytics
-- Team workflow sharing
+- Workflow reuse and pattern recognition
+- Performance optimization (≤800ms planning latency)
+- Advanced prompt engineering for reliable generation
 
 **Priority 3 (Nice to Have)**:
-- Web interface for workflow visualization
-- Integration with CI/CD systems
+- Workflow library and reuse suggestions
+- Advanced NL understanding and context
 
 **Success Criteria**:
-- Developers can migrate existing slash commands to pflow workflows
-- Common development tasks have pre-built workflows
-- Tool integrates seamlessly with existing development environments
+```bash
+# Natural language planning works end-to-end
+pflow "fix github issue, test, create PR"
+# → Generates: github --action=get-issue >> claude --action=implement >> ci --action=run-tests >> github --action=create-pr
+# → User approves → Saves as reusable workflow
+pflow fix-issue --issue=1234 --severity=critical  # Reuses saved workflow
+# ≥95% planning success rate, ≥90% user approval rate
+```
 
 ---
 
@@ -153,96 +161,103 @@ pflow fix-issue --issue=1234 --severity=critical
 
 ## 🎯 Implementation Priorities
 
-### Week 1-2: Foundation Sprint
-**Focus**: Prove the core concept works
+### Week 1-2: Infrastructure Foundation Sprint
+**Focus**: Build robust core systems required for all other features
 
-1. **CLI Framework** (Day 1-2)
-   - Basic click-based CLI
-   - Natural language input handling
-   - Environment setup for LLM access
+1. **CLI Runtime** (Day 1-3)
+   - Basic click-based CLI with simple flag parsing
+   - `--key=value` format without sophisticated categorization
+   - Shell pipe input detection and `shared["stdin"]` handling
 
-2. **LLM Integration** (Day 3-4)
-   - Simple prompt engineering for node selection
-   - Basic workflow generation
-   - Error handling for LLM failures
+2. **Shared Store & Proxy System** (Day 4-6)
+   - Core shared store implementation with natural interfaces
+   - NodeAwareSharedStore proxy for key mapping
+   - JSON IR system with proxy mapping support
 
-3. **Core Nodes** (Day 5-8)
-   - `gh-issue` node with basic GitHub API integration
-   - `claude-analyze` node with claude-code CLI
-   - `run-tests` node with simple test execution
+3. **Basic Registry** (Day 7-9)
+   - Simple file-based node registry (no versioning in MVP)
+   - Node discovery and basic metadata loading
+   - Registry CLI commands foundation
 
-4. **Basic Execution** (Day 9-10)
-   - pocketflow integration
-   - Shared store implementation
-   - End-to-end workflow execution
+4. **pocketflow Integration** (Day 10)
+   - Framework integration and testing
+   - Basic workflow execution without NL planning
+   - End-to-end manual CLI workflow validation
 
-### Week 3-4: Value Demonstration Sprint
-**Focus**: Show clear advantages over existing solutions
+### Week 3-4: Metadata & Registry Sprint
+**Focus**: Build intelligent metadata systems for node discovery and planning
 
-1. **Complete Node Library** (Day 11-14)
-   - All essential developer nodes
-   - Robust error handling
-   - Performance optimization
+1. **Metadata Extraction** (Day 11-14)
+   - Comprehensive docstring parsing (`docstring_parser` + custom regex)
+   - Action-specific parameter mapping
+   - Interface compatibility analysis
 
-2. **Workflow Management** (Day 15-18)
-   - Save/load workflows
-   - Parameterized execution
-   - Basic tracing and debugging
+2. **Enhanced Registry** (Day 15-17)
+   - Metadata indexing and fast lookups
+   - Node discovery with rich interface definitions
+   - Registry CLI commands (`list`, `describe`)
 
-3. **Performance Optimization** (Day 19-20)
-   - Planning speed improvements
-   - Execution efficiency
-   - Token usage optimization
+3. **Validation Framework** (Day 18-20)
+   - Node interface compatibility checking
+   - JSON IR validation
+   - Error handling with meaningful suggestions
 
-### Week 5-6: Production Readiness Sprint
-**Focus**: Make it reliable and user-friendly
+### Week 5-6: Platform Nodes Sprint
+**Focus**: Implement action-based developer workflow nodes
 
-1. **Testing and Validation** (Day 21-24)
-   - Comprehensive test suite
-   - Real-world scenario testing
-   - Performance benchmarking
+1. **Core Platform Nodes** (Day 21-26)
+   - `github` node with actions: `get-issue`, `create-issue`, `list-prs`, `create-pr`, `get-files`, `merge-pr`
+   - `claude` node with actions: `analyze`, `implement`, `review`, `explain`, `refactor`
+   - `ci` node with actions: `run-tests`, `get-status`, `trigger-build`, `get-logs`
+   - `git`, `file`, `shell` nodes with respective action sets
 
-2. **User Experience** (Day 25-28)
-   - Error messages and debugging
+2. **Action Dispatch & Parameters** (Day 27-28)
+   - Action-specific parameter handling
+   - Global parameters available across actions
+   - Comprehensive error handling and testing
+
+### Week 7-8: Natural Language Planning Sprint
+**Focus**: Add intelligent workflow generation on solid foundation
+
+1. **LLM Integration** (Day 29-32)
+   - Thinking model integration (Claude/OpenAI o1)
+   - Metadata-driven node selection
+   - Natural language to CLI workflow compilation
+   - User approval workflow
+
+2. **Production Polish** (Day 33-36)
+   - Performance optimization (≤800ms planning latency)
+   - Comprehensive testing and validation
    - Documentation and examples
-   - CLI improvements
-
-### Week 7-8: Ecosystem Integration Sprint
-**Focus**: Make it indispensable for development workflows
-
-1. **Advanced Features** (Day 29-32)
-   - Workflow composition
-   - Team collaboration
-   - Migration tools
-
-2. **Polish and Launch** (Day 33-36)
-   - Final optimizations
-   - Launch preparation
-   - User onboarding
+   - Success metrics validation (≥95% planning success, ≥90% user approval)
 
 ---
 
 ## 📊 Success Metrics by Phase
 
-### Phase 1: Foundation
-- [ ] Basic workflow generation works
-- [ ] 3 core nodes execute successfully
-- [ ] End-to-end demonstration possible
+### Phase 1: Core Infrastructure
+- [ ] CLI runtime with simple flag parsing works
+- [ ] Shared store and proxy mapping system functional
+- [ ] Basic registry with node discovery operational
+- [ ] Manual CLI workflows execute end-to-end
 
-### Phase 2: Value Demonstration
-- [ ] 10+ developer workflows supported
-- [ ] 5x+ efficiency improvement measured
-- [ ] Workflow reuse demonstrated
+### Phase 2: Metadata & Registry
+- [ ] Comprehensive docstring parsing extracts action-specific metadata
+- [ ] Registry CLI commands provide rich node information
+- [ ] Interface compatibility validation catches mismatches
+- [ ] Metadata-driven node discovery ready for planning
 
-### Phase 3: Production Ready
-- [ ] ≥95% planning success rate
-- [ ] ≥90% user approval rate
-- [ ] Comprehensive test coverage
+### Phase 3: Platform Nodes
+- [ ] All 6 platform nodes (github, claude, ci, git, file, shell) implemented
+- [ ] Action dispatch with action-specific parameters works
+- [ ] Integration with real external services functional
+- [ ] Complex developer workflows executable via CLI
 
-### Phase 4: Ecosystem Integration
-- [ ] Slash command migration possible
-- [ ] Common workflows pre-built
-- [ ] Developer adoption metrics positive
+### Phase 4: Natural Language Planning
+- [ ] ≥95% planning success rate for reasonable requests
+- [ ] ≥90% user approval rate for generated workflows
+- [ ] ≤800ms planning latency achieved
+- [ ] End-to-end NL → CLI → execution pipeline working
 
 ---
 
@@ -256,9 +271,11 @@ pflow fix-issue --issue=1234 --severity=critical
 
 ### Architecture Principles
 1. **Build on pocketflow** - Don't reinvent the execution engine
-2. **Natural interfaces** - Intuitive shared store keys
-3. **Metadata-driven** - Fast node selection without code inspection
-4. **Impure by default** - Realistic for development workflows
+2. **Action-based platform nodes** - Reduce cognitive load with grouped functionality
+3. **Natural interfaces** - Intuitive shared store keys
+4. **Metadata-driven** - Fast node selection without code inspection
+5. **Dependencies-first** - Build foundation before advanced features
+6. **Simple but complete** - MVP includes proxy mappings for future extensibility
 
 ### Quality Gates
 1. **Every feature tested** - Unit and integration tests required
