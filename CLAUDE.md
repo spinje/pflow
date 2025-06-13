@@ -101,22 +101,50 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 ```
 pflow/
-├── pocketflow/              # 100-line framework foundation
-│   ├── __init__.py         # Core framework (Node, Flow, Shared Store)
-│   └── docs/               # Framework documentation and examples
-├── src/pflow/              # Main pflow CLI implementation
-│   ├── __init__.py        # Currently empty - CLI entry point to be added
-│   └── foo.py             # Placeholder - to be replaced with core modules
-├── docs/                   # Comprehensive project specifications
-│   ├── PRD-pflow.md       # Product requirements document
-│   ├── architecture-document.md  # Complete system architecture
-│   └── [other specs]      # Implementation details and design docs
-├── tests/                  # Test suite
-│   ├── test_foo.py        # Placeholder test
-│   └── test_links.py      # Documentation link validation
-├── Makefile               # Development automation
-├── pyproject.toml         # Project configuration and dependencies
-└── CLAUDE.md             # This file
+├── README.md               # Project overview and user guide
+├── pocketflow/             # 100-line framework foundation
+│   ├── __init__.py        # Core framework (Node, Flow, Shared Store)
+│   ├── docs/              # Framework documentation and examples
+│   ├── cookbook/          # Extensive examples (40+ patterns)
+│   └── tests/             # Framework test suite
+├── src/pflow/             # Main pflow CLI implementation
+│   ├── __init__.py       # Currently empty - CLI entry point to be added
+│   └── foo.py            # Placeholder - to be replaced with core modules
+├── docs/                  # Comprehensive project specifications
+│   ├── **PRD-pflow.md**                      # **CORE: Product requirements document**
+│   ├── **architecture-document.md**          # **CORE: Complete system architecture**
+│   ├── **mvp-scope.md**                      # **CORE: Clear MVP boundaries**
+│   ├── **action-based-node-architecture.md** # **CORE: Action-based node design**
+│   ├── shared-store-node-proxy-architecture.md # Shared store + proxy pattern
+│   ├── shared-store-cli-runtime-specification.md # CLI integration and runtime
+│   ├── json-schema-for-flows-ir-and-nodesmetadata.md # JSON IR and metadata schemas
+│   ├── planner-responsibility-functionality-spec.md # Dual-mode planner (CLI + NL)
+│   ├── runtime-behavior-specification.md # Execution engine and caching
+│   ├── node-discovery-namespacing-and-versioning.md # Registry system
+│   ├── component-inventory.md # Complete MVP vs v2.0 breakdown
+│   ├── shell-pipe-native-integration.md # Unix pipe support
+│   ├── cli-autocomplete-spec.md # CLI autocomplete (v2.0)
+│   ├── mcp-server-integrationa-and-security-model.md # MCP integration (v2.0)
+│   ├── core-nodes/        # Platform node specifications
+│   │   ├── github-platform-node-spec.md
+│   │   ├── claude-platform-node-spec.md
+│   │   ├── ci-platform-node-spec.md
+│   │   └── llm-prompt-core-node-spec.md
+│   ├── implementation-details/ # Implementation specifics
+│   │   ├── node-metadata-extraction.md
+│   │   └── cli-auto-complete-feature-implementation-details.md
+│   └── future-version/    # Post-MVP features
+│       ├── future-llm-node-generation.md
+│       └── json-field-extraction-specification.md
+├── todo/                  # Implementation planning
+│   ├── implementation-roadmap.md  # High-level roadmap
+│   └── mvp-implementation-plan.md # Detailed task breakdown
+├── tests/                 # Test suite
+│   ├── test_foo.py       # Placeholder test
+│   └── test_links.py     # Documentation link validation
+├── Makefile              # Development automation
+├── pyproject.toml        # Project configuration and dependencies
+└── CLAUDE.md            # This file
 ```
 
 ### Claude's Operating Guidelines
