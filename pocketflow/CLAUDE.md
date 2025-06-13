@@ -1,4 +1,4 @@
-### PocketFlow
+# PocketFlow
 
 pflow is built on the **PocketFlow** framework (100-line Python library in `pocketflow/__init__.py`) using the **Shared Store + Natural Interface Pattern**:
 

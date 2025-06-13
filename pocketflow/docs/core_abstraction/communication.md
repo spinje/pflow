@@ -1,3 +1,10 @@
+---
+layout: default
+title: "Communication"
+parent: "Core Abstraction"
+nav_order: 3
+---
+
 # Communication
 
 Nodes and Flows **communicate** in 2 ways:

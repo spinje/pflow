@@ -204,19 +204,23 @@ The codebase is in early development with:
 - ✅ PocketFlow framework integrated
 - ✅ Comprehensive documentation infrastructure
 - ✅ Development tooling and testing setup
-- ⏳ Core CLI interface implementation (next phase)
-- ⏳ Node registry system (next phase)
+- ⏳ Create an overview plan for the MVP in `todo/mvp-scope.md` (<- We are here)
+- ⏳ Create a detailed todo list with tasks and subtasks based on the plan
+- ⏳ Start implementing features for the MVP using the todo list one by one
 
 ### Next Development Phase
 
-Focus on implementing:
-1. CLI interface with pipe syntax parsing
-2. Node registry with metadata extraction
-3. Basic built-in nodes (read_file, transform, prompt)
-4. JSON IR generation and validation
-5. Shell integration with stdin/stdout
+Focus on creating the detailed plan for the MVP by doing the following:
+1. Identify the core features that are needed for the MVP
+2. Evaluate if they have any pre-requisites that need to be implemented first
+3. Create a prioritized implementation roadmap with clear milestones
+4. Break down each feature into specific, testable tasks
+5. Define success criteria and validation steps for each component
+
 
 The goal is a working MVP that can execute simple flows like:
 ```bash
 pflow read_file data.txt >> transform --format=json >> prompt "summarize this data"
 ```
+
+But first, we need to create a detailed plan for the MVP.
