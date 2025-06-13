@@ -135,6 +135,84 @@ ci --action=run-tests          # Test the solution
 github --action=create-pr       # Share the solution
 ```
 
+## Real-World Examples
+
+### Daily Standup Automation
+```bash
+# Business scenario: Automate morning standup preparation
+$ pflow "check my team's open PRs, get failing CI builds, summarize weekend slack alerts, format for standup"
+
+# Generated action-based workflow:
+github --action=list-prs --team=backend >>
+ci --action=get-failures >>
+slack --action=get-messages --since=friday >>
+claude --action=analyze --prompt="format as standup report"
+
+# Subsequent executions:
+$ pflow standup-prep
+```
+
+### Production Incident Investigation
+```bash
+# Business scenario: Investigate production errors and correlate with recent changes
+$ pflow "get datadog errors last hour, find related deploys, check which PRs merged, identify likely cause"
+
+# Generated action-based workflow:
+datadog --action=get-errors --window=1h >>
+github --action=get-deploys >>
+github --action=get-merged-prs >>
+claude --action=analyze --prompt="correlate errors with changes"
+```
+
+### Customer Churn Analysis
+```bash
+# Business scenario: Identify churn signals from payment and CRM data
+$ pflow "get stripe failed payments last 30 days, match with hubspot contacts, identify churn signals"
+
+# Generated action-based workflow:
+stripe --action=list-failed-payments --days=30 >>
+hubspot --action=get-contacts >>
+claude --action=analyze --prompt="analyze churn risk" >>
+file --action=save --format=csv
+```
+
+### Multi-System Deployment
+```bash
+# Business scenario: Coordinate deployment across multiple systems
+$ pflow "deploy to staging"
+
+# Generated action-based workflow:
+github --action=create-release --tag=v2.0 >>
+aws --action=deploy --env=staging >>
+slack --action=send --channel=deploys --message="Staging deployment complete"
+```
+
+## Trade-offs and Considerations
+
+### Acknowledged Downsides
+
+**1. Slightly More Verbose Syntax**
+- Action-based: `github --action=list-prs`
+- Function-based: `github-list-prs`
+- **Trade-off**: Slightly longer syntax for significantly better discoverability
+
+**2. Parameter Complexity**
+- Different actions require different parameter sets
+- Example: `github --action=create-issue` needs `--title` and `--body`, while `github --action=list-prs` needs `--state` and `--limit`
+- **Mitigation**: Action-specific help and validation
+
+**3. Error Message Clarity**
+- Need clear indication of which specific action failed within a platform node
+- Example: "GitHub action 'create-pr' failed: missing required parameter 'title'"
+- **Mitigation**: Action-aware error reporting and debugging tools
+
+### Why These Trade-offs Are Acceptable
+
+1. **Cognitive Load Benefits Outweigh Syntax Overhead**: Learning 20 platforms vs 200 functions
+2. **Parameter Complexity Is Inherent**: The underlying operations have different requirements regardless of architecture
+3. **Error Clarity Improves With Tooling**: Better tracing and debugging capabilities offset complexity
+4. **MCP Future-Proofing**: Direct alignment with industry standard tool patterns
+
 ## Implementation Strategy
 
 ### Metadata Schema Updates
