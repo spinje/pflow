@@ -174,7 +174,7 @@ class McpGetToolsNode(Node):
 
     def exec(self, prep_res):
         # Check cache first
-        cached_tools = load_cached_tools(self.server_name)
+        cached_tools = load_cached_tools(self.server_name) # Important user note:this is not correct, we always want to update the cache, the cache is only used for cli and planner discovery of the tools and its parameters
         if cached_tools and not self.params.get("refresh_cache"):
             return cached_tools
 
