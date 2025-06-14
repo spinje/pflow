@@ -46,7 +46,7 @@ pip install pflow
 pflow "check my github PRs and summarize them for standup"
 
 # pflow generates and shows you the workflow:
-# → github --action=list-prs --state=open >> llm --prompt="summarize for standup"
+# → github-list-prs --state=open >> llm --prompt="summarize for standup"
 #
 # Run this flow? [Y/n] y
 ✅ Flow saved as 'standup-prep'
@@ -62,7 +62,7 @@ pflow standup-prep
 pflow "fetch aws costs, analyze by service, create report, send to slack"
 
 # See the generated pipeline:
-# → aws --action=get-costs --period=7d >> claude --action=analyze --prompt="analyze by service" >> file --action=write --format=markdown >> slack --action=send --channel=ops
+# → aws-get-costs --period=7d >> llm --prompt="analyze by service" >> write-file --format=markdown >> slack-send --channel=ops
 ```
 
 ### 3\. Integrate Everything
@@ -195,7 +195,7 @@ pflow registry add-mcp github slack stripe
 Use Simon Willison's `llm` CLI as a node:
 
 ```bash
-pflow file --action=read --path=data.csv >> llm --prompt="analyze trends in this data" >> file --action=write --path=report.md
+pflow read-file --path=data.csv >> llm --prompt="analyze trends in this data" >> write-file --path=report.md
 ```
 
 ### 🚀 A Supercharger for Claude Code & other Agents

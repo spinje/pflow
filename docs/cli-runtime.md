@@ -168,28 +168,28 @@ The node uses natural interface names while the proxy handles any necessary tran
       "execution": { "max_retries": 3, "wait": 1.0 }
     },
     {
-      "id": "summarise-text",
-      "version": "2.1.0",
-      "params": { "temperature": 0.7 }
+      "id": "llm",
+      "version": "1.0.0",
+      "params": { "model": "gpt-4", "temperature": 0.7 }
     }
   ],
   "edges": [
-    {"from": "yt-transcript", "to": "summarise-text"}
+    {"from": "yt-transcript", "to": "llm"}
   ],
   "mappings": {
     "yt-transcript": {
       "input_mappings": {"url": "video_source"},
       "output_mappings": {"transcript": "raw_transcript"}
     },
-    "summarise-text": {
-      "input_mappings": {"text": "raw_transcript"},
-      "output_mappings": {"summary": "article_summary"}
+    "llm": {
+      "input_mappings": {"prompt": "formatted_prompt"},
+      "output_mappings": {"response": "article_summary"}
     }
   }
 }
 ```
 
-Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy mapping).
+Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
 ---
 
@@ -222,8 +222,8 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 | Scenario | Command | Shared-store after injection | Proxy needed? |
 |---|---|---|---|
 | Provide video URL | `pflow yt-transcript --url=`[`https://youtu.be/abc`](https://youtu.be/abc) | `{ "url": "`[`https://youtu.be/abc`](https://youtu.be/abc)`" }` | No |
-| Override temperature | `pflow summarise-text --temperature=0.9` | – | No |
-| Pipe text | `cat notes.txt | pflow summarise-text` | `{ "stdin": "<bytes>" }` | Maybe |
+| Override temperature | `pflow llm --temperature=0.9` | – | No |
+| Pipe text | `cat notes.txt | pflow llm --prompt="Summarize this"` | `{ "stdin": "<bytes>" }` | Maybe |
 | Complex routing | Flow with marketplace compatibility | `{ "video_source": "...", "raw_transcript": "...", "article_summary": "..." }` | Yes |
 
 ---
@@ -255,7 +255,7 @@ Graph: `yt-transcript` ➜ `summarise-text` (wired through transparent proxy map
 **CLI Command**:
 
 ```bash
-pflow yt-transcript --url=https://youtu.be/abc123 >> summarise-text --temperature=0.9
+pflow yt-transcript --url=https://youtu.be/abc123 >> llm --prompt="Summarize this transcript" --temperature=0.9
 ```
 
 **Shared Store Population**:
@@ -271,15 +271,15 @@ shared = {
 ```python
 # Simple scenario - direct access
 def create_flow():
-    fetch_node = YTTranscript()
-    summarize_node = SummarizeText()
+    fetch_node = YTTranscriptNode()
+    process_node = LLMNode()
 
     # Configure nodes with IR params
     fetch_node.set_params({"language": "en"})
-    summarize_node.set_params({"temperature": 0.9})  # CLI override
+    process_node.set_params({"model": "gpt-4", "temperature": 0.9})  # CLI override
 
     # Wire the flow using pocketflow operators
-    fetch_node >> summarize_node
+    fetch_node >> process_node
     return Flow(start=fetch_node)
 
 # Direct execution
@@ -307,15 +307,15 @@ def run_with_cli():
       "params": {"temperature": 0.7"}
     }
   ],
-  "edges": [{"from": "yt-transcript", "to": "summarise-text"}],
+  "edges": [{"from": "yt-transcript", "to": "llm"}],
   "mappings": {
     "yt-transcript": {
       "input_mappings": {"url": "video_source"},
       "output_mappings": {"transcript": "raw_transcript"}
     },
-    "summarise-text": {
-      "input_mappings": {"text": "raw_transcript"},
-      "output_mappings": {"summary": "article_summary"}
+    "llm": {
+      "input_mappings": {"prompt": "formatted_prompt"},
+      "output_mappings": {"response": "article_summary"}
     }
   }
 }
@@ -334,15 +334,15 @@ shared = {
 ```python
 # Complex scenario - with proxy mapping
 def create_flow():
-    fetch_node = YTTranscript()
-    summarize_node = SummarizeText()
+    fetch_node = YTTranscriptNode()
+    process_node = LLMNode()
 
     # Configure nodes
     fetch_node.set_params({"language": "en"})
-    summarize_node.set_params({"temperature": 0.9})
+    process_node.set_params({"model": "gpt-4", "temperature": 0.9})
 
     # Wire the flow
-    fetch_node >> summarize_node
+    fetch_node >> process_node
     return Flow(start=fetch_node)
 
 def run_with_cli():
@@ -374,13 +374,13 @@ def run_with_cli():
 # post() writes to shared["transcript"] (proxy maps to "raw_transcript" if needed)
 ```
 
-**Summarise Node**:
+**LLM Node**:
 
 ```python
 # Node always uses natural interface
-# prep() reads from shared["text"] (proxy maps to "raw_transcript" if needed)
-# exec() uses self.params.get("temperature") = 0.9 (CLI override)
-# post() writes to shared["summary"] (proxy maps to "article_summary" if needed)
+# prep() reads from shared["prompt"] (proxy maps to "formatted_prompt" if needed)
+# exec() uses self.params.get("model", "gpt-4") and self.params.get("temperature") = 0.9 (CLI override)
+# post() writes to shared["response"] (proxy maps to "article_summary" if needed)
 ```
 
 #### 9.4 Final State
@@ -391,7 +391,8 @@ def run_with_cli():
 shared = {
   "url": "https://youtu.be/abc123",
   "transcript": "Video transcript content...",
-  "summary": "Generated summary..."
+  "prompt": "Summarize this transcript: Video transcript content...",
+  "response": "Generated summary..."
 }
 ```
 
@@ -401,6 +402,7 @@ shared = {
 shared = {
   "video_source": "https://youtu.be/abc123",
   "raw_transcript": "Video transcript content...",
+  "formatted_prompt": "Summarize this transcript: Video transcript content...",
   "article_summary": "Generated summary..."
 }
 ```
@@ -409,7 +411,77 @@ Same node code, different shared store layouts.
 
 ---
 
-### 10 · Flow identity, caching & purity
+### 10 · Simple Node Composition Patterns
+
+#### 10.1 Basic Sequential Flow
+
+**Pattern**: Simple data transformation pipeline
+
+```bash
+# CLI command
+pflow read-file --path=data.txt >> llm --prompt="Summarize this data" >> write-file --path=summary.md
+```
+
+**Generated flow**:
+
+```python
+def create_simple_flow():
+    reader = ReadFileNode()
+    processor = LLMNode()
+    writer = WriteFileNode()
+
+    reader.set_params({"path": "data.txt"})
+    processor.set_params({"model": "gpt-4"})
+    writer.set_params({"path": "summary.md"})
+
+    # Simple sequential composition
+    reader >> processor >> writer
+    return Flow(start=reader)
+```
+
+#### 10.2 Multi-Step LLM Processing
+
+**Pattern**: Multiple LLM transformations
+
+```bash
+# CLI command
+pflow yt-transcript --url=VIDEO >> \
+  llm --prompt="Extract key points" >> \
+  llm --prompt="Create presentation outline" >> \
+  write-file --path=outline.md
+```
+
+**Shared store flow**:
+
+```python
+shared = {
+    "url": "https://youtu.be/abc123",           # Initial input
+    "transcript": "Video transcript...",        # After yt-transcript
+    "response": "Key points: 1. ...",          # After first LLM
+    "response": "Outline: I. Introduction..."  # After second LLM (overwrites)
+}
+```
+
+#### 10.3 Platform Integration
+
+**Pattern**: Combine platform nodes with LLM processing
+
+```bash
+# CLI command
+pflow github-get-issue --repo=owner/repo --issue=123 >> \
+  llm --prompt="Analyze this issue and suggest a fix" >> \
+  github-add-comment --issue=123
+```
+
+**Benefits of Simple Composition**:
+- **Predictable**: Each node has one clear purpose
+- **Testable**: Easy to test individual nodes
+- **Reusable**: Same nodes work in different flows
+- **Readable**: Flow purpose is immediately clear from CLI
+
+---
+
+### 11 · Flow identity, caching & purity
 
 - **Flow-hash** = ordered nodes + mappings (when defined) + node ids/versions.
 
@@ -421,7 +493,7 @@ Same node code, different shared store layouts.
 
 ---
 
-### 11 · Validation rules
+### 12 · Validation rules
 
 | \# | Rule | Failure action |
 |---|---|---|

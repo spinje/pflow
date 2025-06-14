@@ -129,16 +129,15 @@ class Node(BaseNode):
     def post(self, shared, prep_res, exec_res):  # Write results back
         pass
 
-# Natural flow syntax
-node_a >> node_b                    # Default transition
-node_a - "error" >> error_handler   # Action-based transition
+# Simple flow syntax
+node_a >> node_b >> node_c          # Sequential composition
 ```
 
 **Framework Characteristics:**
 
 - **Lightweight**: Minimal abstraction over Python functions
 - **Stable**: Core execution patterns don't change
-- **Action-based**: Built-in support for conditional transitions
+- **Simple**: Sequential node composition with clear data flow
 - **Retry-enabled**: Configurable retry with `max_retries` parameter
 
 ### 3.2 Shared Store Pattern
@@ -150,10 +149,11 @@ The **shared store** is pflow's primary innovation—a flow-scoped memory that e
 shared = {
     "url": "https://youtu.be/abc123",      # CLI injection
     "transcript": "Video content...",       # Node output
-    "summary": "Generated summary..."       # Final result
+    "prompt": "Summarize: Video content...", # LLM input
+    "response": "Generated summary..."      # LLM output
 }
 
-class YTTranscript(Node):
+class YTTranscriptNode(Node):
     def prep(self, shared):
         return shared["url"]  # Natural interface
 
@@ -248,9 +248,9 @@ node.prep(proxy)  # still reads shared["text"], proxy maps to shared["raw_conten
 ```json
 {
   "mappings": {
-    "summarize-node": {
-      "input_mappings": {"text": "raw_transcript"},
-      "output_mappings": {"summary": "article_summary"}
+    "llm": {
+      "input_mappings": {"prompt": "formatted_prompt"},
+      "output_mappings": {"response": "article_summary"}
     }
   }
 }
@@ -376,7 +376,7 @@ graph TD
 | **Metadata Discovery** | Extract all available node interfaces | Registry scan | Node metadata JSON |
 | **LLM Context Loading** | Prepare selection context | Metadata + prompt | LLM-ready context |
 | **Node Selection** | Choose appropriate building blocks | User intent | Selected nodes list |
-| **Flow Structure** | Create graph with transitions | Node capabilities | DAG with actions |
+| **Flow Structure** | Create graph with sequential flow | Node capabilities | DAG with clear data flow |
 | **Structural Validation** | Verify graph completeness | Node graph | Validated structure |
 | **Interface Modeling** | Design shared store schema | Node interfaces | Key compatibility map |
 | **Mapping Generation** | Create proxy mappings if needed | Interface mismatches | Optional mappings |
@@ -389,15 +389,15 @@ graph TD
 ```
 Input: "summarize this youtube video"
 ↓
-Registry Discovery: [yt-transcript, summarize-text, save-markdown, ...]
+Registry Discovery: [yt-transcript, llm, write-file, ...]
 ↓
-LLM Selection: yt-transcript@1.0.0 + summarize-text@2.1.0
+LLM Selection: yt-transcript@1.0.0 + llm@1.0.0
 ↓
-Flow Structure: yt-transcript >> summarize-text
+Flow Structure: yt-transcript >> llm
 ↓
-Interface Analysis: transcript output → text input (compatible)
+Interface Analysis: transcript output → prompt input (via mapping)
 ↓
-Generated CLI: pflow yt-transcript --url=$URL >> summarize-text
+Generated CLI: pflow yt-transcript --url=$URL >> llm --prompt="Summarize this transcript"
 ↓
 User Confirmation Required
 ```
@@ -419,13 +419,13 @@ User Confirmation Required
 **Example CLI Processing:**
 
 ```bash
-Input: pflow yt-transcript --url=X >> summarize-text --temperature=0.9
+Input: pflow yt-transcript --url=X >> llm --prompt="Summarize" --temperature=0.9
 ↓
-Parsing: [yt-transcript{url=X}, summarize-text{temperature=0.9}]
+Parsing: [yt-transcript{url=X}, llm{prompt="Summarize", temperature=0.9}]
 ↓
 Validation: Both nodes exist, versions resolved
 ↓
-Interface Check: transcript → text (compatible)
+Interface Check: transcript → prompt (via mapping)
 ↓
 IR Generation: Complete JSON with params and execution config
 ↓
@@ -438,7 +438,7 @@ The planner uses **extracted node metadata** rather than code inspection:
 
 ```python
 # Node docstring (source)
-class YTTranscript(Node):
+class YTTranscriptNode(Node):
     """Fetches YouTube transcript from video URL.
 
     Interface:
@@ -617,7 +617,7 @@ pflow yt-transcript --url=https://youtu.be/abc123
 # Result: shared["url"] = "https://youtu.be/abc123"
 
 # Parameter override (node config)
-pflow summarize-text --temperature=0.9
+pflow llm --temperature=0.9
 # Result: node.params["temperature"] = 0.9
 
 # Execution configuration
@@ -625,7 +625,7 @@ pflow fetch-data --max-retries=3 --wait=1.0
 # Result: node.execution = {"max_retries": 3, "wait": 1.0}
 
 # Pipe stdin (reserved key)
-echo "content" | pflow summarize-text
+echo "content" | pflow llm --prompt="Summarize this content"
 # Result: shared["stdin"] = "content"
 ```
 
@@ -661,13 +661,13 @@ CLI flags use **natural, intuitive names** that match human expectations:
 ```bash
 # Multi-stage pipeline
 pflow yt-transcript --url=$VIDEO >> \
-      summarize-text --temperature=0.7 >> \
-      save-markdown --file=summary.md
+      llm --prompt="Summarize this transcript" --temperature=0.7 >> \
+      write-file --path=summary.md
 
-# Conditional error handling (future)
-pflow fetch-url --url=$URL --max-retries=3 >> \
-      extract-text >> \
-      summarize-text
+# Simple sequential processing
+pflow read-file --path=$FILE --max-retries=3 >> \
+      llm --prompt="Extract key points" >> \
+      write-file --path=summary.txt
 ```
 
 **Saved Flow References:**
@@ -828,7 +828,7 @@ pflow's **Intermediate Representation (IR)** is a complete JSON specification th
     "planner_run_id": "plan_abc123",
     "locked_nodes": {
       "core/yt-transcript": "1.0.0",
-      "core/summarize-text": "2.1.0"
+      "core/llm": "1.0.0"
     }
   },
   "nodes": [...],
@@ -969,7 +969,7 @@ Validated IR generates **lockfiles** for deterministic execution:
   "ir_hash": "sha256:abc123def456...",
   "node_versions": {
     "core/yt-transcript": "1.0.0",
-    "core/summarize-text": "2.1.0"
+    "core/llm": "1.0.0"
   },
   "signature": "valid",
   "created_by": "planner-v1.0.0",

@@ -6,6 +6,32 @@ This document defines a core architectural principle in `pflow`: the coordinatio
 
 This pattern is implemented using the lightweight **pocketflow framework** (100 lines of Python), leveraging its existing `params` system and flow orchestration capabilities.
 
+## Shared Store vs Params Guidelines
+
+Before diving into the autonomy principle, it's crucial to understand when to use shared store vs params:
+
+### Use Shared Store When:
+- **Data flows between nodes**: Input/output data that transforms through the pipeline
+- **Content is dynamic**: User inputs, API responses, generated content
+- **Data has workflow-level significance**: Core data the workflow operates on
+
+### Use Params When:
+- **Configuration is static**: Model selection, API endpoints, retry policies
+- **Settings are node-specific**: Temperature, max_tokens, file formats
+- **Values are operational**: How the node operates, not what it operates on
+
+### Best Practice Pattern:
+```python
+def prep(self, shared):
+    # Check shared store first (dynamic), then params (static)
+    value = shared.get("key") or self.params.get("key")
+    if not value:
+        raise ValueError("key must be in shared store or params")
+    return value
+```
+
+**Shared store takes precedence** - this allows dynamic workflow data to override static configuration when needed.
+
 ## Node Autonomy Principle
 
 The fundamental insight is that **node writers shouldn't need to understand flow orchestration concepts**. They should write simple, testable business logic using natural key names, while flow designers handle mapping complexity at the orchestration level.
@@ -149,23 +175,31 @@ A crucial distinction in our implementation:
 ### Node Example (Static - Written Once)
 
 ```python
-class Summarize(Node):  # Inherits from pocketflow.Node
-    """Summarizes text content using LLM.
+class LLMNode(Node):  # Inherits from pocketflow.Node
+    """General-purpose LLM processing.
 
     Interface:
-    - Reads: shared["text"] - input text to summarize
-    - Writes: shared["summary"] - generated summary
-    - Params: temperature (default 0.7) - LLM creativity
+    - Reads: shared["prompt"] - prompt to send to LLM
+    - Writes: shared["response"] - LLM's response
+    - Params: model (default gpt-4), temperature (default 0.7), system
     """
     def prep(self, shared):
-        return shared["text"]  # Simple, natural access
+        # Best practice: check shared store first, then params
+        prompt = shared.get("prompt") or self.params.get("prompt")
+        if not prompt:
+            raise ValueError("prompt must be in shared store or params")
+        return prompt
 
     def exec(self, prep_res):
-        temp = self.params.get("temperature", 0.7)  # Flat params
-        return call_llm(prep_res, temperature=temp)
+        return call_llm(
+            prompt=prep_res,
+            model=self.params.get("model", "gpt-4"),
+            temperature=self.params.get("temperature", 0.7),
+            system=self.params.get("system")
+        )
 
     def post(self, shared, prep_res, exec_res):
-        shared["summary"] = exec_res  # Direct assignment
+        shared["response"] = exec_res  # Direct assignment
 ```
 
 ## Node Testing Simplicity
@@ -173,17 +207,17 @@ class Summarize(Node):  # Inherits from pocketflow.Node
 The proxy pattern makes testing intuitive and natural:
 
 ```python
-def test_summarize_node():
-    node = Summarize()
-    node.set_params({"temperature": 0.5})  # Just params
+def test_llm_node():
+    node = LLMNode()
+    node.set_params({"model": "gpt-4", "temperature": 0.5})  # Just params
 
     # Natural, intuitive shared store
-    shared = {"text": "Long article content here..."}
+    shared = {"prompt": "Summarize this: Long article content here..."}
 
     node.run(shared)
 
-    assert "summary" in shared
-    assert len(shared["summary"]) < len(shared["text"])
+    assert "response" in shared
+    assert len(shared["response"]) > 0
 ```
 
 Compare this to complex binding setup requirements in other approaches.
@@ -194,13 +228,13 @@ Compare this to complex binding setup requirements in other approaches.
 
 ```python
 # No mappings needed - nodes access shared store directly
-shared = {"text": "Input content"}
+shared = {"prompt": "Summarize this content: Input content"}
 
-summarize_node = Summarize()
-summarize_node.set_params({"temperature": 0.7})
+llm_node = LLMNode()
+llm_node.set_params({"model": "gpt-4", "temperature": 0.7})
 
-flow = Flow(start=summarize_node)
-flow.run(shared)  # Node accesses shared["text"] directly
+flow = Flow(start=llm_node)
+flow.run(shared)  # Node accesses shared["prompt"] directly
 ```
 
 ### Level 2 - Complex Flow (Proxy Mapping)
@@ -210,16 +244,16 @@ flow.run(shared)  # Node accesses shared["text"] directly
 shared = {"raw_transcript": "Input content"}  # Flow schema
 
 # Generated flow code handles proxy creation
-if "mappings" in ir and summarize_node.id in ir["mappings"]:
-    mappings = ir["mappings"][summarize_node.id]
+if "mappings" in ir and llm_node.id in ir["mappings"]:
+    mappings = ir["mappings"][llm_node.id]
     proxy = NodeAwareSharedStore(
         shared,
-        input_mappings={"text": "raw_transcript"},
-        output_mappings={"summary": "article_summary"}
+        input_mappings={"prompt": "formatted_prompt"},  # Built from transcript
+        output_mappings={"response": "summary"}
     )
-    summarize_node._run(proxy)  # Node still uses shared["text"]
+    llm_node._run(proxy)  # Node still uses shared["prompt"]
 else:
-    summarize_node._run(shared)  # Direct access
+    llm_node._run(shared)  # Direct access
 ```
 
 **Same node code works at both levels.**
@@ -230,41 +264,43 @@ else:
 
 ```python
 # Generated flow code (from IR)
-summarize_node = Summarize()
+llm_node = LLMNode()
 
 # Set params from IR
-summarize_node.set_params({
+llm_node.set_params({
+    "model": "gpt-4",
     "temperature": 0.3  # Conservative for academic content
 })
 
 # Wire the flow using pocketflow operators
-flow = Flow(start=summarize_node)
+flow = Flow(start=llm_node)
 ```
 
 **Flow B** (Complex - With Proxy Mapping):
 
 ```python
 # Same static node class, different generated flow
-summary_node = Summarize()  # Same node class!
+llm_node = LLMNode()  # Same node class!
 
 # Set params from IR
-summary_node.set_params({
+llm_node.set_params({
+    "model": "claude-3-opus",
     "temperature": 0.8  # More creative for informal content
 })
 
 # Generated proxy setup for marketplace compatibility
-if summary_node.id in ir["mappings"]:
+if llm_node.id in ir["mappings"]:
     proxy = NodeAwareSharedStore(
         shared,
-        input_mappings={"text": "video_data/transcript"},
-        output_mappings={"summary": "output/video_summary"}
+        input_mappings={"prompt": "formatted_prompt"},  # Built from transcript
+        output_mappings={"response": "output/video_summary"}
     )
-    summary_node._run(proxy)
+    llm_node._run(proxy)
 else:
-    summary_node._run(shared)
+    llm_node._run(shared)
 ```
 
-The same `Summarize` node class works in completely different contexts with different shared store schemas.
+The same `LLMNode` class works in completely different contexts with different shared store schemas.
 
 ## Shared Store Namespacing
 
@@ -307,21 +343,21 @@ Example:
 {
   "nodes": [
     {
-      "id": "summarize-text",
-      "params": {"temperature": 0.7}
+      "id": "llm",
+      "params": {"model": "gpt-4", "temperature": 0.7}
     },
     {
-      "id": "store-markdown",
+      "id": "write-file",
       "params": {"format": "markdown"}
     }
   ],
   "edges": [
-    {"from": "summarize-text", "to": "store-markdown"}
+    {"from": "llm", "to": "write-file"}
   ],
   "mappings": {
-    "summarize-text": {
-      "input_mappings": {"text": "raw_texts/doc1.txt"},
-      "output_mappings": {"summary": "summaries/doc1.txt"}
+    "llm": {
+      "input_mappings": {"prompt": "formatted_prompt"},
+      "output_mappings": {"response": "content"}
     }
   }
 }

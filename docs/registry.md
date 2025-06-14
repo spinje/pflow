@@ -9,7 +9,7 @@
 ```
 
 Examples:
-`core/yt-transcript@1.0.0` `mcp/weather-get@0.3.2` `vesperance/custom-embed@2.1.0`
+`core/yt-transcript@1.0.0` `core/github-get-issue@1.0.0` `core/llm@1.0.0` `mcp/weather-get@0.3.2`
 
 ### 1.1 Namespace
 
@@ -23,6 +23,33 @@ Examples:
 - Lower-case, hyphens allowed: `[a-z0-9-]+`
 - Should match the Python file stem
 - Consistent with pflow's kebab-case convention
+- **Simple node naming**: `platform-action` (e.g., `github-get-issue`, `slack-send-message`)
+- **General nodes**: single purpose name (e.g., `llm`, `read-file`, `write-file`)
+
+### 1.2.1 Simple Node Naming Conventions
+
+**Platform Nodes** follow `platform-action` pattern:
+
+| Platform | Examples | Purpose |
+|----------|----------|---------|
+| **GitHub** | `github-get-issue`, `github-create-pr`, `github-list-prs` | Individual GitHub operations |
+| **Slack** | `slack-send-message`, `slack-get-channel`, `slack-upload-file` | Individual Slack operations |
+| **YouTube** | `yt-transcript`, `yt-get-metadata`, `yt-download-audio` | Individual YouTube operations |
+
+**General Nodes** use single-purpose names:
+
+| Node | Purpose | Interface |
+|------|---------|-----------|
+| **`llm`** | General text processing | `prompt` → `response` |
+| **`read-file`** | File input | `path` → `content` |
+| **`write-file`** | File output | `content` + `path` → file |
+| **`transform-json`** | JSON manipulation | `data` + `transform` → `result` |
+
+**Naming Benefits**:
+- **Predictable**: Users can guess node names (`github-get-issue`)
+- **Discoverable**: `pflow registry search github` finds all GitHub nodes
+- **Composable**: Clear single-purpose functions
+- **Future CLI Grouping**: Naturally maps to `pflow github get-issue` syntax in v2.0
 
 ### 1.3 Version
 
@@ -119,8 +146,7 @@ During installation, planner-compatible metadata is extracted:
   "description": "Fetches YouTube transcript from video URL",
   "inputs": ["url"],
   "outputs": ["transcript"],
-  "params": {"language": "en"},
-  "actions": ["default", "video_unavailable"]
+  "params": {"language": "en"}
 }
 ```
 
@@ -146,8 +172,8 @@ Installation validates:
 ```json
 {
   "yt-transcript": "1.0.0",
-  "summarize-text": "2.1.0",
-  "store-markdown": "1.5.2"
+  "llm": "1.0.0",
+  "write-file": "1.5.2"
 }
 ```
 
@@ -162,7 +188,7 @@ Installation validates:
 ```json
 {
   "ir_hash": "sha256:abc123...",
-  "node_versions": {"yt-transcript": "1.0.0", "summarize-text": "2.1.0"},
+  "node_versions": {"yt-transcript": "1.0.0", "llm": "1.0.0"},
   "signature": "valid",
   "ir": { /* complete JSON IR */ }
 }
@@ -189,13 +215,13 @@ Version lockfile feeds into execution lockfile generation. Version changes trigg
 
 ```bash
 # Simple flow (planner resolves versions using lockfile)
-pflow yt-transcript --url=X >> summarize-text
+pflow yt-transcript --url=X >> llm --prompt="Summarize this transcript"
 
 # Explicit versioning when needed
-pflow yt-transcript@1.0.0 --url=X >> summarize-text@2.1.0
+pflow yt-transcript@1.0.0 --url=X >> llm@1.0.0 --prompt="Summarize"
 
 # Mixed shorthand (planner validates compatibility)
-pflow yt-transcript --url=X >> summarize-text@2
+pflow yt-transcript --url=X >> llm@1 --prompt="Summarize"
 
 # Natural language (planner selects appropriate versions)
 pflow "summarize this youtube video"
@@ -209,8 +235,8 @@ pflow "summarize this youtube video"
 
 ```bash
 pflow registry list              # table of installed nodes with versions
-pflow registry search summarize  # fuzzy search across all registries
-pflow registry describe yt-transcript@1.0.0  # detailed node information
+pflow registry search llm        # fuzzy search across all registries
+pflow registry describe llm@1.0.0        # detailed node information
 pflow registry validate --all    # validate all installed nodes
 pflow registry refresh           # re-scan filesystem, update metadata
 ```
@@ -259,9 +285,10 @@ Versioning enables robust integration with pflow's core architectural principles
 
 **Metadata-Driven Planning**: Version-aware metadata allows planner to:
 
-- Select optimal node combinations for user requirements
+- Select optimal simple node combinations for user requirements
 - Generate appropriate proxy mappings for version compatibility
 - Validate interface alignment across different node versions
+- **LLM node preference**: Default to general LLM node for text processing tasks
 
 **Flow Reproducibility**: Version lockfiles ensure:
 
@@ -273,7 +300,7 @@ Versioning enables robust integration with pflow's core architectural principles
 
 - Natural interface preservation across versions
 - Proxy mapping compatibility for marketplace flows
-- Action-based error handling consistency
+- Simple node composition patterns
 
 ---
 
@@ -292,7 +319,7 @@ Versioning enables robust integration with pflow's core architectural principles
 
 ```python
 # From versioned node file
-class YTTranscript(Node):
+class YTTranscriptNode(Node):
     """Fetches YouTube transcript.
     Interface:
     - Reads: shared["url"] - YouTube video URL
@@ -324,9 +351,9 @@ User: "summarize this youtube video"
   ↓
 Planner Discovery: Scans all yt-transcript versions (1.0.0, 1.2.0, 2.0.0)
   ↓
-LLM Selection: Chooses yt-transcript@1.2.0 + summarize-text@2.1.0 (optimal compatibility)
+LLM Selection: Chooses yt-transcript@1.2.0 + llm@1.0.0 (simple node preference)
   ↓
-IR Generation: {"nodes": [{"id": "yt-transcript", "version": "1.2.0", ...}]}
+IR Generation: {"nodes": [{"id": "yt-transcript", "version": "1.2.0"}, {"id": "llm", "version": "1.0.0"}]}
   ↓
 Runtime: Executes with pinned versions
 ```
@@ -334,13 +361,13 @@ Runtime: Executes with pinned versions
 ### 11.2 CLI Pipe Path
 
 ```
-User: pflow yt-transcript@1 --url=X >> summarize-text
+User: pflow yt-transcript@1 --url=X >> llm --prompt="Summarize this"
   ↓
 CLI Parsing: Extract version hint "@1" for yt-transcript
   ↓
-Planner Resolution: Resolve "@1" to "1.2.0" (highest 1.x.x), validate with summarize-text default
+Planner Resolution: Resolve "@1" to "1.2.0" (highest 1.x.x), validate with llm default
   ↓
-Validation: Check interface compatibility between yt-transcript@1.2.0 → summarize-text@2.1.0
+Validation: Check interface compatibility between yt-transcript@1.2.0 → llm@1.0.0
   ↓
 IR Generation: Complete IR with resolved versions
   ↓
@@ -350,9 +377,9 @@ Runtime: Direct execution (no user verification needed for CLI path)
 ### 11.3 Version Lockfile Integration
 
 ```
-Existing flow.versions.lock: {"yt-transcript": "1.0.0", "summarize-text": "2.0.0"}
+Existing flow.versions.lock: {"yt-transcript": "1.0.0", "llm": "1.0.0"}
   ↓
-User: pflow yt-transcript --url=X >> summarize-text
+User: pflow yt-transcript --url=X >> llm --prompt="Summarize"
   ↓
 Planner: Uses locked versions for consistency
   ↓

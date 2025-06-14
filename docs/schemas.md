@@ -23,7 +23,7 @@ Both schemas work together to enable metadata-driven flow planning and validatio
     "planner_version": "1.0.0",
     "locked_nodes": {
       "core/yt-transcript": "1.0.0",
-      "core/summarize-text": "2.1.0"
+      "core/llm": "1.0.0"
     }
   },
   "nodes": [...],
@@ -92,11 +92,61 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
 }
 ```
 
+**LLM Node Example (General-purpose text processing):**
+
+```json
+{
+  "node": {
+    "id": "llm",
+    "namespace": "core",
+    "version": "1.0.0",
+    "python_file": "nodes/core/llm/1.0.0/node.py",
+    "class_name": "LLMNode"
+  },
+  "interface": {
+    "inputs": {
+      "prompt": {
+        "type": "str",
+        "description": "Prompt text to send to LLM"
+      }
+    },
+    "outputs": {
+      "response": {
+        "type": "str",
+        "description": "Generated response from LLM"
+      }
+    },
+    "params": {
+      "model": {
+        "type": "str",
+        "default": "gpt-4",
+        "optional": true,
+        "description": "LLM model to use"
+      },
+      "temperature": {
+        "type": "float",
+        "default": 0.7,
+        "optional": true,
+        "description": "Sampling temperature"
+      }
+    }
+  },
+  "documentation": {
+    "description": "General-purpose LLM text processing",
+    "long_description": "Processes any text prompt using configurable LLM models. Smart exception to simple node philosophy - prevents proliferation of specific prompt nodes."
+  },
+  "extraction": {
+    "source_hash": "sha256:def456...",
+    "extracted_at": "2025-01-01T12:00:00Z",
+    "extractor_version": "1.0.0"
+  }
+}
+```
+
 ### 2.2 Interface Declaration Rules
 
 - **Natural Interfaces**: Inputs/outputs use `shared["key"]` patterns from docstrings
 - **Params Structure**: Maps to `self.params.get("key", default)` usage in code
-- **Action Enumeration**: Lists all possible return values from node `post()` method
 - **Type Information**: Basic types (str, int, float, bool, dict, list, any)
 
 ### 2.2.1 Type-Based Prevalidation Support
@@ -217,31 +267,34 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 
 ## 4 · Edge Object
 
-**Basic Transitions:**
-
-```json
-{"from": "fetch-transcript", "to": "create-summary"}
-```
-
-**Action-Based Transitions:**
+**Simple Sequential Transitions:**
 
 ```json
 [
-  {"from": "validator", "to": "processor"},
-  {"from": "validator", "to": "error-handler", "action": "fail"},
-  {"from": "processor", "to": "validator", "action": "continue"},
-  {"from": "processor", "to": "finalizer"}
+  {"from": "fetch-transcript", "to": "process-text"},
+  {"from": "process-text", "to": "write-output"}
+]
+```
+
+**Action-Based Flow Control:**
+
+```json
+[
+  {"from": "fetch-transcript", "to": "process-text"},
+  {"from": "fetch-transcript", "to": "error-handler", "action": "error"},
+  {"from": "process-text", "to": "write-output"},
+  {"from": "error-handler", "to": "retry-fetch", "action": "retry"}
 ]
 ```
 
 **Rules:**
 
-- DAG must be acyclic; validator enforces
-- Default transitions omit `"action"` field
-- Named actions enable conditional flow control
-- All declared actions must have defined transitions
+- Simple sequential flow (node-to-node) for default paths
+- Action-based transitions for error handling and conditional flow control
+- Clear data flow from input to output
+- Interface compatibility between connected nodes
 
-> **Flow Structure**: See [planner specification](./planner-responsibility-functionality-spec.md) for action-based transition generation
+> **Flow Structure**: See [planner specification](./planner-responsibility-functionality-spec.md) for simple node sequencing
 
 ---
 
@@ -252,11 +305,11 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 ```json
 {
   "mappings": {
-    "summarize-text": {
-      "input_mappings": {"text": "raw_transcript"},
-      "output_mappings": {"summary": "article_summary"}
+    "llm": {
+      "input_mappings": {"prompt": "formatted_prompt"},
+      "output_mappings": {"response": "article_summary"}
     },
-    "store-result": {
+    "write-file": {
       "input_mappings": {"content": "article_summary"}
     }
   }
@@ -360,7 +413,7 @@ Flow failing any step is rejected before execution with comprehensive diagnostic
 **Extension Compatibility:**
 
 - Forward compatibility for new mapping types
-- Action-based transition extensions
+- Simple node composition extensions
 - Execution configuration additions
 
 **Node Metadata Schema Versioning:**
@@ -379,7 +432,6 @@ Flow failing any step is rejected before execution with comprehensive diagnostic
 - `constraints` object for resource caps (CPU, memory, disk)
 - `annotations` free-form metadata for GUI/tooling integration
 - Advanced mapping patterns for nested shared store keys
-- Conditional execution based on shared store state
 
 **Node Metadata Extensions:**
 
@@ -489,8 +541,7 @@ def build_llm_context(available_nodes: List[str]) -> str:
     "planner_version": "1.0.0",
     "locked_nodes": {
       "core/yt-transcript": "1.0.0",
-      "core/summarize-text": "2.1.0",
-      "core/error-handler": "1.0.0"
+      "core/llm": "1.0.0"
     }
   },
   "nodes": [
@@ -503,25 +554,18 @@ def build_llm_context(available_nodes: List[str]) -> str:
     },
     {
       "id": "create-summary",
-      "registry_id": "core/summarize-text",
-      "version": "2.1.0",
-      "params": {"temperature": 0.7, "max_tokens": 150},
-      "execution": {"use_cache": true}
-    },
-    {
-      "id": "handle-error",
-      "registry_id": "core/error-handler",
+      "registry_id": "core/llm",
       "version": "1.0.0",
-      "params": {"fallback_message": "Video unavailable"}
+      "params": {"model": "gpt-4", "temperature": 0.7},
+      "execution": {"use_cache": true}
     }
   ],
   "edges": [
-    {"from": "fetch-transcript", "to": "create-summary"},
-    {"from": "fetch-transcript", "to": "handle-error", "action": "video_unavailable"}
+    {"from": "fetch-transcript", "to": "create-summary"}
   ],
   "mappings": {
     "create-summary": {
-      "input_mappings": {"text": "transcript"}
+      "input_mappings": {"prompt": "formatted_prompt"}
     }
   }
 }
@@ -530,8 +574,8 @@ def build_llm_context(available_nodes: List[str]) -> str:
 **Example Features:**
 
 - Registry-based node references with metadata resolution
-- Natural interface compatibility (`shared["transcript"]` → `shared["text"]` via mapping)
-- Action-based error handling (`video_unavailable` action)
+- Natural interface compatibility (`shared["transcript"]` → `shared["prompt"]` via mapping)
+- Simple sequential data flow
 - Proper execution configuration for retry and caching
 - Version locking for reproducibility
 

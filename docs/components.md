@@ -80,27 +80,25 @@ This document provides a comprehensive inventory of all components and subsystem
 
 #### 3.2 Node Metadata System
 
-- **Purpose**: Structured interface definitions for action-based platform nodes
+- **Purpose**: Structured interface definitions for simple, single-purpose nodes
 - **Components**:
   - Docstring parser for interface extraction
-  - JSON metadata schema with action definitions
-  - Input/output key definitions per action
-  - Action-specific parameter specifications (some params may be available for all actions)
-  - Global parameter definitions (e.g., extra prompts for claude node across all actions)
-  - Parameter availability mapping per action
+  - JSON metadata schema with natural interface definitions
+  - Input/output shared store key definitions
+  - Parameter specifications for node behavior
   - Purity annotations (`@flow_safe`)
-  - Action discovery and validation
+  - Interface validation and compatibility checking
 
-#### 3.3 Built-in Platform Nodes (MVP Set)
+#### 3.3 Built-in Simple Nodes (MVP Set)
 
-- **Purpose**: Action-based platform functionality
-- **Required Platform Nodes**:
-  - `github` - actions: `get-issue`, `create-issue`, `list-prs`, `create-pr`, `get-files`, `merge-pr`
-  - `claude` - actions: `analyze`, `implement`, `review`, `explain`, `refactor`
-  - `ci` - actions: `run-tests`, `get-status`, `trigger-build`, `get-logs`
-  - `git` - actions: `commit`, `push`, `create-branch`, `merge`, `status`
-  - `file` - actions: `read`, `write`, `copy`, `move`, `delete`
-  - `shell` - actions: `exec`, `pipe`, `background`
+- **Purpose**: Simple, single-purpose platform functionality
+- **Required Simple Nodes**:
+  - **GitHub**: `github-get-issue`, `github-create-issue`, `github-list-prs`, `github-create-pr`, `github-get-files`, `github-merge-pr`
+  - **LLM**: `llm` (general-purpose text processing - smart exception to simple node philosophy)
+  - **CI**: `ci-run-tests`, `ci-get-status`, `ci-trigger-build`, `ci-get-logs`
+  - **Git**: `git-commit`, `git-push`, `git-create-branch`, `git-merge`, `git-status`
+  - **File**: `file-read`, `file-write`, `file-copy`, `file-move`, `file-delete`
+  - **Shell**: `shell-exec`, `shell-pipe`, `shell-background`
 
 ### 4. Planning & Validation
 
@@ -256,12 +254,14 @@ This document provides a comprehensive inventory of all components and subsystem
 
 #### 1.1 Action-Based Transitions
 
-- **Purpose**: Conditional execution paths
+- **Purpose**: Conditional execution paths (action-based outputs for flow control)
 - **Components**:
   - `node - "action" >> handler` syntax
   - Action string returns from `post()`
   - Multiple transition paths
   - Action validation
+
+**Note**: This refers to action-based outputs (flow control), not action-based nodes (which were replaced by simple nodes)
 
 #### 1.2 Error Recovery Patterns
 

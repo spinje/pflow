@@ -11,7 +11,7 @@ The **planner** serves as the central validation and IR generation engine for pf
 
 Its primary goal is to ensure all flows (whether AI-generated or user-written) produce *validated, deterministic JSON IR* ready for execution **without sacrificing** pflow's guarantees of auditability, purity, caching, and reproducibility.
 
-The planner integrates seamlessly with the **shared store pattern**, generating flows that use natural node interfaces with optional proxy mappings for complex orchestration scenarios.
+The planner integrates seamlessly with the **shared store pattern**, generating flows that use simple, single-purpose nodes with natural interfaces and optional proxy mappings for complex orchestration scenarios.
 
 ---
 
@@ -58,7 +58,7 @@ CLI Pipe ──▶ │   CLI shim  │
 ```
 
 - The planner is implemented **as a normal pocketflow flow**—not hard-coded logic.
-- It generates **JSON IR** containing node graphs, action-based transitions, and shared store mappings.
+- It generates **JSON IR** containing node graphs, simple node sequencing, and shared store mappings.
 - **Two entry points**: Natural language (full LLM selection) or CLI pipe syntax (validation only).
 - The **compiler** converts IR to CLI syntax (NL path) or validates existing syntax (CLI path).
 - The **runtime** executes flows using `NodeAwareSharedStore` proxy pattern when needed.
@@ -75,7 +75,7 @@ The planner operates through a **validation-first approach**, performing linting
 |---|---|---|
 | **A. Node/Flow Discovery** | Extract metadata JSON from available Python classes. | Registry of nodes/flows with natural language descriptions. |
 | **B. LLM Selection** | Use thinking model to choose nodes/flows from metadata context. | Selected building blocks (nodes and/or sub-flows). |
-| **C. Flow Structure Generation** | Create node graph with action-based transitions. | Structural IR with conditional flow control. |
+| **C. Flow Structure Generation** | Create node graph with simple node sequencing. | Structural IR with clear data flow. |
 | **D. Structural Validation** | Lint node compatibility, action paths, reachability. | Pass → continue, Fail → retry or abort. |
 | **E. Shared Store Modeling** | Create shared store schema, generate mappings if needed. | Compatible shared store interface design. |
 | **F. Type/Interface Validation** | Validate shared store key compatibility between nodes. | Pass → continue, Fail → repair or retry. |
@@ -191,14 +191,13 @@ def plan_flow(user_input: str) -> JsonIR:
 The planner discovers available building blocks by extracting metadata from Python class docstrings and annotations:
 
 ```python
-class YTTranscript(Node):
+class YTTranscriptNode(Node):
     """Fetches YouTube transcript.
 
     Interface:
     - Reads: shared["url"] - YouTube video URL
     - Writes: shared["transcript"] - extracted transcript text
     - Params: language (default "en") - transcript language
-    - Actions: "default", "video_unavailable"
     """
 ```
 
@@ -211,7 +210,6 @@ class YTTranscript(Node):
   "inputs": ["url"],
   "outputs": ["transcript"],
   "params": {"language": "en"},
-  "actions": ["default", "video_unavailable"],
   "purity": "flow_safe",
   "version": "1.0.0"
 }
@@ -225,7 +223,7 @@ class YTTranscript(Node):
   "description": "Downloads video, extracts transcript, and creates summary",
   "inputs": ["url"],
   "outputs": ["summary"],
-  "sub_nodes": ["yt-transcript", "summarize-text"],
+  "sub_nodes": ["yt-transcript", "llm"],
   "complexity": "simple",
   "version": "1.2.0"
 }
@@ -286,16 +284,18 @@ When generation is required, the planner uses a **thinking model** (e.g., o1-pre
 | Priority | Strategy | Example |
 |---|---|---|
 | **Exact Match** | Existing flow satisfies prompt completely | "summarize video" → `video-summary-pipeline` |
-| **Sub-flow Reuse** | Existing flow used as component | "transcribe and translate" → `yt-transcript` + new translation |
-| **New Composition** | Combine individual nodes | "analyze sentiment" → `extract-text` + `sentiment-analysis` |
+| **Sub-flow Reuse** | Existing flow used as component | "transcribe and translate" → `yt-transcript` + `llm --prompt="translate"` |
+| **New Composition** | Combine individual simple nodes | "analyze sentiment" → `read-file` + `llm --prompt="analyze sentiment"` |
+| **LLM Node Preference** | Use general LLM node for text tasks | "explain this code" → `read-file` + `llm --prompt="explain this code"` |
 
 ### 6.4 LLM Response Format
 
 ```json
 {
-  "reasoning": "User wants video summary. Exact match with existing pipeline.",
+  "reasoning": "User wants video summary. Exact match with existing pipeline using yt-transcript and llm nodes.",
   "selection_type": "exact_match",
   "chosen_flow": "video-summary-pipeline",
+  "selected_nodes": ["yt-transcript", "llm"],
   "modifications": []
 }
 ```
@@ -304,33 +304,34 @@ When generation is required, the planner uses a **thinking model** (e.g., o1-pre
 
 - **Unknown Nodes**: Suggest closest semantic matches, request clarification
 - **Ambiguous Intent**: Present ranked options for user selection
-- **Complex Requirements**: Break down into simpler sub-problems
+- **Complex Requirements**: Break down into simpler sub-problems using LLM node
+- **Text Processing Tasks**: Default to LLM node with appropriate prompts
 
 ---
 
 ## 7 · Flow Structure Generation
 
-### 7.1 Action-Based Transition Syntax
+### 7.1 Simple Node Sequencing
 
-The planner generates flows using action-based transitions for conditional flow control:
+The planner generates flows using simple node-to-node sequencing for clear data flow:
 
-**Basic Transitions**:
+**Basic Sequencing**:
 
 ```python
-node_a >> node_b                    # Default transition (no action needed)
-node_a - "error" >> error_handler   # Named action transition
+node_a >> node_b >> node_c          # Sequential data flow
 ```
 
-**Complex Flow Patterns**:
+**Simple Flow Patterns**:
 
 ```python
-# Branching (default + named actions)
-validator >> processor               # Default path (e.g., validation passes)
-validator - "fail" >> error_handler # Named action for failures
+# Text processing pipeline
+read_file >> llm >> write_file      # Read → Process → Write
 
-# Loops with conditions
-processor - "continue" >> validator  # Loop back for more processing
-processor >> finalizer              # Default path when done
+# API data flow
+github_get_issue >> llm >> github_add_comment  # Get → Analyze → Respond
+
+# Multi-step analysis
+yt_transcript >> llm >> llm >> write_file      # Get → Summarize → Expand → Save
 ```
 
 ### 7.2 IR Representation
@@ -338,28 +339,25 @@ processor >> finalizer              # Default path when done
 ```json
 {
   "nodes": [
-    {"id": "validator", "version": "1.2.0", "params": {"strict": true}},
-    {"id": "processor", "version": "2.0.1", "params": {"batch_size": 100}},
-    {"id": "error_handler", "version": "1.1.0", "params": {}},
-    {"id": "finalizer", "version": "1.0.0", "params": {}}
+    {"id": "read-file", "version": "1.0.0", "params": {"path": "data.txt"}},
+    {"id": "llm", "version": "1.0.0", "params": {"model": "gpt-4", "temperature": 0.7}},
+    {"id": "write-file", "version": "1.0.0", "params": {"path": "summary.md"}}
   ],
   "edges": [
-    {"from": "validator", "to": "error_handler", "action": "fail"},
-    {"from": "validator", "to": "processor"},
-    {"from": "processor", "to": "validator", "action": "continue"},
-    {"from": "processor", "to": "finalizer"}
+    {"from": "read-file", "to": "llm"},
+    {"from": "llm", "to": "write-file"}
   ]
 }
 ```
 
-*Note: Default transitions (node_a >> node_b) omit the `"action"` field entirely. Only named actions include the field.*
+*Note: Simple sequential flows use direct node-to-node connections without complex action logic.*
 
 ### 7.3 Flow Graph Validation
 
 - **Reachability**: All nodes reachable from start
-- **Completeness**: All declared actions have defined transitions
-- **Cycles**: Infinite loops detected and flagged
-- **Termination**: At least one path leads to terminal node
+- **Sequencing**: Clear data flow from input to output
+- **Interface Compatibility**: Node inputs match previous node outputs
+- **Termination**: Flow has clear start and end points
 
 ---
 
@@ -380,7 +378,7 @@ processor >> finalizer              # Default path when done
 
 | Type | Checks | Failure Action |
 |---|---|---|
-| **Structural** | Node existence, action definitions, graph connectivity | Retry with repair |
+| **Structural** | Node existence, graph connectivity | Retry with repair |
 | **Interface** | Shared store key compatibility, type consistency | Generate mappings or retry |
 | **Semantic** | Node purpose alignment, flow logic soundness | LLM re-selection |
 | **Syntactic** | JSON schema compliance, IR format validity | Abort with diagnostic |
@@ -390,7 +388,7 @@ processor >> finalizer              # Default path when done
 - **Retry Budget**: Maximum 4 attempts per validation failure
 - **Purity Constraints**: Retries only allowed on `@flow_safe` nodes; abort otherwise
 - **Incremental Repair**: Fix specific issues rather than full regeneration
-- **Graceful Degradation**: Fall back to simpler flows when complex ones fail
+- **Graceful Degradation**: Fall back to simpler flows, prefer LLM node for text tasks
 - **User Intervention**: Escalate to user when automated repair fails
 
 ### 7.4 Failure Artifacts
@@ -422,9 +420,9 @@ The planner analyzes node metadata to understand natural shared store interfaces
 ```json
 {
   "mappings": {
-    "summarize-text": {
-      "input_mappings": {"text": "raw_transcript"},
-      "output_mappings": {"summary": "article_summary"}
+    "llm": {
+      "input_mappings": {"prompt": "formatted_prompt"},
+      "output_mappings": {"response": "article_summary"}
     }
   }
 }
@@ -432,7 +430,7 @@ The planner analyzes node metadata to understand natural shared store interfaces
 
 **Mapping Triggers**:
 
-- Node A outputs `"transcript"` but Node B expects `"text"`
+- Node A outputs `"transcript"` but LLM node expects `"prompt"`
 - Marketplace compatibility requires specific key names
 - Namespace organization needed for complex flows
 
@@ -468,7 +466,7 @@ The planner embeds **default parameters** from node metadata into IR:
 ```json
 {
   "nodes": [
-    {"id": "summarize-text", "version": "2.1.0", "params": {"temperature": 0.7, "max_tokens": 150}}
+    {"id": "llm", "version": "1.0.0", "params": {"model": "gpt-4", "temperature": 0.7}}
   ]
 }
 ```
@@ -538,23 +536,23 @@ elif user_intent == "technical_summary":
       "execution": {"max_retries": 2, "wait": 1.0}
     },
     {
-      "id": "summarize-text",
-      "version": "2.1.0",
-      "params": {"temperature": 0.7}
+      "id": "llm",
+      "version": "1.0.0",
+      "params": {"model": "gpt-4", "temperature": 0.7}
     }
   ],
   "edges": [
-    {"from": "yt-transcript", "to": "summarize-text"}
+    {"from": "yt-transcript", "to": "llm"}
   ],
   "mappings": {
-    "summarize-text": {
-      "input_mappings": {"text": "transcript"}
+    "llm": {
+      "input_mappings": {"prompt": "formatted_prompt"}
     }
   },
   "shared_store_schema": {
     "inputs": ["url"],
-    "outputs": ["summary"],
-    "intermediate": ["transcript"]
+    "outputs": ["response"],
+    "intermediate": ["transcript", "formatted_prompt"]
   }
 }
 ```
@@ -565,7 +563,7 @@ elif user_intent == "technical_summary":
 
 1. Planner generates validated JSON IR
 2. Compiler converts IR → CLI syntax + executable Python code
-3. User sees CLI preview: `yt-transcript --url=X >> summarize-text`
+3. User sees CLI preview: `yt-transcript --url=X >> llm --prompt="Summarize this transcript"`
 4. User approval triggers execution
 
 ### 10.3 Lockfile Signature System
@@ -573,7 +571,7 @@ elif user_intent == "technical_summary":
 ```json
 {
   "ir_hash": "sha256:abc123...",
-  "node_versions": {"yt-transcript": "1.0.0", "summarize-text": "2.1.0"},
+  "node_versions": {"yt-transcript": "1.0.0", "llm": "1.0.0"},
   "signature": "valid",
   "created_by": "planner-v1.0.0"
 }
@@ -595,7 +593,7 @@ elif user_intent == "technical_summary":
 
 ```bash
 # Generated by compiler, shown to user
-pflow yt-transcript --url=https://youtu.be/abc123 >> summarize-text --temperature=0.9
+pflow yt-transcript --url=https://youtu.be/abc123 >> llm --prompt="Summarize this transcript" --temperature=0.9
 ```
 
 ### 11.2 User Approval Process
@@ -611,10 +609,10 @@ pflow yt-transcript --url=https://youtu.be/abc123 >> summarize-text --temperatur
 ❌ Flow Generation Failed
 │
 ├─ Issue: Node 'sentiment-analysis' not found
-├─ Suggestion: Did you mean 'text-sentiment'?
-├─ Available: text-sentiment, emotion-detection, mood-analysis
+├─ Suggestion: Use 'llm' node with prompt "analyze sentiment of this text"
+├─ Available: llm, text-sentiment, emotion-detection
 │
-└─ Retry with corrected selection? [Y/n]
+└─ Retry with LLM node? [Y/n]
 ```
 
 ### 11.4 Future Enhancements
@@ -646,13 +644,13 @@ The planner's transparent generation process serves as an **educational scaffold
 pflow "summarize this youtube video"
 
 # Generated Output (Structure Revealed)
-yt-transcript --url $VIDEO >> summarize-text --temperature=0.7
+yt-transcript --url $VIDEO >> llm --prompt="Summarize this transcript" --temperature=0.7
 
 # User Learning Opportunity
 # ✓ Sees video → transcript → summary decomposition
-# ✓ Understands parameter role (temperature)
-# ✓ Can modify before execution
-# ✓ Builds intuition for similar tasks
+# ✓ Understands LLM node with clear prompt
+# ✓ Can modify prompt and parameters before execution
+# ✓ Builds intuition for similar text processing tasks
 ```
 
 **Long-term Empowerment:**
@@ -976,13 +974,14 @@ flow_hash = sha256(
 
 | Term | Definition |
 |---|---|
-| **Action-based transitions** | Conditional flow control using return values from node `post()` methods |
 | **JSON IR** | Intermediate Representation in JSON format containing complete flow specification |
+| **LLM Node** | General-purpose text processing node that prevents proliferation of specific prompt nodes |
 | **Metadata JSON** | Structured descriptions of nodes/flows extracted from Python classes |
-| **Natural interface** | Intuitive shared store key names nodes use (`shared["text"]` vs complex bindings) |
+| **Natural interface** | Intuitive shared store key names nodes use (`shared["prompt"]` vs complex bindings) |
 | **NodeAwareSharedStore** | Proxy class enabling transparent key mapping for flow compatibility |
 | **Params** | Node behavior settings accessed via `self.params.get()` (flat structure) |
 | **Shared store** | Per-run key-value memory for node inputs/outputs using natural key names |
+| **Simple nodes** | Single-purpose nodes with clear interfaces and natural composition |
 | **Thinking model** | Advanced LLM capable of complex reasoning (e.g., o1-preview) |
 
 ---

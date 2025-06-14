@@ -35,7 +35,7 @@ This document provides a high-level roadmap for implementing the AI-assisted dev
 **Success Criteria**:
 ```bash
 # Manual CLI workflow execution works
-pflow github --action=get-issue --issue=1234 >> claude --action=analyze >> ci --action=run-tests
+pflow github-get-issue --issue=1234 >> llm --prompt="analyze this issue" >> ci-run-tests
 # Executes with proper shared store communication and proxy mapping
 ```
 
@@ -63,20 +63,20 @@ pflow github --action=get-issue --issue=1234 >> claude --action=analyze >> ci --
 ```bash
 # Registry operations work with rich metadata
 pflow registry list  # Shows action-based platform nodes
-pflow registry describe github  # Shows all actions and parameters
+pflow registry describe github-get-issue  # Shows node interface and parameters
 # Metadata extraction from docstrings provides rich interface definitions
 ```
 
-### Phase 3: Action-Based Platform Nodes (Weeks 5-6)
-**Goal**: Implement core development workflow nodes with action dispatch
+### Phase 3: Simple Platform Nodes (Weeks 5-6)
+**Goal**: Implement core development workflow nodes with simple, single-purpose interfaces
 
 **Priority 1 (Must Have)**:
-- `github` node: `get-issue`, `create-issue`, `list-prs`, `create-pr`, `get-files`, `merge-pr`
-- `claude` node: `analyze`, `implement`, `review`, `explain`, `refactor`
-- `ci` node: `run-tests`, `get-status`, `trigger-build`, `get-logs`
-- `git` node: `commit`, `push`, `create-branch`, `merge`, `status`
-- `file` node: `read`, `write`, `copy`, `move`, `delete`
-- `shell` node: `exec`, `pipe`, `background`
+- GitHub nodes: `github-get-issue`, `github-create-issue`, `github-list-prs`, `github-create-pr`, `github-get-files`, `github-merge-pr`
+- General LLM node: `llm` for all text processing and AI analysis
+- CI nodes: `ci-run-tests`, `ci-get-status`, `ci-trigger-build`, `ci-get-logs`
+- Git nodes: `git-commit`, `git-push`, `git-create-branch`, `git-merge`, `git-status`
+- File nodes: `read-file`, `write-file`, `copy-file`, `move-file`, `delete-file`
+- Shell nodes: `shell-exec`, `shell-pipe`, `shell-background`
 
 **Priority 2 (Should Have)**:
 - Action-specific parameter handling with global parameters
@@ -89,9 +89,9 @@ pflow registry describe github  # Shows all actions and parameters
 
 **Success Criteria**:
 ```bash
-# All platform nodes work with action dispatch
-pflow github --action=get-issue --issue=1234 >> claude --action=analyze --prompt="understand this"
-# Action-specific parameters and error handling work correctly
+# All simple platform nodes work with clear interfaces
+pflow github-get-issue --issue=1234 >> llm --prompt="analyze and understand this issue"
+# Simple node parameters and error handling work correctly
 ```
 
 ### Phase 4: Natural Language Planning (Weeks 7-8)
@@ -99,7 +99,7 @@ pflow github --action=get-issue --issue=1234 >> claude --action=analyze --prompt
 
 **Priority 1 (Must Have)**:
 - LLM integration for thinking models (Claude/OpenAI o1)
-- Metadata-driven node selection using extracted interface definitions
+- Metadata-driven simple node selection using extracted interface definitions
 - Natural language to CLI workflow compilation
 - User approval workflow for generated plans
 
@@ -116,7 +116,7 @@ pflow github --action=get-issue --issue=1234 >> claude --action=analyze --prompt
 ```bash
 # Natural language planning works end-to-end
 pflow "fix github issue, test, create PR"
-# → Generates: github --action=get-issue >> claude --action=implement >> ci --action=run-tests >> github --action=create-pr
+# → Generates: github-get-issue >> llm --prompt="implement fix" >> ci-run-tests >> github-create-pr
 # → User approves → Saves as reusable workflow
 pflow fix-issue --issue=1234 --severity=critical  # Reuses saved workflow
 # ≥95% planning success rate, ≥90% user approval rate
@@ -271,7 +271,7 @@ pflow fix-issue --issue=1234 --severity=critical  # Reuses saved workflow
 
 ### Architecture Principles
 1. **Build on pocketflow** - Don't reinvent the execution engine
-2. **Action-based platform nodes** - Reduce cognitive load with grouped functionality
+2. **Simple, single-purpose nodes** - Reduce cognitive load with clear, focused functionality
 3. **Natural interfaces** - Intuitive shared store keys
 4. **Metadata-driven** - Fast node selection without code inspection
 5. **Dependencies-first** - Build foundation before advanced features

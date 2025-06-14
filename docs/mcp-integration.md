@@ -8,7 +8,7 @@ A comprehensive specification for integrating **Model Context Protocol** servers
 
 - Natural shared store interfaces using intuitive key names
 - Full participation in JSON IR generation and flow orchestration
-- Action-based error handling with conditional flow control
+- Simple sequential data flow with clear error handling
 - Unified registry system with planner-discoverable metadata
 - CLI resolution following "Type flags; engine decides" principle
 - Optional proxy mapping support for complex routing scenarios
@@ -21,7 +21,7 @@ A comprehensive specification for integrating **Model Context Protocol** servers
 
 | Term | Meaning |
 |---|---|
-| **MCP Wrapper Node** | Auto-generated pflow Node subclass that exposes MCP tool via natural shared store interface |
+| **MCP Wrapper Node** | Auto-generated pflow Node subclass that exposes MCP tool as simple, single-purpose node |
 | **MCP Configuration** | Server connection metadata integrated into pflow's unified registry system |
 | **MCP Executor** | Internal component handling MCP protocol communication (hidden from node interface) |
 | **Natural Interface Mapping** | Translation layer between MCP tool schemas and pflow's intuitive key conventions |
@@ -35,16 +35,16 @@ MCP wrapper nodes leverage the lightweight **pocketflow framework** (100 lines o
 
 - **Node Base Class**: Inherit from `pocketflow.Node` with standard `prep()`/`exec()`/`post()` methods
 - **Params System**: Use `set_params()` to configure wrapper nodes with flat parameter structure
-- **Flow Orchestration**: Full compatibility with `>>` operator and action-based transitions
+- **Flow Orchestration**: Full compatibility with `>>` operator and simple sequential flow
 - **No Framework Changes**: Pure pattern implementation using existing pocketflow APIs
 
 ```python
 # MCP wrapper nodes follow identical patterns to manual nodes
 from pocketflow import Node, flow_safe
 
-class McpGithubSearchCode(Node):  # Standard pocketflow inheritance
+class McpGithubSearchCodeNode(Node):  # Standard pocketflow inheritance
     # Natural shared store interface, same as any pflow node
-    # Full action-based error handling support
+    # Simple, single-purpose node design
     # Compatible with proxy mappings and JSON IR
 ```
 
@@ -78,7 +78,6 @@ class McpGithubSearchCode(Node):  # Standard pocketflow inheritance
     "inputs": ["query", "language"],
     "outputs": ["search_results"],
     "params": {"max_results": 10},
-    "actions": ["default", "rate_limited", "auth_failed"]
   },
   "purity": "impure"  # Most MCP tools have side effects
 }
@@ -112,8 +111,8 @@ pflow registry validate --all
 Generated wrapper nodes follow the full pflow pattern with natural shared store interfaces:
 
 ```python
-# Generated wrapper follows complete pflow Node pattern
-class McpGithubSearchCode(Node):
+# Generated wrapper follows simple node pattern
+class McpGithubSearchCodeNode(Node):
     """Search code in GitHub repositories via MCP.
 
     Interface:
@@ -121,7 +120,6 @@ class McpGithubSearchCode(Node):
     - Reads: shared["language"] - programming language filter (optional)
     - Writes: shared["search_results"] - array of code search results
     - Params: max_results (default 10) - maximum results to return
-    - Actions: "default", "rate_limited", "auth_failed", "resource_missing"
 
     MCP Source: github-server/search_code v1.2.0
     """
@@ -158,17 +156,14 @@ class McpGithubSearchCode(Node):
             )
             return response["results"]
         except McpRateLimitError:
-            return "rate_limited"  # Action for conditional flow control
+            raise  # Let framework handle retries
         except McpAuthError:
-            return "auth_failed"
+            raise  # Auth errors should fail clearly
         except McpResourceNotFoundError:
-            return "resource_missing"
+            raise  # Resource errors should fail clearly
 
     def post(self, shared, prep_res, exec_res):
-        """Write results to shared store or return action for flow control."""
-        if isinstance(exec_res, str):  # Action string for flow transitions
-            return exec_res
-
+        """Write results to shared store."""
         # Natural interface - write results to intuitive key
         shared["search_results"] = exec_res
         return "default"
@@ -203,32 +198,41 @@ def format_shared_store_inputs(input_schema):
     return "\n".join(lines)
 ```
 
-### 5.3 Natural Key Conventions
+### 5.3 Simple Node Naming for MCP Tools
 
-**Schema Translation Rules**:
+**MCP Tool → Simple Node Mapping**:
 
-- MCP tool parameter names → direct shared store keys when intuitive
-- Complex nested parameters → flattened structure with natural naming
-- Output mapping → single primary output key per tool when possible
+Each MCP tool becomes a single-purpose simple node following `mcp-platform-action` pattern:
 
-**Examples**:
+| MCP Tool | Simple Node Name | Purpose |
+|----------|------------------|---------|
+| `get_weather` | `mcp-weather-get` | Get weather data for location |
+| `search_repositories` | `mcp-github-search-repos` | Search GitHub repositories |
+| `send_slack_message` | `mcp-slack-send-message` | Send message to Slack channel |
+| `list_files` | `mcp-filesystem-list-files` | List files in directory |
+| `get_stock_price` | `mcp-finance-get-stock` | Get current stock price |
+
+**Natural Interface Examples**:
 
 ```python
-# MCP tool: get_weather
-# Natural interface:
+# mcp-weather-get
 # Inputs: shared["location"], shared["units"]
 # Outputs: shared["weather_data"]
 
-# MCP tool: search_repositories
-# Natural interface:
+# mcp-github-search-repos
 # Inputs: shared["query"], shared["language"], shared["sort_by"]
 # Outputs: shared["repositories"]
 
-# MCP tool: send_slack_message
-# Natural interface:
+# mcp-slack-send-message
 # Inputs: shared["message"], shared["channel"]
 # Outputs: shared["message_id"]
 ```
+
+**Benefits of MCP Simple Node Naming**:
+- **Discoverable**: `pflow registry search mcp-github` finds all GitHub MCP nodes
+- **Predictable**: Users can guess node names (`mcp-slack-send-message`)
+- **Future CLI Ready**: Natural mapping to `pflow mcp slack send-message` in v2.0
+- **Consistent**: Same pattern as native platform nodes (`github-get-issue`, `slack-send-message`)
 
 ---
 
@@ -300,36 +304,37 @@ echo "TODO comments" | pflow mcp-github-search-code --language=python >> summari
 
 ---
 
-## 7 · Action-Based Error Handling
+## 7 · Simple Error Handling
 
-### 7.1 MCP Error Mapping
+### 7.1 MCP Error Handling
 
 **Replaces**: Transport-specific error handling
-**Adopts**: pflow's action-based conditional flow control
+**Adopts**: pflow's simple error propagation
 
 ```python
-class McpErrorMapper:
-    """Maps MCP protocol errors to pflow actions for flow control."""
-
-    ERROR_ACTION_MAP = {
-        "rate_limited": "rate_limited",
-        "unauthorized": "auth_failed",
-        "forbidden": "permission_denied",
-        "not_found": "resource_missing",
-        "timeout": "timeout",
-        "server_error": "server_error",
-        "network_error": "network_error"
-    }
+class McpErrorHandler:
+    """Handles MCP protocol errors with clear error messages."""
 
     @classmethod
-    def map_error_to_action(cls, mcp_error):
-        """Convert MCP error to pflow action string."""
-        return cls.ERROR_ACTION_MAP.get(mcp_error.type, "error")
+    def handle_mcp_error(cls, mcp_error):
+        """Convert MCP error to clear exception with helpful message."""
+        error_messages = {
+            "rate_limited": "GitHub API rate limit exceeded. Please try again later.",
+            "unauthorized": "Authentication failed. Check your GitHub token.",
+            "forbidden": "Permission denied. Check your token scopes.",
+            "not_found": "Resource not found. Check repository and query.",
+            "timeout": "Request timed out. Please try again.",
+            "server_error": "GitHub server error. Please try again later.",
+            "network_error": "Network error. Check your connection."
+        }
+
+        message = error_messages.get(mcp_error.type, f"MCP error: {mcp_error}")
+        raise RuntimeError(message)
 ```
 
-### 7.2 Flow Integration Examples
+### 7.2 Simple Error Integration
 
-**Conditional Error Handling**: MCP wrapper nodes participate in action-based flow control:
+**Clear Error Messages**: MCP wrapper nodes provide helpful error messages:
 
 ```python
 # Flow setup with comprehensive error handling
@@ -356,13 +361,13 @@ flow = Flow(start=github_search)
 
 **All Transports**: Unified error handling regardless of MCP transport mechanism:
 
-| MCP Transport Error | pflow Action | Flow Response |
+| MCP Transport Error | Error Handling | Result |
 |---|---|---|
-| `stdio` process death | `"server_error"` | Restart server or route to fallback |
-| `sse` connection timeout | `"timeout"` | Retry with exponential backoff |
-| `uds` socket error | `"network_error"` | Switch to alternative transport |
-| Rate limit (any transport) | `"rate_limited"` | Delay and retry with jitter |
-| Auth failure (any transport) | `"auth_failed"` | Refresh credentials |
+| `stdio` process death | Clear error message | Flow fails with helpful message |
+| `sse` connection timeout | Timeout exception | Flow fails with retry suggestion |
+| `uds` socket error | Network error exception | Flow fails with connection advice |
+| Rate limit (any transport) | Rate limit exception | Flow fails with retry timing |
+| Auth failure (any transport) | Auth error exception | Flow fails with token guidance |
 
 ---
 
@@ -392,9 +397,9 @@ flow = Flow(start=github_search)
       }
     },
     {
-      "id": "summarize-text",
-      "version": "2.1.0",
-      "params": {"temperature": 0.3}
+      "id": "llm",
+      "version": "1.0.0",
+      "params": {"model": "gpt-4", "temperature": 0.3}
     },
     {
       "id": "mcp-slack-send-message",
@@ -409,9 +414,8 @@ flow = Flow(start=github_search)
     }
   ],
   "edges": [
-    {"from": "mcp-github-search-code", "to": "summarize-text"},
-    {"from": "mcp-github-search-code", "to": "error-handler", "action": "rate_limited"},
-    {"from": "summarize-text", "to": "mcp-slack-send-message"}
+    {"from": "mcp-github-search-code", "to": "llm"},
+    {"from": "llm", "to": "mcp-slack-send-message"}
   ],
   "mappings": {
     "mcp-slack-send-message": {
@@ -427,11 +431,11 @@ flow = Flow(start=github_search)
 
 ```json
 {
-  "reasoning": "User wants to find GitHub issues and notify via Slack. I'll use MCP GitHub integration and Slack notification.",
+  "reasoning": "User wants to find GitHub issues and notify via Slack. I'll use MCP GitHub integration, LLM for processing, and Slack notification.",
   "selection_type": "new_composition",
   "chosen_nodes": [
     "mcp-github-search-code",
-    "summarize-text",
+    "llm",
     "mcp-slack-send-message"
   ],
   "flow_structure": "search → summarize → notify"
@@ -452,19 +456,17 @@ flow = Flow(start=github_search)
 # Generated flow code from JSON IR
 def create_mcp_integrated_flow():
     # Instantiate wrapper nodes (generated classes)
-    github_search = McpGithubSearchCode()
-    summarizer = SummarizeText()  # Manual node
-    slack_sender = McpSlackSendMessage()  # Another MCP wrapper
+    github_search = McpGithubSearchCodeNode()
+    processor = LLMNode()  # General LLM node
+    slack_sender = McpSlackSendMessageNode()  # Another MCP wrapper
 
     # Configure with IR parameters using pocketflow's set_params()
     github_search.set_params({"max_results": 15})
-    summarizer.set_params({"temperature": 0.3})
+    processor.set_params({"model": "gpt-4", "temperature": 0.3})
     slack_sender.set_params({})  # Uses defaults
 
-    # Wire flow with action-based error handling
-    github_search >> summarizer
-    github_search - "rate_limited" >> retry_handler >> github_search
-    summarizer >> slack_sender
+    # Wire simple sequential flow
+    github_search >> processor >> slack_sender
 
     return Flow(start=github_search)
 
@@ -581,7 +583,7 @@ pflow mcp-github-search-code --query "authentication" --language "python" >> sum
 
 # 4. Natural language planning automatically discovers MCP nodes
 pflow "find Python authentication bugs on GitHub and create a summary"
-# Planner selects: mcp-github-search-code >> summarize-text >> format-markdown
+# Planner selects: mcp-github-search-code >> llm >> write-file
 ```
 
 ### 10.2 Complex Flow with Error Handling
@@ -589,33 +591,25 @@ pflow "find Python authentication bugs on GitHub and create a summary"
 **Production-Ready Flow**:
 
 ```python
-# Generated flow with comprehensive error handling
-search_node = McpGithubSearchCode()
-summarizer = SummarizeText()
-slack_notifier = McpSlackSendMessage()
-retry_handler = ExponentialBackoff()
-auth_refresher = RefreshGithubToken()
+# Simple flow with MCP nodes
+search_node = McpGithubSearchCodeNode()
+processor = LLMNode()  # Use general LLM node for text processing
+notifier = McpSlackSendMessageNode()
 
-# Primary flow path
-search_node >> summarizer >> slack_notifier
+# Simple sequential flow
+search_node >> processor >> notifier
 
-# Error recovery paths
-search_node - "rate_limited" >> retry_handler >> search_node
-search_node - "auth_failed" >> auth_refresher >> search_node
-slack_notifier - "channel_not_found" >> create_channel >> slack_notifier
-
-# Complex conditional logic
-search_node - "resource_missing" >> log_warning
-summarizer - "content_too_long" >> split_content >> summarizer
+# Clean, predictable execution path
+flow = Flow(start=search_node)
 ```
 
 **CLI Execution**:
 
 ```bash
-# Complex pipe with multiple MCP tools
+# Simple pipe with multiple MCP tools
 echo "security vulnerability" | \
   pflow mcp-github-search-code --language python --max-results 10 >> \
-  summarize-text --temperature 0.3 >> \
+  llm --prompt="Summarize these security findings" --temperature 0.3 >> \
   mcp-slack-send-message --channel security-alerts
 ```
 

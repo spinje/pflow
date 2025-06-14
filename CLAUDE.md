@@ -126,11 +126,11 @@ pflow/
 │   ├── autocomplete.md               # CLI autocomplete specification (v2.0)
 │   ├── mcp-integration.md            # MCP server integration (v2.0)
 │   ├── workflow-analysis.md          # Technical analysis of AI workflow inefficiencies
-│   ├── core-nodes/                   # Platform node specifications
-│   │   ├── github-node.md
-│   │   ├── claude-node.md
-│   │   ├── ci-node.md
-│   │   └── llm-node.md
+│   ├── core-node-packages/           # Platform node package specifications
+│   │   ├── github-nodes.md
+│   │   ├── claude-nodes.md
+│   │   ├── ci-nodes.md
+│   │   └── llm-nodes.md
 │   ├── implementation-details/       # Implementation specifics
 │   │   ├── metadata-extraction.md
 │   │   └── autocomplete-impl.md
@@ -196,8 +196,10 @@ pflow/
 - `docs/components.md`: Complete MVP vs v2.0 component breakdown
 
 **Core Nodes**:
-- `docs/core-nodes/llm-node.md`: LLM/prompt node specification
-- `docs/core-nodes/claude-node.md`: Claude Code integration specification
+- `docs/core-node-packages/llm-nodes.md`: LLM node package specification
+- `docs/core-node-packages/github-nodes.md`: GitHub node package specification
+- `docs/core-node-packages/claude-nodes.md`: Claude Code CLI integration node package specification
+- `docs/core-node-packages/ci-nodes.md`: CI node package specification
 - `docs/implementation-details/metadata-extraction.md`: Metadata extraction system
 
 **Shell Integration**:

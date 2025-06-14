@@ -119,7 +119,27 @@ Nodes are "dumb pipes" - isolated computation units with:
 - Single, well-defined responsibility
 - Natural interface using intuitive key names
 
-### 3.4 Proxy Pattern for Complex Flows
+### 3.4 Smart Exception: General-Purpose LLM Node
+
+While pflow follows a "one node, one purpose" philosophy, the `llm` node is a smart exception that prevents proliferation of similar prompt-based nodes:
+
+```python
+# Instead of many specific nodes:
+# analyze-code, write-content, explain-concept, review-text...
+
+# Use the general LLM node:
+llm --prompt="Analyze this code for potential issues"
+llm --prompt="Write an introduction paragraph about AI"
+llm --prompt="Explain this concept in simple terms"
+```
+
+**Benefits:**
+- **Reduces Node Clutter**: One flexible node vs dozens of specific prompt nodes
+- **Future Simon Willison Integration**: Will wrap the `llm` CLI for model management
+- **Consistent Interface**: Always reads `shared["prompt"]`, writes `shared["response"]`
+- **Simple for MVP**: Just `--prompt` parameter, templates can come later
+
+### 3.5 Proxy Pattern for Complex Flows
 
 When natural interfaces don't align, the `NodeAwareSharedStore` proxy provides transparent translation:
 
@@ -143,8 +163,8 @@ node.prep(proxy)  # Still reads "text", proxy maps to "raw_content"
 - CLI pipe syntax execution (`pflow node1 >> node2`)
 - Manual node composition and parameter passing
 - Shared store with direct access pattern
-- Basic node types (prompt, transform, read_file)
-- Shell pipe integration (`cat file | pflow summarize`)
+- Basic simple node types (llm, read-file, write-file, github-get-issue)
+- Shell pipe integration (`cat file | pflow llm --prompt="Summarize this"`)
 - JSON IR generation and validation
 - Deterministic execution with lockfiles
 - Simple caching for `@flow_safe` nodes
@@ -198,8 +218,8 @@ graph TD
 pflow <node> [--flags] >> <node> [--flags]
 
 # Examples
-pflow yt-transcript --url=VIDEO >> summarize-text --temperature=0.7
-cat article.md | pflow summarize-text --max-tokens=150
+pflow yt-transcript --url=VIDEO >> llm --prompt="Summarize this transcript"
+cat article.md | pflow llm --prompt="Summarize this in 150 words"
 ```
 
 #### 5.1.3 Shell Pipe Integration
@@ -268,25 +288,31 @@ The planner operates in two modes (though MVP focuses on CLI path):
 All nodes inherit from `pocketflow.Node`:
 
 ```python
-class SummarizeText(Node):
-    """Summarizes text content.
+class LLMNode(Node):
+    """General-purpose LLM processing.
 
     Interface:
-    - Reads: shared["text"] - input text to summarize
-    - Writes: shared["summary"] - generated summary
-    - Params: temperature (default 0.7), max_tokens (default 150)
+    - Reads: shared["prompt"] - prompt to send to LLM
+    - Writes: shared["response"] - LLM's response
+    - Params: model (default gpt-4), temperature (default 0.7), system
     """
 
     def prep(self, shared):
-        return shared["text"]
+        prompt = shared.get("prompt")
+        if not prompt:
+            raise ValueError("Missing 'prompt' in shared store")
+        return prompt
 
     def exec(self, prep_res):
-        temp = self.params.get("temperature", 0.7)
-        tokens = self.params.get("max_tokens", 150)
-        return call_llm(prep_res, temperature=temp, max_tokens=tokens)
+        return call_llm(
+            prompt=prep_res,
+            model=self.params.get("model", "gpt-4"),
+            temperature=self.params.get("temperature", 0.7),
+            system=self.params.get("system")
+        )
 
     def post(self, shared, prep_res, exec_res):
-        shared["summary"] = exec_res
+        shared["response"] = exec_res
         return "default"
 ```
 
@@ -296,15 +322,16 @@ Extracted from docstrings and stored as JSON:
 
 ```json
 {
-  "id": "summarize-text",
-  "description": "Summarizes text content",
-  "inputs": ["text"],
-  "outputs": ["summary"],
+  "id": "llm",
+  "description": "General-purpose LLM processing",
+  "inputs": ["prompt"],
+  "outputs": ["response"],
   "params": {
+    "model": {"type": "string", "default": "gpt-4"},
     "temperature": {"type": "float", "default": 0.7},
-    "max_tokens": {"type": "int", "default": 150}
+    "system": {"type": "string", "optional": true}
   },
-  "purity": "flow_safe"
+  "purity": "impure"
 }
 ```
 
@@ -314,10 +341,20 @@ Extracted from docstrings and stored as JSON:
 ~/.pflow/registry/
 ├── nodes/
 │   ├── core/
-│   │   ├── yt-transcript/
+│   │   ├── llm/
 │   │   │   ├── node.py
 │   │   │   └── metadata.json
-│   │   └── summarize-text/
+│   │   ├── read-file/
+│   │   │   ├── node.py
+│   │   │   └── metadata.json
+│   │   └── write-file/
+│   │       ├── node.py
+│   │       └── metadata.json
+│   ├── github/
+│   │   ├── github-get-issue/
+│   │   │   ├── node.py
+│   │   │   └── metadata.json
+│   │   └── github-create-issue/
 │   │       ├── node.py
 │   │       └── metadata.json
 │   └── custom/
@@ -380,12 +417,15 @@ The shared store is:
 
 ```bash
 # CLI command
-pflow yt-transcript --url=VIDEO >> summarize-text
+pflow yt-transcript --url=VIDEO >> llm --prompt="Summarize this transcript"
 ```
 
 **Step 1: CLI Resolution**
 ```python
-shared = {"url": "VIDEO"}  # From --url flag
+shared = {
+    "url": "VIDEO",                               # From --url flag
+    "prompt": "Summarize this transcript"         # From --prompt flag
+}
 ```
 
 **Step 2: First Node Execution**
@@ -398,19 +438,21 @@ post: shared["transcript"] = transcript
 
 **Step 3: Second Node Execution**
 ```python
-# summarize-text node (with proxy mapping)
-# IR defines: {"input_mappings": {"text": "transcript"}}
-prep: text = shared["text"]  # Proxy maps to shared["transcript"]
-exec: summary = summarize(text)
-post: shared["summary"] = summary
+# llm node (with proxy mapping)
+# IR defines: {"input_mappings": {"prompt": "transcript_prompt"}}
+# where transcript_prompt is built from transcript + prompt template
+prep: prompt = shared["prompt"]  # Proxy provides templated prompt
+exec: response = call_llm(prompt)
+post: shared["response"] = response
 ```
 
 **Final State:**
 ```python
 shared = {
     "url": "VIDEO",
+    "prompt": "Summarize this transcript",
     "transcript": "...",
-    "summary": "..."
+    "response": "..."
 }
 ```
 
@@ -513,16 +555,16 @@ cache_key = node_hash ⊕ effective_params ⊕ input_data_sha256
 ### 10.1 Node Testing Pattern
 
 ```python
-def test_summarize_node():
+def test_llm_node():
     # Simple, natural test setup
-    node = SummarizeText()
-    node.set_params({"temperature": 0.5})
+    node = LLMNode()
+    node.set_params({"model": "gpt-4", "temperature": 0.5})
 
-    shared = {"text": "Long content..."}
+    shared = {"prompt": "Summarize this: Long content..."}
     node.run(shared)
 
-    assert "summary" in shared
-    assert len(shared["summary"]) < len(shared["text"])
+    assert "response" in shared
+    assert len(shared["response"]) > 0
 ```
 
 ### 10.2 Flow Testing
@@ -530,11 +572,14 @@ def test_summarize_node():
 ```python
 def test_video_summary_flow():
     flow = create_video_summary_flow()
-    shared = {"url": "https://youtu.be/test"}
+    shared = {
+        "url": "https://youtu.be/test",
+        "prompt": "Summarize this transcript"
+    }
 
     flow.run(shared)
 
-    assert "summary" in shared
+    assert "response" in shared
 ```
 
 ### 10.3 Validation Framework
@@ -669,14 +714,14 @@ pflow/
 
 **Simple Flow:**
 ```bash
-pflow read-file --path=data.csv >> transform-csv >> save-json --output=result.json
+pflow read-file --path=data.csv >> csv-to-json >> write-file --output=result.json
 ```
 
 **With Proxy Mapping:**
 ```json
 {
   "mappings": {
-    "transform-csv": {
+    "csv-to-json": {
       "input_mappings": {"data": "file_content"}
     }
   }
@@ -685,7 +730,7 @@ pflow read-file --path=data.csv >> transform-csv >> save-json --output=result.js
 
 **With Shell Pipe:**
 ```bash
-kubectl logs my-pod | pflow extract-errors >> summarize >> slack-notify --channel=ops
+kubectl logs my-pod | pflow extract-errors >> llm --prompt="Summarize these errors" >> slack-send-message --channel=ops
 ```
 
 ---
