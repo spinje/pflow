@@ -42,10 +42,11 @@ Target transformation:
   - Transparent key mapping when needed
   - Zero overhead when no mappings defined
   - Integration with pocketflow node execution
-- [ ] **Simple CLI flag resolution** (`src/pflow/core/cli_resolver.py`)
+- [ ] **CLI flag to parameter resolution** (`src/pflow/core/cli_resolver.py`)
   - Basic `--key=value` parsing without sophisticated categorization
-  - Manual parameter specification required
+  - All CLI flags map to `node.set_params()` (not shared store)
   - Shell pipe input detection and `shared["stdin"]` handling
+  - JSON IR → compiled Python code execution pipeline
 
 ### 1.3 Simple Node Registry
 - [ ] **Registry structure** (`src/pflow/registry/`)
@@ -78,12 +79,12 @@ Target transformation:
 ### 2.1 Comprehensive Metadata Extraction
 - [ ] **Docstring parsing system** (`src/pflow/registry/metadata_extractor.py`)
   - Full `docstring_parser` + custom regex implementation
-  - Parse Interface sections with action-specific parameters
-  - Extract inputs, outputs, params, actions per action
+  - Parse Interface sections with node-specific parameters
+  - Extract inputs, outputs, params for each individual node
   - Support both simple and structured Interface formats
-- [ ] **Action-specific parameter mapping**
-  - Parameter availability mapping per action
-  - Global parameters available across all actions
+- [ ] **Node parameter mapping**
+  - Parameter availability mapping per individual node
+  - Global parameters available across all nodes in a flow
   - Validation of parameter consistency
 - [ ] **JSON metadata generation**
   - Schema-compliant metadata for each node
@@ -96,9 +97,9 @@ Target transformation:
   - Interface compatibility analysis
   - Action discovery and validation
 - [ ] **Registry CLI commands** (`src/pflow/cli/registry.py`)
-  - `pflow registry list` - Show platform nodes with actions
+  - `pflow registry list` - Show individual platform nodes
   - `pflow registry describe <node>` - Detailed node information
-  - Rich formatting with action-specific parameters
+  - Rich formatting with node-specific parameters
 - [ ] **Metadata validation**
   - Verify extracted metadata against actual code
   - Consistency checking for interface definitions
@@ -241,15 +242,16 @@ Target transformation:
   - Use extracted metadata for compatibility checking
   - Validation of selected nodes and interfaces
 - [ ] **Workflow generation** (`src/pflow/planning/flow_generator.py`)
-  - Natural language → action-based CLI syntax compilation
+  - Natural language → individual node CLI syntax compilation
   - Parameter inference using metadata
   - Basic linear workflows (A >> B >> C)
+  - JSON IR → compiled Python code generation
 
 ### 4.3 User Approval & Workflow Storage
 - [ ] **User verification system** (`src/pflow/planning/approval.py`)
   - Show generated CLI workflow for approval
   - Allow parameter modifications before execution
-  - Clear presentation of action-based syntax
+  - Clear presentation of individual node syntax
 - [ ] **Workflow storage system** (`src/pflow/core/workflow_storage.py`)
   - Save approved workflows with meaningful names
   - Local filesystem storage (~/.pflow/workflows/)
@@ -266,7 +268,7 @@ Target transformation:
   - Performance optimization (≤800ms planning latency)
 - [ ] **Planning validation tests**
   - Test common development workflow descriptions
-  - Validate generated action-based CLI syntax
+  - Validate generated individual node CLI syntax
   - Success rate measurement (≥95% target)
 - [ ] **User acceptance testing**
   - Real developer workflow scenarios
@@ -388,13 +390,16 @@ Target transformation:
 
 ### Key Architectural Decisions
 1. **Use pocketflow as foundation** - Leverage existing 100-line framework
-2. **Two-tier AI approach** - Claude Code CLI nodes for development, LLM node for general text processing
-3. **Core use case driven** - Primary focus on GitHub issue resolution workflow (from workflow-analysis.md)
-4. **Dependencies-first build order** - Infrastructure before natural language planning
-5. **Simple flag parsing in MVP** - Basic `--key=value` without sophisticated categorization
-6. **Comprehensive metadata extraction** - Rich docstring parsing for planning
-7. **Complete IR with proxy mappings** - Future extensibility built-in
-8. **Natural shared store interfaces** - Intuitive key names for simplicity
+2. **Individual nodes architecture** - Simple, single-purpose nodes (`github-get-issue`, `claude-analyze`, etc.)
+3. **JSON IR → compiled Python** - CLI syntax → JSON IR → compiled Python code execution (per planner.md)
+4. **CLI flags → node.set_params()** - All CLI flags map to node parameters, shared store for data flow
+5. **Two-tier AI approach** - Claude Code CLI nodes for development, LLM node for general text processing
+6. **Core use case driven** - Primary focus on GitHub issue resolution workflow (from workflow-analysis.md)
+7. **Dependencies-first build order** - Infrastructure before natural language planning
+8. **Fail fast error handling** - Clear error messages, no complex retry mechanisms in MVP
+9. **Environment variable authentication** - GITHUB_TOKEN, ANTHROPIC_API_KEY, etc.
+10. **Natural shared store interfaces** - Intuitive key names for node-to-node communication
+11. **Comprehensive metadata extraction** - Rich docstring parsing for planning
 
 ### Critical Dependencies
 1. **LLM access** - Claude/OpenAI API keys for planning

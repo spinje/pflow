@@ -114,7 +114,7 @@ pflow/
 │   ├── **prd.md**                     # **CORE: Product requirements document**
 │   ├── **architecture.md**            # **CORE: Complete system architecture**
 │   ├── **mvp-scope.md**               # **CORE: Clear MVP boundaries**
-│   ├── **action-nodes.md**            # **CORE: Action-based platform node design**
+│   ├── **simple-nodes.md**           # Simple node design pattern
 │   ├── shared-store.md               # Shared store + proxy pattern
 │   ├── cli-runtime.md                # CLI integration and shared store runtime
 │   ├── schemas.md                    # JSON IR and metadata schemas
@@ -265,3 +265,8 @@ pflow github-get-issue --issue=1234 >> claude-analyze --focus-areas=root-cause >
 ```
 
 But first, we need to create a detailed plan for the MVP.
+
+## User Decisions
+
+Every time you need the user to make a decision, you should:
+Create a `scratchpads/critical-user-decisions.md` file and write down the decision and the reasoning. Give at least 2 options with clear recommendations. Add a markdown checkbox for each option so the user can select the option they prefer easily.
