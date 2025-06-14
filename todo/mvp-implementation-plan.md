@@ -6,16 +6,10 @@ This document breaks down the MVP implementation into specific, actionable tasks
 
 **Transform AI-assisted development workflows from inefficient slash commands into deterministic, reusable CLI workflows**
 
-**Primary Use Case** (from workflow-analysis.md):
+Target transformation:
 ```bash
-# From: /project:fix-github-issue 1234 (30-90s, 1000-2000 tokens every time)
-# To: pflow fix-issue --issue=1234 (2-5s, minimal tokens after compilation)
-```
-
-**Secondary Use Case** (general text processing):
-```bash
-# From: Repeatedly asking AI "analyze these logs for error patterns"
-# To: pflow analyze-logs --input=error.log (instant pattern recognition)
+# From: /project:fix-github-issue 1234 (30-90s, variable, token-heavy)
+# To: pflow fix-issue --issue=1234 (2-5s, consistent, token-efficient)
 ```
 
 **Core Architecture**: Two-tier AI approach with Claude Code CLI nodes for development and LLM node for general text processing.
