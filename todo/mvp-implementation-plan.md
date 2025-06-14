@@ -6,11 +6,19 @@ This document breaks down the MVP implementation into specific, actionable tasks
 
 **Transform AI-assisted development workflows from inefficient slash commands into deterministic, reusable CLI workflows**
 
-Target transformation:
+**Primary Use Case** (from workflow-analysis.md):
 ```bash
-# From: /project:fix-github-issue 1234 (30-90s, variable, token-heavy)
-# To: pflow fix-issue --issue=1234 (2-5s, consistent, token-efficient)
+# From: /project:fix-github-issue 1234 (30-90s, 1000-2000 tokens every time)
+# To: pflow fix-issue --issue=1234 (2-5s, minimal tokens after compilation)
 ```
+
+**Secondary Use Case** (general text processing):
+```bash
+# From: Repeatedly asking AI "analyze these logs for error patterns"
+# To: pflow analyze-logs --input=error.log (instant pattern recognition)
+```
+
+**Core Architecture**: Two-tier AI approach with Claude Code CLI nodes for development and LLM node for general text processing.
 
 ---
 
@@ -118,80 +126,96 @@ Target transformation:
 
 ---
 
-## 📋 Phase 3: Action-Based Platform Nodes (Weeks 5-6)
+## 📋 Phase 3: Simple Platform Nodes (Weeks 5-6)
 
-### 3.1 GitHub Platform Node
-- [ ] **GitHub node implementation** (`src/pflow/nodes/github.py`)
-  - Action dispatch pattern with `self.params.get("action")`
-  - Actions: `get-issue`, `create-issue`, `list-prs`, `create-pr`, `get-files`, `merge-pr`, `add-comment`
+### 3.1 GitHub Platform Nodes
+- [ ] **Individual GitHub node implementations** (`src/pflow/nodes/github/`)
+  - Simple, single-purpose nodes: `github-get-issue`, `github-create-issue`, `github-list-prs`, `github-create-pr`, `github-get-files`, `github-merge-pr`, `github-add-comment`
   - Natural interface: `shared["repo"]`, `shared["issue"]`, `shared["pr"]`, `shared["files"]`
-  - Action-specific parameter handling
+  - Clear, focused parameter handling per node
 - [ ] **GitHub API integration**
   - PyGithub or requests-based implementation
   - Authentication via environment variables
   - Error handling for API failures and rate limits
 - [ ] **GitHub node tests**
-  - Mock GitHub API responses for each action
-  - Test action dispatch and parameter routing
+  - Mock GitHub API responses for each individual node
+  - Test simple node interfaces and parameter handling
   - Integration tests with real GitHub API (optional)
 
-### 3.2 Claude Platform Node
-- [ ] **Claude node implementation** (`src/pflow/nodes/claude.py`)
-  - Action dispatch pattern with multiple AI capabilities
-  - Actions: `analyze`, `implement`, `review`, `explain`, `refactor`
-  - Natural interface: `shared["code"]`, `shared["prompt"]` → `shared["result"]`
-  - Integration with headless claude-code CLI for implement action
-- [ ] **Action-specific implementations**
-  - `analyze`: Code analysis and understanding
-  - `implement`: Code generation and implementation
-  - `review`: Code review and suggestions
-  - `explain`: Code explanation and documentation
+### 3.2 Claude Code CLI Nodes
+- [ ] **Individual Claude node implementations** (`src/pflow/nodes/claude/`)
+  - Development-specific nodes: `claude-analyze`, `claude-implement`, `claude-review`
+  - Project-aware AI with file system access and tool integration
+  - Natural interface: `shared["prompt"]` → `shared["analysis"]`, `shared["implementation"]`, `shared["review"]`
+  - Integration with headless Claude Code CLI for project context
+- [ ] **Claude Code CLI integration**
+  - Headless mode execution for workflow automation
+  - Project context and file system access
+  - Model selection and parameter handling
+  - Structured output parsing for each node type
 - [ ] **Claude node tests**
-  - Mock claude-code CLI responses per action
-  - Test action dispatch and safety measures
-  - Validate output formats for each action
+  - Mock Claude Code CLI responses for each node
+  - Test project context integration
+  - Validate development-specific outputs
 
-### 3.3 CI Platform Node
-- [ ] **CI node implementation** (`src/pflow/nodes/ci.py`)
-  - Action dispatch for continuous integration operations
-  - Actions: `run-tests`, `get-status`, `trigger-build`, `get-logs`
+### 3.3 LLM Node
+- [ ] **General LLM node implementation** (`src/pflow/nodes/llm.py`)
+  - Simple interface for general text processing and analysis
+  - Natural interface: `shared["prompt"]` → `shared["response"]`
+  - Integration with multiple LLM providers (Claude API, OpenAI, local models)
+  - Used for prompt generation, log analysis, data processing
+- [ ] **LLM integration implementations**
+  - Claude via Anthropic API (for text processing, not development tasks)
+  - OpenAI via OpenAI API
+  - Simon Willison's `llm` CLI integration
+  - Local model support for privacy-sensitive workflows
+- [ ] **LLM node tests**
+  - Mock LLM API responses for different providers
+  - Test text processing and analysis capabilities
+  - Validate output formats and error handling
+  - Test log analysis and pattern recognition use cases
+
+### 3.4 CI Platform Nodes
+- [ ] **Individual CI node implementations** (`src/pflow/nodes/ci/`)
+  - Simple nodes: `ci-run-tests`, `ci-get-status`, `ci-trigger-build`, `ci-get-logs`
   - Natural interface: `shared["test_command"]` → `shared["test_results"]`
   - Support multiple CI systems (GitHub Actions, local, etc.)
+  - Each node focused on single CI operation
 - [ ] **Framework detection and execution**
   - Auto-detect test frameworks (pytest, npm test, etc.)
   - Handle different exit codes and result formats
   - Configuration file detection and handling
 - [ ] **CI node tests**
-  - Mock test framework responses
-  - Test action dispatch for different CI operations
+  - Mock test framework responses for each node
+  - Test simple interfaces for different CI operations
   - Error handling for failed tests and builds
 
-### 3.4 Git Platform Node
-- [ ] **Git node implementation** (`src/pflow/nodes/git.py`)
-  - Action dispatch for git operations
-  - Actions: `commit`, `push`, `create-branch`, `merge`, `status`
+### 3.5 Git Platform Nodes
+- [ ] **Individual Git node implementations** (`src/pflow/nodes/git/`)
+  - Simple nodes: `git-commit`, `git-push`, `git-create-branch`, `git-merge`, `git-status`
   - Natural interface: `shared["changes"]` → `shared["commit_hash"]`
-  - Automatic commit message generation for commit action
+  - Automatic commit message generation for git-commit node
+  - Each node focused on single git operation
 - [ ] **Git operations implementation**
   - Safety checks and confirmation prompts
   - Branch management and merging
   - Status reporting and change detection
 - [ ] **Git node tests**
-  - Mock git commands and responses
-  - Test action dispatch and safety measures
+  - Mock git commands and responses for each node
+  - Test simple interfaces and safety measures
   - Integration tests with real git repositories
 
-### 3.5 File and Shell Platform Nodes
-- [ ] **File node implementation** (`src/pflow/nodes/file.py`)
-  - Actions: `read`, `write`, `copy`, `move`, `delete`
+### 3.6 File and Shell Platform Nodes
+- [ ] **Individual File node implementations** (`src/pflow/nodes/file/`)
+  - Simple nodes: `read-file`, `write-file`, `copy-file`, `move-file`, `delete-file`
   - Natural interface: `shared["file_path"]`, `shared["content"]`
   - Safety checks for destructive operations
-- [ ] **Shell node implementation** (`src/pflow/nodes/shell.py`)
-  - Actions: `exec`, `pipe`, `background`
+- [ ] **Individual Shell node implementations** (`src/pflow/nodes/shell/`)
+  - Simple nodes: `shell-exec`, `shell-pipe`, `shell-background`
   - Natural interface: `shared["command"]` → `shared["output"]`
   - Timeout handling and security considerations
 - [ ] **File and Shell tests**
-  - Test action dispatch and parameter handling
+  - Test simple interfaces and parameter handling
   - Safety and security validation
   - Error handling for filesystem operations
 
@@ -336,8 +360,13 @@ Target transformation:
 
 1. **Generate workflows from natural language**:
    ```bash
-   pflow "analyze this github issue and suggest a fix"
-   # → Generates: github --action=get-issue >> claude --action=analyze >> claude --action=implement
+   # Primary workflow: GitHub issue resolution
+   pflow "analyze this github issue and implement a fix"
+   # → Generates: github-get-issue >> claude-analyze --focus-areas=root-cause >> claude-implement
+
+   # Secondary workflow: Log analysis
+   pflow "analyze error logs and extract patterns"
+   # → Generates: read-file >> llm --prompt="extract error patterns and root causes" >> write-file
    ```
 
 2. **Execute saved workflows with parameters**:
@@ -348,7 +377,8 @@ Target transformation:
 3. **Get better observability than slash commands**:
    ```bash
    pflow trace run_2024-01-01_abc123
-   # Shows: Step 1: github --action=get-issue ✓ (0.2s), Step 2: claude --action=analyze ✓ (3.1s), etc.
+   # Primary workflow trace: Step 1: github-get-issue ✓ (0.2s), Step 2: claude-analyze ✓ (3.1s), Step 3: claude-implement ✓ (5.2s)
+   # Secondary workflow trace: Step 1: read-file ✓ (0.1s), Step 2: llm ✓ (2.3s), Step 3: write-file ✓ (0.1s)
    ```
 
 4. **Achieve 10x efficiency improvement** over equivalent slash commands in terms of:
@@ -364,12 +394,13 @@ Target transformation:
 
 ### Key Architectural Decisions
 1. **Use pocketflow as foundation** - Leverage existing 100-line framework
-2. **Action-based platform nodes** - Reduce cognitive load vs function-specific nodes
-3. **Dependencies-first build order** - Infrastructure before natural language planning
-4. **Simple flag parsing in MVP** - Basic `--key=value` without sophisticated categorization
-5. **Comprehensive metadata extraction** - Rich docstring parsing for planning
-6. **Complete IR with proxy mappings** - Future extensibility built-in
-7. **Natural shared store interfaces** - Intuitive key names for simplicity
+2. **Two-tier AI approach** - Claude Code CLI nodes for development, LLM node for general text processing
+3. **Core use case driven** - Primary focus on GitHub issue resolution workflow (from workflow-analysis.md)
+4. **Dependencies-first build order** - Infrastructure before natural language planning
+5. **Simple flag parsing in MVP** - Basic `--key=value` without sophisticated categorization
+6. **Comprehensive metadata extraction** - Rich docstring parsing for planning
+7. **Complete IR with proxy mappings** - Future extensibility built-in
+8. **Natural shared store interfaces** - Intuitive key names for simplicity
 
 ### Critical Dependencies
 1. **LLM access** - Claude/OpenAI API keys for planning

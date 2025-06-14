@@ -72,7 +72,8 @@ pflow registry describe github-get-issue  # Shows node interface and parameters
 
 **Priority 1 (Must Have)**:
 - GitHub nodes: `github-get-issue`, `github-create-issue`, `github-list-prs`, `github-create-pr`, `github-get-files`, `github-merge-pr`
-- General LLM node: `llm` for all text processing and AI analysis
+- **Claude Code CLI nodes**: `claude-analyze`, `claude-implement`, `claude-review` (project-aware AI agent with file access)
+- **General LLM node**: `llm` for text processing, prompt generation, data analysis (API-based)
 - CI nodes: `ci-run-tests`, `ci-get-status`, `ci-trigger-build`, `ci-get-logs`
 - Git nodes: `git-commit`, `git-push`, `git-create-branch`, `git-merge`, `git-status`
 - File nodes: `read-file`, `write-file`, `copy-file`, `move-file`, `delete-file`
@@ -89,9 +90,15 @@ pflow registry describe github-get-issue  # Shows node interface and parameters
 
 **Success Criteria**:
 ```bash
-# All simple platform nodes work with clear interfaces
-pflow github-get-issue --issue=1234 >> llm --prompt="analyze and understand this issue"
-# Simple node parameters and error handling work correctly
+# Core MVP workflow: GitHub issue analysis and implementation
+pflow github-get-issue --issue=1234 >>
+  claude-analyze >>
+  claude-implement >>
+  ci-run-tests >>
+  github-create-pr
+
+# Secondary workflow: Log analysis and insights
+cat error.log | pflow llm --prompt="extract error patterns and suggest fixes" >> write-file --path=analysis.md
 ```
 
 ### Phase 4: Natural Language Planning (Weeks 7-8)
@@ -114,12 +121,57 @@ pflow github-get-issue --issue=1234 >> llm --prompt="analyze and understand this
 
 **Success Criteria**:
 ```bash
-# Natural language planning works end-to-end
-pflow "fix github issue, test, create PR"
-# → Generates: github-get-issue >> llm --prompt="implement fix" >> ci-run-tests >> github-create-pr
+# Primary workflow: GitHub issue fixing
+pflow "analyze this issue, implement fix, test, create PR"
+# → Generates: github-get-issue >> claude-analyze >> claude-implement >> ci-run-tests >> github-create-pr
 # → User approves → Saves as reusable workflow
-pflow fix-issue --issue=1234 --severity=critical  # Reuses saved workflow
+
+# Secondary workflow: Log analysis
+pflow "analyze error logs and extract insights"
+# → Generates: read-file >> llm --prompt="analyze logs for patterns" >> write-file
+
+pflow fix-issue --issue=1234  # Reuses deterministic workflow (2-5s)
+pflow analyze-logs --path=error.log  # Instant log analysis
 # ≥95% planning success rate, ≥90% user approval rate
+```
+
+---
+
+## 🏗 Node Architecture Strategy
+
+### Two-Tier AI Approach
+
+**Claude Code CLI Nodes** (Development-Specific):
+- `claude-analyze`: Project-aware code/issue analysis with full context
+- `claude-implement`: Code generation with file system access and project understanding
+- `claude-review`: Code review with development tool integration
+- `claude-explain`, `claude-refactor`: Specialized development tasks
+
+**General LLM Node** (Text Processing):
+- `llm`: API-based text processing, prompt generation, data analysis
+- Used for: Log analysis, document processing, prompt creation between Claude steps
+- No project context, but fast and flexible for general text tasks
+
+### Core MVP Workflows
+
+**Primary: GitHub Issue Resolution** (from workflow-analysis.md)
+```bash
+# Transforms: /project:fix-github-issue 1234 (30-90s, heavy tokens)
+# Into: pflow fix-issue --issue=1234 (2-5s, minimal tokens)
+pflow github-get-issue --issue=1234 >>
+  claude-analyze --focus-areas=root-cause >>
+  claude-implement --language=python >>
+  ci-run-tests >>
+  github-create-pr
+```
+
+**Secondary: Log Analysis** (showcases LLM node value)
+```bash
+# Transforms: Repeatedly asking AI "analyze these logs"
+# Into: pflow analyze-logs --input=error.log (instant)
+pflow read-file --path=error.log >>
+  llm --prompt="extract error patterns, find root causes, suggest fixes" >>
+  write-file --path=analysis.md
 ```
 
 ---

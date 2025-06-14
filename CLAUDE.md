@@ -39,7 +39,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 **MVP Requirements** (0.1 - local-first CLI):
 - Compose and run flows using `pflow` CLI
-- Define simple nodes (`prompt`, `transform`, `read_file`)
+- Define simple nodes (`llm`, `read_file`, `write_file`)
 - Store intermediate data in shared store
 - Use shell pipe syntax for stdin/stdout integration
 - Pure Python, single-machine, stateless
@@ -89,7 +89,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 **CLI Interface**: Commands, pipe syntax parser (`>>` operator), shell integration with stdin/stdout
 
-**Node System**: Registry, metadata extraction, built-in nodes (read_file, transform, prompt)
+**Node System**: Registry, metadata extraction, two-tier AI approach with simple platform nodes
 
 **Execution Engine**: Synchronous runtime with basic caching, action-based transitions
 
@@ -127,10 +127,10 @@ pflow/
 │   ├── mcp-integration.md            # MCP server integration (v2.0)
 │   ├── workflow-analysis.md          # Technical analysis of AI workflow inefficiencies
 │   ├── core-node-packages/           # Platform node package specifications
-│   │   ├── github-nodes.md
-│   │   ├── claude-nodes.md
-│   │   ├── ci-nodes.md
-│   │   └── llm-nodes.md
+│   │   ├── github-nodes.md           # GitHub platform nodes (github-get-issue, github-create-pr, etc.)
+│   │   ├── claude-nodes.md           # Claude Code CLI nodes (claude-analyze, claude-implement, etc.)
+│   │   ├── ci-nodes.md               # CI platform nodes (ci-run-tests, ci-get-status, etc.)
+│   │   └── llm-nodes.md              # General LLM node for text processing
 │   ├── implementation-details/       # Implementation specifics
 │   │   ├── metadata-extraction.md
 │   │   └── autocomplete-impl.md
@@ -195,11 +195,11 @@ pflow/
 - `docs/registry.md`: Registry system and version management
 - `docs/components.md`: Complete MVP vs v2.0 component breakdown
 
-**Core Nodes**:
-- `docs/core-node-packages/llm-nodes.md`: LLM node package specification
-- `docs/core-node-packages/github-nodes.md`: GitHub node package specification
-- `docs/core-node-packages/claude-nodes.md`: Claude Code CLI integration node package specification
-- `docs/core-node-packages/ci-nodes.md`: CI node package specification
+**Node Packages** (Two-Tier AI Architecture):
+- `docs/core-node-packages/claude-nodes.md`: - Claude Code CLI nodes for development tasks (claude-analyze, claude-implement, claude-review)
+- `docs/core-node-packages/llm-nodes.md`: - General LLM node for text processing and prompt generation
+- `docs/core-node-packages/github-nodes.md`: GitHub platform nodes (github-get-issue, github-create-pr, etc.)
+- `docs/core-node-packages/ci-nodes.md`: CI platform nodes (ci-run-tests, ci-get-status, etc.)
 - `docs/implementation-details/metadata-extraction.md`: Metadata extraction system
 
 **Shell Integration**:
@@ -249,9 +249,19 @@ Focus on creating the detailed plan for the MVP by doing the following:
 5. Define success criteria and validation steps for each component
 
 
-The goal is a working MVP that can execute simple flows like:
+The goal is a working MVP that can execute the core workflows:
+
+**Start simple** (general text processing):
 ```bash
-pflow read_file data.txt >> transform --format=json >> prompt "summarize this data"
+# Transform: Repeatedly asking AI "analyze these logs"
+# Into: pflow analyze-logs --input=error.log (instant)
+pflow read-file --path=error.log >> llm --prompt="extract error patterns and suggest fixes" >> write-file --path=analysis.md
+
+**And move on to more complex workflows** (GitHub issue resolution from `docs/workflow-analysis.md`):
+```bash
+# Transform: /project:fix-github-issue 1234 (30-90s, heavy tokens)
+# Into: pflow fix-issue --issue=1234 (2-5s, minimal tokens)
+pflow github-get-issue --issue=1234 >> claude-analyze --focus-areas=root-cause >> claude-implement --language=python
 ```
 
 But first, we need to create a detailed plan for the MVP.
