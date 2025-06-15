@@ -136,7 +136,7 @@ cython_debug/
 .idea/
 
 .temp/
-.archive/
+# .archive/
 
 # Added by Task Master AI
 # Logs
