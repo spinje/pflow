@@ -32,6 +32,60 @@ def prep(self, shared):
 
 **Shared store takes precedence** - this allows dynamic workflow data to override static configuration when needed.
 
+## Template Variable Resolution
+
+Template variables (`$variable`) provide dynamic content substitution in node inputs, enabling sophisticated data flow between nodes:
+
+### Template String Pattern
+```bash
+# Template string with $variable in CLI
+claude-code --prompt="<instructions>
+                        1. Understand the problem described in the issue
+                        2. Search the codebase for relevant files
+                        3. Implement the necessary changes to fix the issue
+                        4. Write and run tests to verify the fix
+                        5. Return a report of what you have done as output
+                      </instructions>
+                      This is the issue: $issue"
+
+# At runtime: $issue → shared["issue"] (from github-get-issue node output)
+claude-code --prompt="<instructions>...This is the issue: Button component touch events not working properly on mobile devices"
+```
+
+### Context-Aware CLI Resolution
+
+The CLI intelligently routes different types of flags:
+
+- **Data flags** (workflow data) → shared store: `--issue=1234` → `shared["issue_number"] = "1234"`
+- **Behavior flags** (node configuration) → node parameters: `--temperature=0.3` → `node.set_params({"temperature": 0.3})`
+- **Template variables** (dynamic content) → shared store at runtime: `$code_report` → `shared["code_report"]`
+
+### Variable Dependency Flow
+
+Template variables create dependencies between nodes:
+
+```bash
+# $issue depends on github-get-issue output
+github-get-issue --issue=1234 >>  # Outputs: shared["issue"], shared["issue_title"]
+claude-code --prompt="...This is the issue: $issue" >>  # Depends on: shared["issue"]
+llm --prompt="Write commit message for: $code_report" >>  # Depends on: shared["code_report"]
+git-commit --message="$commit_message"  # Depends on: shared["commit_message"]
+```
+
+### Missing Input Handling
+
+When required inputs are missing (typically for first nodes expecting user input):
+
+```bash
+# User runs: pflow fix-issue
+# Planner detects missing --issue flag for github-get-issue node
+# Prompts user: "Please provide --issue=<issue_number> for github-get-issue"
+# User provides: pflow fix-issue --issue=1234
+# Continues with: shared["issue_number"] = "1234"
+```
+
+This ensures all node inputs are populated before execution begins.
+
 ## Node Autonomy Principle
 
 The fundamental insight is that **node writers shouldn't need to understand flow orchestration concepts**. They should write simple, testable business logic using natural key names, while flow designers handle mapping complexity at the orchestration level.

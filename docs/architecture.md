@@ -198,31 +198,78 @@ node.prep(proxy)  # Still reads "text", proxy maps to "raw_content"
 
 #### 5.1.1 CLI Resolution Algorithm
 
-The CLI follows a single rule: **"Type flags; engine decides"**
+The CLI follows a **context-aware parameter resolution** rule: **"Type flags; engine decides based on context"**
 
 ```mermaid
 graph TD
-    A[CLI Flag: --key=value] --> B{Matches Node Input?}
+    A[CLI Flag: --key=value] --> B{Data Flag?}
     B -->|Yes| C[Data Injection to shared store]
-    B -->|No| D{Matches Node Param?}
-    D -->|Yes| E[Parameter Override]
-    D -->|No| F{Matches Execution Config?}
+    B -->|No| D{Behavior Flag?}
+    D -->|Yes| E[Parameter Override via node.set_params()]
+    D -->|No| F{Execution Config?}
     F -->|Yes| G[Execution Configuration]
     F -->|No| H[ERROR: Unknown Flag]
 ```
 
-#### 5.1.2 CLI Command Structure
+**Context-Aware Resolution Examples:**
+```bash
+# Data flags → shared store (flow data)
+--issue=1234 → shared["issue_number"] = "1234"
+--url=https://example.com → shared["url"] = "https://example.com"
+
+# Behavior flags → node parameters (node behavior)
+--temperature=0.3 → node.set_params({"temperature": 0.3})
+--model=gpt-4 → node.set_params({"model": "gpt-4"})
+```
+
+#### 5.1.2 Template Resolution System
+
+The CLI supports **$ variable substitution** for dynamic content access:
+
+```bash
+# Template variables → shared store lookup
+$code_report → shared["code_report"]
+$commit_message → shared["commit_message"]
+$issue_title → shared["issue_title"]
+```
+
+**Template-Driven Workflow Examples:**
+```bash
+# Template variables in workflow
+pflow github-get-issue --issue=1234 >> \
+  claude-code --prompt="$comprehensive_fix_instructions" >> \
+  llm --prompt="Write commit message for: $code_report" >> \
+  git-commit --message="$commit_message"
+
+# Where template variables are resolved at runtime:
+# $comprehensive_fix_instructions → planner-generated instructions
+# $code_report → output from claude-code node
+# $commit_message → output from llm node
+```
+
+**Template Resolution Process:**
+1. **Variable Detection**: Parser identifies $variable patterns in CLI syntax
+2. **Runtime Resolution**: Variables resolved to shared store values during execution
+3. **Content Substitution**: Variable placeholders replaced with actual content
+4. **Error Handling**: Missing variables trigger clear error messages
+
+#### 5.1.3 CLI Command Structure
 
 ```bash
 # Basic syntax
 pflow <node> [--flags] >> <node> [--flags]
 
-# Examples
+# Template-driven examples
+pflow github-get-issue --issue=1234 >> \
+  claude-code --prompt="$comprehensive_fix_instructions" >> \
+  git-commit --message="$commit_message"
+
+# Traditional examples (still supported)
 pflow yt-transcript --url=VIDEO >> llm --prompt="Summarize this transcript"
 cat article.md | pflow llm --prompt="Summarize this in 150 words"
 ```
 
-#### 5.1.3 Shell Pipe Integration
+#### 5.1.4 Shell Pipe Integration
 
 When input is piped via stdin:
 1. Content is automatically placed in `shared["stdin"]`
@@ -231,24 +278,29 @@ When input is piped via stdin:
 
 ### 5.2 Planning & Validation Pipeline
 
-#### 5.2.1 Dual-Mode Planner
+#### 5.2.1 Sophisticated Dual-Mode Planner
 
-The planner operates in two modes (though MVP focuses on CLI path):
+The planner operates in two modes with enhanced capabilities for template-driven workflows:
 
 **CLI Pipe Path (MVP Priority):**
-1. Parse CLI syntax into components
+1. Parse CLI syntax and detect template variables
 2. Validate all nodes exist in registry
 3. Check interface compatibility
 4. Generate mappings if needed
-5. Create validated JSON IR
-6. Direct execution (no user confirmation needed)
+5. **Generate sophisticated prompts and parameter values**
+6. Resolve template variables at runtime
+7. Create validated JSON IR
+8. Direct execution with template resolution
 
-**Natural Language Path (Post-MVP):**
+**Natural Language Path (MVP Included):**
 1. Extract metadata from registry
-2. LLM selects appropriate nodes
-3. Generate flow structure
-4. Validate and create mappings
-5. Show CLI preview for user approval
+2. **Generate comprehensive, context-aware instructions**
+3. LLM selects appropriate nodes based on intent
+4. **Create template variables and prompt mappings**
+5. Generate flow structure with template integration
+6. Validate and create mappings
+7. Show CLI preview with template variables
+8. User approval triggers template-driven execution
 
 #### 5.2.2 JSON IR Structure
 

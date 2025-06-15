@@ -10,9 +10,17 @@ Target transformation:
 ```bash
 # From: /project:fix-github-issue 1234 (30-90s, variable, token-heavy)
 # To: pflow fix-issue --issue=1234 (2-5s, consistent, token-efficient)
+# Under the hood fix-issue is a deterministic template-driven workflow:
+```bash
+github-get-issue >> \
+claude-code --prompt="<generated_instructions>" >> \
+llm --prompt="Write commit message for: $code_report" >> \
+git-commit --message="$commit_message" >> \
+git-push >> \
+github-create-pr --title="Fix: $issue_title" --body="$code_report"
 ```
 
-**Core Architecture**: Two-tier AI approach with Claude Code CLI nodes for development and LLM node for general text processing.
+**Core Architecture**: Template-driven workflows with context-aware parameter resolution, $ variable substitution, and planner-generated prompts.
 
 ---
 
@@ -42,11 +50,20 @@ Target transformation:
   - Transparent key mapping when needed
   - Zero overhead when no mappings defined
   - Integration with pocketflow node execution
-- [ ] **CLI flag to parameter resolution** (`src/pflow/core/cli_resolver.py`)
-  - Basic `--key=value` parsing without sophisticated categorization
-  - All CLI flags map to `node.set_params()` (not shared store)
+- [ ] **Context-aware CLI parameter resolution** (`src/pflow/core/cli_resolver.py`)
+  - Basic `--key=value` parsing with context-aware routing
+  - Data flags → shared store (`--issue=1234` → `shared["issue_number"]`)
+  - Behavior flags → node.set_params() (`--temperature=0.3` → `node.set_params({"temperature": 0.3})`)
   - Shell pipe input detection and `shared["stdin"]` handling
   - JSON IR → compiled Python code execution pipeline
+- [ ] **Template resolution system** (`src/pflow/core/template_resolver.py`)
+  - $ variable substitution engine (`$code_report`, `$commit_message`, etc.)
+  - Automatic mapping from shared store keys to template variables
+  - Template validation and error handling for missing variables
+- [ ] **Shared store inspection utilities** (`src/pflow/core/inspector.py`)
+  - `pflow inspect shared-store` - Show current shared store state
+  - `pflow inspect params --node=<node>` - Show node parameters
+  - `pflow inspect template-vars` - Show available template variables
 
 ### 1.3 Simple Node Registry
 - [ ] **Registry structure** (`src/pflow/registry/`)
@@ -77,15 +94,17 @@ Target transformation:
 ## 📋 Phase 2: Metadata & Registry Systems (Weeks 3-4)
 
 ### 2.1 Comprehensive Metadata Extraction
-- [ ] **Docstring parsing system** (`src/pflow/registry/metadata_extractor.py`)
+- [ ] **Enhanced docstring parsing system** (`src/pflow/registry/metadata_extractor.py`)
   - Full `docstring_parser` + custom regex implementation
-  - Parse Interface sections with node-specific parameters
-  - Extract inputs, outputs, params for each individual node
+  - Parse Interface sections with parameter type classification
+  - Extract inputs, outputs, data_params, behavior_params for each node
   - Support both simple and structured Interface formats
-- [ ] **Node parameter mapping**
+  - Template variable tracking (which keys nodes produce/consume)
+- [ ] **Parameter classification system**
+  - Distinguish data parameters (→ shared store) from behavior parameters (→ node.set_params())
   - Parameter availability mapping per individual node
   - Global parameters available across all nodes in a flow
-  - Validation of parameter consistency
+  - Template variable dependency mapping
 - [ ] **JSON metadata generation**
   - Schema-compliant metadata for each node
   - Source hash computation for staleness detection
@@ -137,21 +156,22 @@ Target transformation:
   - Test simple node interfaces and parameter handling
   - Integration tests with real GitHub API (optional)
 
-### 3.2 Claude Code CLI Nodes
-- [ ] **Individual Claude node implementations** (`src/pflow/nodes/claude/`)
-  - Development-specific nodes: `claude-analyze`, `claude-implement`, `claude-review`
-  - Project-aware AI with file system access and tool integration
-  - Natural interface: `shared["prompt"]` → `shared["analysis"]`, `shared["implementation"]`, `shared["review"]`
-  - Integration with headless Claude Code CLI for project context
+### 3.2 Claude Code Super Node
+- [ ] **Claude Code comprehensive node** (`src/pflow/nodes/claude_code.py`)
+  - Single powerful node with instruction-based interface
+  - Complex prompt generation with structured instructions
+  - Project-aware AI with file system access and comprehensive development capabilities
+  - Natural interface: `shared["prompt"]` → `shared["code_report"]` (comprehensive development report)
+  - Integration with headless Claude Code CLI for full project context
 - [ ] **Claude Code CLI integration**
   - Headless mode execution for workflow automation
   - Project context and file system access
   - Model selection and parameter handling
-  - Structured output parsing for each node type
-- [ ] **Claude node tests**
-  - Mock Claude Code CLI responses for each node
-  - Test project context integration
-  - Validate development-specific outputs
+  - Structured output parsing for comprehensive development reports
+- [ ] **Claude Code node tests**
+  - Mock Claude Code CLI responses for comprehensive instructions
+  - Test project context integration with complex multi-step instructions
+  - Validate comprehensive development outputs and reports
 
 ### 3.3 LLM Node
 - [ ] **General LLM node implementation** (`src/pflow/nodes/llm.py`)
@@ -233,19 +253,18 @@ Target transformation:
   - Fallback strategies for model failures
 
 ### 4.2 Metadata-Driven Planning
-- [ ] **Planning context builder** (`src/pflow/planning/context_builder.py`)
-  - Load available node metadata into LLM context
+- [ ] **Sophisticated planning context builder** (`src/pflow/planning/context_builder.py`)
+  - Load available node metadata with parameter classification
   - Generate compact, LLM-optimized descriptions
-  - Include action-specific parameter information
-- [ ] **Node selection engine** (`src/pflow/planning/node_selector.py`)
-  - Intelligent node selection based on user intent
-  - Use extracted metadata for compatibility checking
-  - Validation of selected nodes and interfaces
-- [ ] **Workflow generation** (`src/pflow/planning/flow_generator.py`)
-  - Natural language → individual node CLI syntax compilation
-  - Parameter inference using metadata
-  - Basic linear workflows (A >> B >> C)
-  - JSON IR → compiled Python code generation
+  - Include template variable mapping information
+  - Context for prompt and instruction generation
+- [ ] **Advanced workflow generation engine** (`src/pflow/planning/flow_generator.py`)
+  - Natural language → template-driven CLI syntax compilation
+  - Automatic prompt and instruction generation for complex nodes
+  - Parameter value generation (not just parameter inference)
+  - Template variable creation and mapping ($code_report, $commit_message, etc.)
+  - Context-aware parameter routing (data vs behavior)
+  - JSON IR → compiled Python code generation with template resolution
 
 ### 4.3 User Approval & Workflow Storage
 - [ ] **User verification system** (`src/pflow/planning/approval.py`)
@@ -354,15 +373,24 @@ Target transformation:
 
 **The MVP is complete when developers can successfully**:
 
-1. **Generate workflows from natural language**:
+1. **Generate template-driven workflows from natural language**:
    ```bash
    # Primary workflow: GitHub issue resolution
-   pflow "analyze this github issue and implement a fix"
-   # → Generates: github-get-issue >> claude-analyze --focus-areas=root-cause >> claude-implement
-
-   # Secondary workflow: Log analysis
-   pflow "analyze error logs and extract patterns"
-   # → Generates: read-file >> llm --prompt="extract error patterns and root causes" >> write-file
+   pflow "fix this github issue completely"
+   # → Generates template-driven workflow:
+  github-get-issue >> \
+  claude-code --prompt="<instructions>
+                          1. Understand the problem described in the issue
+                          2. Search the codebase for relevant files
+                          3. Implement the necessary changes to fix the issue
+                          4. Write and run tests to verify the fix
+                          5. Return a report of what you have done as output
+                        </instructions>
+                        This is the issue: $issue" >> \
+  llm --prompt="Write a descriptive commit message for these changes: $code_report" >> \
+  git-commit --message="$commit_message" >> \
+  git-push >> \
+  github-create-pr --title="Fix: $issue_title" --body="$code_report"
    ```
 
 2. **Execute saved workflows with parameters**:
@@ -390,16 +418,18 @@ Target transformation:
 
 ### Key Architectural Decisions
 1. **Use pocketflow as foundation** - Leverage existing 100-line framework
-2. **Individual nodes architecture** - Simple, single-purpose nodes (`github-get-issue`, `claude-analyze`, etc.)
-3. **JSON IR → compiled Python** - CLI syntax → JSON IR → compiled Python code execution (per planner.md)
-4. **CLI flags → node.set_params()** - All CLI flags map to node parameters, shared store for data flow
-5. **Two-tier AI approach** - Claude Code CLI nodes for development, LLM node for general text processing
-6. **Core use case driven** - Primary focus on GitHub issue resolution workflow (from workflow-analysis.md)
-7. **Dependencies-first build order** - Infrastructure before natural language planning
-8. **Fail fast error handling** - Clear error messages, no complex retry mechanisms in MVP
-9. **Environment variable authentication** - GITHUB_TOKEN, ANTHROPIC_API_KEY, etc.
-10. **Natural shared store interfaces** - Intuitive key names for node-to-node communication
-11. **Comprehensive metadata extraction** - Rich docstring parsing for planning
+2. **Template-driven workflow architecture** - $ variable substitution with planner-generated prompts and parameters
+3. **Individual nodes + super nodes** - Simple nodes (`github-get-issue`) + powerful nodes (`claude-code`) with instruction-based interfaces
+4. **Context-aware parameter resolution** - Data flags → shared store, behavior flags → node.set_params()
+5. **JSON IR → compiled Python with templates** - CLI syntax → JSON IR → compiled Python code execution with template resolution
+6. **Sophisticated planner** - Generates prompts, instructions, parameter values, and template mappings
+7. **Shared store inspection capabilities** - Debug commands for transparency and workflow state inspection
+8. **Two-tier AI approach** - Claude Code super node for comprehensive development, LLM node for text processing
+9. **Core use case driven** - Primary focus on realistic end-to-end GitHub issue resolution workflow
+10. **Dependencies-first build order** - Infrastructure before natural language planning
+11. **Fail fast error handling** - Clear error messages, no complex retry mechanisms in MVP
+12. **Environment variable authentication** - GITHUB_TOKEN, ANTHROPIC_API_KEY, etc.
+13. **Enhanced metadata extraction** - Parameter classification (data vs behavior) and template variable tracking
 
 ### Critical Dependencies
 1. **LLM access** - Claude/OpenAI API keys for planning

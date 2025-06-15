@@ -94,6 +94,7 @@ This document provides a comprehensive inventory of all components and subsystem
 - **Purpose**: Simple, single-purpose platform functionality
 - **Required Simple Nodes**:
   - **GitHub**: `github-get-issue`, `github-create-issue`, `github-list-prs`, `github-create-pr`, `github-get-files`, `github-merge-pr`
+  - **Claude Code Super Node**: `claude-code` (comprehensive AI development with planner-generated instructions)
   - **LLM**: `llm` (general-purpose text processing - smart exception to simple node philosophy)
   - **CI**: `ci-run-tests`, `ci-get-status`, `ci-trigger-build`, `ci-get-logs`
   - **Git**: `git-commit`, `git-push`, `git-create-branch`, `git-merge`, `git-status`
@@ -104,14 +105,18 @@ This document provides a comprehensive inventory of all components and subsystem
 
 #### 4.1 Dual-Mode Planner (MVP - Built After Core Infrastructure)
 
-- **Purpose**: Support both CLI and natural language input (NL dependent on registry/metadata)
+- **Purpose**: Support both CLI and natural language input with template string composition
 - **Components**:
-  - CLI syntax parser (build first)
+  - CLI syntax parser with $variable detection (build first)
+  - Template string composition system for populating all node inputs
+  - Variable dependency tracking ($variable → shared store mapping)
+  - Missing input detection and user prompting (for first nodes expecting user input)
   - Natural language processing (build after CLI + registry + metadata)
   - Node existence validation
   - Interface compatibility checking
+  - Template variable resolution validation
   - Basic mapping generation
-  - IR assembly
+  - IR assembly with template metadata
   - Direct execution path for CLI (no user confirmation)
   - User approval workflow for natural language flows
 
@@ -121,6 +126,7 @@ This document provides a comprehensive inventory of all components and subsystem
 - **Components**:
   - JSON schema validation
   - Node interface compatibility
+  - Template variable dependency validation ($variable resolution checking)
   - DAG structure validation (no cycles)
   - Parameter type checking
   - Execution config validation
@@ -128,22 +134,36 @@ This document provides a comprehensive inventory of all components and subsystem
 
 #### 4.3 JSON IR System
 
-- **Purpose**: Machine-readable flow representation
+- **Purpose**: Machine-readable flow representation with template support
 - **Components**:
   - IR schema definition (v0.1.0)
-  - Node specifications
+  - Node specifications with input_templates
+  - Template variable dependency definitions
+  - Variable resolution mapping
   - Edge definitions
   - Mapping definitions
   - Metadata structure
   - Schema validation
 
+#### 4.4 Template Resolution System
+
+- **Purpose**: Resolve $variable references to shared store values at runtime
+- **Components**:
+  - Template string parser for $variable detection
+  - Variable dependency tracker ($variable → shared store key mapping)
+  - Runtime variable substitution engine
+  - Missing variable detection and user prompting (for first nodes)
+  - Template validation and error reporting
+  - Integration with shared store for value resolution
+
 ### 5. Execution Engine
 
 #### 5.1 Runtime Core
 
-- **Purpose**: Execute validated flows
+- **Purpose**: Execute validated flows with template resolution
 - **Components**:
   - IR loader and parser
+  - Template variable resolution engine
   - Node instantiation from registry
   - Parameter configuration
   - Flow wiring based on edges

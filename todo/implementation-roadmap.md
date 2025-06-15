@@ -72,7 +72,7 @@ pflow registry describe github-get-issue  # Shows node interface and parameters
 
 **Priority 1 (Must Have)**:
 - GitHub nodes: `github-get-issue`, `github-create-issue`, `github-list-prs`, `github-create-pr`, `github-get-files`, `github-merge-pr`
-- **Claude Code CLI nodes**: `claude-analyze`, `claude-implement`, `claude-review` (project-aware AI agent with file access)
+- **Claude Code super agent node**: `claude-code` (comprehensive AI development with planner-generated instructions combining analysis, implementation, testing, review)
 - **General LLM node**: `llm` for text processing, prompt generation, data analysis (API-based)
 - CI nodes: `ci-run-tests`, `ci-get-status`, `ci-trigger-build`, `ci-get-logs`
 - Git nodes: `git-commit`, `git-push`, `git-create-branch`, `git-merge`, `git-status`
@@ -90,12 +90,19 @@ pflow registry describe github-get-issue  # Shows node interface and parameters
 
 **Success Criteria**:
 ```bash
-# Core MVP workflow: GitHub issue analysis and implementation
-pflow github-get-issue --issue=1234 >>
-  claude-analyze >>
-  claude-implement >>
-  ci-run-tests >>
-  github-create-pr
+# Core MVP workflow: GitHub issue resolution with template-driven super node
+pflow github-get-issue --issue=1234 >> \
+  claude-code --prompt="<instructions>
+                          1. Understand the problem described in the issue
+                          2. Search the codebase for relevant files
+                          3. Implement the necessary changes to fix the issue
+                          4. Write and run tests to verify the fix
+                          5. Return a report of what you have done as output
+                        </instructions>
+                        This is the issue: $issue" >> \
+  llm --prompt="Write commit message for: $code_report" >> \
+  git-commit --message="$commit_message" >> \
+  github-create-pr --title="Fix: $issue_title" --body="$code_report"
 
 # Secondary workflow: Log analysis and insights
 cat error.log | pflow llm --prompt="extract error patterns and suggest fixes" >> write-file --path=analysis.md
@@ -106,8 +113,10 @@ cat error.log | pflow llm --prompt="extract error patterns and suggest fixes" >>
 
 **Priority 1 (Must Have)**:
 - LLM integration for thinking models (Claude/OpenAI o1)
-- Metadata-driven simple node selection using extracted interface definitions
-- Natural language to CLI workflow compilation
+- Template string composition system for populating all node inputs
+- Variable dependency tracking ($variable → shared store mapping)
+- Missing input detection and user prompting (for first nodes expecting user input)
+- Natural language to template-driven CLI workflow compilation
 - User approval workflow for generated plans
 
 **Priority 2 (Should Have)**:
@@ -123,7 +132,9 @@ cat error.log | pflow llm --prompt="extract error patterns and suggest fixes" >>
 ```bash
 # Primary workflow: GitHub issue fixing
 pflow "analyze this issue, implement fix, test, create PR"
-# → Generates: github-get-issue >> claude-analyze >> claude-implement >> ci-run-tests >> github-create-pr
+# → Generates template-driven workflow:
+# github-get-issue >> claude-code --prompt="$comprehensive_instructions" >>
+# llm --prompt="Write commit message for: $code_report" >> git-commit >> github-create-pr
 # → User approves → Saves as reusable workflow
 
 # Secondary workflow: Log analysis
@@ -131,6 +142,7 @@ pflow "analyze error logs and extract insights"
 # → Generates: read-file >> llm --prompt="analyze logs for patterns" >> write-file
 
 pflow fix-issue --issue=1234  # Reuses deterministic workflow (2-5s)
+# Planner populates: --issue=1234 → shared["issue_number"], prompts for missing inputs
 pflow analyze-logs --path=error.log  # Instant log analysis
 # ≥95% planning success rate, ≥90% user approval rate
 ```
@@ -141,16 +153,17 @@ pflow analyze-logs --path=error.log  # Instant log analysis
 
 ### Two-Tier AI Approach
 
-**Claude Code CLI Nodes** (Development-Specific):
-- `claude-analyze`: Project-aware code/issue analysis with full context
-- `claude-implement`: Code generation with file system access and project understanding
-- `claude-review`: Code review with development tool integration
-- `claude-explain`, `claude-refactor`: Specialized development tasks
+**Claude Code Super Node** (Development-Specific):
+- `claude-code`: Comprehensive AI development with planner-generated instructions
+- Receives sophisticated prompts combining analysis, implementation, testing, review
+- Has full project context, file system access, and development tool integration
+- Instructions frequently contain template variables: `"...This is the issue: $issue_data"`
 
 **General LLM Node** (Text Processing):
 - `llm`: API-based text processing, prompt generation, data analysis
-- Used for: Log analysis, document processing, prompt creation between Claude steps
+- Used for: Log analysis, document processing, template string generation between Claude steps
 - No project context, but fast and flexible for general text tasks
+- Often processes Claude output: `"Write commit message for: $code_report"`
 
 ### Core MVP Workflows
 
@@ -158,11 +171,18 @@ pflow analyze-logs --path=error.log  # Instant log analysis
 ```bash
 # Transforms: /project:fix-github-issue 1234 (30-90s, heavy tokens)
 # Into: pflow fix-issue --issue=1234 (2-5s, minimal tokens)
-pflow github-get-issue --issue=1234 >>
-  claude-analyze --focus-areas=root-cause >>
-  claude-implement --language=python >>
-  ci-run-tests >>
-  github-create-pr
+pflow github-get-issue --issue=1234 >> \
+  claude-code --prompt="<instructions>
+                          1. Understand the problem described in the issue
+                          2. Search the codebase for relevant files
+                          3. Implement the necessary changes to fix the issue
+                          4. Write and run tests to verify the fix
+                          5. Return a report of what you have done as output
+                        </instructions>
+                        This is the issue: $issue" >> \
+  llm --prompt="Write commit message for: $code_report" >> \
+  git-commit --message="$commit_message" >> \
+  github-create-pr --title="Fix: $issue_title" --body="$code_report"
 ```
 
 **Secondary: Log Analysis** (showcases LLM node value)

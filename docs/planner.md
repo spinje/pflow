@@ -69,32 +69,37 @@ CLI Pipe ──▶ │   CLI shim  │
 
 The planner operates through a **validation-first approach**, performing linting and verification at every step to catch errors as early as possible.
 
-### 3.1 Natural Language Path (Full Planner)
+### 3.1 Natural Language Path (Sophisticated Planner)
 
 | Stage | Responsibility | Outcome |
 |---|---|---|
 | **A. Node/Flow Discovery** | Extract metadata JSON from available Python classes. | Registry of nodes/flows with natural language descriptions. |
-| **B. LLM Selection** | Use thinking model to choose nodes/flows from metadata context. | Selected building blocks (nodes and/or sub-flows). |
-| **C. Flow Structure Generation** | Create node graph with simple node sequencing. | Structural IR with clear data flow. |
-| **D. Structural Validation** | Lint node compatibility, action paths, reachability. | Pass → continue, Fail → retry or abort. |
-| **E. Shared Store Modeling** | Create shared store schema, generate mappings if needed. | Compatible shared store interface design. |
-| **F. Type/Interface Validation** | Validate shared store key compatibility between nodes. | Pass → continue, Fail → repair or retry. |
-| **G. IR Finalization** | Generate validated JSON IR with default params. | Complete, validated IR ready for compilation. |
-| **H. Compilation Handoff** | Pass IR to compiler for CLI syntax generation. | CLI pipe syntax for user preview. |
-| **I. User Verification** | Show compiled CLI pipe for user approval. | User-approved flow ready for execution. |
-| **J. Execution Handoff** | Save lockfile, hand off to shared store runtime. | Lockfile + runtime execution. |
+| **B. Intent Analysis & Template Design** | **Analyze user intent and design template-driven workflow structure.** | **Template variables and workflow architecture design.** |
+| **C. Template String Composition** | **Generate template strings that populate all node inputs with static text and $variable references.** | **Complete input templates with proper variable dependencies.** |
+| **D. Parameter Value Creation** | **Generate appropriate parameter values based on workflow context.** | **Context-specific parameter assignments and defaults.** |
+| **E. LLM Selection & Template Mapping** | Use thinking model to choose nodes and **create template variable mappings**. | Selected building blocks with **template integration**. |
+| **F. Flow Structure Generation** | Create node graph with **template-driven sequencing**. | Structural IR with **template variables and data flow**. |
+| **G. Structural Validation** | Lint node compatibility, action paths, reachability, **template resolution**. | Pass → continue, Fail → retry or abort. |
+| **H. Shared Store Modeling** | Create shared store schema, generate mappings, **template variable tracking**. | Compatible shared store interface with **template support**. |
+| **I. Type/Interface Validation** | Validate shared store key compatibility and **template variable resolution**. | Pass → continue, Fail → repair or retry. |
+| **J. IR Finalization** | Generate validated JSON IR with **template variables and generated parameters**. | Complete, validated IR with **template-driven execution plan**. |
+| **K. Compilation Handoff** | Pass IR to compiler for **template-aware** CLI syntax generation. | CLI pipe syntax with **template variables** for user preview. |
+| **L. User Verification** | Show compiled CLI pipe with **template variables** for user approval. | User-approved **template-driven** flow ready for execution. |
+| **M. Execution Handoff** | Save lockfile, hand off to **template-aware** shared store runtime. | Lockfile + **template-driven** runtime execution. |
 
-### 3.2 CLI Pipe Syntax Path (Validation Planner)
+### 3.2 CLI Pipe Syntax Path (Enhanced Validation Planner)
 
 | Stage | Responsibility | Outcome |
 |---|---|---|
-| **A. Syntax Parsing** | Parse CLI pipe syntax into basic node graph structure. | Node sequence + parameter extraction. |
-| **B. Node Validation** | Verify all referenced nodes exist in registry. | Pass → continue, Fail → abort with suggestions. |
-| **C. Structural Validation** | Lint action paths, reachability, parameter compatibility. | Pass → continue, Fail → abort with diagnostics. |
-| **D. Shared Store Modeling** | Analyze node interfaces, create shared store schema. | Compatible shared store interface design. |
-| **E. Mapping Generation** | Detect interface mismatches, generate mappings if needed. | Optional mappings for node compatibility. |
-| **F. IR Finalization** | Generate validated JSON IR with CLI-specified params. | Complete, validated IR ready for execution. |
-| **G. Execution Handoff** | Save lockfile, execute directly via shared store runtime. | Direct execution (no user verification needed). |
+| **A. Syntax Parsing** | Parse CLI pipe syntax and **detect template variables**. | Node sequence + parameter extraction + **template analysis**. |
+| **B. Template Variable Analysis** | **Identify and validate template variable patterns and dependencies.** | **Template variable dependency graph and resolution order.** |
+| **C. Node Validation** | Verify all referenced nodes exist in registry. | Pass → continue, Fail → abort with suggestions. |
+| **D. Template String Resolution** | **Resolve template strings for all node inputs, ensuring $variables map to available shared store values.** | **Fully populated node input templates with validated dependencies.** |
+| **E. Structural Validation** | Lint action paths, reachability, parameter compatibility, **template resolution order**. | Pass → continue, Fail → abort with diagnostics. |
+| **F. Shared Store Modeling** | Analyze node interfaces, create shared store schema, **template variable tracking**. | Compatible shared store interface with **template support**. |
+| **G. Mapping Generation** | Detect interface mismatches, generate mappings, **template variable mappings**. | Optional mappings for node compatibility + **template resolution**. |
+| **H. IR Finalization** | Generate validated JSON IR with CLI-specified params + **template metadata**. | Complete, validated IR with **template-driven execution plan**. |
+| **I. Execution Handoff** | Save lockfile, execute directly via **template-aware** shared store runtime. | Direct execution with **template resolution** (no user verification needed). |
 
 ### 3.2.1 Type Shadow Store Prevalidation (CLI Path Enhancement)
 
@@ -238,29 +243,43 @@ class YTTranscriptNode(Node):
 
 ---
 
-## 6 · LLM Selection Process
+## 6 · Template String Composition & Variable Flow Management
 
-### 6.1 Enhanced Retrieval-First Strategy
+### 6.1 Template String Composition & Shared Store Input Population
 
-The planner leverages existing flow descriptions for **LLM-powered flow discovery** and intelligent reuse:
+The planner leverages LLM capabilities for **template string composition, shared store input population, and variable dependency management**:
 
-**Enhanced Discovery Process:**
-1. **Description-Based Matching**: LLM analyzes user prompt against existing flow description fields
-2. **Semantic Compatibility**: Evaluates flow purpose alignment using natural language descriptions
-3. **Flow-as-Component Reuse**: Treats existing flows as reusable building blocks for new compositions
-4. **Intent Preservation**: Existing description fields enable rediscovery by purpose
+**Core Planning Process:**
+1. **Node Input Analysis**: Examine each node's metadata to identify all required shared store inputs
+2. **Template String Generation**: Create strings that populate node inputs, incorporating both static text and dynamic $variables
+3. **Variable Dependency Tracking**: Map $variable references to their source nodes' outputs in the shared store
+4. **Parameter Value Assignment**: Generate context-appropriate parameter values for node behavior
+5. **Flow Validation**: Ensure all template variables can be resolved through the workflow execution order
 
-**Round-Trip Architecture Benefits:**
-- **Forward Planning**: Natural language → structured flow (enhanced with description matching)
-- **Intent Explanation**: Structured flow → existing description field (simple metadata access)
-- **Flow Discovery**: Description-based search through existing flow library
-- **Compositional Reuse**: Proven flows become components for complex workflows
+**Template String Composition Examples:**
+```bash
+# For claude-code node expecting shared["prompt"]:
+"<instructions>
+1. Understand the problem described in the issue
+2. Search the codebase for relevant files
+3. Implement the necessary changes to fix the issue
+4. Write and run tests to verify the fix
+5. Return a report of what you have done as output
+</instructions>
+This is the issue: $issue"
 
-**Integration with Existing Systems:**
-- Uses existing `metadata.description` field in flow IR (no schema changes)
-- Enhances LLM context with flow descriptions during selection process
-- Preserves established retrieval-first approach with semantic improvements
-- Maintains compatibility with current flow cache and validation systems
+# For llm node expecting shared["prompt"]:
+"Write a descriptive commit message for these changes: $code_report"
+
+# For git-commit node expecting shared["message"]:
+"$commit_message"
+```
+
+**Variable Flow Management:**
+- **Dependency Resolution**: `$issue` → `shared["issue"]` from github-get-issue output
+- **Multi-Consumer Variables**: `$code_report` used by both llm and github-create-pr nodes
+- **Runtime Substitution**: Template strings resolved to actual values during execution
+- **Validation**: Ensure all $variables have corresponding sources in the workflow
 
 **Discovery Enhancement:**
 - LLM receives flow descriptions as context during node/flow selection
@@ -288,15 +307,42 @@ When generation is required, the planner uses a **thinking model** (e.g., o1-pre
 | **New Composition** | Combine individual simple nodes | "analyze sentiment" → `read-file` + `llm --prompt="analyze sentiment"` |
 | **LLM Node Preference** | Use general LLM node for text tasks | "explain this code" → `read-file` + `llm --prompt="explain this code"` |
 
-### 6.4 LLM Response Format
+### 6.4 Template String Composition Response Format
 
 ```json
 {
-  "reasoning": "User wants video summary. Exact match with existing pipeline using yt-transcript and llm nodes.",
-  "selection_type": "exact_match",
-  "chosen_flow": "video-summary-pipeline",
-  "selected_nodes": ["yt-transcript", "llm"],
-  "modifications": []
+  "reasoning": "User wants GitHub issue resolution. Generating template strings to populate all node inputs with proper variable dependencies.",
+  "workflow_type": "template_string_composition",
+  "node_input_templates": {
+    "claude-code": {
+      "prompt": "<instructions>\n1. Understand the problem described in the issue\n2. Search the codebase for relevant files\n3. Implement the necessary changes to fix the issue\n4. Write and run tests to verify the fix\n5. Return a report of what you have done as output\n</instructions>\nThis is the issue: $issue",
+      "dependencies": ["issue"]
+    },
+    "llm": {
+      "prompt": "Write a descriptive commit message for these changes: $code_report",
+      "dependencies": ["code_report"]
+    },
+    "git-commit": {
+      "message": "$commit_message",
+      "dependencies": ["commit_message"]
+    },
+    "github-create-pr": {
+      "title": "Fix: $issue_title",
+      "body": "$code_report",
+      "dependencies": ["issue_title", "code_report"]
+    }
+  },
+  "variable_flow": {
+    "issue": "github-get-issue.outputs.issue_data",
+    "issue_title": "github-get-issue.outputs.title",
+    "code_report": "claude-code.outputs.code_report",
+    "commit_message": "llm.outputs.response"
+  },
+  "selected_nodes": ["github-get-issue", "claude-code", "llm", "git-commit", "git-push", "github-create-pr"],
+  "parameter_values": {
+    "claude-code": {"temperature": 0.2, "max_tokens": 8192},
+    "llm": {"temperature": 0.1, "model": "gpt-4"}
+  }
 }
 ```
 
@@ -518,41 +564,74 @@ elif user_intent == "technical_summary":
 
 ## 10 · IR Schema and Compilation
 
-### 10.1 Complete JSON IR Schema
+### 10.1 Template-Driven JSON IR Schema
 
 ```json
 {
   "metadata": {
     "planner_version": "1.0.0",
     "created_at": "2024-01-01T12:00:00Z",
-    "prompt": "summarize this youtube video",
+    "prompt": "fix github issue 1234",
     "llm_model": "o1-preview"
   },
   "nodes": [
     {
-      "id": "yt-transcript",
+      "id": "github-get-issue",
       "version": "1.0.0",
-      "params": {"language": "en"},
-      "execution": {"max_retries": 2, "wait": 1.0}
+      "params": {"issue": 1234},
+      "input_templates": {},
+      "outputs": ["issue", "issue_title", "issue_body"]
+    },
+    {
+      "id": "claude-code",
+      "version": "1.0.0",
+      "params": {"temperature": 0.2, "max_tokens": 8192},
+      "input_templates": {
+        "prompt": "<instructions>\n1. Understand the problem described in the issue\n2. Search the codebase for relevant files\n3. Implement the necessary changes to fix the issue\n4. Write and run tests to verify the fix\n5. Return a report of what you have done as output\n</instructions>\nThis is the issue: $issue"
+      },
+      "template_dependencies": ["issue"],
+      "outputs": ["code_report"]
     },
     {
       "id": "llm",
       "version": "1.0.0",
-      "params": {"model": "gpt-4", "temperature": 0.7}
+      "params": {"model": "gpt-4", "temperature": 0.1},
+      "input_templates": {
+        "prompt": "Write a descriptive commit message for these changes: $code_report"
+      },
+      "template_dependencies": ["code_report"],
+      "outputs": ["commit_message"]
+    },
+    {
+      "id": "git-commit",
+      "version": "1.0.0",
+      "input_templates": {
+        "message": "$commit_message"
+      },
+      "template_dependencies": ["commit_message"]
+    },
+    {
+      "id": "github-create-pr",
+      "version": "1.0.0",
+      "input_templates": {
+        "title": "Fix: $issue_title",
+        "body": "$code_report"
+      },
+      "template_dependencies": ["issue_title", "code_report"]
     }
   ],
   "edges": [
-    {"from": "yt-transcript", "to": "llm"}
+    {"from": "github-get-issue", "to": "claude-code"},
+    {"from": "claude-code", "to": "llm"},
+    {"from": "llm", "to": "git-commit"},
+    {"from": "git-commit", "to": "git-push"},
+    {"from": "git-push", "to": "github-create-pr"}
   ],
-  "mappings": {
-    "llm": {
-      "input_mappings": {"prompt": "formatted_prompt"}
-    }
-  },
-  "shared_store_schema": {
-    "inputs": ["url"],
-    "outputs": ["response"],
-    "intermediate": ["transcript", "formatted_prompt"]
+  "variable_resolution": {
+    "issue": "github-get-issue.outputs.issue",
+    "issue_title": "github-get-issue.outputs.issue_title",
+    "code_report": "claude-code.outputs.code_report",
+    "commit_message": "llm.outputs.commit_message"
   }
 }
 ```
