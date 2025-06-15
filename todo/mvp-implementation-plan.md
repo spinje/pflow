@@ -60,10 +60,18 @@ github-create-pr --title="Fix: $issue_title" --body="$code_report"
   - $ variable substitution engine (`$code_report`, `$commit_message`, etc.)
   - Automatic mapping from shared store keys to template variables
   - Template validation and error handling for missing variables
+  - Missing input detection and user prompting (especially for first nodes expecting user input)
 - [ ] **Shared store inspection utilities** (`src/pflow/core/inspector.py`)
   - `pflow inspect shared-store` - Show current shared store state
   - `pflow inspect params --node=<node>` - Show node parameters
   - `pflow inspect template-vars` - Show available template variables
+    ```bash
+    # Example output:
+    # Available template variables:
+    #   $issue - GitHub issue content (from: github-get-issue)
+    #   $code_report - Development report (from: claude-code)
+    #   $commit_message - Generated message (from: llm)
+    ```
 
 ### 1.3 Simple Node Registry
 - [ ] **Registry structure** (`src/pflow/registry/`)
@@ -260,10 +268,12 @@ github-create-pr --title="Fix: $issue_title" --body="$code_report"
   - Context for prompt and instruction generation
 - [ ] **Advanced workflow generation engine** (`src/pflow/planning/flow_generator.py`)
   - Natural language → template-driven CLI syntax compilation
+  - Template string composition with embedded $variables for all node inputs
   - Automatic prompt and instruction generation for complex nodes
   - Parameter value generation (not just parameter inference)
   - Template variable creation and mapping ($code_report, $commit_message, etc.)
   - Context-aware parameter routing (data vs behavior)
+  - Missing input detection and user prompting for required parameters
   - JSON IR → compiled Python code generation with template resolution
 
 ### 4.3 User Approval & Workflow Storage
@@ -401,7 +411,12 @@ github-create-pr --title="Fix: $issue_title" --body="$code_report"
 3. **Get better observability than slash commands**:
    ```bash
    pflow trace run_2024-01-01_abc123
-   # Primary workflow trace: Step 1: github-get-issue ✓ (0.2s), Step 2: claude-analyze ✓ (3.1s), Step 3: claude-implement ✓ (5.2s)
+   # Primary workflow trace:
+   #   Step 1: github-get-issue ✓ (0.2s)
+   #   Step 2: claude-code ✓ (8.3s) [comprehensive development with template-driven instructions]
+   #   Step 3: llm ✓ (1.2s) [commit message generation]
+   #   Step 4: git-commit ✓ (0.1s)
+   #   Step 5: github-create-pr ✓ (0.3s)
    # Secondary workflow trace: Step 1: read-file ✓ (0.1s), Step 2: llm ✓ (2.3s), Step 3: write-file ✓ (0.1s)
    ```
 
@@ -418,11 +433,11 @@ github-create-pr --title="Fix: $issue_title" --body="$code_report"
 
 ### Key Architectural Decisions
 1. **Use pocketflow as foundation** - Leverage existing 100-line framework
-2. **Template-driven workflow architecture** - $ variable substitution with planner-generated prompts and parameters
+2. **Template-driven workflow architecture** - Planner does template string composition with embedded $variables, creating complete prompts like `"...This is the issue: $issue"` where variables resolve to shared store values at runtime
 3. **Individual nodes + super nodes** - Simple nodes (`github-get-issue`) + powerful nodes (`claude-code`) with instruction-based interfaces
 4. **Context-aware parameter resolution** - Data flags → shared store, behavior flags → node.set_params()
 5. **JSON IR → compiled Python with templates** - CLI syntax → JSON IR → compiled Python code execution with template resolution
-6. **Sophisticated planner** - Generates prompts, instructions, parameter values, and template mappings
+6. **Sophisticated planner** - Generates prompts, instructions, parameter values, and template mappings; detects missing inputs and prompts users (e.g., "Please provide --issue=<issue_number>")
 7. **Shared store inspection capabilities** - Debug commands for transparency and workflow state inspection
 8. **Two-tier AI approach** - Claude Code super node for comprehensive development, LLM node for text processing
 9. **Core use case driven** - Primary focus on realistic end-to-end GitHub issue resolution workflow
