@@ -14,13 +14,17 @@ The goal is to enable local execution of intelligent workflows with the **minima
 
 ### Core Architecture
 
-pflow is built on the **PocketFlow** framework (100-line Python library in `pocketflow/__init__.py`) using the **Shared Store + Natural Interface Pattern**:
+pflow is built on the **PocketFlow** framework (100-line Python library in `pocketflow/__init__.py`).
+
+> If you need to implement a new feature that includes using pocketflow, and dont have a good understanding of what pocketflow is or how it works always start by reading the source code in `pocketflow/__init__.py` and then the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
 
 - **Nodes**: Self-contained tasks (`prep()` → `exec()` → `post()`) that communicate through a shared store using intuitive keys (`shared["text"]`, `shared["url"]`)
 - **Flows**: Orchestrate nodes into workflows using the pocketflow framework with `>>` operator chaining
 - **CLI**: Primary interface for composing and executing flows with pipe syntax
 - **Registry**: Discovery system for available nodes and their capabilities
 - **Shared Store**: In-memory dictionary for inter-node communication, keeping data handling separate from computation logic
+
+For a more indepth understanding of what documentation and examples that are available in the `pocketflow` folder, please read the `pocketflow/CLAUDE.md` for a detailed repository map and inventory.
 
 ### Development Commands
 
