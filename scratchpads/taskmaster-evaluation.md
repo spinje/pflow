@@ -20,48 +20,6 @@ Evaluate each task file (task_001.txt through task_020.txt) in .taskmaster/tasks
 - **Recommendation**: **ASK** - This is foundational but not explicitly as a task
 - **Rationale**: While pocketflow is the foundation, current tasks.json assumes it's already integrated
 
-### task_002.txt - Implement Shared Store Pattern
-- **Content**: Create flow-scoped shared store system with natural key names
-- **Documentation check**: ✅ Aligns with shared-store.md, architecture.md
-- **Existing task overlap**: ✅ Task #2 in tasks.json covers this
-- **Recommendation**: **SKIP**
-- **Rationale**: Duplicate of existing task #2 "Implement basic shared store"
-
-### task_003.txt - Create NodeAwareSharedStore Proxy
-- **Content**: Implement transparent key mapping system for complex flows
-- **Documentation check**: ✅ Aligns with shared-store.md proxy pattern
-- **Existing task overlap**: ✅ Task #3 in tasks.json covers this
-- **Recommendation**: **SKIP**
-- **Rationale**: Duplicate of existing task #3 "Create NodeAwareSharedStore proxy"
-
-### task_004.txt - Build CLI Parser and Flag Resolution
-- **Content**: 'Type flags; engine decides' CLI parsing system
-- **Documentation check**: ✅ Aligns with cli-runtime.md, architecture.md
-- **Existing task overlap**: ✅ Tasks #1 and #4 cover this
-- **Recommendation**: **SKIP**
-- **Rationale**: Covered by task #1 (CLI entry point) and #4 (context-aware parameter resolution)
-
-### task_005.txt - Implement Node Registry System
-- **Content**: Filesystem-based registry for node discovery
-- **Documentation check**: ✅ Aligns with registry.md
-- **Existing task overlap**: ✅ Task #6 covers this
-- **Recommendation**: **SKIP**
-- **Rationale**: Duplicate of existing task #6 "Create registry structure and node discovery"
-
-### task_006.txt - Create Node Metadata Extraction System
-- **Content**: Extract structured interface definitions from docstrings
-- **Documentation check**: ✅ Aligns with metadata-extraction.md
-- **Existing task overlap**: ✅ Task #8 covers this
-- **Recommendation**: **SKIP**
-- **Rationale**: Duplicate of existing task #8 "Build enhanced metadata extraction system"
-
-### task_007.txt - Develop JSON IR Schema and Validation
-- **Content**: Create JSON IR schema for executable flows
-- **Documentation check**: ✅ Aligns with schemas.md, architecture.md
-- **Existing task overlap**: ✅ Task #7 covers this
-- **Recommendation**: **SKIP**
-- **Rationale**: Duplicate of existing task #7 "Design complete JSON IR system"
-
 ### task_008.txt - Build CLI Path Planner
 - **Content**: CLI syntax to IR compilation without confirmation
 - **Documentation check**: ✅ Aligns with planner.md (CLI mode)
@@ -69,26 +27,12 @@ Evaluate each task file (task_001.txt through task_020.txt) in .taskmaster/tasks
 - **Recommendation**: **ASK**
 - **Rationale**: Current tasks emphasize natural language planning, but CLI path planning is part of dual-mode planner
 
-### task_009.txt - Implement Runtime Execution Engine
-- **Content**: Core execution engine using pocketflow
-- **Documentation check**: ✅ Aligns with runtime.md, architecture.md
-- **Existing task overlap**: ✅ Task #21 covers this
-- **Recommendation**: **SKIP**
-- **Rationale**: Duplicate of existing task #21 "Create execution engine with template support"
-
 ### task_010.txt - Create Built-in Core Nodes
 - **Content**: Essential nodes (read-file, write-file, transform, prompt, summarize-text)
 - **Documentation check**: ⚠️ Some align, some don't match documented nodes
 - **Existing task overlap**: ⚠️ Partial - tasks have specific platform nodes
 - **Recommendation**: **ASK**
 - **Rationale**: "transform", "prompt", and "summarize-text" nodes not in current documentation
-
-### task_011.txt - Implement Basic Caching System
-- **Content**: Cache @flow_safe nodes in ~/.pflow/cache/
-- **Documentation check**: ✅ Aligns with runtime.md caching strategy
-- **Existing task overlap**: ✅ Task #23 covers this
-- **Recommendation**: **SKIP**
-- **Rationale**: Duplicate of existing task #23 "Build caching system"
 
 ### task_012.txt - Build Shell Pipe Integration
 - **Content**: Unix pipe support, stdin handling
@@ -118,27 +62,6 @@ Evaluate each task file (task_001.txt through task_020.txt) in .taskmaster/tasks
 - **Recommendation**: **ASK**
 - **Rationale**: Error handling is important but not explicitly tasked
 
-### task_016.txt - Implement CLI Commands Interface
-- **Content**: Main CLI interface (execute, registry, trace, validate)
-- **Documentation check**: ✅ Aligns with architecture.md CLI commands
-- **Existing task overlap**: ✅ Covered by tasks #1 and #9
-- **Recommendation**: **SKIP**
-- **Rationale**: Duplicate - task #1 covers CLI structure, #9 covers registry commands
-
-### task_017.txt - Create Testing Infrastructure
-- **Content**: Testing framework for nodes and flows
-- **Documentation check**: ✅ Testing mentioned throughout docs
-- **Existing task overlap**: ✅ Task #24 covers comprehensive testing
-- **Recommendation**: **SKIP**
-- **Rationale**: Covered by task #24 "Create comprehensive test suite"
-
-### task_018.txt - Build Documentation and Help System
-- **Content**: Built-in help and documentation
-- **Documentation check**: ✅ Help system mentioned in CLI tasks
-- **Existing task overlap**: ✅ Task #25 covers this
-- **Recommendation**: **SKIP**
-- **Rationale**: Covered by task #25 "Polish CLI experience and documentation"
-
 ### task_019.txt - Performance Optimization and Benchmarking
 - **Content**: Performance targets and benchmarking suite
 - **Documentation check**: ✅ Aligns with architecture.md performance metrics
@@ -154,22 +77,21 @@ Evaluate each task file (task_001.txt through task_020.txt) in .taskmaster/tasks
 - **Rationale**: MVP validation might deserve separate focus from unit testing
 
 ## Summary
-- **Tasks to SKIP** (duplicates): 2, 3, 4, 5, 6, 7, 9, 11, 16, 17, 18 (11 tasks)
 - **Tasks to ASK about**: 1, 8, 10, 12, 13, 14, 15, 19, 20 (9 tasks)
 
 ## Questions for User
 
-### 1. **task_001.txt - Setup pocketflow Framework Integration**
+### 1. **task_001.txt - Setup pocketflow Framework Integration** ✅ Resolved
 The pocketflow framework is foundational to the project, but there's no explicit task for integrating it. Should we add a task to ensure proper pocketflow setup and verification?
 
 User Answer: I think so but im not sure what this would entail. You need to do some deep thinking about why this is needed and how it would be implemented. Cant we just use the code when needed? The full framework is already in the codebase in `pocketflow/__init__.py`. It also seems some tasks in the current tasks.json might not be aware of this, for example task #2 in `todo\tasks.json` does not mention that a shared store already exists in the pocketflow framework (inside the 100 lines of code). We must ALWAYS make sure we are merely extending the framework and not reinventing the wheel. The `pocketflow\docs` will be key to understand the framework and how it is supposed to be used.
 
-**IMPORTANT**: WE ARE IN THE PROCESS OF RESOLVING THIS. Do not proceed to the next item until this is resolved fully.
-
-### 2. **task_008.txt - Build CLI Path Planner**
+### 2. **task_008.txt - Build CLI Path Planner** ⏳ Pending
 Current tasks focus on natural language planning, but the dual-mode planner also needs CLI pipe syntax compilation. Should we add a separate task for CLI path planning that compiles pipe syntax directly to IR without natural language?
 
 User Answer: Yes, its a core feature that the user can write a flow in a pipe syntax without specifying every parameter (or shared store keys and how they interact with each other). What we could do here is to treat this as a natural language planning task but with a pipe syntax (this means the user can get cli auto completion for the pipe syntax while writing the flow). We should add this later in the implementation plan and exclude special handling of the pipe syntax for now (just send the cli command to the natural language planner and let it handle it).
+
+**IMPORTANT**: WE ARE IN THE PROCESS OF RESOLVING THIS. Do not proceed to the next item until this is resolved fully.
 
 ### 3. **task_010.txt - Create Built-in Core Nodes**
 This task mentions nodes like "transform", "prompt", and "summarize-text" which aren't in the current documentation. The docs focus on platform nodes (github, claude-code, llm, git, file). Should we:
@@ -208,9 +130,9 @@ Should MVP validation be a separate task from the general test suite to ensure a
 
 User Answer: Yes, we should add this as a separate task for MVP validation.
 
-## Additional Insights for Remaining Taskmaster Questions
+## Additional Insights for to consider when addessing the taskmaster questions
 
-### Insight #11: CLI Path Planning (Dual-Mode Planner)
+### Insight #1: CLI Path Planning (Dual-Mode Planner)
 
 **Initial approach**: Treat CLI pipe syntax as natural language and send it to the LLM planner.
 
@@ -224,7 +146,7 @@ pflow read-file --path=input.txt >> llm --prompt="summarize this"
 
 **Why this works**: The LLM can understand pipe syntax as a "natural language" and generate appropriate JSON IR. Direct parsing can be added later as an optimization without changing the architecture.
 
-### Insight #12: No Generic Transform Nodes
+### Insight #2: No Generic Transform Nodes
 
 **What NOT to build**: Generic nodes like "transform", "prompt", "summarize-text".
 
@@ -236,7 +158,7 @@ pflow read-file --path=input.txt >> llm --prompt="summarize this"
 
 **Why**: Generic nodes lead to prompt proliferation. The `llm` node with templates handles all text transformations.
 
-### Insight #13: Shell Pipe Integration Pattern
+### Insight #3: Shell Pipe Integration Pattern
 
 **More than stdin**: Full Unix pipe philosophy integration.
 
@@ -254,7 +176,7 @@ if not sys.stdin.isatty():
 
 **Reference**: Look at Simon Willison's `llm` CLI for excellent pipe integration patterns.
 
-### Insight #14: Execution Tracing is Not Just Logging
+### Insight #4: Execution Tracing is Not Just Logging
 
 **What tracing provides**:
 ```
@@ -276,7 +198,7 @@ if not sys.stdin.isatty():
 - Optimizing performance
 - Identifying cache opportunities
 
-### Insight #15: Performance Metrics vs Features
+### Insight #5: Performance Metrics vs Features
 
 **Metrics are success criteria, not features**:
 - ≤800ms planning latency → measure, don't build complex optimizations
@@ -285,7 +207,7 @@ if not sys.stdin.isatty():
 
 **Focus on**: Making it work correctly first. Performance often comes from simplicity.
 
-### Insight #16: MVP Validation vs Unit Testing
+### Insight #6: MVP Validation vs Unit Testing
 
 **Unit tests**: Individual components work correctly.
 ```python
@@ -303,7 +225,7 @@ def test_template_resolution():
 # Success: 10x faster than manual process
 ```
 
-### Insight #17: Features to Skip (MVP Focus)
+### Insight #7: Features to Skip (MVP Focus)
 
 **Skip for MVP**:
 - Lockfiles (nice for determinism, not essential)
@@ -317,7 +239,7 @@ def test_template_resolution():
 - Platform node integration
 - User experience
 
-### Insight #18: The Power of Templates + LLM Node
+### Insight #8: The Power of Templates + LLM Node
 
 **Why we don't need many node types**:
 ```python
