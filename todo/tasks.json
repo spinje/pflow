@@ -2,12 +2,12 @@
   "tasks": [
     {
       "id": 1,
-      "title": "Create CLI entry point and basic structure",
-      "description": "Set up the main CLI entry point using click framework with basic command structure and flag parsing",
+      "title": "Set up basic CLI with click framework",
+      "description": "Create the minimal CLI entry point with basic flag parsing",
       "status": "pending",
       "dependencies": [],
       "priority": "high",
-      "details": "Create src/pflow/cli.py with click-based CLI framework. Implement basic --key=value flag parsing without sophisticated categorization. Set up command routing structure for 'pflow <workflow>', 'pflow registry', 'pflow inspect', and 'pflow trace' commands. Create package structure: src/pflow/core/, src/pflow/registry/, src/pflow/nodes/, src/pflow/planning/. Implement inspect commands: 'pflow inspect shared-store' (show current shared store state), 'pflow inspect params --node=<node>' (show node parameters), 'pflow inspect template-vars' (show available template variables). Implement 'pflow trace <run_id>' for execution timeline visualization. Reference docs: architecture.md#5.1.3",
+      "details": "Create src/pflow/__init__.py and src/pflow/cli.py using click. Set up main entry point with @click.group() for command routing. Implement basic --key=value flag parsing that collects all flags into a dict (no categorization yet). Create minimal package structure: src/pflow/core/, src/pflow/nodes/. Support 'pflow run <workflow>' as primary command. Parse and collect CLI arguments without processing them. This is just the CLI skeleton - command implementations come in later tasks. Reference docs: architecture.md#5.1.3, cli-runtime.md",
       "testStrategy": "Test CLI flag parsing with various input formats. Verify command routing works correctly. Test error handling for invalid commands"
     },
     {
@@ -39,59 +39,58 @@
       "status": "pending",
       "dependencies": [
         1,
-        2,
-        3
+        2
       ],
       "priority": "high",
-      "details": "Create src/pflow/core/cli_resolver.py. Parse --key=value flags and categorize: data flags \u2192 shared store, behavior flags \u2192 node.set_params(), execution flags \u2192 node config. Handle shell pipe input detection and populate shared['stdin']. Implement JSON IR \u2192 compiled Python code execution pipeline. Reference docs: architecture.md#5.1.1, cli-runtime.md#7",
+      "details": "Create src/pflow/core/cli_resolver.py with simple functions: categorize_flags(flags_dict) that separates data flags (\u2192 shared store) from behavior flags (\u2192 node params) based on metadata. detect_stdin() to check if data is piped in and populate shared['stdin']. No complex resolution rules - just check if flag name matches known node parameters from metadata, otherwise treat as data. Shell pipe detection uses sys.stdin.isatty(). Reference docs: architecture.md#5.1.1, cli-runtime.md#7",
       "testStrategy": "Test flag categorization logic, stdin detection, and parameter routing accuracy"
     },
     {
       "id": 5,
-      "title": "Implement template resolution system",
-      "description": "Create the template variable substitution engine for dynamic content access in workflows",
+      "title": "Create template variable substitution",
+      "description": "Implement simple $variable replacement for accessing shared store values",
       "status": "pending",
       "dependencies": [
         2
       ],
       "priority": "high",
-      "details": "Create src/pflow/core/template_resolver.py. Implement $variable substitution engine that maps to shared store keys. Validate template variables and handle missing variables. Support template resolution at runtime. Detect missing inputs and prompt users for first nodes. Reference docs: architecture.md#5.1.2, shared-store.md",
+      "details": "Move template resolution to src/pflow/core/validation.py (already handling shared store validation). Add resolve_template(text, shared) function using regex to replace $variable with shared[variable]. Handle missing variables by returning None or raising clear error. Template syntax is simple: $var or ${var} for variable names with special chars. This is just string substitution, not a complex template engine. Used by planner to generate prompts and by runtime to resolve node parameters. Reference docs: architecture.md#5.1.2, shared-store.md",
       "testStrategy": "Test variable substitution, missing variable detection, and error handling"
     },
     {
       "id": 6,
-      "title": "Create registry structure and node discovery",
-      "description": "Build the file-based node registry system for simple node discovery and metadata storage",
+      "title": "Implement node discovery via filesystem scanning",
+      "description": "Scan Python files to find pocketflow.Node subclasses and extract metadata",
       "status": "pending",
       "dependencies": [
         1
       ],
       "priority": "high",
-      "details": "Create src/pflow/registry/ structure. Implement file-based node discovery scanning Python modules for pocketflow.Node subclasses. Build metadata extraction from docstrings. Create basic indexing for fast lookups. No versioning in MVP. Support \u226550 developer-focused nodes efficiently. Reference docs: registry.md",
+      "details": "Create src/pflow/registry/scanner.py with scan_for_nodes(directories) function. Use ast module or importlib to find all classes inheriting from pocketflow.Node. Extract basic metadata: node name, module path, docstring. Store results in simple dict or JSON file for fast access. No complex indexing needed - just a list of available nodes. Focus on src/pflow/nodes/ directory. This is not a package registry - just local filesystem scanning. Reference docs: registry.md",
       "testStrategy": "Test node discovery, metadata extraction accuracy, and registry performance"
     },
     {
       "id": 7,
-      "title": "Design complete JSON IR system",
-      "description": "Create the JSON IR schema with full support for nodes, edges, mappings, and template variables",
+      "title": "Define JSON IR schema",
+      "description": "Create the JSON schema for workflow intermediate representation",
       "status": "pending",
       "dependencies": [
         6
       ],
       "priority": "high",
-      "details": "Create src/pflow/core/ir_schema.py. Define complete schema with proxy mapping support, node specifications with simple sequencing, edge definitions, template variable metadata. Include provenance tracking and validation rules. Reference docs: architecture.md#5.2.2, planner.md#10.1",
+      "details": "Create src/pflow/core/ir_schema.py with Pydantic models or JSON Schema definitions. Define minimal IR structure: nodes[] with id, type, params; edges[] with from, to, action (default 'default'); start_node id; optional mappings{} for NodeAwareSharedStore proxy. Keep it simple - just enough to represent a workflow graph. Use standard JSON Schema for validation. Don't overengineer - we can extend later. Example: {'nodes': [{'id': 'n1', 'type': 'read-file', 'params': {'file_path': 'input.txt'}}], 'edges': [], 'start_node': 'n1'}. Reference docs: schemas.md, planner.md#10.1",
       "testStrategy": "Test schema validation, IR generation, and compatibility with execution engine"
     },
     {
       "id": 8,
-      "title": "Build enhanced metadata extraction system",
-      "description": "Implement comprehensive docstring parsing for node interface metadata and parameter classification",
+      "title": "Extract node metadata from docstrings",
+      "description": "Parse node docstrings to understand inputs, outputs, and parameters",
       "status": "pending",
       "dependencies": [
         6
       ],
       "priority": "medium",
-      "details": "Create src/pflow/registry/metadata_extractor.py. Use docstring_parser + custom regex to extract Interface sections. Parse inputs, outputs, data_params, behavior_params for each node. Support both simple and structured Interface formats. Classify parameters as data_params (\u2192 shared store) vs behavior_params (\u2192 node.set_params()). Track template variables produced/consumed by nodes. Generate JSON metadata for each node with source hash computation for staleness detection. Part of Phase 2 Metadata & Registry Systems. Reference docs: planner.md#5.1",
+      "details": "Create src/pflow/registry/metadata_extractor.py with extract_metadata(node_class) function. Parse docstring to find: 1) Node description, 2) Interface section with inputs/outputs, 3) Which parameters go to shared store vs node.set_params(). Use simple regex or docstring_parser library. Output format: {'inputs': ['file_path'], 'outputs': ['content'], 'params': ['encoding']}. This metadata helps the planner understand how to connect nodes. Keep extraction logic simple - don't over-parse. Reference docs: metadata-extraction.md, planner.md#5.1",
       "testStrategy": "Test extraction from various docstring formats, parameter classification accuracy"
     },
     {
@@ -200,27 +199,27 @@
     },
     {
       "id": 17,
-      "title": "Create LLM client abstraction",
-      "description": "Build the LLM integration layer for natural language planning",
+      "title": "Implement LLM API client",
+      "description": "Create simple client for calling LLM APIs during planning",
       "status": "pending",
       "dependencies": [
         12
       ],
       "priority": "high",
-      "details": "Create src/pflow/planning/llm_client.py. Support for thinking models (Claude, OpenAI o1). Token usage tracking and optimization. Error handling and retry logic with maximum 4 attempts per planning stage. Model configuration via environment variables (ANTHROPIC_API_KEY, OPENAI_API_KEY). Default to Claude Sonnet with fallback strategies for model failures. Part of Phase 4 Natural Language Planning. Reference docs: planner.md#6.2",
+      "details": "Create src/pflow/planning/llm_client.py with simple functions: call_llm(prompt, model='claude-3-sonnet') that makes API calls to Claude or OpenAI. Use httpx or requests for API calls. Basic retry with exponential backoff (max 3 retries). Read API keys from environment variables. Return just the text response. Keep it simple - this is not a framework, just utility functions for the planner. Can use Simon Willison's 'llm' package if it simplifies implementation. Reference docs: planner.md#6.2",
       "testStrategy": "Mock LLM API calls, test retry logic and error handling"
     },
     {
       "id": 18,
-      "title": "Build sophisticated planning context",
-      "description": "Create the context builder that prepares node metadata for LLM selection",
+      "title": "Create planning context builder",
+      "description": "Format node metadata for LLM-based workflow planning",
       "status": "pending",
       "dependencies": [
         8,
         17
       ],
       "priority": "high",
-      "details": "Create src/pflow/planning/context_builder.py. Load available node metadata with parameter classification. Generate compact, LLM-optimized descriptions. Include template variable mapping information and dependency tracking. Build context for prompt and instruction generation. Part of metadata-driven planning approach. Reference docs: planner.md#6.1",
+      "details": "Create src/pflow/planning/context_builder.py with build_context(registry_metadata) function. Format node information into a structured text that LLMs can understand: node names, descriptions, inputs/outputs, parameter types. Keep format simple and readable - just markdown tables or structured text. Include which parameters go to shared store vs node.set_params(). This provides the LLM with available 'tools' for building workflows. Output example: 'Available nodes:\n- read-file: Reads file from disk\n  Inputs: file_path (from shared store)\n  Outputs: content (to shared store)'. Reference docs: planner.md#6.1",
       "testStrategy": "Test context generation, metadata optimization, and LLM readability"
     },
     {
@@ -234,7 +233,7 @@
         18
       ],
       "priority": "high",
-      "details": "Create src/pflow/planning/flow_generator.py. Natural language \u2192 template-driven CLI syntax compilation. Template string composition with embedded $variables for all node inputs. Automatic prompt and instruction generation for complex nodes. Parameter value generation (not just inference). Template variable creation and mapping ($code_report, $commit_message, etc.). Context-aware parameter routing (data vs behavior). Missing input detection and user prompting for required parameters. JSON IR \u2192 compiled Python code generation with template resolution. Target \u2264800ms planning latency. Reference docs: planner.md#6.1",
+      "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_text, node_context) function. Use LLM to: 1) Extract user intent, 2) Select appropriate nodes, 3) Generate workflow with template variables. Output JSON IR with nodes, edges, and template strings. Example: user says 'analyze error.log' \u2192 generates workflow with read-file node using $file_path template. Automatically create template variables for values that flow between nodes (like $content, $analysis). Focus on common patterns first. The LLM generates the workflow structure, not individual node parameters. Keep prompts simple and examples clear. Reference docs: planner.md#6.1, workflow-analysis.md",
       "testStrategy": "Test workflow generation accuracy, template resolution, and parameter handling"
     },
     {
@@ -255,25 +254,24 @@
       "description": "Build the compiler that converts JSON IR to pocketflow.Flow objects with template resolution",
       "status": "pending",
       "dependencies": [
-        3,
         4,
         5
       ],
       "priority": "high",
-      "details": "Create src/pflow/runtime/compiler.py to convert JSON IR to executable code using pocketflow: compile_ir_to_flow(ir_json) to generate pocketflow.Flow from IR, setup_node_proxies(ir_json, shared) to configure NodeAwareSharedStore if needed, execute_with_tracing(flow, shared) to wrap flow.run() with logging and debugging. DO NOT reimplement execution - pocketflow.Flow already provides orchestration, action-based routing, and lifecycle management. Focus only on IR compilation, template resolution, and pflow-specific runtime features. Reference docs: architecture.md#5.4, runtime.md",
+      "details": "Create src/pflow/runtime/compiler.py to convert JSON IR to executable code using pocketflow: compile_ir_to_flow(ir_json) that instantiates nodes from registry, connects them with pocketflow's >> operator based on edges, returns pocketflow.Flow object. execute_with_tracing(flow, shared) wraps flow.run() with logging. Use resolve_template() from validation.py for parameter templates. Example: IR with read-file -> llm nodes becomes: node1 >> node2; flow = Flow(start=node1). DO NOT reimplement execution - just compile IR to pocketflow objects. Reference docs: architecture.md#5.4, runtime.md",
       "testStrategy": "End-to-end workflow execution tests with various node combinations"
     },
     {
       "id": 22,
-      "title": "Implement validation framework",
-      "description": "Create comprehensive validation for IR, interfaces, and workflow compatibility",
+      "title": "Add IR and workflow validation",
+      "description": "Validate JSON IR structure and node compatibility",
       "status": "pending",
       "dependencies": [
         7,
         21
       ],
       "priority": "high",
-      "details": "Create src/pflow/core/validation.py. JSON schema validation for IR. Node interface compatibility checking. Template variable validation. Execution configuration validation. Clear error reporting. Reference docs: planner.md#8, architecture.md#10.3",
+      "details": "Extend src/pflow/core/validation.py (from task 2) with IR validation functions: validate_ir(ir_json) to check JSON schema compliance, validate_node_compatibility(ir_json, registry) to ensure nodes exist and edges are valid, validate_templates(ir_json, initial_shared) to check all template variables can be resolved. Use jsonschema library for schema validation. Return clear error messages pointing to specific issues. This is not a complex framework - just validation functions that the planner and runtime call. Reference docs: planner.md#8, architecture.md#10.3",
       "testStrategy": "Test validation rules, error messages, and edge cases"
     },
     {
@@ -285,7 +283,7 @@
         21
       ],
       "priority": "medium",
-      "details": "Create src/pflow/runtime/cache.py. Cache key computation: node_hash \u2295 params \u2295 input_sha256. Only cache @flow_safe nodes. Local filesystem storage ~/.pflow/cache/. Cache validation and expiration. Reference docs: runtime.md#caching-strategy, architecture.md#9.1",
+      "details": "Create src/pflow/runtime/cache.py as optional performance optimization. Simple disk-based cache using pickle or json. Cache key = hash(node_type + params + inputs). Store in ~/.pflow/cache/. Only cache nodes marked as @flow_safe (deterministic). Start with just LLM nodes to save API costs. Can be disabled via --no-cache flag. This is not critical for MVP - implement only if performance becomes an issue. Reference docs: runtime.md#caching-strategy",
       "testStrategy": "Test cache hits/misses, key computation, and storage operations"
     },
     {
@@ -329,16 +327,16 @@
     },
     {
       "id": 26,
-      "title": "Implement interface compatibility system",
+      "title": "[DEFER TO v2.0] Implement interface compatibility system",
       "description": "Create the compatibility analysis for shared store key matching and type validation between nodes",
-      "status": "pending",
+      "status": "deferred",
       "dependencies": [
         2,
         3,
         8
       ],
       "priority": "medium",
-      "details": "Create src/pflow/core/compatibility.py. Implement shared store key matching between nodes, type validation for interface connections, and proxy mapping generation for mismatches. Pre-execution workflow validation, parameter type checking, and action availability verification. This is distinct from the general validation framework and focuses specifically on node interface compatibility. Reference docs: architecture.md#10.3",
+      "details": "[DEFERRED TO v2.0 - Not needed for MVP] Advanced compatibility checking is for marketplace scenarios. MVP nodes have compatible interfaces by design. Basic validation in task 22 is sufficient for MVP. When implemented in v2.0: Create compatibility analysis for heterogeneous node sources. Reference docs show this as post-MVP feature for complex marketplace integration.",
       "testStrategy": "Test interface matching scenarios, type validation edge cases, and proxy mapping generation"
     },
     {
@@ -351,19 +349,19 @@
         21
       ],
       "priority": "medium",
-      "details": "Create src/pflow/core/metrics.py. Track planning success rate (\u226595% target), execution reliability (\u226598% target), planning latency (\u2264800ms target), execution speed overhead (\u22642s target), and workflow efficiency gain (10x improvement target). Implement timing instrumentation, success/failure tracking, token usage monitoring, and metrics aggregation. Export metrics for monitoring and analysis. Reference docs: architecture.md#11",
+      "details": "[DEFERRED TO v2.0 - Premature optimization] Focus on building working MVP first before instrumenting performance. Basic logging is sufficient for MVP. When implemented: Add lightweight metrics collection for key performance indicators. Can use simple timing decorators and counters initially. Reference docs: architecture.md#11 shows metrics as success criteria, not MVP feature.",
       "testStrategy": "Test metrics collection accuracy, performance overhead, and aggregation logic"
     },
     {
       "id": 28,
-      "title": "Create prompt engineering system",
-      "description": "Build the sophisticated prompt templates and engineering system for natural language planning",
+      "title": "Create prompt templates for planning",
+      "description": "Design effective prompts for LLM-based workflow generation",
       "status": "pending",
       "dependencies": [
         17
       ],
       "priority": "high",
-      "details": "Create src/pflow/planning/prompts.py. Design node selection prompts with metadata context, workflow generation prompts using extracted metadata, and error recovery/retry prompts. Implement prompt templates for different planning stages, context injection mechanisms, and prompt optimization for token efficiency. Support template variable generation and instruction composition for complex nodes like claude-code. Reference docs: planner.md#6.1",
+      "details": "Create src/pflow/planning/prompts.py with prompt templates as simple string constants or functions. Include: 1) Workflow generation prompt with node context and examples, 2) Error recovery prompt for failed attempts, 3) Template variable extraction prompt. Use f-strings or jinja2 for template composition. Keep prompts focused and include concrete examples. Test prompts manually to ensure they generate valid JSON IR. This is not a complex system - just well-crafted prompts that guide the LLM. Example structure: WORKFLOW_PROMPT = '''Given these nodes: {node_context}\nGenerate a workflow for: {user_request}\nOutput JSON IR format...'''. Reference docs: planner.md#6.1",
       "testStrategy": "Test prompt generation for various scenarios, template composition, and token optimization"
     },
     {
