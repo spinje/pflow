@@ -204,7 +204,7 @@ pflow/
 
 **Shell Integration**:
 - `docs/shell-pipes.md`: Unix pipe support and stdin handling
-- `docs/workflow-analysis.md`: Technical analysis of AI workflow inefficiencies
+- `docs/workflow-analysis.md`: Technical analysis of AI workflow inefficiencies and detailed breakdown of the `project:fix-github-issue` slash command to pflow vision.
 
 **Future Features**:
 - `docs/autocomplete.md`: CLI autocomplete specification (v2.0)
@@ -231,23 +231,24 @@ pflow/
 ### Current State
 
 The codebase is in early development with:
-- ✅ PocketFlow framework integrated
-- ✅ Comprehensive documentation infrastructure
+- ✅ PocketFlow framework added to the codebase
+- ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
 - ✅ Create an overview roadmap for the MVP in `todo/implementation-roadmap.md`
-- ✅ Create a detailed todo list with tasks and subtasks in `todo/mvp-implementation-plan.md` based on the roadmap
-- ⏳ Carefully review the implementation plan and make sure it is complete and accurate (<- We are here)
+- ✅ Create a detailed todo list with tasks and subtasks in `todo/tasks.json` based on the roadmap
+- ⏳ Carefully review the list of tasks to make sure every task is complete, accurate and that we are doing the right things in the right order (<- We are here)
 - ⏳ Start implementing features for the MVP using the todo list one by one
 
-### Next Development Phase
+### Current Development Phase
 
-Focus on creating the detailed plan for the MVP by doing the following:
-1. Identify the core features that are needed for the MVP
-2. Evaluate if they have any pre-requisites that need to be implemented first
-3. Create a prioritized implementation roadmap with clear milestones
-4. Break down each feature into specific, testable tasks
-5. Define success criteria and validation steps for each component
+Focus on refining the tasks for the MVP by doing the following:
+1. Ensure that the tasks are based on product requirements and architecture docs for the pflow project.
+2. Ensure that the tasks dependent on pocketflow (the 100 lines of code in `pocketflow/__init__.py`) are using the pocketflow framework correctly by carefully reading the documentation in `pocketflow/docs` and examples in `pocketflow\cookbook` when needed.
+3. Ensure that every tasks considers the dependencies and the order of implementation. The `todo/tasks.json` will need to be updated continously as you discover new information and discuss the user.
+4. Ensure that every task is easy to understand and has a clear success criteria and test strategy.
 
+
+## End goal and Vision for the MVP
 
 The goal is a working MVP that can execute the core workflows:
 
@@ -256,17 +257,52 @@ The goal is a working MVP that can execute the core workflows:
 # Transform: Repeatedly asking AI "analyze these logs"
 # Into: pflow analyze-logs --input=error.log (instant)
 pflow read-file --path=error.log >> llm --prompt="extract error patterns and suggest fixes" >> write-file --path=analysis.md
-
-**And move on to more complex workflows** (GitHub issue resolution from `docs/workflow-analysis.md`):
-```bash
-# Transform: /project:fix-github-issue 1234 (30-90s, heavy tokens)
-# Into: pflow fix-issue --issue=1234 (2-5s, minimal tokens)
-pflow github-get-issue --issue=1234 >> claude-analyze --focus-areas=root-cause >> claude-implement --language=python
 ```
 
-But first, we need to create a detailed plan for the MVP.
+**And move on to more complex workflows**:
+LLM Agent like Claude Code executing all steps, reasoning between each step:
 
-## User Decisions
+```markdown
+# Transform: /project:fix-github-issue 1234 (Claude code slash command, 50-90s, heavy tokens)
+# This is a Claude Code slash command (prompt shortcut) that was used as an example in an Anthropic blog post as a good example of how to efficiently use Claude Code.
+Please analyze and fix the GitHub issue: $ARGUMENTS.
+
+Follow these steps:
+
+1. Use `gh issue view` to get the issue details
+2. Understand the problem described in the issue
+3. Search the codebase for relevant files
+4. Implement the necessary changes to fix the issue
+5. Write and run tests to verify the fix
+6. Ensure code passes linting and type checking
+7. Create a descriptive commit message
+8. Push and create a PR
+
+Remember to use the GitHub CLI (`gh`) for all GitHub-related tasks.
+```
+
+```bash
+# Into: pflow fix-issue --issue=1234 (20-50s, minimal tokens)
+github-get-issue --issue=1234 >> \
+claude-code --prompt="<instructions>
+                        1. Understand the problem described in the issue
+                        2. Search the codebase for relevant files
+                        3. Implement the necessary changes to fix the issue
+                        4. Write and run tests to verify the fix
+                        5. Return a report of what you have done as output
+                      </instructions>
+                      This is the issue: $issue" >> \
+llm --prompt="Write a descriptive commit message for these changes: $code_report" >> \
+git-commit --message="$commit_message" >> \
+git-push >> \
+github-create-pr --title="Fix: $issue_title" --body="$code_report"
+```
+
+> Note that in this core example we are still needing to use the `claude-code` node to execute parts of the workflow. For many use cases, using LLM as Agents will not be necessary and in these cases the speedup will be much greater and can potentially reach 10x or more by reducing the intermittent reasoning between each step that needs to happen in Agentic workflows.
+
+But first, we need to create a detailed task list for the MVP.
+
+## User Decisions during this process
 
 Every time you need the user to make a decision, you should:
 Create a `scratchpads/critical-user-decisions.md` file and write down the decision and the reasoning. Give at least 2 options with clear recommendations. Add a markdown checkbox for each option so the user can select the option they prefer easily.
