@@ -12,13 +12,13 @@
     },
     {
       "id": 2,
-      "title": "Implement basic shared store",
-      "description": "Create the core shared store class with simple dictionary-based implementation and natural key patterns",
+      "title": "Implement shared store validation utilities",
+      "description": "Create validation functions for the shared store pattern without unnecessary wrapper classes",
       "status": "pending",
       "dependencies": [],
       "priority": "high",
-      "details": "Create src/pflow/core/shared_store.py with dictionary-based SharedStore class. Handle reserved keys like 'stdin'. Implement validation for natural key patterns. No nested namespacing in MVP. Part of Phase 1 Core Infrastructure for template-driven workflows with context-aware parameter resolution and $ variable substitution. Reference docs: shared-store.md",
-      "testStrategy": "Test basic key-value operations, reserved key handling, and validation of natural key patterns"
+      "details": "Create src/pflow/core/validation.py with validation functions for the shared store pattern: validate_reserved_keys(shared) to check reserved keys like 'stdin', validate_natural_patterns(shared) to ensure natural key naming conventions, resolve_template_variables(text, shared) to replace $var with shared[var] values. No wrapper class needed - pocketflow already provides the dict pattern, we just need validation utilities. Use plain functions that operate on the shared dict. Part of Phase 1 Core Infrastructure for template-driven workflows. Reference docs: shared-store.md",
+      "testStrategy": "Test validation functions with various shared dict scenarios, template resolution accuracy, and error cases"
     },
     {
       "id": 3,
@@ -118,7 +118,7 @@
         6
       ],
       "priority": "high",
-      "details": "Create src/pflow/nodes/github/github_get_issue.py. Implement simple single-purpose node that reads issue_number and repo from shared store or params. Use PyGithub or requests for API calls. Natural interface: shared['repo'], shared['issue'], shared['issue_title']. Authentication via environment variables (GITHUB_TOKEN). Error handling for API failures and rate limits. Part of Phase 3 Simple Platform Nodes. Reference docs: simple-nodes.md",
+      "details": "Create src/pflow/nodes/github/github_get_issue.py inheriting from pocketflow.Node. Implement simple single-purpose node that reads issue_number and repo from shared store or params. Use PyGithub or requests for API calls. Natural interface: shared['repo'], shared['issue'], shared['issue_title']. Authentication via environment variables (GITHUB_TOKEN). Error handling for API failures and rate limits. Part of Phase 3 Simple Platform Nodes. Reference docs: simple-nodes.md",
       "testStrategy": "Mock GitHub API responses, test parameter handling and error cases"
     },
     {
@@ -131,7 +131,7 @@
         6
       ],
       "priority": "high",
-      "details": "Create src/pflow/nodes/claude_code.py. Single powerful node with instruction-based interface for AI-assisted development with full project context and file system access. Complex prompt generation from planner templates with structured instructions. Integration with headless Claude Code CLI for workflow automation. Natural interface: shared['prompt'] \u2192 shared['code_report'] (comprehensive development report). Model selection and parameter handling. Part of two-tier AI approach. Reference docs: core-node-packages/claude-nodes.md",
+      "details": "Create src/pflow/nodes/claude_code.py inheriting from pocketflow.Node. Single powerful node with instruction-based interface for AI-assisted development with full project context and file system access. Complex prompt generation from planner templates with structured instructions. Integration with headless Claude Code CLI for workflow automation. Natural interface: shared['prompt'] \u2192 shared['code_report'] (comprehensive development report). Model selection and parameter handling. Part of two-tier AI approach. Reference docs: core-node-packages/claude-nodes.md",
       "testStrategy": "Mock Claude Code CLI responses, test template processing and output parsing"
     },
     {
@@ -144,7 +144,7 @@
         6
       ],
       "priority": "high",
-      "details": "Create src/pflow/nodes/llm.py. Simple interface for general text processing. Natural interface: shared['prompt'] \u2192 shared['response']. Support multiple providers (Claude API, OpenAI). Smart exception to prevent prompt node proliferation. Reference docs: core-node-packages/llm-nodes.md, architecture.md#3.4",
+      "details": "Create src/pflow/nodes/llm.py inheriting from pocketflow.Node. Simple interface for general text processing. Natural interface: shared['prompt'] \u2192 shared['response']. Support multiple providers (Claude API, OpenAI). Smart exception to prevent prompt node proliferation. Reference docs: core-node-packages/llm-nodes.md, architecture.md#3.4",
       "testStrategy": "Mock LLM API responses, test different providers and parameter configurations"
     },
     {
@@ -157,7 +157,7 @@
         6
       ],
       "priority": "medium",
-      "details": "Create src/pflow/nodes/git/git_commit.py. Simple node reading shared['message'] and shared['files']. Execute git commands with safety checks and confirmation prompts. Natural interface: shared['changes'] \u2192 shared['commit_hash']. Automatic commit message generation support. Each node focused on single git operation. Reference docs: simple-nodes.md",
+      "details": "Create src/pflow/nodes/git/git_commit.py inheriting from pocketflow.Node. Simple node reading shared['message'] and shared['files']. Execute git commands with safety checks and confirmation prompts. Natural interface: shared['changes'] \u2192 shared['commit_hash']. Automatic commit message generation support. Each node focused on single git operation. Reference docs: simple-nodes.md",
       "testStrategy": "Mock git commands, test safety measures and error handling"
     },
     {
@@ -170,7 +170,7 @@
         6
       ],
       "priority": "medium",
-      "details": "Create src/pflow/nodes/file/read_file.py, write_file.py, copy_file.py, move_file.py, and delete_file.py. Simple interfaces: read-file uses shared['file_path'] \u2192 shared['content'], write-file uses shared['content'] + shared['file_path'], copy/move use shared['source_path'] + shared['dest_path'], delete uses shared['file_path']. Include safety checks for all destructive operations. Natural interface pattern for file operations. Reference docs: simple-nodes.md",
+      "details": "Create file nodes in src/pflow/nodes/file/, all inheriting from pocketflow.Node: read_file.py, write_file.py, copy_file.py, move_file.py, and delete_file.py. Simple interfaces: read-file uses shared['file_path'] \u2192 shared['content'], write-file uses shared['content'] + shared['file_path'], copy/move use shared['source_path'] + shared['dest_path'], delete uses shared['file_path']. Include safety checks for all destructive operations. Natural interface pattern for file operations. Reference docs: simple-nodes.md",
       "testStrategy": "Test file operations, permission handling, and safety validations"
     },
     {
@@ -182,7 +182,7 @@
         10
       ],
       "priority": "low",
-      "details": "Create github-create-pr, github-list-prs, github-add-comment, and github-merge-pr nodes following simple node pattern. Each with focused single purpose and natural interfaces: shared['pr'], shared['files'], shared['repo']. github-merge-pr includes safety checks and conflict handling with shared['pr_number'], shared['merge_method']. Reference docs: simple-nodes.md",
+      "details": "Create GitHub nodes in src/pflow/nodes/github/, all inheriting from pocketflow.Node: github-create-pr, github-list-prs, github-add-comment, and github-merge-pr. Each with focused single purpose and natural interfaces: shared['pr'], shared['files'], shared['repo']. github-merge-pr includes safety checks and conflict handling with shared['pr_number'], shared['merge_method']. Reference docs: simple-nodes.md",
       "testStrategy": "Mock API responses for each operation, test error handling"
     },
     {
@@ -195,7 +195,7 @@
         6
       ],
       "priority": "low",
-      "details": "Create CI nodes: ci-run-tests, ci-get-status, ci-trigger-build, ci-get-logs. Create shell nodes: shell-exec, shell-pipe, shell-background. CI nodes use natural interface: shared['test_command'] \u2192 shared['test_results'], support multiple CI systems (GitHub Actions, Jenkins, local). Shell nodes use shared['command'] \u2192 shared['output'] with shell-background also writing shared['pid']. Auto-detect test frameworks, handle exit codes, timeout handling, and security considerations. Reference docs: simple-nodes.md",
+      "details": "Create CI and shell nodes, all inheriting from pocketflow.Node. CI nodes in src/pflow/nodes/ci/: ci-run-tests, ci-get-status, ci-trigger-build, ci-get-logs. Shell nodes in src/pflow/nodes/shell/: shell-exec, shell-pipe, shell-background. CI nodes use natural interface: shared['test_command'] \u2192 shared['test_results'], support multiple CI systems (GitHub Actions, Jenkins, local). Shell nodes use shared['command'] \u2192 shared['output'] with shell-background also writing shared['pid']. Auto-detect test frameworks, handle exit codes, timeout handling, and security considerations. Reference docs: simple-nodes.md",
       "testStrategy": "Mock test framework responses, test command execution and timeout handling"
     },
     {
@@ -251,8 +251,8 @@
     },
     {
       "id": 21,
-      "title": "Create execution engine with template support",
-      "description": "Build the runtime engine that executes workflows with template resolution",
+      "title": "Create IR compiler and runtime coordinator",
+      "description": "Build the compiler that converts JSON IR to pocketflow.Flow objects with template resolution",
       "status": "pending",
       "dependencies": [
         3,
@@ -260,7 +260,7 @@
         5
       ],
       "priority": "high",
-      "details": "Create src/pflow/runtime/engine.py. Load validated IR and lockfile. Instantiate nodes from registry. Set up proxy mappings. Execute flow using pocketflow. Handle template variable resolution. Write comprehensive traces. Reference docs: architecture.md#5.4, runtime.md",
+      "details": "Create src/pflow/runtime/compiler.py to convert JSON IR to executable code using pocketflow: compile_ir_to_flow(ir_json) to generate pocketflow.Flow from IR, setup_node_proxies(ir_json, shared) to configure NodeAwareSharedStore if needed, execute_with_tracing(flow, shared) to wrap flow.run() with logging and debugging. DO NOT reimplement execution - pocketflow.Flow already provides orchestration, action-based routing, and lifecycle management. Focus only on IR compilation, template resolution, and pflow-specific runtime features. Reference docs: architecture.md#5.4, runtime.md",
       "testStrategy": "End-to-end workflow execution tests with various node combinations"
     },
     {
@@ -375,7 +375,7 @@
         13
       ],
       "priority": "low",
-      "details": "Create git-push, git-create-branch, git-merge, and git-status nodes in src/pflow/nodes/git/. Each node follows simple single-purpose pattern: git-push reads shared['branch'] and executes push, git-create-branch reads shared['branch_name'] and creates branch, git-merge reads shared['source_branch'] and shared['target_branch'], git-status writes shared['git_status']. Include safety checks and confirmation prompts for destructive operations. Reference docs: simple-nodes.md",
+      "details": "Create git nodes in src/pflow/nodes/git/, all inheriting from pocketflow.Node: git-push, git-create-branch, git-merge, and git-status. Each node follows simple single-purpose pattern: git-push reads shared['branch'] and executes push, git-create-branch reads shared['branch_name'] and creates branch, git-merge reads shared['source_branch'] and shared['target_branch'], git-status writes shared['git_status']. Include safety checks and confirmation prompts for destructive operations. Reference docs: simple-nodes.md",
       "testStrategy": "Mock git commands for each operation, test safety measures and edge cases"
     }
   ]
