@@ -5,9 +5,30 @@ This document provides a high-level roadmap for implementing the AI-assisted dev
 ## 🎯 Vision Recap
 
 **Transform**: `/project:fix-github-issue 1234` (inefficient slash command)
+LLM Agent like Claude Code executing all steps, reasoning between each step:
+
+```markdown
+# This is a Claude Code slash command (prompt shortcut) that was used as an example in an Anthropic blog post as a good example of how to efficiently use Claude Code.
+Please analyze and fix the GitHub issue: $ARGUMENTS.
+
+Follow these steps:
+
+1. Use `gh issue view` to get the issue details
+2. Understand the problem described in the issue
+3. Search the codebase for relevant files
+4. Implement the necessary changes to fix the issue
+5. Write and run tests to verify the fix
+6. Ensure code passes linting and type checking
+7. Create a descriptive commit message
+8. Push and create a PR
+
+Remember to use the GitHub CLI (`gh`) for all GitHub-related tasks.
+```
+
+
 **Into**: `pflow fix-issue --issue=1234` (deterministic workflow)
 
-**Value Proposition**: 10x efficiency improvement through "Plan Once, Run Forever" philosophy.
+**Value Proposition**: 2-10x efficiency improvement through "Plan Once, Run Forever" philosophy depending on how much of the workflow that needs to be run by an LLM Agent.
 
 ---
 
@@ -185,12 +206,14 @@ pflow github-get-issue --issue=1234 >> \
   github-create-pr --title="Fix: $issue_title" --body="$code_report"
 ```
 
-**Secondary: Log Analysis** (showcases LLM node value)
+**Secondary: Log Analysis** (showcases LLM node value by breaking down the task into smaller steps)
 ```bash
 # Transforms: Repeatedly asking AI "analyze these logs"
 # Into: pflow analyze-logs --input=error.log (instant)
 pflow read-file --path=error.log >>
   llm --prompt="extract error patterns, find root causes, suggest fixes" >>
+  llm --prompt="find root causes" >>
+  llm --prompt="suggest fixes" >>
   write-file --path=analysis.md
 ```
 
