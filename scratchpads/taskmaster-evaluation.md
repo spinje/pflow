@@ -164,6 +164,8 @@ The pocketflow framework is foundational to the project, but there's no explicit
 
 User Answer: I think so but im not sure what this would entail. You need to do some deep thinking about why this is needed and how it would be implemented. Cant we just use the code when needed? The full framework is already in the codebase in `pocketflow/__init__.py`. It also seems some tasks in the current tasks.json might not be aware of this, for example task #2 in `todo\tasks.json` does not mention that a shared store already exists in the pocketflow framework (inside the 100 lines of code). We must ALWAYS make sure we are merely extending the framework and not reinventing the wheel. The `pocketflow\docs` will be key to understand the framework and how it is supposed to be used.
 
+**IMPORTANT**: WE ARE IN THE PROCESS OF RESOLVING THIS. Do not proceed to the next item until this is resolved fully.
+
 ### 2. **task_008.txt - Build CLI Path Planner**
 Current tasks focus on natural language planning, but the dual-mode planner also needs CLI pipe syntax compilation. Should we add a separate task for CLI path planning that compiles pipe syntax directly to IR without natural language?
 
@@ -205,3 +207,131 @@ User Answer: As far as I can tell this is already inlcuded in the `todo\tasks.js
 Should MVP validation be a separate task from the general test suite to ensure all acceptance criteria are met?
 
 User Answer: Yes, we should add this as a separate task for MVP validation.
+
+## Additional Insights for Remaining Taskmaster Questions
+
+### Insight #11: CLI Path Planning (Dual-Mode Planner)
+
+**Initial approach**: Treat CLI pipe syntax as natural language and send it to the LLM planner.
+
+```bash
+# User types:
+pflow read-file --path=input.txt >> llm --prompt="summarize this"
+
+# Initially: Send entire command to LLM for parsing
+# Later: Add direct CLI parsing optimization
+```
+
+**Why this works**: The LLM can understand pipe syntax as a "natural language" and generate appropriate JSON IR. Direct parsing can be added later as an optimization without changing the architecture.
+
+### Insight #12: No Generic Transform Nodes
+
+**What NOT to build**: Generic nodes like "transform", "prompt", "summarize-text".
+
+**What to build**: Platform-specific nodes that do concrete things:
+- `github-get-issue` - fetches GitHub issue
+- `claude-code` - runs Claude Code CLI
+- `llm` - calls LLM API
+- `read-file` - reads file from disk
+
+**Why**: Generic nodes lead to prompt proliferation. The `llm` node with templates handles all text transformations.
+
+### Insight #13: Shell Pipe Integration Pattern
+
+**More than stdin**: Full Unix pipe philosophy integration.
+
+```python
+# Not just:
+if not sys.stdin.isatty():
+    shared["stdin"] = sys.stdin.read()
+
+# But also:
+# - Streaming support for large data
+# - Exit code propagation
+# - Signal handling (Ctrl+C)
+# - Output to stdout for next command
+```
+
+**Reference**: Look at Simon Willison's `llm` CLI for excellent pipe integration patterns.
+
+### Insight #14: Execution Tracing is Not Just Logging
+
+**What tracing provides**:
+```
+[1] read-file (0.02s)
+    Input: {"file_path": "error.log"}
+    Output: {"content": "[2024-01-01] Error: ..."}
+    Shared Store Δ: +content
+
+[2] llm (1.3s, 523 tokens, $0.0012)
+    Input: {"prompt": "Analyze: [2024-01-01] Error: ..."}
+    Output: {"response": "The error indicates..."}
+    Shared Store Δ: +response
+    Cache: MISS
+```
+
+**Critical for**:
+- Debugging workflows
+- Understanding token usage and costs
+- Optimizing performance
+- Identifying cache opportunities
+
+### Insight #15: Performance Metrics vs Features
+
+**Metrics are success criteria, not features**:
+- ≤800ms planning latency → measure, don't build complex optimizations
+- ≤2s execution overhead → natural result of good design
+- 10x workflow efficiency → compared to manual LLM interaction
+
+**Focus on**: Making it work correctly first. Performance often comes from simplicity.
+
+### Insight #16: MVP Validation vs Unit Testing
+
+**Unit tests**: Individual components work correctly.
+```python
+def test_template_resolution():
+    assert resolve_template("$var", {"var": "value"}) == "value"
+```
+
+**MVP validation**: End-to-end scenarios that prove real value.
+```bash
+# Scenario: Fix GitHub issue workflow
+# 1. User runs: pflow fix-github-issue --issue=123
+# 2. System generates workflow
+# 3. Workflow executes successfully
+# 4. PR is created with fix
+# Success: 10x faster than manual process
+```
+
+### Insight #17: Features to Skip (MVP Focus)
+
+**Skip for MVP**:
+- Lockfiles (nice for determinism, not essential)
+- Complex error handling (pocketflow has retry)
+- Performance optimization (measure first)
+- Generic transform nodes (use LLM node)
+
+**This allows focus on**:
+- Core workflow execution
+- Natural language planning
+- Platform node integration
+- User experience
+
+### Insight #18: The Power of Templates + LLM Node
+
+**Why we don't need many node types**:
+```python
+# Instead of:
+# - summarize-text node
+# - translate-text node
+# - analyze-log node
+# - extract-data node
+
+# We have:
+llm_node = LLMNode()
+llm_node.set_params({
+    "prompt": "$task_instruction: $content"  # Template handles all cases
+})
+```
+
+**This pattern**: Reduces node proliferation while maintaining flexibility.
