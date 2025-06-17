@@ -1,8 +1,10 @@
 # LLM Node Package Specification
 
+> **Prerequisites**: Before implementing or using this node, read the [Node Implementation Reference](../node-reference.md) for common patterns and best practices.
+
 > **Note**: This package contains a single general-purpose `llm` node as a smart exception to the simple nodes pattern.
 
-This node is an intentional exception to our [simple node philosophy](../simple-nodes.md) - instead of creating dozens of specific prompt-based nodes, we provide one flexible `llm` node that handles all text processing tasks. This design follows the [shared store pattern](../shared-store.md) for data flow.
+This node is an intentional exception to our [simple node philosophy](../simple-nodes.md) - instead of creating dozens of specific prompt-based nodes, we provide one flexible `llm` node that handles all text processing tasks.
 
 ## Overview
 
@@ -31,7 +33,6 @@ The `LLM` node provides:
 | **Input**  | `str` | `prompt`            | The prompt text to send to the model |
 | **Output** | `str` | `response`          | The model-generated output text      |
 
-This interface follows the [shared store pattern](../shared-store.md#natural-interfaces) for natural key names.
 
 ### Natural Usage Pattern
 ```python
@@ -53,15 +54,6 @@ shared["response"] = "The code has the following potential issues..."
 | `system`      | `str?`  | `None`     | Optional system prompt for behavior guidance                   |
 | `max_tokens`  | `int?`  | `None`     | Optional output limit (model-dependent)                       |
 
-### Best Practice: Support Both Shared Store and Params
-```python
-def prep(self, shared):
-    # Check shared store first (dynamic), then params (static)
-    prompt = shared.get("prompt") or self.params.get("prompt")
-    if not prompt:
-        raise ValueError("prompt must be in shared store or params")
-    return prompt
-```
 
 ---
 
@@ -100,38 +92,14 @@ pflow llm --prompt="Create an outline for a technical blog post"
 
 ---
 
-## 💻 Implementation Pattern
+## 💻 Implementation Notes
 
-```python
-class LLMNode(Node):  # Inherits from pocketflow.Node
-    """General-purpose LLM processing.
+The LLM node follows standard node patterns with:
+- Input validation in `prep()` phase
+- LLM API call in `exec()` phase
+- Response storage in `post()` phase
 
-    Interface:
-    - Reads: shared["prompt"] - prompt to send to LLM
-    - Writes: shared["response"] - LLM's response
-    - Params: model (default gpt-4), temperature (default 0.7), system
-    """
-
-    def prep(self, shared):
-        # Best practice: check shared store first, then params
-        prompt = shared.get("prompt") or self.params.get("prompt")
-        if not prompt:
-            raise ValueError("prompt must be in shared store or params")
-        return prompt
-
-    def exec(self, prep_res):
-        return call_llm(
-            prompt=prep_res,
-            model=self.params.get("model", "gpt-4"),
-            temperature=self.params.get("temperature", 0.7),
-            system=self.params.get("system"),
-            max_tokens=self.params.get("max_tokens")
-        )
-
-    def post(self, shared, prep_res, exec_res):
-        shared["response"] = exec_res
-        return "default"
-```
+For complete implementation details, see [Node Reference](../node-reference.md#common-node-templates).
 
 ---
 

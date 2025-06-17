@@ -1,8 +1,8 @@
 # GitHub Node Package Specification
 
-This document specifies the **GitHub node package** - a collection of simple, single-purpose nodes for GitHub operations. Each node handles one specific GitHub API interaction with clear interfaces and natural shared store patterns.
+> **Prerequisites**: Before implementing or using these nodes, read the [Node Implementation Reference](../node-reference.md) for common patterns and best practices.
 
-These nodes follow the [simple node design philosophy](../simple-nodes.md) and use the [shared store pattern](../shared-store.md) for inter-node communication.
+This document specifies the **GitHub node package** - a collection of simple, single-purpose nodes for GitHub operations. Each node handles one specific GitHub API interaction with clear interfaces and natural shared store patterns.
 
 ## Node Package Overview
 
@@ -25,38 +25,10 @@ The GitHub node package provides essential GitHub functionality through individu
 
 **Purpose**: Retrieve GitHub issue details by issue number
 
-```python
-class GitHubGetIssueNode(Node):  # Inherits from pocketflow.Node
-    """Get GitHub issue details by number.
-
-    Interface:
-    - Reads: shared["issue_number"], shared["repo"] (optional)
-    - Writes: shared["issue"] - complete issue object with metadata
-    - Params: repo, token, issue_number (optional if in shared store)
-    """
-
-    def prep(self, shared):
-        issue_number = shared.get("issue_number") or self.params.get("issue_number")
-        if not issue_number:
-            raise ValueError("issue_number must be in shared store or params")
-
-        repo = shared.get("repo") or self.params.get("repo")
-        if not repo:
-            raise ValueError("repo must be in shared store or params")
-
-        return {
-            "repo": repo,
-            "issue_number": int(issue_number),
-            "token": self.params.get("token") or os.getenv("GITHUB_TOKEN")
-        }
-
-    def exec(self, prep_res):
-        return github_api.get_issue(**prep_res)
-
-    def post(self, shared, prep_res, exec_res):
-        shared["issue"] = exec_res
-        return "default"
-```
+**Interface**:
+- Reads: `shared["issue_number"]`, `shared["repo"]` (optional)
+- Writes: `shared["issue"]` - complete issue object with metadata
+- Params: `repo`, `token`, `issue_number` (optional if in shared store)
 
 **CLI Examples**:
 ```bash
@@ -79,41 +51,10 @@ pflow github-get-repo >> github-get-issue --issue-number=789
 
 **Purpose**: Create new GitHub issue
 
-```python
-class GitHubCreateIssueNode(Node):
-    """Create new GitHub issue.
-
-    Interface:
-    - Reads: shared["title"], shared["body"] (optional), shared["repo"] (optional)
-    - Writes: shared["issue"] - created issue object
-    - Params: repo, token, title, body, labels, assignees
-    """
-
-    def prep(self, shared):
-        title = shared.get("title") or self.params.get("title")
-        if not title:
-            raise ValueError("title must be in shared store or params")
-
-        repo = shared.get("repo") or self.params.get("repo")
-        if not repo:
-            raise ValueError("repo must be in shared store or params")
-
-        return {
-            "repo": repo,
-            "title": title,
-            "body": shared.get("body") or self.params.get("body", ""),
-            "labels": self.params.get("labels", []),
-            "assignees": self.params.get("assignees", []),
-            "token": self.params.get("token") or os.getenv("GITHUB_TOKEN")
-        }
-
-    def exec(self, prep_res):
-        return github_api.create_issue(**prep_res)
-
-    def post(self, shared, prep_res, exec_res):
-        shared["issue"] = exec_res
-        return "default"
-```
+**Interface**:
+- Reads: `shared["title"]`, `shared["body"]` (optional), `shared["repo"]` (optional)
+- Writes: `shared["issue"]` - created issue object
+- Params: `repo`, `token`, `title`, `body`, `labels`, `assignees`
 
 **CLI Examples**:
 ```bash
@@ -131,36 +72,10 @@ pflow llm --prompt="Generate bug report for login issue" >> github-create-issue 
 
 **Purpose**: List pull requests for a repository
 
-```python
-class GitHubListPRsNode(Node):
-    """List pull requests for repository.
-
-    Interface:
-    - Reads: shared["repo"], shared["state"] (optional)
-    - Writes: shared["prs"] - array of pull request objects
-    - Params: repo, token, state, per_page, sort
-    """
-
-    def prep(self, shared):
-        repo = shared.get("repo") or self.params.get("repo")
-        if not repo:
-            raise ValueError("repo must be in shared store or params")
-
-        return {
-            "repo": repo,
-            "state": shared.get("state") or self.params.get("state", "open"),
-            "per_page": self.params.get("per_page", 30),
-            "sort": self.params.get("sort", "created"),
-            "token": self.params.get("token") or os.getenv("GITHUB_TOKEN")
-        }
-
-    def exec(self, prep_res):
-        return github_api.list_prs(**prep_res)
-
-    def post(self, shared, prep_res, exec_res):
-        shared["prs"] = exec_res
-        return "default"
-```
+**Interface**:
+- Reads: `shared["repo"]`, `shared["state"]` (optional)
+- Writes: `shared["prs"]` - array of pull request objects
+- Params: `repo`, `token`, `state`, `per_page`, `sort`
 
 **CLI Examples**:
 ```bash
@@ -178,46 +93,10 @@ pflow github-get-repo >> github-list-prs --state=closed
 
 **Purpose**: Create new pull request
 
-```python
-class GitHubCreatePRNode(Node):
-    """Create new pull request.
-
-    Interface:
-    - Reads: shared["title"], shared["body"] (optional), shared["head"], shared["base"] (optional)
-    - Writes: shared["pr"] - created pull request object
-    - Params: repo, token, title, body, head, base, draft
-    """
-
-    def prep(self, shared):
-        title = shared.get("title") or self.params.get("title")
-        head = shared.get("head") or self.params.get("head")
-
-        if not title:
-            raise ValueError("title must be in shared store or params")
-        if not head:
-            raise ValueError("head branch must be in shared store or params")
-
-        repo = shared.get("repo") or self.params.get("repo")
-        if not repo:
-            raise ValueError("repo must be in shared store or params")
-
-        return {
-            "repo": repo,
-            "title": title,
-            "body": shared.get("body") or self.params.get("body", ""),
-            "head": head,
-            "base": shared.get("base") or self.params.get("base", "main"),
-            "draft": self.params.get("draft", False),
-            "token": self.params.get("token") or os.getenv("GITHUB_TOKEN")
-        }
-
-    def exec(self, prep_res):
-        return github_api.create_pr(**prep_res)
-
-    def post(self, shared, prep_res, exec_res):
-        shared["pr"] = exec_res
-        return "default"
-```
+**Interface**:
+- Reads: `shared["title"]`, `shared["body"]` (optional), `shared["head"]`, `shared["base"]` (optional)
+- Writes: `shared["pr"]` - created pull request object
+- Params: `repo`, `token`, `title`, `body`, `head`, `base`, `draft`
 
 **CLI Examples**:
 ```bash
@@ -237,36 +116,10 @@ pflow github-get-issue --issue-number=123 >>
 
 **Purpose**: Get repository files and content
 
-```python
-class GitHubGetFilesNode(Node):
-    """Get repository files and content.
-
-    Interface:
-    - Reads: shared["repo"], shared["path"] (optional)
-    - Writes: shared["files"] - file listing or content
-    - Params: repo, token, path, ref, recursive
-    """
-
-    def prep(self, shared):
-        repo = shared.get("repo") or self.params.get("repo")
-        if not repo:
-            raise ValueError("repo must be in shared store or params")
-
-        return {
-            "repo": repo,
-            "path": shared.get("path") or self.params.get("path", ""),
-            "ref": self.params.get("ref", "main"),
-            "recursive": self.params.get("recursive", False),
-            "token": self.params.get("token") or os.getenv("GITHUB_TOKEN")
-        }
-
-    def exec(self, prep_res):
-        return github_api.get_files(**prep_res)
-
-    def post(self, shared, prep_res, exec_res):
-        shared["files"] = exec_res
-        return "default"
-```
+**Interface**:
+- Reads: `shared["repo"]`, `shared["path"]` (optional)
+- Writes: `shared["files"]` - file listing or content
+- Params: `repo`, `token`, `path`, `ref`, `recursive`
 
 **CLI Examples**:
 ```bash
@@ -284,40 +137,10 @@ pflow github-get-files --repo=owner/project --path=src --recursive=true
 
 **Purpose**: Merge pull request
 
-```python
-class GitHubMergePRNode(Node):
-    """Merge pull request.
-
-    Interface:
-    - Reads: shared["pr_number"], shared["repo"] (optional)
-    - Writes: shared["merge_result"] - merge operation result
-    - Params: repo, token, pr_number, merge_method, commit_title
-    """
-
-    def prep(self, shared):
-        pr_number = shared.get("pr_number") or self.params.get("pr_number")
-        if not pr_number:
-            raise ValueError("pr_number must be in shared store or params")
-
-        repo = shared.get("repo") or self.params.get("repo")
-        if not repo:
-            raise ValueError("repo must be in shared store or params")
-
-        return {
-            "repo": repo,
-            "pr_number": int(pr_number),
-            "merge_method": self.params.get("merge_method", "merge"),
-            "commit_title": self.params.get("commit_title"),
-            "token": self.params.get("token") or os.getenv("GITHUB_TOKEN")
-        }
-
-    def exec(self, prep_res):
-        return github_api.merge_pr(**prep_res)
-
-    def post(self, shared, prep_res, exec_res):
-        shared["merge_result"] = exec_res
-        return "default"
-```
+**Interface**:
+- Reads: `shared["pr_number"]`, `shared["repo"]` (optional)
+- Writes: `shared["merge_result"]` - merge operation result
+- Params: `repo`, `token`, `pr_number`, `merge_method`, `commit_title`
 
 **CLI Examples**:
 ```bash
@@ -335,43 +158,10 @@ pflow github-create-pr --title="Auto fix" >> github-merge-pr --merge-method=squa
 
 **Purpose**: Add comment to issue or pull request
 
-```python
-class GitHubAddCommentNode(Node):
-    """Add comment to GitHub issue or PR.
-
-    Interface:
-    - Reads: shared["comment"], shared["issue_number"], shared["repo"] (optional)
-    - Writes: shared["comment_id"] - created comment ID
-    - Params: repo, token, issue_number, comment
-    """
-
-    def prep(self, shared):
-        comment = shared.get("comment") or self.params.get("comment")
-        issue_number = shared.get("issue_number") or self.params.get("issue_number")
-
-        if not comment:
-            raise ValueError("comment must be in shared store or params")
-        if not issue_number:
-            raise ValueError("issue_number must be in shared store or params")
-
-        repo = shared.get("repo") or self.params.get("repo")
-        if not repo:
-            raise ValueError("repo must be in shared store or params")
-
-        return {
-            "repo": repo,
-            "issue_number": int(issue_number),
-            "comment": comment,
-            "token": self.params.get("token") or os.getenv("GITHUB_TOKEN")
-        }
-
-    def exec(self, prep_res):
-        return github_api.add_comment(**prep_res)
-
-    def post(self, shared, prep_res, exec_res):
-        shared["comment_id"] = exec_res["id"]
-        return "default"
-```
+**Interface**:
+- Reads: `shared["comment"]`, `shared["issue_number"]`, `shared["repo"]` (optional)
+- Writes: `shared["comment_id"]` - created comment ID
+- Params: `repo`, `token`, `issue_number`, `comment`
 
 **CLI Examples**:
 ```bash
@@ -388,49 +178,10 @@ pflow github-get-issue --issue-number=123 >>
 
 **Purpose**: Search code in GitHub repositories
 
-```python
-class GitHubSearchCodeNode(Node):
-    """Search code in GitHub repositories.
-
-    Interface:
-    - Reads: shared["query"], shared["repo"] (optional)
-    - Writes: shared["search_results"] - code search results
-    - Params: query, repo, language, filename, extension, size, path
-    """
-
-    def prep(self, shared):
-        query = shared.get("query") or self.params.get("query")
-        if not query:
-            raise ValueError("query must be in shared store or params")
-
-        # Build search query with filters
-        search_parts = [query]
-
-        if repo := (shared.get("repo") or self.params.get("repo")):
-            search_parts.append(f"repo:{repo}")
-        if language := self.params.get("language"):
-            search_parts.append(f"language:{language}")
-        if filename := self.params.get("filename"):
-            search_parts.append(f"filename:{filename}")
-        if extension := self.params.get("extension"):
-            search_parts.append(f"extension:{extension}")
-        if path := self.params.get("path"):
-            search_parts.append(f"path:{path}")
-
-        return {
-            "query": " ".join(search_parts),
-            "per_page": self.params.get("per_page", 30),
-            "sort": self.params.get("sort", "indexed"),
-            "token": self.params.get("token") or os.getenv("GITHUB_TOKEN")
-        }
-
-    def exec(self, prep_res):
-        return github_api.search_code(**prep_res)
-
-    def post(self, shared, prep_res, exec_res):
-        shared["search_results"] = exec_res
-        return "default"
-```
+**Interface**:
+- Reads: `shared["query"]`, `shared["repo"]` (optional)
+- Writes: `shared["search_results"]` - code search results
+- Params: `query`, `repo`, `language`, `filename`, `extension`, `size`, `path`
 
 **CLI Examples**:
 ```bash
@@ -500,7 +251,7 @@ Each GitHub node has one clear purpose:
 
 ### Natural Interfaces
 
-All nodes use intuitive shared store keys following the [shared store pattern](../shared-store.md#natural-interfaces):
+All nodes use intuitive shared store keys:
 - `shared["issue"]` for issue data
 - `shared["pr"]` for pull request data
 - `shared["files"]` for file listings/content

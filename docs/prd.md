@@ -353,52 +353,17 @@ graph TD
 
 ### 4.2 Natural Language Path (Full Planning)
 
-**10-Stage Process for NL → Executable Flow:**
+The planner provides comprehensive natural language understanding to transform user intent into executable flows. For detailed planning pipeline stages and implementation, see [Planner Specification](planner.md).
 
-| Stage | Purpose | Input | Output |
-|-------|---------|-------|--------|
-| **Metadata Discovery** | Extract all available node interfaces | Registry scan | Node metadata JSON |
-| **LLM Context Loading** | Prepare selection context | Metadata + prompt | LLM-ready context |
-| **Node Selection** | Choose appropriate building blocks | User intent | Selected nodes list |
-| **Flow Structure** | Create graph with sequential flow | Node capabilities | DAG with clear data flow |
-| **Structural Validation** | Verify graph completeness | Node graph | Validated structure |
-| **Interface Modeling** | Design shared store schema | Node interfaces | Key compatibility map |
-| **Mapping Generation** | Create proxy mappings if needed | Interface mismatches | Optional mappings |
-| **IR Generation** | Produce complete JSON IR | All components | Validated JSON IR |
-| **CLI Compilation** | Generate user-readable syntax | JSON IR | CLI preview string |
-| **User Verification** | Present for approval | CLI syntax | User confirmation |
-
-**Example NL Processing:**
-
-```
-Input: "summarize this youtube video"
-↓
-Registry Discovery: [yt-transcript, llm, write-file, ...]
-↓
-LLM Selection: yt-transcript@1.0.0 + llm@1.0.0
-↓
-Flow Structure: yt-transcript >> llm
-↓
-Interface Analysis: transcript output → prompt input (via mapping)
-↓
-Generated CLI: pflow yt-transcript --url=$URL >> llm --prompt="Summarize this transcript"
-↓
-User Confirmation Required
-```
+**Key Features:**
+- Metadata-driven node selection
+- Automatic interface compatibility checking
+- Proxy mapping generation when needed
+- User verification before execution
 
 ### 4.3 CLI Pipe Path (Validation Planning)
 
-**7-Stage Process for CLI → Validated IR:**
-
-| Stage | Purpose | Validation |
-|-------|---------|------------|
-| **Syntax Parsing** | Parse pipe syntax into components | Valid CLI grammar |
-| **Node Resolution** | Verify all nodes exist in registry | Registry lookup |
-| **Version Resolution** | Resolve semantic versions | Lockfile + semver rules |
-| **Interface Analysis** | Check shared store compatibility | Key alignment |
-| **Mapping Detection** | Generate mappings for mismatches | Automatic proxy config |
-| **IR Assembly** | Create complete JSON IR | Schema validation |
-| **Direct Execution** | Skip user verification | Immediate runtime |
+Direct CLI syntax bypasses LLM planning for immediate execution. For complete CLI syntax and resolution details, see [CLI Reference](cli-reference.md).
 
 **Example CLI Processing:**
 
@@ -418,33 +383,7 @@ Direct Runtime Execution
 
 ### 4.4 Metadata-Driven Selection
 
-The planner uses **extracted node metadata** rather than code inspection:
-
-```python
-# Node docstring (source)
-class YTTranscriptNode(Node):
-    """Fetches YouTube transcript from video URL.
-
-    Interface:
-    - Reads: shared["url"] - YouTube video URL
-    - Writes: shared["transcript"] - extracted transcript text
-    - Params: language (default "en") - transcript language
-    - Actions: "default", "video_unavailable"
-    """
-```
-
-```json
-// Generated metadata (LLM context)
-{
-  "id": "yt-transcript",
-  "description": "Fetches YouTube transcript from video URL",
-  "inputs": ["url"],
-  "outputs": ["transcript"],
-  "params": {"language": "en"},
-  "actions": ["default", "video_unavailable"],
-  "purity": "flow_safe"
-}
-```
+The planner uses extracted node metadata for intelligent selection. For details on metadata extraction and schema, see [Schemas](schemas.md#node-metadata-schema) and [Metadata Extraction](implementation-details/metadata-extraction.md).
 
 **Benefits:**
 
@@ -902,47 +841,7 @@ pflow's **Intermediate Representation (IR)** is a complete JSON specification th
 
 ### 5.5 Validation Pipeline
 
-The IR undergoes **comprehensive validation** before execution:
-
-```mermaid
-graph TD
-    A[Draft IR] --> B[JSON Schema Validation]
-    B --> C[Version Compatibility Check]
-    C --> D[Node Registry Resolution]
-    D --> E[DAG Structure Validation]
-    E --> F[Interface Compatibility]
-    F --> G[Proxy Mapping Validation]
-    G --> H[Purity Constraint Check]
-    H --> I[Execution Config Validation]
-    I --> J[Complete Validated IR]
-
-    B -.->|Fail| K[Schema Error]
-    C -.->|Fail| L[Version Error]
-    D -.->|Fail| M[Missing Node Error]
-    E -.->|Fail| N[Cycle Detection Error]
-    F -.->|Fail| O[Interface Mismatch]
-    G -.->|Fail| P[Mapping Error]
-    H -.->|Fail| Q[Purity Violation]
-    I -.->|Fail| R[Config Error]
-
-    style J fill:#c8e6c9
-    style K fill:#ffcdd2
-    style L fill:#ffcdd2
-    style M fill:#ffcdd2
-    style N fill:#ffcdd2
-    style O fill:#ffcdd2
-    style P fill:#ffcdd2
-    style Q fill:#ffcdd2
-    style R fill:#ffcdd2
-```
-
-**Validation Checkpoints:**
-
-1. **Structural**: JSON schema compliance, DAG properties
-2. **Registry**: All nodes exist and versions resolve
-3. **Interface**: Shared store key compatibility between connected nodes
-4. **Execution**: Cache/retry configuration valid for node purity level
-5. **Mapping**: Proxy configurations syntactically correct
+The IR undergoes comprehensive validation before execution. For detailed validation stages and requirements, see [Execution Reference](execution-reference.md#validation-pipeline) and [Schemas](schemas.md#schema-validation-requirements).
 
 ### 5.6 Lockfile Generation
 
@@ -1074,18 +973,7 @@ cache_store(cache_key, {
 - **Exponential backoff**: Optional via `wait` parameter
 - **Failure logging**: Complete retry history in trace
 
-**Retry Execution Pattern:**
-
-```python
-for attempt in range(max_retries):
-    try:
-        return node.exec(prep_data)
-    except Exception as e:
-        if attempt == max_retries - 1:
-            raise e  # Final failure
-        if wait > 0:
-            time.sleep(wait)
-```
+For detailed retry implementation and patterns, see [Execution Reference](execution-reference.md#retry-mechanisms).
 
 ### 6.4 Failure Semantics
 

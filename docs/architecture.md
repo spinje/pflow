@@ -89,7 +89,7 @@ graph TD
 ### 2.3 Foundation: pocketflow Framework
 
 The entire system is built on a 100-line Python framework that provides:
-- Node lifecycle management (`prep()`, `exec()`, `post()`)
+- Node lifecycle management - see [Node Reference](node-reference.md#node-lifecycle)
 - Flow orchestration via `>>` operator
 - Built-in retry mechanism for fault tolerance
 - Action-based transitions (deferred to post-MVP)
@@ -338,32 +338,7 @@ The planner operates in two modes with enhanced capabilities for template-driven
 All nodes inherit from `pocketflow.Node`:
 
 ```python
-class LLMNode(Node):
-    """General-purpose LLM processing.
-
-    Interface:
-    - Reads: shared["prompt"] - prompt to send to LLM
-    - Writes: shared["response"] - LLM's response
-    - Params: model (default gpt-4), temperature (default 0.7), system
-    """
-
-    def prep(self, shared):
-        prompt = shared.get("prompt")
-        if not prompt:
-            raise ValueError("Missing 'prompt' in shared store")
-        return prompt
-
-    def exec(self, prep_res):
-        return call_llm(
-            prompt=prep_res,
-            model=self.params.get("model", "gpt-4"),
-            temperature=self.params.get("temperature", 0.7),
-            system=self.params.get("system")
-        )
-
-    def post(self, shared, prep_res, exec_res):
-        shared["response"] = exec_res
-        return "default"
+For a complete example of node implementation including the LLMNode, see [Node Implementation Examples](node-reference.md#common-node-templates).
 ```
 
 #### 5.3.2 Node Metadata
@@ -413,44 +388,7 @@ Extracted from docstrings and stored as JSON:
 
 ### 5.4 Execution Engine
 
-#### 5.4.1 Execution Flow
-
-1. Load validated IR and lockfile
-2. Instantiate nodes from registry
-3. Configure nodes with params
-4. Set up proxy mappings if defined
-5. Execute flow using pocketflow orchestration
-6. Handle retries for `@flow_safe` nodes
-7. Write comprehensive trace
-
-#### 5.4.2 Runtime Integration
-
-```python
-# Generated execution code
-def execute_flow(ir, shared):
-    # Create nodes
-    nodes = {}
-    for node_spec in ir["nodes"]:
-        node_class = registry.get(node_spec["registry_id"])
-        node = node_class()
-        node.set_params(node_spec["params"])
-        nodes[node_spec["id"]] = node
-
-    # Wire flow
-    for edge in ir["edges"]:
-        nodes[edge["from"]] >> nodes[edge["to"]]
-
-    # Execute with proxy if needed
-    for node_id, node in nodes.items():
-        if node_id in ir.get("mappings", {}):
-            proxy = NodeAwareSharedStore(
-                shared,
-                **ir["mappings"][node_id]
-            )
-            node._run(proxy)
-        else:
-            node._run(shared)
-```
+For detailed execution engine implementation, including execution flow and runtime integration, see [Execution Reference](execution-reference.md).
 
 ## 6. Data Flow & State Management
 
@@ -575,16 +513,7 @@ Foundation for dynamic suggestions:
 
 ### 9.1 Caching Strategy
 
-**Cache Key Computation:**
-```
-cache_key = node_hash ⊕ effective_params ⊕ input_data_sha256
-```
-
-**Eligibility (ALL required):**
-1. Node marked `@flow_safe`
-2. Trust level ≠ mixed
-3. Version and params match
-4. Input data hash matches
+For detailed caching implementation including cache key computation and eligibility rules, see [Caching and Safety](runtime.md#caching-strategy).
 
 ### 9.2 Performance Targets (MVP)
 

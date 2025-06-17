@@ -158,36 +158,8 @@ The node uses natural interface names while the proxy handles any necessary tran
 
 ### 6 · Canonical IR fragment
 
-```json
-{
-  "nodes": [
-    {
-      "id": "yt-transcript",
-      "version": "1.0.0",
-      "params": { "language": "en" },
-      "execution": { "max_retries": 3, "wait": 1.0 }
-    },
-    {
-      "id": "llm",
-      "version": "1.0.0",
-      "params": { "model": "gpt-4", "temperature": 0.7 }
-    }
-  ],
-  "edges": [
-    {"from": "yt-transcript", "to": "llm"}
-  ],
-  "mappings": {
-    "yt-transcript": {
-      "input_mappings": {"url": "video_source"},
-      "output_mappings": {"transcript": "raw_transcript"}
-    },
-    "llm": {
-      "input_mappings": {"prompt": "formatted_prompt"},
-      "output_mappings": {"response": "article_summary"}
-    }
-  }
-}
-```
+
+> **IR Example**: See [Schemas](schemas.md#complete-example-flow) for complete IR structure examples
 
 Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
@@ -195,25 +167,7 @@ Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
 ### 7 · Execution pipeline & CLI resolution
 
-> **Single user rule** — *Type flags; engine decides.*\
-> Flags that match any node's natural interface are **data injections**; all others are **params overrides**.
-
-#### Updated resolution algorithm (emphasizing simplicity)
-
-0. **Detect Piped Input**: If input is being piped to `pflow` via `stdin`, its content is read and placed into `shared["stdin"]`. For details on shell integration, see [Shell Pipes](./shell-pipes.md).
-1. Parse CLI as flat `key=value`
-
-2. For CLI flags matching natural shared store keys: inject directly
-
-3. For CLI flags marked as params: update node params (flat structure)
-
-4. For CLI flags marked as execution config: update node execution settings
-
-5. Generate flow code that:
-   - Creates proxy if IR defines mappings for node (see [proxy pattern](./shared-store.md#proxy-pattern))
-   - Uses direct access if no mappings defined
-
-6. Execute flow with appropriate access pattern per node
+> **Complete Details**: See [CLI Reference](cli-reference.md#flag-resolution) for flag resolution algorithm and [Execution Reference](execution-reference.md#execution-flow) for complete pipeline
 
 ---
 

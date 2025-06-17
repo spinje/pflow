@@ -8,8 +8,6 @@
 - **Components**: [Component Inventory](./components.md) | [Planner](./planner.md) | [Runtime](./runtime.md)
 - **Implementation**: [PocketFlow Integration](./pflow-pocketflow-integration-guide.md)
 
-
-
 ## 🎯 Core Vision
 
 **"Transform AI-assisted development workflows from inefficient slash commands into deterministic, reusable CLI workflows"**

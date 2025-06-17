@@ -563,74 +563,14 @@ elif user_intent == "technical_summary":
 
 ### 10.1 Template-Driven JSON IR Schema
 
-```json
-{
-  "metadata": {
-    "planner_version": "1.0.0",
-    "created_at": "2024-01-01T12:00:00Z",
-    "prompt": "fix github issue 1234",
-    "llm_model": "o1-preview"
-  },
-  "nodes": [
-    {
-      "id": "github-get-issue",
-      "version": "1.0.0",
-      "params": {"issue": 1234},
-      "input_templates": {},
-      "outputs": ["issue", "issue_title", "issue_body"]
-    },
-    {
-      "id": "claude-code",
-      "version": "1.0.0",
-      "params": {"temperature": 0.2, "max_tokens": 8192},
-      "input_templates": {
-        "prompt": "<instructions>\n1. Understand the problem described in the issue\n2. Search the codebase for relevant files\n3. Implement the necessary changes to fix the issue\n4. Write and run tests to verify the fix\n5. Return a report of what you have done as output\n</instructions>\nThis is the issue: $issue"
-      },
-      "template_dependencies": ["issue"],
-      "outputs": ["code_report"]
-    },
-    {
-      "id": "llm",
-      "version": "1.0.0",
-      "params": {"model": "gpt-4", "temperature": 0.1},
-      "input_templates": {
-        "prompt": "Write a descriptive commit message for these changes: $code_report"
-      },
-      "template_dependencies": ["code_report"],
-      "outputs": ["commit_message"]
-    },
-    {
-      "id": "git-commit",
-      "version": "1.0.0",
-      "input_templates": {
-        "message": "$commit_message"
-      },
-      "template_dependencies": ["commit_message"]
-    },
-    {
-      "id": "github-create-pr",
-      "version": "1.0.0",
-      "input_templates": {
-        "title": "Fix: $issue_title",
-        "body": "$code_report"
-      },
-      "template_dependencies": ["issue_title", "code_report"]
-    }
-  ],
-  "edges": [
-    {"from": "github-get-issue", "to": "claude-code"},
-    {"from": "claude-code", "to": "llm"},
-    {"from": "llm", "to": "git-commit"},
-    {"from": "git-commit", "to": "git-push"},
-    {"from": "git-push", "to": "github-create-pr"}
-  ],
-  "variable_resolution": {
-    "issue": "github-get-issue.outputs.issue",
-    "issue_title": "github-get-issue.outputs.issue_title",
-    "code_report": "claude-code.outputs.code_report",
-    "commit_message": "llm.outputs.commit_message"
-  }
-}
+The planner generates JSON IR with template variable support. For complete IR schema definition and validation rules, see [Schemas](schemas.md#document-envelope-flow-ir).
+
+**Template-Specific Features**:
+- `input_templates`: Node inputs with `$variable` placeholders
+- `template_dependencies`: Variables required for resolution
+- `variable_resolution`: Maps variables to node outputs
+
+For a complete example of template-driven IR, see the GitHub issue workflow in [Workflow Analysis](workflow-analysis.md).
 ```
 
 ### 10.2 Compiler Integration
@@ -826,50 +766,7 @@ expects 'text'.
 
 ---
 
-## 14 · Caching and Performance
-
-### 14.1 Flow Hash Calculation
-
-**Components**:
-
-- Ordered node IDs + versions
-- Action-based transitions (edges)
-- Mapping definitions (when present)
-- Shared store schema
-
-```python
-flow_hash = sha256(
-    nodes + edges + mappings + schema
-).hexdigest()[:16]
-```
-
-### 14.2 Node-Level Caching Integration
-
-**Cache Key**: `node_hash ⊕ effective_params ⊕ input_data_sha256`
-
-- **Caching Eligibility**: Node must be `@flow_safe` AND trust level ≠ `mixed`
-- **Safety Constraint**: Impure nodes never cached, regardless of other factors
-- **Param Changes**: Create new cache entries without affecting graph hash
-- **Mapping Changes**: Affect input data hash, ensuring cache correctness
-- **Trust Integration**: Cache only consulted for trusted flow origins
-
-### 14.3 Metadata Caching
-
-**Performance Optimizations**:
-
-- Node metadata cached until source files change
-- LLM selection responses cached by prompt similarity
-- Validation results cached by IR hash
-- Registry updates invalidate dependent caches
-
-### 14.4 LLM Response Caching
-
-**Strategies**:
-
-- Semantic similarity matching for prompt reuse
-- Selection decision caching with confidence scores
-- Invalidation on registry updates
-- User-specific cache namespacing
+> **Caching Details**: See [Runtime](runtime.md#caching-strategy) for node-level caching implementation and [Execution Reference](execution-reference.md#performance-considerations) for performance optimizations
 
 ---
 

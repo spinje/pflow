@@ -149,53 +149,36 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
 - **Params Structure**: Maps to `self.params.get("key", default)` usage in code
 - **Type Information**: Basic types (str, int, float, bool, dict, list, any)
 
-### 2.2.1 Type-Based Prevalidation Support
+### 2.2.1 Type Information
 
-The existing type declarations in node metadata enable **type shadow store prevalidation** during composition:
+Node metadata includes type information for validation:
 
-**Validation Usage:**
-- `inputs.*.type` → Required types for compatibility checking
-- `outputs.*.type` → Produced types accumulated during composition
-- `required` field → Distinguishes mandatory vs optional type dependencies
+- `inputs.*.type`: Expected input types (str, int, float, bool, dict, list, any)
+- `outputs.*.type`: Produced output types
+- `required` field: Distinguishes mandatory vs optional inputs
 
-**Type Compatibility Rules:**
-- Node requires input type T → At least one previous node must produce type T
-- Multiple nodes producing same type → All valid sources available
-- Optional inputs (required: false) → Do not block composition if missing
-
-**Example Metadata for Type Validation:**
+**Example:**
 ```json
 {
   "interface": {
     "inputs": {
-      "text": {"type": "str", "required": true},      // Must be available
-      "format": {"type": "str", "required": false}   // Optional, won't block
+      "text": {"type": "str", "required": true},
+      "format": {"type": "str", "required": false}
     },
     "outputs": {
-      "summary": {"type": "str"}                      // Makes str available
+      "summary": {"type": "str"}
     }
   }
 }
 ```
 
-**Integration Notes:**
-- No additional metadata required
-- Uses existing type information for real-time feedback
-- Complements full interface validation pipeline
-
 ### 2.3 Shared Key Declaration Requirements
 
 All nodes must explicitly declare their shared store interface in metadata:
 
-**Required Declarations:**
 - **Input keys**: All shared store keys read during `prep()`
 - **Output keys**: All shared store keys written during `post()`
 - **Optional keys**: Keys that may or may not be present
-
-**Validation Rules:**
-- Nodes accessing undeclared shared keys trigger validation errors
-- Runtime shared store access must match declared interface
-- Flow validation checks key compatibility between connected nodes
 
 **Example Declaration:**
 ```json
@@ -338,71 +321,32 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 
 ---
 
-## 7 · Failure Semantics
-
-**Retry Configuration:**
-
-- Absence of `execution.max_retries` → `0` retries (fail fast)
-- Flow aborts on first un-retried failure with status `FAILED`
-- Retry configuration integrates with [pocketflow framework](../pocketflow/__init__.py) patterns
-
-**Failure Logging:**
-
-- Engine records `failure_trace` array in run log
-- IR itself remains immutable during execution
-- Complete failure context preserved for debugging
-
-> **Runtime Integration**: See [runtime specification](./runtime-behavior-specification.md) for complete failure handling
+> **Execution Behavior**: See [Execution Reference](execution-reference.md) for failure semantics, retry configuration, and caching contracts
 
 ---
 
-## 8 · Caching Contract
+## 9 · Schema Validation Requirements
 
-IR enables caching through `execution.use_cache` field with validation rules:
+### 9.1 Node Metadata Schema Validation
 
-- Only `@flow_safe` nodes may specify `use_cache: true`
-- Cache eligibility determined at runtime by multiple factors
-- IR validation occurs during planner pipeline
-- Cache bypass (`--reset-cache`) is runtime flag, does not mutate IR
+- **Structure**: Must conform to node metadata JSON schema
+- **Required fields**: node.id, interface.inputs, interface.outputs
+- **Type validation**: All types must be valid (str, int, float, bool, dict, list, any)
+- **Version format**: Semantic versioning (X.Y.Z)
 
-> **Implementation Details**: See [Runtime Behavior Specification](./runtime-behavior-specification.md) for cache key computation and storage
+### 9.2 Flow IR Schema Validation
 
----
+- **Structure**: Must conform to flow IR JSON schema
+- **Version compatibility**: ir_version must be supported
+- **Node references**: All nodes must exist in registry
+- **Edge validity**: Source and target nodes must exist
+- **Mapping validity**: Mapped keys must match node interfaces
 
-## 9 · Enhanced Validation Pipeline
-
-### 9.1 Node Metadata Validation (Registry Phase)
-
-1. **Extraction Validation**: Docstring → metadata consistency
-2. **Code Analysis**: Static analysis of actual shared["key"] usage
-3. **Interface Verification**: Documented vs actual interface matching
-4. **Staleness Check**: Source hash validation for re-extraction needs
-
-### 9.2 Flow IR Validation (Composition Phase)
-
-1. **JSON Structure**: Parse → strict no-comments
-2. **Schema Validation**: `$schema` + `ir_version` compatibility check
-3. **Registry Resolution**: All referenced nodes exist in [registry](./node-discovery-namespacing-and-versioning.md)
-4. **Graph Analysis**: Cycle detection including action-based transition paths
-5. **Interface Compatibility**: Input/output key alignment between connected nodes
-6. **Proxy Mapping**: Validation of mapping definitions when present
-7. **Purity Constraints**: `@flow_safe` requirement for `max_retries` and `use_cache`
-8. **Framework Compatibility**: [pocketflow](../pocketflow/__init__.py) execution pattern validation
-
-### 9.3 Cross-Reference Validation
-
-- **Params Validation**: Flow IR params match node metadata param definitions
-- **Interface Alignment**: Connected nodes have compatible input/output keys
-- **Mapping Necessity**: Detect when proxy mappings required vs optional
-- **Action Coverage**: All node actions have defined transitions
-
-Flow failing any step is rejected before execution with comprehensive diagnostics.
-
-> **Planner Integration**: Validation occurs during [planner responsibility phases](./planner-responsibility-functionality-spec.md)
+> **Validation Details**: See [Execution Reference](execution-reference.md#validation-pipeline) for complete validation pipeline
 
 ---
 
-## 10 · Evolution Rules
+## 11 · Evolution Rules
 
 **Version Compatibility:**
 
@@ -446,90 +390,11 @@ Flow failing any step is rejected before execution with comprehensive diagnostic
 - Optional fields with sensible defaults
 - Clear validation rules for new features
 
----
-
-## 12 · Registry Integration Commands
-
-### 12.1 Node Metadata Management
-
-```bash
-# Extract metadata from Python file
-pflow registry extract node.py --output metadata.json
-
-# Validate code/metadata consistency
-pflow registry validate node.py
-
-# Install node with automatic metadata extraction
-pflow registry install node.py --namespace core
-
-# List nodes with interface information
-pflow registry list --format table
-```
-
-### 12.2 Flow Validation with Metadata
-
-```bash
-# Validate flow IR against registry
-pflow validate flow.ir.json
-
-# Check interface compatibility
-pflow validate flow.ir.json --check-interfaces
-
-# Generate missing proxy mappings
-pflow validate flow.ir.json --suggest-mappings
-```
-
-### 12.3 Registry Structure
-
-```
-~/.pflow/registry/
-├─ nodes/
-│   ├─ core/yt-transcript/1.0.0/
-│   │   ├─ node.py           # Source code
-│   │   └─ metadata.json     # Extracted interface
-│   └─ custom/my-node/1.0.0/
-│       ├─ node.py
-│       └─ metadata.json
-├─ index.json               # Fast lookup index
-└─ schemas/
-    ├─ node-metadata.schema.json
-    └─ flow-ir.schema.json
-```
+> **Implementation Details**: See [CLI Reference](cli-reference.md) for registry commands and [Registry](registry.md) for implementation details
 
 ---
 
-## 13 · Performance Architecture
-
-### 13.1 Registry Loading Strategy
-
-Fast planner context generation using pre-extracted metadata:
-
-```python
-def build_llm_context(available_nodes: List[str]) -> str:
-    """Load pre-extracted metadata for instant LLM context."""
-    metadata_files = [f"registry/nodes/{node}/metadata.json"
-                     for node in available_nodes]
-
-    # Instant JSON loading vs Python parsing
-    interfaces = [json.load(open(f)) for f in metadata_files]
-    return format_for_llm(interfaces)
-```
-
-### 13.2 Validation Caching
-
-- **Registry Index**: Fast node lookup without filesystem scanning
-- **Interface Cache**: Pre-validated interface compatibility matrix
-- **Staleness Detection**: Hash-based change detection for selective re-extraction
-
-### 13.3 CLI Performance
-
-- **Registry Commands**: Instant metadata access for rich CLI experience
-- **Flow Validation**: Fast interface checking without Python imports
-- **Search Operations**: JSON-based filtering and querying
-
----
-
-## 14 · Complete Example Flow
+## 10 · Complete Example Flow
 
 ```json
 {
@@ -581,21 +446,9 @@ def build_llm_context(available_nodes: List[str]) -> str:
 
 ---
 
-## 15 · Integration References
-
-This dual schema system integrates with pflow's complete architecture:
-
-- **Shared Store Pattern**: [Natural interfaces and proxy mappings](./shared-store-node-proxy-architecture.md)
-- **Planner Validation**: [Dual-mode operation and IR generation](./planner-responsibility-functionality-spec.md)
-- **CLI Resolution**: [Parameter injection and override rules](./shared-store-cli-runtime-specification.md)
-- **Node Registry**: [Versioning and discovery](./node-discovery-namespacing-and-versioning.md)
-- **Runtime Behavior**: [Caching, retry, and side-effect management](./runtime-behavior-specification.md)
-- **Framework Integration**: [pocketflow execution patterns](../pocketflow/__init__.py)
-- **Node Metadata Strategy**: [Extraction and documentation](implementation-details/node-metadata-extraction.md)
-
 ---
 
-This governance document ensures both Flow IR and Node Metadata schemas align with pflow's established architecture while providing focused schema definitions for JSON validation, evolution, and metadata-driven planning capabilities.
+This document defines the JSON schemas for Flow IR and Node Metadata, providing the foundation for validation, evolution, and metadata-driven planning capabilities.
 
 ## See Also
 

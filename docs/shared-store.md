@@ -29,14 +29,8 @@ Before diving into the autonomy principle, it's crucial to understand when to us
 - **Values are operational**: How the node operates, not what it operates on
 
 ### Best Practice Pattern:
-```python
-def prep(self, shared):
-    # Check shared store first (dynamic), then params (static)
-    value = shared.get("key") or self.params.get("key")
-    if not value:
-        raise ValueError("key must be in shared store or params")
-    return value
-```
+
+> **Implementation**: See [Node Reference](node-reference.md#shared-store-access) for the recommended pattern of checking shared store first, then params
 
 **Shared store takes precedence** - this allows dynamic workflow data to override static configuration when needed.
 
@@ -216,18 +210,7 @@ validator - "complete" >> finalizer
 - Node-local parameters that don't affect shared store
 - Simple access via `self.params.get("temperature", 0.7)`
 
-## Integration with pocketflow Framework
-
-Our pattern leverages the existing **pocketflow framework** which provides:
-
-- **Node base class**: `prep()`/`exec()`/`post()` execution pattern
-- **Params system**: `set_params()` method for node parameters
-- **Flow orchestration**: `>>` operator for wiring nodes
-- **Minimal overhead**: 100-line implementation with proven patterns
-
-Node classes inherit from `pocketflow.Node` and access params through the simplified `self.params` dictionary.
-
-> **See also**: [pocketflow documentation](../pocketflow/docs/core_abstraction/communication.md) for framework details
+> **Framework Integration**: See [Node Reference](node-reference.md#base-node-class) for pocketflow integration details
 
 ## The Standalone Node Pattern
 
@@ -261,52 +244,9 @@ A crucial distinction in our implementation:
 - **Generated**: Flow orchestration code (from IR) with optional proxy setup
 - **Runtime**: CLI injection into shared store and params overrides
 
-### Node Example (Static - Written Once)
+> **Node Examples**: See [Node Reference](node-reference.md#common-node-templates) for LLMNode and other implementation examples
 
-```python
-class LLMNode(Node):  # Inherits from pocketflow.Node
-    """General-purpose LLM processing.
-
-    Interface:
-    - Reads: shared["prompt"] - prompt to send to LLM
-    - Writes: shared["response"] - LLM's response
-    - Params: model (default gpt-4), temperature (default 0.7), system
-    """
-    def prep(self, shared):
-        # Best practice: check shared store first, then params
-        prompt = shared.get("prompt") or self.params.get("prompt")
-        if not prompt:
-            raise ValueError("prompt must be in shared store or params")
-        return prompt
-
-    def exec(self, prep_res):
-        return call_llm(
-            prompt=prep_res,
-            model=self.params.get("model", "gpt-4"),
-            temperature=self.params.get("temperature", 0.7),
-            system=self.params.get("system")
-        )
-
-    def post(self, shared, prep_res, exec_res):
-        shared["response"] = exec_res  # Direct assignment
-```
-
-## Node Testing Simplicity
-
-The proxy pattern makes testing intuitive and natural:
-
-```python
-def test_llm_node():
-    node = LLMNode()
-    node.set_params({"model": "gpt-4", "temperature": 0.5})  # Just params
-
-    # Natural, intuitive shared store
-    shared = {"prompt": "Summarize this: Long article content here..."}
-
-    node.run(shared)
-
-    assert "response" in shared
-    assert len(shared["response"]) > 0
+> **Testing Examples**: See [Node Reference](node-reference.md#testing-nodes) for node testing patterns
 ```
 
 Compare this to complex binding setup requirements in other approaches.

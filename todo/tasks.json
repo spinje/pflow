@@ -233,7 +233,7 @@
         18
       ],
       "priority": "high",
-      "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_text, node_context) function. Use LLM to: 1) Extract user intent, 2) Select appropriate nodes, 3) Generate workflow with template variables. Output JSON IR with nodes, edges, and template strings. Example: user says 'analyze error.log' \u2192 generates workflow with read-file node using $file_path template. Automatically create template variables for values that flow between nodes (like $content, $analysis). Focus on common patterns first. The LLM generates the workflow structure, not individual node parameters. Keep prompts simple and examples clear. Reference docs: planner.md#6.1, workflow-analysis.md",
+      "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_input, node_context) function. Handles BOTH natural language (quoted: \"analyze this file\") AND CLI pipe syntax (unquoted: read-file >> llm). For MVP, route both through LLM which understands pipe syntax as domain-specific language. Use LLM to: 1) Parse intent from natural language OR interpret CLI syntax structure, 2) Select appropriate nodes, 3) Generate workflow with template variables, 4) Fill in missing parameters and connections. Examples: \"analyze error.log\" OR read-file --path=error.log >> llm both generate complete workflows. CLI syntax rarely specifies all parameters, so LLM fills gaps (prompts, data flow, shared store mappings). The LLM generates workflow structure with template variables for missing pieces. Direct CLI parsing is v2.0 optimization. Reference docs: planner.md#6.1, workflow-analysis.md",
       "testStrategy": "Test workflow generation accuracy, template resolution, and parameter handling"
     },
     {
@@ -375,6 +375,69 @@
       "priority": "low",
       "details": "Create git nodes in src/pflow/nodes/git/, all inheriting from pocketflow.Node: git-push, git-create-branch, git-merge, and git-status. Each node follows simple single-purpose pattern: git-push reads shared['branch'] and executes push, git-create-branch reads shared['branch_name'] and creates branch, git-merge reads shared['source_branch'] and shared['target_branch'], git-status writes shared['git_status']. Include safety checks and confirmation prompts for destructive operations. Reference docs: simple-nodes.md",
       "testStrategy": "Mock git commands for each operation, test safety measures and edge cases"
+    },
+    {
+      "id": 30,
+      "title": "Build comprehensive shell pipe integration",
+      "description": "Implement full Unix pipe support for stdin/stdout handling and shell integration",
+      "status": "pending",
+      "dependencies": [
+        4
+      ],
+      "priority": "high",
+      "details": "Create src/pflow/core/shell_integration.py with comprehensive Unix pipe support. Implement stdin detection and reading when data is piped to pflow. Support streaming for large data (not just reading entire stdin at once). Handle stdout output for chaining pflow with other Unix tools. Implement proper exit code propagation and signal handling (Ctrl+C). When stdin is detected, populate shared['stdin'] automatically. Support both batch mode (fail fast) and interactive mode (prompt for missing data). Look at Simon Willison's 'llm' CLI for excellent pipe integration patterns. This enables: 'cat data.txt | pflow process >> output.txt'. Reference docs: shell-pipes.md, architecture.md#5.1.1",
+      "testStrategy": "Test pipe detection, streaming support, signal handling, and integration with Unix tools"
+    },
+    {
+      "id": 31,
+      "title": "Implement CLI autocomplete for node discovery",
+      "description": "Add shell autocomplete for node names and parameters to enhance CLI usability",
+      "status": "pending",
+      "dependencies": [
+        1,
+        6,
+        9
+      ],
+      "priority": "high",
+      "details": "Create src/pflow/cli/autocomplete.py with shell completion support. Implement autocomplete for: node names (read-file, llm, github-get-issue), common parameters (--path, --prompt, --issue), pipe operator (>>). Use click's shell completion features. Generate completion scripts for bash/zsh/fish. When user types 'pflow read-f[TAB]', complete to 'read-file'. When typing 'pflow read-file --[TAB]', show available parameters from node metadata. This provides immediate value by helping users discover available nodes without documentation. Works even though CLI syntax is processed by LLM in MVP. Makes the tool feel responsive and professional. Reference docs: autocomplete.md (concepts), cli-runtime.md",
+      "testStrategy": "Test completion generation, shell integration, and user experience across shells"
+    },
+    {
+      "id": 32,
+      "title": "[DEFER TO v2.0] Implement direct CLI parsing without LLM",
+      "description": "Parse CLI pipe syntax directly for minor performance optimization",
+      "status": "deferred",
+      "dependencies": [
+        19,
+        31
+      ],
+      "priority": "low",
+      "details": "[DEFERRED TO v2.0 - Minor optimization only] Create direct parser for CLI pipe syntax that bypasses LLM for fully-specified commands. Parse 'node1 --param=value >> node2' syntax directly into IR. Even with direct parsing, LLM still needed for: missing parameters, template variables, data flow connections, shared store mappings. This is a minor optimization since users rarely specify everything. Benefits: slightly faster for complete commands, more predictable for simple flows, reduced token usage. The high-value feature is autocomplete (task #31), not direct parsing. Reference docs: planner.md#3.2 (future state)",
+      "testStrategy": "Test parsing accuracy, measure actual performance improvement, ensure LLM fallback works"
+    },
+    {
+      "id": 33,
+      "title": "Implement execution tracing system",
+      "description": "Build comprehensive execution visibility for debugging and optimization",
+      "status": "pending",
+      "dependencies": [
+        21
+      ],
+      "priority": "high",
+      "details": "Create src/pflow/runtime/tracing.py with execution tracing that helps users understand, debug, and optimize execution flow. Capture and display: inputs/outputs for each node, shared state diffs per step, LLM tokens used per node and total, execution time per node, cache hits/misses. Format output clearly: '[1] read-file (0.02s) Input: {file_path: 'data.txt'} Output: {content: '...'} Shared Store \u0394: +content'. Support different verbosity levels via --trace flag. Include cost estimation for LLM nodes ($0.0012 per call). Critical for understanding workflow behavior and optimizing performance. Reference docs: architecture.md (observability), runtime.md",
+      "testStrategy": "Test trace output formatting, performance overhead, and debugging effectiveness"
+    },
+    {
+      "id": 34,
+      "title": "Create MVP validation test suite",
+      "description": "End-to-end validation that MVP meets all acceptance criteria",
+      "status": "pending",
+      "dependencies": [
+        24
+      ],
+      "priority": "high",
+      "details": "Create tests/mvp_validation/ with end-to-end scenarios proving real value. Test core workflow: 'pflow fix-github-issue --issue=123' generates appropriate workflow, executes successfully, creates PR with fix. Measure against MVP criteria: 10x faster than manual LLM interaction, natural language to workflow works, template resolution functions correctly, all platform nodes integrate properly. Include performance benchmarks showing planning \u2264800ms, execution overhead \u22642s. Document which v2.0 features are intentionally excluded. This is about proving the MVP delivers its core value proposition, not just unit test coverage. Reference docs: mvp-scope.md, architecture.md#11",
+      "testStrategy": "Test real-world scenarios, measure performance targets, validate user experience"
     }
   ]
 }
