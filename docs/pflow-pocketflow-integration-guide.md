@@ -1,5 +1,19 @@
 # pflow-pocketflow Integration Guide
 
+> **Version**: MVP
+> **MVP Status**: ✅ Critical Implementation Guide
+> For complete MVP boundaries, see [MVP Scope](./mvp-scope.md)
+
+## Navigation
+
+**Related Documents:**
+- **Framework**: [pocketflow Source](../pocketflow/__init__.py) | [pocketflow Docs](../pocketflow/CLAUDE.md)
+- **Architecture**: [Architecture](./architecture.md) | [Shared Store](./shared-store.md)
+- **Components**: [CLI Runtime](./cli-runtime.md) | [Planner](./planner.md) | [Runtime](./runtime.md)
+- **Implementation**: [Component Inventory](./components.md)
+
+## Overview
+
 This document captures critical insights about how pflow and pocketflow integrate. These insights were discovered through deep analysis and are essential for correct implementation.
 
 ## Critical Insight #1: PocketFlow IS the Execution Engine

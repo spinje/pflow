@@ -596,3 +596,11 @@ This dual schema system integrates with pflow's complete architecture:
 ---
 
 This governance document ensures both Flow IR and Node Metadata schemas align with pflow's established architecture while providing focused schema definitions for JSON validation, evolution, and metadata-driven planning capabilities.
+
+## See Also
+
+- **Architecture**: [Shared Store + Proxy Pattern](./shared-store.md) - Natural interface patterns and proxy mapping design
+- **Components**: [Planner Specification](./planner.md) - How schemas integrate with dual-mode planning
+- **Components**: [Registry System](./registry.md) - Node discovery and metadata management
+- **Implementation**: [Metadata Extraction](./implementation-details/metadata-extraction.md) - How node metadata is extracted from docstrings
+- **Related Features**: [Runtime Behavior](./runtime.md) - How execution configuration in schemas affects runtime

@@ -6,7 +6,7 @@ Define how **CLI arguments**, **IR mappings**, and the **flow-scoped shared stor
 
 This specification details the implementation using the **pocketflow framework** and shows how generated flow code integrates with static node classes using an optional proxy layer for complex routing scenarios.
 
-> **For conceptual understanding and architectural rationale**, see [Shared Store + Proxy Design Pattern](./shared-store-node-proxy-architecture.md)
+> **For conceptual understanding and architectural rationale**, see [Shared Store + Proxy Design Pattern](./shared-store.md)
 
 ---
 
@@ -30,7 +30,7 @@ Our pattern leverages the lightweight **pocketflow framework** (100 lines of Pyt
 
 ### 3 · Proxy-Based Mapping Architecture
 
-The **NodeAwareSharedStore** proxy enables simple node code while supporting complex flow routing:
+The **NodeAwareSharedStore** proxy enables simple node code while supporting complex flow routing, as described in the [shared store pattern](./shared-store.md#proxy-pattern):
 
 - **Direct Access**: When no mappings defined, nodes access shared store directly (zero overhead)
 - **Proxy Mapping**: When IR defines mappings, proxy transparently handles key translation
@@ -200,7 +200,7 @@ Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
 #### Updated resolution algorithm (emphasizing simplicity)
 
-0. **Detect Piped Input**: If input is being piped to `pflow` via `stdin`, its content is read and placed into `shared["stdin"]`.
+0. **Detect Piped Input**: If input is being piped to `pflow` via `stdin`, its content is read and placed into `shared["stdin"]`. For details on shell integration, see [Shell Pipes](./shell-pipes.md).
 1. Parse CLI as flat `key=value`
 
 2. For CLI flags matching natural shared store keys: inject directly
@@ -210,7 +210,7 @@ Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 4. For CLI flags marked as execution config: update node execution settings
 
 5. Generate flow code that:
-   - Creates proxy if IR defines mappings for node
+   - Creates proxy if IR defines mappings for node (see [proxy pattern](./shared-store.md#proxy-pattern))
    - Uses direct access if no mappings defined
 
 6. Execute flow with appropriate access pattern per node
@@ -232,7 +232,7 @@ Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
 #### 9.1 Simple Scenario (No Mappings)
 
-**IR Definition**:
+**IR Definition** (following [IR schema](./schemas.md#intermediate-representation-ir)):
 
 ```json
 {
@@ -528,7 +528,7 @@ pflow github-get-issue --repo=owner/repo --issue=123 >> \
 
 ### 12.2 CLI Usability Enhancement
 
-**Interactive Autocomplete**: Autocompletion correctly distinguishes between shared store keys (for data injection) and node parameters (for behavior configuration), reinforcing the "Type flags; engine decides" resolution model. This contextual awareness helps users learn the distinction while reducing CLI composition errors.
+**Interactive Autocomplete**: Autocompletion correctly distinguishes between shared store keys (for data injection) and node parameters (for behavior configuration), reinforcing the "Type flags; engine decides" resolution model. This contextual awareness helps users learn the distinction while reducing CLI composition errors. For implementation details, see [CLI Autocomplete](./autocomplete.md).
 
 ### 12.1 Educational Design Rationale
 
@@ -696,3 +696,19 @@ shared = {
 ```
 
 **Key insight**: Same node code works whether using direct natural naming or proxy mapping for compatibility.
+
+## See Also
+
+- **Core Patterns**:
+  - [Shared Store + Proxy Pattern](./shared-store.md) - Core data flow and proxy concepts
+  - [Shell Pipes](./shell-pipes.md) - Unix pipe integration and stdin handling
+- **Planning & Execution**:
+  - [Planner](./planner.md) - How IR is generated from CLI or natural language
+  - [Runtime](./runtime.md) - Execution engine details and caching
+- **Node System**:
+  - [Simple Nodes](./simple-nodes.md) - Node design philosophy
+  - [Node Metadata Schema](./schemas.md#node-metadata-schema) - Interface specifications
+  - [Registry System](./registry.md) - Node discovery and management
+- **Future Features**:
+  - [CLI Autocomplete](./autocomplete.md) - Context-aware completion (v2.0)
+  - [MCP Integration](./mcp-integration.md) - Remote node support (v2.0)

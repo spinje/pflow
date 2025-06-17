@@ -1,5 +1,9 @@
 # JSON Field Extraction & Structured Data Routing
 
+> **Version**: v3.0
+> **MVP Status**: ⏳ Future (v3.0)
+> For complete MVP boundaries, see [MVP Scope](../mvp-scope.md)
+
 *A comprehensive specification for pflow's built-in JSON field extraction capability that eliminates the need for external tools like jq while preserving natural node interfaces.*
 
 ---
@@ -663,3 +667,13 @@ Based on this critical analysis, the automatic JSON field extraction approach ma
 ---
 
 This governance document ensures both Flow IR and Node Metadata schemas align with pflow's established architecture while providing focused schema definitions for JSON validation, evolution, and metadata-driven planning capabilities. The critical analysis section preserves important design considerations for informed decision-making.
+
+## See Also
+
+- **Architecture**: [Shared Store + Proxy Pattern](../shared-store.md) - Foundation for JSON path extraction
+- **Architecture**: [MVP Scope](../mvp-scope.md) - Why JSON extraction is deferred to v3.0
+- **Components**: [JSON Schemas](../schemas.md) - Enhanced mapping syntax for extraction
+- **Components**: [Planner](../planner.md) - Automatic JSON structure detection
+- **Patterns**: [Simple Nodes](../simple-nodes.md) - Maintaining simple interfaces despite complex data
+- **Alternative**: [Shell Pipes](../shell-pipes.md) - Using Unix tools like jq instead
+- **Critical Analysis**: Section 13 of this document - Important design trade-offs

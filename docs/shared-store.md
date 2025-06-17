@@ -1,5 +1,13 @@
 # Shared Store + Proxy Design Pattern in pflow
 
+## Navigation
+
+**Related Documents:**
+- **Architecture**: [PRD](./prd.md) | [Architecture](./architecture.md) | [MVP Scope](./mvp-scope.md)
+- **Components**: [Planner](./planner.md) | [Runtime](./runtime.md) | [CLI Runtime](./cli-runtime.md)
+- **Node Design**: [Simple Nodes](./simple-nodes.md) | [Node Packages](./core-node-packages/)
+- **Implementation**: [PocketFlow Integration](./pflow-pocketflow-integration-guide.md)
+
 ## Overview
 
 This document defines a core architectural principle in `pflow`: the coordination of logic and memory through a **shared store** with an optional **proxy layer** that enables standalone, reusable nodes without imposing binding complexity on node writers.
@@ -34,7 +42,14 @@ def prep(self, shared):
 
 ## Template Variable Resolution
 
-Template variables (`$variable`) provide dynamic content substitution in node inputs, enabling sophisticated data flow between nodes:
+Template variables (`$variable`) provide dynamic content substitution in node inputs, enabling sophisticated data flow between nodes. The CLI supports **$ variable substitution** for dynamic content access:
+
+```bash
+# Template variables → shared store lookup
+$code_report → shared["code_report"]
+$commit_message → shared["commit_message"]
+$issue_title → shared["issue_title"]
+```
 
 ### Template String Pattern
 ```bash
@@ -51,6 +66,26 @@ claude-code --prompt="<instructions>
 # At runtime: $issue → shared["issue"] (from github-get-issue node output)
 claude-code --prompt="<instructions>...This is the issue: Button component touch events not working properly on mobile devices"
 ```
+
+### Template-Driven Workflow Examples
+```bash
+# Template variables in workflow
+pflow github-get-issue --issue=1234 >> \
+  claude-code --prompt="$comprehensive_fix_instructions" >> \
+  llm --prompt="Write commit message for: $code_report" >> \
+  git-commit --message="$commit_message"
+
+# Where template variables are resolved at runtime:
+# $comprehensive_fix_instructions → planner-generated instructions
+# $code_report → output from claude-code node
+# $commit_message → output from llm node
+```
+
+### Template Resolution Process
+1. **Variable Detection**: Parser identifies $variable patterns in CLI syntax
+2. **Runtime Resolution**: Variables resolved to shared store values during execution
+3. **Content Substitution**: Variable placeholders replaced with actual content
+4. **Error Handling**: Missing variables trigger clear error messages
 
 ### Context-Aware CLI Resolution
 
@@ -568,6 +603,20 @@ This pattern enables **progressive user empowerment** by making flow orchestrati
 - No hidden magic prevents learning
 - Complexity introduced progressively as users advance
 - System knowledge becomes user knowledge over time
+
+## Components Using This Pattern
+
+The shared store pattern is fundamental to pflow and is used by:
+
+- **CLI Runtime** ([cli-runtime.md](./cli-runtime.md)): Routes CLI flags to shared store
+- **Planner** ([planner.md](./planner.md)): Generates template strings with variables
+- **All Node Packages**: Every node reads/writes using shared store keys
+  - [GitHub Nodes](./core-node-packages/github-nodes.md)
+  - [Claude Nodes](./core-node-packages/claude-nodes.md)
+  - [CI Nodes](./core-node-packages/ci-nodes.md)
+  - [LLM Node](./core-node-packages/llm-nodes.md)
+- **Runtime Engine** ([runtime.md](./runtime.md)): Manages shared store during execution
+- **Registry System** ([registry.md](./registry.md)): Extracts shared store interfaces from metadata
 
 ## See Also
 

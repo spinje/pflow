@@ -2,6 +2,8 @@
 
 > **Note**: This package contains a single general-purpose `llm` node as a smart exception to the simple nodes pattern.
 
+This node is an intentional exception to our [simple node philosophy](../simple-nodes.md) - instead of creating dozens of specific prompt-based nodes, we provide one flexible `llm` node that handles all text processing tasks. This design follows the [shared store pattern](../shared-store.md) for data flow.
+
 ## Overview
 
 The `LLM` node is pflow's **general-purpose language model processing node**. It serves as a smart exception to our "one node, one purpose" philosophy by replacing what would otherwise be dozens of specific prompt-based nodes (`analyze-code`, `write-content`, `explain-concept`, etc.).
@@ -28,6 +30,8 @@ The `LLM` node provides:
 | ---------- | ----- | ------------------- | ------------------------------------ |
 | **Input**  | `str` | `prompt`            | The prompt text to send to the model |
 | **Output** | `str` | `response`          | The model-generated output text      |
+
+This interface follows the [shared store pattern](../shared-store.md#natural-interfaces) for natural key names.
 
 ### Natural Usage Pattern
 ```python
@@ -99,7 +103,7 @@ pflow llm --prompt="Create an outline for a technical blog post"
 ## 💻 Implementation Pattern
 
 ```python
-class LLMNode(Node):
+class LLMNode(Node):  # Inherits from pocketflow.Node
     """General-purpose LLM processing.
 
     Interface:
@@ -277,3 +281,14 @@ The LLM node represents a carefully designed exception to pflow's simple node ph
 - **Keep MVP simple** with just prompt-based usage
 
 This approach delivers the benefits of simplicity (one interface to learn) with the power of flexibility (handles any text task).
+
+## See Also
+
+- **Design Philosophy**: [Simple Nodes Pattern](../simple-nodes.md) - Why this is a smart exception
+- **Interface Format**: [Node Metadata Schema](../schemas.md#node-metadata-schema) - How node interfaces are defined
+- **Communication**: [Shared Store Pattern](../shared-store.md) - Inter-node data flow
+- **Node Registry**: [Registry System](../registry.md) - How nodes are discovered and managed
+- **Related Nodes**:
+  - [Claude Nodes](./claude-nodes.md) - Comprehensive development "super node" (more complex alternative)
+  - [GitHub Nodes](./github-nodes.md) - Platform integration nodes
+  - [CI Nodes](./ci-nodes.md) - Testing and deployment nodes

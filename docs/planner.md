@@ -1,5 +1,17 @@
 # Planner Responsibility & Functionality Spec
 
+> **Version**: MVP
+> **MVP Status**: ✅ Core Component
+> For complete MVP boundaries, see [MVP Scope](./mvp-scope.md)
+
+## Navigation
+
+**Related Documents:**
+- **Patterns**: [Shared Store](./shared-store.md) | [Template Variables](./shared-store.md#template-variable-resolution)
+- **Architecture**: [Architecture](./architecture.md) | [PRD](./prd.md)
+- **Components**: [Runtime](./runtime.md) | [Registry](./registry.md) | [Schemas](./schemas.md)
+- **Implementation**: [CLI Runtime](./cli-runtime.md) | [Components](./components.md)
+
 ---
 
 ## 1 · Purpose
@@ -11,7 +23,7 @@ The **planner** serves as the central validation and IR generation engine for pf
 
 Its primary goal is to ensure all flows (whether AI-generated or user-written) produce *validated, deterministic JSON IR* ready for execution **without sacrificing** pflow's guarantees of auditability, purity, caching, and reproducibility.
 
-The planner integrates seamlessly with the **shared store pattern**, generating flows that use simple, single-purpose nodes with natural interfaces and optional proxy mappings for complex orchestration scenarios.
+The planner integrates seamlessly with the **shared store pattern**, generating flows that use simple, single-purpose nodes with natural interfaces and optional proxy mappings for complex orchestration scenarios. See [Shared Store Pattern](./shared-store.md) for complete details.
 
 ---
 
@@ -92,47 +104,28 @@ The planner operates through a **validation-first approach**, performing linting
 | Stage | Responsibility | Outcome |
 |---|---|---|
 | **A. Syntax Parsing** | Parse CLI pipe syntax and **detect template variables**. | Node sequence + parameter extraction + **template analysis**. |
-| **B. Template Variable Analysis** | **Identify and validate template variable patterns and dependencies.** | **Template variable dependency graph and resolution order.** |
+| **B. Template Variable Analysis** | **Identify and validate template variable patterns and dependencies.** See [Template Variables](./shared-store.md#template-variable-resolution). | **Template variable dependency graph and resolution order.** |
 | **C. Node Validation** | Verify all referenced nodes exist in registry. | Pass → continue, Fail → abort with suggestions. |
-| **D. Template String Resolution** | **Resolve template strings for all node inputs, ensuring $variables map to available shared store values.** | **Fully populated node input templates with validated dependencies.** |
+| **D. Template String Resolution** | **Resolve template strings for all node inputs, ensuring $variables map to available shared store values.** See [Template Variable Resolution](./shared-store.md#template-variable-resolution). | **Fully populated node input templates with validated dependencies.** |
 | **E. Structural Validation** | Lint action paths, reachability, parameter compatibility, **template resolution order**. | Pass → continue, Fail → abort with diagnostics. |
 | **F. Shared Store Modeling** | Analyze node interfaces, create shared store schema, **template variable tracking**. | Compatible shared store interface with **template support**. |
 | **G. Mapping Generation** | Detect interface mismatches, generate mappings, **template variable mappings**. | Optional mappings for node compatibility + **template resolution**. |
 | **H. IR Finalization** | Generate validated JSON IR with CLI-specified params + **template metadata**. | Complete, validated IR with **template-driven execution plan**. |
 | **I. Execution Handoff** | Save lockfile, execute directly via **template-aware** shared store runtime. | Direct execution with **template resolution** (no user verification needed). |
 
-### 3.2.1 Type Shadow Store Prevalidation (CLI Path Enhancement)
+### 3.2.1 Future Enhancement: Type Shadow Store (v2.0)
 
-During CLI pipe composition, the planner maintains an ephemeral **type shadow store** for real-time compatibility checking:
+> **Version**: v2.0
+> **Status**: ❌ Deferred - See [MVP Scope](./mvp-scope.md#explicitly-excluded-from-mvp)
 
-**Purpose:**
-- Provide immediate type compatibility feedback during interactive composition
-- Reduce planner retry cycles by catching obvious type mismatches early
-- Enable intelligent autocomplete suggestions for valid next nodes
+A future enhancement will provide real-time type compatibility feedback during CLI composition. This feature is explicitly deferred to v2.0 to maintain MVP focus on core functionality.
 
-**Mechanism:**
-1. **Type Accumulation**: As nodes are added to pipe syntax, their output types are accumulated in memory. If `stdin` is piped, `shared["stdin"]` (e.g., as type `str` or `bytes`) is considered available from the start.
-2. **Compatibility Check**: Each candidate next node's input type requirements are validated against available types
-3. **Advisory Feedback**: Invalid compositions flagged immediately, valid options highlighted
+**Future v2.0 capabilities will include:**
+- Real-time compatibility checking during interactive composition
+- Intelligent autocomplete suggestions based on type compatibility
+- Reduced retry cycles through early type mismatch detection
 
-**Example Flow:**
-```bash
-yt-transcript          # Produces: transcript:str
->> summarize           # Requires: text:str → ✓ Compatible (str available)
->> plot-chart          # Requires: data:dataframe → ✗ Incompatible (no dataframe)
-```
-
-**Integration Points:**
-- Uses existing node metadata type declarations (no schema changes)
-- Operates before full IR compilation (lightweight validation)
-- Discarded after pipe→IR compilation (ephemeral advisory tool)
-- Complementary to full validation pipeline (not replacement)
-
-**Limitations:**
-- Type-only validation (no key name compatibility)
-- No proxy mapping awareness
-- No conditional flow logic
-- Defers to full IR validation for definitive compatibility
+For MVP, the planner performs full validation after complete flow definition without real-time feedback.
 
 ---
 
@@ -220,6 +213,8 @@ class YTTranscriptNode(Node):
 }
 ```
 
+For complete metadata format and validation rules, see [Schemas](./schemas.md).
+
 ### 5.3 Flow Metadata Schema
 
 ```json
@@ -233,6 +228,8 @@ class YTTranscriptNode(Node):
   "version": "1.2.0"
 }
 ```
+
+For complete flow metadata schema definitions, see [Schemas](./schemas.md).
 
 ### 5.4 Registry Management
 
@@ -278,7 +275,7 @@ This is the issue: $issue"
 **Variable Flow Management:**
 - **Dependency Resolution**: `$issue` → `shared["issue"]` from github-get-issue output
 - **Multi-Consumer Variables**: `$code_report` used by both llm and github-create-pr nodes
-- **Runtime Substitution**: Template strings resolved to actual values during execution
+- **Runtime Substitution**: Template strings resolved to actual values during execution. See [Template Variable Resolution](./shared-store.md#template-variable-resolution)
 - **Validation**: Ensure all $variables have corresponding sources in the workflow
 
 **Discovery Enhancement:**
@@ -1062,6 +1059,15 @@ flow_hash = sha256(
 | **Shared store** | Per-run key-value memory for node inputs/outputs using natural key names |
 | **Simple nodes** | Single-purpose nodes with clear interfaces and natural composition |
 | **Thinking model** | Advanced LLM capable of complex reasoning (e.g., o1-preview) |
+
+---
+
+## See Also
+
+- **Patterns**: [Shared Store + Proxy Pattern](./shared-store.md) - Core communication mechanism
+- **Schemas**: [JSON IR & Metadata Schemas](./schemas.md) - Schema definitions and validation
+- **Runtime**: [Runtime Behavior](./runtime.md) - Execution engine that consumes planner output
+- **Registry**: [Registry System](./registry.md) - Node discovery and metadata extraction
 
 ---
 

@@ -1,5 +1,9 @@
 # Node Discovery, Namespacing & Versioning
 
+> **Version**: MVP
+> **MVP Status**: ✅ Included
+> For complete MVP boundaries, see [MVP Scope](./mvp-scope.md)
+
 ---
 
 ## 1 · Identifier Syntax
@@ -407,3 +411,12 @@ Execution: Runs with proven version combination
 ---
 
 *End of document*
+
+## See Also
+
+- **Architecture**: [MVP Scope](./mvp-scope.md) - Clear boundaries for MVP registry features
+- **Patterns**: [Simple Nodes](./simple-nodes.md) - Node design philosophy and naming conventions
+- **Components**: [JSON Schemas](./schemas.md) - How registry metadata integrates with IR schemas
+- **Components**: [Planner](./planner.md) - How planner uses registry for node discovery
+- **Implementation**: [Metadata Extraction](./implementation-details/metadata-extraction.md) - Node metadata extraction process
+- **Future Features**: [MCP Integration](./mcp-integration.md) - How MCP nodes integrate with registry (v2.0)

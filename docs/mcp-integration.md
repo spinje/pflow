@@ -1,5 +1,9 @@
 # MCP Server Integration and Security Model
 
+> **Version**: v2.0
+> **MVP Status**: ❌ Deferred to v2.0
+> For complete MVP boundaries, see [MVP Scope](./mvp-scope.md)
+
 ## 1 · Scope
 
 A comprehensive specification for integrating **Model Context Protocol** servers into pflow as native wrapper nodes that follow the shared store + proxy pattern. This integration ensures MCP tools are indistinguishable from manually-written pflow nodes in terms of interface, behavior, and orchestration capabilities.
@@ -767,3 +771,13 @@ This specification transforms MCP integration from a parallel subsystem into a n
 ✅ **Framework Alignment**: Pure pocketflow implementation without modifications
 
 **Result**: Developers can use MCP tools exactly like any other pflow node, with the full power of flow orchestration, conditional error handling, and intelligent planning.
+
+## See Also
+
+- **Architecture**: [Shared Store + Proxy Pattern](./shared-store.md) - Foundation for MCP wrapper node interfaces
+- **Architecture**: [MVP Scope](./mvp-scope.md) - Why MCP is deferred to v2.0
+- **Patterns**: [Simple Nodes](./simple-nodes.md) - How MCP tools become simple nodes
+- **Components**: [Registry](./registry.md) - Unified registry integration for MCP nodes
+- **Components**: [JSON Schemas](./schemas.md) - MCP metadata in Flow IR
+- **Related Features**: [Autocomplete](./autocomplete.md) - MCP node discovery in CLI autocomplete
+- **Implementation**: [Components](./components.md) - MCP components in v2.0 inventory

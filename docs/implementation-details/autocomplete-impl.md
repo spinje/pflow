@@ -1,5 +1,9 @@
 # Implementation Document: `pflow` CLI Autocomplete
 
+> **Version**: v2.0
+> **MVP Status**: ❌ Deferred to v2.0
+> For complete MVP boundaries, see [MVP Scope](../mvp-scope.md)
+
 ## 1. Introduction
 
 This document outlines the implementation details for the Command-Line Interface (CLI) Autocomplete feature for `pflow`. This feature enhances user experience by providing real-time suggestions for commands, node names, flags, and values directly within the user's shell environment. It aims to improve discoverability, reduce errors, and streamline the process of composing `pflow` flows.
@@ -348,3 +352,13 @@ The `CompletionHandler` will need efficient, read-only access to:
 * **Descriptions/Help Text:** Future versions could provide brief descriptions alongside suggestions, if the shell's completion system supports it (e.g., Zsh).
 
 This implementation provides a solid foundation for a highly useful CLI autocomplete feature, consistent with `pflow`'s architecture and design goals.
+
+## See Also
+
+- **Architecture**: [CLI Runtime](../cli-runtime.md) - CLI parsing and resolution that autocomplete builds on
+- **Architecture**: [MVP Scope](../mvp-scope.md) - Why autocomplete is deferred to v2.0
+- **Components**: [Registry](../registry.md) - Node discovery for autocomplete suggestions
+- **Components**: [JSON Schemas](../schemas.md) - Metadata format used for completion hints
+- **Implementation**: [Metadata Extraction](./metadata-extraction.md) - Source of node interface information
+- **Related Features**: [MCP Integration](../mcp-integration.md) - MCP node discovery in autocomplete
+- **Future Features**: [Components](../components.md) - Autocomplete in v2.0 component inventory

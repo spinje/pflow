@@ -1,5 +1,15 @@
 # MVP Scope: AI-Assisted Development Workflow Compiler
 
+## Navigation
+
+**Related Documents:**
+- **Architecture**: [PRD](./prd.md) | [Architecture](./architecture.md)
+- **Patterns**: [Shared Store](./shared-store.md) | [Simple Nodes](./simple-nodes.md)
+- **Components**: [Component Inventory](./components.md) | [Planner](./planner.md) | [Runtime](./runtime.md)
+- **Implementation**: [PocketFlow Integration](./pflow-pocketflow-integration-guide.md)
+
+
+
 ## 🎯 Core Vision
 
 **"Transform AI-assisted development workflows from inefficient slash commands into deterministic, reusable CLI workflows"**

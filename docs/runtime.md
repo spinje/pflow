@@ -297,3 +297,12 @@ pflow process-request  # Would magically know about Alice
 - Cache provides performance optimization
 - Checkpoints provide failure recovery
 - Both require `@flow_safe` nodes for safety
+
+## See Also
+
+- **Architecture**: [Shared Store + Proxy Pattern](./shared-store.md) - Core pattern for node communication
+- **Architecture**: [CLI Runtime](./cli-runtime.md) - CLI integration and shared store management
+- **Patterns**: [Simple Nodes](./simple-nodes.md) - How `@flow_safe` decorator affects runtime behavior
+- **Components**: [JSON Schemas](./schemas.md) - Runtime configuration in Flow IR
+- **Components**: [Registry](./registry.md) - Version management for deterministic execution
+- **Next Steps**: [Components Inventory](./components.md) - Complete list of runtime components

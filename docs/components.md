@@ -1,5 +1,9 @@
 # pflow Component Inventory: MVP vs v2.0
 
+> **Version**: MVP
+> **MVP Status**: ✅ Included
+> For complete MVP boundaries, see [MVP Scope](./mvp-scope.md)
+
 This document provides a comprehensive inventory of all components and subsystems required for pflow, clearly distinguishing between MVP (v0.1) requirements and v2.0 features.
 
 ## MVP (v0.1) Components
@@ -486,3 +490,13 @@ These components are **absolutely required** for MVP to fulfill core promises:
 2. Performance optimization
 
 This inventory ensures that pflow MVP delivers on its core promise of turning CLI commands into permanent, fast, reproducible workflows while maintaining a clear path to v2.0 enhancements.
+
+## See Also
+
+- **Architecture**: [MVP Scope](./mvp-scope.md) - Detailed MVP boundaries and rationale
+- **Architecture**: [Architecture Document](./architecture.md) - High-level system design
+- **Components**: [Planner](./planner.md) - Planning system components in detail
+- **Components**: [Runtime](./runtime.md) - Execution engine components in detail
+- **Components**: [Registry](./registry.md) - Node discovery and management components
+- **Implementation**: [Implementation Roadmap](../todo/implementation-roadmap.md) - Development priorities
+- **Next Steps**: [JSON Schemas](./schemas.md) - Data structures used by components

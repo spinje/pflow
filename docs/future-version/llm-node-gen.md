@@ -1,5 +1,9 @@
 # Future: LLM-Assisted Node Development
 
+> **Version**: v3.0
+> **MVP Status**: ⏳ Future (v3.0)
+> For complete MVP boundaries, see [MVP Scope](../mvp-scope.md)
+
 > **Status**: Future Feature - Not part of MVP architecture
 > **Dependencies**: Requires node-metadata-extraction infrastructure
 > **Integration**: Builds on established static node ecosystem
@@ -377,3 +381,13 @@ This future vision builds carefully on pflow's established static node architect
 - No compromise to pflow's core architectural principles
 
 The future is bright for LLM-assisted development that respects and enhances the solid foundation established in the MVP architecture.
+
+## See Also
+
+- **Architecture**: [MVP Scope](../mvp-scope.md) - Understanding MVP boundaries before future features
+- **Foundation**: [Metadata Extraction](../implementation-details/metadata-extraction.md) - Infrastructure this feature builds upon
+- **Patterns**: [Simple Nodes](../simple-nodes.md) - Design patterns LLM will follow when generating nodes
+- **Components**: [Registry](../registry.md) - How generated nodes integrate with discovery system
+- **Components**: [JSON Schemas](../schemas.md) - Metadata format for generated nodes
+- **Related Features**: [JSON Extraction](./json-extraction.md) - Another v3.0 feature for consideration
+- **Philosophy**: [Workflow Analysis](../workflow-analysis.md) - Balance between AI assistance and determinism

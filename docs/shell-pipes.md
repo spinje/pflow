@@ -77,3 +77,12 @@ Here, the NL planner identifies appropriate nodes. It will generate a flow where
 ## Summary
 
 Native integration with Unix shell pipes positions pflow as a highly intuitive, frictionless, and powerful automation tool, reinforcing its role in modern AI-enabled workflows. By providing familiar, robust, and explicit support for shell piping, pflow ensures both user convenience and workflow reproducibility, clearly differentiating itself from simpler AI CLIs while embracing the Unix philosophy of composability and simplicity.
+
+## See Also
+
+- **Architecture**: [CLI Runtime](./cli-runtime.md) - How stdin integrates with shared store and CLI resolution
+- **Architecture**: [Shared Store](./shared-store.md) - Reserved `shared["stdin"]` key and natural interfaces
+- **Patterns**: [Workflow Analysis](./workflow-analysis.md) - Philosophy of AI workflow composition
+- **Components**: [Planner](./planner.md) - How piped input works with natural language planning
+- **Components**: [Runtime](./runtime.md) - How stdin content affects caching and execution
+- **Implementation**: [Components](./components.md) - Shell integration in MVP component list

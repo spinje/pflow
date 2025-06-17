@@ -2,6 +2,8 @@
 
 This document specifies the **GitHub node package** - a collection of simple, single-purpose nodes for GitHub operations. Each node handles one specific GitHub API interaction with clear interfaces and natural shared store patterns.
 
+These nodes follow the [simple node design philosophy](../simple-nodes.md) and use the [shared store pattern](../shared-store.md) for inter-node communication.
+
 ## Node Package Overview
 
 The GitHub node package provides essential GitHub functionality through individual, focused nodes:
@@ -24,7 +26,7 @@ The GitHub node package provides essential GitHub functionality through individu
 **Purpose**: Retrieve GitHub issue details by issue number
 
 ```python
-class GitHubGetIssueNode(Node):
+class GitHubGetIssueNode(Node):  # Inherits from pocketflow.Node
     """Get GitHub issue details by number.
 
     Interface:
@@ -497,7 +499,8 @@ Each GitHub node has one clear purpose:
 - `github-search-code`: Only code search
 
 ### Natural Interfaces
-All nodes use intuitive shared store keys:
+
+All nodes use intuitive shared store keys following the [shared store pattern](../shared-store.md#natural-interfaces):
 - `shared["issue"]` for issue data
 - `shared["pr"]` for pull request data
 - `shared["files"]` for file listings/content
@@ -544,3 +547,14 @@ Clear error messages for common issues:
 - Multi-org support
 
 This GitHub node package provides comprehensive GitHub functionality through simple, composable nodes that integrate naturally with other pflow node packages and follow established shared store patterns.
+
+## See Also
+
+- **Design Philosophy**: [Simple Nodes Pattern](../simple-nodes.md) - Understanding single-purpose node design
+- **Interface Format**: [Node Metadata Schema](../schemas.md#node-metadata-schema) - How node interfaces are defined
+- **Communication**: [Shared Store Pattern](../shared-store.md) - Inter-node data flow
+- **Node Registry**: [Registry System](../registry.md) - How nodes are discovered and managed
+- **Related Nodes**:
+  - [Claude Nodes](./claude-nodes.md) - Development automation nodes
+  - [CI Nodes](./ci-nodes.md) - Testing and deployment nodes
+  - [LLM Node](./llm-nodes.md) - General text processing

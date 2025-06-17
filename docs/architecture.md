@@ -1,5 +1,13 @@
 # pflow CLI Architecture Document
 
+## Navigation
+
+**Related Documents:**
+- **Core Docs**: [PRD](./prd.md) | [MVP Scope](./mvp-scope.md)
+- **Patterns**: [Shared Store](./shared-store.md) | [Simple Nodes](./simple-nodes.md) | [CLI Runtime](./cli-runtime.md)
+- **Components**: [Planner](./planner.md) | [Runtime](./runtime.md) | [Registry](./registry.md) | [Schemas](./schemas.md)
+- **Implementation**: [PocketFlow Integration](./pflow-pocketflow-integration-guide.md) | [Components](./components.md)
+
 ## 1. Executive Summary
 
 pflow is a workflow compiler that transforms natural language or CLI pipe syntax into permanent, deterministic, and lightning-fast CLI commands. Unlike traditional AI agents that re-compute solutions on every run, pflow follows a "Plan Once, Run Forever" philosophy - capturing user intent once and compiling it into reproducible workflows.
@@ -99,17 +107,15 @@ The entire system is built on a 100-line Python framework that provides:
 
 ### 3.2 The Shared Store Pattern
 
-The shared store is a flow-scoped dictionary that serves as the primary communication mechanism between nodes:
+The shared store is pflow's primary innovation for inter-node communication, enabling nodes to use natural, intuitive interfaces.
 
-```python
-# Simple, natural interface in node code
-class YTTranscript(Node):
-    def prep(self, shared):
-        return shared["url"]  # Natural key access
+> For complete pattern definition, examples, and architectural rationale, see [Shared Store + Proxy Design Pattern](./shared-store.md)
 
-    def post(self, shared, prep_res, exec_res):
-        shared["transcript"] = exec_res  # Direct write
-```
+In the context of the CLI architecture, the shared store:
+- Receives data from CLI flags and shell pipes
+- Flows through the execution pipeline
+- Supports template variable resolution
+- Enables natural key access in nodes (e.g., `shared["text"]`, `shared["url"]`)
 
 ### 3.3 Node Autonomy Principle
 
@@ -141,7 +147,9 @@ llm --prompt="Explain this concept in simple terms"
 
 ### 3.5 Proxy Pattern for Complex Flows
 
-When natural interfaces don't align, the `NodeAwareSharedStore` proxy provides transparent translation:
+When natural interfaces don't align, the `NodeAwareSharedStore` proxy provides transparent translation.
+
+> See [NodeAwareSharedStore Proxy](./shared-store.md#nodeawaresharedstore-proxy) for implementation details
 
 ```python
 # Node always uses natural interface
@@ -224,34 +232,22 @@ graph TD
 
 #### 5.1.2 Template Resolution System
 
-The CLI supports **$ variable substitution** for dynamic content access:
+The CLI supports **$ variable substitution** for dynamic content access, enabling sophisticated template-driven workflows.
 
-```bash
-# Template variables → shared store lookup
-$code_report → shared["code_report"]
-$commit_message → shared["commit_message"]
-$issue_title → shared["issue_title"]
-```
+> For complete template variable syntax, resolution rules, and examples, see [Template Variable Resolution](./shared-store.md#template-variable-resolution)
 
-**Template-Driven Workflow Examples:**
+**Quick Reference:**
+- Template syntax: `$variable` → `shared["variable"]` at runtime
+- Enables dynamic prompts: `--prompt="Analyze: $issue"`
+- Missing variables detected and prompt user for input
+- Full resolution process documented in the shared store pattern
+
+**Example:**
 ```bash
-# Template variables in workflow
 pflow github-get-issue --issue=1234 >> \
-  claude-code --prompt="$comprehensive_fix_instructions" >> \
-  llm --prompt="Write commit message for: $code_report" >> \
+  claude-code --prompt="Fix this issue: $issue" >> \
   git-commit --message="$commit_message"
-
-# Where template variables are resolved at runtime:
-# $comprehensive_fix_instructions → planner-generated instructions
-# $code_report → output from claude-code node
-# $commit_message → output from llm node
 ```
-
-**Template Resolution Process:**
-1. **Variable Detection**: Parser identifies $variable patterns in CLI syntax
-2. **Runtime Resolution**: Variables resolved to shared store values during execution
-3. **Content Substitution**: Variable placeholders replaced with actual content
-4. **Error Handling**: Missing variables trigger clear error messages
 
 #### 5.1.3 CLI Command Structure
 
@@ -280,7 +276,9 @@ When input is piped via stdin:
 
 #### 5.2.1 Sophisticated Dual-Mode Planner
 
-The planner operates in two modes with enhanced capabilities for template-driven workflows:
+The planner operates in two modes with enhanced capabilities for template-driven workflows.
+
+> See [Planner Specification](./planner.md) for complete details
 
 **CLI Pipe Path (MVP Priority):**
 1. Parse CLI syntax and detect template variables
@@ -456,6 +454,8 @@ def execute_flow(ir, shared):
 
 ## 6. Data Flow & State Management
 
+> For detailed CLI integration and runtime behavior, see [CLI Runtime Specification](./cli-runtime.md)
+
 ### 6.1 Shared Store Lifecycle
 
 The shared store is:
@@ -602,9 +602,13 @@ cache_key = node_hash ⊕ effective_params ⊕ input_data_sha256
 - Minimal node instantiation overhead
 - Efficient shared store operations
 
-## 10. Testing & Validation Strategy
+## 10. Component Architecture
 
-### 10.1 Node Testing Pattern
+> For comprehensive MVP vs future component breakdown, see [Component Architecture](./components.md)
+
+## 11. Testing & Validation Strategy
+
+### 11.1 Node Testing Pattern
 
 ```python
 def test_llm_node():
@@ -619,7 +623,7 @@ def test_llm_node():
     assert len(shared["response"]) > 0
 ```
 
-### 10.2 Flow Testing
+### 11.2 Flow Testing
 
 ```python
 def test_video_summary_flow():
@@ -634,44 +638,44 @@ def test_video_summary_flow():
     assert "response" in shared
 ```
 
-### 10.3 Validation Framework
+### 11.3 Validation Framework
 
 - JSON schema validation for IR
 - Node interface compatibility checking
 - Execution configuration validation
 - Comprehensive error reporting
 
-## 11. Development Roadmap & Implementation Priorities
+## 12. Development Roadmap & Implementation Priorities
 
-### 11.1 Phase 1: Foundation (Current MVP Focus)
+### 12.1 Phase 1: Foundation (Current MVP Focus)
 - ✅ pocketflow integration
 - ✅ Basic shared store implementation
 - 🔄 Node registry system
 - 🔄 CLI parsing and resolution
 - 🔄 JSON IR generation
 
-### 11.2 Phase 2: Core Execution
+### 12.2 Phase 2: Core Execution
 - Proxy mapping system
 - Basic caching for pure nodes
 - Retry logic integration
 - Comprehensive tracing
 
-### 11.3 Phase 3: Polish
+### 12.3 Phase 3: Polish
 - Error messages and suggestions
 - Performance optimization
 - Documentation and examples
 - Testing framework
 
-### 11.4 Post-MVP Phases
+### 12.4 Post-MVP Phases
 - Natural language planning
 - Conditional transitions
 - MCP integration
 - CLI autocomplete
 - Cloud deployment
 
-## 12. Future Extensibility
+## 13. Future Extensibility
 
-### 12.1 Planned Extensions (Post-MVP)
+### 13.1 Planned Extensions (Post-MVP)
 
 **Natural Language Planning:**
 - LLM-driven node selection
@@ -688,7 +692,7 @@ def test_video_summary_flow():
 - Visual flow builder
 - Interactive debugging
 
-### 12.2 Architecture Extensibility Points
+### 13.2 Architecture Extensibility Points
 
 - Plugin system for custom nodes
 - Alternative execution engines
@@ -696,9 +700,9 @@ def test_video_summary_flow():
 - Extended metadata schemas
 - Cloud execution adapters
 
-## 13. Technical Decisions & Rationale
+## 14. Technical Decisions & Rationale
 
-### 13.1 Why pocketflow?
+### 14.1 Why pocketflow?
 
 - Minimal, proven 100-line framework
 - Natural flow syntax (`>>` operator)
@@ -706,7 +710,7 @@ def test_video_summary_flow():
 - No heavy abstractions
 - Enables focus on patterns over framework
 
-### 13.2 Why Shared Store + Proxy?
+### 14.2 Why Shared Store + Proxy?
 
 - **Simplicity**: Nodes remain simple with natural interfaces
 - **Flexibility**: Complex routing without node changes
@@ -714,7 +718,7 @@ def test_video_summary_flow():
 - **Composability**: Same nodes work in different contexts
 - **Progressive**: No proxy needed for simple flows
 
-### 13.3 Why JSON IR?
+### 14.3 Why JSON IR?
 
 - Machine-readable and validatable
 - Version-controlled flow definitions
@@ -722,7 +726,7 @@ def test_video_summary_flow():
 - Enables future GUI tools
 - Supports structural analysis and transformation
 
-### 13.4 Why "Type Flags; Engine Decides"?
+### 14.4 Why "Type Flags; Engine Decides"?
 
 - Single, simple mental model
 - No complex flag categorization for users
@@ -730,7 +734,7 @@ def test_video_summary_flow():
 - Consistent with Unix philosophy
 - Reduces cognitive load
 
-### 13.5 Why Opt-in Purity?
+### 14.5 Why Opt-in Purity?
 
 - Safe by default (assumes side effects)
 - Explicit optimization points

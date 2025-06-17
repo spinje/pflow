@@ -242,3 +242,12 @@ The shift from interpreted commands to deterministic workflows represents a diff
 It's similar to the evolution from interpreted to compiled languages - both have their place, but for frequently-executed, performance-critical paths, compilation offers clear benefits. The key insight is that AI's intelligence is often better utilized when focused on specific tasks rather than repeatedly figuring out task orchestration.
 
 As AI tools become more integrated into our development workflows, understanding these tradeoffs helps us make better decisions about when to use conversational interfaces versus more structured approaches. Neither is universally better - they're different tools for different jobs.
+
+## See Also
+
+- **Architecture**: [Product Requirements](./prd.md) - Core vision and philosophy behind pflow
+- **Architecture**: [Architecture Document](./architecture.md) - Complete system design
+- **Patterns**: [Simple Nodes](./simple-nodes.md) - How claude-code super node fits into simple node philosophy
+- **Components**: [Planner](./planner.md) - How natural language translates to deterministic workflows
+- **Implementation**: [MVP Scope](./mvp-scope.md) - What's included in the initial version
+- **Next Steps**: [Shell Pipes](./shell-pipes.md) - Unix philosophy integration with AI workflows

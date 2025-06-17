@@ -1134,3 +1134,12 @@ This metadata extraction infrastructure provides the foundation for pflow's meta
 - **Validation enabled** - Code-metadata consistency checking for quality assurance
 
 The infrastructure enables intelligent flow planning while preserving the simplicity and reliability of pflow's curated node ecosystem.
+
+## See Also
+
+- **Architecture**: [JSON Schemas](../schemas.md) - Node metadata schema definitions
+- **Architecture**: [Registry System](../registry.md) - How metadata integrates with node discovery
+- **Patterns**: [Simple Nodes](../simple-nodes.md) - Node design patterns that guide metadata extraction
+- **Components**: [Planner](../planner.md) - How planner uses extracted metadata for node selection
+- **Related Features**: [Shared Store](../shared-store.md) - Natural interface patterns documented in metadata
+- **Future Features**: [LLM Node Generation](../future-version/llm-node-gen.md) - Future LLM-assisted development using metadata
