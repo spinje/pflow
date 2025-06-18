@@ -8,8 +8,8 @@ This document breaks down the MVP implementation into specific, actionable tasks
 
 Target transformation:
 ```bash
-# From: /project:fix-github-issue 1234 (30-90s, variable, token-heavy)
-# To: pflow fix-issue --issue=1234 (2-5s, consistent, token-efficient)
+# From: /project:fix-github-issue 1234 (60-90s, variable, token-heavy)
+# To: pflow fix-issue --issue=1234 (20-50s, consistent, token-efficient)
 # Under the hood fix-issue is a deterministic template-driven workflow:
 ```bash
 github-get-issue >> \

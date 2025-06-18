@@ -115,11 +115,11 @@ pflow/
 │   ├── __init__.py       # Currently empty - CLI entry point to be added
 │   └── foo.py            # Placeholder - to be replaced with core modules
 ├── docs/                  # Comprehensive project specifications
-│   ├── **CLAUDE.md**                  # Documentation navigation guide for AI
-│   ├── **index.md**                   # Documentation inventory and overview
-│   ├── **prd.md**                     # **CORE: Product requirements document**
+│   ├── CLAUDE.md                  # Documentation navigation guide for AI
+│   ├── index.md                   # Documentation inventory and overview
+│   ├── prd.md                     # **CORE: Product requirements document**
 │   ├── architecture/                  # System architecture documentation
-│   │   ├── **architecture.md**        # **CORE: Complete system architecture**
+│   │   ├── architecture.md        # **CORE: Complete system architecture**
 │   │   ├── components.md              # Complete MVP vs v2.0 breakdown
 │   │   └── pflow-pocketflow-integration-guide.md  # Integration patterns
 │   ├── core-concepts/                 # Core system concepts
