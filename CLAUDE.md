@@ -115,35 +115,41 @@ pflow/
 │   ├── __init__.py       # Currently empty - CLI entry point to be added
 │   └── foo.py            # Placeholder - to be replaced with core modules
 ├── docs/                  # Comprehensive project specifications
+│   ├── **CLAUDE.md**                  # Documentation navigation guide for AI
+│   ├── **index.md**                   # Documentation inventory and overview
 │   ├── **prd.md**                     # **CORE: Product requirements document**
-│   ├── **architecture.md**            # **CORE: Complete system architecture**
-│   ├── **mvp-scope.md**               # **CORE: Clear MVP boundaries**
-│   ├── **simple-nodes.md**           # Simple node design pattern
-│   ├── shared-store.md               # Shared store + proxy pattern
-│   ├── cli-runtime.md                # CLI integration and shared store runtime
-│   ├── schemas.md                    # JSON IR and metadata schemas
-│   ├── planner.md                    # Dual-mode planner (CLI + natural language)
-│   ├── runtime.md                    # Execution engine, caching, safety
-│   ├── registry.md                   # Node discovery, namespacing, versioning
-│   ├── components.md                 # Complete MVP vs v2.0 breakdown
-│   ├── shell-pipes.md                # Unix pipe support and stdin handling
-│   ├── autocomplete.md               # CLI autocomplete specification (v2.0)
-│   ├── mcp-integration.md            # MCP server integration (v2.0)
-│   ├── workflow-analysis.md          # Technical analysis of AI workflow inefficiencies
-│   ├── core-node-packages/           # Platform node package specifications
-│   │   ├── github-nodes.md           # GitHub platform nodes (github-get-issue, github-create-pr, etc.)
-│   │   ├── claude-nodes.md           # Claude Code CLI nodes (claude-analyze, claude-implement, etc.)
-│   │   ├── ci-nodes.md               # CI platform nodes (ci-run-tests, ci-get-status, etc.)
-│   │   └── llm-nodes.md              # General LLM node for text processing
-│   ├── implementation-details/       # Implementation specifics
+│   ├── architecture/                  # System architecture documentation
+│   │   ├── **architecture.md**        # **CORE: Complete system architecture**
+│   │   ├── components.md              # Complete MVP vs v2.0 breakdown
+│   │   └── pflow-pocketflow-integration-guide.md  # Integration patterns
+│   ├── core-concepts/                 # Core system concepts
+│   │   ├── registry.md                # Node discovery, namespacing, versioning
+│   │   ├── runtime.md                 # Execution engine, caching, safety
+│   │   ├── schemas.md                 # JSON IR and metadata schemas
+│   │   └── shared-store.md            # Shared store + proxy pattern
+│   ├── features/                      # Feature specifications
+│   │   ├── mvp-scope.md               # Clear MVP boundaries
+│   │   ├── simple-nodes.md            # Simple node design pattern
+│   │   ├── cli-runtime.md             # CLI integration and shared store runtime
+│   │   ├── planner.md                 # Dual-mode planner (CLI + natural language)
+│   │   ├── shell-pipes.md             # Unix pipe support and stdin handling
+│   │   ├── autocomplete.md            # CLI autocomplete specification (v2.0)
+│   │   ├── mcp-integration.md         # MCP server integration (v2.0)
+│   │   └── workflow-analysis.md       # Technical analysis of AI workflow inefficiencies
+│   ├── reference/                     # Reference documentation
+│   │   ├── cli-reference.md           # CLI commands and syntax
+│   │   ├── execution-reference.md     # Execution model and flow control
+│   │   └── node-reference.md          # Node types and configurations
+│   ├── core-node-packages/            # Platform node package specifications
+│   ├── implementation-details/        # Implementation specifics
 │   │   ├── metadata-extraction.md
 │   │   └── autocomplete-impl.md
-│   └── future-version/              # Post-MVP features
+│   └── future-version/               # Post-MVP features
 │       ├── llm-node-gen.md
 │       └── json-extraction.md
 ├── todo/                  # Implementation planning
 │   ├── implementation-roadmap.md  # High-level roadmap
-│   └── mvp-implementation-plan.md # Detailed task breakdown
+│   └── tasks.json                 # Detailed task list with subtasks
 ├── tests/                 # Test suite
 │   ├── test_foo.py       # Placeholder test
 │   └── test_links.py     # Documentation link validation
@@ -194,7 +200,6 @@ pflow/
 ### Pflow Project Documentation
 
 **Pflow Project Documentation**:
-- `docs/CLAUDE.md`: This file
 - `docs/index.md`: Comprehensive file-by-file inventory of all pflow documentation
 - `docs/features/`: Detailed documentation by feature
 - `docs/core-concepts/`: Core concepts and patterns
@@ -238,7 +243,6 @@ Focus on refining the tasks for the MVP by doing the following:
 2. Ensure that the tasks dependent on pocketflow (the 100 lines of code in `pocketflow/__init__.py`) are using the pocketflow framework correctly by carefully reading the documentation in `pocketflow/docs` and examples in `pocketflow\cookbook` when needed.
 3. Ensure that every tasks considers the dependencies and the order of implementation. The `todo/tasks.json` will need to be updated continously as you discover new information and discuss the user.
 4. Ensure that every task is easy to understand and has a clear success criteria and test strategy.
-
 
 ## End goal and Vision for the MVP
 
