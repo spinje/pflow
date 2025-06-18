@@ -100,16 +100,34 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 - Validation pipeline ensuring generated workflows are executable
 - Schema governance for consistency and evolution
 
+### 5. CLI Autocomplete (MVP Enhancement)
+**Purpose**: Enhance CLI usability through shell completion
+
+**High-Value Features**:
+- Node name completion: `pflow read-f[TAB]` → `read-file`
+- Parameter discovery: `pflow read-file --[TAB]` → `--path, --encoding`
+- Available nodes after pipe: `pflow read-file >> [TAB]` → list of compatible nodes
+- Works with LLM backend - shell parses unquoted syntax
+
+**Benefits**:
+- Immediate user value for node discovery
+- Professional CLI experience
+- Smooth path to v2.0 direct parsing
+- Helps users learn available nodes and parameters
+
 ---
 
 ## ❌ Explicitly Excluded from MVP
 
 ### Deferred to v2.0 (Post-MVP)
+- **Direct CLI parsing**: Parse CLI syntax without LLM (minor optimization only)
 - **Conditional transitions**: `node - "fail" >> error_handler` (pocketflow supports this, but adds complexity)
-- **CLI autocomplete**: Type-ahead suggestions for faster composition
+- **Advanced autocomplete**: Type-aware suggestions and compatibility hints
 - **Shadow store**: Real-time compatibility feedback during composition
 - **Interactive prompts**: Asking for missing inputs during execution
 - **MCP node integration**: MCP server tool wrapping and execution (moved to v2.0)
+- **Lockfile system**: Deterministic execution guarantees
+- **Complex error handling**: Advanced retry logic and recovery
 
 ### Deferred to v3.0 (Cloud Platform)
 - **Multi-user authentication**: Team workflows and permissions
@@ -122,7 +140,7 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 
 ## 🔑 Critical MVP Dependencies
 
-**These 8 components must work together for MVP success**:
+**These 9 components must work together for MVP success**:
 
 1. **Natural Language Planner**: The core differentiator - transforms descriptions into CLI workflows
 2. **Simple Node Registry**: Platform-specific nodes (`github-get-issue`, `claude-implement`, `ci-run-tests`, etc.) with clear single purposes
@@ -132,6 +150,7 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 6. **Shared Store Runtime**: Natural key-based communication between nodes
 7. **Execution Tracing**: Step-by-step debugging superior to conversation logs
 8. **Workflow Storage**: Save/load named workflows for reuse
+9. **CLI Autocomplete**: Shell completion for node and parameter discovery
 
 ---
 

@@ -1,5 +1,8 @@
 # Feature Specification: CLI Autocomplete for `pflow`
 
+> **MVP Status**: ✅ Core Feature (Basic autocomplete)
+> **v2.0 Status**: Advanced type-aware suggestions
+
 ## 1. Overview & Importance
 
 Command-Line Interface (CLI) Autocomplete is a critical usability feature designed to enhance the `pflow` user experience by providing real-time suggestions for commands, node names, flags (parameters and shared store keys), and their potential values. This functionality aims to transform `pflow` from a purely syntax-driven tool into a more interactive composition environment, enabling users to build correct, modular flows more efficiently and with fewer errors.
@@ -12,6 +15,59 @@ Command-Line Interface (CLI) Autocomplete is a critical usability feature design
 * **Learning Aid:** Reinforces `pflow`'s syntax and the "natural interface" patterns by making them visible during composition, supporting the educational design philosophy and progressive learning goals.
 * **Productivity Boost:** Speeds up the process of authoring and iterating on flows.
 * **Reinforces Core Design:** Makes the distinctions and interactions between the shared store and node parameters more tangible and understandable during flow construction.
+
+## 1.1 MVP vs v2.0 Feature Scope
+
+### MVP Features (Basic Autocomplete)
+The MVP implementation focuses on immediate user value with simple completions:
+
+* **Node name completion**: Complete available node names from registry
+  - `pflow read-f[TAB]` → `read-file`
+  - `pflow github-g[TAB]` → `github-get-issue`
+* **Basic parameter completion**: Suggest common flags from node metadata
+  - `pflow read-file --[TAB]` → `--path, --encoding`
+  - `pflow llm --[TAB]` → `--prompt, --model, --temperature`
+* **Pipe operator support**: Recognize `>>` and suggest available nodes
+  - `pflow read-file --path=data.txt >> [TAB]` → list all nodes
+* **Simple shell integration**: Basic completion scripts for bash/zsh
+* **Works with LLM backend**: Unquoted CLI syntax enables autocomplete even though commands are processed by LLM planner
+
+### v2.0 Enhancements (Type-Aware Autocomplete)
+Future enhancements will add intelligent, context-aware suggestions:
+
+* **Type-aware node filtering**: Only suggest compatible nodes based on outputs
+  - After `github-get-issue >>`, prioritize nodes that consume issue data
+* **Dynamic value completion**: Suggest actual values from context
+  - `--issue=[TAB]` could list recent issue numbers
+  - `--model=[TAB]` shows available LLM models
+* **Shadow store integration**: Real-time compatibility validation
+* **Advanced parameter hints**: Show types, descriptions, and defaults
+* **Direct CLI parsing benefit**: More accurate completions with direct parsing
+
+## 1.2 CLI Autocomplete Integration (MVP Feature)
+
+**Shell autocomplete for CLI syntax is a high-value feature** that enhances user experience even while CLI syntax is processed through the LLM:
+
+**Benefits**:
+- **Node Discovery**: Users can tab-complete node names (`read-file`, `llm`, `github-get-issue`)
+- **Parameter Hints**: Discover available flags (`--path`, `--prompt`, `--issue`)
+- **Professional Feel**: Makes pflow feel like a polished CLI tool
+- **Learning Aid**: Helps users understand available nodes and parameters
+
+**Implementation**:
+```bash
+# User types and uses TAB for suggestions:
+pflow [TAB]                    # → read-file, llm, write-file, etc. (recently used nodes)
+pflow read-f[TAB]              # → read-file
+pflow read-file --[TAB]         # → --path, --encoding
+pflow read-file --path=data.txt >> [TAB]  # → llm, write-file, etc.
+```
+
+**Why it works with LLM backend**:
+- Shell sees unquoted CLI syntax and can parse it
+- Autocomplete reads from node registry
+- LLM still handles intelligent connection and parameter filling
+- Progressive enhancement path to direct parsing in v2.0
 
 ## 2. How it Works: Direct CLI Integration
 

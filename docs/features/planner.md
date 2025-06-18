@@ -99,7 +99,7 @@ The planner operates through a **validation-first approach**, performing linting
 | **L. User Verification** | Show compiled CLI pipe with **template variables** for user approval. | User-approved **template-driven** flow ready for execution. |
 | **M. Execution Handoff** | Save lockfile, hand off to **template-aware** shared store runtime. | Lockfile + **template-driven** runtime execution. |
 
-### 3.2 CLI Pipe Syntax Path (Enhanced Validation Planner)
+### 3.2 CLI Pipe Syntax Path (MVP: Also Uses LLM Planner)
 
 | Stage | Responsibility | Outcome |
 |---|---|---|
@@ -113,7 +113,50 @@ The planner operates through a **validation-first approach**, performing linting
 | **H. IR Finalization** | Generate validated JSON IR with CLI-specified params + **template metadata**. | Complete, validated IR with **template-driven execution plan**. |
 | **I. Execution Handoff** | Save lockfile, execute directly via **template-aware** shared store runtime. | Direct execution with **template resolution** (no user verification needed). |
 
-### 3.2.1 Future Enhancement: Type Shadow Store (v2.0)
+> **MVP Implementation Note**: The table above describes the future v2.0 direct parsing approach. For MVP, CLI pipe syntax is treated as a domain-specific language and processed through the natural language planner (Section 3.1). This simplifies implementation while still providing full functionality, as users rarely specify all parameters and connections in CLI syntax anyway.
+
+### 3.2.1 CLI Planning Details
+
+#### MVP Routes All Input Through LLM Planner
+
+**The confusion**: Documentation showed CLI syntax taking a different path than natural language.
+
+**The clarification**: For MVP, both paths use the LLM planner:
+```bash
+# Natural language (quoted) → LLM
+pflow "analyze this file"
+
+# CLI syntax (unquoted) → Also LLM (MVP)
+pflow read-file --path=data.txt >> llm --prompt="analyze"
+```
+
+**Why this makes sense**:
+- Users rarely specify all parameters and connections
+- LLM fills gaps intelligently (templates, data flow, mappings)
+- Simpler to implement one path
+- Direct parsing is only minor optimization
+
+#### CLI Autocomplete is High-Value MVP Feature
+
+**What we learned**: Autocomplete provides more value than direct parsing.
+
+**Implementation priority**:
+1. **HIGH VALUE**: CLI autocomplete (helps discover nodes)
+2. **LOW VALUE**: Direct CLI parsing (minor optimization)
+
+**How it works with LLM backend**:
+```bash
+pflow read-f[TAB]        # → read-file (shell completes)
+pflow read-file --[TAB]   # → --path, --encoding
+# Shell sees unquoted syntax, enables completion
+# LLM still processes the complete command
+```
+
+Read more about the [CLI Autocomplete](../features/cli-autocomplete.md) feature.
+
+**The pattern**: Start simple (everything through LLM), optimize later (direct parsing in v2.0).
+
+### 3.2.2 Future Enhancement: Type Shadow Store (v2.0)
 
 > **Version**: v2.0
 > **Status**: ❌ Deferred - See [MVP Scope](./mvp-scope.md#explicitly-excluded-from-mvp)
@@ -136,12 +179,14 @@ For MVP, the planner performs full validation after complete flow definition wit
 The planner automatically detects the input type and routes to the appropriate processing path:
 
 ```bash
-# Natural Language → Full Planner
+# Natural Language (quoted) → LLM Planner
 pflow "summarize this youtube video"
 
-# CLI Pipe Syntax → Validation Planner
+# CLI Pipe Syntax (unquoted) → LLM Planner (MVP approach)
 pflow yt-transcript --url=X >> summarize-text --temperature=0.9
 ```
+
+> **MVP Note**: For MVP, both natural language and CLI syntax are processed through the LLM planner. Direct CLI parsing without LLM is a v2.0 optimization that only provides performance improvements.
 
 ### 4.2 Shared Components
 
@@ -160,23 +205,36 @@ Both paths utilize the same core planner infrastructure:
 | Aspect | Natural Language Path | CLI Pipe Path |
 |---|---|---|
 | **User Input** | Free-form natural language | Structured CLI syntax |
-| **LLM Usage** | Required for node selection | Not used |
-| **User Verification** | Required (shows generated CLI) | Optional (direct execution) |
+| **LLM Usage** | Required for node selection | Required for intelligent connection (MVP) |
+| **User Verification** | Required (shows generated CLI) | Required (shows generated CLI) - MVP |
 | **Error Recovery** | LLM retry with feedback | Abort with suggestions |
-| **Compilation** | IR → CLI syntax → execution | CLI syntax → IR → execution |
+| **Compilation** | IR → CLI syntax → execution | CLI syntax → LLM → IR → CLI syntax → execution (MVP) |
 
 ### 4.4 Implementation Architecture
 
 ```python
-# Simplified planner entry point
+# MVP planner entry point - both paths use LLM
 def plan_flow(user_input: str) -> JsonIR:
+    # For MVP, route both natural language and CLI syntax through LLM
+    # This enables intelligent parameter filling and connection logic
+    return natural_language_planner(user_input)
+
+# Future v2.0 optimization
+def plan_flow_v2(user_input: str) -> JsonIR:
     if is_natural_language(user_input):
         return natural_language_planner(user_input)
     elif is_cli_pipe_syntax(user_input):
+        # Direct parsing for fully-specified commands
         return cli_validation_planner(user_input)
     else:
         raise InvalidInputError("Unknown input format")
 ```
+
+**Why MVP uses LLM for both paths**:
+- Users rarely specify all parameters and connections
+- LLM intelligently fills gaps (prompts, templates, data flow)
+- Enables shell autocomplete while maintaining simplicity
+- Direct parsing is only minor optimization for edge cases
 
 **Critical Insight**: The CLI pipe path still requires the planner's validation and schema generation capabilities—it's not just deterministic compilation. Interface mismatches, mapping requirements, and shared store schema generation are essential regardless of entry point.
 
