@@ -677,7 +677,36 @@ pflow yt-transcript --url=https://youtu.be/abc123 >> llm --prompt="Summarize thi
 3. **Options**: Run, modify, save, or abort
 4. **Modifications**: User can adjust parameters before execution
 
-### 11.3 Error Reporting
+### 11.3 Workflow Storage & Reuse
+
+After approval, the system prompts for workflow storage to enable the "Plan Once, Run Forever" philosophy:
+
+```bash
+# First execution
+pflow "fix github issue 1234"
+# Generated workflow shown for approval...
+# System: "Save this workflow as 'fix-issue'? [Y/n]"
+
+# Subsequent uses with different parameters
+pflow fix-issue --issue=5678
+pflow fix-issue --issue=9012 --priority=high
+```
+
+**Storage Process**:
+1. **Name Suggestion**: System suggests meaningful names based on intent
+2. **Parameter Extraction**: Identifies reusable parameters from the workflow
+3. **Template Preservation**: Stores workflow with template variables intact
+4. **Location**: Saved to `~/.pflow/workflows/<name>.json`
+
+**Reuse Benefits**:
+- **Instant Execution**: No LLM reasoning overhead on subsequent runs
+- **Parameter Override**: Change specific values without regenerating
+- **Team Sharing**: Export/import workflows across team members
+- **Version Control**: Track workflow evolution in git
+
+This enables the core value proposition where orchestration logic is captured once and reused indefinitely with different parameters.
+
+### 11.4 Error Reporting
 
 ```
 ❌ Flow Generation Failed
@@ -689,14 +718,14 @@ pflow yt-transcript --url=https://youtu.be/abc123 >> llm --prompt="Summarize thi
 └─ Retry with LLM node? [Y/n]
 ```
 
-### 11.4 Future Enhancements
+### 11.5 Future Enhancements
 
 - **Mermaid Diagrams**: Visual flow representation in CLI
 - **Web Interface**: Drag-and-drop flow builder
 - **Interactive Debugging**: Step-through validation failures
 - **Parameter Wizards**: Guided param customization
 
-### 11.5 Progressive Learning Through Transparency
+### 11.6 Progressive Learning Through Transparency
 
 The planner's transparent generation process serves as an **educational scaffold** for user empowerment:
 

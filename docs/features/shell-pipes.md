@@ -68,6 +68,42 @@ Here, the NL planner identifies appropriate nodes. It will generate a flow where
     *   **Node Convention**: Nodes can be designed to check `shared["stdin"]` as a fallback if their primary named input key is not found in the shared store.
 * **Trace & Cache:** Input from `shared["stdin"]` is hashed, its content may be saved (e.g., to a file like `stdin.<hash>.txt` for tracing purposes), and the hash is included in the trace and lockfile to ensure caching and reproducibility.
 
+### Advanced Unix Integration
+
+Beyond basic stdin detection, pflow provides full Unix citizenship:
+
+#### 1. Streaming Support
+Large files are processed in chunks without loading entirely into memory:
+```bash
+cat 1GB-log.txt | pflow analyze-errors  # Streams, doesn't load 1GB
+```
+This is critical for processing server logs, database dumps, or other large datasets.
+
+#### 2. Exit Code Propagation
+Proper exit codes enable shell scripting and automation:
+```bash
+pflow analyze || echo "Analysis failed"  # Exit 0 on success, non-zero on failure
+pflow validate && pflow deploy           # Chain commands based on success
+```
+
+#### 3. Signal Handling
+Graceful interruption support for long-running workflows:
+```bash
+# Ctrl+C during execution:
+# - Cleanly stops current node
+# - Saves partial progress to trace
+# - Returns appropriate exit code
+```
+
+#### 4. stdout Output
+Workflows can output to stdout for further processing:
+```bash
+pflow extract-errors | grep CRITICAL | wc -l
+pflow summarize --format=json | jq '.summary'
+```
+
+This enables pflow to be a true citizen in Unix pipelines, composing naturally with grep, awk, jq, and other tools.
+
 ## Importance and Benefits to Users
 
 * **Reduced Cognitive Load:** Users intuitively use pflow in shell workflows without additional mental overhead.

@@ -126,6 +126,57 @@ When MCP servers are integrated in v2.0, simple nodes provide natural compatibil
 - Consistent user experience between native and MCP nodes
 - Future CLI grouping syntax aligns naturally: `pflow mcp github get-issue`
 
+## Natural Interface Pattern
+
+### Consistent Key Naming
+
+All pflow nodes follow predictable shared store key patterns that make workflow composition intuitive:
+
+**File Operations**:
+- `shared["file_path"]` - Path to file
+- `shared["content"]` - File contents
+- `shared["encoding"]` - File encoding (optional)
+
+**GitHub Operations**:
+- `shared["issue"]` - Issue object/details
+- `shared["repo"]` - Repository name
+- `shared["pr"]` - Pull request details
+- `shared["issue_title"]` - Issue title (when extracted)
+
+**Git Operations**:
+- `shared["commit_message"]` - Commit message
+- `shared["branch"]` - Branch name
+- `shared["commit_hash"]` - Result of commit
+
+**LLM Operations**:
+- `shared["prompt"]` - Input prompt
+- `shared["response"]` - LLM response
+
+**CI/Testing Operations**:
+- `shared["test_command"]` - Command to run
+- `shared["test_results"]` - Test execution results
+- `shared["exit_code"]` - Command exit code
+
+### Benefits of Natural Interfaces
+
+This consistency provides significant advantages:
+
+1. **Reduces Cognitive Load**: When composing workflows, you can predict what keys nodes expect
+2. **Makes Workflows Self-Documenting**: Reading a workflow shows clear data flow
+3. **Enables Node Composition Without Documentation**: Natural key names guide integration
+4. **Supports Learning Through Exploration**: Consistent patterns teach the system
+
+### Example: Natural Data Flow
+
+```bash
+# The key names make the data flow obvious
+github-get-issue --issue=123 >>         # Writes: shared["issue"]
+llm --prompt="Analyze $issue" >>        # Reads: shared["issue"], Writes: shared["response"]
+write-file analysis.md                  # Reads: shared["response"] as content
+```
+
+No documentation needed - the natural interfaces guide composition.
+
 ## User Experience Benefits
 
 ### Discovery and Learning

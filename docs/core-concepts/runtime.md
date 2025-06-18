@@ -117,6 +117,62 @@ Until then: **`@flow_safe` is the contract. Everything else is opaque by design.
 
 > **Execution Details**: See [Execution Reference](../reference/execution-reference.md) for flow immutability, testing framework, and future resilience features
 
+## Execution Tracing
+
+### Comprehensive Trace Output
+
+When using `--trace`, pflow captures detailed execution information that provides visibility into workflow behavior:
+
+```
+[1] github-get-issue (0.3s)
+    Input: {"issue": 1234}
+    Output: {"title": "Bug: Login fails", "body": "..."}
+    Shared Store Δ: +issue, +issue_title
+
+[2] claude-code (45.2s, 1523 tokens, $0.0234)
+    Input: {"prompt": "Implement fix for: Bug: Login fails..."}
+    Output: {"code_report": "Modified auth.py, added tests..."}
+    Shared Store Δ: +code_report, +files_modified
+    Cache: MISS
+
+[3] git-commit (0.1s)
+    Input: {"message": "Fix login bug (#1234)"}
+    Output: {"commit_hash": "abc123"}
+    Shared Store Δ: +commit_hash
+```
+
+### LLM Usage and Cost Tracking
+
+> **Implementation Note**: Before building custom LLM usage tracking, leverage existing tools:
+> - **Simon Willison's `llm` CLI**: Already tracks token usage and costs when used as the LLM backend
+> - **Claude Code CLI output**: Provides detailed metrics in its execution reports
+> - These tools can be integrated via their CLI interfaces or Python APIs
+
+Token usage and cost information will be extracted from:
+- LLM node execution logs (when using `llm` CLI backend)
+- Claude Code node output parsing (comprehensive development reports include metrics)
+- Third-party API responses that include usage data
+
+### Trace vs Conversation Logs
+
+Unlike conversation logs (e.g., Claude's interactive dialogue history), execution traces provide:
+
+- **Deterministic step-by-step execution**: Shows exact order and timing of operations
+- **Resource usage tracking**: Tokens consumed, API costs, execution time per node
+- **Data flow visibility**: Captures how data moves through shared store (Δ shows changes)
+- **Performance optimization insights**: Identifies slow nodes and caching opportunities
+- **Debugging information**: Clear view of inputs, outputs, and state changes
+
+This enables developers to:
+- Understand exactly what happened during workflow execution
+- Identify performance bottlenecks and optimization opportunities
+- Track costs and resource usage for budgeting
+- Debug data flow issues between nodes
+
+### Trace Storage
+
+Traces are persisted in `~/.pflow/traces/<run-id>.json` for post-execution analysis and debugging.
+
 ## See Also
 
 - [Execution Reference](../reference/execution-reference.md) - Complete execution model and runtime behavior

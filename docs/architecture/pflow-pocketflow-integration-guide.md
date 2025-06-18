@@ -259,6 +259,20 @@ def scan_for_nodes(directory):
 4. **When building the CLI** - Keep flag parsing simple
 5. **When implementing planning** - Let the LLM handle structure, not details
 
+## The Core Principle: "Extend, Don't Wrap"
+
+This principle guides every architectural decision:
+- Extend pocketflow.Node directly, don't create wrapper classes
+- Extend shared dict with validation functions, don't wrap in classes
+- Extend CLI patterns, don't reinvent parsing
+- Use pocketflow.Flow directly, don't reimplement orchestration
+
+This prevents the "framework on framework" anti-pattern and keeps pflow as a thin, focused layer that:
+- Makes pocketflow accessible via CLI
+- Adds natural language planning
+- Provides platform-specific nodes
+- Enables workflow reuse
+
 ## The Core Architecture
 
 ```
