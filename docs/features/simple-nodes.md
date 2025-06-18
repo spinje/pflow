@@ -45,13 +45,13 @@ git-commit --message="Fix issue 1234"
 
 | Node | Purpose | Interface |
 |------|---------|-----------|
-| **[`github-get-issue`](./core-node-packages/github-nodes.md#github-get-issue)** | Retrieve GitHub issue details | Reads: `issue_number`, `repo` → Writes: `issue` |
-| **[`github-create-issue`](./core-node-packages/github-nodes.md#github-create-issue)** | Create new GitHub issue | Reads: `title`, `body`, `repo` → Writes: `created_issue` |
-| **[`github-list-prs`](./core-node-packages/github-nodes.md#github-list-prs)** | List GitHub pull requests | Reads: `repo`, `state` → Writes: `prs` |
-| **[`llm`](./core-node-packages/llm-nodes.md)** | General-purpose LLM processing | Reads: `prompt` → Writes: `response` |
+| **[`github-get-issue`](../core-node-packages/github-nodes.md#github-get-issue)** | Retrieve GitHub issue details | Reads: `issue_number`, `repo` → Writes: `issue` |
+| **[`github-create-issue`](../core-node-packages/github-nodes.md#github-create-issue)** | Create new GitHub issue | Reads: `title`, `body`, `repo` → Writes: `created_issue` |
+| **[`github-list-prs`](../core-node-packages/github-nodes.md#github-list-prs)** | List GitHub pull requests | Reads: `repo`, `state` → Writes: `prs` |
+| **[`llm`](../core-node-packages/llm-nodes.md)** | General-purpose LLM processing | Reads: `prompt` → Writes: `response` |
 | **`read-file`** | Read file contents | Reads: `file_path` → Writes: `content` |
 | **`write-file`** | Write file contents | Reads: `content`, `file_path` → Writes: `written` |
-| **[`run-tests`](./core-node-packages/ci-nodes.md#run-tests)** | Execute test commands | Reads: `test_command` → Writes: `test_results` |
+| **[`run-tests`](../core-node-packages/ci-nodes.md#run-tests)** | Execute test commands | Reads: `test_command` → Writes: `test_results` |
 | **`git-commit`** | Create git commit | Reads: `message`, `files` → Writes: `commit_hash` |
 
 ### The LLM Node: Smart Exception to Prevent Proliferation
@@ -65,7 +65,7 @@ The `llm` node is our general-purpose solution for all text processing tasks:
 
 ### Node Implementation Pattern
 
-Nodes follow the interface patterns defined in our [metadata schema](./schemas.md#node-metadata-schema). All nodes inherit from `pocketflow.Node` and use the [shared store pattern](./shared-store.md) for communication.
+Nodes follow the interface patterns defined in our [metadata schema](../core-concepts/schemas.md#node-metadata-schema). All nodes inherit from `pocketflow.Node` and use the [shared store pattern](../core-concepts/shared-store.md) for communication.
 
 ```python
 class GitHubGetIssueNode(Node):
@@ -96,7 +96,7 @@ class GitHubGetIssueNode(Node):
 
 ### Natural Interface Consistency
 
-All simple nodes follow clear interface patterns based on our [shared store design](./shared-store.md#natural-interfaces):
+All simple nodes follow clear interface patterns based on our [shared store design](../core-concepts/shared-store.md#natural-interfaces):
 - **Input**: Natural shared store keys (`shared["repo"]`, `shared["issue"]`, `shared["prompt"]`)
 - **Parameters**: Node configuration via CLI flags (`--repo`, `--token`)
 - **Output**: Structured results in natural shared store keys
@@ -253,7 +253,7 @@ slack-send-message --channel=deploys --message="Staging deployment complete"
 
 ### Metadata Schema Updates
 
-Simple nodes have straightforward metadata without action complexity, following our [node metadata schema](./schemas.md#node-metadata-schema):
+Simple nodes have straightforward metadata without action complexity, following our [node metadata schema](../core-concepts/schemas.md#node-metadata-schema):
 ```json
 {
   "id": "github-get-issue",
@@ -338,13 +338,13 @@ This architecture enables pflow to deliver on its promise of transforming AI-ass
 
 ## See Also
 
-- **Core Patterns**: [Shared Store + Proxy Pattern](./shared-store.md) - Understanding data flow and node communication
+- **Core Patterns**: [Shared Store + Proxy Pattern](../core-concepts/shared-store.md) - Understanding data flow and node communication
 - **Node Specifications**:
-  - [GitHub Nodes](./core-node-packages/github-nodes.md) - Platform integration nodes
-  - [Claude Nodes](./core-node-packages/claude-nodes.md) - Development automation "super node"
-  - [CI Nodes](./core-node-packages/ci-nodes.md) - Testing and deployment nodes
-  - [LLM Node](./core-node-packages/llm-nodes.md) - General text processing
+  - [GitHub Nodes](../core-node-packages/github-nodes.md) - Platform integration nodes
+  - [Claude Nodes](../core-node-packages/claude-nodes.md) - Development automation "super node"
+  - [CI Nodes](../core-node-packages/ci-nodes.md) - Testing and deployment nodes
+  - [LLM Node](../core-node-packages/llm-nodes.md) - General text processing
 - **Implementation Details**:
-  - [Node Metadata Schema](./schemas.md#node-metadata-schema) - Interface format specification
-  - [Registry System](./registry.md) - Node discovery and management
+  - [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - Interface format specification
+  - [Registry System](../core-concepts/registry.md) - Node discovery and management
   - [CLI Runtime](./cli-runtime.md) - How nodes integrate with the CLI

@@ -245,8 +245,8 @@ As AI tools become more integrated into our development workflows, understanding
 
 ## See Also
 
-- **Architecture**: [Product Requirements](./prd.md) - Core vision and philosophy behind pflow
-- **Architecture**: [Architecture Document](./architecture.md) - Complete system design
+- **Architecture**: [Product Requirements](../prd.md) - Core vision and philosophy behind pflow
+- **Architecture**: [Architecture Document](../architecture/architecture.md) - Complete system design
 - **Patterns**: [Simple Nodes](./simple-nodes.md) - How claude-code super node fits into simple node philosophy
 - **Components**: [Planner](./planner.md) - How natural language translates to deterministic workflows
 - **Implementation**: [MVP Scope](./mvp-scope.md) - What's included in the initial version

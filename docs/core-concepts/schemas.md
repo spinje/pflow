@@ -7,7 +7,7 @@ This document defines JSON schema governance for two key pflow artifacts:
 
 Both schemas work together to enable metadata-driven flow planning and validation.
 
-> **Architecture Context**: See [Node Metadata Strategy](implementation-details/node-metadata-extraction.md) for extraction details and [Shared Store Pattern](./shared-store-node-proxy-architecture.md) for interface concepts.
+> **Architecture Context**: See [Node Metadata Strategy](../implementation-details/metadata-extraction.md) for extraction details and [Shared Store Pattern](./shared-store.md) for interface concepts.
 
 ---
 
@@ -36,7 +36,7 @@ Both schemas work together to enable metadata-driven flow planning and validatio
 
 - `$schema` dereferences a JSON-Schema; hard error if not recognised
 - `ir_version` uses semantic versioning; unknown higher major → refuse to run
-- `metadata.locked_nodes` mirrors [version lockfile](./node-discovery-namespacing-and-versioning.md) for deterministic execution
+- `metadata.locked_nodes` mirrors [version lockfile](./registry.md) for deterministic execution
 - `metadata.planner_version` tracks planner that generated IR for provenance
 
 ---
@@ -198,7 +198,7 @@ All nodes must explicitly declare their shared store interface in metadata:
 
 ### 2.4 Extraction and Validation
 
-- **Source**: Structured docstrings using Interface sections (see [Node Metadata](implementation-details/node-metadata-extraction.md))
+- **Source**: Structured docstrings using Interface sections (see [Node Metadata](../implementation-details/metadata-extraction.md))
 - **Validation**: Extracted metadata must match actual code behavior
 - **Staleness**: Source file hash tracks when re-extraction needed
 - **Registry**: Metadata stored alongside Python files in registry structure
@@ -232,11 +232,11 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 |---|---|---|
 | `id` | Unique token, `[A-Za-z0-9_-]{1,64}` | Flow-scoped identifier |
 | `registry_id` | Namespace/name format | References node in registry for metadata resolution |
-| `version` | Semantic version string | Resolved during [planner validation](./planner-responsibility-functionality-spec.md) |
+| `version` | Semantic version string | Resolved during [planner validation](../features/planner.md) |
 | `params` | Arbitrary JSON for node behavior | **Never** contains shared store keys or execution directives |
-| `execution.max_retries` | Integer ≥ 0, only for `@flow_safe` nodes | See [Runtime Behavior](./runtime-behavior-specification.md) |
+| `execution.max_retries` | Integer ≥ 0, only for `@flow_safe` nodes | See [Runtime Behavior](./runtime.md) |
 | `execution.use_cache` | Boolean, only for `@flow_safe` nodes | Cache eligibility enforced at runtime |
-| `execution.wait` | Float ≥ 0, retry delay in seconds | Used by [pocketflow framework](../pocketflow/__init__.py) |
+| `execution.wait` | Float ≥ 0, retry delay in seconds | Used by [pocketflow framework](../../pocketflow/__init__.py) |
 
 **Interface Resolution:**
 
@@ -244,7 +244,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 - Registry metadata validates params and execution config eligibility
 - Node interfaces declared through docstring metadata, not IR params
 
-> **Natural Interface Pattern**: See [shared store specification](./shared-store-node-proxy-architecture.md) for natural interface concepts
+> **Natural Interface Pattern**: See [shared store specification](./shared-store.md) for natural interface concepts
 
 ---
 
@@ -277,7 +277,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 - Clear data flow from input to output
 - Interface compatibility between connected nodes
 
-> **Flow Structure**: See [planner specification](./planner-responsibility-functionality-spec.md) for simple node sequencing
+> **Flow Structure**: See [planner specification](../features/planner.md) for simple node sequencing
 
 ---
 
@@ -306,22 +306,22 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 - Completely optional - nodes use direct shared store access when no mappings defined
 - Transparent to node code via `NodeAwareSharedStore` proxy
 
-> **Architecture Integration**: See [shared store pattern](./shared-store-node-proxy-architecture.md) for proxy implementation details
+> **Architecture Integration**: See [shared store pattern](./shared-store.md) for proxy implementation details
 
 ---
 
 ## 6 · Side-Effect Model
 
-Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior Specification](./runtime-behavior-specification.md)). IR validation enforces purity constraints:
+Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior Specification](./runtime.md)). IR validation enforces purity constraints:
 
 - Only `@flow_safe` nodes may specify `max_retries > 0`
 - Only `@flow_safe` nodes may specify `use_cache: true`
 - Purity status read from node manifest; IR does not repeat it
-- Validation occurs during [planner pipeline](./planner-responsibility-functionality-spec.md)
+- Validation occurs during [planner pipeline](../features/planner.md)
 
 ---
 
-> **Execution Behavior**: See [Execution Reference](execution-reference.md) for failure semantics, retry configuration, and caching contracts
+> **Execution Behavior**: See [Execution Reference](../reference/execution-reference.md) for failure semantics, retry configuration, and caching contracts
 
 ---
 
@@ -342,7 +342,7 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 - **Edge validity**: Source and target nodes must exist
 - **Mapping validity**: Mapped keys must match node interfaces
 
-> **Validation Details**: See [Execution Reference](execution-reference.md#validation-pipeline) for complete validation pipeline
+> **Validation Details**: See [Execution Reference](../reference/execution-reference.md#validation-pipeline) for complete validation pipeline
 
 ---
 
@@ -390,7 +390,7 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 - Optional fields with sensible defaults
 - Clear validation rules for new features
 
-> **Implementation Details**: See [CLI Reference](cli-reference.md) for registry commands and [Registry](registry.md) for implementation details
+> **Implementation Details**: See [CLI Reference](../reference/cli-reference.md) for registry commands and [Registry](./registry.md) for implementation details
 
 ---
 
@@ -453,7 +453,7 @@ This document defines the JSON schemas for Flow IR and Node Metadata, providing 
 ## See Also
 
 - **Architecture**: [Shared Store + Proxy Pattern](./shared-store.md) - Natural interface patterns and proxy mapping design
-- **Components**: [Planner Specification](./planner.md) - How schemas integrate with dual-mode planning
+- **Components**: [Planner Specification](../features/planner.md) - How schemas integrate with dual-mode planning
 - **Components**: [Registry System](./registry.md) - Node discovery and metadata management
-- **Implementation**: [Metadata Extraction](./implementation-details/metadata-extraction.md) - How node metadata is extracted from docstrings
+- **Implementation**: [Metadata Extraction](../implementation-details/metadata-extraction.md) - How node metadata is extracted from docstrings
 - **Related Features**: [Runtime Behavior](./runtime.md) - How execution configuration in schemas affects runtime

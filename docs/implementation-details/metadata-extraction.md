@@ -35,7 +35,7 @@ This metadata extraction infrastructure directly supports several core pflow sys
 
 ### Planner Discovery Integration
 >
-> **See**: [Planner Responsibility Spec](../planner-responsibility-functionality-spec.md#node-discovery)
+> **See**: [Planner Responsibility Spec](../features/planner.md#node-discovery)
 
 The extraction process feeds the planner's metadata-driven selection:
 
@@ -46,7 +46,7 @@ The extraction process feeds the planner's metadata-driven selection:
 
 ### Registry Integration
 >
-> **See**: [Node Discovery & Versioning](../node-discovery-namespacing-and-versioning.md#registry-management)
+> **See**: [Node Discovery & Versioning](../core-concepts/registry.md#registry-management)
 
 Metadata extraction occurs during node installation:
 
@@ -57,7 +57,7 @@ Metadata extraction occurs during node installation:
 
 ### Shared Store Compatibility
 >
-> **See**: [Shared Store Pattern](../shared-store-node-proxy-architecture.md#natural-interfaces)
+> **See**: [Shared Store Pattern](../core-concepts/shared-store.md#natural-interfaces)
 
 Extracted interface data preserves natural shared store access patterns:
 
@@ -1137,9 +1137,9 @@ The infrastructure enables intelligent flow planning while preserving the simpli
 
 ## See Also
 
-- **Architecture**: [JSON Schemas](../schemas.md) - Node metadata schema definitions
-- **Architecture**: [Registry System](../registry.md) - How metadata integrates with node discovery
-- **Patterns**: [Simple Nodes](../simple-nodes.md) - Node design patterns that guide metadata extraction
-- **Components**: [Planner](../planner.md) - How planner uses extracted metadata for node selection
-- **Related Features**: [Shared Store](../shared-store.md) - Natural interface patterns documented in metadata
+- **Architecture**: [JSON Schemas](../core-concepts/schemas.md) - Node metadata schema definitions
+- **Architecture**: [Registry System](../core-concepts/registry.md) - How metadata integrates with node discovery
+- **Patterns**: [Simple Nodes](../features/simple-nodes.md) - Node design patterns that guide metadata extraction
+- **Components**: [Planner](../features/planner.md) - How planner uses extracted metadata for node selection
+- **Related Features**: [Shared Store](../core-concepts/shared-store.md) - Natural interface patterns documented in metadata
 - **Future Features**: [LLM Node Generation](../future-version/llm-node-gen.md) - Future LLM-assisted development using metadata

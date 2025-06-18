@@ -10,9 +10,9 @@
 ## Quick Start
 
 **New to pflow?** Start here:
-1. [Workflow Analysis](./workflow-analysis.md) - Understand the problem pflow solves
-2. [MVP Scope](./mvp-scope.md) - Learn what pflow can do
-3. [Architecture](./architecture.md) - See how it works
+1. [Workflow Analysis](./features/workflow-analysis.md) - Understand the problem pflow solves
+2. [MVP Scope](./features/mvp-scope.md) - Learn what pflow can do
+3. [Architecture](./architecture/architecture.md) - See how it works
 
 ## Documentation Structure
 
@@ -21,26 +21,26 @@
 | Document | Purpose | Start Here If... |
 |----------|---------|------------------|
 | [PRD](./prd.md) | Master product vision and strategy | You want the complete vision |
-| [Architecture](./architecture.md) | Technical implementation for MVP | You're implementing pflow |
-| [MVP Scope](./mvp-scope.md) | Clear boundaries and success criteria | You need to know what's included |
+| [Architecture](./architecture/architecture.md) | Technical implementation for MVP | You're implementing pflow |
+| [MVP Scope](./features/mvp-scope.md) | Clear boundaries and success criteria | You need to know what's included |
 
 ### 🏗️ Core Patterns
 
 | Pattern | Purpose | Key Concept |
 |---------|---------|-------------|
-| [Shared Store](./shared-store.md) | Inter-node communication pattern | Natural interfaces with `shared["key"]` |
-| [Simple Nodes](./simple-nodes.md) | Node design philosophy | One node, one purpose |
-| [CLI Runtime](./cli-runtime.md) | Execution specification | Type flags; engine decides |
+| [Shared Store](./core-concepts/shared-store.md) | Inter-node communication pattern | Natural interfaces with `shared["key"]` |
+| [Simple Nodes](./features/simple-nodes.md) | Node design philosophy | One node, one purpose |
+| [CLI Runtime](./features/cli-runtime.md) | Execution specification | Type flags; engine decides |
 
 ### 🧩 System Components
 
 | Component | Purpose | MVP Status |
 |-----------|---------|------------|
-| [Planner](./planner.md) | Natural language → CLI workflow | ✅ MVP |
-| [Runtime](./runtime.md) | Execution engine | ✅ MVP |
-| [Registry](./registry.md) | Node discovery and versioning | ✅ MVP |
-| [Components](./components.md) | Complete component inventory | Reference |
-| [Schemas](./schemas.md) | JSON IR and metadata schemas | ✅ MVP |
+| [Planner](./features/planner.md) | Natural language → CLI workflow | ✅ MVP |
+| [Runtime](./core-concepts/runtime.md) | Execution engine | ✅ MVP |
+| [Registry](./core-concepts/registry.md) | Node discovery and versioning | ✅ MVP |
+| [Components](./architecture/components.md) | Complete component inventory | Reference |
+| [Schemas](./core-concepts/schemas.md) | JSON IR and metadata schemas | ✅ MVP |
 
 ### 📦 Node Packages
 
@@ -53,15 +53,15 @@
 
 ### 🔧 Implementation Guides
 
-- [PocketFlow Integration](./pflow-pocketflow-integration-guide.md) - Critical insights for correct implementation
-- [Shell Pipes](./shell-pipes.md) - Unix pipe integration
+- [PocketFlow Integration](./architecture/pflow-pocketflow-integration-guide.md) - Critical insights for correct implementation
+- [Shell Pipes](./features/shell-pipes.md) - Unix pipe integration
 - [Metadata Extraction](./implementation-details/metadata-extraction.md) - Node discovery system
 
 ### 🚀 Future Features
 
 | Feature | Version | Status |
 |---------|---------|--------|
-| [MCP Integration](./mcp-integration.md) | v2.0 | ❌ Deferred |
+| [MCP Integration](./features/mcp-integration.md) | v2.0 | ❌ Deferred |
 | [CLI Autocomplete](./implementation-details/autocomplete-impl.md) | v2.0 | ❌ Deferred |
 | [JSON Extraction](./future-version/json-extraction.md) | v3.0 | ⏳ Future |
 | [LLM Node Gen](./future-version/llm-node-gen.md) | v3.0 | ⏳ Future |
@@ -70,41 +70,41 @@
 
 ### Core Concepts
 
-- **Shared Store** → [shared-store.md](./shared-store.md) - Flow-scoped dictionary for node communication
-- **Template Variables** → [shared-store.md#template-variable-resolution](./shared-store.md#template-variable-resolution) - `$variable` syntax for dynamic content
-- **Simple Nodes** → [simple-nodes.md](./simple-nodes.md) - Single-purpose node architecture
-- **NodeAwareSharedStore Proxy** → [shared-store.md#nodeawaresharedstore-proxy](./shared-store.md#nodeawaresharedstore-proxy) - Transparent key mapping
-- **Natural Interfaces** → [shared-store.md#node-autonomy-principle](./shared-store.md#node-autonomy-principle) - Intuitive key names
+- **Shared Store** → [shared-store.md](./core-concepts/shared-store.md) - Flow-scoped dictionary for node communication
+- **Template Variables** → [shared-store.md#template-variable-resolution](./core-concepts/shared-store.md#template-variable-resolution) - `$variable` syntax for dynamic content
+- **Simple Nodes** → [simple-nodes.md](./features/simple-nodes.md) - Single-purpose node architecture
+- **NodeAwareSharedStore Proxy** → [shared-store.md#nodeawaresharedstore-proxy](./core-concepts/shared-store.md#nodeawaresharedstore-proxy) - Transparent key mapping
+- **Natural Interfaces** → [shared-store.md#node-autonomy-principle](./core-concepts/shared-store.md#node-autonomy-principle) - Intuitive key names
 
 ### Planning & Validation
 
-- **Dual-Mode Planner** → [planner.md](./planner.md) - Natural language and CLI paths
-- **JSON IR** → [schemas.md](./schemas.md) - Intermediate representation format
-- **Metadata System** → [schemas.md#node-metadata-schema](./schemas.md#node-metadata-schema) - Node interface definitions
-- **Registry** → [registry.md](./registry.md) - Node discovery and versioning
+- **Dual-Mode Planner** → [planner.md](./features/planner.md) - Natural language and CLI paths
+- **JSON IR** → [schemas.md](./core-concepts/schemas.md) - Intermediate representation format
+- **Metadata System** → [schemas.md#node-metadata-schema](./core-concepts/schemas.md#node-metadata-schema) - Node interface definitions
+- **Registry** → [registry.md](./core-concepts/registry.md) - Node discovery and versioning
 
 ### Execution
 
-- **Runtime Engine** → [runtime.md](./runtime.md) - Flow execution with caching
-- **CLI Parser** → [cli-runtime.md](./cli-runtime.md) - Command parsing and resolution
-- **Shell Integration** → [shell-pipes.md](./shell-pipes.md) - Unix pipe support
+- **Runtime Engine** → [runtime.md](./core-concepts/runtime.md) - Flow execution with caching
+- **CLI Parser** → [cli-runtime.md](./features/cli-runtime.md) - Command parsing and resolution
+- **Shell Integration** → [shell-pipes.md](./features/shell-pipes.md) - Unix pipe support
 
 ## Learning Paths
 
 ### 🎯 For Product Understanding
-1. [Workflow Analysis](./workflow-analysis.md) - Problem space
-2. [MVP Scope](./mvp-scope.md) - Solution vision
+1. [Workflow Analysis](./features/workflow-analysis.md) - Problem space
+2. [MVP Scope](./features/mvp-scope.md) - Solution vision
 3. [PRD](./prd.md) - Complete product strategy
 
 ### 💻 For Implementation
-1. [PocketFlow Integration Guide](./pflow-pocketflow-integration-guide.md) - Critical insights
-2. [Shared Store](./shared-store.md) - Core pattern
-3. [Architecture](./architecture.md) - System design
-4. [Components](./components.md) - What to build
+1. [PocketFlow Integration Guide](./architecture/pflow-pocketflow-integration-guide.md) - Critical insights
+2. [Shared Store](./core-concepts/shared-store.md) - Core pattern
+3. [Architecture](./architecture/architecture.md) - System design
+4. [Components](./architecture/components.md) - What to build
 
 ### 🔌 For Node Development
-1. [Simple Nodes](./simple-nodes.md) - Design philosophy
-2. [Shared Store](./shared-store.md) - Communication pattern
+1. [Simple Nodes](./features/simple-nodes.md) - Design philosophy
+2. [Shared Store](./core-concepts/shared-store.md) - Communication pattern
 3. [Node Package Examples](./core-node-packages/) - Reference implementations
 
 ## Key Design Principles
@@ -121,12 +121,12 @@
 - **v2.0** - MCP integration, autocomplete, conditional flows
 - **v3.0+** - Cloud platform, marketplace, advanced features
 
-See [MVP Scope](./mvp-scope.md) for detailed version boundaries.
+See [MVP Scope](./features/mvp-scope.md) for detailed version boundaries.
 
 ## Contributing
 
 When adding new documentation:
-1. Include version header using the [template](./mvp-scope.md#version-header-template)
+1. Include version header using the [template](./features/mvp-scope.md#version-header-template)
 2. Add navigation section linking to related docs
 3. Update this index with your new document
 4. Add cross-references to existing docs where relevant

@@ -17,7 +17,7 @@ A comprehensive specification for integrating **Model Context Protocol** servers
 - CLI resolution following "Type flags; engine decides" principle
 - Optional proxy mapping support for complex routing scenarios
 
-> **For architectural context**, see [Shared Store + Proxy Design Pattern](./shared-store-node-proxy-architecture.md) and [Planner Responsibility & Functionality Spec](./planner-responsibility-functionality-spec.md)
+> **For architectural context**, see [Shared Store + Proxy Design Pattern](../core-concepts/shared-store.md) and [Planner Responsibility & Functionality Spec](./planner.md)
 
 ---
 
@@ -52,7 +52,7 @@ class McpGithubSearchCodeNode(Node):  # Standard pocketflow inheritance
     # Compatible with proxy mappings and JSON IR
 ```
 
-> **See also**: [pocketflow framework](../pocketflow/__init__.py) for core implementation details
+> **See also**: [pocketflow framework](../../pocketflow/__init__.py) for core implementation details
 
 ---
 
@@ -774,10 +774,10 @@ This specification transforms MCP integration from a parallel subsystem into a n
 
 ## See Also
 
-- **Architecture**: [Shared Store + Proxy Pattern](./shared-store.md) - Foundation for MCP wrapper node interfaces
+- **Architecture**: [Shared Store + Proxy Pattern](../core-concepts/shared-store.md) - Foundation for MCP wrapper node interfaces
 - **Architecture**: [MVP Scope](./mvp-scope.md) - Why MCP is deferred to v2.0
 - **Patterns**: [Simple Nodes](./simple-nodes.md) - How MCP tools become simple nodes
-- **Components**: [Registry](./registry.md) - Unified registry integration for MCP nodes
-- **Components**: [JSON Schemas](./schemas.md) - MCP metadata in Flow IR
+- **Components**: [Registry](../core-concepts/registry.md) - Unified registry integration for MCP nodes
+- **Components**: [JSON Schemas](../core-concepts/schemas.md) - MCP metadata in Flow IR
 - **Related Features**: [Autocomplete](./autocomplete.md) - MCP node discovery in CLI autocomplete
-- **Implementation**: [Components](./components.md) - MCP components in v2.0 inventory
+- **Implementation**: [Components](../architecture/components.md) - MCP components in v2.0 inventory

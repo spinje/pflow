@@ -2,14 +2,14 @@
 
 > **Version**: MVP
 > **MVP Status**: ✅ Critical Implementation Guide
-> For complete MVP boundaries, see [MVP Scope](./mvp-scope.md)
+> For complete MVP boundaries, see [MVP Scope](../features/mvp-scope.md)
 
 ## Navigation
 
 **Related Documents:**
-- **Framework**: [pocketflow Source](../pocketflow/__init__.py) | [pocketflow Docs](../pocketflow/CLAUDE.md)
-- **Architecture**: [Architecture](./architecture.md) | [Shared Store](./shared-store.md)
-- **Components**: [CLI Runtime](./cli-runtime.md) | [Planner](./planner.md) | [Runtime](./runtime.md)
+- **Framework**: [pocketflow Source](../../pocketflow/__init__.py) | [pocketflow Docs](../../pocketflow/CLAUDE.md)
+- **Architecture**: [Architecture](./architecture.md) | [Shared Store](../core-concepts/shared-store.md)
+- **Components**: [CLI Runtime](../features/cli-runtime.md) | [Planner](../features/planner.md) | [Runtime](../core-concepts/runtime.md)
 - **Implementation**: [Component Inventory](./components.md)
 
 ## Overview

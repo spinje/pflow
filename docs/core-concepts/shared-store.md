@@ -3,10 +3,10 @@
 ## Navigation
 
 **Related Documents:**
-- **Architecture**: [PRD](./prd.md) | [Architecture](./architecture.md) | [MVP Scope](./mvp-scope.md)
-- **Components**: [Planner](./planner.md) | [Runtime](./runtime.md) | [CLI Runtime](./cli-runtime.md)
-- **Node Design**: [Simple Nodes](./simple-nodes.md) | [Node Packages](./core-node-packages/)
-- **Implementation**: [PocketFlow Integration](./pflow-pocketflow-integration-guide.md)
+- **Architecture**: [PRD](../prd.md) | [Architecture](../architecture/architecture.md) | [MVP Scope](../features/mvp-scope.md)
+- **Components**: [Planner](../features/planner.md) | [Runtime](./runtime.md) | [CLI Runtime](../features/cli-runtime.md)
+- **Node Design**: [Simple Nodes](../features/simple-nodes.md) | [Node Packages](../core-node-packages/)
+- **Implementation**: [PocketFlow Integration](../architecture/pflow-pocketflow-integration-guide.md)
 
 ## Overview
 
@@ -30,7 +30,7 @@ Before diving into the autonomy principle, it's crucial to understand when to us
 
 ### Best Practice Pattern:
 
-> **Implementation**: See [Node Reference](node-reference.md#shared-store-access) for the recommended pattern of checking shared store first, then params
+> **Implementation**: See [Node Reference](../reference/node-reference.md#shared-store-access) for the recommended pattern of checking shared store first, then params
 
 **Shared store takes precedence** - this allows dynamic workflow data to override static configuration when needed.
 
@@ -210,7 +210,7 @@ validator - "complete" >> finalizer
 - Node-local parameters that don't affect shared store
 - Simple access via `self.params.get("temperature", 0.7)`
 
-> **Framework Integration**: See [Node Reference](node-reference.md#base-node-class) for pocketflow integration details
+> **Framework Integration**: See [Node Reference](../reference/node-reference.md#base-node-class) for pocketflow integration details
 
 ## The Standalone Node Pattern
 
@@ -244,9 +244,9 @@ A crucial distinction in our implementation:
 - **Generated**: Flow orchestration code (from IR) with optional proxy setup
 - **Runtime**: CLI injection into shared store and params overrides
 
-> **Node Examples**: See [Node Reference](node-reference.md#common-node-templates) for LLMNode and other implementation examples
+> **Node Examples**: See [Node Reference](../reference/node-reference.md#common-node-templates) for LLMNode and other implementation examples
 
-> **Testing Examples**: See [Node Reference](node-reference.md#testing-nodes) for node testing patterns
+> **Testing Examples**: See [Node Reference](../reference/node-reference.md#testing-nodes) for node testing patterns
 ```
 
 Compare this to complex binding setup requirements in other approaches.
@@ -548,16 +548,16 @@ This pattern enables **progressive user empowerment** by making flow orchestrati
 
 The shared store pattern is fundamental to pflow and is used by:
 
-- **CLI Runtime** ([cli-runtime.md](./cli-runtime.md)): Routes CLI flags to shared store
-- **Planner** ([planner.md](./planner.md)): Generates template strings with variables
+- **CLI Runtime** ([cli-runtime.md](../features/cli-runtime.md)): Routes CLI flags to shared store
+- **Planner** ([planner.md](../features/planner.md)): Generates template strings with variables
 - **All Node Packages**: Every node reads/writes using shared store keys
-  - [GitHub Nodes](./core-node-packages/github-nodes.md)
-  - [Claude Nodes](./core-node-packages/claude-nodes.md)
-  - [CI Nodes](./core-node-packages/ci-nodes.md)
-  - [LLM Node](./core-node-packages/llm-nodes.md)
+  - [GitHub Nodes](../core-node-packages/github-nodes.md)
+  - [Claude Nodes](../core-node-packages/claude-nodes.md)
+  - [CI Nodes](../core-node-packages/ci-nodes.md)
+  - [LLM Node](../core-node-packages/llm-nodes.md)
 - **Runtime Engine** ([runtime.md](./runtime.md)): Manages shared store during execution
 - **Registry System** ([registry.md](./registry.md)): Extracts shared store interfaces from metadata
 
 ## See Also
 
-> **For complete CLI usage, validation rules, and runtime parameter details**, see [Shared-Store & Proxy Model — CLI Runtime Specification](./shared-store-cli-runtime-specification.md)
+> **For complete CLI usage, validation rules, and runtime parameter details**, see [Shared-Store & Proxy Model — CLI Runtime Specification](../features/cli-runtime.md)

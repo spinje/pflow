@@ -1,6 +1,6 @@
 # GitHub Node Package Specification
 
-> **Prerequisites**: Before implementing or using these nodes, read the [Node Implementation Reference](../node-reference.md) for common patterns and best practices.
+> **Prerequisites**: Before implementing or using these nodes, read the [Node Implementation Reference](../reference/node-reference.md) for common patterns and best practices.
 
 This document specifies the **GitHub node package** - a collection of simple, single-purpose nodes for GitHub operations. Each node handles one specific GitHub API interaction with clear interfaces and natural shared store patterns.
 
@@ -301,10 +301,10 @@ This GitHub node package provides comprehensive GitHub functionality through sim
 
 ## See Also
 
-- **Design Philosophy**: [Simple Nodes Pattern](../simple-nodes.md) - Understanding single-purpose node design
-- **Interface Format**: [Node Metadata Schema](../schemas.md#node-metadata-schema) - How node interfaces are defined
-- **Communication**: [Shared Store Pattern](../shared-store.md) - Inter-node data flow
-- **Node Registry**: [Registry System](../registry.md) - How nodes are discovered and managed
+- **Design Philosophy**: [Simple Nodes Pattern](../features/simple-nodes.md) - Understanding single-purpose node design
+- **Interface Format**: [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - How node interfaces are defined
+- **Communication**: [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow
+- **Node Registry**: [Registry System](../core-concepts/registry.md) - How nodes are discovered and managed
 - **Related Nodes**:
   - [Claude Nodes](./claude-nodes.md) - Development automation nodes
   - [CI Nodes](./ci-nodes.md) - Testing and deployment nodes

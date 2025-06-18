@@ -5,10 +5,10 @@
 ## Navigation
 
 **Related Documents:**
-- **Implementation**: [Architecture](./architecture.md) | [MVP Scope](./mvp-scope.md)
-- **Patterns**: [Shared Store](./shared-store.md) | [Simple Nodes](./simple-nodes.md) | [CLI Runtime](./cli-runtime.md)
-- **Components**: [Planner](./planner.md) | [Runtime](./runtime.md) | [Registry](./registry.md) | [Components](./components.md)
-- **Guides**: [PocketFlow Integration](./pflow-pocketflow-integration-guide.md) | [Workflow Analysis](./workflow-analysis.md)
+- **Implementation**: [Architecture](./architecture/architecture.md) | [MVP Scope](./features/mvp-scope.md)
+- **Patterns**: [Shared Store](./core-concepts/shared-store.md) | [Simple Nodes](./features/simple-nodes.md) | [CLI Runtime](./features/cli-runtime.md)
+- **Components**: [Planner](./features/planner.md) | [Runtime](./core-concepts/runtime.md) | [Registry](./core-concepts/registry.md) | [Components](./architecture/components.md)
+- **Guides**: [PocketFlow Integration](./architecture/pflow-pocketflow-integration-guide.md) | [Workflow Analysis](./features/workflow-analysis.md)
 
 ---
 
@@ -28,7 +28,7 @@ pflow's defining promise: a one-line natural-language prompt compiles—through 
 | Differentiator | Description | Implementation |
 |---|---|---|
 | **Transparent Execution** | Every node's data, config, and errors are trace-logged and replayable | CLI `--trace`, JSON IR → run log schema, deterministic replay via `.lock.json` |
-| **Shared Store + Natural Interfaces** | Nodes communicate through intuitive key names (`shared["url"]`, `shared["text"]`) with zero coupling | pocketflow framework + natural key conventions (see [Shared Store](./shared-store.md)) |
+| **Shared Store + Natural Interfaces** | Nodes communicate through intuitive key names (`shared["url"]`, `shared["text"]`) with zero coupling | pocketflow framework + natural key conventions (see [Shared Store](./core-concepts/shared-store.md)) |
 | **Proxy-Enabled Marketplace Compatibility** | Same nodes work in different flow schemas through transparent key mapping | `NodeAwareSharedStore` proxy pattern |
 | **Dual-Mode Planning Architecture** | Natural language and CLI pipes use same validation pipeline with different entry points | Planner handles both NL→IR and CLI→IR paths |
 | **Metadata-Driven Selection** | LLM selects nodes from extracted interface metadata, not code inspection | Docstring→JSON extraction + registry system |
@@ -110,7 +110,7 @@ graph TD
 
 ## 2 · Out-of-Scope for MVP
 
-For complete MVP boundaries including what's included and excluded, see [MVP Scope](./mvp-scope.md).
+For complete MVP boundaries including what's included and excluded, see [MVP Scope](./features/mvp-scope.md).
 
 ---
 
@@ -118,7 +118,7 @@ For complete MVP boundaries including what's included and excluded, see [MVP Sco
 
 ### 3.1 The pocketflow Foundation
 
-pflow is built on a **100-line Python framework** that provides the execution engine. For integration guidance, see [PocketFlow Integration Guide](./pflow-pocketflow-integration-guide.md):
+pflow is built on a **100-line Python framework** that provides the execution engine. For integration guidance, see [PocketFlow Integration Guide](./architecture/pflow-pocketflow-integration-guide.md):
 
 ```python
 class Node(BaseNode):
@@ -142,7 +142,7 @@ node_a >> node_b >> node_c          # Sequential composition
 
 ### 3.2 Shared Store Pattern
 
-The **shared store** is pflow's primary innovation—a flow-scoped memory that enables natural node interfaces. For detailed information about the shared store pattern, proxy mappings, and implementation examples, see [Shared Store](./shared-store.md).
+The **shared store** is pflow's primary innovation—a flow-scoped memory that enables natural node interfaces. For detailed information about the shared store pattern, proxy mappings, and implementation examples, see [Shared Store](./core-concepts/shared-store.md).
 
 **Key Concepts:**
 - Primary data flow mechanism between nodes
@@ -152,7 +152,7 @@ The **shared store** is pflow's primary innovation—a flow-scoped memory that e
 
 ### 3.2.1 Visualizing Shared Store Data Flow
 
-The following diagram illustrates how data flows through the shared store during pflow execution. For complete shared store documentation and examples, see [Shared Store](./shared-store.md).
+The following diagram illustrates how data flows through the shared store during pflow execution. For complete shared store documentation and examples, see [Shared Store](./core-concepts/shared-store.md).
 
 ```mermaid
 graph LR
@@ -213,7 +213,7 @@ shared["transcript"]    # Output: video transcript
 
 ### 3.4 Proxy Mapping for Complex Flows
 
-When natural interfaces don't align (e.g., marketplace compatibility), **proxy mappings** provide transparent translation. For detailed proxy mapping documentation and examples, see [Shared Store](./shared-store.md#proxy-pattern).
+When natural interfaces don't align (e.g., marketplace compatibility), **proxy mappings** provide transparent translation. For detailed proxy mapping documentation and examples, see [Shared Store](./core-concepts/shared-store.md#proxy-pattern).
 
 ```python
 # Without proxy: direct natural interface (zero overhead)
@@ -316,7 +316,7 @@ mcp/github-search@2.1.0
 
 ## 4 · Planning Pipeline Architecture
 
-pflow's **planner** operates in dual-mode, handling both natural language prompts and CLI pipe syntax through a unified validation and IR generation pipeline. For complete planner details, see [Planner](./planner.md).
+pflow's **planner** operates in dual-mode, handling both natural language prompts and CLI pipe syntax through a unified validation and IR generation pipeline. For complete planner details, see [Planner](./features/planner.md).
 
 ### 4.1 Dual-Mode Operation
 
@@ -493,7 +493,7 @@ Every planned flow includes **complete provenance**:
 
 ## 5 · CLI Surface & Parameter Resolution
 
-pflow's CLI follows a **single resolution rule**: "Type flags; engine decides." The engine automatically categorizes CLI flags as data injection, parameter overrides, or execution configuration. For complete CLI runtime details, see [CLI Runtime](./cli-runtime.md).
+pflow's CLI follows a **single resolution rule**: "Type flags; engine decides." The engine automatically categorizes CLI flags as data injection, parameter overrides, or execution configuration. For complete CLI runtime details, see [CLI Runtime](./features/cli-runtime.md).
 
 ### 5.1 Core CLI Commands
 
@@ -736,7 +736,7 @@ This feature makes `pflow` syntax discoverable directly in the terminal, support
 
 ## 6 · JSON IR & Schema Governance
 
-pflow's **Intermediate Representation (IR)** is a complete JSON specification that captures executable flows with full provenance and validation. For detailed schema specifications, see [Schemas](./schemas.md).
+pflow's **Intermediate Representation (IR)** is a complete JSON specification that captures executable flows with full provenance and validation. For detailed schema specifications, see [Schemas](./core-concepts/schemas.md).
 
 ### 5.1 Document Structure
 
@@ -879,7 +879,7 @@ Validated IR generates **lockfiles** for deterministic execution:
 
 ## 7 · Runtime Behavior & Performance
 
-pflow's runtime implements **opt-in performance optimization** through explicit purity declarations and configurable execution behavior. For complete runtime details, see [Runtime](./runtime.md).
+pflow's runtime implements **opt-in performance optimization** through explicit purity declarations and configurable execution behavior. For complete runtime details, see [Runtime](./core-concepts/runtime.md).
 
 ### 6.1 Node Purity Model
 
@@ -1084,7 +1084,7 @@ pflow trace run_2024-01-01_abc123 --cache-stats
 
 ## 8 · MCP Integration & Unified Registry
 
-pflow integrates **Model Context Protocol (MCP)** tools as native nodes through automatic wrapper generation and unified registry management. For registry details, see [Registry](./registry.md). For MCP integration specifics, see [MCP Integration](./mcp-integration.md).
+pflow integrates **Model Context Protocol (MCP)** tools as native nodes through automatic wrapper generation and unified registry management. For registry details, see [Registry](./core-concepts/registry.md). For MCP integration specifics, see [MCP Integration](./features/mcp-integration.md).
 
 ### 7.1 Unified Registry Approach
 
@@ -1301,7 +1301,7 @@ pflow registry test-mcp-connections
 
 ## 9 · User Experience & Workflows
 
-pflow supports **progressive complexity** from natural language exploration to production automation pipelines. For detailed component breakdown, see [Components](./components.md).
+pflow supports **progressive complexity** from natural language exploration to production automation pipelines. For detailed component breakdown, see [Components](./architecture/components.md).
 
 ### 8.1 User Journey Progression
 
@@ -1564,7 +1564,7 @@ These metrics define success for pflow v0.1, emphasizing reliability, performanc
 
 ### 9.1 Core Functionality Metrics
 
-For complete MVP acceptance criteria and scope, see [MVP Scope](./mvp-scope.md).
+For complete MVP acceptance criteria and scope, see [MVP Scope](./features/mvp-scope.md).
 
 | Metric | Target | Measurement Method |
 |--------|--------|-------------------|
@@ -1669,7 +1669,7 @@ gantt
 
 ### 10.2 Phase 1: Foundation (Weeks 1-4)
 
-**pocketflow Integration & Shared Store** (see [Architecture](./architecture.md) for implementation details)
+**pocketflow Integration & Shared Store** (see [Architecture](./architecture/architecture.md) for implementation details)
 
 - Complete pocketflow framework assessment and minimal extensions
 - Implement shared store pattern with natural interface conventions
@@ -1684,7 +1684,7 @@ gantt
 
 ### 10.3 Phase 2: Planning Pipeline (Weeks 4-8)
 
-**Dual-Mode Planner Implementation** (see [Planner](./planner.md) for specifications)
+**Dual-Mode Planner Implementation** (see [Planner](./features/planner.md) for specifications)
 
 - Build metadata-driven node discovery system
 - Implement LLM integration for natural language planning
@@ -1699,7 +1699,7 @@ gantt
 
 ### 10.4 Phase 3: Runtime & Performance (Weeks 8-12)
 
-**Execution Engine & Optimization** (see [Runtime](./runtime.md) for details)
+**Execution Engine & Optimization** (see [Runtime](./core-concepts/runtime.md) for details)
 
 - Implement proxy mapping system for complex flows
 - Build caching system with purity-based eligibility
@@ -1714,7 +1714,7 @@ gantt
 
 ### 10.5 Phase 4: MCP Integration (Weeks 10-14)
 
-**Unified Registry & Wrapper Generation** (see [Registry](./registry.md) and [MCP Integration](./mcp-integration.md))
+**Unified Registry & Wrapper Generation** (see [Registry](./core-concepts/registry.md) and [MCP Integration](./features/mcp-integration.md))
 
 - Eliminate standalone MCP configuration
 - Implement automatic wrapper node generation

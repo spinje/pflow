@@ -1,6 +1,6 @@
 # CI Node Package Specification
 
-> **Prerequisites**: Before implementing or using these nodes, read the [Node Implementation Reference](../node-reference.md) for common patterns and best practices.
+> **Prerequisites**: Before implementing or using these nodes, read the [Node Implementation Reference](../reference/node-reference.md) for common patterns and best practices.
 
 This document specifies the **CI node package** - a collection of simple, single-purpose nodes for continuous integration operations. Each node has one specific CI-related responsibility with clear interfaces and natural shared store patterns.
 
@@ -220,10 +220,10 @@ This CI node package provides comprehensive CI/CD functionality through simple, 
 
 ## See Also
 
-- **Design Philosophy**: [Simple Nodes Pattern](../simple-nodes.md) - Understanding single-purpose node design
-- **Interface Format**: [Node Metadata Schema](../schemas.md#node-metadata-schema) - How node interfaces are defined
-- **Communication**: [Shared Store Pattern](../shared-store.md) - Inter-node data flow
-- **Node Registry**: [Registry System](../registry.md) - How nodes are discovered and managed
+- **Design Philosophy**: [Simple Nodes Pattern](../features/simple-nodes.md) - Understanding single-purpose node design
+- **Interface Format**: [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - How node interfaces are defined
+- **Communication**: [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow
+- **Node Registry**: [Registry System](../core-concepts/registry.md) - How nodes are discovered and managed
 - **Related Nodes**:
   - [GitHub Nodes](./github-nodes.md) - Repository and issue management
   - [Claude Nodes](./claude-nodes.md) - Development automation nodes

@@ -5,9 +5,9 @@ This document provides common patterns and best practices for implementing nodes
 ## Prerequisites
 
 Before implementing any node, you should understand:
-- [Simple Node Architecture](./simple-nodes.md) - Single-purpose node design philosophy
-- [Shared Store Pattern](./shared-store.md) - Inter-node data flow and communication
-- [Node Metadata Schema](./schemas.md#node-metadata-schema) - Interface format specification
+- [Simple Node Architecture](../features/simple-nodes.md) - Single-purpose node design philosophy
+- [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow and communication
+- [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - Interface format specification
 
 ## Common Implementation Patterns
 
@@ -104,11 +104,11 @@ def test_node_shared_store_priority():
 
 ## See Also
 
-- [Simple Nodes Pattern](./simple-nodes.md) - Understanding single-purpose node design
-- [Shared Store Pattern](./shared-store.md) - Inter-node data flow
-- [Node Metadata Schema](./schemas.md#node-metadata-schema) - Interface format
+- [Simple Nodes Pattern](../features/simple-nodes.md) - Understanding single-purpose node design
+- [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow
+- [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - Interface format
 - **Node Package Specifications**:
-  - [GitHub Nodes](./core-node-packages/github-nodes.md)
-  - [Claude Nodes](./core-node-packages/claude-nodes.md)
-  - [CI Nodes](./core-node-packages/ci-nodes.md)
-  - [LLM Node](./core-node-packages/llm-nodes.md)
+  - [GitHub Nodes](../core-node-packages/github-nodes.md)
+  - [Claude Nodes](../core-node-packages/claude-nodes.md)
+  - [CI Nodes](../core-node-packages/ci-nodes.md)
+  - [LLM Node](../core-node-packages/llm-nodes.md)

@@ -1,6 +1,6 @@
 # Execution Reference
 
-> **Navigation**: [Index](index.md) → Execution Reference
+> **Navigation**: [Index](../index.md) → Execution Reference
 
 ## Overview
 
@@ -529,6 +529,6 @@ for chunk in flow.stream(data_source):
 
 - [Node Reference](node-reference.md) - Node implementation details
 - [CLI Reference](cli-reference.md) - How CLI commands execute
-- [Runtime](runtime.md) - Caching and safety specifics
-- [Schemas](schemas.md) - IR validation schemas
-- [Architecture](architecture.md) - System design overview
+- [Runtime](../core-concepts/runtime.md) - Caching and safety specifics
+- [Schemas](../core-concepts/schemas.md) - IR validation schemas
+- [Architecture](../architecture/architecture.md) - System design overview

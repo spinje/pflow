@@ -1,6 +1,6 @@
 # CLI Reference
 
-> **Navigation**: [Index](index.md) → CLI Reference
+> **Navigation**: [Index](../index.md) → CLI Reference
 
 ## Overview
 
@@ -429,6 +429,6 @@ $ pflow --debug failing-flow
 
 - [Node Reference](node-reference.md) - How to implement nodes that work with CLI
 - [Execution Reference](execution-reference.md) - Runtime behavior of CLI flows
-- [Shared Store](shared-store.md) - How CLI flags interact with shared store
-- [Registry](registry.md) - Node discovery and versioning
-- [Planner](planner.md) - Natural language to CLI compilation
+- [Shared Store](../core-concepts/shared-store.md) - How CLI flags interact with shared store
+- [Registry](../core-concepts/registry.md) - Node discovery and versioning
+- [Planner](../features/planner.md) - Natural language to CLI compilation

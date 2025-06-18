@@ -1,10 +1,10 @@
 # LLM Node Package Specification
 
-> **Prerequisites**: Before implementing or using this node, read the [Node Implementation Reference](../node-reference.md) for common patterns and best practices.
+> **Prerequisites**: Before implementing or using this node, read the [Node Implementation Reference](../reference/node-reference.md) for common patterns and best practices.
 
 > **Note**: This package contains a single general-purpose `llm` node as a smart exception to the simple nodes pattern.
 
-This node is an intentional exception to our [simple node philosophy](../simple-nodes.md) - instead of creating dozens of specific prompt-based nodes, we provide one flexible `llm` node that handles all text processing tasks.
+This node is an intentional exception to our [simple node philosophy](../features/simple-nodes.md) - instead of creating dozens of specific prompt-based nodes, we provide one flexible `llm` node that handles all text processing tasks.
 
 ## Overview
 
@@ -99,7 +99,7 @@ The LLM node follows standard node patterns with:
 - LLM API call in `exec()` phase
 - Response storage in `post()` phase
 
-For complete implementation details, see [Node Reference](../node-reference.md#common-node-templates).
+For complete implementation details, see [Node Reference](../reference/node-reference.md#common-node-templates).
 
 ---
 
@@ -252,10 +252,10 @@ This approach delivers the benefits of simplicity (one interface to learn) with 
 
 ## See Also
 
-- **Design Philosophy**: [Simple Nodes Pattern](../simple-nodes.md) - Why this is a smart exception
-- **Interface Format**: [Node Metadata Schema](../schemas.md#node-metadata-schema) - How node interfaces are defined
-- **Communication**: [Shared Store Pattern](../shared-store.md) - Inter-node data flow
-- **Node Registry**: [Registry System](../registry.md) - How nodes are discovered and managed
+- **Design Philosophy**: [Simple Nodes Pattern](../features/simple-nodes.md) - Why this is a smart exception
+- **Interface Format**: [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - How node interfaces are defined
+- **Communication**: [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow
+- **Node Registry**: [Registry System](../core-concepts/registry.md) - How nodes are discovered and managed
 - **Related Nodes**:
   - [Claude Nodes](./claude-nodes.md) - Comprehensive development "super node" (more complex alternative)
   - [GitHub Nodes](./github-nodes.md) - Platform integration nodes

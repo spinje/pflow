@@ -3,9 +3,9 @@
 ## Navigation
 
 **Related Documents:**
-- **Core Docs**: [PRD](./prd.md) | [MVP Scope](./mvp-scope.md)
-- **Patterns**: [Shared Store](./shared-store.md) | [Simple Nodes](./simple-nodes.md) | [CLI Runtime](./cli-runtime.md)
-- **Components**: [Planner](./planner.md) | [Runtime](./runtime.md) | [Registry](./registry.md) | [Schemas](./schemas.md)
+- **Core Docs**: [PRD](../prd.md) | [MVP Scope](../features/mvp-scope.md)
+- **Patterns**: [Shared Store](../core-concepts/shared-store.md) | [Simple Nodes](../features/simple-nodes.md) | [CLI Runtime](../features/cli-runtime.md)
+- **Components**: [Planner](../features/planner.md) | [Runtime](../core-concepts/runtime.md) | [Registry](../core-concepts/registry.md) | [Schemas](../core-concepts/schemas.md)
 - **Implementation**: [PocketFlow Integration](./pflow-pocketflow-integration-guide.md) | [Components](./components.md)
 
 ## 1. Executive Summary
@@ -89,7 +89,7 @@ graph TD
 ### 2.3 Foundation: pocketflow Framework
 
 The entire system is built on a 100-line Python framework that provides:
-- Node lifecycle management - see [Node Reference](node-reference.md#node-lifecycle)
+- Node lifecycle management - see [Node Reference](../reference/node-reference.md#node-lifecycle)
 - Flow orchestration via `>>` operator
 - Built-in retry mechanism for fault tolerance
 - Action-based transitions (deferred to post-MVP)
@@ -109,7 +109,7 @@ The entire system is built on a 100-line Python framework that provides:
 
 The shared store is pflow's primary innovation for inter-node communication, enabling nodes to use natural, intuitive interfaces.
 
-> For complete pattern definition, examples, and architectural rationale, see [Shared Store + Proxy Design Pattern](./shared-store.md)
+> For complete pattern definition, examples, and architectural rationale, see [Shared Store + Proxy Design Pattern](../core-concepts/shared-store.md)
 
 In the context of the CLI architecture, the shared store:
 - Receives data from CLI flags and shell pipes
@@ -149,7 +149,7 @@ llm --prompt="Explain this concept in simple terms"
 
 When natural interfaces don't align, the `NodeAwareSharedStore` proxy provides transparent translation.
 
-> See [NodeAwareSharedStore Proxy](./shared-store.md#nodeawaresharedstore-proxy) for implementation details
+> See [NodeAwareSharedStore Proxy](../core-concepts/shared-store.md#nodeawaresharedstore-proxy) for implementation details
 
 ```python
 # Node always uses natural interface
@@ -234,7 +234,7 @@ graph TD
 
 The CLI supports **$ variable substitution** for dynamic content access, enabling sophisticated template-driven workflows.
 
-> For complete template variable syntax, resolution rules, and examples, see [Template Variable Resolution](./shared-store.md#template-variable-resolution)
+> For complete template variable syntax, resolution rules, and examples, see [Template Variable Resolution](../core-concepts/shared-store.md#template-variable-resolution)
 
 **Quick Reference:**
 - Template syntax: `$variable` → `shared["variable"]` at runtime
@@ -278,7 +278,7 @@ When input is piped via stdin:
 
 The planner operates in two modes with enhanced capabilities for template-driven workflows.
 
-> See [Planner Specification](./planner.md) for complete details
+> See [Planner Specification](../features/planner.md) for complete details
 
 **CLI Pipe Path (MVP Priority):**
 1. Parse CLI syntax and detect template variables
@@ -338,7 +338,7 @@ The planner operates in two modes with enhanced capabilities for template-driven
 All nodes inherit from `pocketflow.Node`:
 
 ```python
-For a complete example of node implementation including the LLMNode, see [Node Implementation Examples](node-reference.md#common-node-templates).
+For a complete example of node implementation including the LLMNode, see [Node Implementation Examples](../reference/node-reference.md#common-node-templates).
 ```
 
 #### 5.3.2 Node Metadata
@@ -388,11 +388,11 @@ Extracted from docstrings and stored as JSON:
 
 ### 5.4 Execution Engine
 
-For detailed execution engine implementation, including execution flow and runtime integration, see [Execution Reference](execution-reference.md).
+For detailed execution engine implementation, including execution flow and runtime integration, see [Execution Reference](../reference/execution-reference.md).
 
 ## 6. Data Flow & State Management
 
-> For detailed CLI integration and runtime behavior, see [CLI Runtime Specification](./cli-runtime.md)
+> For detailed CLI integration and runtime behavior, see [CLI Runtime Specification](../features/cli-runtime.md)
 
 ### 6.1 Shared Store Lifecycle
 
@@ -513,7 +513,7 @@ Foundation for dynamic suggestions:
 
 ### 9.1 Caching Strategy
 
-For detailed caching implementation including cache key computation and eligibility rules, see [Caching and Safety](runtime.md#caching-strategy).
+For detailed caching implementation including cache key computation and eligibility rules, see [Caching and Safety](../core-concepts/runtime.md#caching-strategy).
 
 ### 9.2 Performance Targets (MVP)
 

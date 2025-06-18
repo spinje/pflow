@@ -6,7 +6,7 @@ Define how **CLI arguments**, **IR mappings**, and the **flow-scoped shared stor
 
 This specification details the implementation using the **pocketflow framework** and shows how generated flow code integrates with static node classes using an optional proxy layer for complex routing scenarios.
 
-> **For conceptual understanding and architectural rationale**, see [Shared Store + Proxy Design Pattern](./shared-store.md)
+> **For conceptual understanding and architectural rationale**, see [Shared Store + Proxy Design Pattern](../core-concepts/shared-store.md)
 
 ---
 
@@ -19,7 +19,7 @@ Our pattern leverages the lightweight **pocketflow framework** (100 lines of Pyt
 - **Flow orchestration**: Use `>>` operator and `Flow` class for wiring
 - **No modifications**: Pure pattern implementation using existing framework APIs
 
-> **See also**: [pocketflow framework](../pocketflow/__init__.py) and [communication patterns](../pocketflow/docs/core_abstraction/communication.md)
+> **See also**: [pocketflow framework](../../pocketflow/__init__.py) and [communication patterns](../../pocketflow/docs/core_abstraction/communication.md)
 
 **Framework vs Pattern**:
 
@@ -30,7 +30,7 @@ Our pattern leverages the lightweight **pocketflow framework** (100 lines of Pyt
 
 ### 3 · Proxy-Based Mapping Architecture
 
-The **NodeAwareSharedStore** proxy enables simple node code while supporting complex flow routing, as described in the [shared store pattern](./shared-store.md#proxy-pattern):
+The **NodeAwareSharedStore** proxy enables simple node code while supporting complex flow routing, as described in the [shared store pattern](../core-concepts/shared-store.md#proxy-pattern):
 
 - **Direct Access**: When no mappings defined, nodes access shared store directly (zero overhead)
 - **Proxy Mapping**: When IR defines mappings, proxy transparently handles key translation
@@ -159,7 +159,7 @@ The node uses natural interface names while the proxy handles any necessary tran
 ### 6 · Canonical IR fragment
 
 
-> **IR Example**: See [Schemas](schemas.md#complete-example-flow) for complete IR structure examples
+> **IR Example**: See [Schemas](../core-concepts/schemas.md#complete-example-flow) for complete IR structure examples
 
 Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
@@ -167,7 +167,7 @@ Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
 ### 7 · Execution pipeline & CLI resolution
 
-> **Complete Details**: See [CLI Reference](cli-reference.md#flag-resolution) for flag resolution algorithm and [Execution Reference](execution-reference.md#execution-flow) for complete pipeline
+> **Complete Details**: See [CLI Reference](../reference/cli-reference.md#flag-resolution) for flag resolution algorithm and [Execution Reference](../reference/execution-reference.md#execution-flow) for complete pipeline
 
 ---
 
@@ -186,7 +186,7 @@ Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
 #### 9.1 Simple Scenario (No Mappings)
 
-**IR Definition** (following [IR schema](./schemas.md#intermediate-representation-ir)):
+**IR Definition** (following [IR schema](../core-concepts/schemas.md#intermediate-representation-ir)):
 
 ```json
 {
@@ -654,15 +654,15 @@ shared = {
 ## See Also
 
 - **Core Patterns**:
-  - [Shared Store + Proxy Pattern](./shared-store.md) - Core data flow and proxy concepts
+  - [Shared Store + Proxy Pattern](../core-concepts/shared-store.md) - Core data flow and proxy concepts
   - [Shell Pipes](./shell-pipes.md) - Unix pipe integration and stdin handling
 - **Planning & Execution**:
   - [Planner](./planner.md) - How IR is generated from CLI or natural language
-  - [Runtime](./runtime.md) - Execution engine details and caching
+  - [Runtime](../core-concepts/runtime.md) - Execution engine details and caching
 - **Node System**:
   - [Simple Nodes](./simple-nodes.md) - Node design philosophy
-  - [Node Metadata Schema](./schemas.md#node-metadata-schema) - Interface specifications
-  - [Registry System](./registry.md) - Node discovery and management
+  - [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - Interface specifications
+  - [Registry System](../core-concepts/registry.md) - Node discovery and management
 - **Future Features**:
   - [CLI Autocomplete](./autocomplete.md) - Context-aware completion (v2.0)
   - [MCP Integration](./mcp-integration.md) - Remote node support (v2.0)

@@ -3,10 +3,10 @@
 ## Navigation
 
 **Related Documents:**
-- **Architecture**: [PRD](./prd.md) | [Architecture](./architecture.md)
-- **Patterns**: [Shared Store](./shared-store.md) | [Simple Nodes](./simple-nodes.md)
-- **Components**: [Component Inventory](./components.md) | [Planner](./planner.md) | [Runtime](./runtime.md)
-- **Implementation**: [PocketFlow Integration](./pflow-pocketflow-integration-guide.md)
+- **Architecture**: [PRD](../prd.md) | [Architecture](../architecture/architecture.md)
+- **Patterns**: [Shared Store](../core-concepts/shared-store.md) | [Simple Nodes](./simple-nodes.md)
+- **Components**: [Component Inventory](../architecture/components.md) | [Planner](./planner.md) | [Runtime](../core-concepts/runtime.md)
+- **Implementation**: [PocketFlow Integration](../architecture/pflow-pocketflow-integration-guide.md)
 
 ## 🎯 Core Vision
 

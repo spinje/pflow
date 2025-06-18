@@ -7,10 +7,10 @@
 ## Navigation
 
 **Related Documents:**
-- **Patterns**: [Shared Store](./shared-store.md) | [Template Variables](./shared-store.md#template-variable-resolution)
-- **Architecture**: [Architecture](./architecture.md) | [PRD](./prd.md)
-- **Components**: [Runtime](./runtime.md) | [Registry](./registry.md) | [Schemas](./schemas.md)
-- **Implementation**: [CLI Runtime](./cli-runtime.md) | [Components](./components.md)
+- **Patterns**: [Shared Store](../core-concepts/shared-store.md) | [Template Variables](../core-concepts/shared-store.md#template-variable-resolution)
+- **Architecture**: [Architecture](../architecture/architecture.md) | [PRD](../prd.md)
+- **Components**: [Runtime](../core-concepts/runtime.md) | [Registry](../core-concepts/registry.md) | [Schemas](../core-concepts/schemas.md)
+- **Implementation**: [CLI Runtime](./cli-runtime.md) | [Components](../architecture/components.md)
 
 ---
 
@@ -23,7 +23,7 @@ The **planner** serves as the central validation and IR generation engine for pf
 
 Its primary goal is to ensure all flows (whether AI-generated or user-written) produce *validated, deterministic JSON IR* ready for execution **without sacrificing** pflow's guarantees of auditability, purity, caching, and reproducibility.
 
-The planner integrates seamlessly with the **shared store pattern**, generating flows that use simple, single-purpose nodes with natural interfaces and optional proxy mappings for complex orchestration scenarios. See [Shared Store Pattern](./shared-store.md) for complete details.
+The planner integrates seamlessly with the **shared store pattern**, generating flows that use simple, single-purpose nodes with natural interfaces and optional proxy mappings for complex orchestration scenarios. See [Shared Store Pattern](../core-concepts/shared-store.md) for complete details.
 
 ---
 
@@ -104,9 +104,9 @@ The planner operates through a **validation-first approach**, performing linting
 | Stage | Responsibility | Outcome |
 |---|---|---|
 | **A. Syntax Parsing** | Parse CLI pipe syntax and **detect template variables**. | Node sequence + parameter extraction + **template analysis**. |
-| **B. Template Variable Analysis** | **Identify and validate template variable patterns and dependencies.** See [Template Variables](./shared-store.md#template-variable-resolution). | **Template variable dependency graph and resolution order.** |
+| **B. Template Variable Analysis** | **Identify and validate template variable patterns and dependencies.** See [Template Variables](../core-concepts/shared-store.md#template-variable-resolution). | **Template variable dependency graph and resolution order.** |
 | **C. Node Validation** | Verify all referenced nodes exist in registry. | Pass → continue, Fail → abort with suggestions. |
-| **D. Template String Resolution** | **Resolve template strings for all node inputs, ensuring $variables map to available shared store values.** See [Template Variable Resolution](./shared-store.md#template-variable-resolution). | **Fully populated node input templates with validated dependencies.** |
+| **D. Template String Resolution** | **Resolve template strings for all node inputs, ensuring $variables map to available shared store values.** See [Template Variable Resolution](../core-concepts/shared-store.md#template-variable-resolution). | **Fully populated node input templates with validated dependencies.** |
 | **E. Structural Validation** | Lint action paths, reachability, parameter compatibility, **template resolution order**. | Pass → continue, Fail → abort with diagnostics. |
 | **F. Shared Store Modeling** | Analyze node interfaces, create shared store schema, **template variable tracking**. | Compatible shared store interface with **template support**. |
 | **G. Mapping Generation** | Detect interface mismatches, generate mappings, **template variable mappings**. | Optional mappings for node compatibility + **template resolution**. |
@@ -213,7 +213,7 @@ class YTTranscriptNode(Node):
 }
 ```
 
-For complete metadata format and validation rules, see [Schemas](./schemas.md).
+For complete metadata format and validation rules, see [Schemas](../core-concepts/schemas.md).
 
 ### 5.3 Flow Metadata Schema
 
@@ -229,7 +229,7 @@ For complete metadata format and validation rules, see [Schemas](./schemas.md).
 }
 ```
 
-For complete flow metadata schema definitions, see [Schemas](./schemas.md).
+For complete flow metadata schema definitions, see [Schemas](../core-concepts/schemas.md).
 
 ### 5.4 Registry Management
 
@@ -275,7 +275,7 @@ This is the issue: $issue"
 **Variable Flow Management:**
 - **Dependency Resolution**: `$issue` → `shared["issue"]` from github-get-issue output
 - **Multi-Consumer Variables**: `$code_report` used by both llm and github-create-pr nodes
-- **Runtime Substitution**: Template strings resolved to actual values during execution. See [Template Variable Resolution](./shared-store.md#template-variable-resolution)
+- **Runtime Substitution**: Template strings resolved to actual values during execution. See [Template Variable Resolution](../core-concepts/shared-store.md#template-variable-resolution)
 - **Validation**: Ensure all $variables have corresponding sources in the workflow
 
 **Discovery Enhancement:**
@@ -563,14 +563,14 @@ elif user_intent == "technical_summary":
 
 ### 10.1 Template-Driven JSON IR Schema
 
-The planner generates JSON IR with template variable support. For complete IR schema definition and validation rules, see [Schemas](schemas.md#document-envelope-flow-ir).
+The planner generates JSON IR with template variable support. For complete IR schema definition and validation rules, see [Schemas](../core-concepts/schemas.md#document-envelope-flow-ir).
 
 **Template-Specific Features**:
 - `input_templates`: Node inputs with `$variable` placeholders
 - `template_dependencies`: Variables required for resolution
 - `variable_resolution`: Maps variables to node outputs
 
-For a complete example of template-driven IR, see the GitHub issue workflow in [Workflow Analysis](workflow-analysis.md).
+For a complete example of template-driven IR, see the GitHub issue workflow in [Workflow Analysis](./workflow-analysis.md).
 ```
 
 ### 10.2 Compiler Integration
@@ -766,7 +766,7 @@ expects 'text'.
 
 ---
 
-> **Caching Details**: See [Runtime](runtime.md#caching-strategy) for node-level caching implementation and [Execution Reference](execution-reference.md#performance-considerations) for performance optimizations
+> **Caching Details**: See [Runtime](../core-concepts/runtime.md#caching-strategy) for node-level caching implementation and [Execution Reference](../reference/execution-reference.md#performance-considerations) for performance optimizations
 
 ---
 
@@ -961,10 +961,10 @@ expects 'text'.
 
 ## See Also
 
-- **Patterns**: [Shared Store + Proxy Pattern](./shared-store.md) - Core communication mechanism
-- **Schemas**: [JSON IR & Metadata Schemas](./schemas.md) - Schema definitions and validation
-- **Runtime**: [Runtime Behavior](./runtime.md) - Execution engine that consumes planner output
-- **Registry**: [Registry System](./registry.md) - Node discovery and metadata extraction
+- **Patterns**: [Shared Store + Proxy Pattern](../core-concepts/shared-store.md) - Core communication mechanism
+- **Schemas**: [JSON IR & Metadata Schemas](../core-concepts/schemas.md) - Schema definitions and validation
+- **Runtime**: [Runtime Behavior](../core-concepts/runtime.md) - Execution engine that consumes planner output
+- **Registry**: [Registry System](../core-concepts/registry.md) - Node discovery and metadata extraction
 
 ---
 

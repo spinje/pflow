@@ -2,7 +2,7 @@
 
 > **Version**: MVP
 > **MVP Status**: ✅ Included
-> For complete MVP boundaries, see [MVP Scope](./mvp-scope.md)
+> For complete MVP boundaries, see [MVP Scope](../features/mvp-scope.md)
 
 ---
 
@@ -136,7 +136,7 @@ Copies to `~/.pflow/nodes/<namespace>/<name>/<version>/` and triggers metadata e
 - Version compatibility validation
 - Natural language → node mapping
 
-> **See also**: [MCP Server Integration](./mcp-server-integrationa-and-security-model.md) for MCP wrapper node installation
+> **See also**: [MCP Server Integration](../features/mcp-integration.md) for MCP wrapper node installation
 
 ### 4.3 Metadata Generation for Planner
 
@@ -414,9 +414,9 @@ Execution: Runs with proven version combination
 
 ## See Also
 
-- **Architecture**: [MVP Scope](./mvp-scope.md) - Clear boundaries for MVP registry features
-- **Patterns**: [Simple Nodes](./simple-nodes.md) - Node design philosophy and naming conventions
+- **Architecture**: [MVP Scope](../features/mvp-scope.md) - Clear boundaries for MVP registry features
+- **Patterns**: [Simple Nodes](../features/simple-nodes.md) - Node design philosophy and naming conventions
 - **Components**: [JSON Schemas](./schemas.md) - How registry metadata integrates with IR schemas
-- **Components**: [Planner](./planner.md) - How planner uses registry for node discovery
-- **Implementation**: [Metadata Extraction](./implementation-details/metadata-extraction.md) - Node metadata extraction process
-- **Future Features**: [MCP Integration](./mcp-integration.md) - How MCP nodes integrate with registry (v2.0)
+- **Components**: [Planner](../features/planner.md) - How planner uses registry for node discovery
+- **Implementation**: [Metadata Extraction](../implementation-details/metadata-extraction.md) - Node metadata extraction process
+- **Future Features**: [MCP Integration](../features/mcp-integration.md) - How MCP nodes integrate with registry (v2.0)
