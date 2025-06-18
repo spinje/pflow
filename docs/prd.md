@@ -363,7 +363,7 @@ The planner provides comprehensive natural language understanding to transform u
 
 ### 4.3 CLI Pipe Path (Validation Planning)
 
-Direct CLI syntax bypasses LLM planning for immediate execution. For complete CLI syntax and resolution details, see [CLI Reference](cli-reference.md).
+Direct CLI syntax bypasses LLM planning for immediate execution. For complete CLI syntax and resolution details, see [CLI Reference](./reference/cli-reference.md).
 
 **Example CLI Processing:**
 
@@ -841,7 +841,7 @@ pflow's **Intermediate Representation (IR)** is a complete JSON specification th
 
 ### 5.5 Validation Pipeline
 
-The IR undergoes comprehensive validation before execution. For detailed validation stages and requirements, see [Execution Reference](execution-reference.md#validation-pipeline) and [Schemas](schemas.md#schema-validation-requirements).
+The IR undergoes comprehensive validation before execution. For detailed validation stages and requirements, see [Execution Reference](./reference/execution-reference.md#validation-pipeline) and [Schemas](schemas.md#schema-validation-requirements).
 
 ### 5.6 Lockfile Generation
 
@@ -973,7 +973,7 @@ cache_store(cache_key, {
 - **Exponential backoff**: Optional via `wait` parameter
 - **Failure logging**: Complete retry history in trace
 
-For detailed retry implementation and patterns, see [Execution Reference](execution-reference.md#retry-mechanisms).
+For detailed retry implementation and patterns, see [Execution Reference](./reference/execution-reference.md#retry-mechanisms).
 
 ### 6.4 Failure Semantics
 

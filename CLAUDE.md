@@ -177,6 +177,14 @@ pflow/
 - Create `CLAUDE.md` files in each directory
 - Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/` directory.
 
+### Documentation Navigation
+
+**For detailed implementation guidance and documentation navigation**, see `docs/CLAUDE.md`. This file provides:
+- Implementation order with pocketflow prerequisites
+- Feature-to-pattern mapping
+- Critical warnings for AI implementation
+- Navigation patterns for finding information
+
 ### Documentation Resources
 
 **Extensive Markdown Documentation** should be leveraged by Claude:
