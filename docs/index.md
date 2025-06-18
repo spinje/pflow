@@ -1,6 +1,8 @@
 # pflow Documentation Inventory for AI Agents
 
-> **Purpose**: This document provides a comprehensive file-by-file inventory of all pflow documentation.
+> **Purpose**: This document (`docs/index.md`) provides a comprehensive file-by-file inventory of all `pflow` documentation.
+
+> **Other documentation**: Note that the documentation for `pocketflow` is in the `pocketflow/docs` folder. For a complete understanding of the foundation `pflow` should be built on, reading the relevant documentation for `pocketflow` is strongly recommended.
 
 ## How to Use This Inventory
 
@@ -11,9 +13,11 @@ This inventory describes **what's inside each documentation file** to help AI ag
 - **When to Use**: Specific scenarios requiring this document
 - **Status**: MVP/v2.0/v3.0 indicator where applicable
 
+> If you are an AI agent, you can use this inventory to see what documentation is available and use that to determine what to read next. Remember, only read the documentation that is relevant to the task at hand to not overwhelm yourself and your context window.
+
 ## Root Documentation Files
 
-### prd.md
+### [prd.md](./prd.md)
 **Purpose**: Master Product Requirements Document defining pflow's complete vision, architecture, and success criteria.
 
 **Key Contents**:
@@ -35,7 +39,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### CLAUDE.md
+### [CLAUDE.md](./CLAUDE.md)
 **Purpose**: Primary navigation guide for AI assistants implementing pflow, with phased implementation order and prerequisites.
 
 **Key Contents**:
@@ -63,7 +67,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ## Architecture Directory (`/architecture/`)
 
-### architecture.md
+### [architecture.md](./architecture/architecture.md)
 **Purpose**: Technical architecture document defining the complete system design for pflow v0.1 MVP.
 
 **Key Contents**:
@@ -86,7 +90,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### components.md
+### [components.md](./architecture/components.md)
 **Purpose**: Comprehensive inventory distinguishing MVP (v0.1) components from v2.0 features with implementation checklist.
 
 **Key Contents**:
@@ -109,7 +113,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### pflow-pocketflow-integration-guide.md
+### [pflow-pocketflow-integration-guide.md](./architecture/pflow-pocketflow-integration-guide.md)
 **Purpose**: Critical implementation insights preventing common mistakes when integrating with pocketflow.
 
 **Key Contents**:
@@ -133,7 +137,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ## Core Concepts Directory (`/core-concepts/`)
 
-### shared-store.md
+### [shared-store.md](./core-concepts/shared-store.md)
 **Purpose**: Defines the core architectural pattern for node communication - shared store with optional proxy layer.
 
 **Key Contents**:
@@ -156,7 +160,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### schemas.md
+### [schemas.md](./core-concepts/schemas.md)
 **Purpose**: JSON schema governance for Flow IR and Node Metadata artifacts.
 
 **Key Contents**:
@@ -179,7 +183,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### registry.md
+### [registry.md](./core-concepts/registry.md)
 **Purpose**: Defines node discovery, versioning, namespacing, and resolution systems.
 
 **Key Contents**:
@@ -202,7 +206,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### runtime.md
+### [runtime.md](./core-concepts/runtime.md)
 **Purpose**: Defines caching strategy and node safety model with `@flow_safe` decorator.
 
 **Key Contents**:
@@ -225,7 +229,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ## Features Directory (`/features/`)
 
-### mvp-scope.md
+### [mvp-scope.md](./features/mvp-scope.md)
 **Purpose**: Defines focused MVP scope for AI-assisted development workflow compiler with clear boundaries.
 
 **Key Contents**:
@@ -248,7 +252,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### simple-nodes.md
+### [simple-nodes.md](./features/simple-nodes.md)
 **Purpose**: Defines simple, single-purpose node architecture reducing cognitive load with clear interfaces.
 
 **Key Contents**:
@@ -271,7 +275,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### planner.md
+### [planner.md](./features/planner.md)
 **Purpose**: Central validation and IR generation engine for both natural language and CLI inputs.
 
 **Key Contents**:
@@ -294,7 +298,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### cli-runtime.md
+### [cli-runtime.md](./features/cli-runtime.md)
 **Purpose**: Specifies CLI arguments, IR mappings, and shared store interaction for single-flag user model.
 
 **Key Contents**:
@@ -317,7 +321,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### shell-pipes.md
+### [shell-pipes.md](./features/shell-pipes.md)
 **Purpose**: Native Unix shell pipe integration for seamless command-line workflows.
 
 **Key Contents**:
@@ -339,7 +343,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### workflow-analysis.md
+### [workflow-analysis.md](./features/workflow-analysis.md)
 **Purpose**: Technical analysis comparing inefficient AI slash commands with deterministic workflows.
 
 **Key Contents**:
@@ -362,7 +366,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### autocomplete.md
+### [autocomplete.md](./features/autocomplete.md)
 **Purpose**: CLI autocomplete specification for enhanced usability (deferred feature).
 
 **Key Contents**:
@@ -384,7 +388,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### mcp-integration.md
+### [mcp-integration.md](./features/mcp-integration.md)
 **Purpose**: Specification for integrating Model Context Protocol servers as native nodes.
 
 **Key Contents**:
@@ -407,7 +411,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ## Reference Directory (`/reference/`)
 
-### cli-reference.md
+### [cli-reference.md](./reference/cli-reference.md)
 **Purpose**: Authoritative CLI interface reference with syntax, operators, and composition.
 
 **Key Contents**:
@@ -430,7 +434,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### execution-reference.md
+### [execution-reference.md](./reference/execution-reference.md)
 **Purpose**: Authoritative execution model and runtime behavior reference.
 
 **Key Contents**:
@@ -453,7 +457,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### node-reference.md
+### [node-reference.md](./reference/node-reference.md)
 **Purpose**: Common patterns and best practices for node implementation consistency.
 
 **Key Contents**:
@@ -476,7 +480,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ## Core Node Packages Directory (`/core-node-packages/`)
 
-### github-nodes.md
+### [github-nodes.md](./core-node-packages/github-nodes.md)
 **Purpose**: GitHub API operations through simple, single-purpose nodes.
 
 **Key Contents**:
@@ -498,7 +502,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### claude-nodes.md
+### [claude-nodes.md](./core-node-packages/claude-nodes.md)
 **Purpose**: Claude Code super node - intentional exception providing comprehensive AI development.
 
 **Key Contents**:
@@ -521,7 +525,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### ci-nodes.md
+### [ci-nodes.md](./core-node-packages/ci-nodes.md)
 **Purpose**: Continuous integration operations through simple, single-purpose nodes.
 
 **Key Contents**:
@@ -543,7 +547,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### llm-nodes.md
+### [llm-nodes.md](./core-node-packages/llm-nodes.md)
 **Purpose**: General-purpose LLM node - smart exception handling all text processing.
 
 **Key Contents**:
@@ -566,7 +570,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ## Implementation Details Directory (`/implementation-details/`)
 
-### metadata-extraction.md
+### [metadata-extraction.md](./implementation-details/metadata-extraction.md)
 **Purpose**: Infrastructure for extracting structured metadata from node docstrings.
 
 **Key Contents**:
@@ -589,7 +593,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### autocomplete-impl.md
+### [autocomplete-impl.md](./implementation-details/autocomplete-impl.md)
 **Purpose**: Implementation details for CLI autocomplete feature.
 
 **Key Contents**:
@@ -612,7 +616,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ## Future Version Directory (`/future-version/`)
 
-### json-extraction.md
+### [json-extraction.md](./future-version/json-extraction.md)
 **Purpose**: v3.0 feature for automatic JSON field extraction (with critical concerns).
 
 **Key Contents**:
@@ -634,7 +638,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### llm-node-gen.md
+### [llm-node-gen.md](./future-version/llm-node-gen.md)
 **Purpose**: v3.0 capability for LLM-assisted node development enhancing productivity.
 
 **Key Contents**:
@@ -657,11 +661,11 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ## Navigation Tips for AI Agents
 
-1. **Starting Implementation**: Read prd.md → CLAUDE.md → architecture.md
-2. **Building Components**: Check components.md for MVP scope → relevant feature/reference docs
-3. **Common Mistakes**: Always read pflow-pocketflow-integration-guide.md first
-4. **Node Development**: simple-nodes.md → node-reference.md → specific package docs
-5. **Understanding Patterns**: shared-store.md is most referenced and central to architecture
+1. **Starting Implementation**: Read [prd.md](./prd.md) → [CLAUDE.md](./CLAUDE.md) → [architecture.md](./architecture/architecture.md)
+2. **Building Components**: Check [components.md](./architecture/components.md) for MVP scope → relevant feature/reference docs
+3. **Common Mistakes**: Always read [pflow-pocketflow-integration-guide.md](./architecture/pflow-pocketflow-integration-guide.md) first
+4. **Node Development**: [simple-nodes.md](./features/simple-nodes.md) → [node-reference.md](./reference/node-reference.md) → specific package docs
+5. **Understanding Patterns**: [shared-store.md](./core-concepts/shared-store.md) is most referenced and central to architecture
 
 ## Document Status Legend
 
