@@ -169,7 +169,7 @@ pflow/
 - **Why Now**: Why implement this step?
 - **Documentation**: What documentation and existing code do I need to read to understand the problem space fully?
 
-**Development Standards**:
+**Development Standards and process**:
 - Start small, build minimal components
 - Test everything that makes sense to test
 - Document decisions and tradeoffs
@@ -189,42 +189,18 @@ pflow/
 
 **Extensive Markdown Documentation** should be leveraged by Claude:
 
-**Project Documentation** (always read relevant docs before coding):
+> Always read relevant docs before coding!
 
-**Core Architecture**:
-- `docs/prd.md`: Master product requirements and complete architectural vision
-- `docs/architecture.md`: MVP-focused architecture document
-- `docs/mvp-scope.md`: Clear MVP boundaries - what to build vs. exclude
+### Pflow Project Documentation
 
-**Core Patterns**:
-- `docs/shared-store.md`: Fundamental shared store + proxy pattern
-- `docs/cli-runtime.md`: CLI integration and shared store management
-- `docs/schemas.md`: JSON IR and metadata schemas
-
-**Implementation Specs**:
-- `docs/planner.md`: Dual-mode planner (CLI + natural language)
-- `docs/runtime.md`: Execution engine, caching, error handling
-- `docs/registry.md`: Registry system and version management
-- `docs/components.md`: Complete MVP vs v2.0 component breakdown
-
-**Node Packages** (Two-Tier AI Architecture):
-- `docs/core-node-packages/claude-nodes.md`: - Claude Code CLI nodes for development tasks (claude-analyze, claude-implement, claude-review)
-- `docs/core-node-packages/llm-nodes.md`: - General LLM node for text processing and prompt generation
-- `docs/core-node-packages/github-nodes.md`: GitHub platform nodes (github-get-issue, github-create-pr, etc.)
-- `docs/core-node-packages/ci-nodes.md`: CI platform nodes (ci-run-tests, ci-get-status, etc.)
-- `docs/implementation-details/metadata-extraction.md`: Metadata extraction system
-
-**Shell Integration**:
-- `docs/shell-pipes.md`: Unix pipe support and stdin handling
-- `docs/workflow-analysis.md`: Technical analysis of AI workflow inefficiencies and detailed breakdown of the `project:fix-github-issue` slash command to pflow vision.
-
-**Future Features**:
-- `docs/autocomplete.md`: CLI autocomplete specification (v2.0)
-- `docs/implementation-details/autocomplete-impl.md`: Detailed CLI autocomplete implementation (v2.0)
-- `docs/mcp-integration.md`: MCP server integration (v2.0)
-- `docs/future-version/llm-node-gen.md`: LLM-assisted node development (v3.0)
-- `docs/future-version/json-extraction.md`: Advanced JSON field extraction (v3.0)
-
+**Pflow Project Documentation**:
+- `docs/CLAUDE.md`: This file
+- `docs/index.md`: Comprehensive file-by-file inventory of all pflow documentation
+- `docs/features/`: Detailed documentation by feature
+- `docs/core-concepts/`: Core concepts and patterns
+- `docs/reference/`: CLI syntax and execution reference
+- `docs/implementation-details/`: Implementation specifics
+- `docs/future-version/`: Future features
 
 **PocketFlow Documentation**:
 - `pocketflow/CLAUDE.md`: Complete reference for available documentation and cookbook examples
@@ -234,16 +210,20 @@ pflow/
 - `pocketflow/cookbook/`: Examples and tutorials for custom nodes and flows
 
 **PocketFlow Core Components**:
-- **Node**: Basic building block with `prep()`, `exec()`, `post()` lifecycle
-- **Flow**: Orchestrator connecting nodes using action strings for transitions
-- **Shared Store**: In-memory dictionary for inter-node communication
+- **Node**: Basic building block with `prep()`, `exec()`, `post()` lifecycle (see `pocketflow/docs/core_abstraction/node.md`)
+- **Flow**: Orchestrator connecting nodes using action strings for transitions (see `pocketflow/docs/core_abstraction/flow.md`)
+- **Shared Store**: In-memory dictionary for inter-node communication (see `pocketflow/docs/core_abstraction/communication.md`)
 - **Batch**: Components for data-intensive tasks (BatchNode, BatchFlow)
 - **Async & Parallel**: Advanced components (excluded from MVP)
+
+Always read the documentation in `pocketflow/docs` and relevant examples in `pocketflow/cookbook` when needed for any task that requires using the pocketflow framework.
+
+*All documentation follows a single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
 
 ### Current State
 
 The codebase is in early development with:
-- ✅ PocketFlow framework added to the codebase
+- ✅ PocketFlow framework added to the codebase inlcuding `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
 - ✅ Create an overview roadmap for the MVP in `todo/implementation-roadmap.md`
@@ -314,7 +294,13 @@ github-create-pr --title="Fix: $issue_title" --body="$code_report"
 
 But first, we need to create a detailed task list for the MVP.
 
-## User Decisions during this process
+## User Decisions
 
 Every time you need the user to make a decision, you should:
-Create a `scratchpads/critical-user-decisions.md` file and write down the decision and the reasoning. Give at least 2 options with clear recommendations. Add a markdown checkbox for each option so the user can select the option they prefer easily.
+1. Create a new markdown file in the folder `scratchpads/critical-user-decisions/` and write down the details about the decision and the reasoning why it is needed.
+2. Give at least 2 options with clear recommendations.
+3. Add a markdown checkbox for each option so the user can select the option they prefer easily.
+
+> Important: Do not proceed to implementation until the user has made a decision and you have a clear understanding of the decision and its implications.
+
+**Remember** You are an AI agent and you *are not able to make decisions for the user*. You are only able to provide information and recommendations. The user is the one who makes the final decision if anything is unclear or ambigous in the documentation.

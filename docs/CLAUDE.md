@@ -1,18 +1,18 @@
 # pflow Documentation Guide for AI Assistants
 
-> **Purpose**: This guide helps AI assistants navigate pflow documentation and understand the implementation order. For detailed file descriptions, see [index.md](./index.md).
+> **Purpose**: This guide helps AI assistants navigate pflow documentation and understand where to find information about key concepts. For detailed file descriptions to discover specific information, see [index.md](./index.md).
 
 ## Quick Start for Implementation
 
-1. **Read Foundation** (5 mins):
+1. **Read Foundation**:
    - `pocketflow/__init__.py` - The entire 100-line framework
    - Understanding this file is **mandatory** before any implementation
 
-2. **Read Integration Guide** (10 mins):
+2. **Read Integration Guide**:
    - `docs/architecture/pflow-pocketflow-integration-guide.md` - Critical insights
    - This prevents common mistakes and clarifies the pflow-pocketflow relationship
 
-3. **Follow Implementation Order** below
+3. **See Implementation Examples** below for example of where to find information about key concepts for different features.
 
 ## Repository Structure for Implementation
 
@@ -40,98 +40,6 @@ pflow/
 ├── CLAUDE.md              # Root-level AI guidance
 └── pyproject.toml         # Dependencies and configuration
 ```
-
-## Implementation Order & Prerequisites Examples
-
-This is a suggested implementation order with examples on how to think when considering documentation to read before implementing or extending a feature. For a more detailed implementation order with a complete list of tasks, see `todo/tasks.json`.
-
-### Phase 1: Foundation Components
-
-#### 1.1 Shared Store Extensions
-- **Prerequisites**:
-  - `pocketflow/__init__.py` - Understand the base SharedStore class
-  - `pocketflow/docs/core_abstraction/communication.md` - Communication patterns
-- **pflow Specifications**:
-  - `docs/core-concepts/shared-store.md` - Natural interfaces and proxy pattern
-  - `docs/reference/execution-reference.md` - Runtime behavior
-- **Key Examples**:
-  - `pocketflow/cookbook/basic/01_hello_world.py` - Basic shared store usage
-  - `pocketflow/cookbook/advanced/flow_in_flow.py` - Nested contexts
-- **Implementation Note**: Extend pocketflow's SharedStore, don't replace it
-
-#### 1.2 Basic Node System
-- **Prerequisites**:
-  - `pocketflow/docs/core_abstraction/computation.md` - Node lifecycle
-  - `pocketflow/docs/guide.md` - Agentic coding patterns
-- **pflow Specifications**:
-  - `docs/reference/node-reference.md` - Complete implementation guide
-  - `docs/features/simple-nodes.md` - Design philosophy
-- **Key Examples**:
-  - `pocketflow/cookbook/basic/03_share_data.py` - Data sharing patterns
-  - `pocketflow/cookbook/building_blocks/custom_node.py` - Custom node creation
-
-### Phase 2: CLI & Parser
-
-#### 2.1 CLI Command Structure
-- **Prerequisites**:
-  - Understanding of Click framework (see pyproject.toml)
-  - `pocketflow/cookbook/basic/02_chain_flow.py` - Flow chaining
-- **pflow Specifications**:
-  - `docs/reference/cli-reference.md` - Complete syntax specification
-  - `docs/features/cli-runtime.md` - Runtime integration
-- **Implementation Note**: CLI should parse to pocketflow Flow objects
-
-#### 2.2 Pipe Syntax Parser
-- **Prerequisites**:
-  - `pocketflow/docs/core_abstraction/orchestration.md` - Flow patterns
-- **pflow Specifications**:
-  - `docs/features/shell-pipes.md` - Unix pipe integration
-  - `docs/core-concepts/schemas.md` - JSON IR format
-- **Key Pattern**: Transform CLI syntax → JSON IR → pocketflow Flow
-
-### Phase 3: Registry & Discovery
-
-#### 3.1 Node Registry
-- **Prerequisites**:
-  - `pocketflow/cookbook/building_blocks/` - Various node patterns
-- **pflow Specifications**:
-  - `docs/core-concepts/registry.md` - Discovery and versioning
-  - `docs/implementation-details/metadata-extraction.md` - Metadata system
-- **Implementation Note**: Registry wraps pocketflow nodes with metadata
-
-### Phase 4: Core Nodes (Week 4)
-
-#### 4.1 Platform Nodes
-- **Prerequisites**:
-  - All Phase 1-3 components working
-  - `pocketflow/cookbook/llm_powered/` - LLM integration patterns
-- **pflow Specifications**:
-  - `docs/core-node-packages/llm-nodes.md` - Text processing
-  - `docs/core-node-packages/github-nodes.md` - GitHub integration
-  - `docs/core-node-packages/claude-nodes.md` - Claude CLI wrapper
-  - `docs/core-node-packages/ci-nodes.md` - CI/CD integration
-
-### Phase 5: Planner
-
-#### 5.1 Natural Language Compilation
-- **Prerequisites**:
-  - `pocketflow/docs/design_pattern/agent.md` - Agent patterns
-  - `pocketflow/cookbook/llm_powered/03_llm_agent.py` - LLM agent example
-- **pflow Specifications**:
-  - `docs/features/planner.md` - Dual-mode planner
-  - `docs/features/workflow-analysis.md` - Use case analysis
-
-## Feature-to-Pattern Mapping
-
-| pflow Feature | pocketflow Foundation | Key Pattern | Example |
-|--------------|---------------------|-------------|---------|
-| Shared Store | `SharedStore` class | Extend with natural keys | `pocketflow/cookbook/basic/03_share_data.py` |
-| Simple Nodes | `Node` class | Single-purpose wrapper | `pocketflow/cookbook/building_blocks/custom_node.py` |
-| Flow Execution | `Flow` class | Direct usage | `pocketflow/cookbook/basic/02_chain_flow.py` |
-| CLI Parsing | - | Parse to Flow objects | Create new |
-| Node Registry | - | Metadata wrapper | Create new |
-| Planner | Agent pattern | LLM-powered planning | `pocketflow/cookbook/llm_powered/03_llm_agent.py` |
-| Batch Processing | `BatchNode/BatchFlow` | Direct usage | `pocketflow/cookbook/advanced/batch.py` |
 
 ## Critical Warnings for AI Implementation
 
@@ -205,3 +113,5 @@ This is a suggested implementation order with examples on how to think when cons
 For detailed documentation about each file's contents and purpose, see [index.md](./index.md).
 
 For the complete pocketflow documentation inventory, see `pocketflow/CLAUDE.md`.
+
+*When extending this documentation, always follow the single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*

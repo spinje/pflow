@@ -124,3 +124,5 @@ flow = Flow(start=node)
 flow.set_params({"filename": "doc2.txt"})
 flow.run(shared)  # The node summarizes doc2, not doc1
 ```
+
+> **Important Note**: Specific to `pflow`, params should not be used to dynamically access the shared store. Use the shared store directly instead, using intuitive keys. To support this kind of behavior, pflow uses a special proxy pattern to dynamically access the shared store. Read more about this in the [Shared Store Namespacing](../core-concepts/shared-store.md) pattern.
