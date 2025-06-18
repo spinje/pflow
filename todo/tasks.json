@@ -289,7 +289,7 @@
     {
       "id": 24,
       "title": "Create comprehensive test suite",
-      "description": "Build unit and integration tests for all components",
+      "description": "Build unit and integration tests for all components that are not already covered by the existing tests",
       "status": "pending",
       "dependencies": [
         1,
