@@ -1,256 +1,669 @@
-# pflow Documentation
+# pflow Documentation Inventory for AI Agents
 
-[![Release](https://img.shields.io/github/v/release/spinje/pflow)](https://img.shields.io/github/v/release/spinje/pflow)
-[![Build status](https://img.shields.io/github/actions/workflow/status/spinje/pflow/main.yml?branch=main)](https://github.com/spinje/pflow/actions/workflows/main.yml?query=branch%3Amain)
-[![Commit activity](https://img.shields.io/github/commit-activity/m/spinje/pflow)](https://img.shields.io/github/commit-activity/m/spinje/pflow)
-[![License](https://img.shields.io/github/license/spinje/pflow)](https://img.shields.io/github/license/spinje/pflow)
+> **Purpose**: This document provides a comprehensive file-by-file inventory of all pflow documentation.
 
-> **pflow** is a workflow compiler that transforms natural language and CLI pipe syntax into permanent, deterministic CLI commands. It follows a "Plan Once, Run Forever" philosophy - capturing user intent once and compiling it into reproducible workflows that run instantly without AI overhead.
+## How to Use This Inventory
 
-## Contents
+This inventory describes **what's inside each documentation file** to help AI agents quickly locate specific information. Each entry includes:
+- **Purpose**: What questions/problems the document addresses
+- **Key Contents**: Main topics and sections covered
+- **Critical Insights**: Warnings, anti-patterns, or must-know information
+- **When to Use**: Specific scenarios requiring this document
+- **Status**: MVP/v2.0/v3.0 indicator where applicable
 
-- [Quick Start](#quick-start)
-- [Documentation Structure](#documentation-structure)
-- [Example Workflows](#example-workflows)
-- [Find What You Need](#find-what-you-need)
-- [Learning Paths](#learning-paths)
-- [Key Design Principles](#key-design-principles)
-- [Version Guide](#version-guide)
-- [Contributing](#contributing)
+## Root Documentation Files
 
-## Quick Start
+### prd.md
+**Purpose**: Master Product Requirements Document defining pflow's complete vision, architecture, and success criteria.
 
-### 🚀 New to pflow?
-1. [Workflow Analysis](./features/workflow-analysis.md) - Understand the problem pflow solves
-2. [MVP Scope](./features/mvp-scope.md) - Learn what pflow can do
-3. [Architecture](./architecture/architecture.md) - See how it works
+**Key Contents**:
+- Vision & strategic positioning with differentiators
+- Core concepts (pocketflow foundation, shared store pattern, natural interfaces)
+- Planning pipeline architecture (dual-mode operation)
+- CLI surface & parameter resolution algorithms
+- JSON IR & schema governance, runtime behavior
+- MVP acceptance criteria and implementation roadmap
+- Comprehensive glossary in Appendix A
 
-### ⚡ For CLI Users
-- [CLI Reference](./reference/cli-reference.md) - Complete command syntax and operators
-- [Quick Examples](#example-workflows) - See pflow in action
-- [Shell Integration](./features/shell-pipes.md) - Unix pipe support
+**Critical Insights**:
+- Emphasizes "Explicit Over Magic" and "Pattern Over Framework Innovation"
+- Shared store + proxy pattern is the primary innovation
+- All nodes are impure by default; `@flow_safe` must be explicit
+- Contains authoritative terminology definitions
 
-### 💻 For Developers
-- [Node Reference](./reference/node-reference.md) - Build custom nodes
-- [Shared Store](./core-concepts/shared-store.md) - Understand data flow
-- [Node Packages](./core-node-packages/) - Example implementations
-
-## Documentation Structure
-
-### 📋 Core Documentation
-
-| Document | Purpose | Start Here If... |
-|----------|---------|------------------|
-| [PRD](./prd.md) | Master product vision and strategy | You want the complete vision |
-| [Architecture](./architecture/architecture.md) | Technical implementation for MVP | You're implementing pflow |
-| [MVP Scope](./features/mvp-scope.md) | Clear boundaries and success criteria | You need to know what's included |
-
-### 🏗️ Core Patterns
-
-| Pattern | Purpose | Key Concept |
-|---------|---------|-------------|
-| [Shared Store](./core-concepts/shared-store.md) | Inter-node communication pattern | Natural interfaces with `shared["key"]` |
-| [Simple Nodes](./features/simple-nodes.md) | Node design philosophy | One node, one purpose |
-| [CLI Runtime](./features/cli-runtime.md) | Execution specification | Type flags; engine decides |
-
-### 🧩 System Components
-
-| Component | Purpose | MVP Status |
-|-----------|---------|------------|
-| [Planner](./features/planner.md) | Natural language → CLI workflow | ✅ MVP |
-| [Runtime](./core-concepts/runtime.md) | Caching and execution engine | ✅ MVP |
-| [Registry](./core-concepts/registry.md) | Node discovery and versioning | ✅ MVP |
-| [Components](./architecture/components.md) | Complete component inventory | Reference |
-| [Schemas](./core-concepts/schemas.md) | JSON IR and metadata schemas | ✅ MVP |
-
-### 📦 Node Packages
-
-| Package | Nodes | Purpose |
-|---------|-------|---------|
-| [GitHub](./core-node-packages/github-nodes.md) | 8 nodes | GitHub API operations |
-| [Claude](./core-node-packages/claude-nodes.md) | 1 super node | AI development tasks |
-| [CI](./core-node-packages/ci-nodes.md) | 5 nodes | Testing and builds |
-| [LLM](./core-node-packages/llm-nodes.md) | 1 node | General text processing |
-
-### 📚 Reference Documentation
-
-| Document | Purpose | Quick Links |
-|----------|---------|-------------|
-| [Node Reference](./reference/node-reference.md) | Complete guide to building nodes | [Lifecycle](./reference/node-reference.md#node-lifecycle) • [Patterns](./reference/node-reference.md#node-patterns) • [Testing](./reference/node-reference.md#testing-nodes) |
-| [CLI Reference](./reference/cli-reference.md) | Command syntax and operators | [Syntax](./reference/cli-reference.md#command-syntax) • [Operators](./reference/cli-reference.md#operators) • [Examples](./reference/cli-reference.md#examples) |
-| [Execution Reference](./reference/execution-reference.md) | Runtime behavior specification | [Flow](./reference/execution-reference.md#execution-flow) • [Errors](./reference/execution-reference.md#error-handling) • [Caching](./reference/execution-reference.md#caching) |
-
-### 🔧 Implementation Guides
-
-- [PocketFlow Integration](./architecture/pflow-pocketflow-integration-guide.md) - Critical insights for correct implementation
-- [Shell Pipes](./features/shell-pipes.md) - Unix pipe integration
-- [Metadata Extraction](./implementation-details/metadata-extraction.md) - Node discovery system
-
-### 🚀 Future Features
-
-| Feature | Version | Status |
-|---------|---------|--------|
-| [MCP Integration](./features/mcp-integration.md) | v2.0 | ❌ Deferred |
-| [CLI Autocomplete](./features/autocomplete.md) | v2.0 | ❌ Deferred |
-| [JSON Extraction](./future-version/json-extraction.md) | v3.0 | ⏳ Future |
-| [LLM Node Gen](./future-version/llm-node-gen.md) | v3.0 | ⏳ Future |
-
-## Example Workflows
-
-### 📝 Text Processing
-```bash
-# Transform error logs into actionable insights
-pflow read-file --path=error.log >> \
-      llm --prompt="extract error patterns and suggest fixes" >> \
-      write-file --path=analysis.md
-```
-
-### 🐙 GitHub Issue to PR
-```bash
-# Convert issue into pull request with implementation
-pflow github-get-issue --issue=1234 >> \
-      claude-code --prompt="implement the requested feature" >> \
-      github-create-pr --title="Fix: Issue #1234"
-```
-
-### 🔄 CI Integration
-```bash
-# Run tests and create report
-pflow ci-run-tests --suite=unit >> \
-      llm --prompt="summarize test failures" >> \
-      write-file --path=test-report.md
-```
-
-See [CLI Reference](./reference/cli-reference.md#examples) for more examples.
-
-## Find What You Need
-
-### ❓ Common Tasks
-
-| I want to... | Start here |
-|--------------|------------|
-| Write my first pflow command | [CLI Reference](./reference/cli-reference.md#getting-started) |
-| Create a custom node | [Node Reference](./reference/node-reference.md) + [Simple Nodes](./features/simple-nodes.md) |
-| Understand how data flows | [Shared Store](./core-concepts/shared-store.md) |
-| Debug a failing workflow | [Execution Reference](./reference/execution-reference.md#error-handling) |
-| Use natural language | [Planner](./features/planner.md) |
-| Integrate with shell scripts | [Shell Pipes](./features/shell-pipes.md) |
-
-### 🔧 Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Command syntax errors | Check [CLI Reference](./reference/cli-reference.md#command-syntax) |
-| Node not found | See [Registry](./core-concepts/registry.md#node-discovery) |
-| Shared store key missing | Review [Shared Store](./core-concepts/shared-store.md#debugging) |
-| Execution failures | Consult [Execution Reference](./reference/execution-reference.md#error-codes) |
-
-## Concept Quick Reference
-
-### 📖 Reference Documents
-
-- **Node Lifecycle** → [node-reference.md](./reference/node-reference.md#node-lifecycle) - prep/exec/post phases
-- **CLI Syntax** → [cli-reference.md](./reference/cli-reference.md#command-syntax) - Complete grammar
-- **Execution Model** → [execution-reference.md](./reference/execution-reference.md) - Runtime behavior
-
-### Core Concepts
-
-- **Shared Store** → [shared-store.md](./core-concepts/shared-store.md) - Flow-scoped dictionary for node communication
-- **Template Variables** → [shared-store.md#template-variable-resolution](./core-concepts/shared-store.md#template-variable-resolution) - `$variable` syntax for dynamic content
-- **Simple Nodes** → [simple-nodes.md](./features/simple-nodes.md) - Single-purpose node architecture
-- **NodeAwareSharedStore Proxy** → [shared-store.md#nodeawaresharedstore-proxy](./core-concepts/shared-store.md#nodeawaresharedstore-proxy) - Transparent key mapping
-- **Natural Interfaces** → [shared-store.md#node-autonomy-principle](./core-concepts/shared-store.md#node-autonomy-principle) - Intuitive key names
-
-### Planning & Validation
-
-- **Dual-Mode Planner** → [planner.md](./features/planner.md) - Natural language and CLI paths
-- **JSON IR** → [schemas.md](./core-concepts/schemas.md) - Intermediate representation format
-- **Metadata System** → [schemas.md#node-metadata-schema](./core-concepts/schemas.md#node-metadata-schema) - Node interface definitions
-- **Registry** → [registry.md](./core-concepts/registry.md) - Node discovery and versioning
-
-### Execution
-
-- **Runtime Engine** → [runtime.md](./core-concepts/runtime.md) - Flow execution with caching
-- **CLI Parser** → [cli-runtime.md](./features/cli-runtime.md) - Command parsing and resolution
-- **Shell Integration** → [shell-pipes.md](./features/shell-pipes.md) - Unix pipe support
-
-## Learning Paths
-
-### 🎯 For Product Understanding
-1. [Workflow Analysis](./features/workflow-analysis.md) - Problem space
-2. [MVP Scope](./features/mvp-scope.md) - Solution vision
-3. [PRD](./prd.md) - Complete product strategy
-
-### 💻 For Implementation
-1. [PocketFlow Integration Guide](./architecture/pflow-pocketflow-integration-guide.md) - Critical insights
-2. [Shared Store](./core-concepts/shared-store.md) - Core pattern
-3. [Architecture](./architecture/architecture.md) - System design
-4. [Components](./architecture/components.md) - What to build
-
-### 🔌 For Node Development
-1. [Node Reference](./reference/node-reference.md) - Complete implementation guide
-2. [Simple Nodes](./features/simple-nodes.md) - Design philosophy
-3. [Shared Store](./core-concepts/shared-store.md) - Communication pattern
-4. [Node Package Examples](./core-node-packages/) - Reference implementations
-
-### ⚡ For CLI Power Users
-1. [CLI Reference](./reference/cli-reference.md) - Master the syntax
-2. [Shell Pipes](./features/shell-pipes.md) - Unix integration
-3. [Execution Reference](./reference/execution-reference.md) - Understand runtime
-4. [Example Workflows](#example-workflows) - Learn by doing
-
-## Key Design Principles
-
-1. **Plan Once, Run Forever** - Transform AI reasoning into permanent workflows
-2. **Natural Interfaces** - Nodes use intuitive keys like `shared["text"]`
-3. **Simple Nodes** - Each node does one thing well
-4. **Deterministic Execution** - Same inputs → same outputs
-5. **Progressive Complexity** - Simple flows stay simple, complex flows are possible
-
-## Version Guide
-
-- **MVP (v0.1)** - Local CLI execution with natural language planning
-- **v2.0** - MCP integration, autocomplete, conditional flows
-- **v3.0+** - Cloud platform, marketplace, advanced features
-
-See [MVP Scope](./features/mvp-scope.md) for detailed version boundaries.
-
-## Contributing
-
-### 📝 Documentation Guidelines
-
-When adding new documentation:
-1. **Choose the right location**:
-   - `reference/` - Authoritative specifications
-   - `core-concepts/` - Fundamental patterns
-   - `architecture/` - System design documents
-   - `features/` - Feature specifications
-   - `core-node-packages/` - Node package docs
-
-2. **Follow standards**:
-   - Include version header using the [template](./features/mvp-scope.md#version-header-template)
-   - Add navigation section with related links
-   - Include "See Also" section at the end
-   - Use single-source-of-truth principle
-
-3. **Update navigation**:
-   - Add to this index in appropriate section
-   - Update cross-references in related docs
-   - Verify all links work correctly
-
-### 🔍 Documentation Structure
-
-```
-docs/
-├── reference/           # Authoritative references
-├── core-concepts/       # Fundamental patterns
-├── architecture/        # System design
-├── features/           # Feature specifications
-├── core-node-packages/ # Platform nodes
-├── implementation-details/ # Detailed guides
-└── future-version/     # Post-MVP features
-```
+**When to Use**: Understanding overall vision, making architectural decisions, ensuring design philosophy alignment, terminology consistency
 
 ---
 
-*This documentation follows a single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
+### CLAUDE.md
+**Purpose**: Primary navigation guide for AI assistants implementing pflow, with phased implementation order and prerequisites.
+
+**Key Contents**:
+- Quick start instructions (read pocketflow first)
+- Repository structure map
+- 5-phase implementation order with prerequisites
+- Feature-to-pattern mapping table
+- Critical warnings about common mistakes
+- Navigation patterns for finding information
+
+**Critical Insights**:
+- ⚠️ DO NOT reimplement pocketflow functionality
+- ⚠️ DO NOT modify pocketflow source code
+- ✅ DO read pocketflow source first (100 lines)
+- ✅ DO check pocketflow cookbook (40+ examples)
+
+**When to Use**: Starting implementation, understanding build order, finding pocketflow examples, avoiding common mistakes
+
+---
+
+### index.md
+**Purpose**: This file - comprehensive inventory of all documentation files for AI agents.
+
+**When to Use**: Finding specific documentation topics, understanding file contents, navigating documentation structure
+
+## Architecture Directory (`/architecture/`)
+
+### architecture.md
+**Purpose**: Technical architecture document defining the complete system design for pflow v0.1 MVP.
+
+**Key Contents**:
+- Executive summary with core value proposition
+- High-level system architecture diagram
+- Core design patterns (shared store, node autonomy, proxy)
+- MVP scope definition with inclusion/exclusion boundaries
+- Detailed component architecture for all layers
+
+**Critical Insights**:
+- Natural language planning built AFTER core infrastructure (not first)
+- Avoid wrapper classes around pocketflow - use directly
+- "Type flags; engine decides" principle for CLI resolution
+- General-purpose LLM node is "smart exception" to prevent proliferation
+- Template resolution enables sophisticated $variable workflows
+
+**When to Use**: Starting implementation, designing components, MVP feature decisions, understanding system flow
+
+**Status**: ✅ MVP
+
+---
+
+### components.md
+**Purpose**: Comprehensive inventory distinguishing MVP (v0.1) components from v2.0 features with implementation checklist.
+
+**Key Contents**:
+- Complete MVP component list with subsystem breakdown
+- v2.0 feature inventory for future planning
+- Critical MVP dependencies (10 required components)
+- Implementation priority ordering (4 phases)
+- Required simple nodes list
+
+**Critical Insights**:
+- Lists exact MVP nodes: GitHub, Claude Code, LLM, CI, Git, File, Shell
+- Template Resolution System required for MVP
+- Natural language planning depends on CLI + registry + metadata
+- Action-based transitions are v2.0 (flow control, not node types)
+- claude-code is "super node" for comprehensive AI development
+
+**When to Use**: Planning tasks, checking MVP scope, understanding dependencies, prioritizing work
+
+**Status**: ✅ MVP
+
+---
+
+### pflow-pocketflow-integration-guide.md
+**Purpose**: Critical implementation insights preventing common mistakes when integrating with pocketflow.
+
+**Key Contents**:
+- 10 critical insights about integration
+- RIGHT vs WRONG code examples
+- Clear separation of pocketflow provides vs pflow adds
+- Simple patterns for complex-sounding features
+- Core architecture summary
+
+**Critical Insights**:
+- **#1**: PocketFlow IS the execution engine - don't reimplement
+- **#2**: No wrapper classes needed - use pocketflow directly
+- **#3**: Shared Store is just a dict - don't over-engineer
+- **#4**: Template resolution is simple regex substitution
+- **#7**: JSON IR compilation is object instantiation, not code generation
+- Lists 10 common traps to avoid
+
+**When to Use**: Before implementing ANY component, avoiding over-engineering, compiling JSON IR, debugging integration
+
+**Status**: ✅ MVP Critical
+
+## Core Concepts Directory (`/core-concepts/`)
+
+### shared-store.md
+**Purpose**: Defines the core architectural pattern for node communication - shared store with optional proxy layer.
+
+**Key Contents**:
+- Shared store vs params usage guidelines
+- Template variable resolution (`$variable` syntax)
+- Node autonomy principle and isolation rules
+- NodeAwareSharedStore proxy pattern
+- Progressive complexity examples
+
+**Critical Insights**:
+- Nodes are "dumb pipes" - isolated computation units
+- Shared store takes precedence over params for dynamic data
+- Template variables create node dependencies
+- Same node works in different flows via proxy mapping
+- All conditional logic at flow level, never in nodes
+
+**When to Use**: Designing nodes, understanding data flow, implementing proxy mappings, debugging communication
+
+**Status**: ✅ MVP (proxy optional)
+
+---
+
+### schemas.md
+**Purpose**: JSON schema governance for Flow IR and Node Metadata artifacts.
+
+**Key Contents**:
+- Flow IR structure (nodes, edges, mappings, metadata)
+- Node metadata schema from docstrings
+- Interface declaration rules and types
+- Proxy mapping schema for complex flows
+- Schema validation and evolution rules
+
+**Critical Insights**:
+- Two key artifacts: Flow IR (orchestration) and Node Metadata (interfaces)
+- Natural interfaces use `shared["key"]` patterns
+- Mapping definitions are flow-level, not node concerns
+- Only `@flow_safe` nodes may specify retry/cache settings
+- Minor additions allowed; major bumps refuse to run
+
+**When to Use**: Understanding IR structure, extracting metadata, implementing validation, debugging compatibility
+
+**Status**: ✅ MVP
+
+---
+
+### registry.md
+**Purpose**: Defines node discovery, versioning, namespacing, and resolution systems.
+
+**Key Contents**:
+- Identifier syntax (`<namespace>/<name>@<semver>`)
+- Version resolution policies and lockfiles
+- Filesystem layout and installation
+- CLI grammar integration
+- Metadata extraction for planner
+
+**Critical Insights**:
+- No latest-by-default - explicit versions for reproducibility
+- Simple nodes: `platform-action` pattern (e.g., `github-get-issue`)
+- General nodes: single-purpose names (e.g., `llm`, `read-file`)
+- Two-phase resolution: natural language (LLM) vs CLI (explicit)
+- Nodes are isolated with no flow awareness
+
+**When to Use**: Implementing discovery, naming nodes, version resolution, planner integration
+
+**Status**: ✅ MVP
+
+---
+
+### runtime.md
+**Purpose**: Defines caching strategy and node safety model with `@flow_safe` decorator.
+
+**Key Contents**:
+- Side-effect declaration and node safety
+- Node classification (impure default vs pure)
+- Caching strategy and eligibility
+- Cache key computation and storage
+- Retry mechanisms and safety
+
+**Critical Insights**:
+- Opt-in purity model - all nodes impure unless `@flow_safe`
+- Only `@flow_safe` nodes can be cached or retried
+- Cache key: node hash + params + input data hash
+- No need to enumerate side effects - only certify purity
+- Caching respects proxy mappings
+
+**When to Use**: Implementing caching, designing retryable nodes, using `@flow_safe`, debugging cache behavior
+
+**Status**: ✅ MVP
+
+## Features Directory (`/features/`)
+
+### mvp-scope.md
+**Purpose**: Defines focused MVP scope for AI-assisted development workflow compiler with clear boundaries.
+
+**Key Contents**:
+- Core vision: Transform slash commands to deterministic workflows
+- MVP features: Natural language planning, developer nodes, CLI
+- Simple node registry listing
+- Explicit exclusions (conditional transitions, autocomplete, MCP)
+- Implementation phases and success criteria
+
+**Critical Insights**:
+- Target: Replace 30-90s variable commands with 2-5s predictable workflows
+- LLM node is smart exception to simple philosophy
+- Natural language planning built AFTER core infrastructure
+- Success = 10x efficiency improvement
+- Must handle workflow generation AND parameterized execution
+
+**When to Use**: Checking feature scope, understanding core problem, implementation planning
+
+**Status**: ✅ MVP Definition
+
+---
+
+### simple-nodes.md
+**Purpose**: Defines simple, single-purpose node architecture reducing cognitive load with clear interfaces.
+
+**Key Contents**:
+- Architecture comparison (complex vs simple)
+- Core simple nodes overview with interfaces
+- LLM node as smart exception rationale
+- Implementation patterns and consistency
+- Real-world business scenarios
+
+**Critical Insights**:
+- Philosophy: Each node does exactly one thing with no magic
+- LLM node handles ALL text processing to prevent explosion
+- Future CLI grouping (v2.0) is purely syntactic sugar
+- Trade-off: more names but crystal clear purpose
+- Direct alignment with MCP tool mapping
+
+**When to Use**: Implementing nodes, understanding design philosophy, explaining architecture choices
+
+**Status**: ✅ MVP
+
+---
+
+### planner.md
+**Purpose**: Central validation and IR generation engine for both natural language and CLI inputs.
+
+**Key Contents**:
+- Dual-mode operation (NL with LLM vs CLI validation-only)
+- Template string composition and variable flow
+- Metadata extraction from docstrings
+- Validation framework with "early and often" principle
+- Integration with shared store and proxy
+
+**Critical Insights**:
+- Template-driven approach: LLM generates `$variable` placeholders
+- Planner is normal pocketflow flow, not hard-coded
+- Both paths use same infrastructure
+- Critical stages: Intent → Template → Selection → Validation
+- Type shadow store deferred to v2.0
+
+**When to Use**: Implementing natural language planning, CLI validation, understanding compilation
+
+**Status**: ✅ MVP (built after core)
+
+---
+
+### cli-runtime.md
+**Purpose**: Specifies CLI arguments, IR mappings, and shared store interaction for single-flag user model.
+
+**Key Contents**:
+- pocketflow framework integration patterns
+- Proxy-based mapping architecture
+- Shared store lifecycle (transient per-run)
+- CLI flag resolution algorithm
+- Complete execution pipeline examples
+
+**Critical Insights**:
+- WARNING: Shared store is transient only - NOT a database
+- Proxy enables zero overhead for simple flows
+- CLI flags: shared store keys → data; params → behavior
+- Reserved key `stdin` for piped input
+- Educational: Generated flows visible as CLI syntax
+
+**When to Use**: Implementing CLI parsing, shared store runtime, understanding data flow
+
+**Status**: ✅ MVP
+
+---
+
+### shell-pipes.md
+**Purpose**: Native Unix shell pipe integration for seamless command-line workflows.
+
+**Key Contents**:
+- Motivation for shell pipe support
+- How piped content populates `shared["stdin"]`
+- Integration with CLI and natural language flows
+- Similarity to llm CLI patterns
+- Trace and cache handling
+
+**Critical Insights**:
+- Reserved key `shared["stdin"]` for all piped input
+- Nodes check stdin as fallback or planner creates mapping
+- Piped content hashed for reproducibility
+- Preserves all pflow guarantees
+
+**When to Use**: Implementing stdin detection, Unix integration, handling piped input
+
+**Status**: ✅ MVP
+
+---
+
+### workflow-analysis.md
+**Purpose**: Technical analysis comparing inefficient AI slash commands with deterministic workflows.
+
+**Key Contents**:
+- Analysis of Anthropic's slash command pattern
+- Hidden costs of repeated reasoning
+- Detailed fix-github-issue transformation
+- Token usage and execution comparisons
+- When to use each approach
+
+**Critical Insights**:
+- Core: AI intelligence better for tasks than orchestration
+- claude-code receives comprehensive planner instructions
+- 10x improvement possible (1000-2000 tokens → minimal)
+- Template-driven preserves context without overhead
+- Middle ground: Start with slash commands, codify patterns
+
+**When to Use**: Understanding value proposition, seeing workflow examples, explaining benefits
+
+**Status**: ✅ MVP
+
+---
+
+### autocomplete.md
+**Purpose**: CLI autocomplete specification for enhanced usability (deferred feature).
+
+**Key Contents**:
+- Overview of autocomplete importance
+- Shell integration mechanism
+- Dynamic suggestion generation
+- Types of suggestions
+- Type shadow store integration
+
+**Critical Insights**:
+- Version: ❌ Deferred to v2.0
+- Reinforces "Type flags; engine decides" principle
+- Must distinguish shared store vs parameters
+- Performance critical for user experience
+
+**When to Use**: Implementing v2.0 autocomplete, understanding future UX enhancements
+
+**Status**: ❌ v2.0
+
+---
+
+### mcp-integration.md
+**Purpose**: Specification for integrating Model Context Protocol servers as native nodes.
+
+**Key Contents**:
+- Unified registry approach
+- Wrapper node generation
+- Natural interface mapping
+- Error handling and transport
+- Complete integration examples
+
+**Critical Insights**:
+- Version: ❌ Deferred to v2.0
+- MCP nodes indistinguishable from manual nodes
+- Each tool becomes single-purpose node
+- Default to impure unless `@flow_safe`
+- Full participation in IR and planner
+
+**When to Use**: Implementing v2.0 MCP integration, understanding external tool integration
+
+**Status**: ❌ v2.0
+
+## Reference Directory (`/reference/`)
+
+### cli-reference.md
+**Purpose**: Authoritative CLI interface reference with syntax, operators, and composition.
+
+**Key Contents**:
+- Basic syntax and grammar definition
+- `>>` operator vs shell pipes (`|`)
+- Flag resolution algorithm
+- Template variables and resolution
+- Shell pipe integration
+
+**Critical Insights**:
+- "Type flags; engine decides" philosophy
+- Nodes should check `stdin` as fallback
+- `>>` passes structured data, not text streams
+- Flows are fail-fast by default
+- Template variables check shared store first
+
+**When to Use**: Implementing CLI parsing, flag handling, shell integration, user interaction
+
+**Status**: ✅ MVP
+
+---
+
+### execution-reference.md
+**Purpose**: Authoritative execution model and runtime behavior reference.
+
+**Key Contents**:
+- Static execution model (immutable flows)
+- 7-step execution pipeline
+- Node safety model with `@flow_safe`
+- Error categorization by namespace
+- Retry mechanisms
+
+**Critical Insights**:
+- Opt-in purity model - explicit `@flow_safe` for caching
+- Flows completely static - no dynamic topology
+- Only transient errors retryable
+- Multiple validation levels
+- Execution context provides debugging hooks
+
+**When to Use**: Implementing runtime engine, error handling, caching, execution flow
+
+**Status**: ✅ MVP
+
+---
+
+### node-reference.md
+**Purpose**: Common patterns and best practices for node implementation consistency.
+
+**Key Contents**:
+- Check shared store first pattern
+- Node lifecycle implementation
+- Error handling guidelines
+- Testing patterns
+- Documentation requirements
+
+**Critical Insights**:
+- Shared store priority over params for dynamic data
+- Clear interface documentation required
+- All nodes inherit from `pocketflow.Node`
+- Comprehensive tests verify functionality and priority
+- Specific error messages for missing values
+
+**When to Use**: Before implementing ANY node, ensuring consistency, following patterns
+
+**Status**: ✅ MVP
+
+## Core Node Packages Directory (`/core-node-packages/`)
+
+### github-nodes.md
+**Purpose**: GitHub API operations through simple, single-purpose nodes.
+
+**Key Contents**:
+- Eight node specifications (issues, PRs, files, comments)
+- Clear interface definitions
+- CLI examples and parameters
+- Composition patterns
+- Authentication flexibility
+
+**Critical Insights**:
+- Strict single responsibility per node
+- Natural keys: `shared["issue"]`, `shared["pr"]`, `shared["files"]`
+- Supports discovery chaining
+- Clear error handling for auth/rate limits
+
+**When to Use**: Implementing GitHub integration, building issue/PR workflows
+
+**Status**: ✅ MVP
+
+---
+
+### claude-nodes.md
+**Purpose**: Claude Code super node - intentional exception providing comprehensive AI development.
+
+**Key Contents**:
+- Single `claude-code` super node specification
+- Template-driven instruction generation
+- Claude Code CLI integration
+- Example planner instructions
+- Technical requirements
+
+**Critical Insights**:
+- "Super node" exception justified by comprehensive capabilities
+- Planner-generated instructions with template variables
+- Full project context and tool access
+- Output is comprehensive `shared["code_report"]`
+- Instructions combine multiple development tasks
+
+**When to Use**: Implementing claude-code node, understanding two-tier AI architecture
+
+**Status**: ✅ MVP
+
+---
+
+### ci-nodes.md
+**Purpose**: Continuous integration operations through simple, single-purpose nodes.
+
+**Key Contents**:
+- Five node specifications (tests, status, builds, logs, coverage)
+- Interface definitions with shared store keys
+- CLI examples and parameters
+- Composition patterns
+- Platform flexibility
+
+**Critical Insights**:
+- Single responsibility per CI operation
+- Natural keys: `shared["test_results"]`, `shared["build_status"]`
+- Automatic test framework detection
+- Coverage can fail builds on threshold
+
+**When to Use**: Implementing CI/CD functionality, test automation workflows
+
+**Status**: ✅ MVP
+
+---
+
+### llm-nodes.md
+**Purpose**: General-purpose LLM node - smart exception handling all text processing.
+
+**Key Contents**:
+- Single `llm` node specification
+- Rationale for consolidation
+- Interface using prompt/response
+- Model and temperature parameters
+- Future llm CLI integration
+
+**Critical Insights**:
+- Prevents node proliferation for text tasks
+- Always consistent interface
+- Temperature defaults to 0.7
+- Designed for future integration without breaks
+- Different from claude-code (API vs CLI)
+
+**When to Use**: Implementing text processing, understanding two-tier AI architecture
+
+**Status**: ✅ MVP
+
+## Implementation Details Directory (`/implementation-details/`)
+
+### metadata-extraction.md
+**Purpose**: Infrastructure for extracting structured metadata from node docstrings.
+
+**Key Contents**:
+- Docstring format standard
+- `PflowMetadataExtractor` implementation
+- `InterfaceSectionParser` for formats
+- Registry integration
+- CLI commands
+
+**Critical Insights**:
+- Zero runtime overhead - pre-extracted to JSON
+- Supports simple and structured formats
+- Code-metadata consistency validation via AST
+- Performance optimized with caching
+- Automatic during `pflow registry install`
+
+**When to Use**: Implementing metadata extraction, registry commands, writing node docs
+
+**Status**: ✅ MVP
+
+---
+
+### autocomplete-impl.md
+**Purpose**: Implementation details for CLI autocomplete feature.
+
+**Key Contents**:
+- Shell integration mechanism
+- `CompletionHandler` implementation
+- Specific completion scenarios
+- Registry integration
+- Performance considerations
+
+**Critical Insights**:
+- Deferred to v2.0
+- Uses `pflow completion <shell>` for scripts
+- Internal `--_pf-autocomplete-generate` command
+- Leverages node metadata
+- Must be extremely fast
+
+**When to Use**: Implementing v2.0 autocomplete, shell integrations
+
+**Status**: ❌ v2.0
+
+## Future Version Directory (`/future-version/`)
+
+### json-extraction.md
+**Purpose**: v3.0 feature for automatic JSON field extraction (with critical concerns).
+
+**Key Contents**:
+- JSON path syntax and mapping extensions
+- Planner integration for structure detection
+- Enhanced proxy implementation
+- Performance optimization
+- **Section 13: Critical Analysis**
+
+**Critical Insights**:
+- WARNING: Section 13 questions feature alignment with philosophy
+- Would violate "explicit over magic" principle
+- Increases complexity beyond "100-line framework"
+- Recommendation: Use explicit JSON nodes instead
+
+**When to Use**: Evaluating JSON processing approaches, understanding design trade-offs
+
+**Status**: ❌ v3.0 (May be abandoned)
+
+---
+
+### llm-node-gen.md
+**Purpose**: v3.0 capability for LLM-assisted node development enhancing productivity.
+
+**Key Contents**:
+- LLM-assisted generation workflows
+- Future CLI commands
+- Metadata infrastructure integration
+- Quality assurance processes
+- System prompts
+
+**Critical Insights**:
+- LLM assists but does NOT replace static ecosystem
+- All generated nodes require human review
+- Builds on metadata infrastructure
+- Emphasizes code + documentation consistency
+- Static nodes remain foundation
+
+**When to Use**: Planning developer tooling, understanding AI-enhanced development
+
+**Status**: ❌ v3.0
+
+## Navigation Tips for AI Agents
+
+1. **Starting Implementation**: Read prd.md → CLAUDE.md → architecture.md
+2. **Building Components**: Check components.md for MVP scope → relevant feature/reference docs
+3. **Common Mistakes**: Always read pflow-pocketflow-integration-guide.md first
+4. **Node Development**: simple-nodes.md → node-reference.md → specific package docs
+5. **Understanding Patterns**: shared-store.md is most referenced and central to architecture
+
+## Document Status Legend
+
+- ✅ **MVP**: Required for v0.1
+- ❌ **v2.0/v3.0**: Future versions

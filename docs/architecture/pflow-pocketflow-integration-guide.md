@@ -128,16 +128,18 @@ resolved = resolve_template(prompt, {"content": "file data"})
 # Result: "Analyze this file: file data"
 ```
 
-## Critical Insight #5: NodeAwareSharedStore Proxy is NOT for MVP
+## Critical Insight #5: NodeAwareSharedStore Proxy is for MVP
 
-**What documentation shows**: The proxy pattern exists for marketplace scenarios where nodes have incompatible interfaces.
+**What documentation shows**: The proxy pattern exists for scenarios where nodes have incompatible interfaces.
 
-**MVP reality**: All MVP nodes use consistent, natural interfaces:
+**MVP**: All MVP nodes might seems to use consistent, natural interfaces:
 - `shared["file_path"]` for file operations
 - `shared["content"]` for text data
 - `shared["prompt"]` and `shared["response"]` for LLMs
 
-**When proxy is needed** (v2.0+): When combining nodes from different sources with incompatible key names.
+But this is ONLY true for sandboxed examples. In the real world, nodes have incompatible interfaces and we need to use the proxy pattern to get the architecture right from the start.
+
+**When proxy is needed**: When combining nodes from different sources with incompatible key names.
 
 ## Critical Insight #6: CLI Parameter Resolution Pattern
 
