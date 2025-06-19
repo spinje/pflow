@@ -171,12 +171,14 @@ pflow/
 **Key Questions** for every task:
 - **Purpose**: Why is this needed?
 - **MVP vs. Future**: Does this belong in v0.1?
-- **Dependencies**: What does this require?
+- **Dependencies**: What dependencies does this task have?
 - **Why Now**: Why implement this step?
 - **Documentation**: What documentation and existing code do I need to read to understand the problem space fully?
+- **Is the task too big?**: If the task is too big, break it down into smaller sub tasks
+
 
 **Development Standards and process**:
-- Start small, build minimal components
+- Start small, build minimal components that can be expanded into reusable components
 - Test everything that makes sense to test
 - Document decisions and tradeoffs
 - Run `make check` before committing
@@ -195,7 +197,7 @@ pflow/
 
 **Extensive Markdown Documentation** should be leveraged by Claude:
 
-> Always read relevant docs before coding!
+> Always read relevant docs before coding or updating existing documentation!
 
 ### Pflow Project Documentation
 
