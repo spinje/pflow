@@ -199,15 +199,19 @@ pflow/
 
 > Always read relevant docs before coding or updating existing documentation!
 
-### Pflow Project Documentation
+#### Pflow Project Documentation
 
 **Pflow Project Documentation**:
 - `docs/index.md`: Comprehensive file-by-file inventory of all pflow documentation
-- `docs/features/`: Detailed documentation by feature
-- `docs/core-concepts/`: Core concepts and patterns
+- `docs/features/`: Feature specifications and guides
+- `docs/core-concepts/`: Core concepts and patterns (shared store, schemas, registry, runtime)
 - `docs/reference/`: CLI syntax and execution reference
-- `docs/implementation-details/`: Implementation specifics
-- `docs/future-version/`: Future features
+- `docs/core-node-packages/`: Platform node specifications
+- `docs/implementation-details/`: Detailed implementation guides
+- `docs/future-version/`: Post-MVP features
+- `docs/architecture/`: System architecture and design
+
+#### PocketFlow Documentation
 
 **PocketFlow Documentation**:
 - `pocketflow/CLAUDE.md`: Complete reference for available documentation and cookbook examples
@@ -227,7 +231,7 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 
 *All documentation follows a single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
 
-### Current State
+### Current State of the Project
 
 The codebase is in early development with:
 - ✅ PocketFlow framework added to the codebase inlcuding `pocketflow/docs` and `pocketflow/cookbook`
