@@ -2,7 +2,7 @@
 
 This guide outlines the typical process for using Task Master to manage software development projects using the **`task-master` CLI** with the global `task-master` command by providing a user-friendly interface for direct terminal interaction.
 
-The `task-master` CLI is a powerful tool that allows you to manage your tasks and subtasks in a structured way. It is designed to allow for efficient and precise control over updating the `tasks.json` file that holds the task hierarchy and all information abouts the projects tasks.
+The `task-master` CLI is a powerful tool that allows you to manage your tasks and subtasks in a structured way. It is designed to allow for efficient and precise control over updating the `tasks.json` file that holds the task hierarchy and all information about the project's tasks.
 
 ## Standard Development Workflow Process
 
@@ -35,55 +35,54 @@ You can also invoke `task-master` commands in parallel to each other. This speed
 ## Task Complexity Analysis
 
 -   Run `task-master analyze-complexity --research` for comprehensive analysis
--   Review complexity report via `task-master complexity-report` for a formatted, readable version.
+-   Review complexity report via `task-master complexity-report` for a formatted, readable version
 -   Focus on tasks with highest complexity scores (8-10) for detailed breakdown
 -   Use analysis results to determine appropriate subtask allocation
--   Note that reports are automatically used by the `expand_task` tool/command
+-   Note that reports are automatically used by the expand command
 
 ## Task Breakdown Process
 
--   Use `task-master expand --id=<id>`. It automatically uses the complexity report if found, otherwise generates default number of subtasks.
--   Use `--num=<number>` to specify an explicit number of subtasks, overriding defaults or complexity report recommendations.
--   Add `--research` flag to leverage Perplexity AI for research-backed expansion.
--   Add `--force` flag to clear existing subtasks before generating new ones (default is to append).
--   Use `--prompt="<context>"` to provide additional context when needed.
--   Review and adjust generated subtasks as necessary.
--   Use `task-master expand --all` to expand multiple pending tasks at once, respecting flags like `--force` and `--research`.
--   If subtasks need complete replacement (regardless of the `--force` flag on `expand`), clear them first with `task-master clear-subtasks --id=<id>`.
+-   Use `task-master expand --id=<id>`. It automatically uses the complexity report if found, otherwise generates default number of subtasks
+-   Use `--num=<number>` to specify an explicit number of subtasks, overriding defaults or complexity report recommendations
+-   Add `--research` flag to leverage Perplexity AI for research-backed expansion
+-   Add `--force` flag to clear existing subtasks before generating new ones (default is to append)
+-   Use `--prompt="<context>"` to provide additional context when needed
+-   Review and adjust generated subtasks as necessary
+-   Use `task-master expand --all` to expand multiple pending tasks at once, respecting flags like `--force` and `--research`
+-   If subtasks need complete replacement (regardless of the `--force` flag on `expand`), clear them first with `task-master clear-subtasks --id=<id>`
 
 ## Implementation Drift Handling
 
 -   When implementation differs significantly from planned approach
 -   When future tasks need modification due to current implementation choices
 -   When new dependencies or requirements emerge
--   Use `task-master update --from=<futureTaskId> --prompt='<explanation>\nUpdate context...' --research` to update multiple future tasks.
--   Use `task-master update-task --id=<taskId> --prompt='<explanation>\nUpdate context...' --research` to update a single specific task.
+-   Use `task-master update --from=<futureTaskId> --prompt='<explanation>\nUpdate context...' --research` to update multiple future tasks
+-   Use `task-master update-task --id=<taskId> --prompt='<explanation>\nUpdate context...' --research` to update a single specific task
 
 ## Task Status Management
 
--   Use 'pending' for tasks ready to be worked on
--   Use 'done' for completed and verified tasks
--   Use 'deferred' for postponed tasks
+-   Use `pending` for tasks ready to be worked on
+-   Use `done` for completed and verified tasks
+-   Use `deferred` for postponed tasks
 -   Add custom status values as needed for project-specific workflows
 
 ## Task Structure Fields
 
-- **id**: Unique identifier for the task (Example: `1` - for top level tasks, `1.1` - for subtasks)
-- **title**: Brief, descriptive title (Example: `"Initialize Repo"`)
-- **description**: Concise summary of what the task involves (Example: `"Create a new repository, set up initial structure."`)
-- **status**: Current state of the task (Example: `"pending"`, `"done"`, `"deferred"`)
+- **id**: Unique identifier for the task (Example: `1` for top level tasks, `1.1` for subtasks)
+- **title**: Brief, descriptive title (Example: "Initialize Repo")
+- **description**: Concise summary of what the task involves (Example: "Create a new repository, set up initial structure")
+- **status**: Current state of the task (Example: `pending`, `done`, `deferred`)
 - **dependencies**: IDs of prerequisite tasks (Example: `[1, 2.1]`)
     - Dependencies are displayed with status indicators (✅ for completed, ⏱️ for pending)
     - This helps quickly identify which prerequisite tasks are blocking work
-- **priority**: Importance level (Example: `"high"`, `"medium"`, `"low"`)
-- **details**: In-depth implementation instructions (Example: `"Use GitHub client ID/secret, handle callback, set session token...."`)
-- **testStrategy**: Verification approach (Example: `"Deploy and call endpoint to confirm 'Hello World' response."`)
-- **subtasks**: List of smaller, more specific tasks (Example: `[{"id": 1, "title": "Configure OAuth", ...}]`)
-
+- **priority**: Importance level (Example: `high`, `medium`, `low`)
+- **details**: In-depth implementation instructions
+- **testStrategy**: Verification approach (Example: "Deploy and call endpoint to confirm 'Hello World' response")
+- **subtasks**: List of smaller, more specific tasks
 
 ## Determining the Next Task
 
-- Run `task-master next` to show the next task to work on.
+- Run `task-master next` to show the next task to work on
 - The command identifies tasks with all dependencies satisfied
 - Tasks are prioritized by priority level, dependency count, and ID
 - The command shows comprehensive task information including:
@@ -98,7 +97,7 @@ You can also invoke `task-master` commands in parallel to each other. This speed
 
 ## Viewing Specific Task Details
 
-- Run `task-master show <id>` to view a specific task.
+- Run `task-master show <id>` to view a specific task
 - Use dot notation for subtasks: `task-master show 1.2` (shows subtask 2 of task 1)
 - Displays comprehensive information similar to the next command, but for a specific task
 - For parent tasks, shows all subtasks and their current status
@@ -108,8 +107,8 @@ You can also invoke `task-master` commands in parallel to each other. This speed
 
 ## Managing Task Dependencies
 
-- Use `task-master add-dependency --id=<id> --depends-on=<id>` to add a dependency.
-- Use `task-master remove-dependency --id=<id> --depends-on=<id>` to remove a dependency.
+- Use `task-master add-dependency --id=<id> --depends-on=<id>` to add a dependency
+- Use `task-master remove-dependency --id=<id> --depends-on=<id>` to remove a dependency
 - The system prevents circular dependencies and duplicate dependency entries
 - Dependencies are checked for existence before being added or removed
 - Task files are automatically regenerated after dependency changes
@@ -129,407 +128,525 @@ You can also invoke `task-master` commands in parallel to each other. This speed
   - Allows moving to non-existent IDs by creating placeholder tasks
   - Prevents moving to existing task IDs that have content (to avoid overwriting)
   - Validates source tasks exist before attempting to move them
-- The system maintains proper parent-child relationships and dependency integrity
+  - Maintains proper parent-child relationships and dependency integrity
 - Task files are automatically regenerated after the move operation
 - This provides greater flexibility in organizing and refining your task structure as project understanding evolves
-- This is especially useful when dealing with potential merge conflicts arising from teams creating tasks on separate branches. Solve these conflicts very easily by moving your tasks and keeping theirs.
+- This is especially useful when dealing with potential merge conflicts arising from teams creating tasks on separate branches. Solve these conflicts very easily by moving your tasks and keeping theirs
 
 ## Iterative Subtask Implementation
 
 Once a task has been broken down into subtasks using `task-master expand` or similar methods, follow this iterative process for implementation:
 
-1.  **Understand the Goal (Preparation):**
-    *   Use `task-master show <subtaskId>` to thoroughly understand the specific goals and requirements of the subtask.
+1. **Understand the Goal (Preparation):**
+   - Use `task-master show <subtaskId>` to thoroughly understand the specific goals and requirements of the subtask
 
-2.  **Initial Exploration & Planning (Iteration 1):**
-    *   This is the first attempt at creating a concrete implementation plan.
-    *   Explore the codebase to identify the precise files, functions, documentationand even specific lines of code that will need modification.
-    *   Determine the intended code changes (diffs) and their locations.
-    *   Gather *all* relevant details from this exploration phase. Evaluate all **potentially relevant** files in the `docs`, `src`, `pocketflow/docs`, `pocketflow/cookbook` directory and ultra think on the problem space and potential solutions.
-    *   If you are not sure about the solution or if there are multiple potential solutions, always ask the user for input.
-    *   Create the detailed plan in a new markdown file in the `.taskmaster/tasks/<taskId>/` file.
+2. **Initial Exploration & Planning (Iteration 1):**
+   - This is the first attempt at creating a concrete implementation plan
+   - Explore the codebase to identify the precise files, functions, documentation and even specific lines of code that will need modification
+   - Determine the intended code changes (diffs) and their locations
+   - Gather *all* relevant details from this exploration phase. Evaluate all **potentially relevant** files in the `docs`, `src`, `pocketflow/docs`, `pocketflow/cookbook` directory and ultra think on the problem space and potential solutions
+   - If you are not sure about the solution or if there are multiple potential solutions, always ask the user for input
+   - Create the detailed plan in a new markdown file in the `.taskmaster/tasks/<taskId>/` file
 
-3.  **Log the Plan:**
-    *   Run `task-master update-subtask --id=<subtaskId> --prompt='<detailed plan>'`.
-    *   Provide the *complete and detailed* findings from the exploration phase in the prompt. Include file paths, line numbers, proposed diffs, reasoning, and any potential challenges identified. Do not omit details. The goal is to create a rich, timestamped log within the subtask's `details`.
+3. **Log the Plan:**
+   - Run `task-master update-subtask --id=<subtaskId> --prompt='<detailed plan>'`
+   - Provide the *complete and detailed* findings from the exploration phase in the prompt. Include file paths, line numbers, proposed diffs, reasoning, and any potential challenges identified. Do not omit details. The goal is to create a rich, timestamped log within the subtask's `details`
 
-4.  **Verify the Plan:**
-    *   Run `task-master show <subtaskId>` again to confirm that the detailed implementation plan has been successfully appended to the subtask's details.
+4. **Verify the Plan:**
+   - Run `task-master show <subtaskId>` again to confirm that the detailed implementation plan has been successfully appended to the subtask's details
 
-5.  **Begin Implementation:**
-    *   Set the subtask status using `task-master set-status --id=<subtaskId> --status=in-progress`.
-    *   Start coding based on the logged plan.
+5. **Begin Implementation:**
+   - Set the subtask status using `task-master set-status --id=<subtaskId> --status=in-progress`
+   - Start coding based on the logged plan
 
-6.  **Refine and Log Progress (Iteration 2+):**
-    *   As implementation progresses, you will encounter challenges, discover nuances, or confirm successful approaches.
-    *   **Before appending new information**: Briefly review the *existing* details logged in the subtask (using `get_task` or recalling from context) to ensure the update adds fresh insights and avoids redundancy.
-    *   **Regularly** use `update_subtask` / `task-master update-subtask --id=<subtaskId> --prompt='<update details>\n- What worked...\n- What didn't work...'` to append new findings.
-    *   **Crucially, log:**
-        *   What worked ("fundamental truths" discovered).
-        *   What didn't work and why (to avoid repeating mistakes).
-        *   Specific code snippets or configurations that were successful.
-        *   Decisions made, especially if confirmed with user input.
-        *   Any deviations from the initial plan and the reasoning.
-    *   The objective is to continuously enrich the subtask's details, creating a log of the implementation journey that helps the AI (and human developers) learn, adapt, and avoid repeating errors.
+6. **Refine and Log Progress (Iteration 2+):**
+   - As implementation progresses, you will encounter challenges, discover nuances, or confirm successful approaches
+   - **Before appending new information**: Briefly review the *existing* details logged in the subtask to ensure the update adds fresh insights and avoids redundancy
+   - **Regularly** use `task-master update-subtask --id=<subtaskId> --prompt='<update details>\n- What worked...\n- What didn't work...'` to append new findings
+   - **Crucially, log:**
+       - What worked ("fundamental truths" discovered)
+       - What didn't work and why (to avoid repeating mistakes)
+       - Specific code snippets or configurations that were successful
+       - Decisions made, especially if confirmed with user input
+       - Any deviations from the initial plan and the reasoning
+   - The objective is to continuously enrich the subtask's details, creating a log of the implementation journey that helps the AI (and human developers) learn, adapt, and avoid repeating errors
 
-7.  **Review(Post-Implementation):**
-    *   Once the implementation for the subtask is functionally complete, review all code changes and the relevant chat history.
-    *   Identify any new or modified code patterns, conventions, or best practices established during the implementation.
-    *   Create a comprehensive section at the end of the `.taskmaster/tasks/<taskId>.md` file that summarizes the implementation and carefully considers any implications for any other tasks that may be affected/dependant by the changes (You can see dependencies in the `dependencies` field of the task). This is the time to reflect on what you have learned, what initial assumptions you had that were incorrect and what key decisions you and the user made that could potentiall impact other tasks and the project as a whole. Also consider if any existing documentation needs to be updated to reflect any key insights you have gained.
+7. **Review (Post-Implementation):**
+   - Once the implementation for the subtask is functionally complete, review all code changes and the relevant chat history
+   - Identify any new or modified code patterns, conventions, or best practices established during the implementation
+   - Create a comprehensive section at the end of the `.taskmaster/tasks/<taskId>.md` file that summarizes the implementation and carefully considers any implications for any other tasks that may be affected/dependent by the changes (You can see dependencies in the `dependencies` field of the task). This is the time to reflect on what you have learned, what initial assumptions you had that were incorrect and what key decisions you and the user made that could potentially impact other tasks and the project as a whole. Also consider if any existing documentation needs to be updated to reflect any key insights you have gained
 
-8.  **Mark Task Complete:**
-    *   After verifying the implementation and updating any necessary rules, mark the subtask as completed: `task-master set-status --id=<subtaskId> --status=done`.
+8. **Mark Task Complete:**
+   - After verifying the implementation and updating any necessary rules, mark the subtask as completed: `task-master set-status --id=<subtaskId> --status=done`
 
-9.  **Commit Changes (If using Git):**
-    *   Stage the relevant code changes and any updated/new rule files (`git add .`).
-    *   Craft a comprehensive Git commit message summarizing the work done for the subtask, including both code implementation and any rule adjustments.
-    *   Execute the commit command directly in the terminal (e.g., `git commit -m 'feat(module): Implement feature X for subtask <subtaskId>\n\n- Details about changes...\n- Updated rule Y for pattern Z'`).
-    *   Consider if a Changeset is needed according to internal versioning guidelines (previously linked to `changeset.mdc`). If so, run `npm run changeset`, stage the generated file, and amend the commit or create a new one.
+9. **Commit Changes (If using Git):**
+   - Stage the relevant code changes and any updated/new rule files (`git add .`)
+   - Craft a comprehensive Git commit message summarizing the work done for the subtask, including both code implementation and any rule adjustments
+   - Execute the commit command directly in the terminal (e.g., `git commit -m 'feat(module): Implement feature X for subtask <subtaskId>\n\n- Details about changes...\n- Updated rule Y for pattern Z'`)
+   - Consider if a Changeset is needed according to internal versioning guidelines. If so, run `npm run changeset`, stage the generated file, and amend the commit or create a new one
 
 10. **Proceed to Next Subtask:**
-    *   Identify the next subtask (e.g., using `next_task` / `task-master next`).
+    - Identify the next subtask using `task-master next`
 
 ## Code Analysis & Refactoring Techniques
 
 - **Top-Level Function Search**:
-    - Useful for understanding module structure or planning refactors.
+    - Useful for understanding module structure or planning refactors
     - Use grep/ripgrep to find exported functions/constants:
-      `rg "export (async function|function|const) \w+"` or similar patterns.
-    - Can help compare functions between files during migrations or identify potential naming conflicts.
-
----
-*This workflow provides a general guideline. Adapt it based on your specific project needs and team practices.*
-
-
-
-
-
-
-
-
-
-
-
-
-
+      `rg "export (async function|function|const) \w+"` or similar patterns
+    - Can help compare functions between files during migrations or identify potential naming conflicts
 
 ---
 
-# Taskmaster Tool & Command Reference
+# Taskmaster Command Reference
 
-This document provides a detailed reference for interacting with Taskmaster using the `task-master` CLI commands.
+**Important:** Several commands involve AI processing. This means the response time will be longer than commands that do not involve AI processing. It also means that the context that you send to the AI will be more important than ever since the task-master AI processing does not have access to the same context as the AI Agent calling it - you (Claude). When you are calling these AI-powered commands, you should always do the heavy lifting and send the most relevant context and detailed instructions to task-master, rather than rely on task-master to figure things out. Task-master is not a general purpose AI agent, it is a tool for managing tasks and subtasks for a software development project. This means that you should always be as specific as possible when calling these commands. Task-master does not know anything about the project other than what you send it in the prompt.
 
-**Important:** Several commands involve AI processing. This means the response time will be longer than the commands that do not involve AI processing. It also means that the context that you send to the AI will be more important than ever since the task-master AI processing does not have access to the same context as the AI Agent calling it - you (Claude). When you are calling these AI-powered commands, you should always do the heavy lifting and send the most relevant context and detailed instructions to task-master, rather to rely on task-master to figure things out. Task-master is not a general purpose AI agent, it is a tool for managing tasks and subtasks for a software development project. This means that you should always be as specific as possible when calling these commands. Task-master does not know anything about the project than what you send it in the prompt.
+## Quick Command Reference
+
+| Command | Description | Category | AI |
+|---------|-------------|----------|-----|
+| `init` | Initialize new project | Setup | ❌ |
+| `parse-prd` | Parse requirements document | Setup | ✅ |
+| `models` | Configure AI models | Setup | ❌ |
+| `list` | List all tasks | Viewing | ❌ |
+| `next` | Show next task to work on | Viewing | ❌ |
+| `show` | Show specific task details | Viewing | ❌ |
+| `add-task` | Add new task | Creation | ✅ |
+| `add-subtask` | Add or convert to subtask | Creation | ❌ |
+| `update` | Update multiple future tasks | Modification | ✅ |
+| `update-task` | Update specific task | Modification | ✅ |
+| `update-subtask` | Append notes to subtask | Modification | ✅ |
+| `set-status` | Change task status | Modification | ❌ |
+| `remove-task` | Delete task | Modification | ❌ |
+| `remove-subtask` | Delete or convert subtask | Modification | ❌ |
+| `expand` | Break down into subtasks | Organization | ✅ |
+| `clear-subtasks` | Remove all subtasks | Organization | ❌ |
+| `move` | Reorganize task hierarchy | Organization | ❌ |
+| `add-dependency` | Add task dependency | Dependencies | ❌ |
+| `remove-dependency` | Remove task dependency | Dependencies | ❌ |
+| `validate-dependencies` | Check for issues | Dependencies | ❌ |
+| `fix-dependencies` | Auto-fix issues | Dependencies | ❌ |
+| `analyze-complexity` | Analyze task complexity | Analysis | ✅ |
+| `complexity-report` | View complexity report | Analysis | ❌ |
+| `generate` | Generate task markdown files | Files | ❌ |
+
+**Legend:** ✅ = AI-powered (requires API key), ❌ = Local operation
+
+## Common Options
+
+These options are available for most task-master commands:
+
+- `-f, --file <file>` - Path to your `tasks.json` file. If not specified, task-master will auto-detect it by searching up the directory tree for `.taskmaster/tasks/tasks.json`
+- `-h, --help` - Show help for any command
+
+## AI-Powered Commands
+
+The following commands use AI and may take up to a minute to complete:
+- `parse-prd` - Parse requirements documents
+- `add-task` - Create new tasks from descriptions
+- `update` - Update multiple tasks with new context
+- `update-task` - Update a specific task
+- `update-subtask` - Append notes to subtasks
+- `expand` - Break down tasks into subtasks
+- `analyze-complexity` - Analyze task complexity
+
+When using these commands:
+- Ensure you have the appropriate API keys in your `.env` file
+- Be as specific as possible in your prompts
+- Consider using the `--research` flag for more informed results (requires Perplexity API key)
 
 ---
 
-## Initialization & Setup
+## Project Setup
 
 ### 1. Initialize Project (`init`)
 
-*   **CLI Command:** `task-master init [options]`
-*   **Description:** `Set up the basic Taskmaster file structure and configuration in the current directory for a new project.`
-*   **Key CLI Options:**
-    *   `--name <name>`: `Set the name for your project in Taskmaster's configuration.`
-    *   `--description <text>`: `Provide a brief description for your project.`
-    *   `--version <version>`: `Set the initial version for your project, e.g., '0.1.0'.`
-    *   `-y, --yes`: `Initialize Taskmaster quickly using default settings without interactive prompts.`
-*   **Usage:** Run this once at the beginning of a new project.
-*   **Important:** Once complete, you *MUST* parse a prd in order to generate tasks. There will be no tasks files until then. The next step after initializing should be to create a PRD using the example PRD in .taskmaster/templates/example_prd.txt.
+**Command:** `task-master init [options]`
 
-### 2. Parse PRD (`parse_prd`)
+**Description:** Set up the basic Taskmaster file structure and configuration in the current directory for a new project.
 
-*   **CLI Command:** `task-master parse-prd [file] [options]`
-*   **Description:** `Parse a Product Requirements Document, PRD, or text file with Taskmaster to automatically generate an initial set of tasks in tasks.json.`
-*   **Key Parameters/Options:**
-    *   `input`: `Path to your PRD or requirements text file that Taskmaster should parse for tasks.` (CLI: `[file]` positional or `-i, --input <file>`)
-    *   `output`: `Specify where Taskmaster should save the generated 'tasks.json' file. Defaults to '.taskmaster/tasks/tasks.json'.` (CLI: `-o, --output <file>`)
-    *   `numTasks`: `Approximate number of top-level tasks Taskmaster should aim to generate from the document.` (CLI: `-n, --num-tasks <number>`)
-    *   `force`: `Use this to allow Taskmaster to overwrite an existing 'tasks.json' without asking for confirmation.` (CLI: `-f, --force`)
-*   **Usage:** Useful for bootstrapping a project from an existing requirements document.
-*   **Notes:** Task Master will strictly adhere to any specific requirements mentioned in the PRD, such as libraries, database schemas, frameworks, tech stacks, etc., while filling in any gaps where the PRD isn't fully specified. Tasks are designed to provide the most direct implementation path while avoiding over-engineering.
-*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress. If the user does not have a PRD, suggest discussing their idea and then use the example PRD in `.taskmaster/templates/example_prd.txt` as a template for creating the PRD based on their idea, for use with `parse-prd`.
+**Options:**
+- `--name <name>` - Set the name for your project
+- `--description <text>` - Provide a brief description for your project
+- `--version <version>` - Set the initial version (e.g., `0.1.0`)
+- `--author <author>` - Set the author name
+- `--skip-install` - Skip installing dependencies
+- `--aliases` - Add shell aliases `tm` and `taskmaster`
+- `-y, --yes` - Use default settings without prompts
+
+**Notes:** Run this once at the beginning of a new project. After initialization, you must parse a PRD to generate tasks. Use the example PRD template in `.taskmaster/templates/example_prd.txt` if needed.
+
+### 2. Parse PRD (`parse-prd`)
+
+**Command:** `task-master parse-prd [file] [options]`
+
+**Description:** Parse a Product Requirements Document (PRD) or text file to automatically generate an initial set of tasks.
+
+**Options:**
+- `[file]` or `-i, --input <file>` - Path to your PRD or requirements text file
+- `-o, --output <file>` - Where to save the generated `tasks.json` (default: `.taskmaster/tasks/tasks.json`)
+- `-n, --num-tasks <number>` - Approximate number of top-level tasks to generate
+- `-f, --force` - Overwrite existing `tasks.json` without confirmation
+
+**Example:**
+```bash
+task-master parse-prd requirements.txt -n 10 --force
+```
+
+**Notes:** This AI-powered command strictly adheres to requirements mentioned in the PRD (libraries, frameworks, tech stacks) while filling gaps appropriately. Tasks are designed for direct implementation without over-engineering.
+
+### 3. Configure AI Models (`models`)
+
+**Command:** `task-master models [options]`
+
+**Description:** View or configure AI models for different roles (main, research, fallback). Supports custom Ollama and OpenRouter models.
+
+**Options:**
+- `--set-main <model_id>` - Set the primary model
+- `--set-research <model_id>` - Set the research model
+- `--set-fallback <model_id>` - Set the fallback model
+- `--ollama` - Specify that the model ID is for Ollama (use with `--set-*`)
+- `--openrouter` - Specify that the model ID is for OpenRouter (validates against API)
+- `--setup` - Run interactive setup to configure models
+
+**Example:**
+```bash
+task-master models --set-main claude-3-opus --set-research perplexity-sonar
+```
+
+**Notes:** Configuration is stored in `.taskmaster/config.json`. API keys must be present in your `.env` file. Model costs are in dollars (e.g., 3 = $3.00, 0.8 = $0.80). DO NOT manually edit the config file.
 
 ---
 
-## AI Model Configuration
+## Task Viewing
 
-### 2. Manage Models (`models`)
-*   **CLI Command:** `task-master models [options]`
-*   **Description:** `View the current AI model configuration or set specific models for different roles (main, research, fallback). Allows setting custom model IDs for Ollama and OpenRouter.`
-*   **Key CLI Options:**
-    *   `--set-main <model_id>`: `Set the primary model.`
-    *   `--set-research <model_id>`: `Set the research model.`
-    *   `--set-fallback <model_id>`: `Set the fallback model.`
-    *   `--ollama`: `Specify that the provided model ID is for Ollama (use with --set-*).`
-    *   `--openrouter`: `Specify that the provided model ID is for OpenRouter (use with --set-*). Validates against OpenRouter API.`
-    *   `--setup`: `Run interactive setup to configure models, including custom Ollama/OpenRouter IDs.`
-*   **Usage:** Run without flags to view current configuration and available models. Use set flags to update specific roles. Use `--setup` for guided configuration, including custom models. To set a custom model via flags, use `--set-<role>=<model_id>` along with either `--ollama` or `--openrouter`.
-*   **Notes:** Configuration is stored in `.taskmaster/config.json` in the project root. This command modifies that file. Use `task-master models` to see internally supported models. OpenRouter custom models are validated against their live API. Ollama custom models are not validated live.
-*   **API note:** API keys for selected AI providers (based on their model) must be present in the local .env file for the CLI to be able to read them.
-*   **Model costs:** The costs in supported models are expressed in dollars. An input/output value of 3 is $3.00. A value of 0.8 is $0.80.
-*   **Warning:** DO NOT MANUALLY EDIT THE .taskmaster/config.json FILE. Use the included commands as needed.
+### 4. List Tasks (`list`)
 
----
+**Command:** `task-master list [options]`
 
-## Task Listing & Viewing
+**Description:** List your tasks, optionally filtering by status and showing subtasks.
 
-### 3. Get Tasks (`get_tasks`)
+**Options:**
+- `-s, --status <status>` - Show only tasks with this status (e.g., `pending`, `done`)
+- `--with-subtasks` - Include subtasks indented under their parent tasks
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
 
-*   **CLI Command:** `task-master list [options]`
-*   **Description:** `List your Taskmaster tasks, optionally filtering by status and showing subtasks.`
-*   **Key CLI Options:**
-    *   `status`: `Show only Taskmaster tasks matching this status, e.g., 'pending' or 'done'.` (CLI: `-s, --status <status>`)
-    *   `withSubtasks`: `Include subtasks indented under their parent tasks in the list.` (CLI: `--with-subtasks`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Get an overview of the project status, often used at the start of a work session.
+**Example:**
+```bash
+task-master list --status pending --with-subtasks
+```
 
-### 4. Get Next Task (`next_task`)
+### 5. Show Next Task (`next`)
 
-*   **CLI Command:** `task-master next [options]`
-*   **Description:** `Ask Taskmaster to show the next available task you can work on, based on status and completed dependencies.`
-*   **Key CLI Options:**
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Identify what to work on next according to the plan.
+**Command:** `task-master next [options]`
 
-### 5. Get Task Details (`get_task`)
+**Description:** Show the next available task based on status and completed dependencies.
 
-*   **CLI Command:** `task-master show [id] [options]`
-*   **Description:** `Display detailed information for a specific Taskmaster task or subtask by its ID.`
-*   **Key CLI Options:**
-    *   `id`: `Required. The ID of the Taskmaster task, e.g., '15', or subtask, e.g., '15.2', you want to view.` (CLI: `[id]` positional or `-i, --id <id>`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Understand the full details, implementation notes, and test strategy for a specific task before starting work.
+**Options:**
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Notes:** This command identifies tasks with all dependencies satisfied, prioritized by priority level, dependency count, and ID. Shows comprehensive task information including subtasks and suggested actions.
+
+### 6. Show Task Details (`show`)
+
+**Command:** `task-master show [id] [options]`
+
+**Description:** Display detailed information for a specific task or subtask by its ID.
+
+**Options:**
+- `[id]` or `-i, --id <id>` - Task ID (e.g., `15` or `15.2` for subtasks)
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Example:**
+```bash
+task-master show 15.2
+```
 
 ---
 
 ## Task Creation & Modification
 
-### 6. Add Task (`add_task`)
+### 7. Add Task (`add-task`)
 
-*   **CLI Command:** `task-master add-task [options]`
-*   **Description:** `Add a new task to Taskmaster by describing it; AI will structure it.`
-*   **Key CLI Options:**
-    *   `prompt`: `Required. Describe the new task you want Taskmaster to create, e.g., "Implement user authentication using JWT".` (CLI: `-p, --prompt <text>`)
-    *   `dependencies`: `Specify the IDs of any Taskmaster tasks that must be completed before this new one can start, e.g., '12,14'.` (CLI: `-d, --dependencies <ids>`)
-    *   `priority`: `Set the priority for the new task: 'high', 'medium', or 'low'. Default is 'medium'.` (CLI: `--priority <priority>`)
-    *   `research`: `Enable Taskmaster to use the research role for potentially more informed task creation.` (CLI: `-r, --research`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Quickly add newly identified tasks during development.
-*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+**Command:** `task-master add-task [options]`
 
-### 7. Add Subtask (`add_subtask`)
+**Description:** Add a new task by describing it; AI will structure it appropriately.
 
-*   **CLI Command:** `task-master add-subtask [options]`
-*   **Description:** `Add a new subtask to a Taskmaster parent task, or convert an existing task into a subtask.`
-*   **Key CLI Options:**
-    *   `parent`: `Required. The ID of the Taskmaster task that will be the parent.` (CLI: `-p, --parent <id>`)
-    *   `taskId`: `Use this if you want to convert an existing top-level Taskmaster task into a subtask of the specified parent.` (CLI: `-i, --task-id <id>`)
-    *   `title`: `Required if not using taskId. The title for the new subtask Taskmaster should create.` (CLI: `-t, --title <title>`)
-    *   `description`: `A brief description for the new subtask.` (CLI: `-d, --description <text>`)
-    *   `details`: `Provide implementation notes or details for the new subtask.` (CLI: `--details <text>`)
-    *   `dependencies`: `Specify IDs of other tasks or subtasks, e.g., '15' or '16.1', that must be done before this new subtask.` (CLI: `--dependencies <ids>`)
-    *   `status`: `Set the initial status for the new subtask. Default is 'pending'.` (CLI: `-s, --status <status>`)
-    *   `skipGenerate`: `Prevent Taskmaster from automatically regenerating markdown task files after adding the subtask.` (CLI: `--skip-generate`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Break down tasks manually or reorganize existing tasks.
+**Options:**
+- `-p, --prompt <text>` (required) - Describe the new task to create
+- `-d, --dependencies <ids>` - Comma-separated IDs of prerequisite tasks
+- `--priority <priority>` - Set priority: `high`, `medium`, or `low` (default: `medium`)
+- `-r, --research` - Enable research mode for more informed task creation
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
 
-### 8. Update Tasks (`update`)
+**Example:**
+```bash
+task-master add-task -p "Implement JWT authentication with refresh tokens" -d 3,5 --priority high
+```
 
-*   **CLI Command:** `task-master update [options]`
-*   **Description:** `Update multiple upcoming tasks in Taskmaster based on new context or changes, starting from a specific task ID.`
-*   **Key CLI Options:**
-    *   `from`: `Required. The ID of the first task Taskmaster should update. All tasks with this ID or higher that are not 'done' will be considered.` (CLI: `--from <id>`)
-    *   `prompt`: `Required. Explain the change or new context for Taskmaster to apply to the tasks, e.g., "We are now using React Query instead of Redux Toolkit for data fetching".` (CLI: `-p, --prompt <text>`)
-    *   `research`: `Enable Taskmaster to use the research role for more informed updates. Requires appropriate API key.` (CLI: `-r, --research`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Handle significant implementation changes or pivots that affect multiple future tasks. Example CLI: `task-master update --from='18' --prompt='Switching to React Query.\nNeed to refactor data fetching...'`
-*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+### 8. Add Subtask (`add-subtask`)
 
-### 9. Update Task (`update_task`)
+**Command:** `task-master add-subtask [options]`
 
-*   **CLI Command:** `task-master update-task [options]`
-*   **Description:** `Modify a specific Taskmaster task or subtask by its ID, incorporating new information or changes.`
-*   **Key CLI Options:**
-    *   `id`: `Required. The specific ID of the Taskmaster task, e.g., '15', or subtask, e.g., '15.2', you want to update.` (CLI: `-i, --id <id>`)
-    *   `prompt`: `Required. Explain the specific changes or provide the new information Taskmaster should incorporate into this task.` (CLI: `-p, --prompt <text>`)
-    *   `research`: `Enable Taskmaster to use the research role for more informed updates. Requires appropriate API key.` (CLI: `-r, --research`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Refine a specific task based on new understanding or feedback. Example CLI: `task-master update-task --id='15' --prompt='Clarification: Use PostgreSQL instead of MySQL.\nUpdate schema details...'`
-*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+**Description:** Add a new subtask to a parent task, or convert an existing task into a subtask.
 
-### 10. Update Subtask (`update_subtask`)
+**Options:**
+- `-p, --parent <id>` (required) - ID of the parent task
+- `-i, --task-id <id>` - Convert existing task to subtask
+- `-t, --title <title>` - Title for new subtask (required if not using `--task-id`)
+- `-d, --description <text>` - Brief description
+- `--details <text>` - Implementation notes
+- `--dependencies <ids>` - Prerequisite task/subtask IDs
+- `-s, --status <status>` - Initial status (default: `pending`)
+- `--skip-generate` - Don't regenerate markdown files
 
-*   **CLI Command:** `task-master update-subtask [options]`
-*   **Description:** `Append timestamped notes or details to a specific Taskmaster subtask without overwriting existing content. Intended for iterative implementation logging.`
-*   **Key CLI Options:**
-    *   `id`: `Required. The specific ID of the Taskmaster subtask, e.g., '15.2', you want to add information to.` (CLI: `-i, --id <id>`)
-    *   `prompt`: `Required. Provide the information or notes Taskmaster should append to the subtask's details. Ensure this adds *new* information not already present.` (CLI: `-p, --prompt <text>`)
-    *   `research`: `Enable Taskmaster to use the research role for more informed updates. Requires appropriate API key.` (CLI: `-r, --research`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Add implementation notes, code snippets, or clarifications to a subtask during development. Before calling, review the subtask's current details to append only fresh insights, helping to build a detailed log of the implementation journey and avoid redundancy. Example CLI: `task-master update-subtask --id='15.2' --prompt='Discovered that the API requires header X.\nImplementation needs adjustment...'`
-*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+**Example:**
+```bash
+task-master add-subtask -p 5 -t "Set up database connection" -d "Configure PostgreSQL connection pool"
+```
 
-### 11. Set Task Status (`set_task_status`)
+### 9. Update Multiple Tasks (`update`)
 
-*   **CLI Command:** `task-master set-status [options]`
-*   **Description:** `Update the status of one or more Taskmaster tasks or subtasks, e.g., 'pending', 'in-progress', 'done'.`
-*   **Key CLI Options:**
-    *   `id`: `Required. The ID(s) of the Taskmaster task(s) or subtask(s), e.g., '15', '15.2', or '16,17.1', to update.` (CLI: `-i, --id <id>`)
-    *   `status`: `Required. The new status to set, e.g., 'done', 'pending', 'in-progress', 'review', 'cancelled'.` (CLI: `-s, --status <status>`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Mark progress as tasks move through the development cycle.
+**Command:** `task-master update [options]`
 
-### 12. Remove Task (`remove_task`)
+**Description:** Update multiple upcoming tasks based on new context or changes.
 
-*   **CLI Command:** `task-master remove-task [options]`
-*   **Description:** `Permanently remove a task or subtask from the Taskmaster tasks list.`
-*   **Key CLI Options:**
-    *   `id`: `Required. The ID of the Taskmaster task, e.g., '5', or subtask, e.g., '5.2', to permanently remove.` (CLI: `-i, --id <id>`)
-    *   `yes`: `Skip the confirmation prompt and immediately delete the task.` (CLI: `-y, --yes`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Permanently delete tasks or subtasks that are no longer needed in the project.
-*   **Notes:** Use with caution as this operation cannot be undone. Consider using 'blocked', 'cancelled', or 'deferred' status instead if you just want to exclude a task from active planning but keep it for reference. The command automatically cleans up dependency references in other tasks.
+**Options:**
+- `--from <id>` (required) - Starting task ID (updates this and all higher IDs not marked `done`)
+- `-p, --prompt <text>` (required) - Explain the change or new context
+- `-r, --research` - Enable research mode
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Example:**
+```bash
+task-master update --from 18 --prompt "Switching to React Query instead of Redux.\nNeed to refactor all data fetching logic."
+```
+
+### 10. Update Task (`update-task`)
+
+**Command:** `task-master update-task [options]`
+
+**Description:** Modify a specific task or subtask by its ID.
+
+**Options:**
+- `-i, --id <id>` (required) - Task or subtask ID to update
+- `-p, --prompt <text>` (required) - Explain the changes or new information
+- `-r, --research` - Enable research mode
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Example:**
+```bash
+task-master update-task -i 15 -p "Use PostgreSQL instead of MySQL.\nUpdate schema to use JSONB for metadata."
+```
+
+### 11. Update Subtask (`update-subtask`)
+
+**Command:** `task-master update-subtask [options]`
+
+**Description:** Append timestamped notes to a subtask without overwriting existing content.
+
+**Options:**
+- `-i, --id <id>` (required) - Subtask ID
+- `-p, --prompt <text>` (required) - Information to append
+- `-r, --research` - Enable research mode
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Example:**
+```bash
+task-master update-subtask -i 15.2 -p "Discovered API requires X-Custom-Header.\nImplemented retry logic with exponential backoff."
+```
+
+**Notes:** Review existing details before appending to avoid redundancy. Use for iterative implementation logging.
+
+### 12. Set Task Status (`set-status`)
+
+**Command:** `task-master set-status [options]`
+
+**Description:** Update the status of one or more tasks or subtasks.
+
+**Options:**
+- `-i, --id <id>` (required) - Task/subtask ID(s), comma-separated for multiple
+- `-s, --status <status>` (required) - New status (e.g., `done`, `pending`, `in-progress`)
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Example:**
+```bash
+task-master set-status -i 15,15.1,15.2 -s done
+```
+
+### 13. Remove Task (`remove-task`)
+
+**Command:** `task-master remove-task [options]`
+
+**Description:** Permanently remove a task or subtask from the tasks list.
+
+**Options:**
+- `-i, --id <id>` (required) - Task or subtask ID to remove
+- `-y, --yes` - Skip confirmation prompt
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Notes:** Use with caution - this cannot be undone. Consider using status like `cancelled` or `deferred` instead. Automatically cleans up dependency references.
 
 ---
 
-## Task Structure & Breakdown
+## Task Organization
 
-### 13. Expand Task (`expand_task`)
+### 14. Expand Task (`expand`)
 
-*   **CLI Command:** `task-master expand [options]`
-*   **Description:** `Use Taskmaster's AI to break down a complex task into smaller, manageable subtasks. Appends subtasks by default.`
-*   **Key CLI Options:**
-    *   `id`: `The ID of the specific Taskmaster task you want to break down into subtasks.` (CLI: `-i, --id <id>`)
-    *   `num`: `Optional: Suggests how many subtasks Taskmaster should aim to create. Uses complexity analysis/defaults otherwise.` (CLI: `-n, --num <number>`)
-    *   `research`: `Enable Taskmaster to use the research role for more informed subtask generation. Requires appropriate API key.` (CLI: `-r, --research`)
-    *   `prompt`: `Optional: Provide extra context or specific instructions to Taskmaster for generating the subtasks.` (CLI: `-p, --prompt <text>`)
-    *   `force`: `Optional: If true, clear existing subtasks before generating new ones. Default is false (append).` (CLI: `--force`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Generate a detailed implementation plan for a complex task before starting coding. Automatically uses complexity report recommendations if available and `num` is not specified.
-*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+**Command:** `task-master expand [options]`
 
-### 14. Expand All Tasks (`expand_all`)
+**Description:** Break down a complex task into smaller, manageable subtasks using AI.
 
-*   **CLI Command:** `task-master expand --all [options]` (Note: CLI uses the `expand` command with the `--all` flag)
-*   **Description:** `Tell Taskmaster to automatically expand all eligible pending/in-progress tasks based on complexity analysis or defaults. Appends subtasks by default.`
-*   **Key CLI Options:**
-    *   `num`: `Optional: Suggests how many subtasks Taskmaster should aim to create per task.` (CLI: `-n, --num <number>`)
-    *   `research`: `Enable research role for more informed subtask generation. Requires appropriate API key.` (CLI: `-r, --research`)
-    *   `prompt`: `Optional: Provide extra context for Taskmaster to apply generally during expansion.` (CLI: `-p, --prompt <text>`)
-    *   `force`: `Optional: If true, clear existing subtasks before generating new ones for each eligible task. Default is false (append).` (CLI: `--force`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Useful after initial task generation or complexity analysis to break down multiple tasks at once.
-*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+**Options:**
+- `-i, --id <id>` - Task ID to expand
+- `--all` - Expand all eligible pending/in-progress tasks
+- `-n, --num <number>` - Number of subtasks to create (overrides complexity analysis)
+- `-r, --research` - Enable research mode
+- `-p, --prompt <text>` - Additional context for expansion
+- `--force` - Clear existing subtasks before generating (default: append)
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
 
-### 15. Clear Subtasks (`clear_subtasks`)
+**Example:**
+```bash
+task-master expand -i 5 -n 8 --research -p "Focus on test coverage and error handling"
+```
 
-*   **CLI Command:** `task-master clear-subtasks [options]`
-*   **Description:** `Remove all subtasks from one or more specified Taskmaster parent tasks.`
-*   **Key CLI Options:**
-    *   `id`: `The ID(s) of the Taskmaster parent task(s) whose subtasks you want to remove, e.g., '15' or '16,18'. Required unless using `all`.) (CLI: `-i, --id <ids>`)
-    *   `all`: `Tell Taskmaster to remove subtasks from all parent tasks.` (CLI: `--all`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Used before regenerating subtasks with `expand_task` if the previous breakdown needs replacement.
+**Notes:** Automatically uses complexity report recommendations if available and `--num` not specified.
 
-### 16. Remove Subtask (`remove_subtask`)
+### 15. Clear Subtasks (`clear-subtasks`)
 
-*   **CLI Command:** `task-master remove-subtask [options]`
-*   **Description:** `Remove a subtask from its Taskmaster parent, optionally converting it into a standalone task.`
-*   **Key CLI Options:**
-    *   `id`: `Required. The ID(s) of the Taskmaster subtask(s) to remove, e.g., '15.2' or '16.1,16.3'.` (CLI: `-i, --id <id>`)
-    *   `convert`: `If used, Taskmaster will turn the subtask into a regular top-level task instead of deleting it.` (CLI: `-c, --convert`)
-    *   `skipGenerate`: `Prevent Taskmaster from automatically regenerating markdown task files after removing the subtask.` (CLI: `--skip-generate`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Delete unnecessary subtasks or promote a subtask to a top-level task.
+**Command:** `task-master clear-subtasks [options]`
 
-### 17. Move Task (`move_task`)
+**Description:** Remove all subtasks from one or more parent tasks.
 
-*   **CLI Command:** `task-master move [options]`
-*   **Description:** `Move a task or subtask to a new position within the task hierarchy.`
-*   **Key CLI Options:**
-    *   `from`: `Required. ID of the task/subtask to move (e.g., "5" or "5.2"). Can be comma-separated for multiple tasks.` (CLI: `--from <id>`)
-    *   `to`: `Required. ID of the destination (e.g., "7" or "7.3"). Must match the number of source IDs if comma-separated.` (CLI: `--to <id>`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Reorganize tasks by moving them within the hierarchy. Supports various scenarios like:
-    *   Moving a task to become a subtask
-    *   Moving a subtask to become a standalone task
-    *   Moving a subtask to a different parent
-    *   Reordering subtasks within the same parent
-    *   Moving a task to a new, non-existent ID (automatically creates placeholders)
-    *   Moving multiple tasks at once with comma-separated IDs
-*   **Validation Features:**
-    *   Allows moving tasks to non-existent destination IDs (creates placeholder tasks)
-    *   Prevents moving to existing task IDs that already have content (to avoid overwriting)
-    *   Validates that source tasks exist before attempting to move them
-    *   Maintains proper parent-child relationships
-*   **Example CLI:** `task-master move --from=5.2 --to=7.3` to move subtask 5.2 to become subtask 7.3.
-*   **Example Multi-Move:** `task-master move --from=10,11,12 --to=16,17,18` to move multiple tasks to new positions.
-*   **Common Use:** Resolving merge conflicts in tasks.json when multiple team members create tasks on different branches.
+**Options:**
+- `-i, --id <ids>` - Parent task ID(s), comma-separated
+- `--all` - Clear subtasks from all parent tasks
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Example:**
+```bash
+task-master clear-subtasks -i 15,16,18
+```
+
+### 16. Remove Subtask (`remove-subtask`)
+
+**Command:** `task-master remove-subtask [options]`
+
+**Description:** Remove a subtask from its parent, optionally converting it to a standalone task.
+
+**Options:**
+- `-i, --id <id>` (required) - Subtask ID(s), comma-separated
+- `-c, --convert` - Convert to top-level task instead of deleting
+- `--skip-generate` - Don't regenerate markdown files
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Example:**
+```bash
+task-master remove-subtask -i 15.2 --convert
+```
+
+### 17. Move Task (`move`)
+
+**Command:** `task-master move [options]`
+
+**Description:** Move tasks or subtasks to new positions within the hierarchy.
+
+**Options:**
+- `--from <id>` (required) - Source task/subtask ID(s), comma-separated
+- `--to <id>` (required) - Destination ID(s), must match number of source IDs
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Examples:**
+```bash
+# Move task 5 to become subtask 7.1
+task-master move --from 5 --to 7.1
+
+# Move multiple tasks
+task-master move --from 10,11,12 --to 16,17,18
+
+# Move subtask to different parent
+task-master move --from 5.2 --to 7.3
+```
+
+**Notes:** Supports moving to non-existent IDs (creates placeholders), prevents overwriting existing tasks, maintains dependencies. Useful for resolving merge conflicts.
 
 ---
 
 ## Dependency Management
 
-### 18. Add Dependency (`add_dependency`)
+### 18. Add Dependency (`add-dependency`)
 
-*   **CLI Command:** `task-master add-dependency [options]`
-*   **Description:** `Define a dependency in Taskmaster, making one task a prerequisite for another.`
-*   **Key CLI Options:**
-    *   `id`: `Required. The ID of the Taskmaster task that will depend on another.` (CLI: `-i, --id <id>`)
-    *   `dependsOn`: `Required. The ID of the Taskmaster task that must be completed first, the prerequisite.` (CLI: `-d, --depends-on <id>`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <path>`)
-*   **Usage:** Establish the correct order of execution between tasks.
+**Command:** `task-master add-dependency [options]`
 
-### 19. Remove Dependency (`remove_dependency`)
+**Description:** Make one task dependent on another.
 
-*   **CLI Command:** `task-master remove-dependency [options]`
-*   **Description:** `Remove a dependency relationship between two Taskmaster tasks.`
-*   **Key CLI Options:**
-    *   `id`: `Required. The ID of the Taskmaster task you want to remove a prerequisite from.` (CLI: `-i, --id <id>`)
-    *   `dependsOn`: `Required. The ID of the Taskmaster task that should no longer be a prerequisite.` (CLI: `-d, --depends-on <id>`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Update task relationships when the order of execution changes.
+**Options:**
+- `-i, --id <id>` (required) - Task that will have the dependency
+- `-d, --depends-on <id>` (required) - Task that must be completed first
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
 
-### 20. Validate Dependencies (`validate_dependencies`)
+**Example:**
+```bash
+task-master add-dependency -i 8 -d 5
+```
 
-*   **CLI Command:** `task-master validate-dependencies [options]`
-*   **Description:** `Check your Taskmaster tasks for dependency issues (like circular references or links to non-existent tasks) without making changes.`
-*   **Key CLI Options:**
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Audit the integrity of your task dependencies.
+### 19. Remove Dependency (`remove-dependency`)
 
-### 21. Fix Dependencies (`fix_dependencies`)
+**Command:** `task-master remove-dependency [options]`
 
-*   **CLI Command:** `task-master fix-dependencies [options]`
-*   **Description:** `Automatically fix dependency issues (like circular references or links to non-existent tasks) in your Taskmaster tasks.`
-*   **Key CLI Options:**
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Clean up dependency errors automatically.
+**Description:** Remove a dependency relationship between tasks.
+
+**Options:**
+- `-i, --id <id>` (required) - Task to remove dependency from
+- `-d, --depends-on <id>` (required) - Dependency to remove
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+### 20. Validate Dependencies (`validate-dependencies`)
+
+**Command:** `task-master validate-dependencies [options]`
+
+**Description:** Check for dependency issues like circular references or links to non-existent tasks.
+
+**Options:**
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+### 21. Fix Dependencies (`fix-dependencies`)
+
+**Command:** `task-master fix-dependencies [options]`
+
+**Description:** Automatically fix dependency issues found by validation.
+
+**Options:**
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
 
 ---
 
 ## Analysis & Reporting
 
-### 22. Analyze Project Complexity (`analyze_project_complexity`)
+### 22. Analyze Complexity (`analyze-complexity`)
 
-*   **CLI Command:** `task-master analyze-complexity [options]`
-*   **Description:** `Have Taskmaster analyze your tasks to determine their complexity and suggest which ones need to be broken down further.`
-*   **Key CLI Options:**
-    *   `output`: `Where to save the complexity analysis report (default: '.taskmaster/reports/task-complexity-report.json').` (CLI: `-o, --output <file>`)
-    *   `threshold`: `The minimum complexity score (1-10) that should trigger a recommendation to expand a task.` (CLI: `-t, --threshold <number>`)
-    *   `research`: `Enable research role for more accurate complexity analysis. Requires appropriate API key.` (CLI: `-r, --research`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Used before breaking down tasks to identify which ones need the most attention.
-*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+**Command:** `task-master analyze-complexity [options]`
 
-### 23. View Complexity Report (`complexity_report`)
+**Description:** Analyze tasks to determine complexity and suggest which need breakdown.
 
-*   **CLI Command:** `task-master complexity-report [options]`
-*   **Description:** `Display the task complexity analysis report in a readable format.`
-*   **Key CLI Options:**
-    *   `file`: `Path to the complexity report (default: '.taskmaster/reports/task-complexity-report.json').` (CLI: `-f, --file <file>`)
-*   **Usage:** Review and understand the complexity analysis results after running analyze-complexity.
+**Options:**
+- `-o, --output <file>` - Save report to file (default: `.taskmaster/reports/task-complexity-report.json`)
+- `-t, --threshold <number>` - Minimum complexity score (1-10) to recommend expansion
+- `-r, --research` - Enable research mode for more accurate analysis
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Notes:** Used before task breakdown to identify which tasks need the most attention.
+
+### 23. View Complexity Report (`complexity-report`)
+
+**Command:** `task-master complexity-report [options]`
+
+**Description:** Display the task complexity analysis report in readable format.
+
+**Options:**
+- `-f, --file <file>` - Path to complexity report (default: `.taskmaster/reports/task-complexity-report.json`)
 
 ---
 
@@ -537,37 +654,41 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 24. Generate Task Files (`generate`)
 
-*   **CLI Command:** `task-master generate [options]`
-*   **Description:** `Create or update individual Markdown files for each task based on your tasks.json.`
-*   **Key CLI Options:**
-    *   `output`: `The directory where Taskmaster should save the task files (default: in a 'tasks' directory).` (CLI: `-o, --output <directory>`)
-    *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
-*   **Usage:** Run this after making changes to tasks.json to keep individual task files up to date.
+**Command:** `task-master generate [options]`
+
+**Description:** Create or update individual Markdown files for each task based on tasks.json.
+
+**Options:**
+- `-o, --output <directory>` - Directory for task files (default: `tasks` directory)
+- `-f, --file <file>` - Path to tasks.json (see Common Options)
+
+**Notes:** Run after making changes to tasks.json to keep individual task files synchronized.
 
 ---
 
-## Environment Variables Configuration (Updated)
+## Environment Variables Configuration
 
-Taskmaster primarily uses the **`.taskmaster/config.json`** file (in project root) for configuration (models, parameters, logging level, etc.), managed via `task-master models --setup`.
+Taskmaster uses **`.taskmaster/config.json`** for configuration (models, parameters, logging), managed via `task-master models --setup`.
 
-Environment variables are used **only** for sensitive API keys related to AI providers and specific overrides like the Ollama base URL:
+Environment variables are used **only** for sensitive API keys:
 
-*   **API Keys (Required for corresponding provider):**
-    *   `ANTHROPIC_API_KEY`
-    *   `PERPLEXITY_API_KEY`
-    *   `OPENAI_API_KEY`
-    *   `GOOGLE_API_KEY`
-    *   `MISTRAL_API_KEY`
-    *   `AZURE_OPENAI_API_KEY` (Requires `AZURE_OPENAI_ENDPOINT` too)
-    *   `OPENROUTER_API_KEY`
-    *   `XAI_API_KEY`
-    *   `OLLAMA_API_KEY` (Requires `OLLAMA_BASE_URL` too)
-*   **Endpoints (Optional/Provider Specific inside .taskmaster/config.json):**
-    *   `AZURE_OPENAI_ENDPOINT`
-    *   `OLLAMA_BASE_URL` (Default: `http://localhost:11434/api`)
+**API Keys (Required for corresponding provider):**
+- `ANTHROPIC_API_KEY`
+- `PERPLEXITY_API_KEY`
+- `OPENAI_API_KEY`
+- `GOOGLE_API_KEY`
+- `MISTRAL_API_KEY`
+- `AZURE_OPENAI_API_KEY` (Requires `AZURE_OPENAI_ENDPOINT`)
+- `OPENROUTER_API_KEY`
+- `XAI_API_KEY`
+- `OLLAMA_API_KEY` (Requires `OLLAMA_BASE_URL`)
 
-**Set API keys** in your **`.env`** file in the project root for CLI use. All other settings (model choice, max tokens, temperature, log level, custom endpoints) are managed in `.taskmaster/config.json` via `task-master models` command.
+**Endpoints (Optional):**
+- `AZURE_OPENAI_ENDPOINT`
+- `OLLAMA_BASE_URL` (Default: `http://localhost:11434/api`)
+
+Set API keys in your **`.env`** file in the project root. All other settings are managed in `.taskmaster/config.json` via `task-master models` command.
 
 ---
 
-For details on how these commands fit into the development process, see the @Development Workflow Guide.
+*This workflow provides a general guideline. Adapt it based on your specific project needs and team practices.*
