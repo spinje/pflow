@@ -10,8 +10,7 @@ Prefer to use the `task-master` CLI over editing the `tasks.json` file directly.
 
 You can also invoke `task-master` commands in parallel to each other. This speeds things up immensely when needing to run bulk operations on the tasks.json file.
 
--   Begin coding sessions with `task-master list`
--   Determine the next task to work on using `task-master next`
+-   Begin coding sessions with `task-master list` or `task-master next` to determine the next task to work on if not explicitly specified by the user
 -   Analyze task complexity with `task-master analyze-complexity --research` before breaking down tasks
 -   Review complexity report using `task-master complexity-report`
 -   Select tasks based on dependencies (all marked 'done'), priority level, and ID order
@@ -29,7 +28,6 @@ You can also invoke `task-master` commands in parallel to each other. This speed
 -   Generate task files with `task-master generate` after updating tasks.json
 -   Maintain valid dependency structure with `task-master add-dependency`/`remove-dependency` commands, `task-master validate-dependencies`, and `task-master fix-dependencies` when needed
 -   Respect dependency chains and task priorities when selecting work
--   Report progress regularly using `task-master list`
 -   Reorganize tasks as needed using `task-master move --from=<id> --to=<id>` to change task hierarchy or ordering
 
 ## Task Complexity Analysis
@@ -206,9 +204,6 @@ Once a task has been broken down into subtasks using `task-master expand` or sim
 
 | Command | Description | Category | AI |
 |---------|-------------|----------|-----|
-| `init` | Initialize new project | Setup | ❌ |
-| `parse-prd` | Parse requirements document | Setup | ✅ |
-| `models` | Configure AI models | Setup | ❌ |
 | `list` | List all tasks | Viewing | ❌ |
 | `next` | Show next task to work on | Viewing | ❌ |
 | `show` | Show specific task details | Viewing | ❌ |
@@ -243,7 +238,6 @@ These options are available for most task-master commands:
 ## AI-Powered Commands
 
 The following commands use AI and may take up to a minute to complete:
-- `parse-prd` - Parse requirements documents
 - `add-task` - Create new tasks from descriptions
 - `update` - Update multiple tasks with new context
 - `update-task` - Update a specific task
@@ -255,67 +249,6 @@ When using these commands:
 - Ensure you have the appropriate API keys in your `.env` file
 - Be as specific as possible in your prompts
 - Consider using the `--research` flag for more informed results (requires Perplexity API key)
-
----
-
-## Project Setup
-
-### 1. Initialize Project (`init`)
-
-**Command:** `task-master init [options]`
-
-**Description:** Set up the basic Taskmaster file structure and configuration in the current directory for a new project.
-
-**Options:**
-- `--name <name>` - Set the name for your project
-- `--description <text>` - Provide a brief description for your project
-- `--version <version>` - Set the initial version (e.g., `0.1.0`)
-- `--author <author>` - Set the author name
-- `--skip-install` - Skip installing dependencies
-- `--aliases` - Add shell aliases `tm` and `taskmaster`
-- `-y, --yes` - Use default settings without prompts
-
-**Notes:** Run this once at the beginning of a new project. After initialization, you must parse a PRD to generate tasks. Use the example PRD template in `.taskmaster/templates/example_prd.txt` if needed.
-
-### 2. Parse PRD (`parse-prd`)
-
-**Command:** `task-master parse-prd [file] [options]`
-
-**Description:** Parse a Product Requirements Document (PRD) or text file to automatically generate an initial set of tasks.
-
-**Options:**
-- `[file]` or `-i, --input <file>` - Path to your PRD or requirements text file
-- `-o, --output <file>` - Where to save the generated `tasks.json` (default: `.taskmaster/tasks/tasks.json`)
-- `-n, --num-tasks <number>` - Approximate number of top-level tasks to generate
-- `-f, --force` - Overwrite existing `tasks.json` without confirmation
-
-**Example:**
-```bash
-task-master parse-prd requirements.txt -n 10 --force
-```
-
-**Notes:** This AI-powered command strictly adheres to requirements mentioned in the PRD (libraries, frameworks, tech stacks) while filling gaps appropriately. Tasks are designed for direct implementation without over-engineering.
-
-### 3. Configure AI Models (`models`)
-
-**Command:** `task-master models [options]`
-
-**Description:** View or configure AI models for different roles (main, research, fallback). Supports custom Ollama and OpenRouter models.
-
-**Options:**
-- `--set-main <model_id>` - Set the primary model
-- `--set-research <model_id>` - Set the research model
-- `--set-fallback <model_id>` - Set the fallback model
-- `--ollama` - Specify that the model ID is for Ollama (use with `--set-*`)
-- `--openrouter` - Specify that the model ID is for OpenRouter (validates against API)
-- `--setup` - Run interactive setup to configure models
-
-**Example:**
-```bash
-task-master models --set-main claude-3-opus --set-research perplexity-sonar
-```
-
-**Notes:** Configuration is stored in `.taskmaster/config.json`. API keys must be present in your `.env` file. Model costs are in dollars (e.g., 3 = $3.00, 0.8 = $0.80). DO NOT manually edit the config file.
 
 ---
 
@@ -666,29 +599,4 @@ task-master add-dependency -i 8 -d 5
 
 ---
 
-## Environment Variables Configuration
-
-Taskmaster uses **`.taskmaster/config.json`** for configuration (models, parameters, logging), managed via `task-master models --setup`.
-
-Environment variables are used **only** for sensitive API keys:
-
-**API Keys (Required for corresponding provider):**
-- `ANTHROPIC_API_KEY`
-- `PERPLEXITY_API_KEY`
-- `OPENAI_API_KEY`
-- `GOOGLE_API_KEY`
-- `MISTRAL_API_KEY`
-- `AZURE_OPENAI_API_KEY` (Requires `AZURE_OPENAI_ENDPOINT`)
-- `OPENROUTER_API_KEY`
-- `XAI_API_KEY`
-- `OLLAMA_API_KEY` (Requires `OLLAMA_BASE_URL`)
-
-**Endpoints (Optional):**
-- `AZURE_OPENAI_ENDPOINT`
-- `OLLAMA_BASE_URL` (Default: `http://localhost:11434/api`)
-
-Set API keys in your **`.env`** file in the project root. All other settings are managed in `.taskmaster/config.json` via `task-master models` command.
-
----
-
-*This workflow provides a general guideline. Adapt it based on your specific project needs and team practices.*
+*This workflow provides a general guideline. Adapt it based on your specific project needs and user preferences.*
