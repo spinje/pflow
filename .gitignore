@@ -159,6 +159,6 @@ node_modules/
 # OS specific
 .DS_Store
 # Task files ?
-.taskmaster/
+# .taskmaster/
 # tasks.json
 # tasks/

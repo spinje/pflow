@@ -1,0 +1,450 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Set up basic CLI with click framework",
+        "description": "Create the minimal CLI entry point with basic flag parsing",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "details": "Create src/pflow/__init__.py and src/pflow/cli.py using click. Set up main entry point with @click.group() for command routing. Implement basic --key=value flag parsing that collects all flags into a dict (no categorization yet). Create minimal package structure: src/pflow/core/, src/pflow/nodes/. Support 'pflow run <workflow>' as primary command. Parse and collect CLI arguments without processing them. This is just the CLI skeleton - command implementations come in later tasks. Reference docs: architecture.md#5.1.3, cli-runtime.md",
+        "testStrategy": "Test CLI flag parsing with various input formats. Verify command routing works correctly. Test error handling for invalid commands"
+      },
+      {
+        "id": 2,
+        "title": "Implement shared store validation utilities",
+        "description": "Create validation functions for the shared store pattern without unnecessary wrapper classes",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "details": "Create src/pflow/core/validation.py with validation functions for the shared store pattern: validate_reserved_keys(shared) to check reserved keys like 'stdin', validate_natural_patterns(shared) to ensure natural key naming conventions, resolve_template_variables(text, shared) to replace $var with shared[var] values. No wrapper class needed - pocketflow already provides the dict pattern, we just need validation utilities. Use plain functions that operate on the shared dict. Part of Phase 1 Core Infrastructure for template-driven workflows. Reference docs: shared-store.md",
+        "testStrategy": "Test validation functions with various shared dict scenarios, template resolution accuracy, and error cases"
+      },
+      {
+        "id": 3,
+        "title": "Create NodeAwareSharedStore proxy",
+        "description": "Implement the proxy pattern for transparent key mapping between nodes with incompatible interfaces",
+        "status": "pending",
+        "dependencies": [
+          2
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/core/proxy.py with NodeAwareSharedStore class. Implement transparent key mapping with zero overhead when no mappings defined. Support input_mappings and output_mappings. Integrate with pocketflow node execution pattern. Reference docs: shared-store.md#2, cli-runtime.md#3",
+        "testStrategy": "Test direct access (no mapping), proxy mapping scenarios, and performance overhead measurement"
+      },
+      {
+        "id": 4,
+        "title": "Build context-aware CLI parameter resolution",
+        "description": "Implement the CLI resolution system that routes flags to shared store or node parameters based on context",
+        "status": "pending",
+        "dependencies": [
+          1,
+          2
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/core/cli_resolver.py with simple functions: categorize_flags(flags_dict) that separates data flags (\u2192 shared store) from behavior flags (\u2192 node params) based on metadata. detect_stdin() to check if data is piped in and populate shared['stdin']. No complex resolution rules - just check if flag name matches known node parameters from metadata, otherwise treat as data. Shell pipe detection uses sys.stdin.isatty(). Reference docs: architecture.md#5.1.1, cli-runtime.md#7",
+        "testStrategy": "Test flag categorization logic, stdin detection, and parameter routing accuracy"
+      },
+      {
+        "id": 5,
+        "title": "Create template variable substitution",
+        "description": "Implement simple $variable replacement for accessing shared store values",
+        "status": "pending",
+        "dependencies": [
+          2
+        ],
+        "priority": "high",
+        "details": "Move template resolution to src/pflow/core/validation.py (already handling shared store validation). Add resolve_template(text, shared) function using regex to replace $variable with shared[variable]. Handle missing variables by returning None or raising clear error. Template syntax is simple: $var or ${var} for variable names with special chars. This is just string substitution, not a complex template engine. Used by planner to generate prompts and by runtime to resolve node parameters. Reference docs: architecture.md#5.1.2, shared-store.md",
+        "testStrategy": "Test variable substitution, missing variable detection, and error handling"
+      },
+      {
+        "id": 6,
+        "title": "Implement node discovery via filesystem scanning",
+        "description": "Scan Python files to find pocketflow.Node subclasses and extract metadata",
+        "status": "pending",
+        "dependencies": [
+          1
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/registry/scanner.py with scan_for_nodes(directories) function. Use ast module or importlib to find all classes inheriting from pocketflow.Node. Extract basic metadata: node name, module path, docstring. Store results in simple dict or JSON file for fast access. No complex indexing needed - just a list of available nodes. Focus on src/pflow/nodes/ directory. This is not a package registry - just local filesystem scanning. Reference docs: registry.md",
+        "testStrategy": "Test node discovery, metadata extraction accuracy, and registry performance"
+      },
+      {
+        "id": 7,
+        "title": "Define JSON IR schema",
+        "description": "Create the JSON schema for workflow intermediate representation",
+        "status": "pending",
+        "dependencies": [
+          6
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/core/ir_schema.py with Pydantic models or JSON Schema definitions. Define minimal IR structure: nodes[] with id, type, params; edges[] with from, to, action (default 'default'); start_node id; optional mappings{} for NodeAwareSharedStore proxy. Keep it simple - just enough to represent a workflow graph. Use standard JSON Schema for validation. Don't overengineer - we can extend later. Example: {'nodes': [{'id': 'n1', 'type': 'read-file', 'params': {'file_path': 'input.txt'}}], 'edges': [], 'start_node': 'n1'}. Reference docs: schemas.md, planner.md#10.1",
+        "testStrategy": "Test schema validation, IR generation, and compatibility with execution engine"
+      },
+      {
+        "id": 8,
+        "title": "Extract node metadata from docstrings",
+        "description": "Parse node docstrings to understand inputs, outputs, and parameters",
+        "status": "pending",
+        "dependencies": [
+          6
+        ],
+        "priority": "medium",
+        "details": "Create src/pflow/registry/metadata_extractor.py with extract_metadata(node_class) function. Parse docstring to find: 1) Node description, 2) Interface section with inputs/outputs, 3) Which parameters go to shared store vs node.set_params(). Use simple regex or docstring_parser library. Output format: {'inputs': ['file_path'], 'outputs': ['content'], 'params': ['encoding']}. This metadata helps the planner understand how to connect nodes. Keep extraction logic simple - don't over-parse. Reference docs: metadata-extraction.md, planner.md#5.1",
+        "testStrategy": "Test extraction from various docstring formats, parameter classification accuracy"
+      },
+      {
+        "id": 9,
+        "title": "Create registry CLI commands",
+        "description": "Implement CLI commands for registry operations: list, describe, and search nodes",
+        "status": "pending",
+        "dependencies": [
+          1,
+          6,
+          8
+        ],
+        "priority": "medium",
+        "details": "Create src/pflow/cli/registry.py. Implement 'pflow registry list' showing individual platform nodes, 'pflow registry describe <node>' for detailed info with rich formatting for node-specific parameters. Part of enhanced registry infrastructure for fast lookups by node ID and capabilities. Reference docs: registry.md",
+        "testStrategy": "Test CLI output formatting, search functionality, and error handling"
+      },
+      {
+        "id": 10,
+        "title": "Implement github-get-issue node",
+        "description": "Create the first simple GitHub node for retrieving issue details",
+        "status": "pending",
+        "dependencies": [
+          2,
+          6
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/nodes/github/github_get_issue.py inheriting from pocketflow.Node. Implement simple single-purpose node that reads issue_number and repo from shared store or params. Use PyGithub or requests for API calls. Natural interface: shared['repo'], shared['issue'], shared['issue_title']. Authentication via environment variables (GITHUB_TOKEN). Error handling for API failures and rate limits. Part of Phase 3 Simple Platform Nodes. Reference docs: simple-nodes.md",
+        "testStrategy": "Mock GitHub API responses, test parameter handling and error cases"
+      },
+      {
+        "id": 11,
+        "title": "Implement claude-code super node",
+        "description": "Create the comprehensive Claude Code node for AI-assisted development with project context",
+        "status": "pending",
+        "dependencies": [
+          2,
+          6
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/nodes/claude_code.py inheriting from pocketflow.Node. Single powerful node with instruction-based interface for AI-assisted development with full project context and file system access. Complex prompt generation from planner templates with structured instructions. Integration with headless Claude Code CLI for workflow automation. Natural interface: shared['prompt'] \u2192 shared['code_report'] (comprehensive development report). Model selection and parameter handling. Part of two-tier AI approach. Reference docs: core-node-packages/claude-nodes.md",
+        "testStrategy": "Mock Claude Code CLI responses, test template processing and output parsing"
+      },
+      {
+        "id": 12,
+        "title": "Implement general LLM node",
+        "description": "Create the general-purpose LLM node for all text processing tasks",
+        "status": "pending",
+        "dependencies": [
+          2,
+          6
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/nodes/llm.py inheriting from pocketflow.Node. Simple interface for general text processing. Natural interface: shared['prompt'] \u2192 shared['response']. Support multiple providers (Claude API, OpenAI). Smart exception to prevent prompt node proliferation. Reference docs: core-node-packages/llm-nodes.md, architecture.md#3.4",
+        "testStrategy": "Mock LLM API responses, test different providers and parameter configurations"
+      },
+      {
+        "id": 13,
+        "title": "Implement git-commit node",
+        "description": "Create simple git node for committing changes",
+        "status": "pending",
+        "dependencies": [
+          2,
+          6
+        ],
+        "priority": "medium",
+        "details": "Create src/pflow/nodes/git/git_commit.py inheriting from pocketflow.Node. Simple node reading shared['message'] and shared['files']. Execute git commands with safety checks and confirmation prompts. Natural interface: shared['changes'] \u2192 shared['commit_hash']. Automatic commit message generation support. Each node focused on single git operation. Reference docs: simple-nodes.md",
+        "testStrategy": "Mock git commands, test safety measures and error handling"
+      },
+      {
+        "id": 14,
+        "title": "Implement read-file and write-file nodes",
+        "description": "Create basic file I/O nodes for reading and writing files",
+        "status": "pending",
+        "dependencies": [
+          2,
+          6
+        ],
+        "priority": "medium",
+        "details": "Create file nodes in src/pflow/nodes/file/, all inheriting from pocketflow.Node: read_file.py, write_file.py, copy_file.py, move_file.py, and delete_file.py. Simple interfaces: read-file uses shared['file_path'] \u2192 shared['content'], write-file uses shared['content'] + shared['file_path'], copy/move use shared['source_path'] + shared['dest_path'], delete uses shared['file_path']. Include safety checks for all destructive operations. Natural interface pattern for file operations. Reference docs: simple-nodes.md",
+        "testStrategy": "Test file operations, permission handling, and safety validations"
+      },
+      {
+        "id": 15,
+        "title": "Create additional GitHub nodes",
+        "description": "Implement remaining GitHub platform nodes: create-pr, list-prs, add-comment, merge-pr",
+        "status": "pending",
+        "dependencies": [
+          10
+        ],
+        "priority": "low",
+        "details": "Create GitHub nodes in src/pflow/nodes/github/, all inheriting from pocketflow.Node: github-create-pr, github-list-prs, github-add-comment, and github-merge-pr. Each with focused single purpose and natural interfaces: shared['pr'], shared['files'], shared['repo']. github-merge-pr includes safety checks and conflict handling with shared['pr_number'], shared['merge_method']. Reference docs: simple-nodes.md",
+        "testStrategy": "Mock API responses for each operation, test error handling"
+      },
+      {
+        "id": 16,
+        "title": "Build CI and shell nodes",
+        "description": "Create comprehensive set of CI and shell execution nodes",
+        "status": "pending",
+        "dependencies": [
+          2,
+          6
+        ],
+        "priority": "low",
+        "details": "Create CI and shell nodes, all inheriting from pocketflow.Node. CI nodes in src/pflow/nodes/ci/: ci-run-tests, ci-get-status, ci-trigger-build, ci-get-logs. Shell nodes in src/pflow/nodes/shell/: shell-exec, shell-pipe, shell-background. CI nodes use natural interface: shared['test_command'] \u2192 shared['test_results'], support multiple CI systems (GitHub Actions, Jenkins, local). Shell nodes use shared['command'] \u2192 shared['output'] with shell-background also writing shared['pid']. Auto-detect test frameworks, handle exit codes, timeout handling, and security considerations. Reference docs: simple-nodes.md",
+        "testStrategy": "Mock test framework responses, test command execution and timeout handling"
+      },
+      {
+        "id": 17,
+        "title": "Implement LLM API client",
+        "description": "Create simple client for calling LLM APIs during planning",
+        "status": "pending",
+        "dependencies": [
+          12
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/planning/llm_client.py with simple functions: call_llm(prompt, model='claude-3-sonnet') that makes API calls to Claude or OpenAI. Use httpx or requests for API calls. Basic retry with exponential backoff (max 3 retries). Read API keys from environment variables. Return just the text response. Keep it simple - this is not a framework, just utility functions for the planner. Can use Simon Willison's 'llm' package if it simplifies implementation. Reference docs: planner.md#6.2",
+        "testStrategy": "Mock LLM API calls, test retry logic and error handling"
+      },
+      {
+        "id": 18,
+        "title": "Create planning context builder",
+        "description": "Format node metadata for LLM-based workflow planning",
+        "status": "pending",
+        "dependencies": [
+          8,
+          17
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/planning/context_builder.py with build_context(registry_metadata) function. Format node information into a structured text that LLMs can understand: node names, descriptions, inputs/outputs, parameter types. Keep format simple and readable - just markdown tables or structured text. Include which parameters go to shared store vs node.set_params(). This provides the LLM with available 'tools' for building workflows. Output example: 'Available nodes:\n- read-file: Reads file from disk\n  Inputs: file_path (from shared store)\n  Outputs: content (to shared store)'. Reference docs: planner.md#6.1",
+        "testStrategy": "Test context generation, metadata optimization, and LLM readability"
+      },
+      {
+        "id": 19,
+        "title": "Implement workflow generation engine",
+        "description": "Create the core engine that transforms natural language into template-driven workflows",
+        "status": "pending",
+        "dependencies": [
+          5,
+          7,
+          18
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_input, node_context) function. Handles BOTH natural language (quoted: \"analyze this file\") AND CLI pipe syntax (unquoted: read-file >> llm). For MVP, route both through LLM which understands pipe syntax as domain-specific language. Use LLM to: 1) Parse intent from natural language OR interpret CLI syntax structure, 2) Select appropriate nodes, 3) Generate workflow with template variables, 4) Fill in missing parameters and connections. Examples: \"analyze error.log\" OR read-file --path=error.log >> llm both generate complete workflows. CLI syntax rarely specifies all parameters, so LLM fills gaps (prompts, data flow, shared store mappings). The LLM generates workflow structure with template variables for missing pieces. Direct CLI parsing is v2.0 optimization. Reference docs: planner.md#6.1, workflow-analysis.md",
+        "testStrategy": "Test workflow generation accuracy, template resolution, and parameter handling"
+      },
+      {
+        "id": 20,
+        "title": "Build workflow storage and approval system",
+        "description": "Implement user verification and workflow persistence",
+        "status": "pending",
+        "dependencies": [
+          19
+        ],
+        "priority": "medium",
+        "details": "Create src/pflow/planning/approval.py and src/pflow/core/workflow_storage.py. Show generated CLI workflow for approval with clear presentation of individual node syntax. Allow parameter modifications before execution. Save approved workflows with meaningful names to ~/.pflow/workflows/. Implement pattern recognition for intelligent reuse of existing workflow definitions. Parameter extraction for similar requests to enable 'Plan Once, Run Forever' optimization. Target \u226590% user approval rate. Reference docs: planner.md#11",
+        "testStrategy": "Test approval flow, workflow saving/loading, and modification handling"
+      },
+      {
+        "id": 21,
+        "title": "Create IR compiler and runtime coordinator",
+        "description": "Build the compiler that converts JSON IR to pocketflow.Flow objects with template resolution",
+        "status": "pending",
+        "dependencies": [
+          4,
+          5
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/runtime/compiler.py to convert JSON IR to executable code using pocketflow: compile_ir_to_flow(ir_json) that instantiates nodes from registry, connects them with pocketflow's >> operator based on edges, returns pocketflow.Flow object. execute_with_tracing(flow, shared) wraps flow.run() with logging. Use resolve_template() from validation.py for parameter templates. Example: IR with read-file -> llm nodes becomes: node1 >> node2; flow = Flow(start=node1). DO NOT reimplement execution - just compile IR to pocketflow objects. Reference docs: architecture.md#5.4, runtime.md",
+        "testStrategy": "End-to-end workflow execution tests with various node combinations"
+      },
+      {
+        "id": 22,
+        "title": "Add IR and workflow validation",
+        "description": "Validate JSON IR structure and node compatibility",
+        "status": "pending",
+        "dependencies": [
+          7,
+          21
+        ],
+        "priority": "high",
+        "details": "Extend src/pflow/core/validation.py (from task 2) with IR validation functions: validate_ir(ir_json) to check JSON schema compliance, validate_node_compatibility(ir_json, registry) to ensure nodes exist and edges are valid, validate_templates(ir_json, initial_shared) to check all template variables can be resolved. Use jsonschema library for schema validation. Return clear error messages pointing to specific issues. This is not a complex framework - just validation functions that the planner and runtime call. Reference docs: planner.md#8, architecture.md#10.3",
+        "testStrategy": "Test validation rules, error messages, and edge cases"
+      },
+      {
+        "id": 23,
+        "title": "Build caching system",
+        "description": "Implement node-level caching for flow_safe nodes",
+        "status": "pending",
+        "dependencies": [
+          21
+        ],
+        "priority": "medium",
+        "details": "Create src/pflow/runtime/cache.py as optional performance optimization. Simple disk-based cache using pickle or json. Cache key = hash(node_type + params + inputs). Store in ~/.pflow/cache/. Only cache nodes marked as @flow_safe (deterministic). Start with just LLM nodes to save API costs. Can be disabled via --no-cache flag. This is not critical for MVP - implement only if performance becomes an issue. Reference docs: runtime.md#caching-strategy",
+        "testStrategy": "Test cache hits/misses, key computation, and storage operations"
+      },
+      {
+        "id": 24,
+        "title": "Create comprehensive test suite",
+        "description": "Build unit and integration tests for all components that are not already covered by the existing tests",
+        "status": "pending",
+        "dependencies": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          21,
+          22
+        ],
+        "priority": "high",
+        "details": "Create tests/ structure mirroring src/. Unit tests for each component (shared store, CLI flag resolution, node registry, metadata extraction, interface compatibility). Integration tests for end-to-end workflows. Performance benchmark suite in tests/benchmarks/ measuring planning latency (\u2264800ms target), execution speed (\u22642s overhead target), token usage optimization. Error recovery test suite in tests/error_recovery/ for invalid input handling, external service failures, partial execution scenarios. Mock external services. Test natural language \u2192 workflow generation with \u226595% success rate target.",
+        "testStrategy": "Achieve >90% code coverage, test all critical paths and error scenarios"
+      },
+      {
+        "id": 25,
+        "title": "Polish CLI experience and documentation",
+        "description": "Enhance user experience with better error messages, help text, and initial documentation",
+        "status": "pending",
+        "dependencies": [
+          24
+        ],
+        "priority": "low",
+        "details": "Improve error messages with actionable suggestions and clear next steps. Add comprehensive --help for all commands. Create initial README with quickstart guide showing primary workflow example (GitHub issue resolution). Add execution tracing with clear step-by-step output. Support developer workflow scenarios including slash command comparison (10x efficiency gain target). Reference docs: architecture.md#11.3",
+        "testStrategy": "User acceptance testing, documentation review, error message clarity"
+      },
+      {
+        "id": 26,
+        "title": "[DEFER TO v2.0] Implement interface compatibility system",
+        "description": "Create the compatibility analysis for shared store key matching and type validation between nodes",
+        "status": "deferred",
+        "dependencies": [
+          2,
+          3,
+          8
+        ],
+        "priority": "medium",
+        "details": "[DEFERRED TO v2.0 - Not needed for MVP] Advanced compatibility checking is for marketplace scenarios. MVP nodes have compatible interfaces by design. Basic validation in task 22 is sufficient for MVP. When implemented in v2.0: Create compatibility analysis for heterogeneous node sources. Reference docs show this as post-MVP feature for complex marketplace integration.",
+        "testStrategy": "Test interface matching scenarios, type validation edge cases, and proxy mapping generation"
+      },
+      {
+        "id": 27,
+        "title": "Build success metrics instrumentation",
+        "description": "Implement comprehensive metrics tracking for planning success, execution reliability, and performance",
+        "status": "pending",
+        "dependencies": [
+          19,
+          21
+        ],
+        "priority": "medium",
+        "details": "[DEFERRED TO v2.0 - Premature optimization] Focus on building working MVP first before instrumenting performance. Basic logging is sufficient for MVP. When implemented: Add lightweight metrics collection for key performance indicators. Can use simple timing decorators and counters initially. Reference docs: architecture.md#11 shows metrics as success criteria, not MVP feature.",
+        "testStrategy": "Test metrics collection accuracy, performance overhead, and aggregation logic"
+      },
+      {
+        "id": 28,
+        "title": "Create prompt templates for planning",
+        "description": "Design effective prompts for LLM-based workflow generation",
+        "status": "pending",
+        "dependencies": [
+          17
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/planning/prompts.py with prompt templates as simple string constants or functions. Include: 1) Workflow generation prompt with node context and examples, 2) Error recovery prompt for failed attempts, 3) Template variable extraction prompt. Use f-strings or jinja2 for template composition. Keep prompts focused and include concrete examples. Test prompts manually to ensure they generate valid JSON IR. This is not a complex system - just well-crafted prompts that guide the LLM. Example structure: WORKFLOW_PROMPT = '''Given these nodes: {node_context}\nGenerate a workflow for: {user_request}\nOutput JSON IR format...'''. Reference docs: planner.md#6.1",
+        "testStrategy": "Test prompt generation for various scenarios, template composition, and token optimization"
+      },
+      {
+        "id": 29,
+        "title": "Implement additional git nodes",
+        "description": "Create remaining git platform nodes: push, create-branch, merge, and status",
+        "status": "pending",
+        "dependencies": [
+          13
+        ],
+        "priority": "low",
+        "details": "Create git nodes in src/pflow/nodes/git/, all inheriting from pocketflow.Node: git-push, git-create-branch, git-merge, and git-status. Each node follows simple single-purpose pattern: git-push reads shared['branch'] and executes push, git-create-branch reads shared['branch_name'] and creates branch, git-merge reads shared['source_branch'] and shared['target_branch'], git-status writes shared['git_status']. Include safety checks and confirmation prompts for destructive operations. Reference docs: simple-nodes.md",
+        "testStrategy": "Mock git commands for each operation, test safety measures and edge cases"
+      },
+      {
+        "id": 30,
+        "title": "Build comprehensive shell pipe integration",
+        "description": "Implement full Unix pipe support for stdin/stdout handling and shell integration",
+        "status": "pending",
+        "dependencies": [
+          4
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/core/shell_integration.py with comprehensive Unix pipe support. Implement stdin detection and reading when data is piped to pflow. Support streaming for large data (not just reading entire stdin at once). Handle stdout output for chaining pflow with other Unix tools. Implement proper exit code propagation and signal handling (Ctrl+C). When stdin is detected, populate shared['stdin'] automatically. Support both batch mode (fail fast) and interactive mode (prompt for missing data). Look at Simon Willison's 'llm' CLI for excellent pipe integration patterns. This enables: 'cat data.txt | pflow process >> output.txt'. Reference docs: shell-pipes.md, architecture.md#5.1.1",
+        "testStrategy": "Test pipe detection, streaming support, signal handling, and integration with Unix tools"
+      },
+      {
+        "id": 31,
+        "title": "Implement CLI autocomplete for node discovery",
+        "description": "Add shell autocomplete for node names and parameters to enhance CLI usability",
+        "status": "pending",
+        "dependencies": [
+          1,
+          6,
+          9
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/cli/autocomplete.py with shell completion support. Implement autocomplete for: node names (read-file, llm, github-get-issue), common parameters (--path, --prompt, --issue), pipe operator (>>). Use click's shell completion features. Generate completion scripts for bash/zsh/fish. When user types 'pflow read-f[TAB]', complete to 'read-file'. When typing 'pflow read-file --[TAB]', show available parameters from node metadata. This provides immediate value by helping users discover available nodes without documentation. Works even though CLI syntax is processed by LLM in MVP. Makes the tool feel responsive and professional. Reference docs: autocomplete.md (concepts), cli-runtime.md",
+        "testStrategy": "Test completion generation, shell integration, and user experience across shells"
+      },
+      {
+        "id": 32,
+        "title": "[DEFER TO v2.0] Implement direct CLI parsing without LLM",
+        "description": "Parse CLI pipe syntax directly for minor performance optimization",
+        "status": "deferred",
+        "dependencies": [
+          19,
+          31
+        ],
+        "priority": "low",
+        "details": "[DEFERRED TO v2.0 - Minor optimization only] Create direct parser for CLI pipe syntax that bypasses LLM for fully-specified commands. Parse 'node1 --param=value >> node2' syntax directly into IR. Even with direct parsing, LLM still needed for: missing parameters, template variables, data flow connections, shared store mappings. This is a minor optimization since users rarely specify everything. Benefits: slightly faster for complete commands, more predictable for simple flows, reduced token usage. The high-value feature is autocomplete (task #31), not direct parsing. Reference docs: planner.md#3.2 (future state)",
+        "testStrategy": "Test parsing accuracy, measure actual performance improvement, ensure LLM fallback works"
+      },
+      {
+        "id": 33,
+        "title": "Implement execution tracing system",
+        "description": "Build comprehensive execution visibility for debugging and optimization",
+        "status": "pending",
+        "dependencies": [
+          21
+        ],
+        "priority": "high",
+        "details": "Create src/pflow/runtime/tracing.py with execution tracing that helps users understand, debug, and optimize execution flow. Capture and display: inputs/outputs for each node, shared state diffs per step, LLM tokens used per node and total, execution time per node, cache hits/misses. Format output clearly: '[1] read-file (0.02s) Input: {file_path: 'data.txt'} Output: {content: '...'} Shared Store \u0394: +content'. Support different verbosity levels via --trace flag. Include cost estimation for LLM nodes ($0.0012 per call). Critical for understanding workflow behavior and optimizing performance. Reference docs: architecture.md (observability), runtime.md",
+        "testStrategy": "Test trace output formatting, performance overhead, and debugging effectiveness"
+      },
+      {
+        "id": 34,
+        "title": "Create MVP validation test suite",
+        "description": "End-to-end validation that MVP meets all acceptance criteria",
+        "status": "pending",
+        "dependencies": [
+          24
+        ],
+        "priority": "high",
+        "details": "Create tests/mvp_validation/ with end-to-end scenarios proving real value. Test core workflow: 'pflow fix-github-issue --issue=123' generates appropriate workflow, executes successfully, creates PR with fix. Measure against MVP criteria: 10x faster than manual LLM interaction, natural language to workflow works, template resolution functions correctly, all platform nodes integrate properly. Include performance benchmarks showing planning \u2264800ms, execution overhead \u22642s. Document which v2.0 features are intentionally excluded. This is about proving the MVP delivers its core value proposition, not just unit test coverage. Reference docs: mvp-scope.md, architecture.md#11",
+        "testStrategy": "Test real-world scenarios, measure performance targets, validate user experience"
+      }
+    ],
+    "metadata": {
+      "created": "2025-06-18T20:41:12.050Z",
+      "updated": "2025-06-18T20:41:12.050Z",
+      "description": "Tasks for master context"
+    }
+  }
+}
