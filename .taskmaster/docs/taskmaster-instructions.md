@@ -219,7 +219,7 @@ Once a task has been broken down into subtasks using `task-master expand` or sim
 
 This document provides a detailed reference for interacting with Taskmaster using the `task-master` CLI commands.
 
-**Important:** Several CLI commands involve AI processing... The AI-powered tools include `analyze_project_complexity`, `update_subtask`, `update_task`, `update`, `expand_all`, `expand_task`, and `add_task`. This means the response time will be longer than the CLI commands that do not involve AI processing. It also means that the context that you send to the AI will be more important than ever since the task-master AI processing does not have access to the same context as the AI Agent calling it - you (Claude). When you are calling these AI-powered commands, you should always do the heavy lifting and send the most relevant context and detailed instructions to task-master, rather to rely on task-master to figure things out. Task-master is not a general purpose AI agent, it is a tool for managing tasks and subtasks for a software development project. This means that you should always be as specific as possible when calling these commands. Task-master does not know anything about the project than what you send it in the prompt.
+**Important:** Several commands involve AI processing. This means the response time will be longer than the commands that do not involve AI processing. It also means that the context that you send to the AI will be more important than ever since the task-master AI processing does not have access to the same context as the AI Agent calling it - you (Claude). When you are calling these AI-powered commands, you should always do the heavy lifting and send the most relevant context and detailed instructions to task-master, rather to rely on task-master to figure things out. Task-master is not a general purpose AI agent, it is a tool for managing tasks and subtasks for a software development project. This means that you should always be as specific as possible when calling these commands. Task-master does not know anything about the project than what you send it in the prompt.
 
 ---
 
@@ -227,7 +227,6 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 1. Initialize Project (`init`)
 
-*   **MCP Tool:** `initialize_project`
 *   **CLI Command:** `task-master init [options]`
 *   **Description:** `Set up the basic Taskmaster file structure and configuration in the current directory for a new project.`
 *   **Key CLI Options:**
@@ -236,21 +235,10 @@ This document provides a detailed reference for interacting with Taskmaster usin
     *   `--version <version>`: `Set the initial version for your project, e.g., '0.1.0'.`
     *   `-y, --yes`: `Initialize Taskmaster quickly using default settings without interactive prompts.`
 *   **Usage:** Run this once at the beginning of a new project.
-*   **MCP Variant Description:** `Set up the basic Taskmaster file structure and configuration in the current directory for a new project by running the 'task-master init' command.`
-*   **Key MCP Parameters/Options:**
-    *   `projectName`: `Set the name for your project.` (CLI: `--name <name>`)
-    *   `projectDescription`: `Provide a brief description for your project.` (CLI: `--description <text>`)
-    *   `projectVersion`: `Set the initial version for your project, e.g., '0.1.0'.` (CLI: `--version <version>`)
-    *   `authorName`: `Author name.` (CLI: `--author <author>`)
-    *   `skipInstall`: `Skip installing dependencies. Default is false.` (CLI: `--skip-install`)
-    *   `addAliases`: `Add shell aliases tm and taskmaster. Default is false.` (CLI: `--aliases`)
-    *   `yes`: `Skip prompts and use defaults/provided arguments. Default is false.` (CLI: `-y, --yes`)
-*   **Usage:** Run this once at the beginning of a new project, typically via an integrated tool like Cursor. Operates on the current working directory of the MCP server.
 *   **Important:** Once complete, you *MUST* parse a prd in order to generate tasks. There will be no tasks files until then. The next step after initializing should be to create a PRD using the example PRD in .taskmaster/templates/example_prd.txt.
 
 ### 2. Parse PRD (`parse_prd`)
 
-*   **MCP Tool:** `parse_prd`
 *   **CLI Command:** `task-master parse-prd [file] [options]`
 *   **Description:** `Parse a Product Requirements Document, PRD, or text file with Taskmaster to automatically generate an initial set of tasks in tasks.json.`
 *   **Key Parameters/Options:**
@@ -260,24 +248,15 @@ This document provides a detailed reference for interacting with Taskmaster usin
     *   `force`: `Use this to allow Taskmaster to overwrite an existing 'tasks.json' without asking for confirmation.` (CLI: `-f, --force`)
 *   **Usage:** Useful for bootstrapping a project from an existing requirements document.
 *   **Notes:** Task Master will strictly adhere to any specific requirements mentioned in the PRD, such as libraries, database schemas, frameworks, tech stacks, etc., while filling in any gaps where the PRD isn't fully specified. Tasks are designed to provide the most direct implementation path while avoiding over-engineering.
-*   **Important:** This MCP tool makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress. If the user does not have a PRD, suggest discussing their idea and then use the example PRD in `.taskmaster/templates/example_prd.txt` as a template for creating the PRD based on their idea, for use with `parse-prd`.
+*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress. If the user does not have a PRD, suggest discussing their idea and then use the example PRD in `.taskmaster/templates/example_prd.txt` as a template for creating the PRD based on their idea, for use with `parse-prd`.
 
 ---
 
 ## AI Model Configuration
 
 ### 2. Manage Models (`models`)
-*   **MCP Tool:** `models`
 *   **CLI Command:** `task-master models [options]`
 *   **Description:** `View the current AI model configuration or set specific models for different roles (main, research, fallback). Allows setting custom model IDs for Ollama and OpenRouter.`
-*   **Key MCP Parameters/Options:**
-    *   `setMain <model_id>`: `Set the primary model ID for task generation/updates.` (CLI: `--set-main <model_id>`)
-    *   `setResearch <model_id>`: `Set the model ID for research-backed operations.` (CLI: `--set-research <model_id>`)
-    *   `setFallback <model_id>`: `Set the model ID to use if the primary fails.` (CLI: `--set-fallback <model_id>`)
-    *   `ollama <boolean>`: `Indicates the set model ID is a custom Ollama model.` (CLI: `--ollama`)
-    *   `openrouter <boolean>`: `Indicates the set model ID is a custom OpenRouter model.` (CLI: `--openrouter`)
-    *   `listAvailableModels <boolean>`: `If true, lists available models not currently assigned to a role.` (CLI: No direct equivalent; CLI lists available automatically)
-    *   `projectRoot <string>`: `Optional. Absolute path to the project root directory.` (CLI: Determined automatically)
 *   **Key CLI Options:**
     *   `--set-main <model_id>`: `Set the primary model.`
     *   `--set-research <model_id>`: `Set the research model.`
@@ -285,12 +264,11 @@ This document provides a detailed reference for interacting with Taskmaster usin
     *   `--ollama`: `Specify that the provided model ID is for Ollama (use with --set-*).`
     *   `--openrouter`: `Specify that the provided model ID is for OpenRouter (use with --set-*). Validates against OpenRouter API.`
     *   `--setup`: `Run interactive setup to configure models, including custom Ollama/OpenRouter IDs.`
-*   **Usage (MCP):** Call without set flags to get current config. Use `setMain`, `setResearch`, or `setFallback` with a valid model ID to update the configuration. Use `listAvailableModels: true` to get a list of unassigned models. To set a custom model, provide the model ID and set `ollama: true` or `openrouter: true`.
-*   **Usage (CLI):** Run without flags to view current configuration and available models. Use set flags to update specific roles. Use `--setup` for guided configuration, including custom models. To set a custom model via flags, use `--set-<role>=<model_id>` along with either `--ollama` or `--openrouter`.
-*   **Notes:** Configuration is stored in `.taskmaster/config.json` in the project root. This command/tool modifies that file. Use `listAvailableModels` or `task-master models` to see internally supported models. OpenRouter custom models are validated against their live API. Ollama custom models are not validated live.
-*   **API note:** API keys for selected AI providers (based on their model) need to exist in the mcp.json file to be accessible in MCP context. The API keys must be present in the local .env file for the CLI to be able to read them.
+*   **Usage:** Run without flags to view current configuration and available models. Use set flags to update specific roles. Use `--setup` for guided configuration, including custom models. To set a custom model via flags, use `--set-<role>=<model_id>` along with either `--ollama` or `--openrouter`.
+*   **Notes:** Configuration is stored in `.taskmaster/config.json` in the project root. This command modifies that file. Use `task-master models` to see internally supported models. OpenRouter custom models are validated against their live API. Ollama custom models are not validated live.
+*   **API note:** API keys for selected AI providers (based on their model) must be present in the local .env file for the CLI to be able to read them.
 *   **Model costs:** The costs in supported models are expressed in dollars. An input/output value of 3 is $3.00. A value of 0.8 is $0.80.
-*   **Warning:** DO NOT MANUALLY EDIT THE .taskmaster/config.json FILE. Use the included commands either in the MCP or CLI format as needed. Always prioritize MCP tools when available and use the CLI as a fallback.
+*   **Warning:** DO NOT MANUALLY EDIT THE .taskmaster/config.json FILE. Use the included commands as needed.
 
 ---
 
@@ -298,10 +276,9 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 3. Get Tasks (`get_tasks`)
 
-*   **MCP Tool:** `get_tasks`
 *   **CLI Command:** `task-master list [options]`
 *   **Description:** `List your Taskmaster tasks, optionally filtering by status and showing subtasks.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `status`: `Show only Taskmaster tasks matching this status, e.g., 'pending' or 'done'.` (CLI: `-s, --status <status>`)
     *   `withSubtasks`: `Include subtasks indented under their parent tasks in the list.` (CLI: `--with-subtasks`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
@@ -309,19 +286,17 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 4. Get Next Task (`next_task`)
 
-*   **MCP Tool:** `next_task`
 *   **CLI Command:** `task-master next [options]`
 *   **Description:** `Ask Taskmaster to show the next available task you can work on, based on status and completed dependencies.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Identify what to work on next according to the plan.
 
 ### 5. Get Task Details (`get_task`)
 
-*   **MCP Tool:** `get_task`
 *   **CLI Command:** `task-master show [id] [options]`
 *   **Description:** `Display detailed information for a specific Taskmaster task or subtask by its ID.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `Required. The ID of the Taskmaster task, e.g., '15', or subtask, e.g., '15.2', you want to view.` (CLI: `[id]` positional or `-i, --id <id>`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Understand the full details, implementation notes, and test strategy for a specific task before starting work.
@@ -332,25 +307,23 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 6. Add Task (`add_task`)
 
-*   **MCP Tool:** `add_task`
 *   **CLI Command:** `task-master add-task [options]`
 *   **Description:** `Add a new task to Taskmaster by describing it; AI will structure it.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `prompt`: `Required. Describe the new task you want Taskmaster to create, e.g., "Implement user authentication using JWT".` (CLI: `-p, --prompt <text>`)
     *   `dependencies`: `Specify the IDs of any Taskmaster tasks that must be completed before this new one can start, e.g., '12,14'.` (CLI: `-d, --dependencies <ids>`)
     *   `priority`: `Set the priority for the new task: 'high', 'medium', or 'low'. Default is 'medium'.` (CLI: `--priority <priority>`)
     *   `research`: `Enable Taskmaster to use the research role for potentially more informed task creation.` (CLI: `-r, --research`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Quickly add newly identified tasks during development.
-*   **Important:** This MCP tool makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
 
 ### 7. Add Subtask (`add_subtask`)
 
-*   **MCP Tool:** `add_subtask`
 *   **CLI Command:** `task-master add-subtask [options]`
 *   **Description:** `Add a new subtask to a Taskmaster parent task, or convert an existing task into a subtask.`
-*   **Key Parameters/Options:**
-    *   `id` / `parent`: `Required. The ID of the Taskmaster task that will be the parent.` (MCP: `id`, CLI: `-p, --parent <id>`)
+*   **Key CLI Options:**
+    *   `parent`: `Required. The ID of the Taskmaster task that will be the parent.` (CLI: `-p, --parent <id>`)
     *   `taskId`: `Use this if you want to convert an existing top-level Taskmaster task into a subtask of the specified parent.` (CLI: `-i, --task-id <id>`)
     *   `title`: `Required if not using taskId. The title for the new subtask Taskmaster should create.` (CLI: `-t, --title <title>`)
     *   `description`: `A brief description for the new subtask.` (CLI: `-d, --description <text>`)
@@ -363,49 +336,45 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 8. Update Tasks (`update`)
 
-*   **MCP Tool:** `update`
 *   **CLI Command:** `task-master update [options]`
 *   **Description:** `Update multiple upcoming tasks in Taskmaster based on new context or changes, starting from a specific task ID.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `from`: `Required. The ID of the first task Taskmaster should update. All tasks with this ID or higher that are not 'done' will be considered.` (CLI: `--from <id>`)
     *   `prompt`: `Required. Explain the change or new context for Taskmaster to apply to the tasks, e.g., "We are now using React Query instead of Redux Toolkit for data fetching".` (CLI: `-p, --prompt <text>`)
     *   `research`: `Enable Taskmaster to use the research role for more informed updates. Requires appropriate API key.` (CLI: `-r, --research`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Handle significant implementation changes or pivots that affect multiple future tasks. Example CLI: `task-master update --from='18' --prompt='Switching to React Query.\nNeed to refactor data fetching...'`
-*   **Important:** This MCP tool makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
 
 ### 9. Update Task (`update_task`)
 
-*   **MCP Tool:** `update_task`
 *   **CLI Command:** `task-master update-task [options]`
 *   **Description:** `Modify a specific Taskmaster task or subtask by its ID, incorporating new information or changes.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `Required. The specific ID of the Taskmaster task, e.g., '15', or subtask, e.g., '15.2', you want to update.` (CLI: `-i, --id <id>`)
     *   `prompt`: `Required. Explain the specific changes or provide the new information Taskmaster should incorporate into this task.` (CLI: `-p, --prompt <text>`)
     *   `research`: `Enable Taskmaster to use the research role for more informed updates. Requires appropriate API key.` (CLI: `-r, --research`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Refine a specific task based on new understanding or feedback. Example CLI: `task-master update-task --id='15' --prompt='Clarification: Use PostgreSQL instead of MySQL.\nUpdate schema details...'`
-*   **Important:** This MCP tool makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
 
 ### 10. Update Subtask (`update_subtask`)
 
-*   **MCP Tool:** `update_subtask`
 *   **CLI Command:** `task-master update-subtask [options]`
 *   **Description:** `Append timestamped notes or details to a specific Taskmaster subtask without overwriting existing content. Intended for iterative implementation logging.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `Required. The specific ID of the Taskmaster subtask, e.g., '15.2', you want to add information to.` (CLI: `-i, --id <id>`)
     *   `prompt`: `Required. Provide the information or notes Taskmaster should append to the subtask's details. Ensure this adds *new* information not already present.` (CLI: `-p, --prompt <text>`)
     *   `research`: `Enable Taskmaster to use the research role for more informed updates. Requires appropriate API key.` (CLI: `-r, --research`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Add implementation notes, code snippets, or clarifications to a subtask during development. Before calling, review the subtask's current details to append only fresh insights, helping to build a detailed log of the implementation journey and avoid redundancy. Example CLI: `task-master update-subtask --id='15.2' --prompt='Discovered that the API requires header X.\nImplementation needs adjustment...'`
-*   **Important:** This MCP tool makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
 
 ### 11. Set Task Status (`set_task_status`)
 
-*   **MCP Tool:** `set_task_status`
 *   **CLI Command:** `task-master set-status [options]`
 *   **Description:** `Update the status of one or more Taskmaster tasks or subtasks, e.g., 'pending', 'in-progress', 'done'.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `Required. The ID(s) of the Taskmaster task(s) or subtask(s), e.g., '15', '15.2', or '16,17.1', to update.` (CLI: `-i, --id <id>`)
     *   `status`: `Required. The new status to set, e.g., 'done', 'pending', 'in-progress', 'review', 'cancelled'.` (CLI: `-s, --status <status>`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
@@ -413,10 +382,9 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 12. Remove Task (`remove_task`)
 
-*   **MCP Tool:** `remove_task`
 *   **CLI Command:** `task-master remove-task [options]`
 *   **Description:** `Permanently remove a task or subtask from the Taskmaster tasks list.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `Required. The ID of the Taskmaster task, e.g., '5', or subtask, e.g., '5.2', to permanently remove.` (CLI: `-i, --id <id>`)
     *   `yes`: `Skip the confirmation prompt and immediately delete the task.` (CLI: `-y, --yes`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
@@ -429,10 +397,9 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 13. Expand Task (`expand_task`)
 
-*   **MCP Tool:** `expand_task`
 *   **CLI Command:** `task-master expand [options]`
 *   **Description:** `Use Taskmaster's AI to break down a complex task into smaller, manageable subtasks. Appends subtasks by default.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `The ID of the specific Taskmaster task you want to break down into subtasks.` (CLI: `-i, --id <id>`)
     *   `num`: `Optional: Suggests how many subtasks Taskmaster should aim to create. Uses complexity analysis/defaults otherwise.` (CLI: `-n, --num <number>`)
     *   `research`: `Enable Taskmaster to use the research role for more informed subtask generation. Requires appropriate API key.` (CLI: `-r, --research`)
@@ -440,28 +407,26 @@ This document provides a detailed reference for interacting with Taskmaster usin
     *   `force`: `Optional: If true, clear existing subtasks before generating new ones. Default is false (append).` (CLI: `--force`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Generate a detailed implementation plan for a complex task before starting coding. Automatically uses complexity report recommendations if available and `num` is not specified.
-*   **Important:** This MCP tool makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
 
 ### 14. Expand All Tasks (`expand_all`)
 
-*   **MCP Tool:** `expand_all`
 *   **CLI Command:** `task-master expand --all [options]` (Note: CLI uses the `expand` command with the `--all` flag)
 *   **Description:** `Tell Taskmaster to automatically expand all eligible pending/in-progress tasks based on complexity analysis or defaults. Appends subtasks by default.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `num`: `Optional: Suggests how many subtasks Taskmaster should aim to create per task.` (CLI: `-n, --num <number>`)
     *   `research`: `Enable research role for more informed subtask generation. Requires appropriate API key.` (CLI: `-r, --research`)
     *   `prompt`: `Optional: Provide extra context for Taskmaster to apply generally during expansion.` (CLI: `-p, --prompt <text>`)
     *   `force`: `Optional: If true, clear existing subtasks before generating new ones for each eligible task. Default is false (append).` (CLI: `--force`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Useful after initial task generation or complexity analysis to break down multiple tasks at once.
-*   **Important:** This MCP tool makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
 
 ### 15. Clear Subtasks (`clear_subtasks`)
 
-*   **MCP Tool:** `clear_subtasks`
 *   **CLI Command:** `task-master clear-subtasks [options]`
 *   **Description:** `Remove all subtasks from one or more specified Taskmaster parent tasks.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `The ID(s) of the Taskmaster parent task(s) whose subtasks you want to remove, e.g., '15' or '16,18'. Required unless using `all`.) (CLI: `-i, --id <ids>`)
     *   `all`: `Tell Taskmaster to remove subtasks from all parent tasks.` (CLI: `--all`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
@@ -469,10 +434,9 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 16. Remove Subtask (`remove_subtask`)
 
-*   **MCP Tool:** `remove_subtask`
 *   **CLI Command:** `task-master remove-subtask [options]`
 *   **Description:** `Remove a subtask from its Taskmaster parent, optionally converting it into a standalone task.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `Required. The ID(s) of the Taskmaster subtask(s) to remove, e.g., '15.2' or '16.1,16.3'.` (CLI: `-i, --id <id>`)
     *   `convert`: `If used, Taskmaster will turn the subtask into a regular top-level task instead of deleting it.` (CLI: `-c, --convert`)
     *   `skipGenerate`: `Prevent Taskmaster from automatically regenerating markdown task files after removing the subtask.` (CLI: `--skip-generate`)
@@ -481,10 +445,9 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 17. Move Task (`move_task`)
 
-*   **MCP Tool:** `move_task`
 *   **CLI Command:** `task-master move [options]`
 *   **Description:** `Move a task or subtask to a new position within the task hierarchy.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `from`: `Required. ID of the task/subtask to move (e.g., "5" or "5.2"). Can be comma-separated for multiple tasks.` (CLI: `--from <id>`)
     *   `to`: `Required. ID of the destination (e.g., "7" or "7.3"). Must match the number of source IDs if comma-separated.` (CLI: `--to <id>`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
@@ -510,10 +473,9 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 18. Add Dependency (`add_dependency`)
 
-*   **MCP Tool:** `add_dependency`
 *   **CLI Command:** `task-master add-dependency [options]`
 *   **Description:** `Define a dependency in Taskmaster, making one task a prerequisite for another.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `Required. The ID of the Taskmaster task that will depend on another.` (CLI: `-i, --id <id>`)
     *   `dependsOn`: `Required. The ID of the Taskmaster task that must be completed first, the prerequisite.` (CLI: `-d, --depends-on <id>`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <path>`)
@@ -521,10 +483,9 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 19. Remove Dependency (`remove_dependency`)
 
-*   **MCP Tool:** `remove_dependency`
 *   **CLI Command:** `task-master remove-dependency [options]`
 *   **Description:** `Remove a dependency relationship between two Taskmaster tasks.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `id`: `Required. The ID of the Taskmaster task you want to remove a prerequisite from.` (CLI: `-i, --id <id>`)
     *   `dependsOn`: `Required. The ID of the Taskmaster task that should no longer be a prerequisite.` (CLI: `-d, --depends-on <id>`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
@@ -532,19 +493,17 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 20. Validate Dependencies (`validate_dependencies`)
 
-*   **MCP Tool:** `validate_dependencies`
 *   **CLI Command:** `task-master validate-dependencies [options]`
 *   **Description:** `Check your Taskmaster tasks for dependency issues (like circular references or links to non-existent tasks) without making changes.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Audit the integrity of your task dependencies.
 
 ### 21. Fix Dependencies (`fix_dependencies`)
 
-*   **MCP Tool:** `fix_dependencies`
 *   **CLI Command:** `task-master fix-dependencies [options]`
 *   **Description:** `Automatically fix dependency issues (like circular references or links to non-existent tasks) in your Taskmaster tasks.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Clean up dependency errors automatically.
 
@@ -554,23 +513,21 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 22. Analyze Project Complexity (`analyze_project_complexity`)
 
-*   **MCP Tool:** `analyze_project_complexity`
 *   **CLI Command:** `task-master analyze-complexity [options]`
 *   **Description:** `Have Taskmaster analyze your tasks to determine their complexity and suggest which ones need to be broken down further.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `output`: `Where to save the complexity analysis report (default: '.taskmaster/reports/task-complexity-report.json').` (CLI: `-o, --output <file>`)
     *   `threshold`: `The minimum complexity score (1-10) that should trigger a recommendation to expand a task.` (CLI: `-t, --threshold <number>`)
     *   `research`: `Enable research role for more accurate complexity analysis. Requires appropriate API key.` (CLI: `-r, --research`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Used before breaking down tasks to identify which ones need the most attention.
-*   **Important:** This MCP tool makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
+*   **Important:** This command makes AI calls and can take up to a minute to complete. Please inform users to hang tight while the operation is in progress.
 
 ### 23. View Complexity Report (`complexity_report`)
 
-*   **MCP Tool:** `complexity_report`
 *   **CLI Command:** `task-master complexity-report [options]`
 *   **Description:** `Display the task complexity analysis report in a readable format.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `file`: `Path to the complexity report (default: '.taskmaster/reports/task-complexity-report.json').` (CLI: `-f, --file <file>`)
 *   **Usage:** Review and understand the complexity analysis results after running analyze-complexity.
 
@@ -580,10 +537,9 @@ This document provides a detailed reference for interacting with Taskmaster usin
 
 ### 24. Generate Task Files (`generate`)
 
-*   **MCP Tool:** `generate`
 *   **CLI Command:** `task-master generate [options]`
 *   **Description:** `Create or update individual Markdown files for each task based on your tasks.json.`
-*   **Key Parameters/Options:**
+*   **Key CLI Options:**
     *   `output`: `The directory where Taskmaster should save the task files (default: in a 'tasks' directory).` (CLI: `-o, --output <directory>`)
     *   `file`: `Path to your Taskmaster 'tasks.json' file. Default relies on auto-detection.` (CLI: `-f, --file <file>`)
 *   **Usage:** Run this after making changes to tasks.json to keep individual task files up to date.
@@ -610,7 +566,7 @@ Environment variables are used **only** for sensitive API keys related to AI pro
     *   `AZURE_OPENAI_ENDPOINT`
     *   `OLLAMA_BASE_URL` (Default: `http://localhost:11434/api`)
 
-**Set API keys** in your **`.env`** file in the project root (for CLI use) or within the `env` section of your **`.cursor/mcp.json`** file (for MCP/Cursor integration). All other settings (model choice, max tokens, temperature, log level, custom endpoints) are managed in `.taskmaster/config.json` via `task-master models` command or `models` MCP tool.
+**Set API keys** in your **`.env`** file in the project root for CLI use. All other settings (model choice, max tokens, temperature, log level, custom endpoints) are managed in `.taskmaster/config.json` via `task-master models` command.
 
 ---
 
