@@ -147,9 +147,11 @@ pflow/
 │   └── future-version/               # Post-MVP features
 │       ├── llm-node-gen.md
 │       └── json-extraction.md
-├── todo/                  # Implementation planning
-│   ├── implementation-roadmap.md  # High-level roadmap
-│   └── tasks.json                 # Detailed task list with subtasks
+├── .taskmaster/           # Task management and planning
+│   ├── tasks/            # Task tracking
+│   │   └── tasks.json    # Detailed task list with subtasks
+│   └── docs/             # Planning documentation
+│       └── implementation-roadmap.md  # High-level roadmap
 ├── tests/                 # Test suite
 │   ├── test_foo.py       # Placeholder test
 │   └── test_links.py     # Documentation link validation
@@ -237,8 +239,8 @@ The codebase is in early development with:
 - ✅ PocketFlow framework added to the codebase inlcuding `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
-- ✅ Create an overview roadmap for the MVP in `todo/implementation-roadmap.md`
-- ✅ Create a detailed todo list with tasks and subtasks in `todo/tasks.json` based on the roadmap
+- ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/implementation-roadmap.md`
+- ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap
 - ⏳ Carefully review the list of tasks to make sure every task is complete, accurate and that we are doing the right things in the right order (<- We are here)
 - ⏳ Start implementing features for the MVP using the todo list one by one
 
@@ -247,7 +249,7 @@ The codebase is in early development with:
 Focus on refining the tasks for the MVP by doing the following:
 1. Ensure that the tasks are based on product requirements and architecture docs for the pflow project.
 2. Ensure that the tasks dependent on pocketflow (the 100 lines of code in `pocketflow/__init__.py`) are using the pocketflow framework correctly by carefully reading the documentation in `pocketflow/docs` and examples in `pocketflow\cookbook` when needed.
-3. Ensure that every tasks considers the dependencies and the order of implementation. The `todo/tasks.json` will need to be updated continously as you discover new information and discuss the user.
+3. Ensure that every tasks considers the dependencies and the order of implementation. The `.taskmaster/tasks/tasks.json` will need to be updated continously as you discover new information and discuss the user.
 4. Ensure that every task is easy to understand and has a clear success criteria and test strategy.
 
 ## End goal and Vision for the MVP
