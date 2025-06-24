@@ -11,7 +11,7 @@ This command helps you create well-structured git commits with descriptive messa
 ### 1. Analyze Changes and Propose a Plan
 Your first step is to get a clear picture of the repository's state.
 - **Check Status:** Run `git status` to see all staged and unstaged files.
-- **Review each file:** Use `git diff` to understand what changed in each file.
+- **Optionally review each file:** Use `git diff` to understand what changed in each file. This step is *only necessary* if you're not sure what the changes are — i.e., they weren't added by you in the current session.
 - **Group Changes:** Analyze the changes and identify single, logical units of work. **IMPORTANT**: Unrelated changes should ALWAYS be in separate commits, even if they're in the same file.
 - **Identify unrelated changes:** Look for changes that serve different purposes (e.g., documentation updates vs. code refactoring vs. new features).
 - **Analyze order of changes:** Analyze what the most logical order of commiting the changes is.
@@ -22,6 +22,7 @@ Your first step is to get a clear picture of the repository's state.
 For each logical commit (either the only one, or the current step in your approved plan), precisely prepare the staging area.
 - **Stage Necessary Files:** Use `git add <file>` for any unstaged changes that belong in this specific commit.
 - **Unstage Unrelated Files:** If files are staged that do *not* belong in this logical commit, unstage them.
+- **Optional: Test Pre-commit Hooks:** Run `.venv/bin/python -m pre_commit run` to check if your staged changes will pass the hooks before committing.
 
 ```bash
 # Unstage a specific file
