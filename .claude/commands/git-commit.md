@@ -16,17 +16,11 @@ Your first step is to get a clear picture of the repository's state.
 - **Identify unrelated changes:** Look for changes that serve different purposes (e.g., documentation updates vs. code refactoring vs. new features).
 - **Analyze order of changes:** Analyze what the most logical order of commiting the changes is.
 - **Plan for Multiple Commits:** If you identify multiple logical changes, you must **propose a plan to the users chat window** for how you will split the work into a series of separate commits. Wait for approval before proceeding.
+- **Test Pre-commit Hooks First:** Run `.venv/bin/python -m pre_commit run --all-files` on the files you plan to commit. This often makes automatic changes (formatting, trailing whitespace, etc.), so run it BEFORE staging to avoid having to re-stage files.
 
 ### 2. Prepare the Staging Area for the Commit
 
 For each logical commit (either the only one, or the current step in your approved plan), precisely prepare the staging area.
-- **Test Pre-commit Hooks First:** Run `.venv/bin/python -m pre_commit run --all-files` on the files you plan to commit. This often makes automatic changes (formatting, trailing whitespace, etc.), so run it BEFORE staging to avoid having to re-stage files.
-  ```bash
-  # Run on specific files you plan to commit
-  .venv/bin/python -m pre_commit run --files file1.py file2.md
-  # Or run on all modified files if committing everything
-  .venv/bin/python -m pre_commit run --all-files
-  ```
 - **Stage Necessary Files:** Use `git add <file>` for any changes that belong in this specific commit (including any fixes made by pre-commit hooks).
 - **Unstage Unrelated Files:** If files are staged that do *not* belong in this logical commit, unstage them.
 
