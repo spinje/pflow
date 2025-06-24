@@ -20,9 +20,15 @@ Your first step is to get a clear picture of the repository's state.
 ### 2. Prepare the Staging Area for the Commit
 
 For each logical commit (either the only one, or the current step in your approved plan), precisely prepare the staging area.
-- **Stage Necessary Files:** Use `git add <file>` for any unstaged changes that belong in this specific commit.
+- **Test Pre-commit Hooks First:** Run `.venv/bin/python -m pre_commit run --all-files` on the files you plan to commit. This often makes automatic changes (formatting, trailing whitespace, etc.), so run it BEFORE staging to avoid having to re-stage files.
+  ```bash
+  # Run on specific files you plan to commit
+  .venv/bin/python -m pre_commit run --files file1.py file2.md
+  # Or run on all modified files if committing everything
+  .venv/bin/python -m pre_commit run --all-files
+  ```
+- **Stage Necessary Files:** Use `git add <file>` for any changes that belong in this specific commit (including any fixes made by pre-commit hooks).
 - **Unstage Unrelated Files:** If files are staged that do *not* belong in this logical commit, unstage them.
-- **Optional: Test Pre-commit Hooks:** Run `.venv/bin/python -m pre_commit run` to check if your staged changes will pass the hooks before committing.
 
 ```bash
 # Unstage a specific file
@@ -38,9 +44,12 @@ git reset
 
 ### 4. Submit the Commit
 
-- If any precommit hooks are ran that aborted the commit, see if the changes made by the commit hook are breaking or if you can proceed with the commit anyway.
-- In most cases, you can proceed with the commit by running the commit again.
-- Never use --no-verify flag to bypass precommit hooks if not explicitly asked by the user.
+- Create the commit with your descriptive message.
+- If pre-commit hooks fail during the commit:
+  - Check if the hooks made any automatic fixes
+  - If fixes were made, you'll need to stage them with `git add` and commit again
+  - If hooks fail without fixes, address the issues before committing
+- Never use --no-verify flag to bypass pre-commit hooks unless explicitly asked by the user.
 
 ### 5. Repeat if Necessary
 If you are executing a multi-commit plan, return to Step 2 and proceed with the next logical commit until all changes are committed.
@@ -92,6 +101,7 @@ A good commit message should:
 - **Refactoring** should be separate from bug fixes or new features
 - **Test additions** can be with the feature they test, but test refactoring should be separate
 - **Different features or fixes** even if they touch the same files, should be in separate commits
+- **Auto-formatting changes** should ideally be in their own commit if they affect many files
 
 ### Red Flags That Indicate Multiple Commits Are Needed
 - Files from completely different parts of the codebase are changed
