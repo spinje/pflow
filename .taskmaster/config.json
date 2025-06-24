@@ -1,21 +1,21 @@
 {
   "models": {
     "main": {
-      "provider": "anthropic",
-      "modelId": "claude-sonnet-4-20250514",
+      "provider": "claude-code",
+      "modelId": "opus",
       "maxTokens": 120000,
       "temperature": 0.2
     },
     "research": {
-      "provider": "perplexity",
-      "modelId": "sonar-pro",
-      "maxTokens": 8700,
+      "provider": "claude-code",
+      "modelId": "opus",
+      "maxTokens": 120000,
       "temperature": 0.1
     },
     "fallback": {
-      "provider": "anthropic",
-      "modelId": "claude-3-5-sonnet-20240620",
-      "maxTokens": 8192,
+      "provider": "claude-code",
+      "modelId": "sonnet",
+      "maxTokens": 120000,
       "temperature": 0.1
     }
   },

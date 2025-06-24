@@ -8,7 +8,7 @@ The `task-master` CLI is a powerful tool that allows you to manage your tasks an
 
 Prefer to use the `task-master` CLI over editing the `tasks.json` file directly. Using the CLI is more efficient and precise and avoids spending unnecessary tokens. It also allows for more precise control over what context you are retrieving, allowing you to avoid context overload. When using sub agents, an effective way is to instruct the sub agent exactly what `task-master` commands to use. For example, if you are using a sub agent to cross-reference a number of tasks, you can instruct the sub agent to use the `task-master show 1,3,5` command to let the sub agent only retrieve the details of the tasks with ids 1, 3, and 5. This makes the sub agent more efficient and precise.
 
-You can also invoke `task-master` commands in parallel to each other. This speeds things up immensely when needing to run bulk operations on the tasks.json file.
+You can also invoke `task-master` commands using parallel tool calling. For maximum efficiency, whenever you need to perform umltiple indedendent operations, invoke all relevant `task-master` commands simultaneously rather than sequentially. This speeds things up immensely when needing to run bulk operations on the tasks.json file.
 
 -   Begin coding sessions with `task-master list` or `task-master next` to determine the next task to work on if not explicitly specified by the user
 -   Analyze task complexity with `task-master analyze-complexity --research` before breaking down tasks
