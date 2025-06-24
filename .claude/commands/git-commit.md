@@ -11,7 +11,9 @@ This command helps you create well-structured git commits with descriptive messa
 ### 1. Analyze Changes and Propose a Plan
 Your first step is to get a clear picture of the repository's state.
 - **Check Status:** Run `git status` to see all staged and unstaged files.
-- **Group Changes:** Analyze the changes and identify single, logical units of work.
+- **Review each file:** Use `git diff` to understand what changed in each file.
+- **Group Changes:** Analyze the changes and identify single, logical units of work. **IMPORTANT**: Unrelated changes should ALWAYS be in separate commits, even if they're in the same file.
+- **Identify unrelated changes:** Look for changes that serve different purposes (e.g., documentation updates vs. code refactoring vs. new features).
 - **Analyze order of changes:** Analyze what the most logical order of commiting the changes is.
 - **Plan for Multiple Commits:** If you identify multiple logical changes, you must **propose a plan to the users chat window** for how you will split the work into a series of separate commits. Wait for approval before proceeding.
 
@@ -82,3 +84,17 @@ A good commit message should:
 ### Handling multiple logical changes
 - If there are multiple logical changes, you should split them into multiple commits.
 - Propose a plan of how you will split the changes into multiple commits to the user before doing it (in the chat window)
+
+### Common Examples of Unrelated Changes to Separate
+- **Documentation updates** (README, CLAUDE.md, command docs) should be separate from code changes
+- **Configuration changes** (package.json, pyproject.toml, settings) should be separate from feature implementation
+- **Refactoring** should be separate from bug fixes or new features
+- **Test additions** can be with the feature they test, but test refactoring should be separate
+- **Different features or fixes** even if they touch the same files, should be in separate commits
+
+### Red Flags That Indicate Multiple Commits Are Needed
+- Files from completely different parts of the codebase are changed
+- The commit message would need "and" to describe all changes
+- Some changes are not mentioned in the commit message because they're unrelated
+- Different types of changes (docs vs code vs config)
+- Changes that could be reverted independently
