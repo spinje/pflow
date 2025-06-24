@@ -306,7 +306,7 @@ github-create-pr --title="Fix: $issue_title" --body="$code_report"
 
 But first, we need to create a detailed task list for the MVP.
 
-## User Decisions
+## User Decisions and Recommendations
 
 Every time you need the user to make a decision, you should:
 1. Create a new markdown file in the folder `scratchpads/critical-user-decisions/` and write down the details about the decision and the reasoning why it is needed.
@@ -316,3 +316,26 @@ Every time you need the user to make a decision, you should:
 > Important: Do not proceed to implementation until the user has made a decision and you have a clear understanding of the decision and its implications.
 
 **Remember** You are an AI agent and you *are not able to make decisions for the user*. You are only able to provide information and recommendations. The user is the one who makes the final decision if anything is unclear or ambigous in the documentation.
+
+### Example formatting for presenting the user with a decision
+
+```markdown
+## 1. Decision Title - Decision importance (1-5)
+
+Describe the decision and the reasoning why it is needed.
+
+### Options:
+
+- [x] **Option A: ...
+  - Reasoning for why this is a good and bad option
+  - ...
+  - ...
+
+- [ ] **Option B: ...
+  - ...
+  - ...
+
+**Recommendation**: Option A - Reasoning for why this might be the best option.
+```
+
+> If the decision importance is 1-2 and you are confident in the decision, you can make the decision for the user and does not need to ask the user for confirmation or document the decision in the scratchpad.
