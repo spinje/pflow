@@ -64,8 +64,7 @@
         "status": "pending",
         "dependencies": [
           2,
-          3,
-          4
+          3
         ],
         "priority": "high",
         "details": "Create src/pflow/core/cli_resolver.py with simple functions: collect_flags(args) that gathers all --key=value flags into a dict. Keep implementation simple - in MVP, all processing happens in the planner. The main purpose is to collect flags and detect stdin (already handled by shell integration in Task 3). This task mainly provides the interface between CLI and planner. Reference docs: architecture.md#5.1.1, cli-runtime.md#7",
@@ -88,9 +87,7 @@
         "title": "Implement node discovery via filesystem scanning",
         "description": "Scan Python files to find pocketflow.Node subclasses and extract metadata",
         "status": "pending",
-        "dependencies": [
-          2
-        ],
+        "dependencies": [],
         "priority": "high",
         "details": "Create src/pflow/registry/scanner.py with scan_for_nodes(directories) function. Use ast module or importlib to find all classes inheriting from pocketflow.Node (BaseNode). Extract basic metadata: node name, module path, docstring. Store results in simple dict or JSON file for fast access. No complex indexing needed - just a list of available nodes. Focus on src/pflow/nodes/ directory. This is not a package registry - just local filesystem scanning. Reference docs: registry.md",
         "testStrategy": "Test node discovery with mock node files, metadata extraction accuracy, and registry performance. Write tests for various node structures."
@@ -100,9 +97,7 @@
         "title": "Define JSON IR schema",
         "description": "Create the JSON schema for workflow intermediate representation",
         "status": "pending",
-        "dependencies": [
-          8
-        ],
+        "dependencies": [],
         "priority": "high",
         "details": "Create src/pflow/core/ir_schema.py with Pydantic models or JSON Schema definitions. Define minimal IR structure: nodes[] with id, type, params; edges[] with from, to, action (default 'default'); start_node id; optional mappings{} for NodeAwareSharedStore proxy. Keep it simple - just enough to represent a workflow graph. Use standard JSON Schema for validation. Don't overengineer - we can extend later. Example: {'nodes': [{'id': 'n1', 'type': 'read-file', 'params': {'file_path': 'input.txt'}}], 'edges': [], 'start_node': 'n1'}. Reference docs: schemas.md, planner.md#10.1",
         "testStrategy": "Test schema validation with valid and invalid IR examples, verify all required fields, test edge cases. Write schema validation tests."
@@ -228,9 +223,7 @@
         "title": "Implement LLM API client",
         "description": "Create simple client for calling LLM APIs during planning",
         "status": "pending",
-        "dependencies": [
-          14
-        ],
+        "dependencies": [],
         "priority": "high",
         "details": "Create src/pflow/planning/llm_client.py with simple functions: call_llm(prompt, model='claude-3-sonnet') that makes API calls to Claude or OpenAI. IMPLEMENTATION NOTE: Consider using Simon Willison's 'llm' package for simplified implementation and model flexibility. If using custom implementation: Use httpx or requests for API calls. Basic retry with exponential backoff (max 3 retries). Read API keys from environment variables. Return just the text response. Keep it simple - this is not a framework, just utility functions for the planner. Reference docs: planner.md#6.2",
         "testStrategy": "Mock LLM API calls, test retry logic and error handling. Test with different model providers."
@@ -241,8 +234,7 @@
         "description": "Format node metadata for LLM-based workflow planning",
         "status": "pending",
         "dependencies": [
-          10,
-          19
+          10
         ],
         "priority": "high",
         "details": "Create src/pflow/planning/context_builder.py with build_context(registry_metadata) function. Format node information into a structured text that LLMs can understand: node names, descriptions, inputs/outputs, parameter types. Keep format simple and readable - just markdown tables or structured text. Include which parameters go to shared store vs node.set_params(). This provides the LLM with available 'tools' for building workflows. Output example: 'Available nodes:\n- read-file: Reads file from disk\n  Inputs: file_path (from shared store)\n  Outputs: content (to shared store)'. Reference docs: planner.md#6.1",
@@ -256,6 +248,7 @@
         "dependencies": [
           7,
           9,
+          19,
           20
         ],
         "priority": "high",
@@ -280,8 +273,10 @@
         "description": "Build the compiler that converts JSON IR to pocketflow.Flow objects with template resolution",
         "status": "pending",
         "dependencies": [
-          6,
-          7
+          5,
+          7,
+          8,
+          9
         ],
         "priority": "high",
         "details": "Create src/pflow/runtime/compiler.py to convert JSON IR to executable code using pocketflow: compile_ir_to_flow(ir_json, shared) that instantiates nodes from registry, resolves template variables in params using resolve_template(), connects nodes with pocketflow's >> operator based on edges, returns pocketflow.Flow object. When mappings defined in IR, wrap shared store with NodeAwareSharedStore proxy. execute_with_tracing(flow, shared) wraps flow.run() with logging. Example: IR with read-file -> llm nodes becomes: node1 >> node2; flow = Flow(start=node1). DO NOT reimplement execution - just compile IR to pocketflow objects. Reference docs: architecture.md#5.4, runtime.md",
@@ -293,8 +288,8 @@
         "description": "Validate JSON IR structure and node compatibility",
         "status": "pending",
         "dependencies": [
-          9,
-          23
+          4,
+          9
         ],
         "priority": "high",
         "details": "Extend src/pflow/core/validation.py (from task 4) with IR validation functions: validate_ir(ir_json) to check JSON schema compliance, validate_node_compatibility(ir_json, registry) to ensure nodes exist and edges are valid, validate_templates(ir_json, initial_shared) to check all template variables can be resolved. Use jsonschema library for schema validation. Return clear error messages pointing to specific issues. This is not a complex framework - just validation functions that the planner and runtime call. Reference docs: planner.md#8, architecture.md#10.3",
@@ -319,6 +314,7 @@
         "status": "pending",
         "dependencies": [
           2,
+          3,
           4,
           5,
           6,
@@ -332,8 +328,12 @@
           14,
           15,
           16,
+          21,
+          22,
           23,
-          24
+          24,
+          32,
+          34
         ],
         "priority": "high",
         "details": "Create tests/ structure for integration and performance tests (unit tests already created with each task). Integration tests for end-to-end workflows. Performance benchmark suite in tests/benchmarks/ measuring planning latency (\u2264800ms target), execution speed (\u22642s overhead target), token usage optimization. Error recovery test suite in tests/error_recovery/ for invalid input handling, external service failures, partial execution scenarios. Mock external services. Test natural language \u2192 workflow generation with \u226595% success rate target.",
@@ -383,9 +383,7 @@
         "title": "Create prompt templates for planning",
         "description": "Design effective prompts for LLM-based workflow generation",
         "status": "pending",
-        "dependencies": [
-          19
-        ],
+        "dependencies": [],
         "priority": "high",
         "details": "Create src/pflow/planning/prompts.py with prompt templates as simple string constants or functions. Include: 1) Workflow generation prompt with node context and examples, 2) Error recovery prompt for failed attempts, 3) Template variable extraction prompt. Emphasize template-driven prompt generation with $variable syntax. Use f-strings or jinja2 for template composition. Keep prompts focused and include concrete examples. Test prompts manually to ensure they generate valid JSON IR. Example structure: WORKFLOW_PROMPT = '''Given these nodes: {node_context}\nGenerate a workflow for: {user_request}\nOutput JSON IR format with template variables like $issue_data...'''. Reference docs: planner.md#6.1",
         "testStrategy": "Test prompt generation for various scenarios, template composition, and token optimization. Verify IR generation success rate."
