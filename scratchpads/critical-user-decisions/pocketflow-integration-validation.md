@@ -83,3 +83,10 @@ class NodeAwareSharedStore(dict):
 1. Should nodes handle missing required inputs gracefully or fail fast?
 2. How should node errors be surfaced - exceptions or error actions?
 3. Should the proxy support nested mappings (e.g., "data.content" -> "file_data.text")?
+
+
+## User Answers
+
+1. They should fail fast (not even execute) just ask the user for the input
+2. It should be clear to the user what went wrong, especially when we are implementing detailed tracing
+3. No, not in the MVP. We can think about this later. Potentially create a deferred task for this last in the task list and update any current task to make this clear.
