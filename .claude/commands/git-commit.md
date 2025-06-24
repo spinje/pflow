@@ -6,19 +6,45 @@
 ## Description
 This command helps you create well-structured git commits with descriptive messages and submit them to the repository.
 
+## Workflow
+
+### 1. Analyze Changes and Propose a Plan
+Your first step is to get a clear picture of the repository's state.
+- **Check Status:** Run `git status` to see all staged and unstaged files.
+- **Group Changes:** Analyze the changes and identify single, logical units of work.
+- **Analyze order of changes:** Analyze what the most logical order of commiting the changes is.
+- **Plan for Multiple Commits:** If you identify multiple logical changes, you must **propose a plan to the users chat window** for how you will split the work into a series of separate commits. Wait for approval before proceeding.
+
+### 2. Prepare the Staging Area for the Commit
+
+For each logical commit (either the only one, or the current step in your approved plan), precisely prepare the staging area.
+- **Stage Necessary Files:** Use `git add <file>` for any unstaged changes that belong in this specific commit.
+- **Unstage Unrelated Files:** If files are staged that do *not* belong in this logical commit, unstage them.
+
+```bash
+# Unstage a specific file
+git reset path/to/unrelated_file.txt
+
+# Or unstage all currently staged files to start fresh
+git reset
+```
+
+### 3. Write a Descriptive Commit Message
+
+- See detailed instructions below.
+
+### 4. Submit the Commit
+
+- If any precommit hooks are ran that aborted the commit, see if the changes made by the commit hook are breaking or if you can proceed with the commit anyway.
+- In most cases, you can proceed with the commit by running the commit again.
+- Never use --no-verify flag to bypass precommit hooks if not explicitly asked by the user.
+
+### 5. Repeat if Necessary
+If you are executing a multi-commit plan, return to Step 2 and proceed with the next logical commit until all changes are committed.
+
 ## Instructions
 
-### 1. Stage Your Changes
-Before using this command, make sure you have staged the files you want to commit:
-```bash
-git add .
-```
-or stage specific files
-```bash
-git add path/to/file.txt
-```
-
-### 2. Write a Descriptive Commit Message
+### Write a Descriptive Commit Message
 A good commit message should:
 - Use the imperative mood ("Add feature" not "Added feature")
 - Start with a verb (add, fix, update, remove, refactor, etc.)
@@ -39,14 +65,20 @@ A good commit message should:
 - `changes`
 - `updates and fixes`
 
-### 3. Submit the Commit
-The command will:
-1. Review your staged changes
-2. Create a commit with your message
-3. Optionally push to the remote repository (if specified)
-
-### 4. Command Behavior
+### Command Behavior
 - If no message is provided, you'll be prompted to write one
 - The command will show you what files are being committed
 - It will verify the commit was successful
 - It can optionally push the changes to the remote repository
+
+### Best Practices
+- Commit often with small, focused changes.
+- Each commit should represent a single logical change.
+- Test your changes before committing.
+- Use meaningful commit messages that help other developers understand the change.
+- Keep commits atomic – if you need to revert, you can revert the entire feature/fix.
+- Handle multiple logical changes: If multiple files are staged or unstaged, your job (CLAUDE) is to analyze the changes, split them into logical pieces that fit together, and propose committing them separately. This ensures the repository history remains clean, organized, and easy to follow.
+
+### Handling multiple logical changes
+- If there are multiple logical changes, you should split them into multiple commits.
+- Propose a plan of how you will split the changes into multiple commits to the user before doing it (in the chat window)
