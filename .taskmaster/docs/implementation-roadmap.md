@@ -2,6 +2,8 @@
 
 This document provides a strategic roadmap for implementing pflow, the AI workflow compiler that transforms natural language and CLI pipe syntax into permanent, deterministic CLI commands.
 
+**Scope**: 35 MVP tasks across 5 phases (8 additional tasks deferred to v2.0)
+
 ## 🎯 Vision: "Plan Once, Run Forever"
 
 **Transform this inefficient pattern**:
@@ -26,20 +28,22 @@ pflow fix-issue --issue=1234
 
 ---
 
-## 🗺 Development Roadmap: 5 Phases, 34 Tasks
+## 🗺 Development Roadmap: 5 Phases, 35 MVP Tasks
 
-### Phase 1: Core Infrastructure Foundation (Tasks 1-7)
+### Phase 1: Core Infrastructure Foundation (Tasks 1-9)
 **Goal**: Build the essential foundation systems that all other features depend on
 **Timeline**: Weeks 1-2
 
 **Key Deliverables**:
-- **CLI Runtime** (Task 1): Basic click framework with `--key=value` flag parsing
-- **Shared Store Validation** (Task 2): Simple validation functions for the dict pattern
-- **NodeAwareSharedStore Proxy** (Task 3): Transparent key mapping between incompatible nodes
-- **CLI Parameter Resolution** (Task 4): Route flags to shared store or node params based on context
-- **Template Variable System** (Task 5): Simple `$variable` replacement for shared store access
-- **Node Discovery** (Task 6): Filesystem scanning to find pocketflow.Node subclasses
-- **JSON IR Schema** (Task 7): Minimal workflow representation format
+- **Package Setup** (Task 1): Create package structure with CLI entry point
+- **CLI Framework** (Task 2): Basic click framework with `--key=value` flag parsing
+- **Shell Pipe Integration** (Task 3): Full Unix pipe support with stdin/stdout handling
+- **Shared Store Validation** (Task 4): Simple validation functions for the dict pattern
+- **NodeAwareSharedStore Proxy** (Task 5): Transparent key mapping between incompatible nodes
+- **CLI Parameter Resolution** (Task 6): Route flags to shared store or node params based on context
+- **Template Variable System** (Task 7): Simple `$variable` replacement for shared store access
+- **Node Discovery** (Task 8): Filesystem scanning to find pocketflow.Node subclasses
+- **JSON IR Schema** (Task 9): Minimal workflow representation format
 
 **Success Criteria**:
 ```bash
@@ -48,13 +52,13 @@ pflow read-file --path=data.txt >> llm --prompt="analyze this" >> write-file --p
 # Nodes discovered, IR generated, shared store validated
 ```
 
-### Phase 2: Metadata & Registry Systems (Tasks 8-9)
+### Phase 2: Metadata & Registry Systems (Tasks 10-11)
 **Goal**: Extract rich metadata from nodes to enable intelligent planning
 **Timeline**: Week 3
 
 **Key Deliverables**:
-- **Metadata Extraction** (Task 8): Parse docstrings to understand node interfaces
-- **Registry CLI Commands** (Task 9): `pflow registry list` and `pflow registry describe`
+- **Metadata Extraction** (Task 10): Parse docstrings to understand node interfaces
+- **Registry CLI Commands** (Task 11): `pflow registry list` and `pflow registry describe`
 
 **Success Criteria**:
 ```bash
@@ -68,20 +72,20 @@ pflow registry describe github-get-issue
 # - Outputs: issue_data, issue_title (to shared store)
 ```
 
-### Phase 3: Simple Platform Nodes (Tasks 10-16, 29)
+### Phase 3: Simple Platform Nodes (Tasks 12-18, 34)
 **Goal**: Implement single-purpose developer workflow nodes
 **Timeline**: Weeks 4-5
 
 **Priority 1 Platform Nodes**:
-- **GitHub nodes** (Tasks 10, 15): Individual nodes like `github-get-issue`, `github-create-pr`
-- **Claude Code super node** (Task 11): `claude-code` - comprehensive AI development agent
-- **General LLM node** (Task 12): `llm` - API-based text processing
-- **Git nodes** (Tasks 13, 29): `git-commit`, `git-push`, `git-create-branch`
-- **File nodes** (Task 14): `read-file`, `write-file`, `copy-file`
+- **GitHub nodes** (Tasks 12, 17): Individual nodes like `github-get-issue`, `github-create-pr`
+- **Claude Code super node** (Task 13): `claude-code` - comprehensive AI development agent
+- **General LLM node** (Task 14): `llm` - API-based text processing
+- **Git nodes** (Tasks 15, 34): `git-commit`, `git-push`, `git-create-branch`
+- **File nodes** (Task 16): `read-file`, `write-file`, `copy-file`
 
 **Priority 2 Platform Nodes**:
-- **CI nodes** (Task 16): `ci-run-tests`, `ci-get-status`
-- **Shell nodes** (Task 16): `shell-exec`, `shell-pipe`
+- **CI nodes** (Task 18): `ci-run-tests`, `ci-get-status`
+- **Shell nodes** (Task 18): `shell-exec`, `shell-pipe`
 
 **Two-Tier AI Architecture**:
 1. **Claude Code Super Node**: Receives complex instructions with template variables
@@ -106,16 +110,18 @@ pflow github-get-issue --issue=1234 >> \
   github-create-pr --title="Fix: $issue_title" --body="$code_report"
 ```
 
-### Phase 4: Natural Language Planning (Tasks 17-20, 28)
-**Goal**: Enable workflow generation from natural language on top of solid foundation
+### Phase 4: Natural Language Planning & Workflow Execution (Tasks 19-24, 33)
+**Goal**: Enable workflow generation from natural language and persistent execution
 **Timeline**: Weeks 6-7
 
 **Key Deliverables**:
-- **LLM API Client** (Task 17): Simple client for Claude/OpenAI integration
-- **Planning Context Builder** (Task 18): Format node metadata for LLM understanding
-- **Workflow Generation Engine** (Task 19): Transform natural language → template-driven workflows
-- **Approval & Storage System** (Task 20): User verification and workflow persistence
-- **Prompt Templates** (Task 28): Well-crafted prompts for reliable generation
+- **LLM API Client** (Task 19): Simple client for Claude/OpenAI integration (consider Simon Willison's llm package)
+- **Planning Context Builder** (Task 20): Format node metadata for LLM understanding
+- **Workflow Generation Engine** (Task 21): Transform natural language → template-driven workflows
+- **Approval & Storage System** (Task 22): User verification and workflow persistence
+- **Workflow Lockfile System** (Task 23): Generate lockfiles for deterministic execution
+- **Named Workflow Execution** (Task 24): Execute saved workflows by name with parameters
+- **Prompt Templates** (Task 33): Well-crafted prompts for reliable generation
 
 **Critical Feature**: Pattern recognition for workflow reuse
 ```bash
@@ -134,22 +140,22 @@ pflow "analyze server.log and create analysis"
 - ≤800ms planning latency
 - Effective workflow reuse for similar requests
 
-### Phase 5: Runtime, Polish & Validation (Tasks 21-25, 30-31, 33-34)
+### Phase 5: Runtime, Polish & Validation (Tasks 25-30, 35, 37-38)
 **Goal**: Build execution engine, enhance UX, and validate MVP readiness
 **Timeline**: Weeks 8-9
 
 **Core Runtime** (Week 8):
-- **IR Compiler** (Task 21): Convert JSON IR → pocketflow.Flow objects
-- **Validation System** (Task 22): Validate IR structure and node compatibility
-- **Shell Pipe Integration** (Task 30): Full Unix pipe support with stdin/stdout
-- **CLI Autocomplete** (Task 31): Shell completion for node discovery
-- **Execution Tracing** (Task 33): Comprehensive visibility into workflow execution
+- **IR Compiler** (Task 25): Convert JSON IR → pocketflow.Flow objects
+- **Shared Store Lifecycle** (Task 26): Ensure isolation between workflow executions
+- **Validation System** (Task 27): Validate IR structure and node compatibility
+- **CLI Autocomplete** (Task 35): Shell completion for node discovery
+- **Execution Tracing** (Task 37): Comprehensive visibility into workflow execution
 
 **Polish & Testing** (Week 9):
-- **Caching System** (Task 23): Optional optimization for @flow_safe nodes
-- **Comprehensive Tests** (Task 24): Unit and integration test coverage
-- **CLI Experience** (Task 25): Error messages, help text, documentation
-- **MVP Validation** (Task 34): End-to-end scenario testing
+- **Caching System** (Task 28): Optional optimization for @flow_safe nodes
+- **Comprehensive Tests** (Task 29): Unit and integration test coverage
+- **CLI Experience** (Task 30): Error messages, help text, documentation
+- **MVP Validation** (Task 38): End-to-end scenario testing
 
 **Execution Trace Example**:
 ```
@@ -171,15 +177,43 @@ pflow "analyze server.log and create analysis"
 
 ---
 
+## 🔄 Parallelization Opportunities
+
+One of the key insights from task dependency analysis is that **6 tasks can start immediately** without waiting for others:
+
+**Immediate Start Tasks (No Dependencies)**:
+- **Task 1**: Create package setup and CLI entry point
+- **Task 4**: Implement shared store validation utilities
+- **Task 8**: Implement node discovery via filesystem scanning
+- **Task 9**: Define JSON IR schema
+- **Task 19**: Implement LLM API client
+- **Task 33**: Create prompt templates for planning
+
+This enables significant timeline compression:
+- **Phase 1 & 2**: Can partially overlap (start registry work while finishing infrastructure)
+- **Phase 3 & 4**: Platform nodes and planning can be developed in parallel
+- **Cross-functional teams**: Different developers can work on independent tracks
+
+**Potential Timeline Optimization**:
+- Sequential approach: 9 weeks
+- Parallel approach: 6-7 weeks (25-30% faster)
+
+---
+
 ## 🚦 Explicitly Deferred to v2.0
 
-Based on tasks.json, these features are NOT part of MVP:
+Based on tasks.json, these 8 features are NOT part of MVP:
 
-1. **Interface Compatibility System** (Task 26): Advanced marketplace node compatibility
-2. **Success Metrics Instrumentation** (Task 27): Detailed performance tracking
-3. **Direct CLI Parsing** (Task 32): Minor optimization to bypass LLM for complete commands
+1. **Execution Configuration Handling** (Task 44): Node-level retry configuration in runtime
+2. **Trace Persistence and Retrieval** (Task 45): Save and retrieve execution traces for debugging
+3. **Node Version Tracking** (Task 46): Track node versions for lockfile generation
+4. **Interface Compatibility System** (Task 47): Advanced marketplace node compatibility
+5. **Success Metrics Instrumentation** (Task 48): Detailed performance tracking
+6. **Direct CLI Parsing** (Task 49): Minor optimization to bypass LLM for complete commands
+7. **Nested Proxy Mappings** (Task 50): Complex key mapping patterns for advanced compatibility
+8. **CLI Pipe Operator Parsing** (Task 51): Parse >> operator directly (MVP uses LLM for all input)
 
-These represent ~10% of total effort but aren't needed for core value delivery.
+These represent valuable enhancements but aren't required for core MVP value delivery.
 
 ---
 
@@ -263,12 +297,12 @@ The pflow MVP is ready when:
    - Clear execution traces aid debugging
 
 4. **Quality Standards Achieved**:
-   - Comprehensive test coverage (Task 24)
-   - All 34 tasks completed and tested
+   - Comprehensive test coverage (Task 29)
+   - All 35 MVP tasks completed and tested
    - Documentation complete
 
 **pflow delivers on its promise**: Transform inefficient AI-assisted development from heavy slash commands into lightweight, deterministic CLI workflows that run forever after planning once.
 
 ---
 
-*This roadmap reflects 34 implementation tasks organized into 5 clear phases, building from core infrastructure through natural language planning to a polished MVP that demonstrates real value to developers.*
+*This roadmap reflects 35 MVP implementation tasks organized into 5 clear phases, building from core infrastructure through natural language planning to a polished MVP that demonstrates real value to developers. An additional 8 tasks are deferred to v2.0 for future enhancements.*
