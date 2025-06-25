@@ -25,7 +25,7 @@ Steps 8-11 are used to create the subtasks and verify that they are well defined
 
 4. If applicable search internet for any relevant information that can help you better understand a particular part of the task, especially if any particular framework (other than pocketflow) is used.
 
-5. Carefully evaluate if there are different ways to solve the task. These approaches should be grouded in a **deep understanding of both the task and the project**. If there are multiple valid approaches and the implications of the different approaches requires the users input to choose the best one, create a new markdown file in the folder `scratchpads/critical-user-decisions/` and write down the details about the decision and the reasoning why it matters.
+5. Carefully evaluate if there are different ways to solve the task. These approaches should be grouded in a **deep understanding of both the task and the project**. If there are multiple valid approaches and the implications of the different approaches requires the users input to choose the best one, create a new markdown file in the folder `scratchpads/critical-user-decisions/` and write down the details about the decision and the reasoning why it matters. Remember to **stop** and pause the process to let the user review the decision and approve it before moving on to the next step if needed.
 
 6. After the best and most viable soltution has been selected that best fits the pflow project. Evaluate if the current implementation details and test strategy for the task are sufficient. If not, expand on them by using the `task-master update-task --id=<taskId> --prompt="<prompt>"`. The <prompt>  should be a detailed instruction of how the implementation details and test strategy should be changed or expanded. Include as much detail and context as possible here on what needs to be changed and what is missing and why it is important.
 
@@ -62,3 +62,14 @@ Json format to add:
 - Make sure that you reference the available documentation and existing code in the project when writing the instructions. Do not include code in the instructions, only reference the code and the documentation.
 - Make sure *every important decision* is documented in a markdown file in the `scratchpads/critical-user-decisions/` directory and approved by the user before moving on to the next step.
 - If you encounter any ambiguities or uncertainties in the documentation or in the task, ask the user for clarification before moving on to the next step.
+- Always **STOP** when the user needs to review something or approve something, do not move on to the next step until the user has approved the current step.
+
+## Notes
+
+- Never assume that the task or even the documentation is accurate and complete, always ask the user for clarification if you are unsure about anything or if something does not make sense.
+
+## Special Instructions
+
+Always do these first before you begin (if empty, ignore this section):
+
+$ARGUMENTS
