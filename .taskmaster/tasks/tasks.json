@@ -395,33 +395,6 @@
         "testStrategy": "User acceptance testing, documentation review, error message clarity testing."
       },
       {
-        "id": 31,
-        "title": "[DEFER TO v2.0] Implement interface compatibility system",
-        "description": "Create the compatibility analysis for shared store key matching and type validation between nodes",
-        "status": "deferred",
-        "dependencies": [
-          4,
-          5,
-          10
-        ],
-        "priority": "low",
-        "details": "[DEFERRED TO v2.0 - Not needed for MVP] Advanced compatibility checking is for marketplace scenarios. MVP nodes have compatible interfaces by design. Basic validation in task 27 is sufficient for MVP. When implemented in v2.0: Create compatibility analysis for heterogeneous node sources. Reference docs show this as post-MVP feature for complex marketplace integration.",
-        "testStrategy": "Test interface matching scenarios, type validation edge cases, and proxy mapping generation"
-      },
-      {
-        "id": 32,
-        "title": "[DEFER TO v2.0] Build success metrics instrumentation",
-        "description": "Implement comprehensive metrics tracking for planning success, execution reliability, and performance",
-        "status": "deferred",
-        "dependencies": [
-          21,
-          25
-        ],
-        "priority": "low",
-        "details": "[DEFERRED TO v2.0 - Premature optimization] Focus on building working MVP first before instrumenting performance. Basic logging is sufficient for MVP. When implemented: Add lightweight metrics collection for key performance indicators. Can use simple timing decorators and counters initially. Reference docs: architecture.md#11 shows metrics as success criteria, not MVP feature.",
-        "testStrategy": "Test metrics collection accuracy, performance overhead, and aggregation logic"
-      },
-      {
         "id": 33,
         "title": "Create prompt templates for planning",
         "description": "Design effective prompts for LLM-based workflow generation",
@@ -458,19 +431,6 @@
         "testStrategy": "Test completion generation, shell integration, and user experience across shells. Write integration tests."
       },
       {
-        "id": 36,
-        "title": "[DEFER TO v2.0] Implement direct CLI parsing without LLM",
-        "description": "Parse CLI pipe syntax directly for minor performance optimization",
-        "status": "deferred",
-        "dependencies": [
-          21,
-          35
-        ],
-        "priority": "low",
-        "details": "[DEFERRED TO v2.0 - Minor optimization only] Create direct parser for CLI pipe syntax that bypasses LLM for fully-specified commands. Parse 'node1 --param=value >> node2' syntax directly into IR. Even with direct parsing, LLM still needed for: missing parameters, template variables, data flow connections, shared store mappings. This is a minor optimization since users rarely specify everything. Benefits: slightly faster for complete commands, more predictable for simple flows, reduced token usage. The high-value feature is autocomplete (task #35), not direct parsing. Reference docs: planner.md#3.2 (future state)",
-        "testStrategy": "Test parsing accuracy, measure actual performance improvement, ensure LLM fallback works"
-      },
-      {
         "id": 37,
         "title": "Implement execution tracing system",
         "description": "Build comprehensive execution visibility for debugging and optimization",
@@ -495,32 +455,7 @@
         "testStrategy": "Test real-world scenarios, measure performance targets, validate user experience metrics."
       },
       {
-        "id": 39,
-        "title": "[DEFER TO v2.0] Support nested proxy mappings",
-        "description": "Implement complex key mapping patterns for advanced node compatibility",
-        "status": "deferred",
-        "dependencies": [
-          5
-        ],
-        "priority": "low",
-        "details": "[DEFERRED TO v2.0 - Not needed for MVP] Support for nested mappings like 'data.content' -> 'file_data.text'. MVP uses simple key-to-key mappings only. This feature enables more complex node compatibility patterns but adds significant complexity. When implemented: extend NodeAwareSharedStore to handle dot-notation paths and nested object transformations.",
-        "testStrategy": "Test nested mapping scenarios, performance impact, and edge cases with deep nesting."
-      },
-      {
-        "id": 40,
-        "title": "[DEFER TO v2.0] CLI pipe operator parsing",
-        "description": "Parse >> operator for CLI workflow syntax",
-        "status": "deferred",
-        "dependencies": [
-          6,
-          9
-        ],
-        "priority": "low",
-        "details": "[DEFERRED TO v2.0 - Not needed for MVP] Extend src/pflow/core/cli_resolver.py to parse pipe operator (>>) in CLI commands. Support syntax: 'pflow read-file --path=data.txt >> llm --prompt=\"analyze\" >> write-file --path=output.md'. Parse into node chain with parameters. In MVP, all input goes through LLM planner anyway, so direct parsing is not essential. This is an optimization for v2.0 when direct CLI parsing is implemented. Reference docs: shell-pipes.md, cli-runtime.md",
-        "testStrategy": "Test pipe syntax parsing, parameter extraction, error handling for malformed commands."
-      },
-      {
-        "id": 41,
+        "id": 44,
         "title": "[DEFER TO v2.0] Execution configuration handling",
         "description": "Support node-level retry configuration in runtime",
         "status": "deferred",
@@ -533,7 +468,7 @@
         "testStrategy": "Test retry logic, timeout handling, configuration parsing. Mock failing operations to test retries."
       },
       {
-        "id": 42,
+        "id": 45,
         "title": "[DEFER TO v2.0] Trace persistence and retrieval",
         "description": "Save and retrieve execution traces for debugging",
         "status": "deferred",
@@ -545,7 +480,7 @@
         "testStrategy": "Test trace saving, retrieval, listing. Test large trace handling and cleanup."
       },
       {
-        "id": 43,
+        "id": 46,
         "title": "[DEFER TO v2.0] Node version tracking",
         "description": "Track node versions for lockfile generation",
         "status": "deferred",
@@ -556,12 +491,77 @@
         "priority": "low",
         "details": "[DEFERRED TO v2.0 - Over-engineering for MVP] Extend registry to track node versions. Add version extraction to metadata. MVP can use simpler approach with hardcoded versions or git commit hash. Full version tracking system is v2.0 when marketplace and version compatibility become important. Reference docs: registry.md#versioning, schemas.md",
         "testStrategy": "Test version extraction, registry storage, version comparison logic."
+      },
+      {
+        "id": 47,
+        "title": "[DEFER TO v2.0] Implement interface compatibility system",
+        "description": "Create the compatibility analysis for shared store key matching and type validation between nodes",
+        "status": "deferred",
+        "dependencies": [
+          4,
+          5,
+          10
+        ],
+        "priority": "low",
+        "details": "[DEFERRED TO v2.0 - Not needed for MVP] Advanced compatibility checking is for marketplace scenarios. MVP nodes have compatible interfaces by design. Basic validation in task 27 is sufficient for MVP. When implemented in v2.0: Create compatibility analysis for heterogeneous node sources. Reference docs show this as post-MVP feature for complex marketplace integration.",
+        "testStrategy": "Test interface matching scenarios, type validation edge cases, and proxy mapping generation"
+      },
+      {
+        "id": 48,
+        "title": "[DEFER TO v2.0] Build success metrics instrumentation",
+        "description": "Implement comprehensive metrics tracking for planning success, execution reliability, and performance",
+        "status": "deferred",
+        "dependencies": [
+          21,
+          25
+        ],
+        "priority": "low",
+        "details": "[DEFERRED TO v2.0 - Premature optimization] Focus on building working MVP first before instrumenting performance. Basic logging is sufficient for MVP. When implemented: Add lightweight metrics collection for key performance indicators. Can use simple timing decorators and counters initially. Reference docs: architecture.md#11 shows metrics as success criteria, not MVP feature.",
+        "testStrategy": "Test metrics collection accuracy, performance overhead, and aggregation logic"
+      },
+      {
+        "id": 49,
+        "title": "[DEFER TO v2.0] Implement direct CLI parsing without LLM",
+        "description": "Parse CLI pipe syntax directly for minor performance optimization",
+        "status": "deferred",
+        "dependencies": [
+          21,
+          35
+        ],
+        "priority": "low",
+        "details": "[DEFERRED TO v2.0 - Minor optimization only] Create direct parser for CLI pipe syntax that bypasses LLM for fully-specified commands. Parse 'node1 --param=value >> node2' syntax directly into IR. Even with direct parsing, LLM still needed for: missing parameters, template variables, data flow connections, shared store mappings. This is a minor optimization since users rarely specify everything. Benefits: slightly faster for complete commands, more predictable for simple flows, reduced token usage. The high-value feature is autocomplete (task #35), not direct parsing. Reference docs: planner.md#3.2 (future state)",
+        "testStrategy": "Test parsing accuracy, measure actual performance improvement, ensure LLM fallback works"
+      },
+      {
+        "id": 50,
+        "title": "[DEFER TO v2.0] Support nested proxy mappings",
+        "description": "Implement complex key mapping patterns for advanced node compatibility",
+        "status": "deferred",
+        "dependencies": [
+          5
+        ],
+        "priority": "low",
+        "details": "[DEFERRED TO v2.0 - Not needed for MVP] Support for nested mappings like 'data.content' -> 'file_data.text'. MVP uses simple key-to-key mappings only. This feature enables more complex node compatibility patterns but adds significant complexity. When implemented: extend NodeAwareSharedStore to handle dot-notation paths and nested object transformations.",
+        "testStrategy": "Test nested mapping scenarios, performance impact, and edge cases with deep nesting."
+      },
+      {
+        "id": 51,
+        "title": "[DEFER TO v2.0] CLI pipe operator parsing",
+        "description": "Parse >> operator for CLI workflow syntax",
+        "status": "deferred",
+        "dependencies": [
+          6,
+          9
+        ],
+        "priority": "low",
+        "details": "[DEFERRED TO v2.0 - Not needed for MVP] Extend src/pflow/core/cli_resolver.py to parse pipe operator (>>) in CLI commands. Support syntax: 'pflow read-file --path=data.txt >> llm --prompt=\"analyze\" >> write-file --path=output.md'. Parse into node chain with parameters. In MVP, all input goes through LLM planner anyway, so direct parsing is not essential. This is an optimization for v2.0 when direct CLI parsing is implemented. Reference docs: shell-pipes.md, cli-runtime.md",
+        "testStrategy": "Test pipe syntax parsing, parameter extraction, error handling for malformed commands."
       }
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-24T14:00:00.000Z",
-      "description": "Reordered task list with core MVP features properly sequenced and non-MVP features deferred"
+      "updated": "2025-06-25T16:30:00.000Z",
+      "description": "Reorganized task list with MVP tasks 1-43 and all deferred v2.0 tasks moved to positions 44-51 for clear separation"
     }
   }
 }
