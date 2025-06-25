@@ -457,7 +457,7 @@ pflow github-get-issue --repo=owner/repo --issue=123 >> \
 | 4 | `params` always overrideable via `set_params()` | Derived snapshot |
 | 5 | `stdin` key reserved; node must handle it naturally. (Note: "naturally" implies either the node is designed to directly consume `shared["stdin"]` if its primary input key is not otherwise populated, or it consumes it via an IR mapping from its input key to `shared["stdin"]` orchestrated by the planner or CLI parser.) | Abort |
 | 6 | Mapping targets unique flow-wide | Abort |
-| 7 | Natural interface names should be intuitive | Warning |
+| 7 | Natural interface names should be intuitive (guideline for node developers, not enforced) | Warning |
 | 8 | Node classes must inherit from `pocketflow.Node` | Abort |
 
 ---
@@ -477,6 +477,8 @@ pflow github-get-issue --repo=owner/repo --issue=123 >> \
 - **Natural interfaces enable simplicity** — node writers focus on business logic.
 
 - **Proxy enables compatibility** — same nodes work with different flow schemas.
+
+- **Natural naming patterns are guidelines** — Nodes define their own conventions. The framework only validates reserved keys (like `stdin`) and detects collisions between nodes, not naming conventions.
 
 - **Static nodes, dynamic flows** — node logic is reusable, flow wiring is generated.
 

@@ -203,6 +203,8 @@ validator - "complete" >> finalizer
 - **Behavior**: Maps keys when mappings defined, passes through otherwise
 - **Performance**: Zero overhead when no mapping needed (direct pass-through)
 - **Activation**: Only when IR defines mappings for a node
+- **Collision Detection**: Works with validation utilities to detect and map around key conflicts between nodes
+- **Reserved Keys**: Protects reserved keys like `stdin` from being overwritten by nodes
 
 ### 3. Params (Flat Structure)
 
@@ -227,6 +229,17 @@ Each node is written to:
 3. **Focus on business logic** without orchestration concerns
 
 This decouples node logic from flow orchestration. The complexity becomes a property of the flow, not the node.
+
+### Natural Naming Patterns
+
+**Important**: Natural naming patterns (like using `shared["text"]` instead of `shared["data"]`) are **guidelines for clarity**, not enforced rules:
+
+- **Node developers** define their own naming conventions
+- **Framework validates** only reserved keys (like `stdin`) and collisions
+- **Natural names** improve readability but aren't required
+- **Each node** documents its interface in the docstring
+
+The goal is self-documenting code, not rigid naming enforcement.
 
 ### Why This Pattern Matters
 
