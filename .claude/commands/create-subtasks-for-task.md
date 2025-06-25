@@ -13,6 +13,7 @@ Can be used to reference the task in the `task-master` CLI and used in this docu
 Steps 1-7 are used to make sure that the task is well defined and updated if needed.
 Steps 8-11 are used to create the subtasks and verify that they are well defined and updated if needed.
 
+> Each step in the workflow should be completed before moving on to the next step. When all 11 steps are completed, the process is complete and the subtasks have been successfully created.
 
 ## Workflow
 
