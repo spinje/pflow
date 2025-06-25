@@ -163,26 +163,13 @@
               1,
               2,
               3,
-              4
+              32
             ],
             "details": "Create tests/test_shell_integration.py with comprehensive test coverage. Test stdin detection (piped vs terminal), content reading (empty, small, large inputs), streaming behavior with various chunk sizes, exit code propagation in success/error cases, signal handling simulation. Include integration tests with Unix tools: cat, echo, grep, jq. Use pytest fixtures for stdin mocking.",
             "status": "pending",
             "testStrategy": ""
           }
         ]
-      },
-      {
-        "id": 4,
-        "title": "Build context-aware CLI parameter resolution",
-        "description": "Implement the CLI resolution system that routes flags to shared store or node parameters based on context",
-        "status": "pending",
-        "dependencies": [
-          2,
-          3
-        ],
-        "priority": "high",
-        "details": "Create src/pflow/core/cli_resolver.py with simple functions: collect_flags(args) that gathers all --key=value flags into a dict. Keep implementation simple - in MVP, all processing happens in the planner. The main purpose is to collect flags and detect stdin (already handled by shell integration in Task 3). This task mainly provides the interface between CLI and planner. Reference docs: architecture.md#5.1.1, cli-runtime.md#7",
-        "testStrategy": "Test flag collection with various formats. Verify integration with shell pipe detection from Task 3. Write unit tests for flag parsing."
       },
       {
         "id": 5,
@@ -380,8 +367,9 @@
           20
         ],
         "priority": "high",
-        "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_input, node_context) function. Handles BOTH natural language (quoted: \"analyze this file\") AND CLI pipe syntax (unquoted: read-file >> llm). For MVP, route both through LLM which understands pipe syntax as domain-specific language. Use LLM to: 1) Parse intent from natural language OR interpret CLI syntax structure, 2) Select appropriate nodes, 3) Generate workflow with template variables like $issue_data, $code_report, 4) Fill in missing parameters and connections. The LLM generates template-driven prompts like: 'Fix the issue described in: $issue_data'. Examples: \"analyze error.log\" OR read-file --path=error.log >> llm both generate complete workflows. CLI syntax rarely specifies all parameters, so LLM fills gaps. Direct CLI parsing is v2.0 optimization. Reference docs: planner.md#6.1, workflow-analysis.md",
-        "testStrategy": "Test workflow generation accuracy for both natural language and CLI syntax. Test template variable generation. Verify IR structure validity."
+        "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_input, node_context) function. In MVP, the entire input after 'pflow' is treated as natural language text (not parsed CLI flags). The workflow compiler passes the complete input string to the LLM as a domain-specific language. The LLM understands conventions like --key=value and >> operator through pattern recognition, not actual CLI parsing. For example: 'pflow read-file --path=error.log >> llm' is passed as a complete string to the LLM, which interprets the structure and generates proper IR with categorized parameters. The LLM: 1) Interprets the natural language input (which may include CLI-like syntax patterns), 2) Recognizes node names and parameter conventions through pattern matching, 3) Generates workflows with template variables like $issue_data, $code_report, 4) Fills in missing parameters and connections. Both \"analyze error.log\" and \"read-file --path=error.log >> llm\" are processed the same way - as text for the LLM to interpret. Real CLI flag parsing with actual argument parsing is deferred to v2.0. Reference docs: planner.md#6.1, workflow-analysis.md",
+        "testStrategy": "Test workflow generation accuracy for natural language inputs including those with CLI-like syntax patterns. Verify LLM correctly interprets --key=value and >> conventions without actual parsing. Test template variable generation. Verify IR structure validity.",
+        "subtasks": []
       },
       {
         "id": 22,
@@ -485,7 +473,7 @@
           3,
           10,
           10,
-          4,
+          32,
           5,
           6,
           7,
@@ -678,12 +666,26 @@
         "description": "Parse >> operator for CLI workflow syntax",
         "status": "deferred",
         "dependencies": [
-          4,
+          32,
           7
         ],
         "priority": "low",
         "details": "[DEFERRED TO v2.0 - Not needed for MVP] Extend src/pflow/core/cli_resolver.py to parse pipe operator (>>) in CLI commands. Support syntax: 'pflow read-file --path=data.txt >> llm --prompt=\"analyze\" >> write-file --path=output.md'. Parse into node chain with parameters. In MVP, all input goes through LLM planner anyway, so direct parsing is not essential. This is an optimization for v2.0 when direct CLI parsing is implemented. Reference docs: shell-pipes.md, cli-runtime.md",
         "testStrategy": "Test pipe syntax parsing, parameter extraction, error handling for malformed commands."
+      },
+      {
+        "id": 32,
+        "title": "[v2.0] Build context-aware CLI parameter resolution",
+        "description": "Implement the CLI resolution system that routes flags to shared store or node parameters based on context",
+        "status": "pending",
+        "dependencies": [
+          2,
+          3
+        ],
+        "priority": "medium",
+        "details": "In v2.0, this will add smart CLI flag validation and categorization for better UX. The system will use node metadata to categorize flags as data (shared store) vs behavior (node params) vs execution config. This enables better error messages like '--temperature is not valid for github-get-issue node' and powers the autocomplete feature (task 35). In MVP, all input is treated as natural language by the planner, so this optimization is not needed. Create src/pflow/core/cli_resolver.py with functions that validate and categorize CLI flags based on node metadata. Reference docs: architecture.md#5.1.1, cli-runtime.md#7",
+        "testStrategy": "Test flag categorization with various node types and parameter combinations. Verify error message generation for invalid flags. Test integration with autocomplete system. Write unit tests for validation logic.",
+        "subtasks": []
       }
     ],
     "metadata": {
