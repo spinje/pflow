@@ -9,7 +9,40 @@
         "dependencies": [],
         "priority": "high",
         "details": "Create pyproject.toml with proper package configuration and CLI entry point for 'pflow' command. Ensure package installs correctly with 'pip install -e .' and the pflow command becomes available. Set up initial src/pflow/ directory structure. Configure package metadata (name, version, dependencies). This task ensures the CLI framework in Task 2 has a proper foundation. Reference: standard Python packaging practices.",
-        "testStrategy": "Verify package installs correctly. Test that 'pflow' command is available after installation. Validate package structure follows Python standards."
+        "testStrategy": "Verify package installs correctly. Test that 'pflow' command is available after installation. Validate package structure follows Python standards.",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Add CLI entry point to pyproject.toml",
+            "description": "Configure the [project.scripts] section in pyproject.toml to register 'pflow' as a console script that points to 'pflow.cli:main'",
+            "dependencies": [],
+            "details": "Edit the existing pyproject.toml file to add a [project.scripts] section with the entry 'pflow = \"pflow.cli:main\"'. This follows the Python Packaging User Guide specification for console_scripts entry points and enables the 'pflow' command to be available system-wide when the package is installed.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Create minimal CLI module with click",
+            "description": "Create src/pflow/cli.py with a basic click application structure including a main() function decorated with @click.command()",
+            "dependencies": [
+              1
+            ],
+            "details": "Create a new file at src/pflow/cli.py that imports click, defines a main() function decorated with @click.command(), and includes minimal functionality to handle --help. The function should print a basic message or pass for now. This provides the skeleton CLI structure that will be expanded in future tasks to handle '>>' operators, node resolution, and other pflow-specific functionality.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Reinstall package and verify CLI availability",
+            "description": "Reinstall the pflow package in editable mode and verify the 'pflow' command is accessible from the command line",
+            "dependencies": [
+              2
+            ],
+            "details": "Run 'uv pip install -e .' from the project root to reinstall the package with the new entry point configuration. Then test that 'pflow --help' executes successfully and displays the basic Click-generated help message. This confirms the CLI entry point is properly configured and the pflow command is available in PATH for future development.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
       },
       {
         "id": 2,
@@ -21,7 +54,51 @@
         ],
         "priority": "high",
         "details": "Create src/pflow/__init__.py and src/pflow/cli.py using click. Set up main entry point with @click.group() for command routing. Implement basic --key=value flag parsing that collects all flags into a dict (no complex categorization yet). Create minimal package structure: src/pflow/core/, src/pflow/nodes/. Support 'pflow run <workflow>' as primary command. Parse and collect CLI arguments without processing them. This is just the CLI skeleton - command implementations come in later tasks. Reference docs: architecture.md#5.1.3, cli-runtime.md",
-        "testStrategy": "Write unit tests for CLI flag parsing with various input formats. Verify command routing works correctly. Test error handling for invalid commands. Include tests as part of implementation."
+        "testStrategy": "Write unit tests for CLI flag parsing with various input formats. Verify command routing works correctly. Test error handling for invalid commands. Include tests as part of implementation.",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create CLI main entry point with click framework",
+            "description": "Set up src/pflow/cli.py with @click.group() decorator for the main 'pflow' command group and add a placeholder 'run' subcommand following the command structure specified in docs/reference/cli-reference.md#basic-syntax",
+            "dependencies": [],
+            "details": "Create the main CLI file at src/pflow/cli.py, implement the @click.group() decorator for 'pflow' command, add a basic 'run' subcommand with @click.command(), ensure the command structure follows the pattern 'pflow [command] [options]' as specified in the CLI reference",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Implement '>>' operator parsing and argument collection",
+            "description": "Parse the custom '>>' flow operator to split node sequences and collect all --key=value flags into a list without categorization, following the operator semantics in docs/reference/cli-reference.md#the--operator",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement parsing logic to detect and split on '>>' operators (not shell pipes), extract node names and their associated --key=value flags, store parsed data in a simple list structure without attempting to categorize or validate flags, handle edge cases like quoted values containing '>>'",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Add template variable detection",
+            "description": "Implement detection for template variables using $variable syntax in flag values without implementing resolution logic, following patterns from docs/core-concepts/shared-store.md#template-variable-resolution",
+            "dependencies": [
+              2
+            ],
+            "details": "Add regex or parsing logic to detect $variable patterns in flag values, identify and mark template variables for future resolution, support both simple variables like $text and complex patterns like ${variable}, store detected variables without attempting to resolve them",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Create directory structure placeholders",
+            "description": "Create empty directory structure with src/pflow/core/ and src/pflow/nodes/ as placeholders for future runtime engine and node implementations",
+            "dependencies": [
+              1
+            ],
+            "details": "Create src/pflow/core/ directory with __init__.py file for future runtime engine components, create src/pflow/nodes/ directory with __init__.py file for future node implementations, add brief docstring comments indicating the purpose of each directory",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
       },
       {
         "id": 3,
@@ -33,7 +110,66 @@
         ],
         "priority": "high",
         "details": "Create src/pflow/core/shell_integration.py with comprehensive Unix pipe support. Implement stdin detection and reading when data is piped to pflow. Support streaming for large data (not just reading entire stdin at once). Handle stdout output for chaining pflow with other Unix tools. Parse and support the >> pipe operator for CLI workflow syntax (e.g., 'pflow read-file >> llm >> write-file'). Implement proper exit code propagation and signal handling (Ctrl+C). When stdin is detected, populate shared['stdin'] automatically. Support both batch mode (fail fast) and interactive mode (prompt for missing data). Look at Simon Willison's 'llm' CLI source code for excellent pipe integration patterns. This enables both: 'cat data.txt | pflow process' AND 'pflow node1 >> node2'. Reference docs: shell-pipes.md, architecture.md#5.1.1",
-        "testStrategy": "Test pipe detection, streaming support, signal handling, and integration with Unix tools. Write comprehensive tests for various pipe scenarios."
+        "testStrategy": "Test pipe detection, streaming support, signal handling, and integration with Unix tools. Write comprehensive tests for various pipe scenarios.",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create shell_integration.py with stdin detection and content reading",
+            "description": "Implement the core shell integration module in src/pflow/core/shell_integration.py with functions to detect if stdin is piped using sys.stdin.isatty() and read piped content into shared['stdin']",
+            "dependencies": [],
+            "details": "Create the shell_integration module following docs/features/shell-pipes.md#internal-implementation. Key functions: detect_stdin() to check if stdin is piped, read_stdin() to read content and place in shared['stdin']. Handle text encoding (UTF-8) and empty stdin cases. Ensure the module can be imported by other pflow components.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Add streaming support for large inputs with buffered reading",
+            "description": "Implement buffered reading using 8KB chunks to handle large piped inputs without loading entire content into memory at once",
+            "dependencies": [
+              1
+            ],
+            "details": "Extend shell_integration.py with stream_stdin() function that reads in 8KB chunks as specified in docs/features/shell-pipes.md#streaming-support. Support both full read mode (for small inputs) and streaming mode (for large inputs). Add configuration option to set chunk size. Ensure chunks are properly concatenated when needed.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Implement exit code handling for shell scripting compatibility",
+            "description": "Add proper exit code propagation where 0 indicates success and non-zero indicates errors, enabling pflow to work correctly in shell scripts and pipelines",
+            "dependencies": [
+              1
+            ],
+            "details": "Following docs/features/shell-pipes.md#exit-code-propagation, implement exit code handling in shell_integration.py. Create exit_with_code() function that properly exits with given code. Define standard exit codes (0=success, 1=general error, 2=usage error, etc). Ensure all error paths in stdin handling use appropriate exit codes.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Add SIGINT signal handling for graceful interruption",
+            "description": "Implement signal handling using Python's signal module to allow users to interrupt pflow execution with Ctrl+C gracefully",
+            "dependencies": [
+              1,
+              3
+            ],
+            "details": "As per docs/features/shell-pipes.md#signal-handling, add signal handler for SIGINT in shell_integration.py. Create setup_signal_handlers() function that registers handler. Handler should clean up resources, print interruption message to stderr, and exit with code 130 (standard for SIGINT). Ensure handler works during stdin reading.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Write comprehensive tests for shell integration features",
+            "description": "Create test suite covering stdin detection, content reading, streaming, exit codes, and signal handling with compatibility tests for common Unix tools",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "details": "Create tests/test_shell_integration.py with comprehensive test coverage. Test stdin detection (piped vs terminal), content reading (empty, small, large inputs), streaming behavior with various chunk sizes, exit code propagation in success/error cases, signal handling simulation. Include integration tests with Unix tools: cat, echo, grep, jq. Use pytest fixtures for stdin mocking.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
       },
       {
         "id": 4,
