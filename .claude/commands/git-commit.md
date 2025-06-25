@@ -70,6 +70,7 @@ A good commit message should:
 - `fixed it`
 - `changes`
 - `updates and fixes`
+- `... Co-Authored-By: Claude <noreply@anthropic.com>`
 
 ### Command Behavior
 - If no message is provided, you'll be prompted to write one
@@ -84,6 +85,7 @@ A good commit message should:
 - Use meaningful commit messages that help other developers understand the change.
 - Keep commits atomic – if you need to revert, you can revert the entire feature/fix.
 - Handle multiple logical changes: If multiple files are staged or unstaged, your job (CLAUDE) is to analyze the changes, split them into logical pieces that fit together, and propose committing them separately. This ensures the repository history remains clean, organized, and easy to follow.
+- NEVER mention that you Co-Authored the commit in the commit message, it should look like a human wrote it.
 
 ### Handling multiple logical changes
 - If there are multiple logical changes, you should split them into multiple commits.
