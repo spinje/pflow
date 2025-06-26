@@ -1,9 +1,9 @@
 {
   "meta": {
     "generatedAt": "2025-06-25T10:09:02.802Z",
-    "tasksAnalyzed": 3,
-    "totalTasks": 3,
-    "analysisCount": 3,
+    "tasksAnalyzed": 4,
+    "totalTasks": 4,
+    "analysisCount": 4,
     "thresholdScore": 5,
     "projectName": "Taskmaster",
     "usedResearch": true
@@ -32,6 +32,14 @@
       "recommendedSubtasks": 5,
       "expansionPrompt": "Implement Unix pipe integration for stdin handling following pflow's design: 1) Create src/pflow/core/shell_integration.py with stdin detection using sys.stdin.isatty() and content reading - place piped content in shared['stdin'] as documented in docs/features/shell-pipes.md#internal-implementation, 2) Add basic streaming support for large inputs using buffered reading (8KB chunks) to avoid loading entire files into memory - reference docs/features/shell-pipes.md#streaming-support for requirements, 3) Implement proper exit code handling (0 for success, non-zero for errors) to enable shell scripting as per docs/features/shell-pipes.md#exit-code-propagation, 4) Add basic SIGINT (Ctrl+C) signal handling using Python's signal module for graceful interruption - see docs/features/shell-pipes.md#signal-handling, 5) Write comprehensive tests covering pipe detection, content reading, exit codes, and signal handling scenarios - ensure compatibility with common Unix tools like cat, grep, and jq",
       "reasoning": "This task's complexity is moderate (6) rather than very high (9) because it focuses specifically on Unix stdin integration, NOT the custom '>>' operator parsing which is already handled in task 2. The main implementation challenges are: 1) Correctly detecting and reading from stdin when piped, 2) Implementing streaming for large inputs without loading everything into memory, 3) Proper exit code propagation for shell scripting compatibility, 4) Basic signal handling for user interruption. The task does NOT require parsing the '>>' operator (that's CLI parsing in task 2), implementing the shared store (that comes later), or building the full execution engine. The documentation in shell-pipes.md provides clear specifications for each feature. The reference to Simon Willison's llm CLI provides a proven pattern to follow. This is focused Unix integration work that enables pflow to be a proper shell citizen without requiring deep pflow architecture knowledge."
+    },
+    {
+      "taskId": 5,
+      "taskTitle": "Create template variable substitution",
+      "complexityScore": 4,
+      "recommendedSubtasks": 3,
+      "expansionPrompt": "Create 3 subtasks for implementing planner-internal template variable substitution in src/pflow/planning/template_resolver.py: 1) First subtask: Implement the core resolve_template(template_str, available_vars) function with regex patterns to match $var and ${var} syntax. Handle basic substitution logic that replaces template variables with values from the available_vars dictionary. Include support for escaping with $$var which should become $var in the output. 2) Second subtask: Add comprehensive error handling including custom TemplateResolutionError exception class, validation for missing variables (should list all missing vars in error message), handling of None/empty values in available_vars, and edge cases like malformed syntax or special characters. 3) Third subtask: Write thorough unit tests covering all template syntax forms ($var, ${var}, $$var escaping), error cases (missing variables, malformed syntax), edge cases (empty strings, None values, special characters in variable names), and create integration test stubs showing how the planner will use this module. Each subtask should reference the implementation details about this being planner-internal only (not runtime), used for generating sophisticated prompts with variables that will exist in shared store at runtime.",
+      "reasoning": "This task has low-moderate complexity (4) because it's a focused string substitution utility with clear requirements. The implementation is straightforward: regex-based pattern matching and replacement with simple error handling. The scope is limited to planner-internal use only (not runtime resolution), which reduces complexity. Main challenges are: 1) Correctly handling both $var and ${var} syntax with proper regex patterns, 2) Implementing escaping ($$var), 3) Clear error messages for missing variables to aid planner replanning. The task doesn't require understanding complex pflow architecture, just basic string manipulation. The referenced documentation provides clear examples of template usage patterns. This is a well-scoped utility module that enables the planner to generate sophisticated template-driven prompts."
     }
   ]
 }

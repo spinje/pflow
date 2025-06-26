@@ -174,14 +174,48 @@
       {
         "id": 5,
         "title": "Create template variable substitution",
-        "description": "Implement simple $variable replacement for accessing shared store values",
+        "description": "Implement simple $variable replacement for planner-internal template resolution",
         "status": "pending",
         "dependencies": [
           10
         ],
         "priority": "high",
-        "details": "Add to src/pflow/core/validation.py (already handling shared store validation). Add resolve_template(text, shared) function using regex to replace $variable with shared[variable]. Handle missing variables by raising clear error with variable name. Template syntax is simple: $var or ${var} for variable names with special chars. This is just string substitution, not a complex template engine. Used by planner to generate prompts and by runtime to resolve node parameters. Reference docs: architecture.md#5.1.2, shared-store.md",
-        "testStrategy": "Test variable substitution with various syntax forms, missing variable detection, and error handling. Include edge cases like ${var}, escaped dollars, etc."
+        "details": "Create src/pflow/planning/template_resolver.py with planner-internal template resolution. Implement resolve_template(template_str, available_vars) function using regex to replace $variable with values from available_vars dict. Support $var and ${var} syntax. Raise TemplateResolutionError for missing variables (caught by planner for replanning). This is NOT for runtime use - only for planner to generate sophisticated prompts. Used when planner creates prompts like 'Fix this issue: $issue' where $issue will reference shared store values that will be available at runtime. Simple string substitution, not a template engine. Reference docs: planner.md stages B & D, shared-store.md#template-variable-resolution",
+        "testStrategy": "Test template resolution with various syntax forms ($var, ${var}), missing variable detection raises proper errors, escaping works correctly ($$var), resolution with empty/None values. Verify integration with planner workflow generation. Include edge cases like nested braces, special characters in variable names, and boundary conditions",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement core resolve_template function with regex patterns",
+            "description": "Create the main resolve_template(template_str, available_vars) function in src/pflow/planning/template_resolver.py with regex patterns to match $var and ${var} syntax, implementing basic substitution logic",
+            "dependencies": [],
+            "details": "- Create src/pflow/planning/template_resolver.py module\n- Implement resolve_template(template_str: str, available_vars: Dict[str, Any]) -> str function\n- Use regex patterns to identify $var and ${var} template variables\n- Replace matched variables with values from available_vars dictionary\n- Support escaping with $$var which outputs literal $var\n- This is planner-internal only (not runtime) for generating sophisticated prompts with variables that will exist in shared store at runtime\n- Handle both simple $var and bracketed ${var} syntax uniformly",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Add comprehensive error handling and validation",
+            "description": "Implement custom TemplateResolutionError exception class and add validation for missing variables, None/empty values, and malformed syntax edge cases",
+            "dependencies": [
+              1
+            ],
+            "details": "- Create custom TemplateResolutionError exception class\n- Validate all template variables exist in available_vars before substitution\n- Collect and report all missing variables in a single error message\n- Handle None and empty string values in available_vars appropriately\n- Detect and report malformed template syntax (e.g., unclosed braces)\n- Handle edge cases like special characters in variable names\n- Ensure error messages are clear and actionable for planner replanning\n- Remember this is planner-internal validation to catch issues before runtime",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Write comprehensive unit tests and integration test stubs",
+            "description": "Create thorough unit tests covering all template syntax forms, error cases, edge cases, and integration test stubs showing planner usage patterns",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "- Create tests/test_template_resolver.py\n- Test all syntax forms: $var, ${var}, $$var escaping\n- Test successful substitution with various data types\n- Test error cases: missing variables, malformed syntax, invalid variable names\n- Test edge cases: empty strings, None values, special characters, nested braces\n- Test that all missing variables are reported in single error\n- Create integration test stubs demonstrating how planner will use module\n- Include examples of template strings for LLM prompts with runtime variables\n- Document that this is planner-internal only, not for runtime resolution",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
       },
       {
         "id": 6,
@@ -367,8 +401,8 @@
           20
         ],
         "priority": "high",
-        "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_input, node_context) function. In MVP, the entire input after 'pflow' is treated as natural language text (not parsed CLI flags). The workflow compiler passes the complete input string to the LLM as a domain-specific language. The LLM understands conventions like --key=value and >> operator through pattern recognition, not actual CLI parsing. For example: 'pflow read-file --path=error.log >> llm' is passed as a complete string to the LLM, which interprets the structure and generates proper IR with categorized parameters. The LLM: 1) Interprets the natural language input (which may include CLI-like syntax patterns), 2) Recognizes node names and parameter conventions through pattern matching, 3) Generates workflows with template variables like $issue_data, $code_report, 4) Fills in missing parameters and connections. Both \"analyze error.log\" and \"read-file --path=error.log >> llm\" are processed the same way - as text for the LLM to interpret. Real CLI flag parsing with actual argument parsing is deferred to v2.0. Reference docs: planner.md#6.1, workflow-analysis.md",
-        "testStrategy": "Test workflow generation accuracy for natural language inputs including those with CLI-like syntax patterns. Verify LLM correctly interprets --key=value and >> conventions without actual parsing. Test template variable generation. Verify IR structure validity.",
+        "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_input, node_context) function. In MVP, the entire input after 'pflow' is treated as natural language text (not parsed CLI flags). The workflow compiler passes the complete input string to the LLM as a domain-specific language. The LLM understands conventions like --key=value and >> operator through pattern recognition, not actual CLI parsing. For example: 'pflow read-file --path=error.log >> llm' is passed as a complete string to the LLM, which interprets the structure and generates proper IR with categorized parameters. The LLM: 1) Interprets the natural language input (which may include CLI-like syntax patterns), 2) Recognizes node names and parameter conventions through pattern matching, 3) Generates workflows with template variables like $issue_data, $code_report, 4) Fills in missing parameters and connections. Both \"analyze error.log\" and \"read-file --path=error.log >> llm\" are processed the same way - as text for the LLM to interpret. Real CLI flag parsing with actual argument parsing is deferred to v2.0. Template variable resolution (task 5) is a planner-internal feature. The planner uses template variables like $issue_data, $code_report to generate sophisticated prompts. When the LLM processes input like 'fix-issue --issue=1234', it generates workflows with template-driven prompts such as 'Fix this issue: $issue' where $issue will reference values that will be in the shared store at runtime. The template_resolver.py (from task 5) provides resolve_template() function for the planner to validate and prepare these templates during IR generation. This is NOT runtime template resolution - that's v2.0. The planner ensures all template variables in the generated IR will be resolvable when the workflow executes. Reference docs: planner.md#6.1, workflow-analysis.md",
+        "testStrategy": "Test workflow generation accuracy for natural language inputs including those with CLI-like syntax patterns. Verify LLM correctly interprets --key=value and >> conventions without actual parsing. Test template variable generation and validation using template_resolver. Verify IR structure validity and that all template variables in generated workflows are resolvable.",
         "subtasks": []
       },
       {
