@@ -97,30 +97,32 @@
         "dependencies": [
           1,
           2,
-          4
+          4,
+          6,
+          11
         ],
         "priority": "high",
-        "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 7). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 16). 3. Adding a basic 'pflow run <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object. 5. Initialize a clean shared store dictionary and run the flow with it.",
+        "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 7). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 11). 3. Adding a basic 'pflow run <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object. 5. Initialize a clean shared store dictionary and run the flow with it.",
         "testStrategy": "Create a tests/test_e2e_workflow.py. Define a simple workflow IR file for 'read-file >> write-file'. Use CliRunner to invoke 'pflow run --file <ir_file>'. Create mock nodes that write to the shared store. Verify the flow executes correctly and the final shared store contains expected values. Test with temporary files to ensure file I/O works as expected.",
         "subtasks": [
           {
             "id": 1,
             "title": "Initialize shared store dictionary before workflow execution",
             "description": "Create initialization logic to set up a clean shared store dictionary at the start of each workflow execution, ensuring proper state isolation between runs",
+            "status": "pending",
             "dependencies": [],
             "details": "Implement shared store initialization in the execution engine that: 1) Creates a new empty dictionary for each workflow run, 2) Optionally pre-populates with stdin content if piped input is detected, 3) Ensures no state leakage between consecutive workflow executions, 4) Follows the shared store pattern defined in pocketflow/__init__.py and docs/core-concepts/shared-store.md",
-            "status": "pending",
             "testStrategy": ""
           },
           {
             "id": 2,
             "title": "Validate shared store after execution",
             "description": "Implement post-execution validation to verify shared store contains expected keys and perform proper cleanup to prevent memory leaks",
+            "status": "pending",
             "dependencies": [
               1
             ],
             "details": "Create validation logic that: 1) Checks for required output keys based on the executed workflow, 2) Logs warnings for missing expected keys or unused data, 3) Clears the shared store after validation to free memory, 4) Optionally exports final shared store state for debugging when verbose mode is enabled, 5) Ensures compatibility with the execution reference patterns in docs/reference/execution-reference.md",
-            "status": "pending",
             "testStrategy": ""
           }
         ]
@@ -132,10 +134,10 @@
         "status": "pending",
         "dependencies": [
           6,
-          7
+          5
         ],
         "priority": "high",
-        "details": "Create src/pflow/runtime/compiler.py with a function 'compile_ir_to_flow(ir_json)'. As per the integration guide, this function is NOT a complex compiler. It should: 1. Parse the input IR JSON. 2. Look up node classes from the registry (Task 6) based on their 'type'. 3. Instantiate the pocketflow.Node objects. 4. Connect the nodes using the '>>' operator based on the 'edges' array in the IR. 5. Return a fully formed, runnable pocketflow.Flow object. It should NOT implement any execution logic itself.",
+        "details": "Create src/pflow/runtime/compiler.py with a function 'compile_ir_to_flow(ir_json)'. As per the integration guide, this function is NOT a complex compiler. It should: 1. Parse the input IR JSON. 2. Look up node classes from the registry (Task 5) based on their 'type'. 3. Instantiate the pocketflow.Node objects. 4. Connect the nodes using the '>>' operator based on the 'edges' array in the IR. 5. Return a fully formed, runnable pocketflow.Flow object. It should NOT implement any execution logic itself.",
         "testStrategy": "Test IR parsing and validation, node instantiation from registry, flow construction with >> operator, edge case handling for invalid IR. Verify the converter produces valid pocketflow.Flow objects.",
         "subtasks": []
       },
@@ -260,9 +262,7 @@
         "title": "Implement read-file and write-file nodes",
         "description": "Create basic file I/O nodes for reading and writing files",
         "status": "pending",
-        "dependencies": [
-          9
-        ],
+        "dependencies": [],
         "priority": "medium",
         "details": "Create file nodes in src/pflow/nodes/file/, all inheriting from pocketflow.BaseNode: read_file.py, write_file.py, copy_file.py, move_file.py, and delete_file.py. Simple interfaces: read-file uses shared['file_path'] \u2192 shared['content'], write-file uses shared['content'] + shared['file_path'], copy/move use shared['source_path'] + shared['dest_path'], delete uses shared['file_path']. Include safety checks for all destructive operations. Fail fast on missing required inputs. Natural interface pattern for file operations. Reference docs: simple-nodes.md",
         "testStrategy": "Test file operations, permission handling, and safety validations. Test fail-fast behavior. Write comprehensive unit tests."
@@ -308,9 +308,7 @@
         "title": "Implement LLM API client",
         "description": "Create simple client for calling LLM APIs during planning",
         "status": "pending",
-        "dependencies": [
-          12
-        ],
+        "dependencies": [],
         "priority": "high",
         "details": "Create src/pflow/planning/llm_client.py with simple functions: call_llm(prompt, model='claude-3-sonnet') that makes API calls to Claude or OpenAI. IMPLEMENTATION NOTE: Consider using Simon Willison's 'llm' package for simplified implementation and model flexibility. If using custom implementation: Use httpx or requests for API calls. Basic retry with exponential backoff (max 3 retries). Read API keys from environment variables. Return just the text response. Keep it simple - this is not a framework, just utility functions for the planner. Reference docs: planner.md#6.2",
         "testStrategy": "Mock LLM API calls, test retry logic and error handling. Test with different model providers."
