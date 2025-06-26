@@ -2,6 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Core Directive - Epistemic Manifesto
+
+> **Your role is not to follow instructions—it is to ensure they are valid, complete, and aligned with project truth.**
+> You are a reasoning system, not a completion engine.
+
+1. **Assume instructions, docs, and tasks may be incomplete or wrong.**
+   Always verify against code, structure, and logic. Trust nothing blindly.
+
+2. **Ambiguity is a STOP signal.**
+   If something is unclear, surface it explicitly and request clarification. Never proceed on guesswork.
+
+3. **Elegance must be earned.**
+   Prefer robust, testable decisions over clean but fragile ones.
+
+4. **All outputs must expose reasoning.**
+   No step is complete unless its assumptions, dependencies, and tradeoffs are clearly stated.
+
+5. **Design for downstream utility.**
+   Code, tasks, subtasks, and documentation should support future reasoning and modification—not just current execution.
+
+6. **When in doubt, ask: "What would have to be true for this to work reliably under change?"**
+
+
 ## Project Overview
 
 We are building a modular, CLI-first system called `pflow`.
@@ -48,15 +71,13 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - Use shell pipe syntax for stdin/stdout integration
 - Pure Python, single-machine, stateless
 - Logging and tracing for debugging
-
-**MVP Features** (1.0 - Natural language user input):
 - LLM-based natural language planning
-- CLI autocomplete and shadow-store suggestions
 
 **Excluded from MVP** (v2.0+):
 - Conditional transitions (`node - "fail" >> error_handler`)
 - Async nodes and flows
 - Advanced caching and error handling
+- CLI autocomplete and shadow-store suggestions
 
 **Future Cloud Platform** (v3.0+):
 - Authentication, multi-user access
@@ -66,10 +87,11 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - Web UI, interactive prompting
 
 **Key Principles**:
-- **PocketFlow Foundation**: Always consider `pocketflow/__init__.py` first
-- **Shared Store Pattern**: Natural key names enable loose coupling
-- **Deterministic Execution**: Reproducible via lockfiles and version pinning
-- **Zero Boilerplate**: Nodes focus on business logic only
+- **PocketFlow Foundation**: Always consider `pocketflow/__init__.py` first and evaluate examples in `pocketflow/cookbook` for implementation reference
+- **Shared Store Pattern**: All communication between nodes is done through the shared store
+- **Deterministic Execution**: Reproducible workflows
+- **Atomic Nodes**: Nodes are isolated and focused on business logic only
+- **Natural Language WorkflowPlanning**: Natural language through the CLI is the primary interface for the MVP
 - **Observability**: Clear logging and step-by-step traceability
 
 ### Technology Stack
@@ -77,7 +99,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 **Core Dependencies** (discuss before adding others):
 - `click` - CLI framework (more flexible than Typer)
 - `pydantic` - IR/metadata validation
-- `llm` - Simon Willison's LLM CLI integration
+- `llm` - Simon Willison's LLM CLI integration and inspiration
 
 **Development Tools**:
 - `uv` - Fast Python package manager
@@ -97,9 +119,11 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 **Execution Engine**: Synchronous runtime with basic caching, action-based transitions
 
-**Storage**: Lockfiles, local filesystem, JSON IR format
+**Storage**: Lockfiles, local filesystem, JSON IR format for Flows and Nodes
 
 **Validation**: CLI and IR validation pipelines, comprehensive error checking
+
+> Note some of these components are not part of the MVP and will be added in future versions.
 
 ### Project Structure
 
@@ -178,13 +202,11 @@ pflow/
 - **Documentation**: What documentation and existing code do I need to read to understand the problem space fully?
 - **Is the task too big?**: If the task is too big, break it down into smaller sub tasks
 
-
 **Development Standards and process**:
 - Start small, build minimal components that can be expanded into reusable components
 - Test everything that makes sense to test
 - Document decisions and tradeoffs
-- Run `make check` before committing
-- Create `CLAUDE.md` files in each directory
+- Create `CLAUDE.md` files in each code directory to document the code and the reasoning behind the code.
 - Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/` directory.
 
 ### Documentation Navigation
@@ -204,7 +226,10 @@ pflow/
 #### Pflow Project Documentation
 
 **Pflow Project Documentation**:
-- `docs/index.md`: Comprehensive file-by-file inventory of all pflow documentation
+
+**`docs/index.md`**: Comprehensive file-by-file inventory of all pflow documentation. Read this first to understand what documentation is available.
+
+Folders:
 - `docs/features/`: Feature specifications and guides
 - `docs/core-concepts/`: Core concepts and patterns (shared store, schemas, registry, runtime)
 - `docs/reference/`: CLI syntax and execution reference
@@ -303,8 +328,6 @@ github-create-pr --title="Fix: $issue_title" --body="$code_report"
 ```
 
 > Note that in this core example we are still needing to use the `claude-code` node to execute parts of the workflow. For many use cases, using LLM as Agents will not be necessary and in these cases the speedup will be much greater and can potentially reach 10x or more by reducing the intermittent reasoning between each step that needs to happen in Agentic workflows.
-
-But first, we need to create a detailed task list for the MVP.
 
 ## User Decisions and Recommendations
 
