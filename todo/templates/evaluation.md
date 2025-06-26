@@ -1,5 +1,7 @@
 # Evaluation for [Task/Subtask ID]
 
+**File Location**: `.taskmaster/tasks/task_[X]/subtask_[X.Y]/refinement/evaluation.md`
+
 *Created: [Date]*
 
 ## Task Understanding

@@ -1,5 +1,7 @@
 # Refined Specification for [Task/Subtask ID]
 
+**File Location**: `.taskmaster/tasks/task_[X]/subtask_[X.Y]/refinement/refined-spec.md`
+
 *Created: [Date]*
 *Refined from evaluation.md with user decisions*
 

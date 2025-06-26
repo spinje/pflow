@@ -1,5 +1,7 @@
 # Learning Log for [Task/Subtask ID]
 
+**File Location**: `.taskmaster/tasks/task_[X]/subtask_[X.Y]/implementation/progress-log.md`
+
 Started: [Date Time]
 Plan: implementation-plan.md
 

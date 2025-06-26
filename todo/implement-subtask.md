@@ -15,14 +15,14 @@ Your goal is to implement the refined specification for subtask `<subtaskId>` wh
 
 **Required:**
 - Completed refinement with `ready-for-implementation` marker
-- Refined specification in task-master
+- Refined specification created
 - Clear success criteria defined
 - Test strategy identified
 
 **Inputs from Refinement:**
-- `.taskmaster/tasks/task_<parentTaskId>/refinement/refined-spec.md`
-- `.taskmaster/tasks/task_<parentTaskId>/refinement/knowledge-synthesis.md`
-- Task-master entry with refined details
+- `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/refined-spec.md`
+- `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/knowledge-synthesis.md`
+- `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/ready-for-implementation`
 
 ## Phase 2: Implementation
 
@@ -33,25 +33,20 @@ Execute the refined specification systematically while capturing all learnings i
 
 #### 2.1 Pre-Implementation Setup
 
-```bash
-# Verify refinement is complete
-test -f .taskmaster/tasks/task_<parentTaskId>/refinement/ready-for-implementation
-# Should exist
+Verify refinement is complete by checking for marker file:
+- Check: `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/ready-for-implementation` exists
 
-# Load the refined specification
-task-master show --id=<subtaskId>
-# Should show REFINEMENT COMPLETE in details
-```
+Read the refined specification:
+- Read: `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/refined-spec.md`
 
-Create implementation workspace:
-```bash
-mkdir -p .taskmaster/tasks/task_<parentTaskId>/implementation
-cd .taskmaster/tasks/task_<parentTaskId>/implementation
-```
+Note: Implementation files go in the subtask folder, not a separate implementation folder.
 
 #### 2.2 Create Implementation Plan
 
-Create `plan.md` based on refined specification:
+Create implementation plan at:
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/plan.md`
+
+Based on refined specification:
 
 ```markdown
 # Implementation Plan for <subtaskId>
@@ -80,20 +75,22 @@ Create `plan.md` based on refined specification:
 
 #### 2.3 Begin Implementation
 
-```bash
-# Mark as in-progress
-task-master set-status --id=<subtaskId> --status=in-progress
+Create learning log at:
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/progress-log.md`
 
-# Initialize learning log
-echo "# Learning Log for <subtaskId>" > progress-log.md
-echo "Started: $(date)" >> progress-log.md
+Initial content:
+```markdown
+# Learning Log for <subtaskId>
+Started: [Current date/time]
 ```
+
+Note: Do NOT update task-master status yet. All progress tracking happens in files.
 
 #### 2.4 Real-Time Learning Capture
 
-**AS YOU IMPLEMENT**, continuously update both local log and task-master:
+**AS YOU IMPLEMENT**, continuously append to your progress log:
 
-**Local Learning Log** (`progress-log.md`):
+File: `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/progress-log.md`
 ```markdown
 ## [Timestamp] - [What I'm trying]
 Attempting to [specific action]...
@@ -109,16 +106,7 @@ Code that worked:
 ```
 ```
 
-**Task-Master Updates** (every significant discovery):
-```bash
-task-master update-subtask --id=<subtaskId> --prompt="
-DISCOVERY [$(date)]:
-- Tried: [approach]
-- Result: [what happened]
-- Learning: [key insight]
-- Code: [snippet if valuable]
-"
-```
+Remember: Do NOT update task-master during implementation. Keep all discoveries in your progress-log.md file and update every significant discovery.
 
 #### 2.5 Handle Discoveries and Deviations
 
@@ -129,20 +117,19 @@ DISCOVERY [$(date)]:
 3. Update the plan with new approach
 4. Continue with new understanding
 
-```bash
-# Log the deviation
-task-master update-subtask --id=<subtaskId> --prompt="
-DEVIATION [$(date)]:
+Append deviation to progress log:
+```markdown
+## [Time] - DEVIATION FROM PLAN
 - Original plan: [what was planned]
 - Why it failed: [specific reason]
 - New approach: [what you're trying instead]
 - Lesson: [what this teaches us]
-"
 ```
 
 **When you discover something that affects other tasks:**
 
-Create `affects-tasks.md`:
+Create file at:
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/affects-tasks.md`
 ```markdown
 # Task Impact Analysis
 
@@ -162,20 +149,16 @@ Create `affects-tasks.md`:
 
 Execute test strategy from refined spec:
 
-```bash
-# Run tests continuously during implementation
-make test  # or appropriate test command
-
-# Document test discoveries
-echo "## Test Insights" >> progress-log.md
-echo "- Test X revealed [insight]" >> progress-log.md
-```
+- Run tests using appropriate commands (e.g., `make test`, `pytest`, etc.)
+- Document test discoveries in your progress log
+- Add section "## Test Insights" with findings
 
 #### 2.7 Extract Patterns
 
 As patterns emerge, document them immediately:
 
-Create `new-patterns.md`:
+Create patterns file at:
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/new-patterns.md`
 ```markdown
 # Patterns Discovered
 
@@ -192,7 +175,8 @@ Create `new-patterns.md`:
 
 #### 2.8 Create Implementation Review
 
-Once functional, create comprehensive `review.md`:
+Once functional, create comprehensive review at:
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/review.md`
 
 ```markdown
 # Implementation Review for <subtaskId>
@@ -239,20 +223,36 @@ If you're implementing something similar:
 
 #### 2.9 Final Learning Integration
 
+Optionally copy patterns to shared knowledge base:
+- From: `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/new-patterns.md`
+- To: `.taskmaster/knowledge/patterns/[pattern-name].md`
+
+Note: The knowledge base is manually maintained. Only copy truly reusable patterns.
+
+#### 2.10 Create Task Review (If Last Subtask)
+
+If this is the final subtask of the task:
+1. Read all subtask reviews from this task:
+   - `.taskmaster/tasks/task_<parentTaskId>/subtask_*/implementation/review.md`
+2. Create task-level summary at:
+   - `.taskmaster/tasks/task_<parentTaskId>/task-review.md`
+3. Include:
+   - Major patterns discovered across all subtasks
+   - Key architectural decisions made
+   - Important warnings for future tasks
+   - Overall task success metrics
+
+#### 2.11 Update Task-Master (FINAL STEP ONLY)
+
+Only after implementation is complete and reviewed:
+
 ```bash
-# Push all learnings to task-master
-task-master update-subtask --id=<subtaskId> \
-  --prompt="IMPLEMENTATION COMPLETE: $(< review.md)"
-
-# Extract patterns to knowledge base
-cp new-patterns.md ../../knowledge/patterns/
-cp affects-tasks.md ../../impact/
-
-# Mark complete
 task-master set-status --id=<subtaskId> --status=done
 ```
 
-#### 2.10 Git Commit
+This is the ONLY time you update task-master during the entire workflow.
+
+#### 2.12 Git Commit
 
 Create meaningful commit with context:
 
@@ -264,8 +264,7 @@ Key learnings:
 - [Major discovery 1]
 - [Major discovery 2]
 
-Patterns documented in .taskmaster/knowledge/patterns/
-See .taskmaster/tasks/task_<parentTaskId>/implementation/review.md for details"
+See .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/review.md for details"
 ```
 
 ## Learning Capture Best Practices
@@ -312,16 +311,20 @@ async def process_with_timeout(data):
 - [ ] Success criteria cannot be met as specified
 
 **How to trigger feedback:**
-```bash
-# Document the issue
-echo "REFINEMENT NEEDED: [reason]" > refinement-needed.md
 
-# Update task-master
-task-master update-subtask --id=<subtaskId> \
-  --prompt="BLOCKED: Refinement needed - [specific issue]"
+Create file at:
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement-needed.md`
 
-# Return to refining-subtask.md
+Content:
+```markdown
+# Refinement Needed
+
+Reason: [specific issue discovered]
+Details: [what assumption was wrong]
+Needed: [what clarification is required]
 ```
+
+Then return to `refining-subtask.md` workflow.
 
 ## Success Metrics
 
@@ -331,8 +334,30 @@ Your implementation is successful when:
 - [ ] Learnings are captured in real-time
 - [ ] Patterns are extracted and documented
 - [ ] Review document is comprehensive
-- [ ] Task-master contains complete history
+- [ ] If last subtask: Task review created
 - [ ] Future implementers can learn from your work
+
+## Important Notes for AI Agents
+
+1. **File Organization**:
+   - All files go in subtask-specific folders
+   - Path: `.taskmaster/tasks/task_X/subtask_X.Y/implementation/`
+   - Create directories as needed when writing files
+
+2. **Progress Tracking**:
+   - NO task-master updates during work
+   - ALL progress goes to `progress-log.md`
+   - Update task-master ONLY when marking complete
+
+3. **Task Review Creation**:
+   - Only create `task-review.md` after ALL subtasks complete
+   - This becomes the summary other tasks will read
+   - Individual subtask reviews contain the details
+
+4. **Direct File Operations**:
+   - Use Read/Write tools directly
+   - Don't use shell commands for file operations
+   - Follow explicit paths provided
 
 ---
 

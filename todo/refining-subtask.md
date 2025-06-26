@@ -30,31 +30,44 @@ Load ALL relevant knowledge from previous implementations to avoid repeating mis
 ### Activities
 
 #### 0.1 Load Project-Wide Knowledge
-```bash
-# Read ALL previous task implementation reviews
-task-master show-reviews --all
 
-# Focus on:
-# - Patterns that worked well
-# - Approaches that failed
-# - Architectural decisions made
-# - Conventions established
-```
+**For a NEW TASK** (first subtask of a task, e.g., subtask 3.1):
+Read all task-level reviews from completed tasks:
+1. Navigate to `.taskmaster/tasks/`
+2. For each `task_*` folder (except your current task):
+   - Read `task-review.md` if it exists
+
+Example paths to check for task 3.1:
+- `.taskmaster/tasks/task_1/task-review.md`
+- `.taskmaster/tasks/task_2/task-review.md`
+
+**Focus on:**
+- Patterns that worked well
+- Approaches that failed
+- Architectural decisions made
+- Conventions established
 
 #### 0.2 Load Task-Specific Knowledge
-```bash
-# If working on a subtask, read ALL sibling subtask reviews
-task-master show-reviews --task=<parentTaskId>
 
-# Understand:
-# - How the parent task is evolving
-# - Dependencies between subtasks
-# - Assumptions already made
-# - Context from completed siblings
-```
+**For a SUBTASK** (not the first in its task, e.g., subtask 3.2 or 3.3):
+Read sibling subtask reviews from your current task:
+1. Navigate to `.taskmaster/tasks/task_<parentTaskId>/`
+2. For each completed `subtask_*` folder (with lower number than current):
+   - Read `implementation/review.md`
+
+Example for subtask 3.3:
+- `.taskmaster/tasks/task_3/subtask_3.1/implementation/review.md`
+- `.taskmaster/tasks/task_3/subtask_3.2/implementation/review.md`
+
+**Understand:**
+- How the parent task is evolving
+- Dependencies between subtasks
+- Assumptions already made
+- Context from completed siblings
 
 #### 0.3 Synthesize Patterns
-Create `.taskmaster/tasks/task_<parentTaskId>/refinement/knowledge-synthesis.md`:
+Create knowledge synthesis file at:
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/knowledge-synthesis.md`
 
 ```markdown
 # Knowledge Synthesis for <subtaskId>
@@ -86,10 +99,13 @@ Transform the task description into an unambiguous specification, validated agai
 ### Activities
 
 #### 1.1 Deep Understanding (Knowledge-Informed)
+
+Read the task details:
 ```bash
-# Read the task with full context
-task-master show --id=<subtaskId> --with-dependencies
+task-master show --id=<subtaskId>
 ```
+
+Note: This is the primary use of task-master in the refinement phase.
 
 **Key Questions:**
 - What does this task REALLY need to accomplish?
@@ -111,7 +127,8 @@ task-master show --id=<subtaskId> --with-dependencies
 
 #### 1.3 Ambiguity Detection and Resolution
 
-Create `.taskmaster/tasks/task_<parentTaskId>/refinement/evaluation.md`:
+Create evaluation file at:
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/evaluation.md`
 
 ```markdown
 # Evaluation for <subtaskId>
@@ -149,7 +166,8 @@ Create `.taskmaster/tasks/task_<parentTaskId>/refinement/evaluation.md`:
 
 #### 1.4 Create Refined Specification
 
-Create `.taskmaster/tasks/task_<parentTaskId>/refinement/refined-spec.md`:
+Create refined specification at:
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/refined-spec.md`
 
 ```markdown
 # Refined Specification for <subtaskId>
@@ -193,13 +211,14 @@ Create `.taskmaster/tasks/task_<parentTaskId>/refinement/refined-spec.md`:
 - [Decision]: [Rationale] (User confirmed on [date])
 ```
 
-#### 1.5 Update Task-Master with Refinement
+#### 1.5 Mark Refinement Complete
 
+Create a marker file to indicate refinement is complete:
 ```bash
-# Log the complete refinement into task-master
-task-master update-subtask --id=<subtaskId> \
-  --prompt="REFINEMENT COMPLETE: $(< .taskmaster/tasks/task_<parentTaskId>/refinement/refined-spec.md)"
+touch .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/ready-for-implementation
 ```
+
+Note: We do NOT update task-master during refinement. Task-master is only updated when the entire subtask is complete.
 
 ### Exit Criteria for Phase 1
 - [ ] All code validated against task requirements
@@ -209,34 +228,28 @@ task-master update-subtask --id=<subtaskId> \
 - [ ] Success criteria clearly defined
 - [ ] Test strategy identified
 - [ ] Knowledge from previous tasks incorporated
-- [ ] Task-master updated with refinement
+- [ ] Marker file created for ready-for-implementation
 
 ## Handoff to Implementation
 
 Once ALL exit criteria are met:
 
-1. Verify refinement completeness:
-   ```bash
-   task-master show --id=<subtaskId>
-   # Confirm refined spec is in details
-   ```
+1. Verify all required files exist:
+   - `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/knowledge-synthesis.md`
+   - `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/evaluation.md`
+   - `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/refined-spec.md`
+   - `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/ready-for-implementation`
 
-2. Create handoff marker:
-   ```bash
-   touch .taskmaster/tasks/task_<parentTaskId>/refinement/ready-for-implementation
-   ```
-
-3. Proceed to `implement-subtask.md` for Phase 2
+2. Proceed to `implement-subtask.md` for Phase 2
 
 ## Common Refinement Patterns
 
 ### Pattern: Dependency Validation
 Always verify that dependencies mentioned in tasks actually exist:
-```bash
-# Example: Task says "use the existing auth system"
-grep -r "auth" src/
-# Verify it exists before assuming
-```
+- If task says "use the existing auth system"
+- Check files in `src/` for auth-related code
+- Read the actual implementation to understand it
+- Don't assume based on naming alone
 
 ### Pattern: Specification Gaps
 If the task says "implement X like Y", always:
@@ -263,6 +276,28 @@ Before refining implementation details, understand:
 
 ### ❌ Surface Reading
 "I understand the task" → Always dig deeper for hidden complexity
+
+## Important Notes for AI Agents
+
+1. **Knowledge Loading Strategy**:
+   - First subtask of a task? Read other tasks' `task-review.md` files
+   - Later subtask? Read previous subtasks' `review.md` from current task
+   - This prevents redundant reading while maintaining context
+
+2. **task-master limitations**:
+   - Can only show task details and set status
+   - Cannot store or retrieve reviews/patterns/progress
+   - Use ONLY for initial task reading and final status update
+
+3. **File-based workflow**:
+   - All progress tracking happens in markdown files
+   - Create all files in their exact subtask folder
+   - Task reviews are created only after ALL subtasks complete
+
+4. **No shell commands needed**:
+   - You have Read and Write tools - use them directly
+   - Don't search for files - follow the explicit paths provided
+   - Create directories as needed when writing files
 
 ---
 

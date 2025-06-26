@@ -20,9 +20,9 @@ graph LR
 ```
 
 ### Phase 0: Knowledge Loading (📚 `refining-subtask.md`)
-**Purpose**: Start smart by learning from ALL previous implementations
-- Read all task implementation reviews
-- Read relevant subtask reviews
+**Purpose**: Start smart by learning from previous implementations
+- **For NEW TASKS**: Read task-level reviews from other tasks
+- **For SUBTASKS**: Read sibling subtask reviews from current task
 - Synthesize patterns and pitfalls
 - Build mental model of codebase evolution
 
@@ -39,6 +39,7 @@ graph LR
 - Log discoveries AS THEY HAPPEN
 - Extract reusable patterns
 - Create comprehensive review
+- If last subtask: Create task-level review
 
 ## When to Use Which Document
 
@@ -80,77 +81,105 @@ Each task contributes to a growing knowledge base that makes future tasks progre
 ### Scenario: Implement Task 5.2 - "Add user authentication to CLI"
 
 #### Phase 0: Knowledge Loading
-```bash
-$ task-master show-reviews --all
-# Discovers Task 2.3 implemented JWT auth
-# Discovers Task 3.1 tried OAuth but failed
-# Discovers Task 4.2 established CLI patterns
+```
+As subtask 5.2 (not the first subtask):
+1. Read: .taskmaster/tasks/task_5/subtask_5.1/implementation/review.md
+   - Discovers initial auth setup patterns
 
-# Creates knowledge-synthesis.md:
-# - Use JWT pattern from Task 2.3
-# - Avoid OAuth complexity (failed in 3.1)
-# - Follow CLI conventions from 4.2
+Creates knowledge-synthesis.md:
+- Build on auth foundation from 5.1
+- Use JWT pattern mentioned in task_2/task-review.md
+- Avoid OAuth complexity noted in task_3/task-review.md
 ```
 
 #### Phase 1: Refinement
-```bash
-$ task-master show --id=5.2
-# "Add user authentication to CLI"
+```
+1. Use: task-master show --id=5.2
+   Output: "Add user authentication to CLI"
 
-# Ambiguity detected: Which auth method?
-# Creates evaluation.md with options:
-# - Option A: JWT (proven in 2.3)
-# - Option B: API keys (simpler)
-# User chooses: Option A
+2. Create: .taskmaster/tasks/task_5/subtask_5.2/refinement/evaluation.md
+   - Ambiguity: Which auth method?
+   - Option A: JWT (proven in task 2)
+   - Option B: API keys (simpler)
+   - User chooses: Option A
 
-# Creates refined-spec.md:
-# - Use JWT with refresh tokens
-# - Store tokens in ~/.pflow/auth
-# - Add login/logout commands
-# Success criteria: User can authenticate and make authorized requests
+3. Create: .taskmaster/tasks/task_5/subtask_5.2/refinement/refined-spec.md
+   - Use JWT with refresh tokens
+   - Store tokens in ~/.pflow/auth
+   - Add login/logout commands
+   - Success criteria: User can authenticate
+
+4. Create marker: .taskmaster/tasks/task_5/subtask_5.2/ready-for-implementation
 ```
 
 #### Phase 2: Implementation
-```bash
-$ task-master set-status --id=5.2 --status=in-progress
+```
+1. Write to: .taskmaster/tasks/task_5/subtask_5.2/implementation/progress-log.md
+   ## 10:15 - Try to reuse auth module
+   Discovery: Module too tightly coupled to web server
+   Learning: Need auth abstraction layer
 
-# 10:15 - Try to reuse auth module from Task 2.3
-# Discovery: Module too tightly coupled to web server
-# Learning: Need auth abstraction layer
+   ## 10:45 - Create auth abstraction
+   Success! Clean separation of concerns
+   Pattern: AuthProvider interface
 
-# 10:45 - Create auth abstraction
-# Success! Clean separation of concerns
-# Pattern: AuthProvider interface
+2. Create: .taskmaster/tasks/task_5/subtask_5.2/implementation/review.md
+   - Extracted AuthProvider pattern
+   - Affects Task 6.1 (can use same pattern)
+   - Update arch docs with auth abstraction
 
-# 11:30 - Implementation complete
-# Creates review.md:
-# - Extracted AuthProvider pattern
-# - Affects Task 6.1 (can use same pattern)
-# - Update arch docs with auth abstraction
+3. Only at end: task-master set-status --id=5.2 --status=done
 ```
 
 ## File Structure
 
 ```
 .taskmaster/
-├── knowledge/                    # Accumulated wisdom
-│   ├── patterns/                # What works
-│   ├── pitfalls/               # What doesn't
-│   └── decisions/              # Architectural choices
 ├── tasks/
-│   └── task_X/
-│       ├── refinement/         # Phase 0 & 1 artifacts
-│       │   ├── knowledge-synthesis.md
-│       │   ├── evaluation.md
-│       │   ├── refined-spec.md
-│       │   └── ready-for-implementation
-│       ├── implementation/     # Phase 2 artifacts
-│       │   ├── plan.md
-│       │   ├── progress-log.md
-│       │   └── review.md
-│       └── impact/            # Cross-task effects
-│           └── affects-tasks.md
+│   ├── task_1/
+│   │   ├── subtask_1.1/
+│   │   │   ├── refinement/
+│   │   │   │   ├── knowledge-synthesis.md
+│   │   │   │   ├── evaluation.md
+│   │   │   │   └── refined-spec.md
+│   │   │   ├── implementation/
+│   │   │   │   ├── plan.md
+│   │   │   │   ├── progress-log.md
+│   │   │   │   └── review.md
+│   │   │   └── ready-for-implementation (marker file)
+│   │   ├── subtask_1.2/
+│   │   │   └── (same structure)
+│   │   └── task-review.md (created after all subtasks complete)
+│   └── task_2/
+│       └── (same structure)
+└── knowledge/                    # Manually maintained
+    ├── patterns/                # What works
+    │   └── README.md
+    └── pitfalls/               # What doesn't
+        └── README.md
 ```
+
+## Knowledge Loading Examples
+
+### Example 1: Starting Task 5 (First Subtask)
+You're about to work on subtask 5.1 (the first subtask of task 5):
+
+**Read these task reviews**:
+- `.taskmaster/tasks/task_1/task-review.md`
+- `.taskmaster/tasks/task_2/task-review.md`
+- `.taskmaster/tasks/task_3/task-review.md`
+- `.taskmaster/tasks/task_4/task-review.md`
+
+**Don't read**: Individual subtask reviews from tasks 1-4 (already summarized in task reviews)
+
+### Example 2: Working on Subtask 5.3
+You're working on subtask 5.3 (subtasks 5.1 and 5.2 are complete):
+
+**Read these sibling reviews**:
+- `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
+- `.taskmaster/tasks/task_5/subtask_5.2/implementation/review.md`
+
+**Don't read**: Task reviews from other tasks (already loaded for 5.1)
 
 ## Key Success Factors
 
@@ -166,25 +195,35 @@ Every assumption is a future bug. Get clarity upfront in refinement.
 ### 4. **Extract Patterns Immediately**
 When something works, document it as a pattern before moving on.
 
-## Quick Reference Card
+## Quick Reference for AI Agents
 
-```bash
-# Phase 0: Knowledge Loading
-task-master show-reviews --all              # Load all knowledge
-task-master show-reviews --task=X           # Load task-specific
+### Phase 0: Knowledge Loading
+**For new tasks (e.g., starting task 5.1)**:
+- Read: `.taskmaster/tasks/task_1/task-review.md`
+- Read: `.taskmaster/tasks/task_2/task-review.md`
+- Read: `.taskmaster/tasks/task_3/task-review.md`
+- Read: `.taskmaster/tasks/task_4/task-review.md`
+- Create: `.taskmaster/tasks/task_5/subtask_5.1/refinement/knowledge-synthesis.md`
 
-# Phase 1: Refinement
-task-master show --id=X.Y --with-deps       # Understand task
-# Create: evaluation.md → decisions → refined-spec.md
-touch .../refinement/ready-for-implementation
+**For subtasks (e.g., working on 5.3)**:
+- Read: `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
+- Read: `.taskmaster/tasks/task_5/subtask_5.2/implementation/review.md`
+- Update: `.taskmaster/tasks/task_5/subtask_5.3/refinement/knowledge-synthesis.md`
 
-# Phase 2: Implementation
-task-master set-status --id=X.Y --status=in-progress
-# Log continuously to progress-log.md
-task-master update-subtask --id=X.Y --prompt="DISCOVERY:..."
-# Create: review.md → extract patterns
-task-master set-status --id=X.Y --status=done
-```
+### Phase 1: Refinement
+1. Use: `task-master show --id=X.Y` (only task-master command in refinement)
+2. Create: `.taskmaster/tasks/task_X/subtask_X.Y/refinement/evaluation.md`
+3. Get user decisions
+4. Create: `.taskmaster/tasks/task_X/subtask_X.Y/refinement/refined-spec.md`
+5. Create: `.taskmaster/tasks/task_X/subtask_X.Y/ready-for-implementation`
+
+### Phase 2: Implementation
+1. Verify: `.taskmaster/tasks/task_X/subtask_X.Y/ready-for-implementation` exists
+2. Create: `.taskmaster/tasks/task_X/subtask_X.Y/implementation/plan.md`
+3. Write to: `.taskmaster/tasks/task_X/subtask_X.Y/implementation/progress-log.md` (continuously)
+4. Create: `.taskmaster/tasks/task_X/subtask_X.Y/implementation/review.md`
+5. If last subtask: Create `.taskmaster/tasks/task_X/task-review.md`
+6. Use: `task-master set-status --id=X.Y --status=done` (only task-master command)
 
 ## The Payoff
 

@@ -1,5 +1,7 @@
 # Implementation Review for [Task/Subtask ID]
 
+**File Location**: `.taskmaster/tasks/task_[X]/subtask_[X.Y]/implementation/review.md`
+
 *Completed: [Date]*
 
 ## Summary
@@ -119,19 +121,6 @@
 
 ### Nice to Have
 - [ ] Examples - Add [new example showing pattern]
-
-## Metrics and Measurements
-
-### Code Quality
-- Lines added: [X]
-- Lines removed: [Y]
-- Test coverage: [Z]%
-- Cyclomatic complexity: [metric]
-
-### Performance
-- Operation [X]: [Y]ms (requirement was [Z]ms) ✅
-- Memory usage: [Amount]
-- Key optimization: [What made it fast]
 
 ## Advice for Future Implementers
 

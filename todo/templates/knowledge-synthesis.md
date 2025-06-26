@@ -1,5 +1,7 @@
 # Knowledge Synthesis for [Task/Subtask ID]
 
+**File Location**: `.taskmaster/tasks/task_[X]/subtask_[X.Y]/refinement/knowledge-synthesis.md`
+
 *Created: [Date]*
 
 ## Purpose
