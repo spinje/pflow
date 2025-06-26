@@ -36,6 +36,8 @@ Before diving into the autonomy principle, it's crucial to understand when to us
 
 ## Template Variable Resolution
 
+> **MVP Note**: Template variable resolution is handled internally by the planner when generating workflows. The planner ensures all template variables in the generated IR will map to shared store values that exist at execution time. Runtime template resolution is a v2.0 feature.
+
 Template variables (`$variable`) provide dynamic content substitution in node inputs, enabling sophisticated data flow between nodes. The CLI supports **$ variable substitution** for dynamic content access:
 
 ```bash
@@ -57,8 +59,9 @@ claude-code --prompt="<instructions>
                       </instructions>
                       This is the issue: $issue"
 
-# At runtime: $issue → shared["issue"] (from github-get-issue node output)
-claude-code --prompt="<instructions>...This is the issue: Button component touch events not working properly on mobile devices"
+# Planner generates workflow where $issue will map to shared["issue"] (from github-get-issue node output)
+# The generated workflow will contain the actual prompt with template already planned
+claude-code --prompt="<instructions>...This is the issue: $issue"
 ```
 
 ### Template-Driven Workflow Examples
@@ -69,17 +72,17 @@ pflow github-get-issue --issue=1234 >> \
   llm --prompt="Write commit message for: $code_report" >> \
   git-commit --message="$commit_message"
 
-# Where template variables are resolved at runtime:
+# Template variables in the generated workflow will map to:
 # $comprehensive_fix_instructions → planner-generated instructions
 # $code_report → output from claude-code node
 # $commit_message → output from llm node
 ```
 
 ### Template Resolution Process
-1. **Variable Detection**: Parser identifies $variable patterns in CLI syntax
-2. **Runtime Resolution**: Variables resolved to shared store values during execution
-3. **Content Substitution**: Variable placeholders replaced with actual content
-4. **Error Handling**: Missing variables trigger clear error messages
+1. **Variable Detection**: Planner identifies $variable patterns when generating workflows
+2. **Planner Validation**: Planner ensures all variables will map to shared store values
+3. **IR Generation**: Planner creates workflows where template variables reference future shared store values
+4. **Error Handling**: Missing variables trigger planner replanning (internal to planner)
 
 ### Context-Aware CLI Resolution
 
@@ -87,7 +90,7 @@ The CLI intelligently routes different types of flags:
 
 - **Data flags** (workflow data) → shared store: `--issue=1234` → `shared["issue_number"] = "1234"`
 - **Behavior flags** (node configuration) → node parameters: `--temperature=0.3` → `node.set_params({"temperature": 0.3})`
-- **Template variables** (dynamic content) → shared store at runtime: `$code_report` → `shared["code_report"]`
+- **Template variables** (dynamic references) → planner maps to shared store: `$code_report` → `shared["code_report"]`
 
 ### Variable Dependency Flow
 
