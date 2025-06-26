@@ -105,3 +105,9 @@ A good commit message should:
 - Some changes are not mentioned in the commit message because they're unrelated
 - Different types of changes (docs vs code vs config)
 - Changes that could be reverted independently
+
+## Additional Instructions
+
+User message (can be empty) : $ARGUMENTS
+
+If no user message was provided, ignore this Additional Instructions section.
