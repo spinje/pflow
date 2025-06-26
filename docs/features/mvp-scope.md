@@ -100,7 +100,7 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 - Validation pipeline ensuring generated workflows are executable
 - Schema governance for consistency and evolution
 
-### 5. CLI Autocomplete (MVP Enhancement)
+### 5. CLI Autocomplete (Post-MVP Enhancement)
 **Purpose**: Enhance CLI usability through shell completion
 
 **High-Value Features**:
@@ -123,6 +123,7 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 - **Direct CLI parsing**: Parse CLI syntax without LLM (minor optimization only)
 - **Conditional transitions**: `node - "fail" >> error_handler` (pocketflow supports this, but adds complexity)
 - **Advanced autocomplete**: Type-aware suggestions and compatibility hints
+- **CLI Autocomplete**: High-value feature for usability, deferred to prioritize core workflow engine.
 - **Shadow store**: Real-time compatibility feedback during composition
 - **Interactive prompts**: Asking for missing inputs during execution
 - **MCP node integration**: MCP server tool wrapping and execution (moved to v2.0)
@@ -140,7 +141,7 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 
 ## 🔑 Critical MVP Dependencies
 
-**These 9 components must work together for MVP success**:
+**These 8 components must work together for MVP success**:
 
 1. **Natural Language Planner**: The core differentiator - transforms descriptions into CLI workflows
 2. **Simple Node Registry**: Platform-specific nodes (`github-get-issue`, `claude-implement`, `ci-run-tests`, etc.) with clear single purposes
@@ -150,7 +151,6 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 6. **Shared Store Runtime**: Natural key-based communication between nodes
 7. **Execution Tracing**: Step-by-step debugging superior to conversation logs
 8. **Workflow Storage**: Save/load named workflows for reuse
-9. **CLI Autocomplete**: Shell completion for node and parameter discovery
 
 ---
 

@@ -98,6 +98,7 @@
           1,
           2,
           4,
+          5,
           6,
           11
         ],
@@ -376,11 +377,11 @@
         "id": 21,
         "title": "Implement workflow lockfile system",
         "description": "Create lockfile generation for deterministic workflow execution",
-        "status": "pending",
+        "status": "deferred",
         "dependencies": [
           20
         ],
-        "priority": "high",
+        "priority": "medium",
         "details": "Create src/pflow/core/lockfile.py to generate and manage workflow lockfiles. After workflow validation, generate lockfile containing: workflow IR hash, node versions from registry, execution timestamp, pflow version. Store lockfiles alongside workflows in ~/.pflow/workflows/<name>.lock. Lockfiles ensure deterministic execution across environments and time. Include functions: generate_lockfile(workflow, registry), validate_lockfile(lockfile, registry), check_compatibility(lockfile). This is critical for 'Plan Once, Run Forever' - workflows must execute identically months later. Reference docs: PRD#5.6, architecture.md",
         "testStrategy": "Test lockfile generation, validation, version compatibility checks. Test deterministic execution with lockfiles."
       },
