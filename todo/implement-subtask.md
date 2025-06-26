@@ -223,11 +223,25 @@ If you're implementing something similar:
 
 #### 2.9 Final Learning Integration
 
-Optionally copy patterns to shared knowledge base:
-- From: `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/new-patterns.md`
-- To: `.taskmaster/knowledge/patterns/[pattern-name].md`
+If you discovered truly reusable patterns, pitfalls, or made architectural decisions:
 
-Note: The knowledge base is manually maintained. Only copy truly reusable patterns.
+1. **For Patterns**:
+   - Read: `.taskmaster/knowledge/patterns.md` (entire file)
+   - Check: Does this pattern already exist?
+   - If unique: Append your pattern to the end of the file
+   - Use the format specified in `.taskmaster/knowledge/README.md`
+
+2. **For Pitfalls**:
+   - Read: `.taskmaster/knowledge/pitfalls.md` (entire file)
+   - Check: Is this failure already documented?
+   - If unique: Append to the end of the file
+
+3. **For Architectural Decisions**:
+   - Read: `.taskmaster/knowledge/decisions.md` (entire file)
+   - Check: Does this decision area already exist?
+   - If new: Append to the end of the file
+
+Note: Only add knowledge that will genuinely help future tasks. Quality over quantity.
 
 #### 2.10 Create Task Review (If Last Subtask)
 

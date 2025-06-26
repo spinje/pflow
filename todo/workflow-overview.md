@@ -153,10 +153,10 @@ Creates knowledge-synthesis.md:
 │   └── task_2/
 │       └── (same structure)
 └── knowledge/                    # Manually maintained
-    ├── patterns/                # What works
-    │   └── README.md
-    └── pitfalls/               # What doesn't
-        └── README.md
+    ├── CLAUDE.md               # Guide for maintaining knowledge
+    ├── patterns.md             # All patterns (consolidated)
+    ├── pitfalls.md             # All pitfalls (consolidated)
+    └── decisions.md            # All architectural decisions
 ```
 
 ## Knowledge Loading Examples
