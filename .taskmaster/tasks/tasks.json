@@ -100,9 +100,30 @@
           4
         ],
         "priority": "high",
-        "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 7). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 16). 3. Adding a basic 'pflow run <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object. 5. Running the flow with a clean shared store (Task 5).",
+        "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 7). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 16). 3. Adding a basic 'pflow run <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object. 5. Initialize a clean shared store dictionary and run the flow with it.",
         "testStrategy": "Create a tests/test_e2e_workflow.py. Define a simple workflow IR file for 'read-file >> write-file'. Use CliRunner to invoke 'pflow run --file <ir_file>'. Create mock nodes that write to the shared store. Verify the flow executes correctly and the final shared store contains expected values. Test with temporary files to ensure file I/O works as expected.",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Initialize shared store dictionary before workflow execution",
+            "description": "Create initialization logic to set up a clean shared store dictionary at the start of each workflow execution, ensuring proper state isolation between runs",
+            "dependencies": [],
+            "details": "Implement shared store initialization in the execution engine that: 1) Creates a new empty dictionary for each workflow run, 2) Optionally pre-populates with stdin content if piped input is detected, 3) Ensures no state leakage between consecutive workflow executions, 4) Follows the shared store pattern defined in pocketflow/__init__.py and docs/core-concepts/shared-store.md",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Validate shared store after execution",
+            "description": "Implement post-execution validation to verify shared store contains expected keys and perform proper cleanup to prevent memory leaks",
+            "dependencies": [
+              1
+            ],
+            "details": "Create validation logic that: 1) Checks for required output keys based on the executed workflow, 2) Logs warnings for missing expected keys or unused data, 3) Clears the shared store after validation to free memory, 4) Optionally exports final shared store state for debugging when verbose mode is enabled, 5) Ensures compatibility with the execution reference patterns in docs/reference/execution-reference.md",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
       },
       {
         "id": 4,
@@ -115,7 +136,8 @@
         ],
         "priority": "high",
         "details": "Create src/pflow/runtime/compiler.py with a function 'compile_ir_to_flow(ir_json)'. As per the integration guide, this function is NOT a complex compiler. It should: 1. Parse the input IR JSON. 2. Look up node classes from the registry (Task 6) based on their 'type'. 3. Instantiate the pocketflow.Node objects. 4. Connect the nodes using the '>>' operator based on the 'edges' array in the IR. 5. Return a fully formed, runnable pocketflow.Flow object. It should NOT implement any execution logic itself.",
-        "testStrategy": "End-to-end workflow execution tests with various node combinations. Test template resolution and proxy usage."
+        "testStrategy": "Test IR parsing and validation, node instantiation from registry, flow construction with >> operator, edge case handling for invalid IR. Verify the converter produces valid pocketflow.Flow objects.",
+        "subtasks": []
       },
       {
         "id": 6,
@@ -203,19 +225,6 @@
             ],
             "details": "As per docs/features/shell-pipes.md#signal-handling, add signal handler for SIGINT in shell_integration.py. Create setup_signal_handlers() function that registers handler. Handler should clean up resources, print interruption message to stderr, and exit with code 130 (standard for SIGINT). Ensure handler works during stdin reading.",
             "testStrategy": ""
-          },
-          {
-            "id": 5,
-            "title": "Write comprehensive tests for shell integration features",
-            "description": "Create test suite covering stdin detection, content reading, streaming, exit codes, and signal handling with compatibility tests for common Unix tools",
-            "status": "pending",
-            "dependencies": [
-              1,
-              2,
-              3
-            ],
-            "details": "Create tests/test_shell_integration.py with comprehensive test coverage. Test stdin detection (piped vs terminal), content reading (empty, small, large inputs), streaming behavior with various chunk sizes, exit code propagation in success/error cases, signal handling simulation. Include integration tests with Unix tools: cat, echo, grep, jq. Use pytest fixtures for stdin mocking.",
-            "testStrategy": ""
           }
         ]
       },
@@ -229,8 +238,9 @@
           8
         ],
         "priority": "high",
-        "details": "Merge validation and proxy implementation into src/pflow/core/proxy.py. Implement: 1) get_reserved_keys() returning ['stdin'], 2) detect_collisions(node_interfaces) to find key conflicts between nodes in a flow, 3) NodeAwareSharedStore class for transparent mapping around collisions and reserved keys. The proxy uses collision detection internally to know what needs mapping. Zero overhead when no collisions exist. Support input_mappings and output_mappings. Fail fast on missing required inputs. Note: Natural pattern validation is NOT needed - nodes define their own conventions. Only validate for reserved keys and collisions. Reference docs: shared-store.md#2, cli-runtime.md#3",
-        "testStrategy": "Test collision detection with various node combinations, proxy mapping scenarios, reserved key handling, and performance overhead. Verify fail-fast behavior and zero-overhead direct access."
+        "details": "Merge validation and proxy implementation into src/pflow/core/proxy.py. Implement: 1) get_reserved_keys() returning ['stdin'], 2) detect_collisions(node_interfaces) to find key conflicts between nodes in a flow, 3) NodeAwareSharedStore class for transparent mapping around collisions and reserved keys. The proxy uses collision detection internally to know what needs mapping. Zero overhead when no collisions exist. Support input_mappings and output_mappings. Fail fast on missing required inputs. Include basic key existence validation: when a node requires an input key, verify it exists in the shared store before execution. This prevents silent failures and provides clear error messages. This minimal validation is essential for the proxy pattern to function correctly in MVP. Note: Natural pattern validation is NOT needed - nodes define their own conventions. Only validate for reserved keys and collisions. Reference docs: shared-store.md#2, cli-runtime.md#3",
+        "testStrategy": "Test collision detection with various node combinations, proxy mapping scenarios, reserved key handling, and performance overhead. Verify fail-fast behavior and zero-overhead direct access. Test key existence validation to ensure missing keys produce clear error messages before node execution.",
+        "subtasks": []
       },
       {
         "id": 11,
