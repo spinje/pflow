@@ -1,7 +1,7 @@
 ---
-description: Guidelines for creating and maintaining Cursor rules to ensure consistency and effectiveness.
-globs: .cursor/rules/*.mdc
-alwaysApply: true
+description:
+globs:
+alwaysApply: false
 ---
 
 - **Required Rule Structure:**
