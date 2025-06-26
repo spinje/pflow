@@ -192,7 +192,7 @@ pflow/
 3. Specify *how* it fits into current architecture
 4. Use consistent patterns (shared store, simple IO, single responsibility)
 5. Avoid introducing abstractions not yet justified
-6. Write comprehensive tests and documentation before, during and after working on the task.
+6. Write comprehensive tests and documentation before, during and after working on the task following the test-as-you-go strategy.
 
 **Key Questions** for every task:
 - **Purpose**: Why is this needed?
@@ -204,7 +204,7 @@ pflow/
 
 **Development Standards and process**:
 - Start small, build minimal components that can be expanded into reusable components
-- Test everything that makes sense to test
+- Each task includes its own test strategy. This ensures functionality is validated immediately and helps catch regressions when implementing future tasks.
 - Document decisions and tradeoffs
 - Create `CLAUDE.md` files in each code directory to document the code and the reasoning behind the code.
 - Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/` directory.
