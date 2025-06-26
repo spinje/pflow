@@ -67,8 +67,11 @@ Json format to add:
 ## Notes
 
 - Never assume that the task or even the documentation is accurate and complete, always ask the user for clarification if you are unsure about anything or if something does not make sense.
+- Do not just read the documentation referenced in the task (this is a common mistake), make your own thorough search of the codebase and the documentation to understand the task and the subtasks.
+- Use subagents to gather information and context efficiently.
+- Document all your thinking and reasoning in the `scratchpads/` directory and explore multiple options before making a decision.
 
-## Special Instructions
+## Special Instructions from the user
 
 Always do these first before you begin (if empty, ignore this section):
 
