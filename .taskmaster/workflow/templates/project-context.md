@@ -1,0 +1,78 @@
+# Project Context for [Task ID]: [Task Title]
+
+**File Location**: `.taskmaster/tasks/task_[X]/subtask_[X.Y]/refinement/project-context.md`
+
+*Created by sub-agents on: [Date]*
+*Purpose: Provide focused project understanding for this specific task*
+
+## Task Domain Overview
+
+[Brief description of what part of the system this task involves, why it exists, and its role in the larger project]
+
+## Relevant Components
+
+### [Component Name]
+- **Purpose**: [What this component does]
+- **Responsibilities**: [Key functions]
+- **Key Files**: [Main files to be aware of]
+- **How it works**: [Brief explanation relevant to task]
+
+### [Another Component if applicable]
+- **Purpose**: [...]
+- **Responsibilities**: [...]
+- **Interactions**: [How it relates to other components]
+
+## Core Concepts
+
+### [Concept 1]
+- **Definition**: [What this means in the project context]
+- **Why it matters for this task**: [Relevance]
+- **Key terminology**: [Terms that will appear in code/docs]
+
+### [Concept 2]
+- **Definition**: [...]
+- **Relationships**: [How it connects to other concepts]
+
+## Architectural Context
+
+### Where This Fits
+[Explain how the task's target component(s) fit into the overall architecture]
+
+### Data Flow
+[If relevant, describe how data moves through the components involved]
+
+### Dependencies
+- **Upstream**: [What this depends on]
+- **Downstream**: [What depends on this]
+
+## Constraints and Conventions
+
+### Technical Constraints
+- [Constraint 1]: [What it means for this task]
+- [Constraint 2]: [Impact on implementation]
+
+### Project Conventions
+- **Naming**: [Relevant naming conventions]
+- **Patterns**: [Established patterns in this area]
+- **Style**: [Code style specific to this component]
+
+### Design Decisions
+- [Decision]: [Why it was made and how it affects this task]
+
+## Key Questions This Context Answers
+
+1. **What am I building/modifying?** [Answer]
+2. **How does it fit in the system?** [Answer]
+3. **What rules must I follow?** [Answer]
+4. **What existing code should I study?** [Answer]
+
+## What This Document Does NOT Cover
+
+- Implementation details (see cookbook examples later)
+- Specific code solutions (that's for implementation phase)
+- Unrelated components (to preserve focus)
+- Historical details not relevant to current task
+
+---
+
+*This briefing was synthesized from project documentation to provide exactly the context needed for this task, without overwhelming detail.*

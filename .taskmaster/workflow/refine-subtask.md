@@ -29,7 +29,35 @@ Load ALL relevant knowledge from previous implementations to avoid repeating mis
 
 ### Activities
 
-#### 0.1 Load Project-Wide Knowledge
+#### 0.1 Create Task-Specific Project Context
+
+Launch sub-agents to synthesize a focused project briefing for this specific task:
+
+**Sub-agent Mission:**
+"Analyze the task requirements and create a briefing document that provides exactly the project context needed for this task. Read all relevant documentation but synthesize it into a focused brief."
+
+**Sub-agents should:**
+1. Analyze the task description to identify which components/concepts are involved
+2. Read relevant sections from `docs/` (carefully search through the docs for relevant information)
+3. If task mentions PocketFlow or implicitly uses PocketFlow: Read `pocketflow/__init__.py` and relevant `pocketflow/docs/`
+4. Create a synthesized briefing that includes:
+   - Overview of relevant components and how they work
+   - Key concepts and terminology for this task domain
+   - Architectural context (where this fits in the system)
+   - Relevant constraints, conventions, or decisions
+   - Just enough big picture to ground the implementation
+
+**Sub-agents should NOT:**
+- Include implementation examples (save cookbook for later)
+- Add details about unrelated components
+- Copy large sections verbatim
+- Focus on HOW to implement (that comes later)
+
+**Output**: Create `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/project-context.md` based on the `project-context.md` template in `.taskmaster/workflow/templates/`
+
+This briefing document should be 2-4 pages that give you exactly the mental model needed for this task and all its subtasks.
+
+#### 0.2 Load Project-Wide Knowledge
 
 **For a NEW TASK** (first subtask of a task, e.g., subtask 3.1):
 Read all task-level reviews from completed tasks:
@@ -47,7 +75,7 @@ Example paths to check for task 3.1:
 - Architectural decisions made
 - Conventions established
 
-#### 0.2 Load Task-Specific Knowledge
+#### 0.3 Load Task-Specific Knowledge
 
 **For a SUBTASK** (not the first in its task, e.g., subtask 3.2 or 3.3):
 Read sibling subtask reviews from your current task:
@@ -65,7 +93,7 @@ Example for subtask 3.3:
 - Assumptions already made
 - Context from completed siblings
 
-#### 0.3 Synthesize Patterns
+#### 0.4 Synthesize Patterns
 Create knowledge synthesis file at:
 `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/knowledge-synthesis.md`
 
@@ -86,6 +114,8 @@ Create knowledge synthesis file at:
 ```
 
 ### Exit Criteria for Phase 0
+- [ ] Project context briefing created by sub-agents
+- [ ] Relevant components and concepts understood
 - [ ] All previous task reviews read and understood
 - [ ] All relevant subtask reviews (if applicable) processed
 - [ ] Knowledge synthesis document created

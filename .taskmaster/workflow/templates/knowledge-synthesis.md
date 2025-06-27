@@ -7,6 +7,8 @@
 ## Purpose
 Synthesize all relevant learnings from previous implementations to inform the refinement and implementation of [Task ID].
 
+*Note: This document builds on the project context briefing created in step 0.1. It focuses on patterns and learnings from past implementations that are relevant to the current task.*
+
 ## Relevant Patterns from Previous Tasks
 
 ### Pattern: [Pattern Name]
