@@ -176,6 +176,7 @@ Both loops feed each other: better decomposition leads to better implementation,
 ```
 .taskmaster/
 ├── workflow/                              # How to execute tasks
+│   ├── epistemic-manifesto.md             # Epistemic approach overview
 │   ├── workflow-overview.md               # This document - complete system guide
 │   ├── refine-task.md                    # Main task understanding & decomposition
 │   ├── refine-subtask.md                 # Subtask refinement before implementation

@@ -125,7 +125,7 @@ task-master update-task --id=<taskId> --prompt="[detailed update instructions]"
 3. Use project context to inform decisions
 
 **If multiple valid approaches with significant implications:**
-- Create decision document in `scratchpads/critical-user-decisions/`
+- Create decision document in `scratchpads/task_<taskId>/critical-user-decisions/`
 - STOP and wait for user decision
 - Document chosen approach rationale
 
@@ -162,7 +162,7 @@ Create well-structured subtasks using patterns from decomposition synthesis.
 
 **Create scratchpad for planning:**
 ```
-scratchpads/task-<taskId>-decomposition-plan.md
+scratchpads/task-<taskId>/task-<taskId>-decomposition-plan.md
 ```
 
 **Document:**
