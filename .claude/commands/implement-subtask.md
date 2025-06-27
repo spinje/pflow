@@ -25,16 +25,10 @@ Prerequisites:
 - Read refined specification first
 - For PocketFlow tasks: Review `cookbook-patterns.md` from refinement
 
-**Cookbook Pattern Application**:
-- Your implementation plan MUST reference cookbook patterns identified during refinement
-- Document pattern application success/failure in progress log
-- Include cookbook evaluation in your subtask review
-- Extract new patterns that extend beyond cookbook examples
-
 Key outputs in `.taskmaster/tasks/task_X/subtask_$ARGUMENTS/implementation/`:
-- `implementation-plan.md` (with cookbook patterns section)
-- `progress-log.md` (update continuously with pattern applications!)
-- `subtask-review.md` (include cookbook pattern evaluation)
+- `implementation-plan.md`
+- `progress-log.md` (update continuously!)
+- `subtask-review.md`
 - If final subtask: create `task-review.md`
 
 Remember: Capture learnings IN REAL-TIME for compound effect!

@@ -20,16 +20,10 @@ You are at the SUBTASK REFINEMENT stage (see diagram in workflow-overview.md):
 - **You handle**: Subtask Knowledge Loading → Subtask Refinement
 - **Your output enables**: Implementation phase (creates ready-for-implementation marker)
 
-**MANDATORY for PocketFlow subtasks**:
-- Analyze 2-3 relevant cookbook examples (minimum)
-- Read `pocketflow/cookbook/CLAUDE.md` to navigate examples
-- Document patterns in `cookbook-patterns.md` using the template
-- Your refined spec MUST list which cookbook patterns will be applied
-
 Key outputs in `.taskmaster/tasks/task_X/subtask_$ARGUMENTS/refinement/`:
 - `knowledge-synthesis.md`
 - `evaluation.md`
-- `refined-spec.md` (must include cookbook patterns)
+- `refined-spec.md`
 - `cookbook-patterns.md` (for PocketFlow tasks)
 - Create marker: `ready-for-implementation`
 
