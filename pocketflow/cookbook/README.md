@@ -24,3 +24,41 @@
 </div>
 
 👀 Want to see other tutorials? [Create an issue!](https://github.com/The-Pocket/PocketFlow/issues/new)
+
+## Advanced Full-Repository Examples
+
+This cookbook also includes several complete application examples as git submodules:
+
+- **PocketFlow-Tutorial-Website-Chatbot** - "Set & Forget" website chatbot with live learning
+- **PocketFlow-Tutorial-Danganronpa-Simulator** - Multi-agent social deduction game
+- **Tutorial-Codebase-Knowledge** - GitHub repo analyzer and tutorial generator
+- **Tutorial-Cursor** - AI coding agent with file operations
+- **Tutorial-AI-Paul-Graham** - RAG system with personality mimicry
+- **Tutorial-Youtube-Made-Simple** - YouTube video ELI5 summarizer
+- **Tutorial-Cold-Email-Personalization** - Personalized cold email generator
+
+### Working with Submodules
+
+These advanced examples are included as git submodules. To get them when cloning:
+
+```bash
+# Clone with submodules
+git clone --recursive https://github.com/The-Pocket/PocketFlow.git
+
+# Or if already cloned
+git submodule init
+git submodule update
+```
+
+To update submodules to their latest versions:
+
+```bash
+# Update all submodules
+git submodule update --remote
+
+# Update a specific submodule
+cd pocketflow/cookbook/PocketFlow-Tutorial-Website-Chatbot
+git pull origin main
+```
+
+For more details on these examples, see the [cookbook documentation](./CLAUDE.md).

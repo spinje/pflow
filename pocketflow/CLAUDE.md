@@ -159,6 +159,33 @@ pocketflow/
 34. **`pocketflow-workflow`**: Multi-stage content generation
     - *When to examine*: Complex content pipelines
 
+### Advanced Full-Repository Examples
+These are complete applications that demonstrate sophisticated PocketFlow patterns. These examples are included as git submodules in the repository:
+
+> **Note**: These examples are git submodules. To access them locally, clone with `git clone --recursive` or run `git submodule init && git submodule update` after cloning.
+
+35. **`PocketFlow-Tutorial-Website-Chatbot`**: "Set & Forget" website chatbot with live learning
+    - *When to examine*: Building autonomous customer support systems
+    - *Patterns*: Agent + RAG + Map-Reduce + Workflow
+36. **`PocketFlow-Tutorial-Danganronpa-Simulator`**: Multi-agent social deduction game
+    - *When to examine*: Complex game mechanics with AI agents
+    - *Patterns*: Async + Agent + State Machine
+37. **`Tutorial-Codebase-Knowledge`**: GitHub repo analyzer and tutorial generator
+    - *When to examine*: Documentation generation from code
+    - *Patterns*: Workflow + BatchNode + Map-Reduce
+38. **`Tutorial-Cursor`**: AI coding agent with file operations
+    - *When to examine*: Building code editing assistants
+    - *Patterns*: Agent + Nested Flows + Tool Integration
+39. **`Tutorial-AI-Paul-Graham`**: RAG system with personality mimicry
+    - *When to examine*: Building domain-specific Q&A systems
+    - *Patterns*: RAG + Map-Reduce + TTS
+40. **`Tutorial-Youtube-Made-Simple`**: YouTube video ELI5 summarizer
+    - *When to examine*: Video content processing and summarization
+    - *Patterns*: Map-Reduce + Batch Processing
+41. **`Tutorial-Cold-Email-Personalization`**: Personalized cold email generator
+    - *When to examine*: Web research and content personalization
+    - *Patterns*: Map-Reduce + Web Search + Batch Processing
+
 ## Key Patterns for pflow MVP
 
 ### Essential Patterns to Study
