@@ -174,8 +174,21 @@ pflow/
 ├── .taskmaster/           # Task management and planning
 │   ├── tasks/            # Task tracking
 │   │   └── tasks.json    # Detailed task list with subtasks
-│   └── docs/             # Planning documentation
-│       └── implementation-roadmap.md  # High-level roadmap
+│   ├── docs/             # Planning documentation
+│   │   └── implementation-roadmap.md  # High-level roadmap
+│   ├── workflow/         # Epistemic workflow system
+│   │   ├── workflow-overview.md       # Complete workflow guide
+│   │   ├── refine-task.md            # Main task workflow
+│   │   ├── refine-subtask.md         # Subtask refinement workflow
+│   │   ├── implement-subtask.md      # Implementation workflow
+│   │   └── templates/                # Workflow artifact templates
+│   ├── knowledge/        # Consolidated learning repository
+│   │   ├── CLAUDE.md    # Knowledge maintenance guide
+│   │   ├── patterns.md  # Successful implementation patterns
+│   │   ├── pitfalls.md  # Common mistakes to avoid
+│   │   └── decisions.md # Architectural decisions
+│   └── reports/         # Generated reports
+│       └── task-complexity-report.json  # Task decomposition history
 ├── tests/                 # Test suite
 │   ├── test_foo.py       # Placeholder test
 │   └── test_links.py     # Documentation link validation
@@ -261,11 +274,12 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 ### Current State of the Project
 
 The codebase is in early development with:
-- ✅ PocketFlow framework added to the codebase inlcuding `pocketflow/docs` and `pocketflow/cookbook`
+- ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
 - ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/implementation-roadmap.md`
 - ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap
+- ✅ Establish epistemic workflow for task execution in `.taskmaster/workflow/`
 - ⏳ Carefully review the list of tasks to make sure every task is complete, accurate and that we are doing the right things in the right order (<- We are here)
 - ⏳ Start implementing features for the MVP using the todo list one by one
 
@@ -273,29 +287,29 @@ The codebase is in early development with:
 
 Focus on refining the tasks for the MVP by doing the following:
 1. Ensure that the tasks are based on product requirements and architecture docs for the pflow project.
-2. Ensure that the tasks dependent on pocketflow (the 100 lines of code in `pocketflow/__init__.py`) are using the pocketflow framework correctly by carefully reading the documentation in `pocketflow/docs` and examples in `pocketflow\cookbook` when needed.
+2. Ensure that the tasks dependent on pocketflow (the 100 lines of code in `pocketflow/__init__.py`) are using the pocketflow framework correctly by carefully reading the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
 3. Ensure that every tasks considers the dependencies and the order of implementation. The `.taskmaster/tasks/tasks.json` will need to be updated continously as you discover new information and discuss the user.
 4. Ensure that every task is easy to understand and has a clear success criteria and test strategy.
 
 ## Task Implementation Workflow
 
 **Use the unified epistemic workflow in `.taskmaster/workflow/`**:
-- `refine-task.md` - Main task decomposition with project context creation and pattern learning
+- `refine-task.md` - Main task understanding, project context creation, and decomposition
 - `refine-subtask.md` - Subtask refinement with knowledge loading
 - `implement-subtask.md` - Implementation with real-time learning capture
 
 **Core Principles**:
-1. **Task Decomposition**: Create project context FIRST, then decompose using patterns from previous tasks
-2. **Subtask Implementation**: Build on ALL previous implementations with shared project understanding
+1. **Task Understanding First**: Deeply understand the current task and create project context before decomposition
+2. **Natural Decomposition**: Break down tasks based on understanding, with optional reference to similar tasks
+3. **Compound Learning**: Each implementation builds on previous technical learnings
 
 The workflow ensures:
-- MAIN TASKS: Create project context, apply decomposition patterns, generate informed subtasks
+- MAIN TASKS: Understand deeply, create project context, generate logical subtasks
 - ALL SUBTASKS: Read shared project context, load implementation knowledge
-- NEW TASKS: Read other tasks' reviews before starting
+- NEW TASKS: Optionally review similar tasks for inspiration
 - CONTINUING SUBTASKS: Read sibling reviews within current task
-- ALL WORK: Capture discoveries in real-time for future benefit
+- ALL WORK: Capture technical discoveries in real-time for future benefit
 
-**Key insight**: Project context is created ONCE during main task workflow and read by ALL subtasks. Decomposition quality is assessed in task-review.md AFTER implementation completes.
 
 See `.taskmaster/workflow/workflow-overview.md` for the complete system.
 
