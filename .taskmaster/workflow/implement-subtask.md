@@ -287,6 +287,8 @@ Key learnings:
 See .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/subtask-review.md for details"
 ```
 
+Do NOT include "Generated with [Claude Code](https://claude.ai/code)" in the commit message.
+
 #### 2.13 Notify the user of the next step
 
 Let the user know that the next step is to run the following slash command:
