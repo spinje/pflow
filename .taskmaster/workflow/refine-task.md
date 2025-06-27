@@ -273,6 +273,14 @@ Once ALL exit criteria are met:
    - Read the existing project-context.md
    - Build on shared understanding
 
+
+#### 3.3 Notify the user of the next step
+
+Let the user know that the next step is to run the following slash command:
+```
+/refine-subtask <taskId>.1
+```
+
 ## Common Decomposition Patterns
 
 ### Pattern: Foundation-Integration-Polish

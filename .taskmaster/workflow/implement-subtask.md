@@ -287,6 +287,17 @@ Key learnings:
 See .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/subtask-review.md for details"
 ```
 
+#### 2.13 Notify the user of the next step
+
+Let the user know that the next step is to run the following slash command:
+```
+/refine-subtask <nextSubtaskId> (If not last subtask)
+# OR
+/refine-task <nextTaskId> (If Last Subtask)
+```
+
+You can get the next task by running `task-master next`
+
 ## Learning Capture Best Practices
 
 ### DO: Capture Immediately

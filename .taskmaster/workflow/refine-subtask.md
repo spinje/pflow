@@ -261,7 +261,12 @@ Once ALL exit criteria are met:
    - `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/refined-spec.md`
    - `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/ready-for-implementation`
 
-2. Proceed to `implement-subtask.md` for Phase 2
+2. Proceed to read and follow `implement-subtask.md` if instructed to do so or by notifying the user of the next step
+
+   Let the user know that the next step is to run the following slash command:
+   ```
+   /implement-subtask <subtaskId>
+   ```
 
 ## Common Refinement Patterns
 
