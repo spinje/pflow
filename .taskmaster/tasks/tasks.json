@@ -13,32 +13,32 @@
         "subtasks": [
           {
             "id": 1,
-            "title": "Add CLI entry point to pyproject.toml",
-            "description": "Configure the [project.scripts] section in pyproject.toml to register 'pflow' as a console script that points to 'pflow.cli:main'",
+            "title": "Configure CLI entry point in pyproject.toml",
+            "description": "Add [project.scripts] section to pyproject.toml defining 'pflow = \"pflow.cli:main\"' as the console script entry point. This enables the 'pflow' command to be available system-wide after installation.",
             "dependencies": [],
-            "details": "Edit the existing pyproject.toml file to add a [project.scripts] section with the entry 'pflow = \"pflow.cli:main\"'. This follows the Python Packaging User Guide specification for console_scripts entry points and enables the 'pflow' command to be available system-wide when the package is installed.",
+            "details": "Edit pyproject.toml to add the [project.scripts] section with the pflow entry point. This follows standard Python packaging practices for creating command-line tools. The entry point syntax 'pflow.cli:main' tells setuptools to look for a 'main' function in the pflow.cli module when the 'pflow' command is invoked.",
             "status": "pending",
             "testStrategy": ""
           },
           {
             "id": 2,
-            "title": "Create minimal CLI module with click",
-            "description": "Create src/pflow/cli.py with a basic click application structure including a main() function decorated with @click.command()",
+            "title": "Create CLI module structure with basic click application",
+            "description": "Create the src/pflow/cli/ directory structure with __init__.py and main.py files. Implement a basic click application in main.py with a simple test command to verify the framework is working.",
             "dependencies": [
               1
             ],
-            "details": "Create a new file at src/pflow/cli.py that imports click, defines a main() function decorated with @click.command(), and includes minimal functionality to handle --help. The function should print a basic message or pass for now. This provides the skeleton CLI structure that will be expanded in future tasks to handle '>>' operators, node resolution, and other pflow-specific functionality.",
+            "details": "Create src/pflow/cli/__init__.py (can be empty initially) and src/pflow/cli/main.py containing a basic click application. The main.py should define a main() function decorated with @click.command() or @click.group() and include at least one simple command (e.g., 'version' or 'hello') to test the CLI framework. This provides the actual CLI code that the pyproject.toml entry point references.",
             "status": "pending",
             "testStrategy": ""
           },
           {
             "id": 3,
-            "title": "Reinstall package and verify CLI availability",
-            "description": "Reinstall the pflow package in editable mode and verify the 'pflow' command is accessible from the command line",
+            "title": "Verify package installation and CLI availability",
+            "description": "Install the package in development mode using 'pip install -e .' and verify that the 'pflow' command becomes available in the terminal. Add a basic test to ensure the CLI framework is properly initialized.",
             "dependencies": [
               2
             ],
-            "details": "Run 'uv pip install -e .' from the project root to reinstall the package with the new entry point configuration. Then test that 'pflow --help' executes successfully and displays the basic Click-generated help message. This confirms the CLI entry point is properly configured and the pflow command is available in PATH for future development.",
+            "details": "Run 'pip install -e .' (or 'uv pip install -e .') in the project root to install the package in editable/development mode. Verify the 'pflow' command is available by running it in the terminal and checking it executes without errors. Create a basic test in tests/test_cli.py using click.testing.CliRunner to ensure the CLI framework initializes correctly and the test command works as expected. This confirms the entire setup chain from pyproject.toml entry point to CLI execution is functioning properly.",
             "status": "pending",
             "testStrategy": ""
           }
