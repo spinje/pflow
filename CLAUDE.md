@@ -279,16 +279,23 @@ Focus on refining the tasks for the MVP by doing the following:
 
 ## Task Implementation Workflow
 
-**When implementing tasks, use the epistemic workflow in `.taskmaster/workflow/`**:
-- `refine-subtask.md` - Knowledge loading and task refinement
+**Use the unified epistemic workflow in `.taskmaster/workflow/`**:
+- `refine-task.md` - Main task decomposition with project context creation and pattern learning
+- `refine-subtask.md` - Subtask refinement with knowledge loading
 - `implement-subtask.md` - Implementation with real-time learning capture
 
-**Core Principle**: Every task builds on ALL previous implementations. The workflow ensures:
-- NEW TASKS: Load knowledge from all completed tasks before starting
-- CONTINUING SUBTASKS: Build on sibling implementations within the task
-- ALL TASKS: Capture discoveries in real-time for future benefit
+**Core Principles**:
+1. **Task Decomposition**: Create project context FIRST, then decompose using patterns from previous tasks
+2. **Subtask Implementation**: Build on ALL previous implementations with shared project understanding
 
-This creates compound learning where each task makes future tasks progressively easier.
+The workflow ensures:
+- MAIN TASKS: Create project context, apply decomposition patterns, generate informed subtasks
+- ALL SUBTASKS: Read shared project context, load implementation knowledge
+- NEW TASKS: Read other tasks' reviews before starting
+- CONTINUING SUBTASKS: Read sibling reviews within current task
+- ALL WORK: Capture discoveries in real-time for future benefit
+
+**Key insight**: Project context is created ONCE during main task workflow and read by ALL subtasks. Decomposition quality is assessed in task-review.md AFTER implementation completes.
 
 See `.taskmaster/workflow/workflow-overview.md` for the complete system.
 

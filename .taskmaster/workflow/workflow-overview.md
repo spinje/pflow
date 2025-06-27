@@ -1,149 +1,174 @@
 # Epistemic Workflow Overview
 
-This document provides a high-level view of the epistemic learning system for task implementation. The system transforms isolated task execution into a compound learning accelerator.
+This document provides a high-level view of the epistemic learning system for task execution. The system focuses on deep understanding for decomposition and compound learning for implementation.
 
-## The Three-Phase System
+## The Complete System
 
 ```mermaid
-graph LR
-    A[Task Assignment] --> B[Phase 0: Knowledge Loading]
-    B --> C[Phase 1: Refinement]
-    C --> D{Ready?}
-    D -->|Yes| E[Phase 2: Implementation]
-    D -->|No| C
-    E --> F[Learning Capture]
-    F --> G[Knowledge Base]
-    G --> B
+graph TB
+    A[Main Task] --> B[Task Understanding<br/>+ Project Context Creation]
+    B --> C[Task Refinement]
+    C --> D[Subtask Generation]
+    D --> E[Subtask Refinement]
+
+    E --> F[Subtask 1] & G[Subtask 2] & H[Subtask N]
+
+    F --> I[Subtask Knowledge Loading<br/>+ Read Project Context]
+    I --> J[Subtask Refinement]
+    J --> K[Implementation]
+    K --> L[Learning Capture]
+
+    L --> M[Task Review]
+    M --> N[Knowledge Base]
+    N --> I
 
     style B fill:#f9f,stroke:#333,stroke-width:4px
-    style F fill:#9ff,stroke:#333,stroke-width:4px
+    style I fill:#f9f,stroke:#333,stroke-width:4px
+    style M fill:#9ff,stroke:#333,stroke-width:4px
+    style L fill:#9ff,stroke:#333,stroke-width:4px
 ```
 
-### Phase 0: Knowledge Loading (📚 `refine-subtask.md`)
-**Purpose**: Start smart by learning from previous implementations
+## Two Complementary Workflows
 
-**For NEW TASKS (first subtask of a task):**
-1. Sub-agents create task-level project context briefing (once per task)
-2. Read task-level reviews from other completed tasks
-3. Synthesize patterns and pitfalls from across the codebase
+### 1. Main Task Workflow (`refine-task.md`)
+**Purpose**: Understand tasks deeply and create logical decompositions
 
-**For CONTINUING SUBTASKS (not the first subtask):**
-1. Read existing task-level project context (created by first subtask)
-2. Read sibling subtask reviews from current task
-3. Build on knowledge from completed siblings
+**Key Activities:**
+- Read and understand the current task thoroughly
+- Create project context to understand the domain
+- Optionally review similar tasks for inspiration
+- Generate subtasks based on understanding
+- Refine subtasks to ensure clarity
 
-**Both create:**
-- Knowledge synthesis document
-- Mental model of codebase evolution
+### 2. Subtask Workflow (`refine-subtask.md` → `implement-subtask.md`)
+**Purpose**: Implement subtasks while building on previous learnings
 
-### Phase 1: Refinement (🔍 `refine-subtask.md`)
-**Purpose**: Transform ambiguous tasks into crystal-clear specifications
-- Validate against actual code
-- Surface and resolve ALL ambiguities
-- Get explicit user decisions
-- Create unambiguous specification
-
-### Phase 2: Implementation (🔨 `implement-subtask.md`)
-**Purpose**: Execute systematically while capturing learnings in real-time
-- Implement the refined specification
-- Log discoveries AS THEY HAPPEN
-- Extract reusable patterns
-- Create comprehensive review
-- If last subtask: Create task-level review
-
-## When to Use Which Document
-
-### Start with `refine-subtask.md` when:
-- [ ] Beginning any new task or subtask
-- [ ] Task description seems unclear
-- [ ] You're not sure what's already been tried
-- [ ] Dependencies need validation
-
-### Move to `implement-subtask.md` when:
-- [ ] ALL ambiguities are resolved
-- [ ] Refined specification exists
-- [ ] Success criteria are clear
-- [ ] `ready-for-implementation` marker exists
-
-### Return to `refine-subtask.md` if:
-- [ ] Core assumptions prove false during implementation
-- [ ] New ambiguities surface
-- [ ] Dependencies don't exist as expected
-- [ ] Success criteria can't be met as specified
+**Key Activities:**
+- Read project context created during task workflow
+- Load relevant implementation knowledge from past work
+- Refine specifications and implement
+- Capture learnings for future tasks
 
 ## The Compound Learning Effect
 
+The system creates TWO compound learning loops:
+
+### 1. Task Decomposition Learning
 ```
-Task 1: 4 hours (no prior knowledge)
+Task 1: 2 hours to decompose (learning the project)
+  ↓ Gains domain understanding
+Task 5: 1 hour to decompose (familiar with codebase)
+  ↓ Natural intuition develops
+Task 10: 20 minutes (instinctive breakdown)
+  ↓ Experience guides decisions
+```
+
+### 2. Subtask Implementation Learning
+```
+Subtask 1.1: 4 hours (no prior knowledge)
   ↓ Discovers authentication pattern
-Task 5: 3 hours (reuses auth pattern)
+Subtask 5.1: 3 hours (reuses auth pattern)
   ↓ Discovers caching approach
-Task 10: 2 hours (uses both patterns)
-  ↓ Adds error handling pattern
-Task 20: 1 hour (applies all patterns)
+Subtask 10.1: 1 hour (applies all patterns)
   ↓ Mostly configuration at this point
 ```
 
-Each task contributes to a growing knowledge base that makes future tasks progressively easier.
+Both loops feed each other: better decomposition leads to better implementation, which informs better future decomposition.
 
-## Example Workflow
+## When to Use Which Workflow
 
-### Hypothetical Scenario: Implement Task 5.2 - "Add user authentication to CLI"
+### Start with `refine-task.md` when:
+- [ ] You have a main task without subtasks
+- [ ] The task needs to be broken down
+- [ ] You want to learn from previous decompositions
 
-#### Phase 0: Knowledge Loading
+### Continue with `refine-subtask.md` when:
+- [ ] Subtasks have been generated and refined
+- [ ] You're implementing a specific subtask
+- [ ] You need to load implementation knowledge
+
+### Move to `implement-subtask.md` when:
+- [ ] Subtask is fully refined with no ambiguities
+- [ ] Ready-for-implementation marker exists
+- [ ] Time to write code
+
+### Return to previous workflow if:
+- [ ] Task decomposition proves inadequate
+- [ ] Subtask assumptions prove false
+- [ ] Major scope changes needed
+
+## Complete Example: Task 5 - "Add Authentication System"
+
+### Phase A: Main Task Decomposition (using `refine-task.md`)
+
+#### A.0-A.1: Task Understanding and Refinement
 ```
-As subtask 5.2 (not the first subtask):
-1. Read existing: .taskmaster/tasks/task_5/project-context.md
-   - Was created by sub-agents during subtask 5.1
-   - Contains synthesized briefing about CLI and auth concepts
-   - Provides 2-4 page overview for entire task 5
+1. Read task: task-master show --id=5
+   - "Add Authentication System"
+   - Understand requirements deeply
 
-2. Read: .taskmaster/tasks/task_5/subtask_5.1/implementation/review.md
-   - Discovers initial auth setup patterns
+2. Sub-agents create project context:
+   - Analyze auth system requirements
+   - Synthesize docs about security, CLI structure
+   - Create: .taskmaster/tasks/task_5/project-context.md
 
-3. Creates knowledge-synthesis.md:
-   - Build on auth foundation from 5.1
-   - Use JWT pattern mentioned in task_2/task-review.md
-   - Avoid OAuth complexity noted in task_3/task-review.md
+3. Optional: Review similar tasks for inspiration
+   - Task 2 dealt with similar domain (might be helpful)
+   - Quick scan for any relevant technical insights
 ```
 
-#### Phase 1: Refinement
+#### A.2-A.3: Subtask Generation and Refinement
 ```
-1. Use: task-master show --id=5.2
-   Output: "Add user authentication to CLI"
+1. Create task-complexity-report.json entry:
+   {
+     "taskId": 5,
+     "taskTitle": "Add Authentication System",
+     "complexityScore": 6,
+     "recommendedSubtasks": 4,
+     "expansionPrompt": "Break down auth system logically based on project understanding..."
+   }
 
-2. Create: .taskmaster/tasks/task_5/subtask_5.2/refinement/evaluation.md
-   - Ambiguity: Which auth method?
-   - Option A: JWT (proven in task 2)
-   - Option B: API keys (simpler)
-   - User chooses: Option A
+2. Run: task-master expand --id=5 --num=4
+   Generated:
+   - 5.1: Set up auth infrastructure and data models
+   - 5.2: Implement core authentication logic
+   - 5.3: Add CLI authentication commands
+   - 5.4: Error handling and documentation
 
-3. Create: .taskmaster/tasks/task_5/subtask_5.2/refinement/refined-spec.md
-   - Use JWT with refresh tokens
-   - Store tokens in ~/.pflow/auth
-   - Add login/logout commands
-   - Success criteria: User can authenticate
-
-4. Create marker: .taskmaster/tasks/task_5/subtask_5.2/ready-for-implementation
+3. Refine subtasks as needed, ready for implementation
 ```
 
-#### Phase 2: Implementation
+### Phase B: Subtask Implementation (using `refine-subtask.md` → `implement-subtask.md`)
+
+#### B.0: Implementing Subtask 5.1 (first subtask)
 ```
-1. Write to: .taskmaster/tasks/task_5/subtask_5.2/implementation/progress-log.md
-   ## 10:15 - Try to reuse auth module
-   Discovery: Module too tightly coupled to web server
-   Learning: Need auth abstraction layer
+1. READ: .taskmaster/tasks/task_5/project-context.md
+   - Created during main task workflow
+   - Provides auth system understanding
 
-   ## 10:45 - Create auth abstraction
-   Success! Clean separation of concerns
-   Pattern: AuthProvider interface
+2. Read previous task reviews for implementation patterns
+3. Implement infrastructure following patterns
+4. Create review documenting auth foundation decisions
+```
 
-2. Create: .taskmaster/tasks/task_5/subtask_5.2/implementation/review.md
-   - Extracted AuthProvider pattern
-   - Affects Task 6.1 (can use same pattern)
-   - Update arch docs with auth abstraction
+#### B.1: Implementing Subtask 5.3 (continuing subtask)
+```
+1. READ: .taskmaster/tasks/task_5/project-context.md (same as 5.1 read)
+2. Read sibling reviews: 5.1 and 5.2 implementations
+3. Build on established auth patterns
+4. Implement CLI commands using discovered patterns
+5. Create review for future subtasks
+```
 
-3. Only at end: task-master set-status --id=5.2 --status=done
+#### B.2: Implementing Subtask 5.4 (final subtask)
+```
+1. Complete implementation as normal
+2. Create subtask review
+3. CREATE: .taskmaster/tasks/task_5/task-review.md
+   - Summarizes technical learnings from all subtasks
+   - Documents architectural decisions made
+   - Captures patterns and pitfalls discovered
+   - Notes impact on future tasks
 ```
 
 ## File Structure
@@ -152,12 +177,19 @@ As subtask 5.2 (not the first subtask):
 .taskmaster/
 ├── workflow/                    # How to execute tasks
 │   ├── workflow-overview.md     # This document
-│   ├── refine-subtask.md        # Phase 0 & 1
-│   ├── implement-subtask.md     # Phase 2
-│   └── templates/               # Artifact templates
+│   ├── refine-task.md          # Main task decomposition workflow
+│   ├── refine-subtask.md       # Subtask refinement workflow
+│   ├── implement-subtask.md    # Subtask implementation workflow
+│   └── templates/              # Artifact templates
+│       ├── project-context.md
+│       ├── task-review.md
+│       ├── subtask-review.md
+│       └── (other templates)
+├── reports/
+│   └── task-complexity-report.json  # Decomposition history
 ├── tasks/
 │   ├── task_1/
-│   │   ├── project-context.md  # Created once per task by sub-agents
+│   │   ├── project-context.md          # Created during main task workflow
 │   │   ├── subtask_1.1/
 │   │   │   ├── refinement/
 │   │   │   │   ├── knowledge-synthesis.md
@@ -167,50 +199,63 @@ As subtask 5.2 (not the first subtask):
 │   │   │   │   ├── plan.md
 │   │   │   │   ├── progress-log.md
 │   │   │   │   └── review.md
-│   │   │   └── ready-for-implementation (marker file)
+│   │   │   └── ready-for-implementation
 │   │   ├── subtask_1.2/
-│   │   │   └── (same structure, but reads existing project-context.md)
+│   │   │   └── (same structure)
 │   │   └── task-review.md (created after all subtasks complete)
 │   └── task_2/
 │       └── (same structure)
 └── knowledge/                    # Manually maintained
     ├── CLAUDE.md               # Guide for maintaining knowledge
-    ├── patterns.md             # All patterns (consolidated)
-    ├── pitfalls.md             # All pitfalls (consolidated)
-    └── decisions.md            # All architectural decisions
+    ├── patterns.md             # Implementation patterns
+    ├── pitfalls.md             # Implementation pitfalls
+    └── decisions.md            # Architectural decisions
 ```
 
-## Knowledge Loading Examples
+## Workflow Examples
 
-### Example 1: Starting Task 5 (First Subtask)
-You're about to work on subtask 5.1 (the first subtask of task 5):
+### Example 1: Decomposing Task 5 (Main Task)
+You're about to break down task 5 into subtasks:
 
-**Step 1 - Sub-agents create project context**:
-- **CREATE**: `.taskmaster/tasks/task_5/project-context.md`
-- They analyze the entire task 5 and synthesize relevant project documentation
-- You get a 2-4 page briefing that will be used by ALL subtasks of task 5
+**Step 1 - Understand the task**:
+- Run: `task-master show --id=5`
+- Read and comprehend the requirements
+- Identify any ambiguities
 
-**Step 2 - Read these task reviews**:
-- `.taskmaster/tasks/task_1/task-review.md`
-- `.taskmaster/tasks/task_2/task-review.md`
-- `.taskmaster/tasks/task_3/task-review.md`
-- `.taskmaster/tasks/task_4/task-review.md`
+**Step 2 - Create project context**:
+- Sub-agents CREATE: `.taskmaster/tasks/task_5/project-context.md`
+- Analyzes task requirements and domain
+- Synthesizes relevant documentation
 
-**Don't read**: Individual subtask reviews from tasks 1-4 (already summarized in task reviews)
+**Step 3 - Optional inspiration**:
+- Quick check if any previous tasks are similar
+- Might glance at task-complexity-report.json
+- Light review for any helpful insights
 
-### Example 2: Working on Subtask 5.3
-You're working on subtask 5.3 (subtasks 5.1 and 5.2 are complete):
+### Example 2: Implementing Subtask 5.1 (First of Task)
+You're implementing the first subtask:
 
-**Step 1 - Read existing project context**:
-- **READ**: `.taskmaster/tasks/task_5/project-context.md`
-- This was already created during subtask 5.1
-- Contains the same briefing used by 5.1 and 5.2
+**Step 1 - Read project context**:
+- READ: `.taskmaster/tasks/task_5/project-context.md`
+- Created during main task decomposition
+- Provides domain understanding for all subtasks
 
-**Step 2 - Read these sibling reviews**:
-- `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
-- `.taskmaster/tasks/task_5/subtask_5.2/implementation/review.md`
+**Step 2 - Load implementation knowledge**:
+- Read: `.taskmaster/tasks/task_1/task-review.md`
+- Read: `.taskmaster/tasks/task_2/task-review.md`
+- Focus on: Auth patterns, CLI patterns
 
-**Don't read**: Task reviews from other tasks (already loaded for 5.1)
+### Example 3: Implementing Subtask 5.3 (Continuing)
+You're implementing a later subtask:
+
+**Step 1 - Read existing context**:
+- READ: `.taskmaster/tasks/task_5/project-context.md`
+- Created during main task workflow
+
+**Step 2 - Load sibling knowledge**:
+- Read: `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
+- Read: `.taskmaster/tasks/task_5/subtask_5.2/implementation/review.md`
+- Build on established patterns
 
 ## Key Success Factors
 
@@ -228,53 +273,74 @@ When something works, document it as a pattern before moving on.
 
 ## Quick Reference for AI Agents
 
-### Phase 0: Knowledge Loading
-**For new tasks (e.g., starting task 5.1)**:
-- Sub-agents CREATE: `.taskmaster/tasks/task_5/project-context.md`
-- Read: `.taskmaster/tasks/task_1/task-review.md`
-- Read: `.taskmaster/tasks/task_2/task-review.md`
-- Read: `.taskmaster/tasks/task_3/task-review.md`
-- Read: `.taskmaster/tasks/task_4/task-review.md`
-- Create: `.taskmaster/tasks/task_5/subtask_5.1/refinement/knowledge-synthesis.md`
+### For Main Task Decomposition (`refine-task.md`)
+1. Read and understand current task (task-master show)
+2. Sub-agents create project-context.md for the task
+3. (Optional) Review similar tasks for inspiration
+4. Refine task description if needed
+5. Create task-complexity-report.json entry
+6. Run `task-master expand --id=X --num=Y`
+7. Refine generated subtasks
 
-**For continuing subtasks (e.g., working on 5.3)**:
-- READ existing: `.taskmaster/tasks/task_5/project-context.md`
-- Read: `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
-- Read: `.taskmaster/tasks/task_5/subtask_5.2/implementation/review.md`
-- Create: `.taskmaster/tasks/task_5/subtask_5.3/refinement/knowledge-synthesis.md`
+### For Subtask Implementation (`refine-subtask.md` → `implement-subtask.md`)
 
-### Phase 1: Refinement
-1. Use: `task-master show --id=X.Y` (only task-master command in refinement)
-2. Create: `.taskmaster/tasks/task_X/subtask_X.Y/refinement/evaluation.md`
-3. Get user decisions
-4. Create: `.taskmaster/tasks/task_X/subtask_X.Y/refinement/refined-spec.md`
-5. Create: `.taskmaster/tasks/task_X/subtask_X.Y/ready-for-implementation`
+**ALL subtasks**:
+1. READ project-context.md (created during main task)
+2. Load historical knowledge:
+   - First subtask: Read other tasks' reviews
+   - Continuing subtasks: Read sibling reviews
+3. Create knowledge-synthesis.md
+4. Refine → Implement → Review
 
-### Phase 2: Implementation
-1. Verify: `.taskmaster/tasks/task_X/subtask_X.Y/ready-for-implementation` exists
-2. Create: `.taskmaster/tasks/task_X/subtask_X.Y/implementation/plan.md`
-3. Write to: `.taskmaster/tasks/task_X/subtask_X.Y/implementation/progress-log.md` (continuously)
-4. Create: `.taskmaster/tasks/task_X/subtask_X.Y/implementation/review.md`
-5. If last subtask: Create `.taskmaster/tasks/task_X/task-review.md`
-6. Use: `task-master set-status --id=X.Y --status=done` (only task-master command)
+**Final subtask extras**:
+- Create task-review.md after implementation
+- Summarize entire task execution
 
-## The Payoff
+## The Unified Payoff
 
-When this system is followed:
-- **No repeated mistakes** - Pitfalls are documented and avoided
-- **Faster implementation** - Patterns accelerate development
-- **Higher quality** - Ambiguities caught before coding
-- **Team learning** - Everyone benefits from discoveries - Humans as well as AI Agents
-- **Compound returns** - Each task is easier than the last
+When both workflows are followed:
+
+### Decomposition Benefits
+- **Deep understanding** - Task comprehension drives logical breakdowns
+- **Natural improvement** - Experience builds intuition over time
+- **Optional inspiration** - Can reference similar tasks when helpful
+- **Right-sized subtasks** - Practice leads to better scoping
+
+### Implementation Benefits
+- **No repeated mistakes** - Pitfalls documented and avoided
+- **Faster coding** - Technical patterns accelerate development
+- **Higher quality** - Ambiguities caught before implementation
+- **Compound learning** - Each subtask easier than the last
+
+### Combined Effect
+```
+Poor Understanding → Poor Decomposition → Hard Implementation
+  vs.
+Deep Understanding → Logical Decomposition → Smooth Implementation
+```
+
+Understanding drives everything - the better you understand, the better you decompose and implement.
 
 ## Getting Started
 
-1. Pick a task ID - Assigned by the user or by using `task-master next`
+### For a New Main Task:
+1. Get task ID from user or `task-master next`
+2. Open `.taskmaster/workflow/refine-task.md`
+3. Understand the task deeply
+4. Create logical subtask breakdown
+
+### For Subtask Implementation:
+1. Ensure subtasks exist (via task decomposition)
 2. Open `.taskmaster/workflow/refine-subtask.md`
-3. Start with Phase 0: Knowledge Loading
-4. Follow the workflow systematically
-5. Watch your velocity increase with each task
+3. Read project context and load knowledge
+4. Follow through to implementation
+
+### Watch the Progress:
+- Task 1: Everything is new (learning the domain)
+- Task 5: Familiarity growing (noticeably smoother)
+- Task 10: Deep understanding (much faster)
+- Task 20: Natural expertise (peak efficiency)
 
 ---
 
-*"Your role is not to follow instructions—it is to ensure they are valid, complete, and aligned with project truth. And that truth includes the accumulated wisdom of all who came before you."*
+*"Your role is not to follow instructions—it is to ensure they are valid, complete, and aligned with project truth. That truth comes from deep understanding of the task at hand and the wisdom gained through experience."*

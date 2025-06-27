@@ -29,40 +29,24 @@ Load ALL relevant knowledge from previous implementations to avoid repeating mis
 
 ### Activities
 
-#### 0.1 Load or Create Task-Level Project Context
+#### 0.1 Load Task-Level Project Context
 
-**For NEW TASKS (first subtask of a task):**
-1. Check if `.taskmaster/tasks/task_<parentTaskId>/project-context.md` exists
-2. If it exists, read it (another subtask may have created it)
-3. If not, launch sub-agents to create it:
+**Read the project context created during task decomposition:**
+1. Read `.taskmaster/tasks/task_<parentTaskId>/project-context.md`
+2. This was created by sub-agents during the main task workflow
+3. Contains synthesized project understanding for all subtasks
 
-   **Sub-agent Mission:**
-   "Analyze the ENTIRE task (not just this subtask) and create a briefing document that provides the project context needed for ALL subtasks of this task. Read all relevant documentation but synthesize it into a focused brief."
+**The project context provides:**
+- Overview of relevant components and how they work
+- Key concepts and terminology for this task domain
+- Architectural context (where this fits in the system)
+- Relevant constraints, conventions, or decisions
+- Domain understanding shared by all subtasks
 
-   **Sub-agents should:**
-   - Analyze the parent task description and all its subtasks
-   - Read relevant sections from `docs/` (carefully search through the docs for relevant information)
-   - If task mentions PocketFlow or implicitly uses PocketFlow: Read `pocketflow/__init__.py` and relevant `pocketflow/docs/`
-   - Create a synthesized briefing that includes:
-     - Overview of relevant components and how they work
-     - Key concepts and terminology for this task domain
-     - Architectural context (where this fits in the system)
-     - Relevant constraints, conventions, or decisions
-     - Just enough big picture to ground ALL subtasks
-
-   **Sub-agents should NOT:**
-   - Include implementation examples (save cookbook for later)
-   - Add details about unrelated components
-   - Copy large sections verbatim
-   - Focus on HOW to implement (that comes later)
-
-   **Output**: Create `.taskmaster/tasks/task_<parentTaskId>/project-context.md` based on the template
-
-**For CONTINUING SUBTASKS (not the first in the task):**
-1. Read existing `.taskmaster/tasks/task_<parentTaskId>/project-context.md`
-2. If it doesn't exist (rare case where earlier subtask failed), follow the NEW TASKS process above
-
-This briefing document should be 2-4 pages that give the mental model needed for the entire task.
+**If project context is missing:**
+- This indicates the main task workflow was not followed
+- Alert the user that task decomposition should be done first
+- The task needs to go through `refine-task.md` workflow
 
 #### 0.2 Load Historical Knowledge
 
@@ -121,10 +105,10 @@ Create knowledge synthesis file at:
 ```
 
 ### Exit Criteria for Phase 0
-- [ ] Project context briefing created by sub-agents
-- [ ] Relevant components and concepts understood
-- [ ] All previous task reviews read and understood
-- [ ] All relevant subtask reviews (if applicable) processed
+- [ ] Project context read and understood
+- [ ] Relevant components and concepts clear
+- [ ] All previous task reviews read and understood (for new tasks)
+- [ ] All relevant sibling reviews processed (for continuing subtasks)
 - [ ] Knowledge synthesis document created
 - [ ] Mental model of codebase evolution established
 
@@ -317,9 +301,10 @@ Before refining implementation details, understand:
 ## Important Notes for AI Agents
 
 1. **Knowledge Loading Strategy**:
-   - NEW TASKS (first subtask)? Create project context + read other tasks' reviews
-   - CONTINUING SUBTASKS? Read existing project context + sibling reviews
-   - This prevents redundant reading while maintaining context
+   - ALL subtasks read project context (created during main task workflow)
+   - NEW TASKS (first subtask)? Read other tasks' reviews
+   - CONTINUING SUBTASKS? Read sibling reviews from current task
+   - Project context should always exist - if not, task decomposition was skipped
 
 2. **task-master limitations**:
    - Can only show task details and set status
