@@ -21,12 +21,20 @@ graph LR
 
 ### Phase 0: Knowledge Loading (📚 `refine-subtask.md`)
 **Purpose**: Start smart by learning from previous implementations
-- **For NEW TASKS**: Sub-agents create task-level project context briefing (once per task)
-- **For CONTINUING SUBTASKS**: Read existing task-level project context
-- **For NEW TASKS**: Read task-level reviews from other tasks
-- **For SUBTASKS**: Read sibling subtask reviews from current task
-- Synthesize patterns and pitfalls
-- Build mental model of codebase evolution
+
+**For NEW TASKS (first subtask of a task):**
+1. Sub-agents create task-level project context briefing (once per task)
+2. Read task-level reviews from other completed tasks
+3. Synthesize patterns and pitfalls from across the codebase
+
+**For CONTINUING SUBTASKS (not the first subtask):**
+1. Read existing task-level project context (created by first subtask)
+2. Read sibling subtask reviews from current task
+3. Build on knowledge from completed siblings
+
+**Both create:**
+- Knowledge synthesis document
+- Mental model of codebase evolution
 
 ### Phase 1: Refinement (🔍 `refine-subtask.md`)
 **Purpose**: Transform ambiguous tasks into crystal-clear specifications

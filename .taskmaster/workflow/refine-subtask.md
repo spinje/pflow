@@ -64,9 +64,10 @@ Load ALL relevant knowledge from previous implementations to avoid repeating mis
 
 This briefing document should be 2-4 pages that give the mental model needed for the entire task.
 
-#### 0.2 Load Project-Wide Knowledge
+#### 0.2 Load Historical Knowledge
 
-**For a NEW TASK** (first subtask of a task, e.g., subtask 3.1):
+**For NEW TASKS (first subtask of a task):**
+
 Read all task-level reviews from completed tasks:
 1. Navigate to `.taskmaster/tasks/`
 2. For each `task_*` folder (except your current task):
@@ -82,9 +83,8 @@ Example paths to check for task 3.1:
 - Architectural decisions made
 - Conventions established
 
-#### 0.3 Load Task-Specific Knowledge
+**For CONTINUING SUBTASKS (not the first subtask):**
 
-**For a SUBTASK** (not the first in its task, e.g., subtask 3.2 or 3.3):
 Read sibling subtask reviews from your current task:
 1. Navigate to `.taskmaster/tasks/task_<parentTaskId>/`
 2. For each completed `subtask_*` folder (with lower number than current):
@@ -100,7 +100,7 @@ Example for subtask 3.3:
 - Assumptions already made
 - Context from completed siblings
 
-#### 0.4 Synthesize Patterns
+#### 0.3 Synthesize Patterns
 Create knowledge synthesis file at:
 `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/knowledge-synthesis.md`
 
@@ -317,8 +317,8 @@ Before refining implementation details, understand:
 ## Important Notes for AI Agents
 
 1. **Knowledge Loading Strategy**:
-   - First subtask of a task? Read other tasks' `task-review.md` files
-   - Later subtask? Read previous subtasks' `review.md` from current task
+   - NEW TASKS (first subtask)? Create project context + read other tasks' reviews
+   - CONTINUING SUBTASKS? Read existing project context + sibling reviews
    - This prevents redundant reading while maintaining context
 
 2. **task-master limitations**:
