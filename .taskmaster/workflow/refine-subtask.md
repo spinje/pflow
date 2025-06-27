@@ -134,17 +134,40 @@ Note: This is the primary use of task-master in the refinement phase.
 - What assumptions are being made?
 - Where might ambiguities hide?
 
-#### 1.2 Code Validation
-**Explore and verify against actual codebase:**
-- Read relevant source files in `src/pflow/`
-- Check documentation in `docs/` for accuracy
-- If using PocketFlow, study `pocketflow/__init__.py`
-- Review examples in `pocketflow/cookbook/` if applicable
+#### 1.2 Code Validation & Cookbook Pattern Analysis
+
+**Deploy sub-agents** to analyze the codebase, documentation and identify relevant cookbook patterns.
+
+**Part A: Gather relevant information:**
+- Agents search the documentation in `docs/` for relevant files and information
+
+**Part B: Explore and verify against actual codebase:**
+- Agents search for relevant source files in `src/pflow/`
+- And search documentation in `docs/` for accuracy and cross-references
+
+
+-If using PocketFlow:
+  -
+
+**Part C: Cookbook Pattern Discovery (only for tasks where PocketFlow can potentially be used):**
+- **Sub-agents read** `pocketflow/cookbook/CLAUDE.md` to understand available examples and `pocketflow/__init__.py` to understand core framework
+- **Sub-agents search** `pocketflow/docs/` for conceptual understanding that can be applied to the current task
+- **Sub-agents search** `pocketflow/cookbook/` for relevant examples
+- **Sub-agents identify** 1-3 cookbook examples most relevant to this subtask
+- **Sub-agents analyze** the identified examples for:
+  - Implementation patterns you can adapt
+  - Error handling approaches
+  - Code organization conventions
+  - Testing strategies
+  - And more...
 
 **Document findings:**
 - Note discrepancies between docs and code
 - Identify missing information
 - List assumptions that need validation
+- Document which cookbook patterns that can be applied
+
+> **Using sub-agents is mandatory** for gathering this information effectively. This ensures that you are not polluting your own context window with irrelevant information when searching for relevant information.
 
 #### 1.3 Ambiguity Detection and Resolution
 
@@ -200,6 +223,7 @@ Create refined specification at:
 - Building on: [Previous patterns being reused]
 - Avoiding: [Known pitfalls being sidestepped]
 - Following: [Conventions being maintained]
+- **Cookbook patterns to apply**: [List specific examples, e.g., "pocketflow-batch-node for file processing"]
 
 ## Technical Specification
 ### Inputs
@@ -243,9 +267,10 @@ Note: We do NOT update task-master during refinement. Task-master is only update
 
 ### Exit Criteria for Phase 1
 - [ ] All code validated against task requirements
+- [ ] Relevant cookbook patterns analyzed and documented (2-3 examples minimum for PocketFlow tasks)
 - [ ] All ambiguities identified and resolved
 - [ ] User decisions obtained and documented
-- [ ] Refined specification created
+- [ ] Refined specification created with cookbook patterns listed
 - [ ] Success criteria clearly defined
 - [ ] Test strategy identified
 - [ ] Knowledge from previous tasks incorporated

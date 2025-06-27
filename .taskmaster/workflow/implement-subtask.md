@@ -66,6 +66,15 @@ Based on refined specification:
    - Test: [...]
 
 ## Pattern Applications
+
+### Cookbook Patterns (only potentially applicable to tasks that can leverage pocketflow)
+- **[Cookbook Example Name]**: [How you'll adapt it]
+  - Specific code/approach: [What you're taking from it]
+  - Modifications needed: [How you'll adjust for this task]
+  - If Discarded: [Why it was discarded]
+- **[Another Example]**: [Its application]
+
+### Previous Task Patterns
 - Using [Pattern X] from [Task Y] for [specific part]
 - Avoiding [Anti-pattern Z] discovered in [Task W]
 
@@ -82,6 +91,10 @@ Initial content:
 ```markdown
 # Learning Log for <subtaskId>
 Started: [Current date/time]
+
+## Cookbook Patterns Being Applied
+- [Pattern from example X]: [Status]
+- [Pattern from example Y]: [Status]
 ```
 
 Note: Do NOT update task-master status yet. All progress tracking happens in files.
@@ -145,6 +158,24 @@ Create file at:
 - [ ] Warn implementer of Task Y about [issue]
 ```
 
+**When applying cookbook patterns:**
+
+Document pattern application results in your progress log:
+```markdown
+## [Time] - Applying [Cookbook Example Name] Pattern
+- Pattern source: pocketflow/cookbook/[example-name]/
+- What I'm adapting: [Specific code/approach]
+- Modifications made: [How I adjusted it]
+- Result: SUCCESS/PARTIAL/FAILED
+- Learning: [What this teaches about the pattern]
+
+Working code:
+```[language]
+# Code adapted from cookbook
+[actual implementation]
+```
+```
+
 #### 2.6 Testing and Validation
 
 Execute test strategy from refined spec:
@@ -185,6 +216,22 @@ Once functional, create comprehensive review at:
 - Started: [Date/time]
 - Completed: [Date/time]
 - Deviations from plan: [Count and severity]
+
+## Cookbook Pattern Evaluation
+### Patterns Applied
+1. **[Cookbook Example Name]** (pocketflow/cookbook/[example]/)
+   - Applied for: [What aspect of the task]
+   - Success level: [Full/Partial/Failed]
+   - Key adaptations: [How you modified it]
+   - Would use again: [Yes/No + reasoning]
+
+2. **[Another Example]**
+   - [Same structure]
+
+### Cookbook Insights
+- Most valuable pattern: [Which one and why]
+- Unexpected discovery: [Something learned from examples]
+- Gap identified: [What cookbook doesn't cover that would help]
 
 ## What Worked Well
 1. [Approach/pattern]: [Why it worked]
