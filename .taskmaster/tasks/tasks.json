@@ -17,7 +17,7 @@
             "description": "Add [project.scripts] section to pyproject.toml defining 'pflow = \"pflow.cli:main\"' as the console script entry point. This enables the 'pflow' command to be available system-wide after installation.",
             "dependencies": [],
             "details": "Edit pyproject.toml to add the [project.scripts] section with the pflow entry point. This follows standard Python packaging practices for creating command-line tools. The entry point syntax 'pflow.cli:main' tells setuptools to look for a 'main' function in the pflow.cli module when the 'pflow' command is invoked.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": ""
           },
           {
@@ -643,7 +643,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-26T13:54:40.828226Z",
+      "updated": "2025-06-27T15:07:39.814Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }

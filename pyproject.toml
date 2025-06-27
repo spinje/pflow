@@ -24,6 +24,9 @@ dependencies = [
     "llm>=0.26",      # Simon W simple prompts native integration
 ]
 
+[project.scripts]
+pflow = "pflow.cli:main"
+
 [project.urls]
 Homepage = "https://spinje.github.io/pflow/"
 Repository = "https://github.com/spinje/pflow"
