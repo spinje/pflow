@@ -21,7 +21,8 @@ graph LR
 
 ### Phase 0: Knowledge Loading (📚 `refine-subtask.md`)
 **Purpose**: Start smart by learning from previous implementations
-- **NEW**: Use sub-agents to create task-specific project context briefing
+- **For NEW TASKS**: Sub-agents create task-level project context briefing (once per task)
+- **For CONTINUING SUBTASKS**: Read existing task-level project context
 - **For NEW TASKS**: Read task-level reviews from other tasks
 - **For SUBTASKS**: Read sibling subtask reviews from current task
 - Synthesize patterns and pitfalls
@@ -84,10 +85,10 @@ Each task contributes to a growing knowledge base that makes future tasks progre
 #### Phase 0: Knowledge Loading
 ```
 As subtask 5.2 (not the first subtask):
-1. Sub-agents create: .taskmaster/tasks/task_5/subtask_5.2/refinement/project-context.md
-   - Analyzes "Add user authentication to CLI"
-   - Synthesizes relevant docs about CLI component and auth concepts
-   - Creates 2-4 page briefing on auth in CLI context
+1. Read existing: .taskmaster/tasks/task_5/project-context.md
+   - Was created by sub-agents during subtask 5.1
+   - Contains synthesized briefing about CLI and auth concepts
+   - Provides 2-4 page overview for entire task 5
 
 2. Read: .taskmaster/tasks/task_5/subtask_5.1/implementation/review.md
    - Discovers initial auth setup patterns
@@ -148,9 +149,9 @@ As subtask 5.2 (not the first subtask):
 │   └── templates/               # Artifact templates
 ├── tasks/
 │   ├── task_1/
+│   │   ├── project-context.md  # Created once per task by sub-agents
 │   │   ├── subtask_1.1/
 │   │   │   ├── refinement/
-│   │   │   │   ├── project-context.md
 │   │   │   │   ├── knowledge-synthesis.md
 │   │   │   │   ├── evaluation.md
 │   │   │   │   └── refined-spec.md
@@ -160,7 +161,7 @@ As subtask 5.2 (not the first subtask):
 │   │   │   │   └── review.md
 │   │   │   └── ready-for-implementation (marker file)
 │   │   ├── subtask_1.2/
-│   │   │   └── (same structure)
+│   │   │   └── (same structure, but reads existing project-context.md)
 │   │   └── task-review.md (created after all subtasks complete)
 │   └── task_2/
 │       └── (same structure)
@@ -177,9 +178,9 @@ As subtask 5.2 (not the first subtask):
 You're about to work on subtask 5.1 (the first subtask of task 5):
 
 **Step 1 - Sub-agents create project context**:
-- `.taskmaster/tasks/task_5/subtask_5.1/refinement/project-context.md`
-- They analyze the task and synthesize relevant project documentation
-- You get a 2-4 page briefing specific to your task
+- **CREATE**: `.taskmaster/tasks/task_5/project-context.md`
+- They analyze the entire task 5 and synthesize relevant project documentation
+- You get a 2-4 page briefing that will be used by ALL subtasks of task 5
 
 **Step 2 - Read these task reviews**:
 - `.taskmaster/tasks/task_1/task-review.md`
@@ -192,10 +193,10 @@ You're about to work on subtask 5.1 (the first subtask of task 5):
 ### Example 2: Working on Subtask 5.3
 You're working on subtask 5.3 (subtasks 5.1 and 5.2 are complete):
 
-**Step 1 - Sub-agents create project context**:
-- `.taskmaster/tasks/task_5/subtask_5.3/refinement/project-context.md`
-- Even though you're on the same task, you get a fresh briefing
-- Tailored to subtask 5.3's specific needs
+**Step 1 - Read existing project context**:
+- **READ**: `.taskmaster/tasks/task_5/project-context.md`
+- This was already created during subtask 5.1
+- Contains the same briefing used by 5.1 and 5.2
 
 **Step 2 - Read these sibling reviews**:
 - `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
@@ -221,18 +222,18 @@ When something works, document it as a pattern before moving on.
 
 ### Phase 0: Knowledge Loading
 **For new tasks (e.g., starting task 5.1)**:
-- Sub-agents create: `.taskmaster/tasks/task_5/subtask_5.1/refinement/project-context.md`
+- Sub-agents CREATE: `.taskmaster/tasks/task_5/project-context.md`
 - Read: `.taskmaster/tasks/task_1/task-review.md`
 - Read: `.taskmaster/tasks/task_2/task-review.md`
 - Read: `.taskmaster/tasks/task_3/task-review.md`
 - Read: `.taskmaster/tasks/task_4/task-review.md`
 - Create: `.taskmaster/tasks/task_5/subtask_5.1/refinement/knowledge-synthesis.md`
 
-**For subtasks (e.g., working on 5.3)**:
-- Sub-agents create: `.taskmaster/tasks/task_5/subtask_5.3/refinement/project-context.md`
+**For continuing subtasks (e.g., working on 5.3)**:
+- READ existing: `.taskmaster/tasks/task_5/project-context.md`
 - Read: `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
 - Read: `.taskmaster/tasks/task_5/subtask_5.2/implementation/review.md`
-- Update: `.taskmaster/tasks/task_5/subtask_5.3/refinement/knowledge-synthesis.md`
+- Create: `.taskmaster/tasks/task_5/subtask_5.3/refinement/knowledge-synthesis.md`
 
 ### Phase 1: Refinement
 1. Use: `task-master show --id=X.Y` (only task-master command in refinement)

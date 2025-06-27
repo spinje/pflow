@@ -29,33 +29,40 @@ Load ALL relevant knowledge from previous implementations to avoid repeating mis
 
 ### Activities
 
-#### 0.1 Create Task-Specific Project Context
+#### 0.1 Load or Create Task-Level Project Context
 
-Launch sub-agents to synthesize a focused project briefing for this specific task:
+**For NEW TASKS (first subtask of a task):**
+1. Check if `.taskmaster/tasks/task_<parentTaskId>/project-context.md` exists
+2. If it exists, read it (another subtask may have created it)
+3. If not, launch sub-agents to create it:
 
-**Sub-agent Mission:**
-"Analyze the task requirements and create a briefing document that provides exactly the project context needed for this task. Read all relevant documentation but synthesize it into a focused brief."
+   **Sub-agent Mission:**
+   "Analyze the ENTIRE task (not just this subtask) and create a briefing document that provides the project context needed for ALL subtasks of this task. Read all relevant documentation but synthesize it into a focused brief."
 
-**Sub-agents should:**
-1. Analyze the task description to identify which components/concepts are involved
-2. Read relevant sections from `docs/` (carefully search through the docs for relevant information)
-3. If task mentions PocketFlow or implicitly uses PocketFlow: Read `pocketflow/__init__.py` and relevant `pocketflow/docs/`
-4. Create a synthesized briefing that includes:
-   - Overview of relevant components and how they work
-   - Key concepts and terminology for this task domain
-   - Architectural context (where this fits in the system)
-   - Relevant constraints, conventions, or decisions
-   - Just enough big picture to ground the implementation
+   **Sub-agents should:**
+   - Analyze the parent task description and all its subtasks
+   - Read relevant sections from `docs/` (carefully search through the docs for relevant information)
+   - If task mentions PocketFlow or implicitly uses PocketFlow: Read `pocketflow/__init__.py` and relevant `pocketflow/docs/`
+   - Create a synthesized briefing that includes:
+     - Overview of relevant components and how they work
+     - Key concepts and terminology for this task domain
+     - Architectural context (where this fits in the system)
+     - Relevant constraints, conventions, or decisions
+     - Just enough big picture to ground ALL subtasks
 
-**Sub-agents should NOT:**
-- Include implementation examples (save cookbook for later)
-- Add details about unrelated components
-- Copy large sections verbatim
-- Focus on HOW to implement (that comes later)
+   **Sub-agents should NOT:**
+   - Include implementation examples (save cookbook for later)
+   - Add details about unrelated components
+   - Copy large sections verbatim
+   - Focus on HOW to implement (that comes later)
 
-**Output**: Create `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/project-context.md` based on the `project-context.md` template in `.taskmaster/workflow/templates/`
+   **Output**: Create `.taskmaster/tasks/task_<parentTaskId>/project-context.md` based on the template
 
-This briefing document should be 2-4 pages that give you exactly the mental model needed for this task and all its subtasks.
+**For CONTINUING SUBTASKS (not the first in the task):**
+1. Read existing `.taskmaster/tasks/task_<parentTaskId>/project-context.md`
+2. If it doesn't exist (rare case where earlier subtask failed), follow the NEW TASKS process above
+
+This briefing document should be 2-4 pages that give the mental model needed for the entire task.
 
 #### 0.2 Load Project-Wide Knowledge
 

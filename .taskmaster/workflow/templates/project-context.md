@@ -1,9 +1,9 @@
-# Project Context for [Task ID]: [Task Title]
+# Project Context for Task [X]: [Task Title]
 
-**File Location**: `.taskmaster/tasks/task_[X]/subtask_[X.Y]/refinement/project-context.md`
+**File Location**: `.taskmaster/tasks/task_[X]/project-context.md`
 
 *Created by sub-agents on: [Date]*
-*Purpose: Provide focused project understanding for this specific task*
+*Purpose: Provide focused project understanding for ALL subtasks of this task*
 
 ## Task Domain Overview
 
@@ -76,3 +76,5 @@
 ---
 
 *This briefing was synthesized from project documentation to provide exactly the context needed for this task, without overwhelming detail.*
+
+**Note**: This document is created ONCE at the task level and shared by ALL subtasks. It is created by the first subtask and read by all subsequent subtasks.
