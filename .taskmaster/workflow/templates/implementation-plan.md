@@ -26,7 +26,11 @@
   // Add this function/class/component
   [specific code to add]
   ```
-- **Test**: Run `[command]` to verify [expected outcome]
+- **Test Strategy**:
+  - Test file: `tests/test_[module].py`
+  - Focus: [What critical behavior to test]
+  - Consider: [Edge cases or error conditions]
+- **Verify**: Run `[command]` to ensure tests pass
 - **Time Estimate**: [X minutes]
 
 ### Step 2: [Next Step Name]
@@ -35,16 +39,26 @@
 - **Change**:
   - Line [X]: Change `[old]` to `[new]`
   - Line [Y]: Add `[code]`
+- **Test Updates**:
+  - Update test file: `tests/test_[module].ext`
+  - Add/modify tests for changed functionality
+  - Ensure existing tests still pass
 - **Depends on**: Step 1 completion
-- **Test**: [How to verify this step worked]
+- **Verify**: [Test command to run]
 - **Time Estimate**: [X minutes]
 
 ### Step 3: [Integration Step]
 - **Files**: Multiple files affected
-  - `file1.js`: [what changes]
-  - `file2.js`: [what changes]
+  - `module1.py`: [what changes]
+  - `module2.py`: [what changes]
 - **Action**: [Description]
-- **Test**: [Integration test command]
+- **Integration Tests**:
+  - Create: `tests/test_integration_[feature].py`
+  - Test cases:
+    - Test component interactions
+    - Test data flow between modules
+    - Test error propagation
+- **Verify**: [Integration test command]
 - **Time Estimate**: [X minutes]
 
 ## Pattern Applications
@@ -106,11 +120,12 @@ If implementation fails:
 ## Success Markers
 
 After each step, verify:
-- [ ] Step 1: [Observable outcome]
-- [ ] Step 2: [What should work]
-- [ ] Step 3: [What to check]
-- [ ] All tests passing
+- [ ] Step 1: [Observable outcome] + critical tests passing
+- [ ] Step 2: [What should work] + tests still passing
+- [ ] Step 3: [What to check] + integration working
+- [ ] All tests passing (new and existing)
 - [ ] No regressions
+- [ ] Key functionality properly tested
 
 ## Notes for Learning Log
 

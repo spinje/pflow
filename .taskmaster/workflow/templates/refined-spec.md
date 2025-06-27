@@ -86,22 +86,42 @@
 - [ ] **Tests**: All unit tests pass with >90% coverage
 - [ ] **Documentation**: API docs updated with examples
 
-## Test Strategy
+## Test Requirements & Creation Strategy
 
-### Unit Tests
-- **[Component]**: Test [specific behavior]
-  - Happy path: [scenario]
-  - Error case: [scenario]
-  - Edge case: [scenario]
+**Test Coverage Target**: >80% for all new code
 
-### Integration Tests
-- **[Integration Point]**: Verify [specific interaction]
-  - Test case: [description]
-  - Expected: [outcome]
+### Tests to Create
 
-### Manual Verification
+#### Unit Tests (REQUIRED)
+**File**: `tests/test_[module].py`
+- **[Function/Class Name]**:
+  - `test_[name]_happy_path`: [What normal operation should do]
+  - `test_[name]_with_invalid_input`: [How it handles bad data]
+  - `test_[name]_edge_case`: [Boundary condition behavior]
+  - `test_[name]_error_propagation`: [How errors are handled]
+
+**File**: `tests/test_[another_module].py`
+- **[Another Component]**:
+  - [List specific test cases]
+
+#### Integration Tests (When Components Interact)
+**File**: `tests/test_integration_[feature].py`
+- **Test Case**: [Component A + Component B interaction]
+- **Test Case**: [Data flow through system]
+- **Test Case**: [Error handling across components]
+- **Test Case**: [Real-world usage scenario]
+
+### Test Implementation Guidelines
+- **Test what matters**: Focus on public interfaces and critical paths
+- **Quality over quantity**: Better to have fewer, meaningful tests than many trivial ones
+- **Integration tests are valuable**: Sometimes more important than unit tests
+- **Test edge cases**: Where bugs hide (empty inputs, boundaries, errors)
+- **Mock sparingly**: Only mock external dependencies, not internal components
+
+### Manual Verification (Post-Implementation)
 - [ ] [Specific user flow to test]
 - [ ] [Another manual check]
+- [ ] All automated tests pass locally
 
 ## Dependencies
 
@@ -133,19 +153,26 @@
 
 ### File Structure
 ```
-path/to/
-├── component.js     # [What it does]
-├── component.test.js # [Test coverage]
-└── types.ts         # [Type definitions]
+src/pflow/
+├── module.py            # [What it does]
+├── __init__.py         # Module exports
+└── tests/
+    ├── test_module.py  # Unit tests (>80% coverage)
+    └── test_integration_[feature].py # Integration tests
 ```
 
-### Key Interfaces
-```typescript
-interface [Name] {
-  // [Purpose]
-  property: Type;
-  method(): ReturnType;
-}
+### Key Interfaces/Classes
+```python
+class [ClassName]:
+    """[Purpose of this class]"""
+
+    def __init__(self, [params]):
+        """Initialize with [description]."""
+        self.property = [value]
+
+    def method_name(self) -> ReturnType:
+        """[What this method does]."""
+        pass
 ```
 
 ### Error Handling

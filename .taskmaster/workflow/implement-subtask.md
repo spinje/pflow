@@ -176,15 +176,47 @@ Working code:
 ```
 ```
 
-#### 2.6 Testing and Validation
+#### 2.6 Test Creation
 
-Execute test strategy from refined spec:
+**Core Principle**: "Test what matters"
+
+**Focus on quality over quantity**:
+- Test public interfaces and critical paths
+- Test edge cases where bugs typically hide
+- Create integration tests when components interact
+- Document only interesting test discoveries in your progress log
+
+**What to test**:
+- **Critical paths**: Business logic that must work correctly
+- **Public APIs**: Functions/classes exposed to other modules
+- **Error handling**: How code behaves with invalid input
+- **Integration points**: Where components connect
+
+**What NOT to test**:
+- Simple getters/setters
+- Configuration loading
+- Framework code
+- Internal helper functions (unless complex)
+
+**Progress Log - Only document testing insights**:
+```markdown
+## 14:50 - Testing revealed edge case
+While testing authenticate_user(), discovered that empty strings
+bypass validation. Added specific check and test case.
+This pattern might affect other input validation across the system.
+```
+
+**Remember**: Quality tests that catch real bugs > many trivial tests
+
+#### 2.7 Testing and Validation
+
+Execute test strategy from refined spec and run your newly created tests:
 
 - Run tests using appropriate commands (e.g., `make test`, `pytest`, etc.)
 - Document test discoveries in your progress log
 - Add section "## Test Insights" with findings
 
-#### 2.7 Extract Patterns
+#### 2.8 Extract Patterns
 
 As patterns emerge, document them immediately:
 
@@ -204,7 +236,7 @@ Create patterns file at:
 ```
 ```
 
-#### 2.8 Create Implementation Review
+#### 2.9 Create Implementation Review
 
 Once functional, create comprehensive review at:
 `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/subtask-review.md`
@@ -232,6 +264,28 @@ Once functional, create comprehensive review at:
 - Most valuable pattern: [Which one and why]
 - Unexpected discovery: [Something learned from examples]
 - Gap identified: [What cookbook doesn't cover that would help]
+
+## Test Creation Summary
+### Tests Created
+- **Total test files**: [Number] new, [Number] modified
+- **Total test cases**: [Number] created
+- **Coverage achieved**: [X]% of new code
+- **Test execution time**: [X] seconds
+
+### Test Breakdown by Feature
+1. **[Feature/Function Name]**
+   - Test file: `tests/test_[module].py`
+   - Test cases: [Number]
+   - Coverage: [X]%
+   - Key scenarios tested: [List main test scenarios]
+
+2. **[Another Feature]**
+   - [Same structure]
+
+### Testing Insights
+- Most valuable test: [Which caught important issues]
+- Testing challenges: [Any difficulties encountered]
+- Future test improvements: [What could be added]
 
 ## What Worked Well
 1. [Approach/pattern]: [Why it worked]
@@ -268,7 +322,7 @@ If you're implementing something similar:
 3. Use [pattern] for [situation]
 ```
 
-#### 2.9 Final Learning Integration
+#### 2.10 Final Learning Integration
 
 If you discovered truly reusable patterns, pitfalls, or made architectural decisions:
 
@@ -296,7 +350,7 @@ If you discovered truly reusable patterns, pitfalls, or made architectural decis
 
 Note: Only add knowledge that will genuinely help future tasks. Quality over quantity.
 
-#### 2.10 Create Task Review (If Last Subtask)
+#### 2.11 Create Task Review (If Last Subtask)
 
 If this is the final subtask of the task:
 1. Read all subtask reviews from this task:
@@ -309,7 +363,7 @@ If this is the final subtask of the task:
    - Important warnings for future tasks
    - Overall task success metrics
 
-#### 2.11 Update Task-Master (FINAL STEP ONLY)
+#### 2.12 Update Task-Master (FINAL STEP ONLY)
 
 Only after implementation is complete and reviewed:
 
@@ -319,7 +373,7 @@ task-master set-status --id=<subtaskId> --status=done
 
 This is the ONLY time you update task-master during the entire workflow.
 
-#### 2.12 Git Commit
+#### 2.13 Git Commit
 
 Create meaningful commit with context:
 
@@ -336,7 +390,7 @@ See .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/sub
 
 Do NOT include "Generated with [Claude Code](https://claude.ai/code)" in the commit message.
 
-#### 2.13 Notify the user of the next step
+#### 2.14 Notify the user of the next step
 
 Let the user know that the next step is to run the following slash command:
 ```
@@ -412,7 +466,8 @@ Then return to `refine-subtask.md` workflow.
 
 Your implementation is successful when:
 - [ ] All success criteria from refined spec are met
-- [ ] All tests pass
+- [ ] Critical functionality has tests
+- [ ] All tests pass (both existing and new)
 - [ ] Learnings are captured in real-time
 - [ ] Patterns are extracted and documented
 - [ ] Review document is comprehensive

@@ -13,6 +13,7 @@ Environment check:
 - Working directory: `[pwd output]`
 - Git branch: `[branch name]`
 - Dependencies verified: ✓
+- Test suite passing: ✓
 
 ---
 
@@ -107,20 +108,25 @@ While implementing [feature], discovered a reusable pattern:
 
 ## [HH:MM] - Testing Insights
 
-### Unit Test Results
-```
-[test output]
-```
+**Only document tests that revealed something interesting:**
 
-**Surprises**:
-- Test [X] failed because [reason]
-- Fixed by [solution]
+### Failed Test That Taught Something
+```python
+def test_[function]_[scenario]():
+    # This test failed and revealed [insight]
+    result = function(edge_case_input)
+    # Expected X but got Y because [reason]
+```
+**Learning**: [What this failure taught about the system]
 
-### Interesting Edge Case
-- Input: `[edge case input]`
-- Expected: [what you thought would happen]
-- Actual: [what actually happened]
-- Learning: [what this means]
+### Edge Case Discovery
+- Scenario: [What edge case you found]
+- Why it matters: [Impact on the system]
+- How to handle: [Solution implemented]
+
+### Testing Pattern Emerged
+- Pattern: [Reusable testing approach discovered]
+- When to use: [Situations where this helps]
 
 ---
 
@@ -175,6 +181,11 @@ Result: [PASS/FAIL]
 - New patterns discovered: [N]
 - Tasks affected: [N]
 
+### Test Summary
+- **Coverage**: [X]% of new code (target was >80%)
+- **All tests passing**: ✅ YES / ❌ NO
+- **Key testing insight**: [Most important thing learned from testing]
+
 ### Key Learnings
 1. **Most Important**: [The #1 thing you learned]
 2. **Surprised by**: [What you didn't expect]
@@ -183,6 +194,7 @@ Result: [PASS/FAIL]
 ### Updated Documentation
 - [ ] Review document created
 - [ ] Patterns extracted
+- [ ] Tests documented
 - [ ] Task-master updated
 - [ ] Affected tasks noted
 
