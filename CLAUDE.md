@@ -102,7 +102,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - `llm` - Simon Willison's LLM CLI integration and inspiration
 
 **Development Tools**:
-- `uv` - Fast Python package manager
+- `uv` - Fast Python package manager (ALWAYS use `uv pip` instead of `pip`)
 - `pytest` - Testing framework
 - `mypy` - Type checking
 - `ruff` - Linting and formatting
@@ -136,8 +136,11 @@ pflow/
 │   ├── cookbook/          # Extensive examples (40+ patterns)
 │   └── tests/             # Framework test suite
 ├── src/pflow/             # Main pflow CLI implementation
-│   ├── __init__.py       # Currently empty - CLI entry point to be added
-│   └── foo.py            # Placeholder - to be replaced with core modules
+│   ├── __init__.py       # Package initialization
+│   ├── foo.py            # Legacy placeholder (to be removed)
+│   └── cli/              # CLI module
+│       ├── __init__.py   # Exports main CLI entry point
+│       └── main.py       # CLI implementation with click
 ├── docs/                  # Comprehensive project specifications
 │   ├── CLAUDE.md                  # Documentation navigation guide for AI
 │   ├── index.md                   # Documentation inventory and overview
@@ -190,8 +193,9 @@ pflow/
 │   └── reports/         # Generated reports
 │       └── task-complexity-report.json  # Task decomposition history
 ├── tests/                 # Test suite
-│   ├── test_foo.py       # Placeholder test
-│   └── test_links.py     # Documentation link validation
+│   ├── test_foo.py       # Legacy placeholder test (to be removed)
+│   ├── test_links.py     # Documentation link validation
+│   └── test_cli.py       # CLI tests using click.testing.CliRunner
 ├── Makefile              # Development automation
 ├── pyproject.toml        # Project configuration and dependencies
 └── CLAUDE.md            # This file
@@ -205,11 +209,12 @@ pflow/
 3. Specify *how* it fits into current architecture
 4. Use consistent patterns (shared store, simple IO, single responsibility)
 5. Avoid introducing abstractions not yet justified
-6. Write comprehensive tests and documentation before, during and after working on the task following the test-as-you-go strategy:
-   - Create tests AS YOU CODE, not after implementation is complete
-   - Every new function/component needs at least 3 test cases (happy path, error, edge)
-   - Aim for >80% coverage of new code
+6. Write comprehensive tests and documentation following the test-as-you-go strategy:
+   - Create tests AS YOU CODE, not as separate tasks/subtasks
+   - Every new function/component needs appropriate test cases (focus on quality over quantity)
+   - Test public APIs, critical paths, error handling, and integration points
    - A task without tests is an INCOMPLETE task
+   - Tests and implementation should be committed together
 
 **Key Questions** for every task:
 - **Purpose**: Why is this needed?
@@ -285,7 +290,8 @@ The codebase is in early development with:
 - ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/implementation-roadmap.md`
 - ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap
 - ✅ Establish epistemic workflow for task execution in `.taskmaster/workflow/`
-- ⏳ Start implementing features for the MVP using the `refine-task.md` -> `refine-subtask.md` -> `implement-subtask.md` epistemic workflow.
+- ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
+- ⏳ Implementing features for the MVP using the epistemic workflow (next: Task 5 - Node discovery)
 
 ## Task Implementation Workflow
 
