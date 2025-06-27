@@ -39,6 +39,7 @@ graph TB
 - Optionally review similar tasks for inspiration
 - Generate subtasks based on understanding
 - Refine subtasks to ensure clarity
+- Heavily utilize sub-agents to search the codebase and the available documentation and examples
 
 ### 2. Subtask Workflow (`refine-subtask.md` → `implement-subtask.md`)
 **Purpose**: Implement subtasks while building on previous learnings
@@ -48,6 +49,7 @@ graph TB
 - Load relevant implementation knowledge from past work
 - Refine specifications and implement
 - Capture learnings for future tasks
+- Heavily utilize sub-agents to search the codebase and the available documentation and examples
 
 ## The Compound Learning Effect
 
@@ -296,6 +298,7 @@ When something works, document it as a pattern before moving on.
    - Continuing subtasks: Read sibling reviews
 3. Create knowledge-synthesis.md
 4. Refine → Implement → Review
+5. Notify the user of the next step (/refine-task <nextTaskId>, /refine-subtask <subtaskId>, /implement-subtask <subtaskId>)
 
 **Final subtask extras**:
 - Create task-review.md after implementation
