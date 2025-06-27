@@ -5,7 +5,7 @@
         "id": 1,
         "title": "Create package setup and CLI entry point",
         "description": "Set up the pflow package structure with proper entry point configuration",
-        "status": "pending",
+        "status": "done",
         "dependencies": [],
         "priority": "high",
         "details": "Create pyproject.toml with proper package configuration and CLI entry point for 'pflow' command. Ensure package installs correctly with 'pip install -e .' and the pflow command becomes available. Set up initial src/pflow/ directory structure. Configure package metadata (name, version, dependencies). This task ensures the CLI framework in Task 2 has a proper foundation. Reference: standard Python packaging practices.",
@@ -643,7 +643,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-27T18:56:33.614Z",
+      "updated": "2025-06-27T18:57:12.912Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }
