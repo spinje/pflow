@@ -19,6 +19,56 @@ pflow MVP solves the specific problem of slash command inefficiency by enabling 
 3. **Enable Predictable Execution**: Replace variable 30-90s slash command runs with consistent 2-5s workflow execution
 4. **Improve Observability**: Get step-by-step execution traces instead of conversation logs
 
+The goal is a working MVP that can execute the core workflows:
+
+**Start simple** (general text processing):
+```bash
+# Transform: Repeatedly asking AI "analyze these logs"
+# Into: pflow analyze-logs --input=error.log (instant)
+pflow read-file --path=error.log >> llm --prompt="extract error patterns and suggest fixes" >> write-file --path=analysis.md
+```
+
+**And move on to more complex workflows**:
+LLM Agent like Claude Code executing all steps, reasoning between each step:
+
+```markdown
+# Transform: /project:fix-github-issue 1234 (Claude code slash command, 50-90s, heavy tokens)
+# This is a Claude Code slash command (prompt shortcut) that was used as an example in an Anthropic blog post as a good example of how to efficiently use Claude Code.
+Please analyze and fix the GitHub issue: $ARGUMENTS.
+
+Follow these steps:
+
+1. Use `gh issue view` to get the issue details
+2. Understand the problem described in the issue
+3. Search the codebase for relevant files
+4. Implement the necessary changes to fix the issue
+5. Write and run tests to verify the fix
+6. Ensure code passes linting and type checking
+7. Create a descriptive commit message
+8. Push and create a PR
+
+Remember to use the GitHub CLI (`gh`) for all GitHub-related tasks.
+```
+
+```bash
+# Into: pflow fix-issue --issue=1234 (20-50s, minimal tokens)
+github-get-issue --issue=1234 >> \
+claude-code --prompt="<instructions>
+                        1. Understand the problem described in the issue
+                        2. Search the codebase for relevant files
+                        3. Implement the necessary changes to fix the issue
+                        4. Write and run tests to verify the fix
+                        5. Return a report of what you have done as output
+                      </instructions>
+                      This is the issue: $issue" >> \
+llm --prompt="Write a descriptive commit message for these changes: $code_report" >> \
+git-commit --message="$commit_message" >> \
+git-push >> \
+github-create-pr --title="Fix: $issue_title" --body="$code_report"
+```
+
+> Note that in this core example we are still needing to use the `claude-code` node to execute parts of the workflow. For many use cases, using LLM as Agents will not be necessary and in these cases the speedup will be much greater and can potentially reach 10x or more by reducing the intermittent reasoning between each step that needs to happen in Agentic workflows.
+
 ### Target Use Case Example
 
 ```bash

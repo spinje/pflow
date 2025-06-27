@@ -277,57 +277,20 @@ Focus on refining the tasks for the MVP by doing the following:
 3. Ensure that every tasks considers the dependencies and the order of implementation. The `.taskmaster/tasks/tasks.json` will need to be updated continously as you discover new information and discuss the user.
 4. Ensure that every task is easy to understand and has a clear success criteria and test strategy.
 
-## End goal and Vision for the MVP
+## Task Implementation Workflow
 
-The goal is a working MVP that can execute the core workflows:
+**When implementing tasks, use the epistemic workflow in `.taskmaster/workflow/`**:
+- `refine-subtask.md` - Knowledge loading and task refinement
+- `implement-subtask.md` - Implementation with real-time learning capture
 
-**Start simple** (general text processing):
-```bash
-# Transform: Repeatedly asking AI "analyze these logs"
-# Into: pflow analyze-logs --input=error.log (instant)
-pflow read-file --path=error.log >> llm --prompt="extract error patterns and suggest fixes" >> write-file --path=analysis.md
-```
+**Core Principle**: Every task builds on ALL previous implementations. The workflow ensures:
+- NEW TASKS: Load knowledge from all completed tasks before starting
+- CONTINUING SUBTASKS: Build on sibling implementations within the task
+- ALL TASKS: Capture discoveries in real-time for future benefit
 
-**And move on to more complex workflows**:
-LLM Agent like Claude Code executing all steps, reasoning between each step:
+This creates compound learning where each task makes future tasks progressively easier.
 
-```markdown
-# Transform: /project:fix-github-issue 1234 (Claude code slash command, 50-90s, heavy tokens)
-# This is a Claude Code slash command (prompt shortcut) that was used as an example in an Anthropic blog post as a good example of how to efficiently use Claude Code.
-Please analyze and fix the GitHub issue: $ARGUMENTS.
-
-Follow these steps:
-
-1. Use `gh issue view` to get the issue details
-2. Understand the problem described in the issue
-3. Search the codebase for relevant files
-4. Implement the necessary changes to fix the issue
-5. Write and run tests to verify the fix
-6. Ensure code passes linting and type checking
-7. Create a descriptive commit message
-8. Push and create a PR
-
-Remember to use the GitHub CLI (`gh`) for all GitHub-related tasks.
-```
-
-```bash
-# Into: pflow fix-issue --issue=1234 (20-50s, minimal tokens)
-github-get-issue --issue=1234 >> \
-claude-code --prompt="<instructions>
-                        1. Understand the problem described in the issue
-                        2. Search the codebase for relevant files
-                        3. Implement the necessary changes to fix the issue
-                        4. Write and run tests to verify the fix
-                        5. Return a report of what you have done as output
-                      </instructions>
-                      This is the issue: $issue" >> \
-llm --prompt="Write a descriptive commit message for these changes: $code_report" >> \
-git-commit --message="$commit_message" >> \
-git-push >> \
-github-create-pr --title="Fix: $issue_title" --body="$code_report"
-```
-
-> Note that in this core example we are still needing to use the `claude-code` node to execute parts of the workflow. For many use cases, using LLM as Agents will not be necessary and in these cases the speedup will be much greater and can potentially reach 10x or more by reducing the intermittent reasoning between each step that needs to happen in Agentic workflows.
+See `.taskmaster/workflow/workflow-overview.md` for the complete system.
 
 ## User Decisions and Recommendations
 
