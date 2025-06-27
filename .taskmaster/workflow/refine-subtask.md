@@ -145,10 +145,6 @@ Note: This is the primary use of task-master in the refinement phase.
 - Agents search for relevant source files in `src/pflow/`
 - And search documentation in `docs/` for accuracy and cross-references
 
-
--If using PocketFlow:
-  -
-
 **Part C: Cookbook Pattern Discovery (only for tasks where PocketFlow can potentially be used):**
 - **Sub-agents read** `pocketflow/cookbook/CLAUDE.md` to understand available examples and `pocketflow/__init__.py` to understand core framework
 - **Sub-agents search** `pocketflow/docs/` for conceptual understanding that can be applied to the current task
