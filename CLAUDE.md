@@ -205,7 +205,11 @@ pflow/
 3. Specify *how* it fits into current architecture
 4. Use consistent patterns (shared store, simple IO, single responsibility)
 5. Avoid introducing abstractions not yet justified
-6. Write comprehensive tests and documentation before, during and after working on the task following the test-as-you-go strategy.
+6. Write comprehensive tests and documentation before, during and after working on the task following the test-as-you-go strategy:
+   - Create tests AS YOU CODE, not after implementation is complete
+   - Every new function/component needs at least 3 test cases (happy path, error, edge)
+   - Aim for >80% coverage of new code
+   - A task without tests is an INCOMPLETE task
 
 **Key Questions** for every task:
 - **Purpose**: Why is this needed?
@@ -214,6 +218,7 @@ pflow/
 - **Why Now**: Why implement this step?
 - **Documentation**: What documentation and existing code do I need to read to understand the problem space fully?
 - **Is the task too big?**: If the task is too big, break it down into smaller sub tasks
+- **Test Strategy**: What tests will validate this functionality?
 
 **Development Standards and process**:
 - Start small, build minimal components that can be expanded into reusable components
@@ -280,16 +285,7 @@ The codebase is in early development with:
 - ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/implementation-roadmap.md`
 - ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap
 - ✅ Establish epistemic workflow for task execution in `.taskmaster/workflow/`
-- ⏳ Carefully review the list of tasks to make sure every task is complete, accurate and that we are doing the right things in the right order (<- We are here)
-- ⏳ Start implementing features for the MVP using the todo list one by one
-
-### Current Development Phase
-
-Focus on refining the tasks for the MVP by doing the following:
-1. Ensure that the tasks are based on product requirements and architecture docs for the pflow project.
-2. Ensure that the tasks dependent on pocketflow (the 100 lines of code in `pocketflow/__init__.py`) are using the pocketflow framework correctly by carefully reading the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
-3. Ensure that every tasks considers the dependencies and the order of implementation. The `.taskmaster/tasks/tasks.json` will need to be updated continously as you discover new information and discuss the user.
-4. Ensure that every task is easy to understand and has a clear success criteria and test strategy.
+- ⏳ Start implementing features for the MVP using the `refine-task.md` -> `refine-subtask.md` -> `implement-subtask.md` epistemic workflow.
 
 ## Task Implementation Workflow
 
@@ -309,7 +305,6 @@ The workflow ensures:
 - NEW TASKS: Optionally review similar tasks for inspiration
 - CONTINUING SUBTASKS: Read sibling reviews within current task
 - ALL WORK: Capture technical discoveries in real-time for future benefit
-
 
 See `.taskmaster/workflow/workflow-overview.md` for the complete system.
 
