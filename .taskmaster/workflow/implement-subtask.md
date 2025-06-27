@@ -176,7 +176,7 @@ Create patterns file at:
 #### 2.8 Create Implementation Review
 
 Once functional, create comprehensive review at:
-`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/review.md`
+`.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/subtask-review.md`
 
 ```markdown
 # Implementation Review for <subtaskId>
@@ -247,7 +247,7 @@ Note: Only add knowledge that will genuinely help future tasks. Quality over qua
 
 If this is the final subtask of the task:
 1. Read all subtask reviews from this task:
-   - `.taskmaster/tasks/task_<parentTaskId>/subtask_*/implementation/review.md`
+   - `.taskmaster/tasks/task_<parentTaskId>/subtask_*/implementation/subtask-review.md`
 2. Create task-level summary at:
    - `.taskmaster/tasks/task_<parentTaskId>/task-review.md`
 3. Include:
@@ -278,7 +278,7 @@ Key learnings:
 - [Major discovery 1]
 - [Major discovery 2]
 
-See .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/review.md for details"
+See .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/subtask-review.md for details"
 ```
 
 ## Learning Capture Best Practices

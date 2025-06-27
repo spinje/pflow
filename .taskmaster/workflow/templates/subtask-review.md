@@ -1,6 +1,6 @@
 # Implementation Review for [Task/Subtask ID]
 
-**File Location**: `.taskmaster/tasks/task_[X]/subtask_[X.Y]/implementation/review.md`
+**File Location**: `.taskmaster/tasks/task_[X]/subtask_[X.Y]/implementation/subtask-review.md`
 
 *Completed: [Date]*
 

@@ -86,6 +86,6 @@ Quick reference of what each subtask accomplished:
 *This review summarizes learnings from all subtasks. Individual subtask reviews contain detailed implementation notes.*
 
 *For detailed implementation notes, see:*
-- `.taskmaster/tasks/task_[X]/subtask_[X.1]/implementation/review.md`
-- `.taskmaster/tasks/task_[X]/subtask_[X.2]/implementation/review.md`
+- `.taskmaster/tasks/task_[X]/subtask_[X.1]/implementation/subtask-review.md`
+- `.taskmaster/tasks/task_[X]/subtask_[X.2]/implementation/subtask-review.md`
 - [etc.]

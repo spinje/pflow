@@ -175,41 +175,45 @@ Both loops feed each other: better decomposition leads to better implementation,
 
 ```
 .taskmaster/
-├── workflow/                    # How to execute tasks
-│   ├── workflow-overview.md     # This document
-│   ├── refine-task.md          # Main task decomposition workflow
-│   ├── refine-subtask.md       # Subtask refinement workflow
-│   ├── implement-subtask.md    # Subtask implementation workflow
-│   └── templates/              # Artifact templates
-│       ├── project-context.md
-│       ├── task-review.md
-│       ├── subtask-review.md
-│       └── (other templates)
+├── workflow/                              # How to execute tasks
+│   ├── workflow-overview.md               # This document - complete system guide
+│   ├── refine-task.md                    # Main task understanding & decomposition
+│   ├── refine-subtask.md                 # Subtask refinement before implementation
+│   ├── implement-subtask.md              # Subtask implementation workflow
+│   └── templates/                        # Artifact templates for each phase
+│       ├── project-context.md            # Task-level domain understanding (created once)
+│       ├── knowledge-synthesis.md        # Subtask knowledge loading summary
+│       ├── evaluation.md                 # Ambiguity detection and analysis
+│       ├── refined-spec.md               # Final refined subtask specification
+│       ├── implementation-plan.md        # Step-by-step implementation approach
+│       ├── progress-log.md               # Real-time learning capture during work
+│       ├── subtask-review.md             # Post-implementation subtask review
+│       └── task-review.md                # Task-level summary after all subtasks
 ├── reports/
-│   └── task-complexity-report.json  # Decomposition history
+│   └── task-complexity-report.json      # Historical decomposition data
 ├── tasks/
 │   ├── task_1/
-│   │   ├── project-context.md          # Created during main task workflow
+│   │   ├── project-context.md           # Domain understanding (shared by all subtasks)
 │   │   ├── subtask_1.1/
-│   │   │   ├── refinement/
-│   │   │   │   ├── knowledge-synthesis.md
-│   │   │   │   ├── evaluation.md
-│   │   │   │   └── refined-spec.md
-│   │   │   ├── implementation/
-│   │   │   │   ├── plan.md
-│   │   │   │   ├── progress-log.md
-│   │   │   │   └── review.md
-│   │   │   └── ready-for-implementation
+│   │   │   ├── refinement/              # Pre-implementation phase
+│   │   │   │   ├── knowledge-synthesis.md   # What we learned from past work
+│   │   │   │   ├── evaluation.md            # Ambiguity analysis
+│   │   │   │   └── refined-spec.md          # Final specification
+│   │   │   ├── implementation/          # During implementation phase
+│   │   │   │   ├── implementation-plan.md   # Step-by-step approach
+│   │   │   │   ├── progress-log.md          # Real-time discoveries
+│   │   │   │   └── subtask-review.md        # Post-implementation review
+│   │   │   └── ready-for-implementation # Marker file (empty)
 │   │   ├── subtask_1.2/
 │   │   │   └── (same structure)
-│   │   └── task-review.md (created after all subtasks complete)
+│   │   └── task-review.md               # Created after ALL subtasks complete
 │   └── task_2/
 │       └── (same structure)
-└── knowledge/                    # Manually maintained
-    ├── CLAUDE.md               # Guide for maintaining knowledge
-    ├── patterns.md             # Implementation patterns
-    ├── pitfalls.md             # Implementation pitfalls
-    └── decisions.md            # Architectural decisions
+└── knowledge/                           # Persistent learning repository
+    ├── CLAUDE.md                        # How to maintain knowledge files
+    ├── patterns.md                      # Successful approaches to reuse
+    ├── pitfalls.md                      # Mistakes to avoid
+    └── decisions.md                     # Architectural choices & rationale
 ```
 
 ## Workflow Examples
@@ -253,8 +257,8 @@ You're implementing a later subtask:
 - Created during main task workflow
 
 **Step 2 - Load sibling knowledge**:
-- Read: `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
-- Read: `.taskmaster/tasks/task_5/subtask_5.2/implementation/review.md`
+- Read: `.taskmaster/tasks/task_5/subtask_5.1/implementation/subtask-review.md`
+- Read: `.taskmaster/tasks/task_5/subtask_5.2/implementation/subtask-review.md`
 - Build on established patterns
 
 ## Key Success Factors

@@ -72,11 +72,11 @@ Example paths to check for task 3.1:
 Read sibling subtask reviews from your current task:
 1. Navigate to `.taskmaster/tasks/task_<parentTaskId>/`
 2. For each completed `subtask_*` folder (with lower number than current):
-   - Read `implementation/review.md`
+   - Read `implementation/subtask-review.md`
 
 Example for subtask 3.3:
-- `.taskmaster/tasks/task_3/subtask_3.1/implementation/review.md`
-- `.taskmaster/tasks/task_3/subtask_3.2/implementation/review.md`
+- `.taskmaster/tasks/task_3/subtask_3.1/implementation/subtask-review.md`
+- `.taskmaster/tasks/task_3/subtask_3.2/implementation/subtask-review.md`
 
 **Understand:**
 - How the parent task is evolving
