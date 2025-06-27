@@ -39,7 +39,7 @@
               2
             ],
             "details": "Run 'pip install -e .' (or 'uv pip install -e .') in the project root to install the package in editable/development mode. Verify the 'pflow' command is available by running it in the terminal and checking it executes without errors. Create a basic test in tests/test_cli.py using click.testing.CliRunner to ensure the CLI framework initializes correctly and the test command works as expected. This confirms the entire setup chain from pyproject.toml entry point to CLI execution is functioning properly.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": ""
           }
         ]
@@ -643,7 +643,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-27T15:57:39.756Z",
+      "updated": "2025-06-27T18:56:33.614Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }
