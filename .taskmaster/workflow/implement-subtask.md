@@ -227,18 +227,24 @@ If you discovered truly reusable patterns, pitfalls, or made architectural decis
 
 1. **For Patterns**:
    - Read: `.taskmaster/knowledge/patterns.md` (entire file)
-   - Check: Does this pattern already exist?
+   - Check:
+      - Does this pattern already exist?
+      - Will this pattern be useful for future tasks and help make the project more coherent?
    - If unique: Append your pattern to the end of the file
-   - Use the format specified in `.taskmaster/knowledge/README.md`
+   - Use the format specified in `.taskmaster/knowledge/CLAUDE.md`
 
 2. **For Pitfalls**:
    - Read: `.taskmaster/knowledge/pitfalls.md` (entire file)
-   - Check: Is this failure already documented?
+   - Check:
+      - Is this failure already documented?
+      - Is this general knowledge that will help future tasks avoid the same mistake?
    - If unique: Append to the end of the file
 
 3. **For Architectural Decisions**:
    - Read: `.taskmaster/knowledge/decisions.md` (entire file)
-   - Check: Does this decision area already exist?
+   - Check:
+      - Does this decision area already exist?
+      - Is this an important decision with big consequences and impact on the project?
    - If new: Append to the end of the file
 
 Note: Only add knowledge that will genuinely help future tasks. Quality over quantity.
