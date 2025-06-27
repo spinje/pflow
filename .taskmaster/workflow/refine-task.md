@@ -177,6 +177,7 @@ scratchpads/task-<taskId>/task-<taskId>-decomposition-plan.md
 - Include granular subtask descriptions
 - Specify dependencies explicitly
 - Mention test requirements per subtask
+- Contain ALL the necessary information for an llm to generate the subtasks automatically (all context is needed)
 
 #### 2.3 Update task-complexity-report.json
 
@@ -193,6 +194,8 @@ scratchpads/task-<taskId>/task-<taskId>-decomposition-plan.md
 ```
 
 **Critical**: This is error-prone for AI agents. Double-check JSON syntax!
+
+**Note**: Running `task-master expand` will NOT work if the `task-complexity-report.json` is not updated for the current task.
 
 #### 2.4 Generate Subtasks
 
