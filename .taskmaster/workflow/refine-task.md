@@ -62,35 +62,24 @@ task-master show --id=<taskId>
 **Sub-agents should:**
 - Analyze the main task description and requirements
 - Read relevant sections from `docs/` for the task domain
-- If task mentions PocketFlow:
+- If task mentions PocketFlow or use of PocketFlow is implied or potentially applicable:
   - First read `pocketflow/__init__.py` to understand core framework
   - Search relevant `pocketflow/docs` for conceptual understanding
-  - **CRITICAL**: Explore `pocketflow/cookbook/` for production-ready patterns:
-    - Read `pocketflow/cookbook/CLAUDE.md` for complete example inventory
-    - Identify 2-3 relevant examples based on task requirements
+  - **CRITICAL**: *Use sub-agents* to explore `pocketflow/cookbook/` for production-ready patterns:
+    - Sub-agents read `pocketflow/cookbook/CLAUDE.md` for complete example inventory
+    - Sub-agents should identify 1-3 relevant examples based on task requirements
     - Extract implementation patterns that apply to this task
 - Create a synthesized briefing that includes:
   - Overview of relevant components and how they work
   - Key concepts and terminology for this task domain
   - Architectural context (where this fits in the system)
   - Relevant constraints, conventions, or decisions
-  - **Cookbook patterns discovered** that will guide implementation
+  - Cookbook patterns discovered that will guide implementation
   - Domain understanding needed for intelligent decomposition
 
 **Output**: Create `.taskmaster/tasks/task_<taskId>/project-context.md` based on template (`project-context.md` in `.taskmaster/workflow/templates/`)
 
-**Cookbook Pattern Discovery Guide**:
-When analyzing the task, use this mapping to find relevant cookbook examples:
-- **For basic node/flow setup**: `pocketflow-hello-world`, `pocketflow-node`, `pocketflow-flow`
-- **For file/batch processing**: `pocketflow-batch-node`, `pocketflow-batch-flow`, `pocketflow-nested-batch`
-- **For LLM integration**: `pocketflow-chat`, `pocketflow-structured-output`, `pocketflow-llm-streaming`
-- **For error handling/retry**: `pocketflow-node` (retry patterns), `pocketflow-supervisor`
-- **For data extraction**: `pocketflow-structured-output`, `pocketflow-text2sql`, `pocketflow-rag`
-- **For tool integration**: `pocketflow-tool-*` examples (database, search, crawler, etc.)
-- **For multi-stage workflows**: `pocketflow-workflow`, `pocketflow-map-reduce`
-- **For agent patterns**: `pocketflow-agent`, `pocketflow-thinking`, `pocketflow-supervisor`
-
-Remember: These examples contain production-ready code that can be adapted directly!
+Remember: The PocketFlow cookbook examples contain production-ready code that can be adapted directly!
 
 #### 0.3 Review Similar Tasks (Recommended)
 
@@ -293,7 +282,6 @@ Once ALL exit criteria are met:
    - Follow `refine-subtask.md` workflow
    - Read the existing project-context.md
    - Build on shared understanding
-
 
 #### 3.3 Notify the user of the next step
 
