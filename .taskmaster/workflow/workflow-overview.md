@@ -21,6 +21,7 @@ graph LR
 
 ### Phase 0: Knowledge Loading (📚 `refine-subtask.md`)
 **Purpose**: Start smart by learning from previous implementations
+- **NEW**: Use sub-agents to create task-specific project context briefing
 - **For NEW TASKS**: Read task-level reviews from other tasks
 - **For SUBTASKS**: Read sibling subtask reviews from current task
 - Synthesize patterns and pitfalls
@@ -78,18 +79,23 @@ Each task contributes to a growing knowledge base that makes future tasks progre
 
 ## Example Workflow
 
-### Scenario: Implement Task 5.2 - "Add user authentication to CLI"
+### Hypothetical Scenario: Implement Task 5.2 - "Add user authentication to CLI"
 
 #### Phase 0: Knowledge Loading
 ```
 As subtask 5.2 (not the first subtask):
-1. Read: .taskmaster/tasks/task_5/subtask_5.1/implementation/review.md
+1. Sub-agents create: .taskmaster/tasks/task_5/subtask_5.2/refinement/project-context.md
+   - Analyzes "Add user authentication to CLI"
+   - Synthesizes relevant docs about CLI component and auth concepts
+   - Creates 2-4 page briefing on auth in CLI context
+
+2. Read: .taskmaster/tasks/task_5/subtask_5.1/implementation/review.md
    - Discovers initial auth setup patterns
 
-Creates knowledge-synthesis.md:
-- Build on auth foundation from 5.1
-- Use JWT pattern mentioned in task_2/task-review.md
-- Avoid OAuth complexity noted in task_3/task-review.md
+3. Creates knowledge-synthesis.md:
+   - Build on auth foundation from 5.1
+   - Use JWT pattern mentioned in task_2/task-review.md
+   - Avoid OAuth complexity noted in task_3/task-review.md
 ```
 
 #### Phase 1: Refinement
@@ -144,6 +150,7 @@ Creates knowledge-synthesis.md:
 │   ├── task_1/
 │   │   ├── subtask_1.1/
 │   │   │   ├── refinement/
+│   │   │   │   ├── project-context.md
 │   │   │   │   ├── knowledge-synthesis.md
 │   │   │   │   ├── evaluation.md
 │   │   │   │   └── refined-spec.md
@@ -169,7 +176,12 @@ Creates knowledge-synthesis.md:
 ### Example 1: Starting Task 5 (First Subtask)
 You're about to work on subtask 5.1 (the first subtask of task 5):
 
-**Read these task reviews**:
+**Step 1 - Sub-agents create project context**:
+- `.taskmaster/tasks/task_5/subtask_5.1/refinement/project-context.md`
+- They analyze the task and synthesize relevant project documentation
+- You get a 2-4 page briefing specific to your task
+
+**Step 2 - Read these task reviews**:
 - `.taskmaster/tasks/task_1/task-review.md`
 - `.taskmaster/tasks/task_2/task-review.md`
 - `.taskmaster/tasks/task_3/task-review.md`
@@ -180,7 +192,12 @@ You're about to work on subtask 5.1 (the first subtask of task 5):
 ### Example 2: Working on Subtask 5.3
 You're working on subtask 5.3 (subtasks 5.1 and 5.2 are complete):
 
-**Read these sibling reviews**:
+**Step 1 - Sub-agents create project context**:
+- `.taskmaster/tasks/task_5/subtask_5.3/refinement/project-context.md`
+- Even though you're on the same task, you get a fresh briefing
+- Tailored to subtask 5.3's specific needs
+
+**Step 2 - Read these sibling reviews**:
 - `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
 - `.taskmaster/tasks/task_5/subtask_5.2/implementation/review.md`
 
@@ -204,6 +221,7 @@ When something works, document it as a pattern before moving on.
 
 ### Phase 0: Knowledge Loading
 **For new tasks (e.g., starting task 5.1)**:
+- Sub-agents create: `.taskmaster/tasks/task_5/subtask_5.1/refinement/project-context.md`
 - Read: `.taskmaster/tasks/task_1/task-review.md`
 - Read: `.taskmaster/tasks/task_2/task-review.md`
 - Read: `.taskmaster/tasks/task_3/task-review.md`
@@ -211,6 +229,7 @@ When something works, document it as a pattern before moving on.
 - Create: `.taskmaster/tasks/task_5/subtask_5.1/refinement/knowledge-synthesis.md`
 
 **For subtasks (e.g., working on 5.3)**:
+- Sub-agents create: `.taskmaster/tasks/task_5/subtask_5.3/refinement/project-context.md`
 - Read: `.taskmaster/tasks/task_5/subtask_5.1/implementation/review.md`
 - Read: `.taskmaster/tasks/task_5/subtask_5.2/implementation/review.md`
 - Update: `.taskmaster/tasks/task_5/subtask_5.3/refinement/knowledge-synthesis.md`
