@@ -1,15 +1,26 @@
-Please implement Task with id: $ARGUMENTS.
+---
+description: Implement a refined subtask using epistemic workflow
+allowed-tools: Bash(*), Read, Write, Edit, MultiEdit, Task, TodoRead, TodoWrite
+---
 
-You can find the task in the `.taskmaster/tasks_$id.txt` file.
+Implement subtask $ARGUMENTS following the epistemic implementation workflow.
 
-BEFORE YOU START:
-1. Mark as in-progress by using the `task-master set-status --id=$task_id --status=in-progress` command.
-1. Read the task carefully and understand it fully.
-2. Read and understand the tasks dependencies. They are referenced by their `task_id` and you can access them by using the `taskmaster show-task $task_id` command.
-2. Read the documentation in the `docs/` folder to understand the project and the task.
+**CRITICAL**: Read and follow the complete workflow in `.taskmaster/workflow/implement-subtask.md`
 
+Prerequisites:
+- Subtask must be refined (check for `ready-for-implementation` marker)
+- Read refined specification first
 
+Key activities:
+- Create implementation plan
+- Maintain real-time progress log
+- Extract patterns/pitfalls as you discover them
+- Create comprehensive review when complete
+- If final subtask: create task-review.md
 
+Files you'll create in `.taskmaster/tasks/task_X/subtask_$ARGUMENTS/implementation/`:
+- `implementation-plan.md`
+- `progress-log.md` (update continuously!)
+- `subtask-review.md`
 
-
-// cat .taskmaster/tasks/tasks.json | jq '.tasks[] | select(.id == 1)'
+Remember: Capture learnings IN REAL-TIME for compound effect!
