@@ -28,7 +28,7 @@
               1
             ],
             "details": "Create src/pflow/cli/__init__.py (can be empty initially) and src/pflow/cli/main.py containing a basic click application. The main.py should define a main() function decorated with @click.command() or @click.group() and include at least one simple command (e.g., 'version' or 'hello') to test the CLI framework. This provides the actual CLI code that the pyproject.toml entry point references.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": ""
           },
           {
@@ -643,7 +643,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-27T15:07:39.814Z",
+      "updated": "2025-06-27T15:57:39.756Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }
