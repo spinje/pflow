@@ -498,5 +498,5 @@ This inventory ensures that pflow MVP delivers on its core promise of turning CL
 - **Components**: [Planner](../features/planner.md) - Planning system components in detail
 - **Components**: [Runtime](../core-concepts/runtime.md) - Execution engine components in detail
 - **Components**: [Registry](../core-concepts/registry.md) - Node discovery and management components
-- **Implementation**: [Implementation Roadmap](../../todo/implementation-roadmap.md) - Development priorities
+- **Implementation**: [Implementation Roadmap](../../.taskmaster/docs/implementation-roadmap.md) - Development priorities
 - **Next Steps**: [JSON Schemas](../core-concepts/schemas.md) - Data structures used by components

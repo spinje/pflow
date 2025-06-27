@@ -19,14 +19,14 @@ graph LR
     style F fill:#9ff,stroke:#333,stroke-width:4px
 ```
 
-### Phase 0: Knowledge Loading (📚 `refining-subtask.md`)
+### Phase 0: Knowledge Loading (📚 `refine-subtask.md`)
 **Purpose**: Start smart by learning from previous implementations
 - **For NEW TASKS**: Read task-level reviews from other tasks
 - **For SUBTASKS**: Read sibling subtask reviews from current task
 - Synthesize patterns and pitfalls
 - Build mental model of codebase evolution
 
-### Phase 1: Refinement (🔍 `refining-subtask.md`)
+### Phase 1: Refinement (🔍 `refine-subtask.md`)
 **Purpose**: Transform ambiguous tasks into crystal-clear specifications
 - Validate against actual code
 - Surface and resolve ALL ambiguities
@@ -43,7 +43,7 @@ graph LR
 
 ## When to Use Which Document
 
-### Start with `refining-subtask.md` when:
+### Start with `refine-subtask.md` when:
 - [ ] Beginning any new task or subtask
 - [ ] Task description seems unclear
 - [ ] You're not sure what's already been tried
@@ -55,7 +55,7 @@ graph LR
 - [ ] Success criteria are clear
 - [ ] `ready-for-implementation` marker exists
 
-### Return to `refining-subtask.md` if:
+### Return to `refine-subtask.md` if:
 - [ ] Core assumptions prove false during implementation
 - [ ] New ambiguities surface
 - [ ] Dependencies don't exist as expected
@@ -135,6 +135,11 @@ Creates knowledge-synthesis.md:
 
 ```
 .taskmaster/
+├── workflow/                    # How to execute tasks
+│   ├── workflow-overview.md     # This document
+│   ├── refine-subtask.md        # Phase 0 & 1
+│   ├── implement-subtask.md     # Phase 2
+│   └── templates/               # Artifact templates
 ├── tasks/
 │   ├── task_1/
 │   │   ├── subtask_1.1/
@@ -237,7 +242,7 @@ When this system is followed:
 ## Getting Started
 
 1. Pick a task ID - Assigned by the user or by using `task-master next`
-2. Open `refining-subtask.md`
+2. Open `.taskmaster/workflow/refine-subtask.md`
 3. Start with Phase 0: Knowledge Loading
 4. Follow the workflow systematically
 5. Watch your velocity increase with each task

@@ -2,7 +2,7 @@
 
 Your goal is to implement the refined specification for subtask `<subtaskId>` while capturing ALL learnings for future tasks. This document covers Phase 2 (Implementation) only.
 
-**PREREQUISITE**: You must have completed the refinement workflow (`refining-subtask.md`) and have a clear, unambiguous specification ready.
+**PREREQUISITE**: You must have completed the refinement workflow (`refine-subtask.md`) and have a clear, unambiguous specification ready.
 
 ## Core Principles
 
@@ -338,7 +338,7 @@ Details: [what assumption was wrong]
 Needed: [what clarification is required]
 ```
 
-Then return to `refining-subtask.md` workflow.
+Then return to `refine-subtask.md` workflow.
 
 ## Success Metrics
 
