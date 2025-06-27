@@ -52,10 +52,17 @@ task-master show --id=<taskId>
 **Launch sub-agents with this mission:**
 "Analyze the main task <taskId> and create a comprehensive project context briefing that will be used by ALL subtasks. Read all relevant documentation but synthesize it into a focused brief that provides the domain understanding needed for both decomposition and implementation."
 
+**You should:**
+- Deploy and synthesize subagent results
+- If task mentions PocketFlow: Read `pocketflow/__init__.py`
+- Create a synthesized briefing that includes:
+  - Overview of relevant components and how they work
+  - Key concepts and terminology for this task domain
+
 **Sub-agents should:**
 - Analyze the main task description and requirements
 - Read relevant sections from `docs/` for the task domain
-- If task mentions PocketFlow: Read `pocketflow/__init__.py` and relevant docs
+- If task mentions PocketFlow: Search for relevant `pocketflow/docs`
 - Create a synthesized briefing that includes:
   - Overview of relevant components and how they work
   - Key concepts and terminology for this task domain
@@ -63,16 +70,17 @@ task-master show --id=<taskId>
   - Relevant constraints, conventions, or decisions
   - Domain understanding needed for intelligent decomposition
 
-**Output**: Create `.taskmaster/tasks/task_<taskId>/project-context.md` based on template
+**Output**: Create `.taskmaster/tasks/task_<taskId>/project-context.md` based on template (`project-context.md` in `.taskmaster/workflow/templates/`)
 
-#### 0.3 Review Similar Tasks (Optional)
+#### 0.3 Review Similar Tasks (Recommended)
 
 **If helpful, look at similar completed tasks:**
 - Check `.taskmaster/reports/task-complexity-report.json` for tasks with similar domain/complexity
-- Read their task-review.md files for technical insights
+- Read their task-review.md files for technical insights (located in `.taskmaster/tasks/task_<id>/task-review.md` for each task)
 - Note any useful patterns or approaches
+- If many tasks seem relevant, deploy sub-agents to gather useful information from the task-reviews
 
-**This is NOT about analyzing decomposition quality**, but rather:
+**This is about:**
 - Understanding how similar technical challenges were solved
 - Learning from architectural decisions
 - Avoiding known pitfalls
