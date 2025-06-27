@@ -298,6 +298,8 @@ Let the user know that the next step is to run the following slash command:
 
 You can get the next task by running `task-master next`
 
+Example last line to the user: I just finished implementing subtask 1.1, the next step is to run the following slash command: `/refine-subtask 1.2`
+
 ## Learning Capture Best Practices
 
 ### DO: Capture Immediately
