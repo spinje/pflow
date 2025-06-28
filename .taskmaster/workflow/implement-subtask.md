@@ -36,8 +36,11 @@ Execute the refined specification systematically while capturing all learnings i
 Verify refinement is complete by checking for marker file:
 - Check: `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/ready-for-implementation` exists
 
-Read the refined specification:
+Read the refined specification and knowledge synthesis:
 - Read: `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/refined-spec.md`
+- Read: `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/knowledge-synthesis.md`
+
+**Why read knowledge synthesis?** It contains patterns that worked, pitfalls to avoid, and conventions to follow from previous implementations. This accumulated wisdom helps you avoid repeating mistakes and maintain consistency.
 
 Note: Implementation files go in the subtask folder, not a separate implementation folder.
 
@@ -348,7 +351,7 @@ If you discovered truly reusable patterns, pitfalls, or made architectural decis
       - Is this an important decision with big consequences and impact on the project?
    - If new: Append to the end of the file
 
-Note: Only add knowledge that will genuinely help future tasks. Quality over quantity.
+Note: Only add knowledge that will genuinely help future tasks. Quality over quantity. *Take your time to evaluate every pattern, pitfall and decision that you have encountered.* Think hard about this!
 
 #### 2.11 Create Task Review (If Last Subtask)
 

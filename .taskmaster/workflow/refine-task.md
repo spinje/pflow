@@ -27,6 +27,9 @@ Your goal is to refine task `<taskId>` and decompose it into well-structured sub
 ### Goal
 Deeply understand the current task and its project context before attempting decomposition.
 
+### Workflow Note
+Steps 0.2-0.5 can be executed in parallel by sub-agents for efficiency. The final project context document should synthesize all gathered information.
+
 ### Activities
 
 #### 0.1 Read and Analyze Current Task
@@ -54,10 +57,12 @@ task-master show --id=<taskId>
 
 **You should:**
 - Deploy and synthesize subagent results
+- Incorporate knowledge summary from step 0.4 (if completed)
 - If task mentions PocketFlow: Read `pocketflow/__init__.py`
 - Create a synthesized briefing that includes:
   - Overview of relevant components and how they work
   - Key concepts and terminology for this task domain
+  - Applied knowledge from previous tasks (patterns, pitfalls, decisions)
 
 **Sub-agents should:**
 - Analyze the main task description and requirements
@@ -83,10 +88,11 @@ task-master show --id=<taskId>
 
 **Output**: Create `.taskmaster/tasks/task_<taskId>/project-context.md` based on template (`project-context.md` in `.taskmaster/workflow/templates/`)
 
-**IMPORTANT**: The project context should identify key documentation that will be referenced in the decomposition plan. This includes:
-- Essential pflow docs from `docs/` folder
-- Relevant PocketFlow documentation (if applicable)
-- Cookbook examples that demonstrate needed patterns
+**IMPORTANT**:
+- The project context should identify key documentation that will be referenced in the decomposition plan.
+- If knowledge base integration (step 0.4) yields relevant results, incorporate them into the project context under "Applied Knowledge from Previous Tasks" section.
+- The final project context should be created after all information gathering steps (0.2-0.5) are complete.
+- This includes: Essential pflow docs from `docs/` folder, relevant PocketFlow documentation (if applicable), and cookbook examples that demonstrate needed patterns.
 
 Remember: The PocketFlow cookbook examples contain production-ready code that can be adapted directly!
 
@@ -105,7 +111,55 @@ Remember: The PocketFlow cookbook examples contain production-ready code that ca
 
 **Keep it lightweight** - don't create formal synthesis documents. Just gather inspiration if needed.
 
-#### 0.4 Understanding Prior Research (If Available)
+#### 0.4 Knowledge Base Integration
+
+**Deploy sub-agents to search accumulated project wisdom:**
+
+This step ensures that all previously learned patterns, pitfalls, and architectural decisions influence how we decompose this task.
+
+**Search Strategy:**
+1. Extract domain keywords from the current task description
+2. Deploy sub-agents to search `.taskmaster/knowledge/` for relevant items:
+   - `patterns.md` - Successful approaches that could apply here
+   - `pitfalls.md` - Known failures to structure around avoiding
+   - `decisions.md` - Architectural constraints that must be respected
+
+**Relevance Filtering (for sub-agents):**
+- **Tier 1 - Direct Match**: Exact domain match (e.g., "authentication" for auth task)
+- **Tier 2 - Adjacent**: Related concepts (e.g., "security patterns" for auth task)
+- **Tier 3 - Universal**: Always applicable (e.g., "error handling patterns")
+
+**Integration Requirements:**
+- Don't copy the entire knowledge base
+- Extract only genuinely relevant items with clear justification
+- For each item, explain WHY it's relevant to this specific task
+- Focus on knowledge that will influence task decomposition
+
+**Sub-agents should create a knowledge summary that includes:**
+```markdown
+## Relevant Knowledge for Task <taskId>
+
+### Applicable Patterns
+- **Pattern: [Name]** (from patterns.md)
+  - Relevance: [Why this applies to current task]
+  - Application: [How it should influence decomposition]
+
+### Pitfalls to Avoid
+- **Pitfall: [Name]** (from pitfalls.md)
+  - Risk: [How this could affect the task]
+  - Mitigation: [How to structure subtasks to avoid it]
+
+### Architectural Constraints
+- **Decision: [Name]** (from decisions.md)
+  - Constraint: [What this limits or requires]
+  - Impact: [How this shapes the task approach]
+```
+
+> Note: Sub-agents should only retrieve knowledge that is directly relevant to the current task.
+
+**This knowledge will be incorporated into project-context.md to ensure all subtasks benefit from accumulated wisdom.**
+
+#### 0.5 Understanding Prior Research (If Available)
 
 **Check for existing research files in the task's research folder:**
 ```bash
@@ -142,6 +196,7 @@ ls .taskmaster/tasks/task_<taskId>/research/
 ### Exit Criteria for Phase 0
 - [ ] Current task fully understood with no ambiguities
 - [ ] Project context briefing created for the task
+- [ ] Knowledge base searched and relevant items incorporated
 - [ ] Relevant cookbook patterns identified and documented in project context
 - [ ] Domain understanding acquired for intelligent decomposition
 - [ ] (Optional) Similar tasks reviewed for inspiration

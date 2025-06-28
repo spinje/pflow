@@ -59,6 +59,31 @@
 ### Design Decisions
 - [Decision]: [Why it was made and how it affects this task]
 
+## Applied Knowledge from Previous Tasks
+
+### Relevant Patterns
+- **Pattern: [Name]** (from knowledge base)
+  - Why relevant: [Connection to this task]
+  - How to apply: [Specific guidance for subtasks]
+  - Example usage: [Brief description or reference]
+
+### Known Pitfalls to Avoid
+- **Pitfall: [Name]** (from knowledge base)
+  - Risk for this task: [Why it matters here]
+  - Mitigation strategy: [How subtasks should avoid it]
+  - Warning signs: [What to watch for during implementation]
+
+### Architectural Constraints
+- **Decision: [Name]** (from knowledge base)
+  - Impact on this task: [Specific constraints or requirements]
+  - Required compliance: [What all subtasks must follow]
+
+## Decomposition Guidance
+Based on accumulated knowledge:
+- Consider using [Pattern X] for [aspect of task]
+- Structure subtasks to avoid [Pitfall Y]
+- Ensure all subtasks respect [Decision Z]
+
 ## Key Documentation References
 
 ### Essential pflow Documentation
