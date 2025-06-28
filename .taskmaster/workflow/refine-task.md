@@ -220,7 +220,7 @@ Create well-structured subtasks using patterns from decomposition synthesis.
 - Complexity score (1-10) from task understanding
 - Similar tasks' subtask counts
 - Available patterns from synthesis
-- Which research files contain patterns relevant to each planned subtask
+- How all available documentation and research files can be used to guide the decomposition
 
 #### 2.2 Create Detailed Expansion Prompt
 
@@ -258,6 +258,8 @@ Create well-structured subtasks using patterns from decomposition synthesis.
 - Ensure architectural consistency
 - Point to specific patterns and examples to follow
 - Prevent reinventing existing solutions
+
+> Note: Only include references that is directly relevant to the subtasks. For example, dont automatically reference all the research files for every subtask. Be smart about it and think deeply about what is relevant and what is not.
 
 #### 2.3 Review Decomposition Plan
 
