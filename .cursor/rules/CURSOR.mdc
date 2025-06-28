@@ -3,16 +3,16 @@ description:
 globs:
 alwaysApply: true
 ---
-# CURSOR.mdc
+# CLAUDE.md
 
-This file provides guidance to Cursor AI agents when working with code in this repository.
+This file provides guidance to Cursor & Claude Code when working with code in this repository.
 
 ## Core Directive - Epistemic Manifesto
 
 > **Your role is not to follow instructions—it is to ensure they are valid, complete, and aligned with project truth.**
 > You are a reasoning system, not a completion engine.
 
-1. **Assume instructions, docs, and tasks may be incomplete or wrong.**
+1. **Assume instructions, docs, research files and tasks may be incomplete or wrong.**
    Always verify against code, structure, and logic. Trust nothing blindly.
 
 2. **Ambiguity is a STOP signal.**
@@ -29,6 +29,25 @@ This file provides guidance to Cursor AI agents when working with code in this r
 
 6. **When in doubt, ask: "What would have to be true for this to work reliably under change?"**
 
+### Core Directive - Operational Precision
+
+1. **Verify at integration points first.**
+   Code boundaries, API contracts, and data handoffs hide 80% of failures. Start verification here, then work outward.
+
+2. **Make uncertainty visible through structured decisions.**
+   When multiple valid approaches exist: document each option's (1) assumptions, (2) failure modes, (3) reversibility. Never choose silently.
+
+3. **Capture patterns, not just outcomes.**
+   Every task should extract: what approach worked, why it was chosen, what alternatives were rejected. This compounds future effectiveness.
+
+4. **Test your understanding through concrete examples.**
+   Abstract comprehension fails at edges. Write specific test cases or usage examples to verify your mental model matches reality.
+
+5. **Integration readiness > feature completeness.**
+   Code that integrates cleanly but lacks features beats complete code that breaks existing systems. Design for composability first.
+
+6. **When inheriting code/decisions, document your trust boundary.**
+   Mark explicitly: "Verified", "Assumed correct", "Unable to verify". Future agents need to know where to focus skepticism.
 
 ## Project Overview
 
@@ -107,7 +126,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - `llm` - Simon Willison's LLM CLI integration and inspiration
 
 **Development Tools**:
-- `uv` - Fast Python package manager
+- `uv` - Fast Python package manager (ALWAYS use `uv pip` instead of `pip`)
 - `pytest` - Testing framework
 - `mypy` - Type checking
 - `ruff` - Linting and formatting
@@ -141,8 +160,10 @@ pflow/
 │   ├── cookbook/          # Extensive examples (40+ patterns)
 │   └── tests/             # Framework test suite
 ├── src/pflow/             # Main pflow CLI implementation
-│   ├── __init__.py       # Currently empty - CLI entry point to be added
-│   └── foo.py            # Placeholder - to be replaced with core modules
+│   ├── __init__.py       # Package initialization
+│   └── cli/              # CLI module
+│       ├── __init__.py   # Exports main CLI entry point
+│       └── main.py       # CLI implementation with click
 ├── docs/                  # Comprehensive project specifications
 │   ├── CLAUDE.md                  # Documentation navigation guide for AI
 │   ├── index.md                   # Documentation inventory and overview
@@ -178,17 +199,36 @@ pflow/
 │       └── json-extraction.md
 ├── .taskmaster/           # Task management and planning
 │   ├── tasks/            # Task tracking
+│   │   ├── task_1/
+│   │   │   ├── project-context.md
+│   │   │   ├── decomposition-plan.md
+│   │   │   ├── subtask_1.1/
+│   │   │   ├── subtask_1.2/
+│   │   │   └── task-review.md
+│   │   ├── task_2/
+│   │   │   └── (same structure)
 │   │   └── tasks.json    # Detailed task list with subtasks
-│   └── docs/             # Planning documentation
-│       └── implementation-roadmap.md  # High-level roadmap
+│   ├── docs/             # Planning documentation
+│   │   └── implementation-roadmap.md  # High-level roadmap
+│   ├── workflow/         # Epistemic workflow system
+│   │   ├── workflow-overview.md       # Complete workflow guide
+│   │   ├── refine-task.md            # Main task workflow
+│   │   ├── refine-subtask.md         # Subtask refinement workflow
+│   │   ├── implement-subtask.md      # Implementation workflow
+│   │   └── templates/                # Workflow artifact templates
+│   ├── knowledge/        # Consolidated learning repository
+│   │   ├── CLAUDE.md    # Knowledge maintenance guide
+│   │   ├── patterns.md  # Successful implementation patterns
+│   │   ├── pitfalls.md  # Common mistakes to avoid
+│   │   └── decisions.md # Architectural decisions
 ├── tests/                 # Test suite
-│   ├── test_foo.py       # Placeholder test
-│   └── test_links.py     # Documentation link validation
+│   ├── test_links.py     # Documentation link validation
+│   └── test_cli.py       # CLI tests using click.testing.CliRunner
 ├── Makefile              # Development automation
-└──  pyproject.toml        # Project configuration and dependencies
+├── pyproject.toml        # Project configuration and dependencies
 ```
 
-### Cursors's Operating Guidelines
+### Claude's Operating Guidelines
 
 **Reasoning-First Approach**: Every code generation task must:
 1. Be part of MVP (unless explicitly requested by the user)
@@ -196,7 +236,12 @@ pflow/
 3. Specify *how* it fits into current architecture
 4. Use consistent patterns (shared store, simple IO, single responsibility)
 5. Avoid introducing abstractions not yet justified
-6. Write comprehensive tests and documentation before, during and after working on the task following the test-as-you-go strategy.
+6. Write comprehensive tests and documentation following the test-as-you-go strategy:
+   - Create tests AS YOU CODE, not as separate tasks/subtasks
+   - Every new function/component needs appropriate test cases (focus on quality over quantity)
+   - Test public APIs, critical paths, error handling, and integration points
+   - A task without tests is an INCOMPLETE task
+   - Tests and implementation should be committed together
 
 **Key Questions** for every task:
 - **Purpose**: Why is this needed?
@@ -205,6 +250,7 @@ pflow/
 - **Why Now**: Why implement this step?
 - **Documentation**: What documentation and existing code do I need to read to understand the problem space fully?
 - **Is the task too big?**: If the task is too big, break it down into smaller sub tasks
+- **Test Strategy**: What tests will validate this functionality?
 
 **Development Standards and process**:
 - Start small, build minimal components that can be expanded into reusable components
@@ -223,7 +269,7 @@ pflow/
 
 ### Documentation Resources
 
-**Extensive Markdown Documentation** should be leveraged by Cursor:
+**Extensive Markdown Documentation** should be leveraged by Claude:
 
 > Always read relevant docs before coding or updating existing documentation!
 
@@ -265,73 +311,35 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 ### Current State of the Project
 
 The codebase is in early development with:
-- ✅ PocketFlow framework added to the codebase inlcuding `pocketflow/docs` and `pocketflow/cookbook`
+- ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
 - ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/implementation-roadmap.md`
 - ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap
-- ⏳ Carefully review the list of tasks to make sure every task is complete, accurate and that we are doing the right things in the right order (<- We are here)
-- ⏳ Start implementing features for the MVP using the todo list one by one
+- ✅ Establish epistemic workflow for task execution in `.taskmaster/workflow/`
+- ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
+- ⏳ Implementing features for the MVP using the epistemic workflow (next: Task 5 - Node discovery)
 
-### Current Development Phase
+## Task Implementation Workflow
 
-Focus on refining the tasks for the MVP by doing the following:
-1. Ensure that the tasks are based on product requirements and architecture docs for the pflow project.
-2. Ensure that the tasks dependent on pocketflow (the 100 lines of code in `pocketflow/__init__.py`) are using the pocketflow framework correctly by carefully reading the documentation in `pocketflow/docs` and examples in `pocketflow\cookbook` when needed.
-3. Ensure that every tasks considers the dependencies and the order of implementation. The `.taskmaster/tasks/tasks.json` will need to be updated continously as you discover new information and discuss the user.
-4. Ensure that every task is easy to understand and has a clear success criteria and test strategy.
+**Use the unified epistemic workflow in `.taskmaster/workflow/`**:
+- `refine-task.md` - Main task understanding, project context creation, and decomposition
+- `refine-subtask.md` - Subtask refinement with knowledge loading
+- `implement-subtask.md` - Implementation with real-time learning capture
 
-## End goal and Vision for the MVP
+**Core Principles**:
+1. **Task Understanding First**: Deeply understand the current task and create project context before decomposition
+2. **Natural Decomposition**: Break down tasks based on understanding, with optional reference to similar tasks
+3. **Compound Learning**: Each implementation builds on previous technical learnings
 
-The goal is a working MVP that can execute the core workflows:
+The workflow ensures:
+- MAIN TASKS: Understand deeply, create project context, generate logical subtasks
+- ALL SUBTASKS: Read shared project context, load implementation knowledge
+- NEW TASKS: Optionally review similar tasks for inspiration
+- CONTINUING SUBTASKS: Read sibling reviews within current task
+- ALL WORK: Capture technical discoveries in real-time for future benefit
 
-**Start simple** (general text processing):
-```bash
-# Transform: Repeatedly asking AI "analyze these logs"
-# Into: pflow analyze-logs --input=error.log (instant)
-pflow read-file --path=error.log >> llm --prompt="extract error patterns and suggest fixes" >> write-file --path=analysis.md
-```
-
-**And move on to more complex workflows**:
-LLM Agent like Cursor and Claude Code executing all steps, reasoning between each step:
-
-```markdown
-# Transform: /project:fix-github-issue 1234 (Claude code slash command, 50-90s, heavy tokens)
-# This is a Claude Code slash command (prompt shortcut) that was used as an example in an Anthropic blog post as a good example of how to efficiently use Claude Code.
-Please analyze and fix the GitHub issue: $ARGUMENTS.
-
-Follow these steps:
-
-1. Use `gh issue view` to get the issue details
-2. Understand the problem described in the issue
-3. Search the codebase for relevant files
-4. Implement the necessary changes to fix the issue
-5. Write and run tests to verify the fix
-6. Ensure code passes linting and type checking
-7. Create a descriptive commit message
-8. Push and create a PR
-
-Remember to use the GitHub CLI (`gh`) for all GitHub-related tasks.
-```
-
-```bash
-# Into: pflow fix-issue --issue=1234 (20-50s, minimal tokens)
-github-get-issue --issue=1234 >> \
-claude-code --prompt="<instructions>
-                        1. Understand the problem described in the issue
-                        2. Search the codebase for relevant files
-                        3. Implement the necessary changes to fix the issue
-                        4. Write and run tests to verify the fix
-                        5. Return a report of what you have done as output
-                      </instructions>
-                      This is the issue: $issue" >> \
-llm --prompt="Write a descriptive commit message for these changes: $code_report" >> \
-git-commit --message="$commit_message" >> \
-git-push >> \
-github-create-pr --title="Fix: $issue_title" --body="$code_report"
-```
-
-> Note that in this core example we are still needing to use the `claude-code` node to execute parts of the workflow. For many use cases, using LLM as Agents will not be necessary and in these cases the speedup will be much greater and can potentially reach 10x or more by reducing the intermittent reasoning between each step that needs to happen in Agentic workflows.
+See `.taskmaster/workflow/workflow-overview.md` for the complete system.
 
 ## User Decisions and Recommendations
 
@@ -366,3 +374,17 @@ Describe the decision and the reasoning why it is needed.
 ```
 
 > If the decision importance is 1-2 and you are confident in the decision, you can make the decision for the user and does not need to ask the user for confirmation or document the decision in the scratchpad.
+
+### Decision Escalation Framework
+
+Escalate to user when:
+- Architectural decisions affect multiple components
+- Trade-offs have no clear winner after analysis
+- Current approach contradicts established patterns
+- Integration would break existing functionality
+
+Document for user decision:
+1. Context and constraints
+2. Options with pros/cons
+3. Your recommendation and why
+4. Reversibility of each option
