@@ -98,25 +98,24 @@ Remember: The PocketFlow cookbook examples contain production-ready code that ca
 
 #### 0.4 Understanding Prior Research (If Available)
 
-**Check for existing research files in the task folder:**
+**Check for existing research files in the task's research folder:**
 ```bash
 # Look for research files created by previous AI agents
-ls .taskmaster/tasks/task_<taskId>/*patterns*.md
-ls .taskmaster/tasks/task_<taskId>/*research*.md
-ls .taskmaster/tasks/task_<taskId>/external-*.md
+ls .taskmaster/tasks/task_<taskId>/research/
 ```
 
-**Common research files include:**
-- `pocketflow-patterns.md` - Insights from PocketFlow cookbook examples
-- `external-patterns.md` - Patterns from similar projects (e.g., Simon Willison's llm)
-- `implementation-research.md` - Technical approaches and recommendations
+> Always read all the available research files. This is mandatory.
+
+**Common research files (organized in `research/` subfolder):**
+- `research/pocketflow-patterns.md` - Insights from PocketFlow cookbook examples
+- `research/external-patterns.md` - Patterns from similar projects (e.g., Simon Willison's llm)
 
 **Critical Thinking Required:**
 > **⚠️ IMPORTANT**: These research files contain recommendations from other AI agents. You must:
 > - **Verify all assumptions** - Don't blindly trust prior research
-> - **Cross-reference with actual code** - Research may be outdated or incorrect
+> - **Cross-reference with actual code if possible** - Research may be outdated or incorrect
 > - **Question relevance** - Patterns may not apply to current task or need adaptation
-> - **Validate against current docs** - Project may have evolved since research was done
+> - **Validate against current docs** - Make sure the patterns are applicable to pflow. Project may have evolved since research was done or research may not have considered everything.
 
 **If research files exist:**
 1. Read each file critically
@@ -124,7 +123,8 @@ ls .taskmaster/tasks/task_<taskId>/external-*.md
 3. Verify recommendations against:
    - Current task requirements
    - Latest project documentation
-   - Actual code in PocketFlow cookbook
+   - Actual code in pflow (does this fit?)
+   - Actual code in PocketFlow cookbook (only do this if the code seems to be wrong, use sub-agents)
    - Current architectural decisions
 4. Document verified insights in project context
 
@@ -205,11 +205,13 @@ Create well-structured subtasks using patterns from decomposition synthesis.
 1. Identify which pattern(s) fit this task
 2. Determine optimal number of subtasks
 3. Plan subtask ordering for dependencies
+4. Map relevant research insights to specific subtasks
 
 **Consider:**
 - Complexity score (1-10) from task understanding
 - Similar tasks' subtask counts
 - Available patterns from synthesis
+- Which research files contain patterns relevant to each planned subtask
 
 #### 2.2 Create Detailed Expansion Prompt
 
@@ -230,7 +232,16 @@ scratchpads/task-<taskId>/task-<taskId>-decomposition-plan.md
 - Include granular subtask descriptions
 - Specify dependencies explicitly
 - Mention test requirements per subtask
+- Reference specific research files by path (e.g., `.taskmaster/tasks/task_5/research/pocketflow-patterns.md`) when patterns apply to particular subtasks
 - Contain ALL the necessary information for an llm to generate the subtasks automatically (all context is needed)
+
+**Example research reference in expansion prompt:**
+```
+"Subtask 5.2 should implement the authentication flow following the pattern
+documented in .taskmaster/tasks/task_5/research/external-patterns.md (section
+on JWT token handling). Also reference .taskmaster/tasks/task_5/research/
+pocketflow-patterns.md for the decorator pattern used in similar auth systems."
+```
 
 #### 2.3 Update task-complexity-report.json
 
