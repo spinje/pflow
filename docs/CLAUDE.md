@@ -12,33 +12,24 @@
    - `docs/architecture/pflow-pocketflow-integration-guide.md` - Critical insights
    - This prevents common mistakes and clarifies the pflow-pocketflow relationship
 
-3. **See Implementation Examples** below for example of where to find information about key concepts for different features.
+3. **See Implementation Examples** below for where to find information about key concepts for different features.
 
 ## Repository Structure for Implementation
 
 ```
 pflow/
-├── pocketflow/              # Foundation framework (DO NOT MODIFY)
-│   ├── __init__.py         # ⭐ 100-line framework - READ FIRST
-│   ├── CLAUDE.md           # Complete pocketflow documentation inventory
-│   ├── docs/               # Conceptual documentation
-│   └── cookbook/           # 40+ examples to reference
-│
-├── src/pflow/              # Main implementation directory
-│   └── [TO BE BUILT]       # Your implementation goes here
-│
 ├── docs/                   # pflow documentation
 │   ├── CLAUDE.md           # This file - AI navigation guide
 │   ├── index.md            # Detailed file inventory
+│   ├── prd.md              # Product Requirements Document
 │   ├── reference/          # Authoritative specifications
 │   ├── core-concepts/      # Fundamental patterns
 │   ├── architecture/       # System design documents
 │   ├── features/           # Feature specifications
-│   └── core-node-packages/ # Platform node specifications
-│
-├── tests/                  # Test suite
-├── CLAUDE.md              # Root-level AI guidance
-└── pyproject.toml         # Dependencies and configuration
+│   │   └── implementation-roadmap.md  # Development phases
+│   ├── core-node-packages/ # Platform node specifications
+│   ├── implementation-details/  # Detailed implementation guides
+│   └── future-version/     # Post-MVP features
 ```
 
 ## Critical Warnings for AI Implementation
@@ -65,6 +56,7 @@ pflow/
 1. Check if pocketflow has documentation for it
 2. Read pflow's extension/specification of that concept
 3. Look for examples in pocketflow cookbook
+4. Review accumulated knowledge in `.taskmaster/knowledge/`
 
 **Implement a Feature**:
 1. Find it in the implementation order above
