@@ -4,11 +4,29 @@
 **Critical Decision**: Wrap Simon Willison's `llm` library instead of building from scratch. This saves weeks of development and provides battle-tested LLM integration.
 
 Key patterns to leverage:
-- **LLM Library Integration**: Use `llm` as a dependency
+- **LLM Library Integration**: Use `llm` as a dependency (from llm-main codebase)
 - **Pocketflow Node Pattern**: Proper prep/exec/post separation
 - **Natural Interface**: Intuitive shared store keys
 - **Error Handling**: Graceful fallbacks and retries
 - **Multi-Provider Support**: Automatic via `llm` plugins
+
+## llm Library Features vs pflow-specific Features
+
+### From llm library (llm-main):
+- `llm.get_model()` - Model resolution and loading
+- `llm.Attachment` - Image/file attachment handling
+- `model.prompt()` - Core prompt execution
+- `response.text()`, `response.usage()`, `response.json()` - Response data access
+- `llm.UnknownModelError` - Error handling
+- Multi-provider support via plugins
+
+### pflow-specific additions:
+- Pocketflow Node pattern (prep/exec/post)
+- Shared store integration
+- Multiple input key fallbacks (prompt/text/stdin)
+- Cumulative token tracking across flows
+- Fallback model strategy on rate limits
+- Natural key naming for chaining
 
 ## Specific Implementation
 
@@ -17,7 +35,7 @@ Key patterns to leverage:
 ```python
 # src/pflow/nodes/llm_node.py
 from pocketflow import Node
-import llm
+import llm  # From llm-main library
 from typing import Optional, Dict, Any
 
 class LLMNode(Node):
@@ -89,6 +107,7 @@ class LLMNode(Node):
 
             for img_path in images:
                 try:
+                    # llm.Attachment from llm-main/llm/models.py:52
                     attachments.append(llm.Attachment(path=img_path))
                 except Exception as e:
                     # Log warning but don't fail
@@ -108,7 +127,7 @@ class LLMNode(Node):
     def exec(self, prep_res: Dict[str, Any]) -> Dict[str, Any]:
         """Execute LLM call using llm library - isolated from shared store."""
         try:
-            # Get model from llm library
+            # Get model from llm library (llm-main/llm/__init__.py:325)
             model = llm.get_model(self.model_name)
 
             # Build prompt arguments
@@ -126,19 +145,27 @@ class LLMNode(Node):
             if prep_res["schema"]:
                 prompt_args["schema"] = prep_res["schema"]
 
-            # Execute prompt
+            # Execute prompt (llm-main/llm/models.py:1747)
             response = model.prompt(**prompt_args)
 
             # Extract all useful information
+            # response.text() from llm-main/llm/models.py:996
+            # response.usage() from llm-main/llm/models.py:1108 returns Usage dataclass
+            usage = response.usage()
             result = {
                 "text": response.text(),
-                "usage": response.usage() or {},
+                "usage": {
+                    "input": usage.input,
+                    "output": usage.output,
+                    "details": usage.details
+                } if usage else {},
                 "model": str(model.model_id)
             }
 
             # Add structured output if schema was used
             if prep_res["schema"]:
                 try:
+                    # response.json() from llm-main/llm/models.py:1096
                     result["json"] = response.json()
                 except:
                     result["json"] = None
@@ -146,6 +173,7 @@ class LLMNode(Node):
             return result
 
         except llm.UnknownModelError as e:
+            # UnknownModelError from llm-main/llm/__init__.py:290
             # Provide helpful error message
             available = [m.model_id for m in llm.get_models()]
             raise ValueError(
@@ -189,6 +217,7 @@ class LLMNode(Node):
         shared["text"] = exec_res["text"]
 
         # Metadata
+        # Usage object from llm-main/llm/models.py:45 has input/output/details fields
         shared["llm_usage"] = exec_res["usage"]
         shared["llm_model"] = exec_res["model"]
 
@@ -196,12 +225,12 @@ class LLMNode(Node):
         if "json" in exec_res and exec_res["json"]:
             shared["llm_json"] = exec_res["json"]
 
-        # Track cumulative token usage for cost tracking
-        if "total_tokens" in exec_res["usage"]:
-            shared["total_tokens"] = (
-                shared.get("total_tokens", 0) +
-                exec_res["usage"]["total_tokens"]
-            )
+        # Track cumulative token usage for cost tracking (pflow-specific feature)
+        # Note: llm's Usage object has separate input/output fields
+        usage = exec_res["usage"]
+        if usage.get("input") and usage.get("output"):
+            total = usage["input"] + usage["output"]
+            shared["total_tokens"] = shared.get("total_tokens", 0) + total
 
         # Store fallback info if it happened
         if "fallback_reason" in exec_res:
@@ -300,7 +329,7 @@ class TestLLMNode:
 
         exec_res = {
             "text": "LLM response",
-            "usage": {"total_tokens": 100, "prompt_tokens": 20},
+            "usage": {"input": 20, "output": 80, "details": None},
             "model": "gpt-4o-mini"
         }
 
@@ -309,9 +338,10 @@ class TestLLMNode:
         # Check all keys are set correctly
         assert shared["response"] == "LLM response"
         assert shared["text"] == "LLM response"  # For chaining
-        assert shared["llm_usage"]["total_tokens"] == 100
+        assert shared["llm_usage"]["input"] == 20
+        assert shared["llm_usage"]["output"] == 80
         assert shared["llm_model"] == "gpt-4o-mini"
-        assert shared["total_tokens"] == 100
+        assert shared["total_tokens"] == 100  # 20 + 80
         assert action == "default"
 
     def test_multimodal_support(self):
@@ -388,7 +418,13 @@ read_file >> llm >> write_file
 ```
 
 ## References
-- IMPLEMENTATION-GUIDE.md: Complete LLM node implementation
-- FINAL-ANALYSIS.md: Architecture alignment with pocketflow
+- `docs/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`: Complete LLM node implementation (pflow-specific)
+- `docs/implementation-details/simonw-llm-patterns/FINAL-ANALYSIS.md`: Architecture alignment with pocketflow
+- LLM library source: llm-main/ directory in this codebase
 - LLM docs: https://llm.datasette.io/
 - Available models: Run `llm models` after installing
+
+## Key llm-main Source Files Referenced
+- `llm-main/llm/__init__.py`: get_model(), UnknownModelError
+- `llm-main/llm/models.py`: Attachment, Usage, Response methods, Model.prompt()
+- Model resolution and plugin system from llm library

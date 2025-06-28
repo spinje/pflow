@@ -5,8 +5,9 @@
 
 Key insights:
 - **Direct Usage**: The planner can import and use `llm` directly
-- **No Abstraction Needed**: Adding a wrapper just adds complexity
+- **No Abstraction Needed**: Adding a wrapper just adds complexity (confirmed: llm-main uses no internal wrappers)
 - **Maintenance Burden**: Why maintain code that duplicates `llm`?
+- **llm-main Pattern**: Even llm itself doesn't wrap its own API - it uses `model.prompt()` directly
 
 ## Recommended Implementation
 
@@ -50,14 +51,17 @@ Generate a workflow as JSON IR with this structure:
 
     try:
         # Use llm directly - no wrapper needed!
+        # This is the exact pattern used in llm's own documentation
         model = llm.get_model("claude-3-5-sonnet-latest")
         response = model.prompt(
             prompt,
             system=system_prompt,
+            # Note: temperature is passed as a keyword argument, not in options
             temperature=0.7
         )
 
         # Parse JSON from response
+        # response.text() is the standard llm API pattern
         result = response.text().strip()
 
         # Handle markdown-wrapped JSON
@@ -72,7 +76,8 @@ Generate a workflow as JSON IR with this structure:
         # Retry with more explicit instructions
         retry_prompt = prompt + "\n\nIMPORTANT: Output ONLY valid JSON, no other text."
 
-        model = llm.get_model("gpt-4o-mini")  # Fallback model
+        # Fallback pattern from llm docs - get_model() with different model
+        model = llm.get_model("gpt-4o-mini")
         response = model.prompt(retry_prompt, temperature=0.3)
 
         return json.loads(response.text().strip())
@@ -104,14 +109,22 @@ class PlannerConfig:
 
     @classmethod
     def get_model(cls, fallback=False):
-        """Get configured model."""
+        """Get configured model using llm's standard API."""
         model_name = cls.FALLBACK_MODEL if fallback else cls.PRIMARY_MODEL
+        # llm.get_model() is the standard API - no wrappers needed
         return llm.get_model(model_name)
 ```
 
 ## What This Task Should Have Been
 
-If we were to keep this task, it should be minimal utilities:
+If we were to keep this task, it should be minimal utilities.
+
+**Important**: Even llm-main itself has no "LLM client" abstraction layer. The core API is simply:
+- `llm.get_model()` - Get a model instance
+- `model.prompt()` - Execute a prompt
+- `response.text()` - Get the response text
+
+No wrapper classes, no client objects, just direct function calls.
 
 ```python
 # src/pflow/planning/utils.py
@@ -145,7 +158,10 @@ from pflow.planning.workflow_compiler import generate_workflow_ir
 class TestPlanning:
     @vcr.use_cassette('fixtures/planning/simple_workflow.yaml')
     def test_generate_simple_workflow(self):
-        """Test workflow generation from natural language."""
+        """Test workflow generation from natural language.
+
+        This follows llm's testing patterns - direct API usage, no wrappers.
+        """
         node_context = """
 - read-file: Reads file from disk
   Inputs: file_path
@@ -176,14 +192,16 @@ class TestPlanning:
 ## Migration if Wrapper Already Exists
 
 ```python
-# OLD: Using wrapper
+# OLD: Using wrapper (DON'T DO THIS)
 from pflow.planning.llm_client import call_llm
 response = call_llm(prompt, model="claude-3-5-sonnet")
 
-# NEW: Direct usage
+# NEW: Direct usage (CORRECT - matches llm documentation)
 import llm
 model = llm.get_model("claude-3-5-sonnet-latest")
 response = model.prompt(prompt)
+# Access the text exactly as shown in llm docs
+text = response.text()
 ```
 
 ## Common Pitfalls to Avoid
@@ -200,8 +218,31 @@ The only abstraction needed is at the workflow generation level:
 - `parse_json_response()` - Reusable utility
 - Direct `llm` usage - No wrapper needed
 
+## Actual llm API Usage
+
+From llm's Python API documentation (docs/python-api.md):
+
+```python
+# Basic usage pattern from llm docs
+import llm
+
+model = llm.get_model("gpt-4o-mini")
+response = model.prompt(
+    "Five surprising names for a pet pelican",
+    system="Answer like GlaDOS"
+)
+print(response.text())
+```
+
+Key observations from llm-main codebase:
+1. **No internal wrappers**: Even llm itself calls `model.prompt()` directly
+2. **Simple API**: `get_model()` → `prompt()` → `text()` is the complete flow
+3. **Options as kwargs**: Temperature, system prompts, etc. are keyword arguments
+4. **Lazy evaluation**: Response text is only generated when `text()` is called
+
 ## References
-- IMPLEMENTATION-GUIDE.md: Task 15 recommendation
-- FINAL-ANALYSIS.md: Why wrapping is unnecessary
-- LLM docs: Direct usage examples
+- `docs/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`: Task 15 recommendation
+- `docs/implementation-details/simonw-llm-patterns/FINAL-ANALYSIS.md`: Why wrapping is unnecessary
+- `llm-main/llm-main/docs/python-api.md`: Official Python API documentation
+- `llm-main/llm-main/llm/__init__.py`: Core API exports (no client wrapper)
 - Design principle: YAGNI (You Aren't Gonna Need It)

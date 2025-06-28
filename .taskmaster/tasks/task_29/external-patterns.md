@@ -1,16 +1,26 @@
 # External Patterns for Task 29: Create comprehensive test suite
 
+## Key Clarifications
+
+After examining llm-main's actual test implementation:
+- **CliRunner Usage**: LLM creates CliRunner instances directly in tests, not via fixtures
+- **API Recording**: LLM uses `pytest-recording` (not VCR directly) with `@pytest.mark.vcr` decorator
+- **Test Organization**: LLM has a flat test structure with descriptive file names
+- **Fixtures**: LLM primarily uses conftest.py for mock models and environment setup
+
 ## Summary
-This task heavily benefits from LLM's testing patterns:
-- **CliRunner**: Click's testing framework for CLI commands
-- **VCR Pattern**: Record and replay API responses
-- **Fixture Organization**: Shared test utilities
-- **Parametrized Tests**: Test multiple scenarios efficiently
+This task benefits from LLM's testing patterns and general pytest best practices:
+- **CliRunner**: Click's testing framework for CLI commands (used by llm in all CLI tests)
+- **pytest-recording**: Record and replay API responses (llm uses this, not VCR directly)
+- **Fixture Organization**: Shared test utilities via conftest.py
+- **Parametrized Tests**: Test multiple scenarios efficiently (pytest feature used by llm)
 - **Integration Testing**: End-to-end workflow validation
 
 ## Specific Implementation
 
 ### Pattern: Test Structure and Fixtures
+
+Based on llm's test structure (see `llm-main/tests/conftest.py`), here's how to organize fixtures:
 
 ```python
 # tests/conftest.py
@@ -20,37 +30,32 @@ from pathlib import Path
 import json
 import os
 
-@pytest.fixture
-def runner():
-    """Provide a CliRunner for testing CLI commands."""
-    return CliRunner()
+# Note: llm doesn't define a runner fixture - they create CliRunner instances directly
+# in tests. However, a runner fixture can be convenient for consistency.
 
 @pytest.fixture
-def isolated_env(runner, tmp_path):
-    """Provide isolated filesystem and environment."""
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        # Set up test environment
-        old_home = os.environ.get("PFLOW_HOME")
-        os.environ["PFLOW_HOME"] = str(Path.cwd() / "test_home")
+def user_path(tmpdir):
+    """Similar to llm's user_path fixture - creates isolated test directory."""
+    dir = tmpdir / "pflow_test"
+    dir.mkdir()
+    return dir
 
-        # Create test directories
-        Path("test_home").mkdir(exist_ok=True)
-        Path("test_home/workflows").mkdir(exist_ok=True)
-        Path("test_home/traces").mkdir(exist_ok=True)
+@pytest.fixture(autouse=True)
+def env_setup(monkeypatch, user_path):
+    """Similar to llm's env_setup - sets up environment variables."""
+    monkeypatch.setenv("PFLOW_HOME", str(user_path))
 
-        # Mock LLM settings
-        os.environ["OPENAI_API_KEY"] = "test-key"
+@pytest.fixture
+def isolated_env(user_path):
+    """Provide isolated filesystem and environment for pflow tests."""
+    # Create test directories
+    (user_path / "workflows").mkdir(exist_ok=True)
+    (user_path / "traces").mkdir(exist_ok=True)
 
-        yield {
-            "home": Path("test_home"),
-            "runner": runner
-        }
-
-        # Restore environment
-        if old_home:
-            os.environ["PFLOW_HOME"] = old_home
-        else:
-            os.environ.pop("PFLOW_HOME", None)
+    return {
+        "home": user_path,
+        "runner": CliRunner()
+    }
 
 @pytest.fixture
 def sample_workflow():
@@ -120,29 +125,33 @@ def mock_nodes(monkeypatch):
 
 ### Pattern: CLI Testing with CliRunner
 
+Following llm's pattern (see `llm-main/tests/test_llm.py`):
+
 ```python
 # tests/test_cli.py
+from click.testing import CliRunner
 import pytest
 from pflow.cli import cli
 
-class TestCLI:
-    def test_version_command(self, runner):
-        """Test version display."""
-        result = runner.invoke(cli, ['--version'])
+def test_version():
+    """Test version display - llm pattern: create CliRunner in test."""
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert 'pflow' in result.output
-        assert '0.1.0' in result.output
+        assert result.output.startswith("pflow, version ")
 
-    def test_help_command(self, runner):
-        """Test help display."""
-        result = runner.invoke(cli, ['--help'])
-        assert result.exit_code == 0
-        assert 'Plan Once, Run Forever' in result.output
+def test_help_command():
+    """Test help display."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ['--help'])
+    assert result.exit_code == 0
+    assert 'Plan Once, Run Forever' in result.output
 
-        # Test subcommand help
-        result = runner.invoke(cli, ['run', '--help'])
-        assert result.exit_code == 0
-        assert 'Run a workflow' in result.output
+    # Test subcommand help
+    result = runner.invoke(cli, ['run', '--help'])
+    assert result.exit_code == 0
+    assert 'Run a workflow' in result.output
 
     @pytest.mark.parametrize("input_method", ["args", "stdin", "file"])
     def test_run_command_input_methods(self, runner, isolated_env, input_method):
@@ -184,27 +193,24 @@ class TestCLI:
         assert result.exit_code != 0
 ```
 
-### Pattern: VCR for API Testing
+### Pattern: API Recording for Testing
+
+LLM uses `pytest-recording` (which wraps VCR) for API testing (see `llm-main/tests/test_tools.py`):
 
 ```python
 # tests/test_integration.py
-import vcr
 import pytest
 from pathlib import Path
 
-# Configure VCR
-vcr_config = vcr.VCR(
-    cassette_library_dir='tests/fixtures/cassettes',
-    filter_headers=['authorization', 'x-api-key'],
-    filter_post_data_parameters=['api_key'],
-    match_on=['method', 'path', 'query'],
-    record_mode='once'  # Change to 'new_episodes' to update
-)
+# LLM's approach: Use @pytest.mark.vcr decorator
+# pytest-recording provides this functionality
 
 class TestIntegration:
-    @vcr_config.use_cassette('test_llm_workflow.yaml')
-    def test_llm_workflow_execution(self, runner, isolated_env, sample_workflow):
-        """Test complete workflow with LLM calls."""
+    @pytest.mark.vcr
+    def test_llm_workflow_execution(self, isolated_env):
+        """Test complete workflow with LLM calls - using llm's pytest.mark.vcr pattern."""
+        runner = CliRunner()
+
         # Create test input
         Path("input.txt").write_text("The quick brown fox jumps over the lazy dog.")
 
@@ -220,11 +226,11 @@ class TestIntegration:
         # Verify LLM processed the content
         output = Path("output.txt").read_text()
         assert len(output) > 0
-        assert "fox" in output.lower() or "processed" in output.lower()
 
-    @vcr_config.use_cassette('test_natural_language_planning.yaml')
-    def test_natural_language_to_workflow(self, runner, isolated_env):
+    @pytest.mark.vcr
+    def test_natural_language_to_workflow(self, isolated_env):
         """Test planning from natural language."""
+        runner = CliRunner()
         result = runner.invoke(cli, [
             'run',
             'read the file data.txt and count the words'
@@ -233,19 +239,8 @@ class TestIntegration:
         # Should generate and execute workflow
         assert result.exit_code == 0
 
-    @pytest.mark.parametrize("model", ["gpt-4o-mini", "claude-3-haiku"])
-    def test_multiple_llm_providers(self, runner, isolated_env, model):
-        """Test different LLM providers."""
-        with vcr_config.use_cassette(f'test_{model.replace("-", "_")}.yaml'):
-            result = runner.invoke(cli, [
-                'run',
-                'llm',
-                f'--model={model}',
-                '--prompt=Say hello'
-            ], input="Hello, World!")
-
-            assert result.exit_code == 0
-            assert result.output.strip() != ""
+    # Note: In llm, parametrized tests with VCR would use separate cassettes
+    # automatically based on the test name and parameters
 ```
 
 ### Pattern: Performance Testing
@@ -364,45 +359,62 @@ class TestErrorRecovery:
 
 ### Pattern: Test Organization
 
+LLM's test organization (from `llm-main/tests/`):
 ```
 tests/
-├── conftest.py                 # Shared fixtures
-├── test_cli.py                # CLI command tests
-├── test_integration.py        # End-to-end workflow tests
-├── test_nodes/               # Node-specific tests
-│   ├── test_llm_node.py
-│   ├── test_file_nodes.py
-│   └── test_github_nodes.py
-├── test_planning/            # Planner tests
-│   ├── test_workflow_generation.py
-│   └── test_prompt_templates.py
-├── test_runtime/             # Runtime engine tests
-│   ├── test_compiler.py
-│   ├── test_tracing.py
-│   └── test_shared_store.py
-├── benchmarks/               # Performance tests
-│   └── test_performance.py
-├── test_error_recovery.py    # Error handling tests
-└── fixtures/                 # Test data
-    ├── cassettes/           # VCR recordings
-    ├── workflows/           # Sample workflows
-    └── data/               # Test files
+├── conftest.py                 # Shared fixtures and mock models
+├── test_llm.py                # Core CLI tests
+├── test_cli_options.py        # CLI option handling
+├── test_cli_openai_models.py  # Model-specific tests
+├── test_tools.py              # Tool/function calling tests
+├── test_plugins.py            # Plugin system tests
+├── test_templates.py          # Template tests
+├── test_keys.py               # API key management
+├── test_llm_logs.py           # Logging functionality
+├── test_async.py              # Async functionality
+├── test_embed.py              # Embedding tests
+├── test_embed_cli.py          # Embedding CLI tests
+├── test_utils.py              # Utility function tests
+├── cassettes/                 # pytest-recording cassettes
+│   └── test_tools/           # Organized by test module
+│       ├── test_tool_use_basic.yaml
+│       └── test_tool_use_chain_of_two_calls.yaml
+└── test-llm-load-plugins.sh   # Shell script for plugin testing
 ```
 
-## Testing Best Practices
+Recommended pflow test organization based on llm patterns:
+```
+tests/
+├── conftest.py                # Shared fixtures (following llm's pattern)
+├── test_cli.py               # Core CLI tests (like llm's test_llm.py)
+├── test_run_command.py       # Run command specific tests
+├── test_plan_command.py      # Plan command tests
+├── test_registry.py          # Node registry tests
+├── test_nodes.py             # Node implementation tests
+├── test_workflow.py          # Workflow execution tests
+├── test_integration.py       # End-to-end tests
+├── cassettes/                # API recordings (llm pattern)
+│   └── test_integration/    # Organized by test module
+└── fixtures/                 # Test data
+    ├── workflows/           # Sample workflow files
+    └── data/               # Test input files
+```
 
-1. **Use CliRunner for all CLI tests**: Don't use subprocess
-2. **Record API calls with VCR**: Makes tests fast and deterministic
-3. **Parametrize when possible**: Test multiple scenarios efficiently
+## Testing Best Practices (from llm and pytest patterns)
+
+1. **Use CliRunner for all CLI tests**: Don't use subprocess (llm pattern)
+2. **Record API calls with pytest-recording**: Makes tests fast and deterministic (llm uses this)
+3. **Parametrize when possible**: Test multiple scenarios efficiently (pytest best practice)
 4. **Mock at the right level**: Mock external APIs, not internal components
 5. **Test the full stack**: Integration tests catch real issues
+6. **Create CliRunner in tests**: LLM creates fresh CliRunner instances in each test rather than using fixtures
 
 ## Common Pitfalls to Avoid
 
 1. **Don't test implementation details**: Test behavior, not internals
 2. **Don't skip error cases**: Error paths need testing too
-3. **Don't forget cleanup**: Use fixtures for proper teardown
-4. **Don't hardcode paths**: Use tmp_path and isolated_filesystem
+3. **Don't forget cleanup**: Use pytest's tmpdir and monkeypatch for isolation
+4. **Don't hardcode paths**: Use tmpdir fixture (llm pattern)
 5. **Don't ignore performance**: Track regressions with benchmarks
 
 ## Coverage Requirements
@@ -420,7 +432,10 @@ skip_covered = false
 ```
 
 ## References
-- IMPLEMENTATION-GUIDE.md: Testing patterns section
-- LLM source: Test suite organization
+- `llm-main/tests/`: Actual test implementation patterns
+- `llm-main/tests/conftest.py`: Fixture organization and mock models
+- `llm-main/tests/test_llm.py`: Core CLI testing patterns with CliRunner
+- `llm-main/tests/test_tools.py`: pytest-recording usage example
+- `llm-main/pyproject.toml`: Test dependencies including pytest-recording
 - Click docs: CliRunner documentation
-- VCR.py docs: Recording HTTP interactions
+- pytest-recording docs: Modern VCR alternative used by llm

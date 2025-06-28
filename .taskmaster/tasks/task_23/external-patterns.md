@@ -1,14 +1,28 @@
 # External Patterns for Task 23: Implement execution tracing system
 
 ## Summary
-This task benefits from LLM's structured logging patterns adapted for pocketflow's execution model:
-- **Structured Event Logging**: Clear event types and timing
-- **Cost Tracking**: Token usage and cost estimation
-- **Hierarchical Tracing**: Handle nested flows properly
-- **Safe Output**: stderr for traces, stdout for results
-- **JSON Persistence**: Structured trace storage
+This task implements execution tracing using general best practices, with limited inspiration from llm-main:
+
+**What comes from llm**:
+- Token tracking field names (`input_tokens`, `output_tokens`, `token_details`)
+- The concept of logging execution metadata alongside responses
+
+**What does NOT come from llm**:
+- Real-time tracing (llm only logs after completion)
+- stderr output (llm logs to SQLite database)
+- Cost calculation (llm doesn't estimate costs)
+- Hierarchical flow tracing (custom for pocketflow)
+- Structured event types (custom design)
+
+**Our approach**: Real-time execution tracing to stderr during workflow execution, with hierarchical support for nested pocketflow nodes
 
 ## Specific Implementation
+
+**Note**: The implementation below is a custom design for pflow's needs, not directly from llm. It combines:
+- General software engineering best practices for tracing/debugging
+- Token tracking inspired by llm's database schema
+- Real-time output suitable for CLI tools
+- Hierarchical structure for pocketflow's nested execution model
 
 ### Pattern: Execution Tracer for Pocketflow
 
@@ -232,7 +246,8 @@ class ExecutionTracer:
 
     def _estimate_cost(self, usage: Dict[str, Any], model: str) -> float:
         """Estimate cost from token usage."""
-        # Rough estimates per 1K tokens (prompt, completion)
+        # Example rates per 1K tokens (prompt, completion)
+        # NOTE: These are example rates and should be updated with current pricing
         rates = {
             "gpt-4": (0.03, 0.06),
             "gpt-4o": (0.005, 0.015),
@@ -491,8 +506,25 @@ else:
     # Run without tracing overhead
 ```
 
+## Key Differences from llm
+
+1. **Real-time vs Post-execution**:
+   - llm: Logs to SQLite after execution completes
+   - pflow: Real-time tracing to stderr during execution
+
+2. **Storage**:
+   - llm: SQLite database with full schema for queries
+   - pflow: JSON trace files for debugging
+
+3. **Token/Cost Tracking**:
+   - llm: Stores `input_tokens`, `output_tokens`, `token_details` from model responses
+   - pflow: Extends this with cost estimation based on model pricing
+
+4. **Output Separation**:
+   - llm: All output to stdout, logs to database
+   - pflow: Traces to stderr, results to stdout (allows piping)
+
 ## References
-- IMPLEMENTATION-GUIDE.md: Task 23 tracing implementation
-- LLM patterns: Structured logging approach
-- Pocketflow: Node lifecycle for trace points
-- Best practices: Always trace to stderr, not stdout
+- `llm-main/llm/models.py`: Database logging in `log_to_db()` method
+- `llm-main/llm/docs/logging.md`: SQLite storage approach
+- Best practices: stderr for traces, stdout for data (Unix philosophy)

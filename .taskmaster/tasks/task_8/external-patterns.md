@@ -172,7 +172,7 @@ def run(ctx, workflow):
     shell = ShellIntegration.setup()
     shared = ctx.obj['shared']
 
-    # Populate shared store with stdin if piped
+    # Populate shared store with stdin if piped (like LLM's pattern)
     if ShellIntegration.populate_shared_store(shared):
         if ctx.obj['verbose']:
             click.echo(f"Read {len(shared['stdin'])} bytes from stdin", err=True)
@@ -295,8 +295,17 @@ fi
 pflow long-running-task  # Ctrl+C exits with code 130
 ```
 
+## What Actually Comes from LLM
+
+LLM's codebase provides these specific patterns:
+1. **Stdin detection**: `if not sys.stdin.isatty():`
+2. **Reading stdin**: `stdin_prompt = sys.stdin.read()`
+3. **Attachment stdin**: `sys.stdin.buffer.read()` for binary data
+
+The rest of this document (signal handling, broken pipes, exit codes, safe output) represents Unix shell best practices that pflow should implement for robust shell integration.
+
 ## References
-- IMPLEMENTATION-GUIDE.md: Task 8 section
+- `docs/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`: Task 8 section
 - LLM source: `llm-main/llm/cli.py` lines ~1106-1110 (stdin handling in read_prompt)
 - LLM attachment handling: `llm-main/llm/cli.py` lines ~170-190 (stdin for attachments)
 - Unix philosophy: Proper pipe citizenship
