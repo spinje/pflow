@@ -53,7 +53,7 @@
           1
         ],
         "priority": "high",
-        "details": "Create src/pflow/cli.py using click. The primary goal is to accept and collect all command-line arguments (e.g., 'node1 --param=val >> node2') as a raw list or string. This raw input will be passed to the planner (in Phase 3) or a simple dispatcher. **This task does NOT involve parsing the '>>' operator or interpreting node syntax.** It only provides the entry point and collects the user's raw input.",
+        "details": "Create src/pflow/cli.py using click. The primary goal is to accept and collect all command-line arguments (e.g., 'node1 --param=val => node2') as a raw list or string. This raw input will be passed to the planner (in Phase 3) or a simple dispatcher. **This task does NOT involve parsing the '=>' operator or interpreting node syntax.** It only provides the entry point and collects the user's raw input.",
         "testStrategy": "Create tests/test_cli_core.py. Use click.testing.CliRunner to test basic command invocation (e.g., pflow --version). Verify the --help output is complete. Test that a simple dummy command receives its arguments correctly. Test error handling for both unknown arguments and invalid option formats to ensure the CLI is robust.",
         "subtasks": [
           {
@@ -81,7 +81,7 @@
             "dependencies": [
               2
             ],
-            "details": "Implementation: Add detailed help text for 'run' command with usage examples showing various input formats. Implement error handling for invalid arguments with clear error messages. Use proper exit codes (0 for success, non-zero for errors). Ensure --help works properly for all commands. Add examples to help text demonstrating: simple node chains, natural language in quotes, piped input, file input. Reference docs/architecture/architecture.md#5.1 for 'Type flags; engine decides' philosophy.",
+            "details": "Implementation: Add detailed help text for the main command with usage examples showing various input formats. Implement error handling for invalid arguments with clear error messages. Use proper exit codes (0 for success, non-zero for errors). Ensure --help works properly. Add examples to help text demonstrating: simple node chains using => operator, natural language in quotes, piped input, file input. Reference docs/architecture/architecture.md#5.1 for 'Type flags; engine decides' philosophy.",
             "status": "pending",
             "testStrategy": "Complete tests/test_cli_core.py coverage: Test help text displays correctly with expected examples, test error handling for malformed input with appropriate error messages, test proper exit codes for success/failure scenarios, verify error messages are clear and actionable"
           }
@@ -90,7 +90,7 @@
       {
         "id": 3,
         "title": "Execute a Hardcoded 'Hello World' Workflow",
-        "description": "Create and execute a simple, hardcoded 'read-file >> write-file' workflow from a local JSON file to validate the core end-to-end execution pipeline.",
+        "description": "Create and execute a simple, hardcoded 'read-file => write-file' workflow from a local JSON file to validate the core end-to-end execution pipeline.",
         "status": "pending",
         "dependencies": [
           1,
@@ -101,8 +101,8 @@
           11
         ],
         "priority": "high",
-        "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 7). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 11). 3. Adding a basic 'pflow run <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object. 5. Initialize a clean shared store dictionary and run the flow with it.",
-        "testStrategy": "Create a tests/test_e2e_workflow.py. Define a simple workflow IR file for 'read-file >> write-file'. Use CliRunner to invoke 'pflow run --file <ir_file>'. Create mock nodes that write to the shared store. Verify the flow executes correctly and the final shared store contains expected values. Test with temporary files to ensure file I/O works as expected.",
+        "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 7). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 11). 3. Adding a basic 'pflow --file <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object. 5. Initialize a clean shared store dictionary and run the flow with it.",
+        "testStrategy": "Create a tests/test_e2e_workflow.py. Define a simple workflow IR file for 'read-file => write-file'. Use CliRunner to invoke 'pflow --file <ir_file>'. Create mock nodes that write to the shared store. Verify the flow executes correctly and the final shared store contains expected values. Test with temporary files to ensure file I/O works as expected.",
         "subtasks": [
           {
             "id": 1,
@@ -181,7 +181,7 @@
           3
         ],
         "priority": "high",
-        "details": "Create src/pflow/core/shell_integration.py with comprehensive Unix pipe support. Implement stdin detection and reading when data is piped to pflow. Support streaming for large data (not just reading entire stdin at once). Handle stdout output for chaining pflow with other Unix tools. Implement proper exit code propagation and signal handling (Ctrl+C). When stdin is detected, populate shared['stdin'] automatically. Support both batch mode (fail fast) and interactive mode (prompt for missing data). Look at Simon Willison's 'llm' CLI source code for excellent pipe integration patterns. This enables both: 'cat data.txt | pflow process' AND 'pflow node1 >> node2'. Reference docs: shell-pipes.md, architecture.md#5.1.1",
+        "details": "Create src/pflow/core/shell_integration.py with comprehensive Unix pipe support. Implement stdin detection and reading when data is piped to pflow. Support streaming for large data (not just reading entire stdin at once). Handle stdout output for chaining pflow with other Unix tools. Implement proper exit code propagation and signal handling (Ctrl+C). When stdin is detected, populate shared['stdin'] automatically. Support both batch mode (fail fast) and interactive mode (prompt for missing data). Look at Simon Willison's 'llm' CLI source code for excellent pipe integration patterns. This enables both: 'cat data.txt | pflow process' AND 'pflow node1 => node2'. Reference docs: shell-pipes.md, architecture.md#5.1.1",
         "testStrategy": "Create tests/test_shell_integration.py. Use pytest fixtures to mock sys.stdin. Test stdin detection (distinguishing between piped data and interactive terminal input). Test reading various content sizes from stdin (empty, small, large). Verify that node output is correctly written to stdout. Include integration tests with mocked Unix tools like echo, cat, and grep to ensure compatibility. Test exit code propagation on both success and error cases.",
         "subtasks": [
           {
@@ -336,7 +336,7 @@
           19
         ],
         "priority": "high",
-        "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_input, node_context) function. In the MVP, this engine receives the entire raw input string from the CLI (e.g., \"pflow read-file --path=... >> llm\"). It uses the LLM to interpret this string as a domain-specific language, recognizing node names and conventions through pattern matching, not direct parsing. The LLM: 1) Interprets the natural language input, 2) Recognizes node names and parameter conventions, 3) Generates workflows with template variables like $issue_data, and 4) Fills in missing parameters. The planner uses the template resolver utility (Task 20) to validate and prepare templates. Reference docs: planner.md#6.1, workflow-analysis.md",
+        "details": "Create src/pflow/planning/workflow_compiler.py with compile_request(user_input, node_context) function. In the MVP, this engine receives the entire raw input string from the CLI (e.g., \"pflow read-file --path=... => llm\"). It uses the LLM to interpret this string as a domain-specific language, recognizing node names and conventions through pattern matching, not direct parsing. The LLM: 1) Interprets the natural language input, 2) Recognizes node names and parameter conventions, 3) Generates workflows with template variables like $issue_data, and 4) Fills in missing parameters. The planner uses the template resolver utility (Task 20) to validate and prepare templates. Reference docs: planner.md#6.1, workflow-analysis.md",
         "testStrategy": "Test workflow generation accuracy for natural language inputs. Verify LLM correctly interprets CLI-like syntax. Test template variable generation and validation. Verify IR structure is valid."
       },
       {
@@ -595,7 +595,7 @@
           49
         ],
         "priority": "low",
-        "details": "[DEFERRED TO v2.0 - Minor optimization only] Create direct parser for CLI pipe syntax that bypasses LLM for fully-specified commands. Parse 'node1 --param=value >> node2' syntax directly into IR. Even with direct parsing, LLM still needed for: missing parameters, template variables, data flow connections, shared store mappings. This is a minor optimization since users rarely specify everything. Benefits: slightly faster for complete commands, more predictable for simple flows, reduced token usage. The high-value feature is autocomplete (task #39), not direct parsing. Reference docs: planner.md#3.2 (future state)",
+        "details": "[DEFERRED TO v2.0 - Minor optimization only] Create direct parser for CLI pipe syntax that bypasses LLM for fully-specified commands. Parse 'node1 --param=value => node2' syntax directly into IR. Even with direct parsing, LLM still needed for: missing parameters, template variables, data flow connections, shared store mappings. This is a minor optimization since users rarely specify everything. Benefits: slightly faster for complete commands, more predictable for simple flows, reduced token usage. The high-value feature is autocomplete (task #39), not direct parsing. Reference docs: planner.md#3.2 (future state)",
         "testStrategy": "Test parsing accuracy, measure actual performance improvement, ensure LLM fallback works"
       },
       {
@@ -609,7 +609,7 @@
           10
         ],
         "priority": "high",
-        "details": "Create src/pflow/cli/autocomplete.py with shell completion support. Implement autocomplete for: node names (read-file, llm, github-get-issue), common parameters (--path, --prompt, --issue), pipe operator (>>). Use click's shell completion features. Generate completion scripts for bash/zsh/fish. When user types 'pflow read-f[TAB]', complete to 'read-file'. When typing 'pflow read-file --[TAB]', show available parameters from node metadata. This provides immediate value by helping users discover available nodes without documentation. Works even though CLI syntax is processed by LLM in MVP. Makes the tool feel responsive and professional. Reference docs: autocomplete.md (concepts), cli-runtime.md",
+        "details": "Create src/pflow/cli/autocomplete.py with shell completion support. Implement autocomplete for: node names (read-file, llm, github-get-issue), common parameters (--path, --prompt, --issue), flow operator (=>). Use click's shell completion features. Generate completion scripts for bash/zsh/fish. When user types 'pflow read-f[TAB]', complete to 'read-file'. When typing 'pflow read-file --[TAB]', show available parameters from node metadata. This provides immediate value by helping users discover available nodes without documentation. Works even though CLI syntax is processed by LLM in MVP. Makes the tool feel responsive and professional. Reference docs: autocomplete.md (concepts), cli-runtime.md",
         "testStrategy": "Test completion generation, shell integration, and user experience across shells. Write integration tests."
       },
       {
