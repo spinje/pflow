@@ -1,109 +1,174 @@
-# pflow Documentation Guide for AI Assistants
+# pflow Documentation Navigation Guide
 
-> **Purpose**: This guide helps AI assistants navigate pflow documentation and understand where to find information about key concepts. For detailed file descriptions to discover specific information, see [index.md](./index.md).
+> **Purpose**: This guide helps AI assistants navigate the pflow documentation to quickly find the information they need. For a detailed inventory of what's in each file, see [index.md](./index.md).
 
-## Quick Start for Implementation
-
-1. **Read Foundation**:
-   - `pocketflow/__init__.py` - The entire 100-line framework
-   - Understanding this file is **mandatory** before any implementation
-
-2. **Read Integration Guide**:
-   - `docs/architecture/pflow-pocketflow-integration-guide.md` - Critical insights
-   - This prevents common mistakes and clarifies the pflow-pocketflow relationship
-
-3. **See Implementation Examples** below for where to find information about key concepts for different features.
-
-## Repository Structure for Implementation
+## Documentation Structure
 
 ```
-pflow/
-├── docs/                   # pflow documentation
-│   ├── CLAUDE.md           # This file - AI navigation guide
-│   ├── index.md            # Detailed file inventory
-│   ├── prd.md              # Product Requirements Document
-│   ├── reference/          # Authoritative specifications
-│   ├── core-concepts/      # Fundamental patterns
-│   ├── architecture/       # System design documents
-│   ├── features/           # Feature specifications
-│   │   └── implementation-roadmap.md  # Development phases
-│   ├── core-node-packages/ # Platform node specifications
-│   ├── implementation-details/  # Detailed implementation guides
-│   └── future-version/     # Post-MVP features
+docs/
+├── prd.md                     # Product Requirements Document
+├── index.md                   # File-by-file content inventory
+├── architecture/              # System design and integration
+│   ├── architecture.md        # Core system design
+│   ├── components.md          # MVP vs v2.0 breakdown
+│   └── pflow-pocketflow-integration-guide.md  # Critical integration patterns
+├── core-concepts/             # Fundamental patterns
+│   ├── registry.md            # Node discovery system
+│   ├── runtime.md             # Execution engine
+│   ├── schemas.md             # JSON formats
+│   └── shared-store.md        # Data communication
+├── features/                  # Feature specifications
+│   ├── mvp-scope.md           # What's in/out of MVP
+│   ├── implementation-roadmap.md  # Development phases
+│   ├── cli-runtime.md         # CLI integration
+│   ├── planner.md             # Natural language planning
+│   ├── shell-pipes.md         # Unix pipe support
+│   ├── simple-nodes.md        # Node design principles
+│   ├── workflow-analysis.md   # AI workflow inefficiencies
+│   ├── autocomplete.md        # CLI autocomplete (v2.0)
+│   └── mcp-integration.md     # MCP protocol (v2.0)
+├── reference/                 # Technical references
+│   ├── cli-reference.md       # CLI syntax and commands
+│   ├── node-reference.md      # Node implementation guide
+│   └── execution-reference.md # Execution model
+├── core-node-packages/        # Platform node specs
+│   ├── llm-nodes.md           # LLM integration
+│   ├── ci-nodes.md            # CI/CD nodes
+│   ├── github-nodes.md        # GitHub integration
+│   └── claude-nodes.md        # Claude-specific nodes
+├── implementation-details/    # Deep dives
+│   ├── metadata-extraction.md # Node metadata system
+│   └── autocomplete-impl.md   # Autocomplete details
+└── future-version/            # Post-MVP features
+    ├── llm-node-gen.md        # Dynamic node generation
+    └── json-extraction.md     # JSON handling improvements
 ```
 
-## Critical Warnings for AI Implementation
+## Navigation by Purpose
 
-### ⚠️ DO NOT:
-1. **Reimplement pocketflow functionality** - Use it as a library
-2. **Modify pocketflow source code** - It's a dependency
-3. **Create new orchestration patterns** - Use pocketflow's Flow
-4. **Build custom retry/error handling** - pocketflow handles this
-5. **Implement async in MVP** - Explicitly excluded from scope
+### "I need to understand..."
 
-### ✅ DO:
-1. **Read pocketflow source first** - It's only 100 lines
-2. **Check pocketflow cookbook** - 40+ examples available
-3. **Extend pocketflow classes** - Don't wrap unnecessarily
-4. **Follow simple node principle** - One node, one purpose
-5. **Use shared store pattern** - All communication through store
+**The overall system**
+- Start with: `prd.md` (sections 1-3 for vision, skip deep technical details)
+- Then read: `architecture/architecture.md`
+- Key insight: Focus on shared store + proxy pattern
 
-## Navigation Patterns
+**What we're building in MVP**
+- Start with: `features/mvp-scope.md`
+- Then read: `features/implementation-roadmap.md`
+- Reference: `architecture/components.md` for detailed breakdown
 
-### When You Need To:
+**How pflow uses pocketflow**
+- **Must read**: `architecture/pflow-pocketflow-integration-guide.md`
+- This prevents common implementation mistakes
 
-**Understand a Concept**:
-1. Check if pocketflow has documentation for it
-2. Read pflow's extension/specification of that concept
-3. Look for examples in pocketflow cookbook
-4. Review accumulated knowledge in `.taskmaster/knowledge/`
+**The data flow between nodes**
+- Primary: `core-concepts/shared-store.md`
+- Supporting: `core-concepts/schemas.md` (section on mappings)
 
-**Implement a Feature**:
-1. Find it in the implementation order above
-2. Read all prerequisites first
-3. Check feature-to-pattern mapping
-4. Read pflow specifications
-5. Reference pocketflow examples
+**How to implement a node**
+- Guide: `reference/node-reference.md`
+- Principles: `features/simple-nodes.md`
+- Examples: Any file in `core-node-packages/`
 
-**Debug an Issue**:
-1. Check if it's a pocketflow pattern issue
-2. Review integration guide for common mistakes
-3. Ensure you're extending, not reimplementing
+**The CLI syntax and behavior**
+- Reference: `reference/cli-reference.md`
+- Integration: `features/cli-runtime.md`
+- Shell support: `features/shell-pipes.md`
 
-## Key Documents by Purpose
+**Natural language planning**
+- Specification: `features/planner.md`
+- Context: `features/workflow-analysis.md` (why we need it)
 
-### Architecture & Design:
-- `docs/prd.md` - Product vision (skip technical details)
-- `docs/architecture/architecture.md` - System architecture
-- `docs/architecture/pflow-pocketflow-integration-guide.md` - **Critical**
+## Document Categories
 
-### Implementation Specs:
-- `docs/reference/node-reference.md` - Node implementation
-- `docs/reference/cli-reference.md` - CLI syntax
-- `docs/reference/execution-reference.md` - Runtime behavior
+### 🎯 Start Here (Core Understanding)
+1. `prd.md` - Vision and core concepts
+2. `architecture/pflow-pocketflow-integration-guide.md` - Critical patterns
+3. `features/mvp-scope.md` - What we're building now
 
-### Core Patterns:
-- `docs/core-concepts/shared-store.md` - Communication
-- `docs/features/simple-nodes.md` - Node design
-- `docs/core-concepts/schemas.md` - Data formats
+### 📐 Architecture Documents
+- System design and component relationships
+- How pieces fit together
+- Design decisions and rationale
 
-### Feature Specs:
-- `docs/features/planner.md` - Natural language
-- `docs/features/cli-runtime.md` - CLI integration
-- `docs/features/mvp-scope.md` - What's in/out of scope
+### 🧩 Core Concepts
+- Fundamental patterns that everything builds on
+- Shared store, schemas, registry, runtime
+- Read these before implementing features
 
-## Next Steps
+### ⚙️ Feature Specifications
+- Detailed specs for each major feature
+- Implementation requirements
+- User-facing behavior
 
-1. **Start with Phase 1** - Foundation is critical
-2. **Read pocketflow examples** - Learn patterns by example
-3. **Implement incrementally** - Each phase builds on previous
-4. **Test with pocketflow patterns** - Reuse their test approaches
-5. **Ask for clarification** - When pflow extends pocketflow in unclear ways
+### 📖 Reference Guides
+- Technical specifications
+- Implementation patterns
+- "How to" guides
+
+### 📦 Node Package Specs
+- Platform-specific node documentation
+- Interface definitions
+- Usage examples
+
+## Suggested Reading Paths
+
+### For Understanding the System
+1. `prd.md` (sections 1-3)
+2. `architecture/architecture.md`
+3. `core-concepts/shared-store.md`
+4. `architecture/pflow-pocketflow-integration-guide.md`
+
+### For Implementing Nodes
+1. `features/simple-nodes.md`
+2. `reference/node-reference.md`
+3. `core-concepts/shared-store.md`
+4. Pick relevant `core-node-packages/*.md`
+
+### For CLI Development
+1. `reference/cli-reference.md`
+2. `features/cli-runtime.md`
+3. `features/shell-pipes.md`
+4. `core-concepts/runtime.md`
+
+### For Natural Language Features
+1. `features/workflow-analysis.md` (context)
+2. `features/planner.md`
+3. `core-concepts/schemas.md`
+
+## Key Document Relationships
+
+```
+prd.md
+├─> architecture/architecture.md
+│   ├─> core-concepts/shared-store.md
+│   ├─> core-concepts/schemas.md
+│   └─> architecture/pflow-pocketflow-integration-guide.md
+├─> features/mvp-scope.md
+│   └─> features/implementation-roadmap.md
+└─> reference/cli-reference.md
+    ├─> features/cli-runtime.md
+    └─> features/shell-pipes.md
+```
+
+## Important Notes
+
+### Single Source of Truth
+Each concept has ONE canonical document. Other documents link to it rather than duplicating content. If you see the same concept explained in multiple places, find the canonical source.
+
+### MVP vs Future
+Many documents describe both MVP and future features. Look for:
+- "MVP:" or "v0.1" tags for current scope
+- "v2.0" or "Future:" for post-MVP features
+- Check `features/mvp-scope.md` when uncertain
+
+### Prerequisites
+Some documents assume knowledge from others:
+- All implementation docs assume you've read `architecture/pflow-pocketflow-integration-guide.md`
+- Node docs assume you understand the shared store pattern
+- CLI docs build on the architecture overview
 
 ---
 
-For detailed documentation about each file's contents and purpose, see [index.md](./index.md).
-
-For the complete pocketflow documentation inventory, see `pocketflow/CLAUDE.md`.
-
-*When extending this documentation, always follow the single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
+**Quick Tip**: Use `index.md` to see what's IN each file. Use this guide to understand WHEN and WHY to read each file.
