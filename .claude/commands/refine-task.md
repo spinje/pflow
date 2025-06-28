@@ -25,3 +25,5 @@ Key outputs:
 - `.taskmaster/tasks/task_$ARGUMENTS/decomposition-plan.md`
 
 Remember: Deep understanding drives good decomposition. Don't skip Phase 0!
+
+*Needless to say this is a very important and complex task where ultra thinking is required.*

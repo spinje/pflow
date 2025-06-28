@@ -32,3 +32,5 @@ Key outputs in `.taskmaster/tasks/task_X/subtask_$ARGUMENTS/implementation/`:
 - If final subtask: create `task-review.md`
 
 Remember: Capture learnings IN REAL-TIME for compound effect!
+
+*Needless to say this is a very important and complex task where ultra thinking is required.*
