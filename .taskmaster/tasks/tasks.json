@@ -71,7 +71,7 @@
             "description": "Enhance the 'run' command to handle different input formats including quoted natural language commands, unquoted CLI syntax with flags, stdin piped input, and file-based input via --file option",
             "dependencies": [],
             "details": "Implementation: Detect stdin input using sys.stdin.isatty() and read piped content when available. Handle both quoted strings (\"plan something\") and unquoted syntax with proper flag preservation. Store raw input in click context using ctx.obj dictionary for future planner use. Add --file option using @click.option() to read workflow from file. Reference docs/features/cli-runtime.md for context storage patterns and argument flow.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Expand tests/test_cli_core.py: Test quoted natural language input collection, test unquoted CLI syntax with flags (--param=value), test stdin pipe detection and reading using mock stdin, test file input option with temporary files, verify context properly stores the raw input"
           },
           {
@@ -641,7 +641,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-28T14:34:32.074Z",
+      "updated": "2025-06-28T16:23:23.060Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }
