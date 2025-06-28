@@ -202,8 +202,6 @@ Both loops feed each other: better decomposition leads to better implementation,
 │       ├── progress-log.md               # Real-time learning capture during work
 │       ├── subtask-review.md             # Post-implementation subtask review
 │       └── task-review.md                # Task-level summary after all subtasks
-├── reports/
-│   └── task-complexity-report.json      # Optional historical decomposition data
 ├── tasks/
 │   ├── task_1/
 │   │   ├── project-context.md           # Domain understanding (shared by all subtasks)

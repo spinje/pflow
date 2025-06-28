@@ -209,8 +209,6 @@ pflow/
 │   │   ├── patterns.md  # Successful implementation patterns
 │   │   ├── pitfalls.md  # Common mistakes to avoid
 │   │   └── decisions.md # Architectural decisions
-│   └── reports/         # Generated reports
-│       └── task-complexity-report.json  # Task decomposition history
 ├── tests/                 # Test suite
 │   ├── test_foo.py       # Legacy placeholder test (to be removed)
 │   ├── test_links.py     # Documentation link validation

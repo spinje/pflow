@@ -22,6 +22,6 @@ You are at the BEGINNING of the epistemic workflow (see diagram in workflow-over
 
 Key outputs:
 - `.taskmaster/tasks/task_$ARGUMENTS/project-context.md`
-- Update to `.taskmaster/reports/task-complexity-report.json`
+- `.taskmaster/tasks/task_$ARGUMENTS/decomposition-plan.md`
 
 Remember: Deep understanding drives good decomposition. Don't skip Phase 0!
