@@ -87,7 +87,7 @@ Remember: The PocketFlow cookbook examples contain production-ready code that ca
 - Check `.taskmaster/reports/task-complexity-report.json` for tasks with similar domain/complexity
 - Read their task-review.md files for technical insights (located in `.taskmaster/tasks/task_<id>/task-review.md` for each task)
 - Note any useful patterns or approaches
-- If many tasks seem relevant, deploy sub-agents to gather useful information from the task-reviews
+- If many tasks seem relevant, deploy sub-agents to gather useful information from the `task-review.md` files.
 
 **This is about:**
 - Understanding how similar technical challenges were solved
@@ -96,12 +96,47 @@ Remember: The PocketFlow cookbook examples contain production-ready code that ca
 
 **Keep it lightweight** - don't create formal synthesis documents. Just gather inspiration if needed.
 
+#### 0.4 Understanding Prior Research (If Available)
+
+**Check for existing research files in the task folder:**
+```bash
+# Look for research files created by previous AI agents
+ls .taskmaster/tasks/task_<taskId>/*patterns*.md
+ls .taskmaster/tasks/task_<taskId>/*research*.md
+ls .taskmaster/tasks/task_<taskId>/external-*.md
+```
+
+**Common research files include:**
+- `pocketflow-patterns.md` - Insights from PocketFlow cookbook examples
+- `external-patterns.md` - Patterns from similar projects (e.g., Simon Willison's llm)
+- `implementation-research.md` - Technical approaches and recommendations
+
+**Critical Thinking Required:**
+> **⚠️ IMPORTANT**: These research files contain recommendations from other AI agents. You must:
+> - **Verify all assumptions** - Don't blindly trust prior research
+> - **Cross-reference with actual code** - Research may be outdated or incorrect
+> - **Question relevance** - Patterns may not apply to current task or need adaptation
+> - **Validate against current docs** - Project may have evolved since research was done
+
+**If research files exist:**
+1. Read each file critically
+2. Extract potentially useful patterns
+3. Verify recommendations against:
+   - Current task requirements
+   - Latest project documentation
+   - Actual code in PocketFlow cookbook
+   - Current architectural decisions
+4. Document verified insights in project context
+
+**Remember**: Prior research is a starting point, not gospel. Your understanding of the current task and codebase takes precedence over any recommendations in these files. With that said, the reasearch can be an invaluable source of inspiration and ideas to make the best possible task decomposition and implementation.
+
 ### Exit Criteria for Phase 0
 - [ ] Current task fully understood with no ambiguities
 - [ ] Project context briefing created for the task
 - [ ] Relevant cookbook patterns identified and documented in project context
 - [ ] Domain understanding acquired for intelligent decomposition
 - [ ] (Optional) Similar tasks reviewed for inspiration
+- [ ] (If available) Prior research files critically reviewed and verified
 
 ## Phase 1: Task Refinement
 
