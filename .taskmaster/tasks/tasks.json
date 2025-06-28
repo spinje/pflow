@@ -641,7 +641,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-28T16:23:23.060Z",
+      "updated": "2025-06-28T19:07:02.783Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }

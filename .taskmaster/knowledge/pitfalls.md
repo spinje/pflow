@@ -28,4 +28,28 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
+## Pitfall: Shell Operator Conflicts in CLI Design
+- **Date**: 2025-06-28
+- **Discovered in**: Task 2.2
+- **What we tried**: Using >> as a flow operator in CLI syntax without considering shell behavior
+- **Why it seemed good**: The >> operator visually represents data flow and is used in documentation
+- **Why it failed**: Shell intercepts >> for output redirection before the command sees it
+- **Symptoms**:
+  - `pflow node1 >> node2` creates a file named "node2" instead of passing >> as argument
+  - Users forced to quote the operator: `pflow node1 ">>" node2`
+  - Poor user experience requiring special escaping
+- **Better approach**: Choose operators without shell conflicts: =>, |>, ~>, ::, ++, etc.
+- **Example of failure**:
+  ```bash
+  # DON'T DO THIS
+  pflow read-file >> process-text
+  # Shell redirects stdout to file "process-text"
+  # pflow only sees: ["read-file"]
+
+  # Required workaround (poor UX)
+  pflow read-file ">>" process-text
+  ```
+
+---
+
 <!-- New pitfalls are appended below this line -->

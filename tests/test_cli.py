@@ -20,34 +20,33 @@ def test_cli_help_command():
 
     assert result.exit_code == 0
     assert "pflow - workflow compiler for deterministic CLI commands." in result.output
-    assert "Commands:" in result.output
-    assert "version" in result.output
+    assert "Execute workflows using the =>" in result.output
+    assert "--version" in result.output
 
 
-def test_version_command():
-    """Test that the version command outputs the correct version."""
+def test_version_flag():
+    """Test that the version flag outputs the correct version."""
     runner = click.testing.CliRunner()
-    result = runner.invoke(main, ["version"])
+    result = runner.invoke(main, ["--version"])
 
     assert result.exit_code == 0
     assert result.output.strip() == "pflow version 0.0.1"
 
 
-def test_invalid_command():
-    """Test that invalid commands show appropriate error."""
+def test_workflow_arguments():
+    """Test that workflow arguments are collected."""
     runner = click.testing.CliRunner()
-    result = runner.invoke(main, ["invalid-command"])
+    result = runner.invoke(main, ["node1", "=>", "node2"])
 
-    assert result.exit_code != 0
-    assert "Error" in result.output or "No such command" in result.output
+    assert result.exit_code == 0
+    assert "Collected workflow from args: node1 => node2" in result.output
 
 
 def test_no_arguments():
-    """Test that running with no arguments shows help."""
+    """Test that running with no arguments collects empty workflow."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [])
 
-    # Click groups return exit code 2 when no command is provided
-    assert result.exit_code == 2
-    assert "Commands:" in result.output
-    assert "pflow - workflow compiler for deterministic CLI commands." in result.output
+    # With no arguments, it should still run and collect empty workflow
+    assert result.exit_code == 0
+    assert "Collected workflow from args:" in result.output

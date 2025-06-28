@@ -353,7 +353,7 @@ graph TD
 
 ### 4.2 Natural Language Path (Full Planning)
 
-The planner provides comprehensive natural language understanding to transform user intent into executable flows. For detailed planning pipeline stages and implementation, see [Planner Specification](planner.md).
+The planner provides comprehensive natural language understanding to transform user intent into executable flows. For detailed planning pipeline stages and implementation, see [Planner Specification](./features/planner.md).
 
 **Key Features:**
 - Metadata-driven node selection
@@ -383,7 +383,7 @@ Direct Runtime Execution
 
 ### 4.4 Metadata-Driven Selection
 
-The planner uses extracted node metadata for intelligent selection. For details on metadata extraction and schema, see [Schemas](schemas.md#node-metadata-schema) and [Metadata Extraction](implementation-details/metadata-extraction.md).
+The planner uses extracted node metadata for intelligent selection. For details on metadata extraction and schema, see [Schemas](./core-concepts/schemas.md#node-metadata-schema) and [Metadata Extraction](./implementation-details/metadata-extraction.md).
 
 **Benefits:**
 
@@ -841,7 +841,7 @@ pflow's **Intermediate Representation (IR)** is a complete JSON specification th
 
 ### 5.5 Validation Pipeline
 
-The IR undergoes comprehensive validation before execution. For detailed validation stages and requirements, see [Execution Reference](./reference/execution-reference.md#validation-pipeline) and [Schemas](schemas.md#schema-validation-requirements).
+The IR undergoes comprehensive validation before execution. For detailed validation stages and requirements, see [Execution Reference](./reference/execution-reference.md#validation-pipeline) and [Schemas](./core-concepts/schemas.md#schema-validation-requirements).
 
 ### 5.6 Lockfile Generation
 

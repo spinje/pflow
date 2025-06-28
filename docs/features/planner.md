@@ -152,7 +152,7 @@ pflow read-file --[TAB]   # → --path, --encoding
 # LLM still processes the complete command
 ```
 
-Read more about the [CLI Autocomplete](../features/cli-autocomplete.md) feature.
+Read more about the [CLI Autocomplete](../features/autocomplete.md) feature.
 
 **The pattern**: Start simple (everything through LLM), optimize later (direct parsing in v2.0).
 

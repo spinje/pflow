@@ -69,4 +69,36 @@ A chronological record of significant architectural and design decisions made du
 
 ---
 
+## Decision: Direct Command Execution Over Subcommands for Workflow Syntax
+- **Date**: 2025-06-28
+- **Made during**: Task 2.2
+- **Status**: Accepted
+- **Context**: Initial implementation used `pflow run node1 >> node2` but all documentation showed `pflow node1 >> node2`
+- **Alternatives considered**:
+  1. **Keep run subcommand** - Explicit subcommand for workflow execution
+     - Pros: Clear separation of concerns, room for other subcommands
+     - Cons: Extra typing, doesn't match documentation, less intuitive
+  2. **Direct execution** - Workflow syntax directly after pflow command
+     - Pros: Matches all documentation, more intuitive, cleaner syntax
+     - Cons: Slightly more complex CLI parsing
+  3. **Both approaches** - Support both with and without run
+     - Pros: Backwards compatible, flexible
+     - Cons: Confusing, maintenance burden, unclear which is canonical
+- **Decision**: Use direct command execution without subcommands
+- **Rationale**:
+  - All documentation consistently shows direct usage
+  - More intuitive for users (less typing)
+  - Aligns with Unix philosophy of simple commands
+  - The 'run' subcommand was a task decomposition error
+  - Direct execution feels more like a compiler/interpreter
+- **Consequences**:
+  - CLI uses @click.command() instead of @click.group()
+  - Version becomes a flag (--version) instead of subcommand
+  - All workflow arguments collected directly
+  - Future subcommands would need careful design
+  - Documentation remains consistent with implementation
+- **Review date**: After MVP completion
+
+---
+
 <!-- New decisions are appended below this line -->

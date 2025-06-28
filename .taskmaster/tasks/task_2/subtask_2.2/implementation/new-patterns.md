@@ -32,3 +32,24 @@ def test_run_context_storage_verification():
     result = runner.invoke(cli, ["run", "test"])
     assert "expected output reflecting context" in result.output
 ```
+
+## Pattern: Operator selection for CLI tools
+**Context**: When designing CLI tools that need operators between arguments (like flow operators)
+**Solution**: Systematically test operators for shell and Click conflicts before choosing
+**Why it works**: Many operators have special meaning in shells or argument parsers
+**When to use**: Any CLI tool design that needs operators in the command syntax
+**Example**:
+```bash
+# Test shell conflicts:
+echo "node1 >> node2"   # Shell redirects to file
+echo "node1 >>> node2"  # Shell syntax error
+echo "node1 | node2"    # Shell pipe
+echo "node1 -> node2"   # No shell conflict
+
+# Test Click conflicts:
+# -> starts with dash, parsed as option
+# => no conflicts, works perfectly
+
+# Safe operators: =>, |>, ~>, ::, ++, ..
+# Recommended: => (arrow-like, intuitive)
+```

@@ -157,4 +157,4 @@ This feature is a natural extension of `pflow`'s existing architecture and direc
 
 A phased approach to implementation, starting with core suggestions (node names, flags) and progressively adding more sophisticated contextual awareness, would be a sensible way to manage complexity and deliver value incrementally. The performance of the suggestion-generation call will be paramount.
 
-See [Cli Autocomplete Feature Implementation Details](implementation-details/cli-auto-complete-feature-implementation-details.md) for the implementation details.
+See [Cli Autocomplete Feature Implementation Details](../implementation-details/autocomplete-impl.md) for the implementation details.

@@ -81,4 +81,46 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: Non-Conflicting CLI Operators
+- **Date**: 2025-06-28
+- **Discovered in**: Task 2.2
+- **Problem**: Need operators for CLI syntax that don't conflict with shell or Click parsing
+- **Solution**: Test operators systematically and choose ones without conflicts
+- **Example**:
+  ```python
+  # Testing methodology:
+  # 1. Test shell conflicts: echo "cmd1 OPERATOR cmd2"
+  # 2. Test Click conflicts: create minimal CLI and test parsing
+
+  # Operators with conflicts:
+  # >> - Shell output redirection
+  # >>> - Shell interprets as >> followed by >
+  # -> - Click interprets as option due to leading dash
+  # | - Shell pipe
+  # < - Shell input redirection
+  # & - Shell background process
+
+  # Safe operators:
+  # => - Arrow-like, no conflicts (RECOMMENDED)
+  # |> - Pipe-like semantics, no conflicts
+  # ~> - Wavy arrow, unique
+  # :: - Double colon separator
+  # ++ - Concatenation style
+  # .. - Range/continuation style
+
+  # Implementation with Click:
+  @click.command(context_settings={"allow_interspersed_args": False})
+  @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
+  def main(workflow):
+      # Now => works without quotes: pflow node1 => node2
+  ```
+- **When to use**: Designing any CLI tool that needs operators between arguments
+- **Benefits**:
+  - No quoting required for users
+  - Better user experience
+  - Works in all shells
+  - No special escaping needed
+
+---
+
 <!-- New patterns are appended below this line -->

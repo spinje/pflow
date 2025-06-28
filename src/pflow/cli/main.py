@@ -6,24 +6,26 @@ from pathlib import Path
 import click
 
 
-@click.group()
-def main() -> None:
-    """pflow - workflow compiler for deterministic CLI commands."""
-    pass
-
-
-@main.command()
-def version() -> None:
-    """Show the pflow version."""
-    click.echo("pflow version 0.0.1")
-
-
-@main.command()
+@click.command(context_settings={"allow_interspersed_args": False})
 @click.pass_context
+@click.option("--version", is_flag=True, help="Show the pflow version")
 @click.option("--file", "-f", type=click.Path(exists=True), help="Read workflow from file")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
-def run(ctx: click.Context, file: str | None, workflow: tuple[str, ...]) -> None:
-    """Run a pflow workflow from command-line arguments, stdin, or file."""
+def main(ctx: click.Context, version: bool, file: str | None, workflow: tuple[str, ...]) -> None:
+    """pflow - workflow compiler for deterministic CLI commands.
+
+    Execute workflows using the => operator to chain nodes:
+
+    \b
+    Examples:
+      pflow read-file --path=input.txt => llm --prompt="Summarize"
+      pflow "analyze the Python files and find bugs"
+      echo "read-file => process" | pflow
+      pflow --file=workflow.txt
+    """
+    if version:
+        click.echo("pflow version 0.0.1")
+        ctx.exit(0)
     # Initialize context object
     if ctx.obj is None:
         ctx.obj = {}
