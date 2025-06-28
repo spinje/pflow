@@ -1,5 +1,7 @@
 """Main CLI entry point for pflow."""
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 from typing import Optional
@@ -12,7 +14,7 @@ import click
 @click.option("--version", is_flag=True, help="Show the pflow version")
 @click.option("--file", "-f", type=click.Path(exists=True), help="Read workflow from file")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
-def main(ctx: click.Context, version: bool, file: Optional[str], workflow: tuple[str, ...]) -> None:
+def main(ctx: click.Context, version: bool, file: Optional[str], workflow: tuple[str, ...]) -> None:  # noqa: UP007
     """pflow - workflow compiler for deterministic CLI commands.
 
     Execute workflows using the => operator to chain nodes:
