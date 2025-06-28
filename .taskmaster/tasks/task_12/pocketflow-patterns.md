@@ -4,7 +4,7 @@
 
 - **Goal**: Create general-purpose LLM node preventing node proliferation
 - **Dependencies**: Task 9 (natural keys: prompt/response)
-- **Constraints**: Must support YAML output format (90% more reliable than JSON)
+- **Constraints**: Must support YAML output format (often more forgiving than JSON)
 
 ## Overview
 
