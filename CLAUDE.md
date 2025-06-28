@@ -156,7 +156,6 @@ pflow/
 │   └── tests/             # Framework test suite
 ├── src/pflow/             # Main pflow CLI implementation
 │   ├── __init__.py       # Package initialization
-│   ├── foo.py            # Legacy placeholder (to be removed)
 │   └── cli/              # CLI module
 │       ├── __init__.py   # Exports main CLI entry point
 │       └── main.py       # CLI implementation with click
@@ -195,6 +194,14 @@ pflow/
 │       └── json-extraction.md
 ├── .taskmaster/           # Task management and planning
 │   ├── tasks/            # Task tracking
+│   │   ├── task_1/
+│   │   │   ├── project-context.md
+│   │   │   ├── decomposition-plan.md
+│   │   │   ├── subtask_1.1/
+│   │   │   ├── subtask_1.2/
+│   │   │   └── task-review.md
+│   │   ├── task_2/
+│   │   │   └── (same structure)
 │   │   └── tasks.json    # Detailed task list with subtasks
 │   ├── docs/             # Planning documentation
 │   │   └── implementation-roadmap.md  # High-level roadmap
@@ -210,7 +217,6 @@ pflow/
 │   │   ├── pitfalls.md  # Common mistakes to avoid
 │   │   └── decisions.md # Architectural decisions
 ├── tests/                 # Test suite
-│   ├── test_foo.py       # Legacy placeholder test (to be removed)
 │   ├── test_links.py     # Documentation link validation
 │   └── test_cli.py       # CLI tests using click.testing.CliRunner
 ├── Makefile              # Development automation
