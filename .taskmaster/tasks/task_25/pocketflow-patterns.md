@@ -1,8 +1,104 @@
 # PocketFlow Patterns for Task 25: Implement claude-code Super Node
 
+## Task Context
+
+- **Goal**: Create comprehensive AI development node with project context
+- **Dependencies**: Task 12 (LLM patterns), Task 9 (natural keys)
+- **Constraints**: Two-tier AI approach - simple nodes + this super node
+
 ## Overview
 
 The claude-code node is a comprehensive AI development assistant that represents the "super node" pattern - a single powerful node that can handle complex, multi-step development tasks through instruction-based prompts.
+
+## Core Patterns from Advanced Analysis
+
+### Pattern: Instruction-Based Templating
+**Found in**: Tutorial-Cursor, Cold Email show template-driven prompts
+**Why It Applies**: Complex tasks need structured instructions
+
+```python
+class InstructionTemplates:
+    """Reusable instruction templates for common dev tasks"""
+
+    FIX_ISSUE = """Task: Fix GitHub Issue #{issue_number}
+
+Issue Description:
+{issue_description}
+
+Instructions:
+1. Analyze the issue to understand the root cause
+2. Search the codebase for relevant files
+3. Implement a fix that addresses the issue
+4. Write or update tests to verify the fix
+5. Ensure all existing tests still pass
+6. Generate a clear summary of changes
+
+Constraints:
+- Follow existing code style and patterns
+- Minimize changes to unrelated code
+- Include error handling where appropriate
+"""
+
+    IMPLEMENT_FEATURE = """Task: Implement New Feature
+
+Feature Request:
+{feature_description}
+
+Instructions:
+1. Design the implementation approach
+2. Identify files that need modification
+3. Implement the feature incrementally
+4. Add comprehensive tests
+5. Update documentation if needed
+6. Verify integration with existing features
+
+Context:
+- Framework: {framework}
+- Key patterns: {patterns}
+"""
+
+# Usage in prep
+def prep(self, shared):
+    # Template selection based on task type
+    if "issue" in shared:
+        template = InstructionTemplates.FIX_ISSUE
+        prompt = template.format(
+            issue_number=shared["issue_number"],
+            issue_description=shared["issue"]
+        )
+    else:
+        prompt = shared.get("prompt", "")
+```
+
+### Pattern: Progressive Context Building
+**Found in**: Codebase Knowledge builds understanding incrementally
+**Why It Applies**: Claude needs rich context for good decisions
+
+```python
+def _build_progressive_context(self, instruction):
+    """Build context in layers, stopping when sufficient"""
+    context = {"instruction": instruction}
+
+    # Layer 1: Project basics
+    context["project_type"] = self._detect_project_type()
+
+    # Layer 2: Relevant files (based on instruction)
+    search_terms = self._extract_search_terms(instruction)
+    context["relevant_files"] = self._find_relevant_files(search_terms)
+
+    # Layer 3: Code understanding (only if needed)
+    if self._needs_code_analysis(instruction):
+        context["code_analysis"] = self._analyze_relevant_code(
+            context["relevant_files"]
+        )
+
+    # Layer 4: Test context (for fixes/features)
+    if "test" in instruction.lower() or "fix" in instruction.lower():
+        context["test_framework"] = self._detect_test_framework()
+        context["test_patterns"] = self._analyze_test_patterns()
+
+    return context
+```
 
 ## Relevant Cookbook Examples
 
@@ -234,29 +330,50 @@ class ClaudeCodeNode(Node):
         }
 ```
 
-### Pattern: Comprehensive Context Building
-**Source**: Agent patterns with project awareness
-**Compatibility**: ✅ Direct
-**Description**: Build rich context for AI decision-making
+### Pattern: Output Parsing with Structure
+**Found in**: All complex tutorials parse AI output
+**Why It Applies**: Need structured data for downstream nodes
 
-**Context aggregation**:
 ```python
-def _build_comprehensive_context(self, prep_res):
-    """Build full context for Claude."""
-    context = {
-        "instruction": prep_res["prompt"],
-        "project_structure": self._analyze_project_structure(),
-        "recent_changes": self._get_recent_git_changes(),
-        "test_status": self._check_current_test_status(),
-        "dependencies": self._analyze_dependencies(),
-        "relevant_docs": self._find_relevant_documentation()
+def _parse_claude_output(self, raw_output):
+    """Parse structured output from Claude's response"""
+    # Claude outputs in sections
+    sections = self._split_into_sections(raw_output)
+
+    report = {
+        "summary": sections.get("SUMMARY", "No summary provided"),
+        "changes_made": self._parse_changes_section(sections.get("CHANGES", "")),
+        "files_modified": self._extract_file_list(sections.get("FILES", "")),
+        "tests_status": self._parse_test_results(sections.get("TESTS", "")),
+        "next_steps": sections.get("NEXT_STEPS", []),
+        "raw_output": raw_output  # Keep original
     }
 
-    # Add any provided context
-    if prep_res.get("project_context"):
-        context.update(prep_res["project_context"])
+    # Validate required sections
+    if not report["files_modified"] and "implement" in self.instruction:
+        report["warnings"] = ["No files were modified"]
 
-    return context
+    return report
+
+def _split_into_sections(self, text):
+    """Split output into named sections"""
+    sections = {}
+    current_section = None
+    current_content = []
+
+    for line in text.split('\n'):
+        if line.startswith("##") and line.endswith(":"):
+            if current_section:
+                sections[current_section] = '\n'.join(current_content)
+            current_section = line.strip("# :").upper()
+            current_content = []
+        else:
+            current_content.append(line)
+
+    if current_section:
+        sections[current_section] = '\n'.join(current_content)
+
+    return sections
 
 def _analyze_project_structure(self):
     """Understand project layout."""
@@ -431,3 +548,176 @@ def test_comprehensive_report():
 ```
 
 This claude-code super node embodies the power of AI-assisted development while maintaining safety and structure for integration with pflow workflows.
+
+## Integration Points
+
+### Connection to Task 12 (LLM Node)
+Complements simple LLM node in two-tier approach:
+```python
+# Simple tasks -> LLM node
+llm --prompt="Analyze this code: $code"
+
+# Complex tasks -> Claude Code node
+claude-code --prompt="Fix issue #123 with full implementation"
+```
+
+### Connection to Task 17 (Planner)
+Provides complex node option for planner:
+```python
+# Planner can choose between:
+# 1. Simple nodes chained together
+# 2. Claude-code for complex multi-step tasks
+```
+
+### Connection to Task 13 (GitHub)
+Natural flow from issue to implementation:
+```python
+github-get-issue >> claude-code >> git-commit >> github-create-pr
+```
+
+## Minimal Test Case
+
+```python
+# Save as test_claude_code_patterns.py
+from pocketflow import Node
+from unittest.mock import Mock, patch
+
+class MinimalClaudeCodeNode(Node):
+    """Claude Code with essential patterns"""
+
+    def prep(self, shared):
+        # Instruction-based interface
+        if "issue" in shared:
+            # Template for issue fixing
+            prompt = f"""Fix Issue: {shared['issue_title']}
+
+Description: {shared['issue']}
+
+Steps:
+1. Find relevant code
+2. Implement fix
+3. Test the fix
+"""
+        else:
+            prompt = shared.get("prompt", "")
+
+        if not prompt:
+            raise ValueError("Missing required input: prompt")
+
+        return {
+            "prompt": prompt,
+            "context": self._build_minimal_context(shared)
+        }
+
+    def _build_minimal_context(self, shared):
+        """Essential context only"""
+        return {
+            "has_issue": "issue" in shared,
+            "project_files": ["main.py", "tests/test_main.py"]
+        }
+
+    def exec(self, prep_res):
+        # Mock Claude response
+        return """## SUMMARY:
+Fixed the authentication issue by updating token validation.
+
+## CHANGES:
+- Updated auth.py: Added proper token expiry check
+- Updated tests/test_auth.py: Added test for expired tokens
+
+## FILES:
+auth.py
+tests/test_auth.py
+
+## TESTS:
+All tests passing (15/15)
+
+## NEXT STEPS:
+- Consider adding rate limiting
+- Update documentation
+"""
+
+    def post(self, shared, prep_res, exec_res):
+        # Parse structured output
+        report = self._parse_output(exec_res)
+
+        # Natural output keys
+        shared["code_report"] = report["summary"]
+        shared["files_modified"] = report["files"]
+        shared["tests_passed"] = "passing" in report.get("tests", "")
+        shared["claude_output"] = exec_res  # Full output
+
+        return "default"
+
+    def _parse_output(self, text):
+        """Simple section parsing"""
+        sections = {}
+        current = None
+
+        for line in text.split('\n'):
+            if line.startswith("##") and line.endswith(":"):
+                current = line.strip("# :").lower()
+                sections[current] = ""
+            elif current:
+                sections[current] += line + "\n"
+
+        # Extract files list
+        files = []
+        if "files" in sections:
+            files = [f.strip() for f in sections["files"].split('\n') if f.strip()]
+
+        return {
+            "summary": sections.get("summary", "").strip(),
+            "files": files,
+            "tests": sections.get("tests", "").strip()
+        }
+
+def test_instruction_templates():
+    """Test template-based prompts"""
+    node = MinimalClaudeCodeNode()
+
+    # With issue context
+    shared = {
+        "issue": "User login fails with expired tokens",
+        "issue_title": "Auth Bug: Token Expiry",
+        "issue_number": 123
+    }
+
+    prep = node.prep(shared)
+    assert "Fix Issue: Auth Bug" in prep["prompt"]
+    assert "expired tokens" in prep["prompt"]
+    assert prep["context"]["has_issue"] == True
+
+    print("✓ Instruction templates validated")
+
+def test_output_parsing():
+    """Test structured output parsing"""
+    node = MinimalClaudeCodeNode()
+
+    shared = {"prompt": "Fix authentication"}
+    node.run(shared)
+
+    # Check parsed output
+    assert shared["code_report"] == "Fixed the authentication issue by updating token validation."
+    assert shared["files_modified"] == ["auth.py", "tests/test_auth.py"]
+    assert shared["tests_passed"] == True
+
+    print("✓ Output parsing validated")
+
+if __name__ == "__main__":
+    test_instruction_templates()
+    test_output_parsing()
+    print("\n✅ All Claude Code patterns validated!")
+```
+
+## Summary
+
+Task 25's claude-code node demonstrates the "super node" pattern:
+
+1. **Instruction Templates** - Structured prompts for complex tasks
+2. **Progressive Context** - Build only what's needed
+3. **Structured Output** - Parse into usable components
+4. **Two-Tier Design** - Complements simple nodes
+5. **Natural Integration** - Works with GitHub/Git flow
+
+This pattern enables handling complex development tasks while maintaining pflow's simplicity principle.

@@ -1,8 +1,78 @@
 # PocketFlow Patterns for Task 11: Implement read-file and write-file nodes
 
+## Task Context
+
+- **Goal**: Create basic file I/O nodes following single-purpose design
+- **Dependencies**: Task 9 (natural key patterns)
+- **Constraints**: Simple operations only - streaming deferred to v2.0
+
 ## Overview
 
 Basic file I/O nodes are fundamental building blocks for pflow workflows. These nodes demonstrate the core node implementation pattern that all other nodes will follow.
+
+## Core Patterns from Advanced Analysis
+
+### Pattern: Content Truncation for Performance
+**Found in**: YouTube summarizer, Codebase Knowledge
+**Why It Applies**: Prevent memory issues with large files
+
+```python
+def truncate_content(content: str, max_length: int = 50000) -> str:
+    """Truncate content for downstream processing"""
+    if len(content) <= max_length:
+        return content
+
+    # Smart truncation - try to break at paragraph
+    truncated = content[:max_length]
+    last_newline = truncated.rfind('\n')
+    if last_newline > max_length * 0.8:  # If we have a good break point
+        truncated = truncated[:last_newline]
+
+    return truncated + "\n\n[Content truncated...]"
+
+# In ReadFileNode
+def post(self, shared, prep_res, exec_res):
+    # Option to truncate for performance
+    if self.params.get("truncate", False):
+        max_length = self.params.get("max_length", 50000)
+        shared["content"] = truncate_content(exec_res, max_length)
+        shared["content_truncated"] = True
+    else:
+        shared["content"] = exec_res
+
+    shared["file_path"] = prep_res["file_path"]
+    shared["file_size"] = len(exec_res)  # Original size
+    return "default"
+```
+
+### Pattern: Selective File Loading
+**Found in**: Codebase Knowledge (filters by extension)
+**Why It Applies**: Don't load files that won't be processed
+
+```python
+def should_read_file(file_path: str, filters: dict) -> bool:
+    """Determine if file should be read based on filters"""
+    # Extension filter
+    allowed_extensions = filters.get("extensions", [])
+    if allowed_extensions:
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext not in allowed_extensions:
+            return False
+
+    # Size filter
+    max_size = filters.get("max_size", float('inf'))
+    if os.path.getsize(file_path) > max_size:
+        return False
+
+    # Binary detection
+    if filters.get("text_only", True):
+        with open(file_path, 'rb') as f:
+            chunk = f.read(512)
+            if b'\0' in chunk:  # Likely binary
+                return False
+
+    return True
+```
 
 ## Relevant Cookbook Examples
 
@@ -257,6 +327,11 @@ def exec(self, prep_res):
 **Issue**: Not in MVP scope
 **Alternative**: Synchronous I/O is sufficient
 
+### Anti-Pattern: Generic Key Names
+**Found in**: Early implementations
+**Issue**: Causes collisions and confusion
+**Alternative**: Always use descriptive keys like "file_content", "config_file_path"
+
 ## Implementation Guidelines
 
 1. **Consistent interface**: All file nodes follow same pattern
@@ -311,3 +386,143 @@ def test_file_not_found():
 ```
 
 These file nodes establish the pattern for all pflow platform nodes: simple, focused, with natural interfaces.
+
+## Integration Points
+
+### Connection to Task 8 (Shell Pipes)
+File nodes can read from stdin instead:
+```python
+# In ReadFileNode.prep()
+if "stdin" in shared and not shared.get("file_path"):
+    # Use stdin as content source
+    return {"content": shared["stdin"], "from_stdin": True}
+```
+
+### Connection to Task 9 (Natural Keys)
+All keys follow natural naming:
+```python
+# Good: Descriptive, specific
+shared["config_file_path"] = "/etc/config.json"
+shared["config_content"] = "{...}"
+shared["readme_content"] = "# Project\n..."
+
+# Bad: Generic, collision-prone
+shared["path"] = "/etc/config.json"  # Which path?
+shared["content"] = "{...}"         # Content of what?
+```
+
+### Connection to Task 23 (Tracing)
+File operations add trace metadata:
+```python
+def post(self, shared, prep_res, exec_res):
+    shared["content"] = exec_res
+    # Trace-friendly metadata
+    shared["_file_metadata"] = {
+        "path": prep_res["file_path"],
+        "size": len(exec_res),
+        "truncated": self.params.get("truncate", False)
+    }
+```
+
+## Minimal Test Case
+
+```python
+# Save as test_file_patterns.py
+import tempfile
+import os
+from pocketflow import Node
+
+class MinimalReadFileNode(Node):
+    """Read file following all patterns"""
+
+    def prep(self, shared):
+        # Natural key, shared store priority
+        file_path = shared.get("file_path") or self.params.get("file_path")
+
+        if not file_path and "stdin" in shared:
+            # Shell pipe support
+            return {"use_stdin": True}
+
+        if not file_path:
+            raise ValueError("Missing required input: file_path")
+
+        return {"file_path": file_path}
+
+    def exec(self, prep_res):
+        if prep_res.get("use_stdin"):
+            return None  # Content already in shared["stdin"]
+
+        with open(prep_res["file_path"], 'r') as f:
+            content = f.read()
+
+        # Performance: truncate if requested
+        if self.params.get("truncate"):
+            max_len = self.params.get("max_length", 50000)
+            if len(content) > max_len:
+                content = content[:max_len] + "\n[Truncated]"
+
+        return content
+
+    def post(self, shared, prep_res, exec_res):
+        if prep_res.get("use_stdin"):
+            # Already have content
+            shared["file_content"] = shared["stdin"]
+            shared["from_stdin"] = True
+        else:
+            # Natural, specific key
+            shared["file_content"] = exec_res
+            shared["source_file"] = prep_res["file_path"]
+
+        return "default"
+
+def test_natural_keys_and_performance():
+    # Create test file
+    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+        f.write("A" * 100000)  # 100KB file
+        test_file = f.name
+
+    # Test 1: Natural keys
+    node = MinimalReadFileNode()
+    shared = {"file_path": test_file}
+    node.run(shared)
+
+    assert "file_content" in shared  # Natural key
+    assert "source_file" in shared   # Descriptive
+    assert len(shared["file_content"]) == 100000
+
+    # Test 2: Performance truncation
+    node_truncate = MinimalReadFileNode()
+    node_truncate.set_params({"truncate": True, "max_length": 1000})
+    shared2 = {"file_path": test_file}
+    node_truncate.run(shared2)
+
+    assert len(shared2["file_content"]) < 1100  # Truncated
+    assert "[Truncated]" in shared2["file_content"]
+
+    # Test 3: stdin support
+    node_stdin = MinimalReadFileNode()
+    shared3 = {"stdin": "From pipe!"}
+    node_stdin.run(shared3)
+
+    assert shared3["file_content"] == "From pipe!"
+    assert shared3["from_stdin"] == True
+
+    # Cleanup
+    os.unlink(test_file)
+    print("✓ File patterns validated")
+
+if __name__ == "__main__":
+    test_natural_keys_and_performance()
+```
+
+## Summary
+
+Task 11's file nodes demonstrate all core pflow patterns:
+
+1. **Natural Key Naming** - "file_content" not "content"
+2. **Performance Awareness** - Truncation and filtering options
+3. **Shell Integration** - stdin as alternative to file reading
+4. **Single Purpose** - Each node does ONE file operation
+5. **Fail Fast** - Clear validation in prep()
+
+These patterns ensure file operations are efficient, debuggable, and composable.

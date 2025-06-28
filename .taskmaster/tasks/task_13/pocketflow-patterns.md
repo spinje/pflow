@@ -1,8 +1,60 @@
 # PocketFlow Patterns for Task 13: Implement github-get-issue Node
 
+## Task Context
+
+- **Goal**: Create first GitHub API node with robust error handling
+- **Dependencies**: Task 9 (natural keys for issue data)
+- **Constraints**: Single-purpose - get ONE issue
+
 ## Overview
 
 The github-get-issue node is the first of the GitHub platform nodes, demonstrating patterns for external API integration, authentication, and error handling that all API-based nodes will follow.
+
+## Core Patterns from Advanced Analysis
+
+### Pattern: Exponential Backoff for API Calls
+**Found in**: All repos with external APIs use exponential backoff
+**Why It Applies**: GitHub API has rate limits and transient failures
+
+```python
+def __init__(self):
+    # Configure retry with exponential backoff
+    super().__init__(
+        max_retries=3,
+        wait=2.0,  # Start with 2 seconds
+        exponential_backoff=True,  # 2s, 4s, 8s
+        retry_on=[RuntimeError]  # Only retry transient errors
+    )
+```
+
+### Pattern: Rich Error Context
+**Found in**: Cold Email, Website Chatbot provide detailed errors
+**Why It Applies**: API errors need actionable context
+
+```python
+def exec(self, prep_res):
+    try:
+        response = requests.get(url, headers=headers)
+    except requests.ConnectionError:
+        raise RuntimeError(
+            f"Cannot connect to GitHub API at {prep_res['api_base']}. "
+            "Check your internet connection."
+        )
+    except requests.Timeout:
+        raise RuntimeError(
+            "GitHub API request timed out. "
+            "The service might be experiencing issues."
+        )
+
+    # Include rate limit info in errors
+    if response.status_code == 403:
+        remaining = response.headers.get('X-RateLimit-Remaining', 'unknown')
+        reset_time = response.headers.get('X-RateLimit-Reset', 'unknown')
+        raise RuntimeError(
+            f"GitHub API rate limit exceeded. "
+            f"Remaining: {remaining}, Resets at: {reset_time}"
+        )
+```
 
 ## Relevant Cookbook Examples
 
@@ -162,6 +214,7 @@ response.raise_for_status()  # Includes status code and message
 ```python
 def exec(self, prep_res):
     from github import Github
+    from github.GithubException import RateLimitExceededException, UnknownObjectException
 
     g = Github(prep_res["token"])
 
@@ -179,10 +232,38 @@ def exec(self, prep_res):
             "assignee": {"login": issue.assignee.login} if issue.assignee else None,
             # ... other fields
         }
-    except Exception as e:
-        if "404" in str(e):
-            raise ValueError(f"Issue not found")
-        raise
+    except RateLimitExceededException:
+        # PyGithub handles rate limit detection
+        raise RuntimeError("GitHub API rate limit exceeded")
+    except UnknownObjectException:
+        raise ValueError(
+            f"Issue #{prep_res['issue_number']} not found in {prep_res['repo']}"
+        )
+```
+
+### Pattern: Natural Key Output Design
+**Found in**: All successful repos use descriptive output keys
+**Why It Applies**: Prevents downstream nodes needing mappings
+
+```python
+def post(self, shared, prep_res, exec_res):
+    # Primary content gets simple key
+    shared["issue"] = exec_res["body"]
+
+    # Related data gets prefixed keys
+    shared["issue_title"] = exec_res["title"]
+    shared["issue_number"] = exec_res["number"]
+    shared["issue_author"] = exec_res["user"]["login"]
+    shared["issue_created_at"] = exec_res["created_at"]
+
+    # Lists get descriptive names
+    shared["issue_labels"] = [l["name"] for l in exec_res.get("labels", [])]
+    shared["issue_assignees"] = [a["login"] for a in exec_res.get("assignees", [])]
+
+    # Full data for advanced use
+    shared["issue_data"] = exec_res
+
+    return "default"
 ```
 
 ## Patterns to Avoid
@@ -297,3 +378,147 @@ def test_rate_limit_retry():
 ```
 
 This node establishes patterns for all external API integrations: clean interfaces, proper authentication, and helpful error handling.
+
+## Integration Points
+
+### Connection to Task 12 (LLM Node)
+GitHub issue data feeds into LLM analysis:
+```python
+# Natural flow without mappings
+github-get-issue >> llm --prompt="Analyze this issue: $issue"
+
+# Rich data available
+llm --prompt="Issue: $issue_title\nLabels: $issue_labels\nDescription: $issue"
+```
+
+### Connection to Task 9 (Natural Keys)
+All output keys are descriptive:
+```python
+# Good: Prefixed, specific
+shared["issue_title"]
+shared["issue_labels"]
+shared["issue_author"]
+
+# Bad: Generic, collision-prone
+shared["title"]  # Title of what?
+shared["data"]   # Too generic
+```
+
+### Connection to Task 25 (Claude Code)
+Provides context for AI implementation:
+```python
+# Issue data feeds into Claude
+shared["issue"] -> shared["prompt"] = f"Fix this issue: {issue}"
+```
+
+## Minimal Test Case
+
+```python
+# Save as test_github_patterns.py
+import os
+import pytest
+from unittest.mock import Mock, patch
+from pocketflow import Node
+
+class MinimalGitHubNode(Node):
+    """GitHub node with all patterns"""
+
+    def __init__(self):
+        super().__init__(max_retries=3, wait=2.0)
+
+    def prep(self, shared):
+        # Natural interface
+        issue_number = shared.get("issue_number") or self.params.get("issue_number")
+        repo = shared.get("repo") or self.params.get("repo", "owner/repo")
+
+        if not issue_number:
+            raise ValueError("Missing required input: issue_number")
+
+        # Environment auth
+        token = os.environ.get("GITHUB_TOKEN")
+        if not token:
+            raise ValueError(
+                "GITHUB_TOKEN not set. Run: export GITHUB_TOKEN='your-token'"
+            )
+
+        return {"issue_number": issue_number, "repo": repo, "token": token}
+
+    def exec(self, prep_res):
+        # Mock response for test
+        if prep_res["issue_number"] == "404":
+            raise ValueError(f"Issue #{prep_res['issue_number']} not found")
+
+        if prep_res["issue_number"] == "403":
+            raise RuntimeError("GitHub API rate limit exceeded")
+
+        return {
+            "number": int(prep_res["issue_number"]),
+            "title": "Test Issue Title",
+            "body": "This is the issue description",
+            "state": "open",
+            "labels": [{"name": "bug"}, {"name": "high-priority"}],
+            "user": {"login": "testuser"},
+            "created_at": "2024-01-01T00:00:00Z"
+        }
+
+    def post(self, shared, prep_res, exec_res):
+        # Natural output keys
+        shared["issue"] = exec_res["body"]
+        shared["issue_title"] = exec_res["title"]
+        shared["issue_number"] = exec_res["number"]
+        shared["issue_author"] = exec_res["user"]["login"]
+        shared["issue_labels"] = [l["name"] for l in exec_res["labels"]]
+        shared["issue_data"] = exec_res
+        return "default"
+
+def test_natural_keys_and_errors():
+    # Test 1: Natural key output
+    with patch.dict(os.environ, {"GITHUB_TOKEN": "fake"}):
+        node = MinimalGitHubNode()
+        shared = {"issue_number": "123", "repo": "pflow/pflow"}
+        node.run(shared)
+
+        # All natural, descriptive keys
+        assert shared["issue"] == "This is the issue description"
+        assert shared["issue_title"] == "Test Issue Title"
+        assert shared["issue_labels"] == ["bug", "high-priority"]
+        assert shared["issue_author"] == "testuser"
+
+    # Test 2: Missing token
+    with patch.dict(os.environ, {}, clear=True):
+        node = MinimalGitHubNode()
+        shared = {"issue_number": "123"}
+
+        with pytest.raises(ValueError) as exc:
+            node.run(shared)
+        assert "GITHUB_TOKEN not set" in str(exc.value)
+        assert "export GITHUB_TOKEN" in str(exc.value)  # Actionable
+
+    # Test 3: Not found vs rate limit
+    with patch.dict(os.environ, {"GITHUB_TOKEN": "fake"}):
+        # Not found - ValueError (non-retryable)
+        node = MinimalGitHubNode()
+        with pytest.raises(ValueError, match="not found"):
+            node.run({"issue_number": "404"})
+
+        # Rate limit - RuntimeError (retryable)
+        with pytest.raises(RuntimeError, match="rate limit"):
+            node.run({"issue_number": "403"})
+
+    print("✓ GitHub patterns validated")
+
+if __name__ == "__main__":
+    test_natural_keys_and_errors()
+```
+
+## Summary
+
+Task 13's GitHub node demonstrates external API best practices:
+
+1. **Exponential Backoff** - Handle transient failures gracefully
+2. **Rich Error Context** - Actionable error messages
+3. **Natural Output Keys** - Prevent downstream mapping needs
+4. **Environment Auth** - Secure token handling
+5. **Single Purpose** - Get one issue, do it well
+
+These patterns ensure reliable, secure, and maintainable API integration.
