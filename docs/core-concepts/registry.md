@@ -219,13 +219,13 @@ Version lockfile feeds into execution lockfile generation. Version changes trigg
 
 ```bash
 # Simple flow (planner resolves versions using lockfile)
-pflow yt-transcript --url=X >> llm --prompt="Summarize this transcript"
+pflow yt-transcript --url=X => llm --prompt="Summarize this transcript"
 
 # Explicit versioning when needed
-pflow yt-transcript@1.0.0 --url=X >> llm@1.0.0 --prompt="Summarize"
+pflow yt-transcript@1.0.0 --url=X => llm@1.0.0 --prompt="Summarize"
 
 # Mixed shorthand (planner validates compatibility)
-pflow yt-transcript --url=X >> llm@1 --prompt="Summarize"
+pflow yt-transcript --url=X => llm@1 --prompt="Summarize"
 
 # Natural language (planner selects appropriate versions)
 pflow "summarize this youtube video"
@@ -365,7 +365,7 @@ Runtime: Executes with pinned versions
 ### 11.2 CLI Pipe Path
 
 ```
-User: pflow yt-transcript@1 --url=X >> llm --prompt="Summarize this"
+User: pflow yt-transcript@1 --url=X => llm --prompt="Summarize this"
   ↓
 CLI Parsing: Extract version hint "@1" for yt-transcript
   ↓
@@ -383,7 +383,7 @@ Runtime: Direct execution (no user verification needed for CLI path)
 ```
 Existing flow.versions.lock: {"yt-transcript": "1.0.0", "llm": "1.0.0"}
   ↓
-User: pflow yt-transcript --url=X >> llm --prompt="Summarize"
+User: pflow yt-transcript --url=X => llm --prompt="Summarize"
   ↓
 Planner: Uses locked versions for consistency
   ↓

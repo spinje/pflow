@@ -124,7 +124,7 @@ class CompletionContext:
         # Iterate backwards from current word index to find last non-flag, non-operator word
         if self.cword_idx > 0:
             for i in range(self.cword_idx -1, -1, -1):
-                if i < len(self.words) and not self.words[i].startswith("-") and self.words[i] not in (">>", "-"):
+                if i < len(self.words) and not self.words[i].startswith("-") and self.words[i] not in ("=>", "-"):
                     # This assumes a simple structure; real parsing might be needed
                     # to confirm it's a valid node name from the registry.
                     if "/" in self.words[i] : # Simple check for namespaced node
@@ -148,15 +148,15 @@ class CompletionHandler:
              pass # This part is typically handled by `complete -F _pflow_completions pflow`
 
         # Scenario 2: Completing after 'pflow' (node name or pflow subcommand)
-        if ctx.cword_idx == 1 or (ctx.cword_idx > 1 and ctx.previous_word in (">>", "-")) or \
-           (ctx.cword_idx > 2 and ctx.words[ctx.cword_idx-2] == "-" and ctx.previous_word not in (">>", "-")): # after 'pflow node - action'
+        if ctx.cword_idx == 1 or (ctx.cword_idx > 1 and ctx.previous_word in ("=>", "-")) or \
+           (ctx.cword_idx > 2 and ctx.words[ctx.cword_idx-2] == "-" and ctx.previous_word not in ("=>", "-")): # after 'pflow node - action'
             suggestions.extend(self._suggest_pflow_subcommands())
             suggestions.extend(self._suggest_node_names(ctx))
             # Potentially use Type Shadow Store logic if previous_word was '>>' or an action
 
         # Scenario 3: Completing after a node name (suggest flags or operators)
         elif ctx.previous_word and not ctx.previous_word.startswith("-") \
-             and ctx.previous_word not in (">>", "-") \
+             and ctx.previous_word not in ("=>", "-") \
              and "/" in ctx.previous_word: # Simple check it was a node
             suggestions.extend(self._suggest_flags_for_node(ctx.previous_word, ctx))
             suggestions.extend(self._suggest_flow_operators())
@@ -222,7 +222,7 @@ class CompletionHandler:
         return flags
 
     def _suggest_flow_operators(self):
-        return [">>", "-"]
+        return ["=>", "-"]
 
     def _suggest_actions_for_node(self, node_id_with_version: str, ctx: CompletionContext):
         metadata = self.metadata_loader(node_id_with_version)
@@ -317,7 +317,7 @@ The `CompletionHandler` will need efficient, read-only access to:
 
 ## 6. Specific Completion Scenarios and Logic
 
-* **After `pflow` (or `pflow >>` or `pflow some_node - some_action >>`):**
+* **After `pflow` (or `pflow =>` or `pflow some_node - some_action =>`):**
   * Suggest all registered node names/IDs.
   * Suggest `pflow` subcommands (`registry`, `explain`, `run`, `lock`, `trace`, `completion`).
   * If the "Type Shadow Store Prevalidation" logic is accessible, it could filter or rank node suggestions based on compatibility with the previous node's output.
@@ -326,7 +326,7 @@ The `CompletionHandler` will need efficient, read-only access to:
   * Suggest `--param_name` for each parameter defined in its metadata.
   * Suggest `--shared_input_key` for each shared store input key defined in its metadata.
   * Suggest execution configuration flags like `--max-retries` (if node is `@flow_safe`).
-  * Suggest flow operators: `>>` (for piping) and `-` (for action-based transitions).
+  * Suggest flow operators: `=>` (for piping) and `-` (for action-based transitions).
 * **After a flag (e.g., `pflow core/yt-transcript@1.0.0 --language`):**
   * Load metadata for `core/yt-transcript@1.0.0`.
   * Find the definition for the `language` parameter.

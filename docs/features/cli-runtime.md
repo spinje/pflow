@@ -423,7 +423,7 @@ shared = {
 ```bash
 # CLI command
 pflow github-get-issue --repo=owner/repo --issue=123 => \
-  llm --prompt="Analyze this issue and suggest a fix" >> \
+  llm --prompt="Analyze this issue and suggest a fix" => \
   github-add-comment --issue=123
 ```
 
@@ -500,11 +500,11 @@ The CLI design prioritizes **learning through transparency** over automation eff
 ```bash
 # Educational Flow: User sees and can modify each step
 pflow "process this data"
-# → Generated: load-csv --file data.csv >> clean-data >> analyze >> save-results
-# → User can edit: load-csv --file data.csv >> clean-data --strict >> analyze --method=detailed >> save-results --format=json
+# → Generated: load-csv --file data.csv => clean-data => analyze => save-results
+# → User can edit: load-csv --file data.csv => clean-data --strict => analyze --method=detailed => save-results --format=json
 
 # Knowledge Transfer: User eventually authors directly
-pflow load-csv --file new_data.csv >> custom-analysis >> export-dashboard
+pflow load-csv --file new_data.csv => custom-analysis => export-dashboard
 ```
 
 **Progressive Complexity:**

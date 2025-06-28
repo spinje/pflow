@@ -64,7 +64,7 @@ pflow ci-get-status --repo=owner/project
 pflow ci-get-status --repo=owner/project --branch=feature-branch
 
 # From shared store
-pflow github-get-repo >> ci-get-status
+pflow github-get-repo => ci-get-status
 ```
 
 **Parameters**:
@@ -112,7 +112,7 @@ pflow ci-get-logs --build-id=12345
 pflow ci-get-logs --build-id=12345 --lines=500 --format=json
 
 # Chain from trigger
-pflow ci-trigger-build --repo=owner/project >> ci-get-logs
+pflow ci-trigger-build --repo=owner/project => ci-get-logs
 ```
 
 ### ci-analyze-coverage
@@ -130,7 +130,7 @@ pflow ci-trigger-build --repo=owner/project >> ci-get-logs
 pflow ci-analyze-coverage --threshold=85
 
 # Chain from test execution
-pflow ci-run-tests --coverage=true >> ci-analyze-coverage --threshold=90
+pflow ci-run-tests --coverage=true => ci-analyze-coverage --threshold=90
 
 # Fail build if under threshold
 pflow ci-analyze-coverage --fail-under=true --threshold=85
@@ -141,30 +141,30 @@ pflow ci-analyze-coverage --fail-under=true --threshold=85
 ### Basic Test Pipeline
 ```bash
 # Simple test execution with coverage analysis
-pflow ci-run-tests --coverage=true >> ci-analyze-coverage --threshold=85
+pflow ci-run-tests --coverage=true => ci-analyze-coverage --threshold=85
 ```
 
 ### CI Status Check
 ```bash
 # Check status and get logs if failed
-pflow github-get-repo >> ci-get-status >> ci-get-logs
+pflow github-get-repo => ci-get-status => ci-get-logs
 ```
 
 ### Complete CI Workflow
 ```bash
 # Trigger build, monitor, and analyze
-pflow ci-trigger-build --repo=owner/project >>
-  ci-get-logs >>
-  ci-run-tests --coverage=true >>
+pflow ci-trigger-build --repo=owner/project =>
+  ci-get-logs =>
+  ci-run-tests --coverage=true =>
   ci-analyze-coverage --threshold=90
 ```
 
 ### Integration with Other Nodes
 ```bash
 # GitHub issue → test → report results
-pflow github-get-issue --issue=123 >>
-  ci-run-tests --verbose=true >>
-  llm --prompt="Summarize test results" >>
+pflow github-get-issue --issue=123 =>
+  ci-run-tests --verbose=true =>
+  llm --prompt="Summarize test results" =>
   github-add-comment --issue=123
 ```
 

@@ -108,10 +108,10 @@ For complete implementation details, see [Node Reference](../reference/node-refe
 ### Simple Text Processing
 ```bash
 # Summarization
-pflow read-file data.txt >> llm --prompt="Summarize this data in 3 bullet points"
+pflow read-file data.txt => llm --prompt="Summarize this data in 3 bullet points"
 
 # Analysis
-pflow github-get-issue --issue=123 >> llm --prompt="Analyze this issue and suggest a fix"
+pflow github-get-issue --issue=123 => llm --prompt="Analyze this issue and suggest a fix"
 
 # Content Creation
 echo "AI Safety" | pflow llm --prompt="Write an introduction paragraph about this topic"
@@ -132,9 +132,9 @@ pflow llm --prompt="Explain quantum computing" --system="You are a physics profe
 ### In Workflows
 ```bash
 # Multi-step content pipeline
-pflow read-file research.md >> \
-  llm --prompt="Extract key findings from this research" >> \
-  llm --prompt="Write a blog post based on these findings" >> \
+pflow read-file research.md => \
+  llm --prompt="Extract key findings from this research" => \
+  llm --prompt="Write a blog post based on these findings" => \
   write-file blog-post.md
 ```
 
@@ -179,21 +179,21 @@ The LLM node composes naturally with other simple nodes:
 
 ```bash
 # Data analysis pipeline
-pflow read-file data.csv >> \
-  llm --prompt="Analyze this data and find patterns" >> \
-  llm --prompt="Create visualizations suggestions for this analysis" >> \
+pflow read-file data.csv => \
+  llm --prompt="Analyze this data and find patterns" => \
+  llm --prompt="Create visualizations suggestions for this analysis" => \
   write-file analysis-report.md
 
 # GitHub workflow
-pflow github-get-issue --issue=123 >> \
-  github-get-files --paths="src/" >> \
-  llm --prompt="Review this issue and related code, suggest implementation" >> \
+pflow github-get-issue --issue=123 => \
+  github-get-files --paths="src/" => \
+  llm --prompt="Review this issue and related code, suggest implementation" => \
   write-file implementation-plan.md
 
 # Content pipeline
-pflow web-fetch --url=example.com/article >> \
-  llm --prompt="Summarize this article" >> \
-  llm --prompt="Generate 5 discussion questions about this summary" >> \
+pflow web-fetch --url=example.com/article => \
+  llm --prompt="Summarize this article" => \
+  llm --prompt="Generate 5 discussion questions about this summary" => \
   slack-send-message --channel=book-club
 ```
 

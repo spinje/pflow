@@ -197,7 +197,7 @@ $ pflow "get GitHub repo info for microsoft/vscode and summarize it"
    → Auto-mapping: repo.description → summary input
 
 📋 Generated CLI:
-   pflow fetch-github-repo --repo=microsoft/vscode >> summarize-text
+   pflow fetch-github-repo --repo=microsoft/vscode => summarize-text
 
 💡 Data flow: repo_data.description → shared["text"]
 
@@ -210,14 +210,14 @@ Execute? [Y/n]:
 
 ```bash
 # Extract specific field
-pflow fetch-api --url=X >> summarize-text --extract="response.content"
+pflow fetch-api --url=X => summarize-text --extract="response.content"
 
 # Multiple field extraction
-pflow fetch-user-data --id=123 >> \
+pflow fetch-user-data --id=123 => \
       process-profile --extract="user.name,user.email,user.preferences"
 
 # Complex extraction with fallbacks
-pflow fetch-article --url=X >> \
+pflow fetch-article --url=X => \
       summarize-text --extract="content.body|content.summary"
 ```
 
@@ -403,13 +403,13 @@ class JsonPathExtractor:
 pflow automatically extracts JSON fields when nodes have compatible interfaces:
 
 ```bash
-pflow fetch-api-data >> summarize-text
+pflow fetch-api-data => summarize-text
 # Auto-maps: api_response.content → shared["text"]
 ```
 
 ### Manual Extraction (Advanced)
 ```bash
-pflow fetch-complex-data >> process-text --extract="data.articles[0].body"
+pflow fetch-complex-data => process-text --extract="data.articles[0].body"
 ```
 
 ### Debugging Extractions
@@ -427,7 +427,7 @@ pflow trace run_id --show-extractions
 # pflow fetch-api | jq '.results[0].text' | pflow summarize
 
 # With this pflow pattern (newly documented):
-pflow fetch-api >> summarize-text
+pflow fetch-api => summarize-text
 # (automatic extraction: results[0].text → shared["text"])
 ```
 
@@ -439,12 +439,12 @@ pflow "get weather for Stockholm and summarize the conditions"
 # Learns: API JSON → natural text extraction
 
 # Learning phase
-pflow weather-api --city=Stockholm >> summarize-text
+pflow weather-api --city=Stockholm => summarize-text
 # Sees: automatic field mapping in trace
 
 # Advanced phase
-pflow weather-api --city=Stockholm >> \
-      extract-temperature --field="current.temp" >> \
+pflow weather-api --city=Stockholm => \
+      extract-temperature --field="current.temp" => \
       check-comfort-level
 ```
 
@@ -567,10 +567,10 @@ Instead of automatic extraction, provide explicit JSON manipulation nodes:
 
 ```bash
 # Explicit approach - clear data flow
-pflow fetch-api-data >> extract-json-field --path="data.articles[0].content" --output-key="text" >> summarize-text
+pflow fetch-api-data => extract-json-field --path="data.articles[0].content" --output-key="text" => summarize-text
 
 # Multiple extractions
-pflow fetch-github-repo >> extract-json-field --path="description" --output-key="text" >> summarize-text
+pflow fetch-github-repo => extract-json-field --path="description" --output-key="text" => summarize-text
 ```
 
 **Benefits:**
@@ -605,10 +605,10 @@ Seamless integration with existing JSON processing tools:
 
 ```bash
 # jq integration (future)
-pflow fetch-api-data >> jq --path=".data.articles[0].content" >> summarize-text
+pflow fetch-api-data => jq --path=".data.articles[0].content" => summarize-text
 
 # Or dedicated JSON transformer nodes
-pflow fetch-api-data >> json-transform --extract="data.articles[0].content" >> summarize-text
+pflow fetch-api-data => json-transform --extract="data.articles[0].content" => summarize-text
 ```
 
 **Benefits:**

@@ -368,7 +368,7 @@ Direct CLI syntax bypasses LLM planning for immediate execution. For complete CL
 **Example CLI Processing:**
 
 ```bash
-Input: pflow yt-transcript --url=X >> llm --prompt="Summarize" --temperature=0.9
+Input: pflow yt-transcript --url=X => llm --prompt="Summarize" --temperature=0.9
 ↓
 Parsing: [yt-transcript{url=X}, llm{prompt="Summarize", temperature=0.9}]
 ↓
@@ -500,7 +500,7 @@ pflow's CLI follows a **single resolution rule**: "Type flags; engine decides." 
 | Command | Purpose | Example |
 |---------|---------|---------|
 | `pflow "<natural language>"` | Natural language planning with user confirmation | `pflow "summarize this youtube video"` |
-| `pflow <node> >> <node>` | Direct CLI pipe execution | `pflow yt-transcript --url=X >> summarize` |
+| `pflow <node> => <node>` | Direct CLI pipe execution | `pflow yt-transcript --url=X => summarize` |
 | `pflow trace <run-id>` | Inspect execution details and shared store state | `pflow trace run_2024-01-01_abc123` |
 | `pflow registry list` | Show available nodes and their interfaces | `pflow registry list --filter mcp` |
 | `pflow explain <flow>` | Reverse-engineer flow description from IR/lockfile | `pflow explain my-flow.lock.json` |
@@ -583,13 +583,13 @@ CLI flags use **natural, intuitive names** that match human expectations:
 
 ```bash
 # Multi-stage pipeline
-pflow yt-transcript --url=$VIDEO >> \
-      llm --prompt="Summarize this transcript" --temperature=0.7 >> \
+pflow yt-transcript --url=$VIDEO => \
+      llm --prompt="Summarize this transcript" --temperature=0.7 => \
       write-file --path=summary.md
 
 # Simple sequential processing
-pflow read-file --path=$FILE --max-retries=3 >> \
-      llm --prompt="Extract key points" >> \
+pflow read-file --path=$FILE --max-retries=3 => \
+      llm --prompt="Extract key points" => \
       write-file --path=summary.txt
 ```
 
@@ -597,21 +597,21 @@ pflow read-file --path=$FILE --max-retries=3 >> \
 
 ```bash
 # Reference pre-built flows by name
-pflow video-summary-pipeline --url=$VIDEO >> format-report
+pflow video-summary-pipeline --url=$VIDEO => format-report
 
 # Flow composition
-pflow my-data-pipeline >> analysis-flow >> reporting-flow
+pflow my-data-pipeline => analysis-flow => reporting-flow
 ```
 
 **Interactive vs. Batch Mode:**
 
 ```bash
 # Interactive: missing data prompts user
-pflow yt-transcript >> summarize-text
+pflow yt-transcript => summarize-text
 # Prompt: "Please provide --url for yt-transcript"
 
 # Batch/CI: missing data fails fast
-pflow yt-transcript >> summarize-text
+pflow yt-transcript => summarize-text
 # Error: "MISSING_INPUT: --url required for yt-transcript"
 ```
 
@@ -625,7 +625,7 @@ pflow yt-transcript >> summarize-text
 - **Examples**: `--url`, `--text`, `--query`, `--file`
 
 ```bash
-pflow yt-transcript --url=https://youtu.be/abc123 >> summarize-text
+pflow yt-transcript --url=https://youtu.be/abc123 => summarize-text
 # shared["url"] available to yt-transcript
 # shared["transcript"] written by yt-transcript, read by summarize-text
 ```
@@ -686,7 +686,7 @@ pflow summarize-text --invalid-flag=value
 **Missing Required Data:**
 
 ```bash
-pflow yt-transcript >> summarize-text
+pflow yt-transcript => summarize-text
 # Interactive: Prompt for --url
 # Batch: Error with clear requirements
 
@@ -1205,7 +1205,7 @@ MCP wrapper nodes participate in **pflow's action-based flow control**:
 
 ```bash
 # Flow with MCP error handling
-pflow mcp-github-search-code --query="auth bugs" >> summarize-text
+pflow mcp-github-search-code --query="auth bugs" => summarize-text
 # Automatic transitions:
 # - "default" → continue to summarize-text
 # - "rate_limited" → could route to exponential backoff
@@ -1240,7 +1240,7 @@ User: "find Python authentication bugs on GitHub and post summary to Slack"
 ↓
 Planner Discovery: [mcp-github-search-code, summarize-text, mcp-slack-send, ...]
 ↓
-LLM Selection: mcp-github-search-code >> summarize-text >> mcp-slack-send
+LLM Selection: mcp-github-search-code => summarize-text => mcp-slack-send
 ↓
 Generated Flow: Complete action-based error handling included
 ```
@@ -1267,12 +1267,12 @@ MCP wrapper nodes follow **identical CLI patterns**:
 
 ```bash
 # Same CLI resolution rules apply
-pflow mcp-github-search-code --query="test patterns" --language=python >> summarize-text
+pflow mcp-github-search-code --query="test patterns" --language=python => summarize-text
 
 # Natural pipe composition
 echo "security vulnerability" | \
-  pflow mcp-github-search-code --language=python >> \
-  summarize-text --temperature=0.3 >> \
+  pflow mcp-github-search-code --language=python => \
+  summarize-text --temperature=0.3 => \
   mcp-slack-send-message --channel=security-alerts
 ```
 
@@ -1319,7 +1319,7 @@ graph TD
     end
 
     subgraph "Iteration Phase"
-        C --> I["pflow yt-transcript >> summarize"]
+        C --> I["pflow yt-transcript => summarize"]
         I --> J[Parameter tuning]
         J --> K[Flow composition]
     end
@@ -1351,9 +1351,9 @@ cat my_notes.txt | pflow "summarize this text"
 
 ```
 Generated flow:
-pflow mcp-weather-get --location="Stockholm" >> \
-      mcp-weather-get --location="Oslo" >> \
-      compare-weather-data >> \
+pflow mcp-weather-get --location="Stockholm" => \
+      mcp-weather-get --location="Oslo" => \
+      compare-weather-data => \
       summarize-text --temperature=0.7
 
 Execute this flow? [Y/n]
@@ -1372,15 +1372,15 @@ Execute this flow? [Y/n]
 
 ```bash
 # Direct CLI iteration based on learned patterns
-pflow mcp-weather-get --location="Stockholm" --units=metric >> \
+pflow mcp-weather-get --location="Stockholm" --units=metric => \
       summarize-text --temperature=0.5 --max-tokens=100
 
 # Using piped input with CLI
 echo "This is some text to be summarized." | pflow summarize-text --temperature=0.6
 
 # Parameter experimentation
-pflow yt-transcript --url=$VIDEO --language=es >> \
-      translate-text --target=en >> \
+pflow yt-transcript --url=$VIDEO --language=es => \
+      translate-text --target=en => \
       summarize-text --temperature=0.9
 ```
 
@@ -1388,10 +1388,10 @@ pflow yt-transcript --url=$VIDEO --language=es >> \
 
 ```bash
 # Saved flow reuse
-pflow weather-comparison-flow --cities="Stockholm,Oslo" >> format-report
+pflow weather-comparison-flow --cities="Stockholm,Oslo" => format-report
 
 # Flow composition
-pflow my-data-pipeline >> analysis-flow >> reporting-flow
+pflow my-data-pipeline => analysis-flow => reporting-flow
 ```
 
 ### 8.4 Iteration: Parameter Tuning and Flow Evolution
@@ -1407,22 +1407,22 @@ pflow summarize-text --temperature=0.7  # Creative content
 pflow summarize-text --temperature=0.9  # Brainstorming
 
 # Performance optimization
-pflow fetch-data --max-retries=3 --wait=1.0 --use-cache >> process-data
+pflow fetch-data --max-retries=3 --wait=1.0 --use-cache => process-data
 ```
 
 **Flow Evolution:**
 
 ```bash
 # Basic version
-pflow yt-transcript >> summarize-text
+pflow yt-transcript => summarize-text
 
 # Enhanced with error handling (when action syntax supported)
-pflow yt-transcript >> summarize-text
+pflow yt-transcript => summarize-text
 # Potential: yt-transcript - "video_unavailable" >> fallback-message
 
 # Production-ready with caching and retries
-pflow yt-transcript --max-retries=2 --use-cache >> \
-      summarize-text --use-cache >> \
+pflow yt-transcript --max-retries=2 --use-cache => \
+      summarize-text --use-cache => \
       save-markdown --file=summary.md
 ```
 
@@ -1482,13 +1482,13 @@ pflow trace run_2024-01-01_def456 --failure-analysis
 
 ```bash
 # Conditional branching based on data content
-pflow analyze-content >> \
-      branch-by-type >> \
-      [text-processing, image-processing, video-processing] >> \
+pflow analyze-content => \
+      branch-by-type => \
+      [text-processing, image-processing, video-processing] => \
       merge-results
 
 # Parallel execution for independent operations
-pflow parallel-fetch --urls=$URL_LIST >> merge-data >> analyze-trends
+pflow parallel-fetch --urls=$URL_LIST => merge-data => analyze-trends
 ```
 
 **Flow Marketplace Integration (Future):**

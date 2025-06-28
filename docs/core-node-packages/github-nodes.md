@@ -39,7 +39,7 @@ pflow github-get-issue --repo=owner/project --issue-number=123
 echo "456" | pflow github-get-issue --repo=owner/project
 
 # Chain with repo discovery
-pflow github-get-repo >> github-get-issue --issue-number=789
+pflow github-get-repo => github-get-issue --issue-number=789
 ```
 
 **Parameters**:
@@ -65,7 +65,7 @@ pflow github-create-issue --repo=owner/project --title="Bug report" --body="Desc
 pflow github-create-issue --repo=owner/project --title="Feature request" --labels='["enhancement"]' --assignees='["username"]'
 
 # From LLM generation
-pflow llm --prompt="Generate bug report for login issue" >> github-create-issue --repo=owner/project
+pflow llm --prompt="Generate bug report for login issue" => github-create-issue --repo=owner/project
 ```
 
 ### github-list-prs
@@ -86,7 +86,7 @@ pflow github-list-prs --repo=owner/project
 pflow github-list-prs --repo=owner/project --state=all
 
 # Chain from repo discovery
-pflow github-get-repo >> github-list-prs --state=closed
+pflow github-get-repo => github-list-prs --state=closed
 ```
 
 ### github-create-pr
@@ -107,8 +107,8 @@ pflow github-create-pr --repo=owner/project --title="Fix login bug" --head=featu
 pflow github-create-pr --repo=owner/project --title="WIP: New feature" --head=feature --draft=true
 
 # Chain from issue analysis
-pflow github-get-issue --issue-number=123 >>
-  llm --prompt="Create PR title and description to fix this issue" >>
+pflow github-get-issue --issue-number=123 =>
+  llm --prompt="Create PR title and description to fix this issue" =>
   github-create-pr --head=fix-issue-123
 ```
 
@@ -151,7 +151,7 @@ pflow github-merge-pr --repo=owner/project --pr-number=456
 pflow github-merge-pr --repo=owner/project --pr-number=456 --merge-method=squash
 
 # Chain from PR creation
-pflow github-create-pr --title="Auto fix" >> github-merge-pr --merge-method=squash
+pflow github-create-pr --title="Auto fix" => github-merge-pr --merge-method=squash
 ```
 
 ### github-add-comment
@@ -169,8 +169,8 @@ pflow github-create-pr --title="Auto fix" >> github-merge-pr --merge-method=squa
 pflow github-add-comment --repo=owner/project --issue-number=123 --comment="This is fixed"
 
 # Chain from analysis
-pflow github-get-issue --issue-number=123 >>
-  llm --prompt="Analyze this issue and provide helpful comment" >>
+pflow github-get-issue --issue-number=123 =>
+  llm --prompt="Analyze this issue and provide helpful comment" =>
   github-add-comment --issue-number=123
 ```
 
@@ -192,8 +192,8 @@ pflow github-search-code --query="def authenticate" --language=python
 pflow github-search-code --query="TODO" --repo=owner/project --extension=py
 
 # Chain from issue
-pflow github-get-issue --issue-number=123 >>
-  llm --prompt="Extract keywords to search for related code" >>
+pflow github-get-issue --issue-number=123 =>
+  llm --prompt="Extract keywords to search for related code" =>
   github-search-code --repo=owner/project
 ```
 
@@ -202,37 +202,37 @@ pflow github-get-issue --issue-number=123 >>
 ### Issue Analysis Workflow
 ```bash
 # Get issue → analyze → search related code → comment
-pflow github-get-issue --issue-number=123 >>
-  llm --prompt="Analyze this issue and suggest search terms" >>
-  github-search-code --language=python >>
-  llm --prompt="Analyze code and suggest fix" >>
+pflow github-get-issue --issue-number=123 =>
+  llm --prompt="Analyze this issue and suggest search terms" =>
+  github-search-code --language=python =>
+  llm --prompt="Analyze code and suggest fix" =>
   github-add-comment --issue-number=123
 ```
 
 ### Pull Request Workflow
 ```bash
 # Create branch → make changes → create PR → merge
-pflow git-create-branch --name=fix-issue-123 >>
-  file-write --path=fix.py >>
-  git-commit --message="Fix issue 123" >>
-  github-create-pr --title="Fix for issue 123" --head=fix-issue-123 >>
+pflow git-create-branch --name=fix-issue-123 =>
+  file-write --path=fix.py =>
+  git-commit --message="Fix issue 123" =>
+  github-create-pr --title="Fix for issue 123" --head=fix-issue-123 =>
   github-merge-pr
 ```
 
 ### Repository Analysis
 ```bash
 # Get files → analyze structure → create documentation issue
-pflow github-get-files --recursive=true >>
-  llm --prompt="Analyze repo structure and suggest documentation improvements" >>
+pflow github-get-files --recursive=true =>
+  llm --prompt="Analyze repo structure and suggest documentation improvements" =>
   github-create-issue --title="Documentation improvements" --labels='["documentation"]'
 ```
 
 ### Code Review Support
 ```bash
 # List PRs → get files → analyze → comment
-pflow github-list-prs --state=open >>
-  github-get-files --path=src >>
-  llm --prompt="Review code changes and provide feedback" >>
+pflow github-list-prs --state=open =>
+  github-get-files --path=src =>
+  llm --prompt="Review code changes and provide feedback" =>
   github-add-comment
 ```
 

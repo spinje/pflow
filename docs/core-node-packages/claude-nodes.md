@@ -44,9 +44,9 @@ The claude-code node executes the Claude Code CLI in headless mode, passing comp
 **CLI Examples**:
 ```bash
 # Comprehensive GitHub issue resolution (template-driven workflow)
-pflow github-get-issue --issue=1234 >> \
-  claude-code --prompt="$comprehensive_fix_instructions" >> \
-  llm --prompt="Write commit message for: $code_report" >> \
+pflow github-get-issue --issue=1234 => \
+  claude-code --prompt="$comprehensive_fix_instructions" => \
+  llm --prompt="Write commit message for: $code_report" => \
   git-commit --message="$commit_message"
 
 # Generated instructions example (created by planner)
@@ -115,11 +115,11 @@ The planner generates instructions by composing different development activities
 ### Issue Resolution Workflow
 ```bash
 # Template-driven GitHub issue resolution
-pflow github-get-issue --issue=1234 >> \
-  claude-code --prompt="$comprehensive_fix_instructions" >> \
-  llm --prompt="Write commit message for: $code_report" >> \
-  git-commit --message="$commit_message" >> \
-  git-push >> \
+pflow github-get-issue --issue=1234 => \
+  claude-code --prompt="$comprehensive_fix_instructions" => \
+  llm --prompt="Write commit message for: $code_report" => \
+  git-commit --message="$commit_message" => \
+  git-push => \
   github-create-pr --title="Fix: $issue_title" --body="$code_report"
 
 # Where $comprehensive_fix_instructions contains template variables:
@@ -130,9 +130,9 @@ pflow github-get-issue --issue=1234 >> \
 ### Code Quality Improvement
 ```bash
 # Template-driven code quality workflow
-pflow github-get-files --path=legacy_module.py >> \
-  claude-code --prompt="$quality_improvement_instructions" >> \
-  llm --prompt="Summarize improvements from: $code_report" >> \
+pflow github-get-files --path=legacy_module.py => \
+  claude-code --prompt="$quality_improvement_instructions" => \
+  llm --prompt="Summarize improvements from: $code_report" => \
   write-file --path=REFACTOR_SUMMARY.md --content="$summary"
 
 # Where $quality_improvement_instructions contains template variables:
@@ -143,8 +143,8 @@ pflow github-get-files --path=legacy_module.py >> \
 ### Documentation Generation
 ```bash
 # Template-driven documentation workflow
-pflow github-get-files --path=api_module.py >> \
-  claude-code --prompt="$documentation_instructions" >> \
+pflow github-get-files --path=api_module.py => \
+  claude-code --prompt="$documentation_instructions" => \
   write-file --path=API_DOCS.md --content="$code_report"
 
 # Where $documentation_instructions contains template variables:
@@ -155,8 +155,8 @@ pflow github-get-files --path=api_module.py >> \
 ### Pull Request Review
 ```bash
 # Template-driven PR review workflow
-pflow github-get-pr --pr=456 >> \
-  claude-code --prompt="$pr_review_instructions" >> \
+pflow github-get-pr --pr=456 => \
+  claude-code --prompt="$pr_review_instructions" => \
   github-add-comment --body="$code_report"
 
 # Where $pr_review_instructions contains template variables:
