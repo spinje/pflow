@@ -38,7 +38,10 @@ docs/
 │   └── claude-nodes.md        # Claude-specific nodes
 ├── implementation-details/    # Deep dives
 │   ├── metadata-extraction.md # Node metadata system
-│   └── autocomplete-impl.md   # Autocomplete details
+│   ├── autocomplete-impl.md   # Autocomplete details
+│   └── simonw-llm-patterns/  # LLM CLI pattern analysis
+│       ├── FINAL-ANALYSIS.md  # Pattern recommendations
+│       └── IMPLEMENTATION-GUIDE.md  # Integration guide
 └── future-version/            # Post-MVP features
     ├── llm-node-gen.md        # Dynamic node generation
     └── json-extraction.md     # JSON handling improvements

@@ -40,23 +40,23 @@ This inventory describes **what's inside each documentation file** to help AI ag
 ---
 
 ### [CLAUDE.md](./CLAUDE.md)
-**Purpose**: Primary navigation guide for AI assistants implementing pflow, with phased implementation order and prerequisites.
+**Purpose**: Documentation navigation guide helping AI assistants quickly find the information they need within the docs directory.
 
 **Key Contents**:
-- Quick start instructions (read pocketflow first)
-- Repository structure map
-- 5-phase implementation order with prerequisites
-- Feature-to-pattern mapping table
-- Critical warnings about common mistakes
-- Navigation patterns for finding information
+- Complete documentation structure map
+- Navigation by purpose ("I need to understand...")
+- Document categories with visual indicators
+- Suggested reading paths for different goals
+- Key document relationships diagram
+- Prerequisites and single source of truth notes
 
 **Critical Insights**:
-- ⚠️ DO NOT reimplement pocketflow functionality
-- ⚠️ DO NOT modify pocketflow source code
-- ✅ DO read pocketflow source first (100 lines)
-- ✅ DO check pocketflow cookbook (40+ examples)
+- Complements index.md - CLAUDE.md shows WHEN/WHY to read files
+- Groups documentation by use case and purpose
+- Provides reading sequences for common tasks
+- Highlights MVP vs future version distinctions
 
-**When to Use**: Starting implementation, understanding build order, finding pocketflow examples, avoiding common mistakes
+**When to Use**: Finding relevant documentation, understanding reading order, navigating by task/purpose
 
 ---
 
@@ -613,6 +613,52 @@ This inventory describes **what's inside each documentation file** to help AI ag
 **When to Use**: Implementing v2.0 autocomplete, shell integrations
 
 **Status**: ❌ v2.0
+
+---
+
+### [simonw-llm-patterns/FINAL-ANALYSIS.md](./implementation-details/simonw-llm-patterns/FINAL-ANALYSIS.md)
+**Purpose**: Analysis of Simon Willison's llm library patterns and their alignment with pflow architecture.
+
+**Key Contents**:
+- Core architecture alignment with pocketflow lifecycle
+- Eight specific pattern recommendations from llm library
+- Integration architecture (wrapper pattern)
+- Benefits of adoption (CLI polish, plugins, proven patterns)
+- Implementation priority recommendations
+
+**Critical Insights**:
+- `llm` library fits perfectly in exec() phase of nodes
+- Wrapper pattern preserves pocketflow architecture
+- Default command pattern ideal for pflow CLI
+- Plugin ecosystem provides immediate value
+- All patterns respect prep/exec/post separation
+
+**When to Use**: Understanding llm library integration, implementing LLM nodes, CLI design decisions
+
+**Status**: ✅ MVP
+
+---
+
+### [simonw-llm-patterns/IMPLEMENTATION-GUIDE.md](./implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md)
+**Purpose**: Concrete implementation guide for integrating llm library patterns into pflow tasks.
+
+**Key Contents**:
+- Quick start checklist with dependencies
+- Task-specific implementations for each pflow task
+- LLMNode wrapper implementation example
+- Template system integration
+- Database and plugin configuration
+
+**Critical Insights**:
+- Provides task-by-task integration examples
+- Shows how to wrap llm library in pocketflow nodes
+- Demonstrates respecting architectural boundaries
+- Includes testing approaches
+- Maps llm features to pflow requirements
+
+**When to Use**: Implementing LLM functionality, following integration patterns, task implementation
+
+**Status**: ✅ MVP
 
 ## Future Version Directory (`/future-version/`)
 
