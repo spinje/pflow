@@ -1,5 +1,7 @@
 # Runtime: Caching and Safety Mechanisms
 
+> **MVP Note**: The `@flow_safe` decorator and associated caching/retry mechanisms described in this document are **post-MVP features** (v2.0+). They are documented here for architectural completeness but will not be implemented in the initial release.
+
 This document defines pflow's caching strategy and node safety model (`@flow_safe` decorator).
 
 > **Navigation**: [Index](../index.md) → Runtime

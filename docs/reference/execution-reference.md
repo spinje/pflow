@@ -4,6 +4,8 @@
 
 ## Overview
 
+> **MVP Note**: The `@flow_safe` decorator, caching, and automatic retry mechanisms described in this document are **post-MVP features** (v2.0+). For MVP, all nodes execute without these optimizations.
+
 This document is the authoritative reference for pflow's execution model and runtime behavior. It covers the execution flow, error handling, retry mechanisms, validation, and performance optimizations.
 
 ## Table of Contents

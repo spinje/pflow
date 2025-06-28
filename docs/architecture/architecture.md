@@ -462,7 +462,7 @@ Native support for Unix pipes:
 - First node consumes via natural interface or mapping
 - Full compatibility with standard Unix tools
 
-### 7.2 MCP Integration (Post-MVP Foundation)
+### 7.2 MCP Integration (v2.0)
 
 MCP tools will be wrapped as native pflow nodes:
 - Auto-generate Node subclasses from MCP manifests
