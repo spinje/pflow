@@ -119,6 +119,12 @@ Both loops feed each other: better decomposition leads to better implementation,
 3. Optional: Review similar tasks for inspiration
    - Task 2 dealt with similar domain (might be helpful)
    - Quick scan for any relevant technical insights
+
+4. Review existing research (if available):
+   - Check .taskmaster/tasks/task_5/research/ folder
+   - Verify insights as OPTIONS to consider
+   - Document verified patterns in project context
+   - Remember: Research suggests, refinement decides
 ```
 
 #### A.2-A.3: Subtask Generation and Refinement
@@ -129,7 +135,9 @@ Both loops feed each other: better decomposition leads to better implementation,
      "taskTitle": "Add Authentication System",
      "complexityScore": 6,
      "recommendedSubtasks": 4,
-     "expansionPrompt": "Break down auth system logically based on project understanding..."
+     "expansionPrompt": "Break down auth system logically based on project understanding.
+                        Reference .taskmaster/tasks/task_5/research/external-patterns.md
+                        for JWT patterns in subtask 5.2..."
    }
 
 2. Run: task-master expand --id=5 --num=4

@@ -48,7 +48,21 @@ Load ALL relevant knowledge from previous implementations to avoid repeating mis
 - Alert the user that task decomposition should be done first
 - The task needs to go through `refine-task.md` workflow
 
-#### 0.2 Load Historical Knowledge
+#### 0.2 Note Research References in Subtask Description
+
+**Check if your subtask description contains research references:**
+- Subtasks may include paths like `.taskmaster/tasks/task_5/research/pocketflow-patterns.md`
+- These are **suggestions from task decomposition**, not mandates
+- Research provides options to consider, not instructions to follow
+
+**Critical understanding:**
+> Research references are ONE INPUT among many. During refinement, you will:
+> - Consider research suggestions alongside other approaches
+> - Evaluate multiple implementation options
+> - Make reasoned decisions based on current context
+> - Escalate critical choices to the user when needed
+
+#### 0.3 Load Historical Knowledge
 
 **For NEW TASKS (first subtask of a task):**
 
@@ -84,7 +98,7 @@ Example for subtask 3.3:
 - Assumptions already made
 - Context from completed siblings
 
-#### 0.3 Synthesize Patterns
+#### 0.4 Synthesize Patterns
 Create knowledge synthesis file at:
 `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/knowledge-synthesis.md`
 
@@ -204,7 +218,50 @@ Create evaluation file at:
 
 **Get user decisions on ALL ambiguities before proceeding.**
 
-#### 1.4 Create Refined Specification
+#### 1.4 Implementation Approach Decisions
+
+**Evaluate multiple approaches:**
+1. Research-suggested patterns (if referenced in subtask)
+2. Patterns from knowledge synthesis
+3. Approaches discovered through code validation
+4. Standard pflow conventions
+
+**For each approach, consider:**
+- Pros and cons
+- Fit with current architecture
+- Complexity vs. benefit
+- Long-term maintainability
+
+**Critical Decision Framework:**
+- If decision has **profound architectural impact** → Create decision document
+- If decision affects **multiple subtasks** → Escalate to user
+- If decision contradicts **established patterns** → Document reasoning
+- If **multiple valid approaches** exist → Present options to user
+
+**Document in evaluation.md:**
+```markdown
+## Implementation Approaches Considered
+
+### Approach 1: Research-suggested pattern from external-patterns.md
+- Description: JWT token approach from research
+- Pros: Industry standard, well-tested
+- Cons: May be overkill for MVP
+- Decision: [Selected/Rejected] because...
+
+### Approach 2: Simple session-based auth
+- Description: Basic cookie sessions
+- Pros: Simple, fits MVP scope
+- Cons: Less scalable
+- Decision: [Selected/Rejected] because...
+
+### Approach 3: PocketFlow pattern from cookbook
+- Description: Using decorator pattern from example X
+- Pros: Consistent with framework
+- Cons: May need adaptation
+- Decision: [Selected/Rejected] because...
+```
+
+#### 1.5 Create Refined Specification
 
 Create refined specification at:
 `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/refined-spec.md`
@@ -252,7 +309,7 @@ Create refined specification at:
 - [Decision]: [Rationale] (User confirmed on [date])
 ```
 
-#### 1.5 Mark Refinement Complete
+#### 1.6 Mark Refinement Complete
 
 Create a marker file to indicate refinement is complete:
 ```bash
