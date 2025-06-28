@@ -123,4 +123,34 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: Click Validation Override for Custom Errors
+- **Date**: 2025-01-28
+- **Discovered in**: Task 2.3
+- **Problem**: Click's built-in validators (like Path(exists=True)) run during parsing phase, preventing custom error messages
+- **Solution**: Use basic types instead of Click's validation types and handle validation manually in the command function
+- **Example**:
+  ```python
+  # DON'T DO THIS - Click shows generic error
+  @click.option("--file", type=click.Path(exists=True))
+  def main(file):
+      # Never reached if file doesn't exist
+      pass
+
+  # DO THIS - Custom error messages
+  @click.option("--file", type=str)
+  def main(file):
+      if file:
+          try:
+              content = Path(file).read_text()
+          except FileNotFoundError:
+              raise click.ClickException("cli: File not found. Check the path.")
+  ```
+- **When to use**: When you need specific error message formatting or namespace prefixes for consistency
+- **Benefits**:
+  - Full control over error message content
+  - Consistent error formatting across the application
+  - Better user experience with helpful suggestions
+
+---
+
 <!-- New patterns are appended below this line -->

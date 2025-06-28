@@ -67,9 +67,9 @@ claude-code --prompt="<instructions>...This is the issue: $issue"
 ### Template-Driven Workflow Examples
 ```bash
 # Template variables in workflow
-pflow github-get-issue --issue=1234 >> \
-  claude-code --prompt="$comprehensive_fix_instructions" >> \
-  llm --prompt="Write commit message for: $code_report" >> \
+pflow github-get-issue --issue=1234 => \
+  claude-code --prompt="$comprehensive_fix_instructions" => \
+  llm --prompt="Write commit message for: $code_report" => \
   git-commit --message="$commit_message"
 
 # Template variables in the generated workflow will map to:
@@ -98,9 +98,9 @@ Template variables create dependencies between nodes:
 
 ```bash
 # $issue depends on github-get-issue output
-github-get-issue --issue=1234 >>  # Outputs: shared["issue"], shared["issue_title"]
-claude-code --prompt="...This is the issue: $issue" >>  # Depends on: shared["issue"]
-llm --prompt="Write commit message for: $code_report" >>  # Depends on: shared["code_report"]
+github-get-issue --issue=1234 =>  # Outputs: shared["issue"], shared["issue_title"]
+claude-code --prompt="...This is the issue: $issue" =>  # Depends on: shared["issue"]
+llm --prompt="Write commit message for: $code_report" =>  # Depends on: shared["commit_message"]
 git-commit --message="$commit_message"  # Depends on: shared["commit_message"]
 ```
 

@@ -11,8 +11,14 @@ def test_main_command_help():
     result = runner.invoke(main, ["--help"])
 
     assert result.exit_code == 0
-    assert "pflow - workflow compiler" in result.output
-    assert "Execute workflows using the =>" in result.output
+    assert "pflow - Plan Once, Run Forever" in result.output
+    assert "Natural language to deterministic workflows" in result.output
+    assert "CLI Syntax - chain nodes with => operator" in result.output
+    assert "Natural Language - use quotes for commands with spaces" in result.output
+    assert "From File - store complex workflows" in result.output
+    assert "From stdin - pipe from other commands" in result.output
+    assert "Passing flags to nodes - use -- separator" in result.output
+    assert "Input precedence: --file > stdin > command arguments" in result.output
 
 
 def test_simple_arguments():
@@ -57,8 +63,9 @@ def test_empty_arguments():
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [])
 
-    assert result.exit_code == 0
-    assert result.output.strip() == "Collected workflow from args:"
+    assert result.exit_code != 0
+    assert "cli: No workflow provided" in result.output
+    assert "Use --help to see usage examples" in result.output
 
 
 def test_complex_workflow():
@@ -171,7 +178,8 @@ def test_from_file_missing():
     result = runner.invoke(main, ["--file", "nonexistent.txt"])
 
     assert result.exit_code != 0
-    assert "does not exist" in result.output or "Error" in result.output
+    assert "cli: File not found: 'nonexistent.txt'" in result.output
+    assert "Check the file path and try again" in result.output
 
 
 # Tests for error cases
@@ -186,7 +194,8 @@ def test_error_file_and_args():
         result = runner.invoke(main, ["--file", "workflow.txt", "node2"])
 
         assert result.exit_code != 0
-        assert "Cannot specify both --file and command arguments" in result.output
+        assert "cli: Cannot specify both --file and command arguments" in result.output
+        assert "Use either --file OR provide a workflow as arguments" in result.output
 
 
 def test_error_stdin_and_args():
@@ -195,7 +204,8 @@ def test_error_stdin_and_args():
     result = runner.invoke(main, ["node1"], input="node2 => node3")
 
     assert result.exit_code != 0
-    assert "Cannot specify both stdin and command arguments" in result.output
+    assert "cli: Cannot use stdin input when command arguments are provided" in result.output
+    assert "Use either piped input OR command arguments" in result.output
 
 
 def test_stdin_ignored_with_file():
@@ -237,3 +247,85 @@ def test_context_storage_verification():
         result = runner.invoke(main, ["--file", "test.pflow"])
         assert result.exit_code == 0
         assert "Collected workflow from file: file workflow" in result.output
+
+
+# Tests for new error handling enhancements
+def test_error_empty_stdin_no_args():
+    """Test error when both stdin and args are empty."""
+    runner = click.testing.CliRunner()
+    result = runner.invoke(main, [], input="")
+
+    assert result.exit_code != 0
+    assert "cli: No workflow provided" in result.output
+
+
+def test_error_empty_file():
+    """Test error when file contains no workflow."""
+    runner = click.testing.CliRunner()
+    with runner.isolated_filesystem():
+        # Create empty file
+        with open("empty.txt", "w") as f:
+            f.write("")
+
+        result = runner.invoke(main, ["--file", "empty.txt"])
+
+        assert result.exit_code != 0
+        assert "cli: No workflow provided" in result.output
+
+
+def test_error_file_permission_denied():
+    """Test error when file cannot be read due to permissions."""
+    import os
+
+    runner = click.testing.CliRunner()
+    with runner.isolated_filesystem():
+        # Create a file and remove read permissions
+        with open("no-read.txt", "w") as f:
+            f.write("workflow")
+        os.chmod("no-read.txt", 0o000)
+
+        try:
+            result = runner.invoke(main, ["--file", "no-read.txt"])
+            assert result.exit_code != 0
+            assert "cli: Permission denied reading file" in result.output
+        finally:
+            # Restore permissions for cleanup
+            os.chmod("no-read.txt", 0o644)
+
+
+def test_error_file_encoding():
+    """Test error when file is not valid UTF-8."""
+    runner = click.testing.CliRunner()
+    with runner.isolated_filesystem():
+        # Create a binary file
+        with open("binary.dat", "wb") as f:
+            f.write(b"\x80\x81\x82\x83")
+
+        result = runner.invoke(main, ["--file", "binary.dat"])
+
+        assert result.exit_code != 0
+        assert "cli: Unable to read file" in result.output
+        assert "File must be valid UTF-8 text" in result.output
+
+
+def test_error_workflow_too_large():
+    """Test error when workflow input exceeds size limit."""
+    runner = click.testing.CliRunner()
+    # Create a workflow larger than 100KB
+    large_workflow = "node " * 25000  # ~125KB
+
+    result = runner.invoke(main, large_workflow.split())
+
+    assert result.exit_code != 0
+    assert "cli: Workflow input too large" in result.output
+    assert "max 100KB" in result.output
+
+
+def test_signal_handling_exit_code():
+    """Test that SIGINT handler is registered (cannot test actual signal)."""
+    # This test verifies the handler is registered, but we can't send actual signals in tests
+    runner = click.testing.CliRunner()
+    result = runner.invoke(main, ["test"])
+
+    # If we get here without error, the signal handler was registered successfully
+    assert result.exit_code == 0

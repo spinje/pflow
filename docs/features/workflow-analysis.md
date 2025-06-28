@@ -178,12 +178,12 @@ Workflows can be building blocks:
 
 ```
 # Combine existing workflows
-pflow fix-issue --issue=1234 >> \
+pflow fix-issue --issue=1234 => \
       fix-issue --issue=1235 >> \
       prepare-release
 
 # Or use in shell pipelines
-git log --oneline | pflow analyze-commits >> summary.md
+git log --oneline | pflow analyze-commits => summary.md
 
 ```
 

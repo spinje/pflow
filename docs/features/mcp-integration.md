@@ -303,7 +303,7 @@ pflow mcp-github-search-code --max-results=20
 # Results in: params["max_results"] = 20
 
 # Complex flow with established pipe syntax
-echo "TODO comments" | pflow mcp-github-search-code --language=python >> summarize-text >> mcp-slack-send-message --channel=dev-team
+echo "TODO comments" | pflow mcp-github-search-code --language=python => summarize-text => mcp-slack-send-message --channel=dev-team
 ```
 
 ---
@@ -583,7 +583,7 @@ pflow registry list --filter github
 # mcp-github-create-issue   Create new issue
 
 # 3. Direct CLI usage with natural interface
-pflow mcp-github-search-code --query "authentication" --language "python" >> summarize-text
+pflow mcp-github-search-code --query "authentication" --language "python" => summarize-text
 
 # 4. Natural language planning automatically discovers MCP nodes
 pflow "find Python authentication bugs on GitHub and create a summary"
@@ -612,7 +612,7 @@ flow = Flow(start=search_node)
 ```bash
 # Simple pipe with multiple MCP tools
 echo "security vulnerability" | \
-  pflow mcp-github-search-code --language python --max-results 10 >> \
+  pflow mcp-github-search-code --language python --max-results 10 => \
   llm --prompt="Summarize these security findings" --temperature 0.3 >> \
   mcp-slack-send-message --channel security-alerts
 ```

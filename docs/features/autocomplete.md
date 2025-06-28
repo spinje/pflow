@@ -28,7 +28,7 @@ The MVP implementation focuses on immediate user value with simple completions:
   - `pflow read-file --[TAB]` → `--path, --encoding`
   - `pflow llm --[TAB]` → `--prompt, --model, --temperature`
 * **Pipe operator support**: Recognize `>>` and suggest available nodes
-  - `pflow read-file --path=data.txt >> [TAB]` → list all nodes
+  - `pflow read-file --path=data.txt => [TAB]` → list all nodes
 * **Simple shell integration**: Basic completion scripts for bash/zsh
 * **Works with LLM backend**: Unquoted CLI syntax enables autocomplete even though commands are processed by LLM planner
 
@@ -60,7 +60,7 @@ Future enhancements will add intelligent, context-aware suggestions:
 pflow [TAB]                    # → read-file, llm, write-file, etc. (recently used nodes)
 pflow read-f[TAB]              # → read-file
 pflow read-file --[TAB]         # → --path, --encoding
-pflow read-file --path=data.txt >> [TAB]  # → llm, write-file, etc.
+pflow read-file --path=data.txt => [TAB]  # → llm, write-file, etc.
 ```
 
 **Why it works with LLM backend**:
@@ -86,7 +86,7 @@ CLI Autocomplete for `pflow` will be implemented through direct integration with
 
 * The completion script is designed to call the `pflow` executable itself. This call includes special arguments or environment variables that signal a completion request, along with the entire content of the command line typed so far by the user.
 * Upon receiving a completion request, `pflow` will:
-    1. Parse the current command-line input to understand the context (e.g., is the cursor after `pflow`, after a node name, after a flag, after a transition operator like `>>` or `-`?).
+    1. Parse the current command-line input to understand the context (e.g., is the cursor after `pflow`, after a node name, after a flag, after a transition operator like `=>` or `-`?).
     2. Query the **Unified Registry** for available node names, including namespaces and versions.
     3. Access **Node Metadata** (extracted from docstrings or MCP manifests) to find relevant inputs (shared store keys), outputs, parameters, default values, types, and actions for the current node or context.
     4. Potentially leverage logic from the **Type Shadow Store Prevalidation** concept to offer contextually intelligent suggestions, such as valid next nodes in a pipe or compatible shared store keys based on the output of a preceding node.

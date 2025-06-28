@@ -45,7 +45,7 @@ This document provides a comprehensive inventory of all components and subsystem
 
 - **Purpose**: Parse and interpret command-line input
 - **Components**:
-  - Pipe syntax parser (`node1 >> node2`)
+  - Pipe syntax parser (`node1 => node2`)
   - Flag parser for `--key=value` format
   - "Type flags; engine decides" resolution algorithm
   - Shell pipe detection (stdin handling)
@@ -55,7 +55,7 @@ This document provides a comprehensive inventory of all components and subsystem
 
 - **Purpose**: Core command interface
 - **Commands**:
-  - `pflow <node> [--flags] >> <node> [--flags]` - Execute flow
+  - `pflow <node> [--flags] => <node> [--flags]` - Execute flow
   - `pflow registry list` - Show available nodes
   - `pflow registry describe <node>` - Show node details
   - `pflow trace <run-id>` - Inspect execution details

@@ -19,8 +19,8 @@ def test_cli_help_command():
     result = runner.invoke(main, ["--help"])
 
     assert result.exit_code == 0
-    assert "pflow - workflow compiler for deterministic CLI commands." in result.output
-    assert "Execute workflows using the =>" in result.output
+    assert "pflow - Plan Once, Run Forever" in result.output
+    assert "Natural language to deterministic workflows" in result.output
     assert "--version" in result.output
 
 
@@ -43,10 +43,10 @@ def test_workflow_arguments():
 
 
 def test_no_arguments():
-    """Test that running with no arguments collects empty workflow."""
+    """Test that running with no arguments shows error."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [])
 
-    # With no arguments, it should still run and collect empty workflow
-    assert result.exit_code == 0
-    assert "Collected workflow from args:" in result.output
+    # With no arguments, it should show an error
+    assert result.exit_code != 0
+    assert "cli: No workflow provided" in result.output

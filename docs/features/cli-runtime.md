@@ -16,7 +16,7 @@ Our pattern leverages the lightweight **pocketflow framework** (100 lines of Pyt
 
 - **Static node classes**: Inherit from `pocketflow.Node` with `prep()`/`exec()`/`post()` methods
 - **Params system**: Use `set_params()` to configure node behavior with flat params structure
-- **Flow orchestration**: Use `>>` operator and `Flow` class for wiring
+- **Flow orchestration**: Use `=>` operator for CLI and `Flow` class for wiring
 - **No modifications**: Pure pattern implementation using existing framework APIs
 
 > **See also**: pocketflow framework (`pocketflow/__init__.py`) and communication patterns (`pocketflow/docs/core_abstraction/communication.md`)
@@ -209,7 +209,7 @@ Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 **CLI Command**:
 
 ```bash
-pflow yt-transcript --url=https://youtu.be/abc123 >> llm --prompt="Summarize this transcript" --temperature=0.9
+pflow yt-transcript --url=https://youtu.be/abc123 => llm --prompt="Summarize this transcript" --temperature=0.9
 ```
 
 **Shared Store Population**:
@@ -373,7 +373,7 @@ Same node code, different shared store layouts.
 
 ```bash
 # CLI command
-pflow read-file --path=data.txt >> llm --prompt="Summarize this data" >> write-file --path=summary.md
+pflow read-file --path=data.txt => llm --prompt="Summarize this data" => write-file --path=summary.md
 ```
 
 **Generated flow**:
@@ -399,9 +399,9 @@ def create_simple_flow():
 
 ```bash
 # CLI command
-pflow yt-transcript --url=VIDEO >> \
-  llm --prompt="Extract key points" >> \
-  llm --prompt="Create presentation outline" >> \
+pflow yt-transcript --url=VIDEO => \
+  llm --prompt="Extract key points" => \
+  llm --prompt="Create presentation outline" => \
   write-file --path=outline.md
 ```
 
@@ -422,7 +422,7 @@ shared = {
 
 ```bash
 # CLI command
-pflow github-get-issue --repo=owner/repo --issue=123 >> \
+pflow github-get-issue --repo=owner/repo --issue=123 => \
   llm --prompt="Analyze this issue and suggest a fix" >> \
   github-add-comment --issue=123
 ```

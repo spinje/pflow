@@ -24,7 +24,7 @@ This document is the authoritative reference for pflow's command-line interface.
 ### Core Command Structure
 
 ```
-pflow <node> [--flags] >> <node> [--flags] >> <node> [--flags]
+pflow <node> [--flags] => <node> [--flags] => <node> [--flags]
 ```
 
 - **`pflow`**: The CLI command
@@ -52,7 +52,7 @@ The `>>` operator is pflow's primary composition mechanism, inspired by Unix pip
 
 ### Key Differences from Shell Pipes (`|`)
 
-| Feature | Shell Pipe (`\|`) | pflow (`>>`) |
+| Feature | Shell Pipe (`\|`) | pflow (`=>`) |
 |---------|------------------|--------------|
 | Data passing | stdout → stdin | shared store |
 | Data format | Text stream | Structured data |
@@ -71,7 +71,7 @@ pflow read-file --path=input.txt
 ### Chained Flow
 
 ```bash
-pflow read-file --path=input.txt >> llm --prompt="Summarize this"
+pflow read-file --path=input.txt => llm --prompt="Summarize this"
 ```
 
 ### With Natural Language Planning
@@ -123,7 +123,7 @@ pflow llm --model=gpt-4 --temperature=0.7
 pflow process --text="Hello world"
 
 # Mixed usage
-pflow read-file --path=input.txt --encoding=utf-8 >> \
+pflow read-file --path=input.txt --encoding=utf-8 => \
       llm --prompt="Analyze this" --model=gpt-4
 ```
 
@@ -147,7 +147,7 @@ pflow llm --prompt="Summarize this: $content"
 
 ```bash
 # From shared store
-pflow read-file --path=doc.txt >> \
+pflow read-file --path=doc.txt => \
       llm --prompt="Summary of $content"
 
 # From environment
@@ -188,7 +188,7 @@ grep ERROR app.log | pflow llm --prompt="Explain these errors"
 # Multi-stage pipeline
 cat data.json | \
   jq '.items[]' | \
-  pflow process-json >> \
+  pflow process-json => \
   write-file --path=output.txt
 ```
 
@@ -268,7 +268,7 @@ pflow github-get-issue --issue=123 >> \
 
 ```bash
 # Complex analysis pipeline
-pflow read-file --path=logs.txt >> \
+pflow read-file --path=logs.txt => \
       llm --prompt="Extract errors" >> \
       llm --prompt="Group by category" >> \
       llm --prompt="Generate report" >> \
@@ -290,21 +290,21 @@ git diff | pflow "explain these changes"
 ### Sequential Processing
 
 ```bash
-pflow A >> B >> C
+pflow A => B => C
 # A completes → B runs → C runs
 ```
 
 ### Conditional Paths (v2.0)
 
 ```bash
-pflow validate >> process -fail>> handle-error
+pflow validate => process -fail=> handle-error
 # Future: action-based transitions
 ```
 
 ### Parallel Execution (v2.0)
 
 ```bash
-pflow split >> [process-a, process-b] >> merge
+pflow split => [process-a, process-b] => merge
 # Future: parallel node execution
 ```
 
@@ -312,10 +312,10 @@ pflow split >> [process-a, process-b] >> merge
 
 ```bash
 # Define reusable flow
-pflow --save=analyze "read-file >> llm >> summarize"
+pflow --save=analyze "read-file => llm => summarize"
 
 # Use in larger flow
-pflow analyze --path=doc.txt >> publish
+pflow analyze --path=doc.txt => publish
 ```
 
 ## Advanced Usage
@@ -323,7 +323,7 @@ pflow analyze --path=doc.txt >> publish
 ### Debug Mode
 
 ```bash
-pflow --debug read-file --path=test.txt >> llm
+pflow --debug read-file --path=test.txt => llm
 # Verbose logging, step-by-step execution
 ```
 
@@ -337,7 +337,7 @@ pflow --trace "complex natural language task"
 ### Dry Run
 
 ```bash
-pflow --dry-run expensive-flow >> another-node
+pflow --dry-run expensive-flow => another-node
 # Show what would execute without running
 ```
 
@@ -369,7 +369,7 @@ pflow --from-lock=flow.lock
 
 ```bash
 cat document.pdf | \
-  pflow pdf-to-text >> \
+  pflow pdf-to-text => \
   llm --prompt="Extract key points" >> \
   write-file --path=summary.md
 ```
@@ -377,7 +377,7 @@ cat document.pdf | \
 ### API Orchestration
 
 ```bash
-pflow api/get-data --endpoint=/users >> \
+pflow api/get-data --endpoint=/users => \
       transform --format=csv >> \
       upload --bucket=reports
 ```

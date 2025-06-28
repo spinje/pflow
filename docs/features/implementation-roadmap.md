@@ -30,7 +30,7 @@ pflow fix-issue --issue=1234
 
 ## 🗺 Development Roadmap: 4 Phases, 40 MVP Tasks
 
-📌 **MVP Natural Language Approach**: In the MVP, pflow does NOT parse CLI syntax directly. Everything after the 'pflow' command is treated as a natural language string and sent to the LLM for interpretation. Real CLI parsing (understanding >> operators, routing --flags) is deferred to v2.0. This simplification allows faster MVP delivery while still providing full functionality through LLM interpretation.
+📌 **MVP Natural Language Approach**: In the MVP, pflow does NOT parse CLI syntax directly. Everything after the 'pflow' command is treated as a natural language string and sent to the LLM for interpretation. Real CLI parsing (understanding => operators, routing --flags) is deferred to v2.0. This simplification allows faster MVP delivery while still providing full functionality through LLM interpretation.
 
 🧪 **Test-as-You-Go Strategy**: Instead of a separate testing phase, each task includes its own test strategy. This ensures functionality is validated immediately and helps catch regressions when implementing future tasks.
 
@@ -105,7 +105,7 @@ pflow "fix github issue 1234"
 # → Entire string sent to LLM for interpretation
 
 # Even with CLI-like syntax, it's still interpreted as natural language:
-pflow read-file --path=data.txt >> analyze >> write report
+pflow read-file --path=data.txt => analyze => write report
 # → LLM interprets this string and generates the workflow
 ```
 
@@ -281,7 +281,7 @@ The pflow MVP is ready when:
    pflow fix-issue --issue=1234  # 2-5s execution, minimal tokens
 
    # CLI-like syntax still goes through LLM:
-   pflow read-file --path=error.log >> analyze >> write-file --path=report.md
+   pflow read-file --path=error.log => analyze => write-file --path=report.md
    # → Entire string interpreted by LLM
    ```
 

@@ -168,7 +168,7 @@ node.prep(proxy)  # Still reads "text", proxy maps to "raw_content"
 ### 4.1 Included in MVP
 
 **Core Functionality:**
-- CLI pipe syntax execution (`pflow node1 >> node2`)
+- CLI pipe syntax execution (`pflow node1 => node2`)
 - Manual node composition and parameter passing
 - Shared store with direct access pattern
 - Basic simple node types (llm, read-file, write-file, github-get-issue)
@@ -244,8 +244,8 @@ The CLI supports **$ variable substitution** for dynamic content access, enablin
 
 **Example:**
 ```bash
-pflow github-get-issue --issue=1234 >> \
-  claude-code --prompt="Fix this issue: $issue" >> \
+pflow github-get-issue --issue=1234 => \
+  claude-code --prompt="Fix this issue: $issue" => \
   git-commit --message="$commit_message"
 ```
 
@@ -253,15 +253,15 @@ pflow github-get-issue --issue=1234 >> \
 
 ```bash
 # Basic syntax
-pflow <node> [--flags] >> <node> [--flags]
+pflow <node> [--flags] => <node> [--flags]
 
 # Template-driven examples
-pflow github-get-issue --issue=1234 >> \
-  claude-code --prompt="$comprehensive_fix_instructions" >> \
+pflow github-get-issue --issue=1234 => \
+  claude-code --prompt="$comprehensive_fix_instructions" => \
   git-commit --message="$commit_message"
 
 # Traditional examples (still supported)
-pflow yt-transcript --url=VIDEO >> llm --prompt="Summarize this transcript"
+pflow yt-transcript --url=VIDEO => llm --prompt="Summarize this transcript"
 cat article.md | pflow llm --prompt="Summarize this in 150 words"
 ```
 
@@ -407,7 +407,7 @@ The shared store is:
 
 ```bash
 # CLI command
-pflow yt-transcript --url=VIDEO >> llm --prompt="Summarize this transcript"
+pflow yt-transcript --url=VIDEO => llm --prompt="Summarize this transcript"
 ```
 
 **Step 1: CLI Resolution**
@@ -634,7 +634,7 @@ def test_video_summary_flow():
 ### 14.1 Why pocketflow?
 
 - Minimal, proven 100-line framework
-- Natural flow syntax (`>>` operator)
+- Natural flow syntax (`=>` operator)
 - Built-in retry mechanism
 - No heavy abstractions
 - Enables focus on patterns over framework
@@ -699,7 +699,7 @@ pflow/
 
 **Simple Flow:**
 ```bash
-pflow read-file --path=data.csv >> csv-to-json >> write-file --output=result.json
+pflow read-file --path=data.csv => csv-to-json => write-file --output=result.json
 ```
 
 **With Proxy Mapping:**
@@ -715,7 +715,7 @@ pflow read-file --path=data.csv >> csv-to-json >> write-file --output=result.jso
 
 **With Shell Pipe:**
 ```bash
-kubectl logs my-pod | pflow extract-errors >> llm --prompt="Summarize these errors" >> slack-send-message --channel=ops
+kubectl logs my-pod | pflow extract-errors => llm --prompt="Summarize these errors" => slack-send-message --channel=ops
 ```
 
 ---

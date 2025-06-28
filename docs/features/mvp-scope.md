@@ -25,7 +25,7 @@ The goal is a working MVP that can execute the core workflows:
 ```bash
 # Transform: Repeatedly asking AI "analyze these logs"
 # Into: pflow analyze-logs --input=error.log (instant)
-pflow read-file --path=error.log >> llm --prompt="extract error patterns and suggest fixes" >> write-file --path=analysis.md
+pflow read-file --path=error.log => llm --prompt="extract error patterns and suggest fixes" => write-file --path=analysis.md
 ```
 
 **And move on to more complex workflows**:
@@ -156,7 +156,7 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 **High-Value Features**:
 - Node name completion: `pflow read-f[TAB]` → `read-file`
 - Parameter discovery: `pflow read-file --[TAB]` → `--path, --encoding`
-- Available nodes after pipe: `pflow read-file >> [TAB]` → list of compatible nodes
+- Available nodes after pipe: `pflow read-file => [TAB]` → list of compatible nodes
 - Works with LLM backend - shell parses unquoted syntax
 
 **Benefits**:
@@ -219,7 +219,7 @@ pflow fix-issue --issue=1234  # 2-5s, consistent execution, minimal tokens
 - **Flow Complexity**: Handle 10-node workflows without performance degradation
 
 ### Capabilities Demonstrated
-- **Natural Language Processing**: `pflow "fix this issue, test it, create PR"` → `github-get-issue >> claude-implement >> ci-run-tests >> github-create-pr`
+- **Natural Language Processing**: `pflow "fix this issue, test it, create PR"` → `github-get-issue => claude-implement => ci-run-tests => github-create-pr`
 - **Workflow Reuse**: `pflow fix-issue --issue=1234 --severity=critical`
 - **Developer Integration**: Works with existing GitHub/testing/linting workflows
 - **Slash Command Migration**: Existing `.claude/commands/*.md` can be transformed naturally

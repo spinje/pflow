@@ -48,7 +48,7 @@
         "id": 2,
         "title": "Set up basic CLI for argument collection",
         "description": "Create the minimal CLI entry point with basic flag parsing",
-        "status": "pending",
+        "status": "done",
         "dependencies": [
           1
         ],
@@ -82,7 +82,7 @@
               2
             ],
             "details": "Implementation: Add detailed help text for the main command with usage examples showing various input formats. Implement error handling for invalid arguments with clear error messages. Use proper exit codes (0 for success, non-zero for errors). Ensure --help works properly. Add examples to help text demonstrating: simple node chains using => operator, natural language in quotes, piped input, file input. Reference docs/architecture/architecture.md#5.1 for 'Type flags; engine decides' philosophy.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Complete tests/test_cli_core.py coverage: Test help text displays correctly with expected examples, test error handling for malformed input with appropriate error messages, test proper exit codes for success/failure scenarios, verify error messages are clear and actionable"
           }
         ]
@@ -102,29 +102,7 @@
         ],
         "priority": "high",
         "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 7). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 11). 3. Adding a basic 'pflow --file <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object. 5. Initialize a clean shared store dictionary and run the flow with it.",
-        "testStrategy": "Create a tests/test_e2e_workflow.py. Define a simple workflow IR file for 'read-file => write-file'. Use CliRunner to invoke 'pflow --file <ir_file>'. Create mock nodes that write to the shared store. Verify the flow executes correctly and the final shared store contains expected values. Test with temporary files to ensure file I/O works as expected.",
-        "subtasks": [
-          {
-            "id": 1,
-            "title": "Initialize shared store dictionary before workflow execution",
-            "description": "Create initialization logic to set up a clean shared store dictionary at the start of each workflow execution, ensuring proper state isolation between runs",
-            "status": "pending",
-            "dependencies": [],
-            "details": "Implement shared store initialization in the execution engine that: 1) Creates a new empty dictionary for each workflow run, 2) Optionally pre-populates with stdin content if piped input is detected, 3) Ensures no state leakage between consecutive workflow executions, 4) Follows the shared store pattern defined in pocketflow/__init__.py and docs/core-concepts/shared-store.md",
-            "testStrategy": ""
-          },
-          {
-            "id": 2,
-            "title": "Validate shared store after execution",
-            "description": "Implement post-execution validation to verify shared store contains expected keys and perform proper cleanup to prevent memory leaks",
-            "status": "pending",
-            "dependencies": [
-              1
-            ],
-            "details": "Create validation logic that: 1) Checks for required output keys based on the executed workflow, 2) Logs warnings for missing expected keys or unused data, 3) Clears the shared store after validation to free memory, 4) Optionally exports final shared store state for debugging when verbose mode is enabled, 5) Ensures compatibility with the execution reference patterns in docs/reference/execution-reference.md",
-            "testStrategy": ""
-          }
-        ]
+        "testStrategy": "Create a tests/test_e2e_workflow.py. Define a simple workflow IR file for 'read-file => write-file'. Use CliRunner to invoke 'pflow --file <ir_file>'. Create mock nodes that write to the shared store. Verify the flow executes correctly and the final shared store contains expected values. Test with temporary files to ensure file I/O works as expected."
       },
       {
         "id": 4,
@@ -641,7 +619,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-28T19:07:02.783Z",
+      "updated": "2025-06-28T20:19:21.898Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }
