@@ -55,4 +55,30 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: Empty stdin handling with CliRunner
+- **Date**: 2025-06-28
+- **Discovered in**: Task 2.2
+- **Problem**: Click's CliRunner simulates a non-tty stdin even when empty, causing false positive stdin detection
+- **Solution**: Check if stdin has actual content before treating it as stdin input
+- **Example**:
+  ```python
+  elif not sys.stdin.isatty():
+      raw_input = sys.stdin.read().strip()
+      if raw_input:  # Only use stdin if it has content
+          if workflow:
+              raise click.ClickException("Cannot specify both stdin and command arguments")
+          source = "stdin"
+      else:
+          # Empty stdin, treat as command arguments
+          raw_input = " ".join(workflow)
+          source = "args"
+  ```
+- **When to use**: Any CLI command that accepts both stdin and other input methods (args, files)
+- **Benefits**:
+  - Prevents test failures with CliRunner
+  - Allows proper fallback to other input methods
+  - Maintains compatibility with both testing and production environments
+
+---
+
 <!-- New patterns are appended below this line -->
