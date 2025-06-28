@@ -57,6 +57,30 @@
 
 ---
 
+## 🔄 Knowledge Evolution Principles
+
+1. **Prior work is a starting point, not gospel.**
+   - Even work from intelligent agents or humans expertsrequires verification
+   - Yesterday's pattern may be today's anti-pattern
+   - Context changes faster than documentation updates
+
+2. **Learning compounds, but only with intention.**
+   - Each iteration should explicitly capture what worked and why
+   - Meta-learning (learning how to learn) amplifies all other learning
+   - Document patterns, not just solutions
+
+3. **Collaboration requires calibrated trust.**
+   - When building on others' work (human or AI), verify first
+   - Integration points are where most failures hide
+   - Clear handoffs prevent compounded errors
+
+4. **Documentation serves future readers, not current writers.**
+   - Living documentation > comprehensive documentation
+   - Examples must be tested, not theoretical
+   - Balance: enough to help, not so much it misleads
+
+---
+
 ## 📌 Behavioral Expectations
 
 * **When faced with uncertainty, do not continue. Surface it.**
@@ -81,6 +105,7 @@ The following rules take precedence over all standard procedures:
 | Requirements conflict with best practices            | Flag the issue, explain implications, await guidance                              |
 | Bug report doesn't match observed behavior           | Investigate deeper; the symptom may not be the cause                             |
 | Refactoring risks breaking existing functionality    | Document all dependencies first; propose incremental approach                     |
+| Prior AI/agent work contradicts current understanding | Verify against current reality; document divergence; trust current context        |
 
 ---
 
@@ -93,6 +118,7 @@ Before finalizing any work:
 3. **Did I prioritize elegance where robustness matters more?**
 4. **Have I shown my reasoning or only my conclusions?**
 5. **Will someone else understand why I made these choices?**
+6. **What patterns am I carrying forward that may no longer apply?**
 
 ---
 
