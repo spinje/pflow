@@ -47,6 +47,59 @@
 
 [Continue for all planned subtasks...]
 
+## Relevant pflow Documentation
+[ALWAYS include - Reference key project documentation that guides this task]
+
+### Core Documentation
+- `docs/[filename].md` - [Which sections/concepts apply]
+  - Relevance: [How this guides the implementation]
+  - Key concepts: [Specific patterns or conventions to follow]
+  - Applies to subtasks: [Which subtasks should reference this]
+
+### Architecture/Feature Documentation
+- `docs/architecture/[filename].md` - [Relevant architectural patterns]
+  - Critical for: [Which aspects of the task]
+  - Must follow: [Specific conventions or constraints]
+
+### Example:
+```
+- `docs/features/cli-runtime.md` - Sections on shared store usage
+  - Relevance: All subtasks must follow shared store conventions
+  - Key concepts: Store initialization, key naming patterns
+  - Applies to subtasks: 2, 3, and 4
+```
+
+## Relevant PocketFlow Documentation
+[Include if this task uses PocketFlow framework]
+
+### Framework Core
+- `pocketflow/__init__.py` - [Which classes/patterns are relevant]
+- `pocketflow/docs/[topic]/[file].md` - [Specific concepts]
+  - Pattern: [What pattern to follow]
+  - Usage: [How to apply in this context]
+
+### Example:
+```
+- `pocketflow/docs/core_abstraction/node.md` - Node lifecycle (prep/exec/post)
+  - Pattern: All nodes must follow the three-phase lifecycle
+  - Usage: Subtask 2 will implement custom nodes following this pattern
+```
+
+## Relevant PocketFlow Examples
+[Include if not already mentioned in research files]
+
+### Cookbook Patterns
+- `pocketflow/cookbook/[example-name]/` - [What pattern this demonstrates]
+  - Adaptation needed: [How to modify for this task]
+  - Applies to: [Which subtasks can use this pattern]
+
+### Example:
+```
+- `pocketflow/cookbook/rag-wiki-simple/` - Simple RAG pattern with caching
+  - Adaptation: Replace wiki search with our custom data source
+  - Applies to: Subtask 3 for implementing search functionality
+```
+
 ## Research References
 [Only include if research files exist for this task]
 
@@ -79,7 +132,9 @@
 - Focus on [specific aspect]
 - Ensure [particular requirement]
 - Consider [important factor]
+- Each subtask should reference relevant documentation sections
+- Include specific file paths and concepts in subtask descriptions
 
 ---
 
-**Note**: This file will be passed directly to `task-master expand` as the prompt. Ensure it contains ALL context needed for intelligent subtask generation.
+**Note**: This file will be passed directly to `task-master expand` as the prompt. Ensure it contains ALL context needed for intelligent subtask generation, including explicit references to project documentation, framework docs, and examples.

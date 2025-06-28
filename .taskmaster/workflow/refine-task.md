@@ -62,13 +62,16 @@ task-master show --id=<taskId>
 **Sub-agents should:**
 - Analyze the main task description and requirements
 - Read relevant sections from `docs/` for the task domain
+- **Document which pflow docs are essential** for this task (to be referenced in decomposition plan)
 - If task mentions PocketFlow or use of PocketFlow is implied or potentially applicable:
   - First read `pocketflow/__init__.py` to understand core framework
   - Search relevant `pocketflow/docs` for conceptual understanding
+  - **Document which PocketFlow docs are relevant** (for decomposition plan)
   - **CRITICAL**: *Use sub-agents* to explore `pocketflow/cookbook/` for production-ready patterns:
     - Sub-agents read `pocketflow/cookbook/CLAUDE.md` for complete example inventory
     - Sub-agents should identify 1-3 relevant examples based on task requirements
     - Extract implementation patterns that apply to this task
+    - **Note which examples to reference** in the decomposition plan
 - Create a synthesized briefing that includes:
   - Overview of relevant components and how they work
   - Key concepts and terminology for this task domain
@@ -76,8 +79,14 @@ task-master show --id=<taskId>
   - Relevant constraints, conventions, or decisions
   - Cookbook patterns discovered that will guide implementation
   - Domain understanding needed for intelligent decomposition
+  - **List of key documentation references** to include in decomposition plan
 
 **Output**: Create `.taskmaster/tasks/task_<taskId>/project-context.md` based on template (`project-context.md` in `.taskmaster/workflow/templates/`)
+
+**IMPORTANT**: The project context should identify key documentation that will be referenced in the decomposition plan. This includes:
+- Essential pflow docs from `docs/` folder
+- Relevant PocketFlow documentation (if applicable)
+- Cookbook examples that demonstrate needed patterns
 
 Remember: The PocketFlow cookbook examples contain production-ready code that can be adapted directly!
 
@@ -224,48 +233,33 @@ Create well-structured subtasks using patterns from decomposition synthesis.
 
 **Template Available**: Use `.taskmaster/workflow/templates/decomposition-plan.md` as a starting point.
 
-**Document Structure:**
-```markdown
-# Task <taskId> Decomposition Plan
+**Follow the template structure** (see `.taskmaster/workflow/templates/decomposition-plan.md`):
+- Task overview and decomposition pattern
+- Detailed subtask descriptions
+- Relevant pflow Documentation section (ALWAYS include)
+- Relevant PocketFlow Documentation section (if applicable)
+- Relevant PocketFlow Examples section (if not in research)
+- Research references (if applicable)
+- Key considerations and special instructions
 
-## Task Overview
-[Brief description of the main task]
-
-## Decomposition Pattern
-Pattern: [e.g., Foundation-Integration-Polish]
-Reasoning: [Why this pattern fits]
-
-## Planned Subtasks (Total: <num>)
-
-### Subtask 1: [Title]
-- Description: [Detailed description]
-- Dependencies: [None or list task IDs]
-- Estimated hours: [2-6]
-- Implementation notes: [Key points]
-- Test requirements: [What tests to write]
-
-### Subtask 2: [Title]
-[Same structure...]
-
-## Research References
-[If applicable, reference specific research files]
-- Subtask 2: Follow pattern from .taskmaster/tasks/task_<taskId>/research/external-patterns.md (JWT section)
-- Subtask 3: Apply cookbook pattern from .taskmaster/tasks/task_<taskId>/research/pocketflow-patterns.md
-
-## Key Considerations
-- [Any special notes for the LLM doing the expansion]
-- [Constraints or conventions to follow]
-```
+**IMPORTANT**: Always read and use the template from the decomposition-plan.md file.
 
 **The file must contain:**
 - Complete context about the task
 - Detailed descriptions for each subtask
 - All dependencies and relationships
+- Explicit references to pflow documentation (from `docs/` folder)
+- PocketFlow documentation references (if framework can potentially be used)
+- Cookbook example references (if applicable and not in research)
 - References to research files where applicable
 - Test requirements per subtask
 - Any special implementation notes
 
-**Remember**: This is the ONLY input the expansion will receive, so include everything needed for intelligent subtask generation.
+**Remember**: This is the ONLY input the expansion will receive. Documentation references are CRITICAL because they:
+- Guide the LLM to generate subtasks that follow project conventions
+- Ensure architectural consistency
+- Point to specific patterns and examples to follow
+- Prevent reinventing existing solutions
 
 #### 2.3 Review Decomposition Plan
 

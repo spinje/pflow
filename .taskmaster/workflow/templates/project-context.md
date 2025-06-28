@@ -59,6 +59,18 @@
 ### Design Decisions
 - [Decision]: [Why it was made and how it affects this task]
 
+## Key Documentation References
+
+### Essential pflow Documentation
+- `docs/[filename].md` - [Why this is important for the task]
+- `docs/architecture/[filename].md` - [Key architectural patterns]
+
+### PocketFlow Documentation (if applicable)
+- `pocketflow/docs/[topic]/[file].md` - [Relevant concepts]
+- `pocketflow/cookbook/[example]/` - [Pattern to follow]
+
+*These references should be included in the decomposition plan to guide subtask generation.*
+
 ## Key Questions This Context Answers
 
 1. **What am I building/modifying?** [Answer]
