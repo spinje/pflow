@@ -129,18 +129,18 @@ Both loops feed each other: better decomposition leads to better implementation,
 
 #### A.2-A.3: Subtask Generation and Refinement
 ```
-1. Create task-complexity-report.json entry:
-   {
-     "taskId": 5,
-     "taskTitle": "Add Authentication System",
-     "complexityScore": 6,
-     "recommendedSubtasks": 4,
-     "expansionPrompt": "Break down auth system logically based on project understanding.
-                        Reference .taskmaster/tasks/task_5/research/external-patterns.md
-                        for JWT patterns in subtask 5.2..."
-   }
+1. Create comprehensive decomposition plan:
+   File: .taskmaster/tasks/task_5/decomposition-plan.md
+   Content:
+   - Task overview and chosen pattern
+   - Detailed subtask descriptions (4 subtasks)
+   - Dependencies and time estimates
+   - References to research files:
+     "Subtask 5.2: Apply JWT patterns from
+      .taskmaster/tasks/task_5/research/external-patterns.md"
+   - Complete context for expansion
 
-2. Run: task-master expand --id=5 --num=4
+2. Run: task-master expand --id=5 --num=4 --prompt="$(< .taskmaster/tasks/task_5/decomposition-plan.md)"
    Generated:
    - 5.1: Set up auth infrastructure and data models
    - 5.2: Implement core authentication logic
@@ -203,10 +203,11 @@ Both loops feed each other: better decomposition leads to better implementation,
 │       ├── subtask-review.md             # Post-implementation subtask review
 │       └── task-review.md                # Task-level summary after all subtasks
 ├── reports/
-│   └── task-complexity-report.json      # Historical decomposition data
+│   └── task-complexity-report.json      # Optional historical decomposition data
 ├── tasks/
 │   ├── task_1/
 │   │   ├── project-context.md           # Domain understanding (shared by all subtasks)
+│   │   ├── decomposition-plan.md        # Comprehensive expansion prompt
 │   │   ├── subtask_1.1/
 │   │   │   ├── refinement/              # Pre-implementation phase
 │   │   │   │   ├── knowledge-synthesis.md   # What we learned from past work
@@ -246,7 +247,7 @@ You're about to break down task 5 into subtasks:
 
 **Step 3 - Optional inspiration**:
 - Quick check if any previous tasks are similar
-- Might glance at task-complexity-report.json
+- Review task-review.md files from similar tasks
 - Light review for any helpful insights
 
 ### Example 2: Implementing Subtask 5.1 (First of Task)
@@ -295,8 +296,8 @@ When something works, document it as a pattern before moving on.
 2. Sub-agents create project-context.md for the task
 3. (Optional) Review similar tasks for inspiration
 4. Refine task description if needed
-5. Create task-complexity-report.json entry
-6. Run `task-master expand --id=X --num=Y`
+5. Create comprehensive decomposition plan at .taskmaster/tasks/task_X/decomposition-plan.md
+6. Run `task-master expand --id=X --num=Y --prompt="$(< .taskmaster/tasks/task_X/decomposition-plan.md)"`
 7. Refine generated subtasks
 
 ### For Subtask Implementation (`refine-subtask.md` → `implement-subtask.md`)

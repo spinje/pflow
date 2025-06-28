@@ -84,7 +84,7 @@ Remember: The PocketFlow cookbook examples contain production-ready code that ca
 #### 0.3 Review Similar Tasks (Recommended)
 
 **If helpful, look at similar completed tasks:**
-- Check `.taskmaster/reports/task-complexity-report.json` for tasks with similar domain/complexity
+- Review completed tasks in `.taskmaster/tasks/` directory
 - Read their task-review.md files for technical insights (located in `.taskmaster/tasks/task_<id>/task-review.md` for each task)
 - Note any useful patterns or approaches
 - If many tasks seem relevant, deploy sub-agents to gather useful information from the `task-review.md` files.
@@ -215,63 +215,80 @@ Create well-structured subtasks using patterns from decomposition synthesis.
 
 #### 2.2 Create Detailed Expansion Prompt
 
-**Create scratchpad for planning:**
+**Create comprehensive decomposition plan:**
 ```
-scratchpads/task-<taskId>/task-<taskId>-decomposition-plan.md
-```
-
-**Document:**
-1. Chosen decomposition pattern and why
-2. Planned subtasks with descriptions
-3. Dependencies between subtasks
-4. Size estimate for each (hours)
-5. Detailed expansion prompt
-
-**Expansion prompt should:**
-- Reference specific patterns to follow
-- Include granular subtask descriptions
-- Specify dependencies explicitly
-- Mention test requirements per subtask
-- Reference specific research files by path (e.g., `.taskmaster/tasks/task_5/research/pocketflow-patterns.md`) when patterns apply to particular subtasks
-- Contain ALL the necessary information for an llm to generate the subtasks automatically (all context is needed)
-
-**Example research reference in expansion prompt:**
-```
-"Subtask 5.2 should implement the authentication flow following the pattern
-documented in .taskmaster/tasks/task_5/research/external-patterns.md (section
-on JWT token handling). Also reference .taskmaster/tasks/task_5/research/
-pocketflow-patterns.md for the decorator pattern used in similar auth systems."
+.taskmaster/tasks/task_<taskId>/decomposition-plan.md
 ```
 
-#### 2.3 Update task-complexity-report.json
+**CRITICAL**: This file will be passed directly to task-master expand as the prompt. It must be self-contained and comprehensive.
 
-**Add new entry with extreme care:**
-```json
-{
-    "taskId": <taskId>,
-    "taskTitle": "<from task-master show>",
-    "complexityScore": <1-10 based on analysis>,
-    "recommendedSubtasks": <number based on patterns>,
-    "expansionPrompt": "<extremely detailed prompt based on plan>",
-    "reasoning": "<why this decomposition, what patterns applied>"
-}
+**Template Available**: Use `.taskmaster/workflow/templates/decomposition-plan.md` as a starting point.
+
+**Document Structure:**
+```markdown
+# Task <taskId> Decomposition Plan
+
+## Task Overview
+[Brief description of the main task]
+
+## Decomposition Pattern
+Pattern: [e.g., Foundation-Integration-Polish]
+Reasoning: [Why this pattern fits]
+
+## Planned Subtasks (Total: <num>)
+
+### Subtask 1: [Title]
+- Description: [Detailed description]
+- Dependencies: [None or list task IDs]
+- Estimated hours: [2-6]
+- Implementation notes: [Key points]
+- Test requirements: [What tests to write]
+
+### Subtask 2: [Title]
+[Same structure...]
+
+## Research References
+[If applicable, reference specific research files]
+- Subtask 2: Follow pattern from .taskmaster/tasks/task_<taskId>/research/external-patterns.md (JWT section)
+- Subtask 3: Apply cookbook pattern from .taskmaster/tasks/task_<taskId>/research/pocketflow-patterns.md
+
+## Key Considerations
+- [Any special notes for the LLM doing the expansion]
+- [Constraints or conventions to follow]
 ```
 
-**Critical**: This is error-prone for AI agents. Double-check JSON syntax!
+**The file must contain:**
+- Complete context about the task
+- Detailed descriptions for each subtask
+- All dependencies and relationships
+- References to research files where applicable
+- Test requirements per subtask
+- Any special implementation notes
 
-**Note**: Running `task-master expand` will NOT work if the `task-complexity-report.json` is not updated for the current task.
+**Remember**: This is the ONLY input the expansion will receive, so include everything needed for intelligent subtask generation.
+
+#### 2.3 Review Decomposition Plan
+
+**Before proceeding, verify your decomposition plan file:**
+- Is it comprehensive and self-contained?
+- Does it include all context needed for subtask generation?
+- Are all subtasks clearly described with dependencies?
+- Are research references included where applicable?
+- Would an LLM reading ONLY this file understand what to create?
 
 #### 2.4 Generate Subtasks
 
-Run the expansion:
+Run the expansion using your decomposition plan file:
 ```bash
-task-master expand --id=<taskId> --num=<recommendedSubtasks>
+task-master expand --id=<taskId> --num=<recommendedSubtasks> --prompt="$(< .taskmaster/tasks/task_<taskId>/decomposition-plan.md)"
 ```
+
+**Note**: The `--prompt` flag passes the entire contents of your decomposition plan file to task-master. This ensures all your planning context is used for intelligent subtask generation. By using the shell command substitution, you can avoid writing out all the content of the decomposition plan file in the prompt.
 
 ### Exit Criteria for Phase 2
 - [ ] Decomposition strategy documented
-- [ ] task-complexity-report.json updated correctly
-- [ ] Subtasks generated via task-master expand
+- [ ] Comprehensive decomposition plan file created
+- [ ] Subtasks generated via task-master expand with file-based prompt
 - [ ] All subtasks created successfully
 
 ## Phase 3: Subtask Refinement
@@ -322,7 +339,7 @@ Once ALL exit criteria are met:
 
 1. Verify all required files exist:
    - `.taskmaster/tasks/task_<taskId>/project-context.md`
-   - `.taskmaster/reports/task-complexity-report.json` (updated)
+   - `.taskmaster/tasks/task_<taskId>/decomposition-plan.md`
 
 2. All subtasks should:
    - Follow `refine-subtask.md` workflow
@@ -387,7 +404,8 @@ Mixing different concerns (e.g., infrastructure + features) in one subtask
 2. **task-master expand**:
    - This is the ONLY safe way to create subtasks
    - Never try to manipulate tasks.json directly
-   - The expansion prompt is where intelligence lives
+   - The decomposition plan file is where all intelligence lives
+   - Use file-based prompt to pass comprehensive context
 
 3. **Pattern References**:
    - Patterns are suggestions, not rules
