@@ -384,3 +384,7 @@ Document for user decision:
 2. Options with pros/cons
 3. Your recommendation and why
 4. Reversibility of each option
+
+### Project-specific Memories
+
+- **CLI Development Principle**: never commit code unless explicitly instructed by the user
