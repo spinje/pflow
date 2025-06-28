@@ -16,7 +16,7 @@ Your goal is to refine task `<taskId>` and decompose it into well-structured sub
 
 **Required:**
 - Task ID provided as argument (`<taskId>`)
-- Access to task-master CLI
+- Access to task-master CLI (external task management tool, not part of pflow)
 - Understanding of pflow project structure
 
 **Variables:**

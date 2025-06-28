@@ -2,6 +2,8 @@
 
 This document provides a high-level view of the epistemic learning system for task execution. The system focuses on deep understanding for decomposition and compound learning for implementation.
 
+> **Note**: This workflow uses `task-master`, an external task management CLI tool (not part of pflow). Task-master handles task tracking, decomposition, and subtask management.
+
 ## The Complete System
 
 ```mermaid
