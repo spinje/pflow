@@ -231,7 +231,7 @@ Create well-structured subtasks using patterns from decomposition synthesis.
 
 **CRITICAL**: This file will be passed directly to task-master expand as the prompt. It must be self-contained and comprehensive.
 
-**Template Available**: Use `.taskmaster/workflow/templates/decomposition-plan.md` as a starting point.
+**Template Available**: *ALWAYS* Use `.taskmaster/workflow/templates/decomposition-plan.md` as a starting point.
 
 **Follow the template structure** (see `.taskmaster/workflow/templates/decomposition-plan.md`):
 - Task overview and decomposition pattern
@@ -241,8 +241,6 @@ Create well-structured subtasks using patterns from decomposition synthesis.
 - Relevant PocketFlow Examples section (if not in research)
 - Research references (if applicable)
 - Key considerations and special instructions
-
-**IMPORTANT**: Always read and use the template from the decomposition-plan.md file.
 
 **The file must contain:**
 - Complete context about the task
