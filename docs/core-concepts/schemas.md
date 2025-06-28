@@ -11,7 +11,7 @@ Both schemas work together to enable metadata-driven flow planning and validatio
 
 ---
 
-## 1 · Document Envelope (Flow IR)
+## Document Envelope Flow IR
 
 ```json
 {
@@ -41,7 +41,7 @@ Both schemas work together to enable metadata-driven flow planning and validatio
 
 ---
 
-## 2 · Node Metadata Schema
+## Node Metadata Schema
 
 Node metadata is extracted from Python docstrings and stored as JSON for fast planner access.
 
@@ -205,7 +205,7 @@ All nodes must explicitly declare their shared store interface in metadata:
 
 ---
 
-## 3 · Node Object (Flow IR)
+## Node Object Flow IR
 
 Flow IR references nodes by registry ID, with metadata resolved during validation.
 
@@ -236,7 +236,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 | `params` | Arbitrary JSON for node behavior | **Never** contains shared store keys or execution directives |
 | `execution.max_retries` | Integer ≥ 0, only for `@flow_safe` nodes | See [Runtime Behavior](./runtime.md) |
 | `execution.use_cache` | Boolean, only for `@flow_safe` nodes | Cache eligibility enforced at runtime |
-| `execution.wait` | Float ≥ 0, retry delay in seconds | Used by [pocketflow framework](../../pocketflow/__init__.py) |
+| `execution.wait` | Float ≥ 0, retry delay in seconds | Used by pocketflow framework (`pocketflow/__init__.py`) |
 
 **Interface Resolution:**
 
@@ -248,7 +248,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 
 ---
 
-## 4 · Edge Object
+## Edge Object
 
 **Simple Sequential Transitions:**
 
@@ -281,7 +281,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 
 ---
 
-## 5 · Proxy Mapping Schema
+## Proxy Mapping Schema
 
 **Optional Flow-Level Mappings:**
 
@@ -310,7 +310,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 
 ---
 
-## 6 · Side-Effect Model
+## Side-Effect Model
 
 Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior Specification](./runtime.md)). IR validation enforces purity constraints:
 
@@ -325,7 +325,7 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 
 ---
 
-## 9 · Schema Validation Requirements
+## Schema Validation Requirements
 
 ### 9.1 Node Metadata Schema Validation
 
@@ -346,7 +346,7 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 
 ---
 
-## 11 · Evolution Rules
+## Evolution Rules
 
 **Version Compatibility:**
 
@@ -368,7 +368,7 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 
 ---
 
-## 11 · Extension Points
+## Extension Points
 
 **Planned Extensions:**
 
@@ -394,7 +394,7 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 
 ---
 
-## 10 · Complete Example Flow
+## Complete Example Flow
 
 ```json
 {

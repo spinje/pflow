@@ -7,7 +7,7 @@
 ## Navigation
 
 **Related Documents:**
-- **Framework**: [pocketflow Source](../../pocketflow/__init__.py) | [pocketflow Docs](../../pocketflow/CLAUDE.md)
+- **Framework**: pocketflow Source (`pocketflow/__init__.py`) | pocketflow Docs (`pocketflow/CLAUDE.md`)
 - **Architecture**: [Architecture](./architecture.md) | [Shared Store](../core-concepts/shared-store.md)
 - **Components**: [CLI Runtime](../features/cli-runtime.md) | [Planner](../features/planner.md) | [Runtime](../core-concepts/runtime.md)
 - **Implementation**: [Component Inventory](./components.md)

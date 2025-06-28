@@ -51,7 +51,7 @@ git-commit --message="Fix issue 1234"
 | **[`llm`](../core-node-packages/llm-nodes.md)** | General-purpose LLM processing | Reads: `prompt` → Writes: `response` |
 | **`read-file`** | Read file contents | Reads: `file_path` → Writes: `content` |
 | **`write-file`** | Write file contents | Reads: `content`, `file_path` → Writes: `written` |
-| **[`run-tests`](../core-node-packages/ci-nodes.md#run-tests)** | Execute test commands | Reads: `test_command` → Writes: `test_results` |
+| **[`run-tests`](../core-node-packages/ci-nodes.md#ci-run-tests)** | Execute test commands | Reads: `test_command` → Writes: `test_results` |
 | **`git-commit`** | Create git commit | Reads: `message`, `files` → Writes: `commit_hash` |
 
 ### The LLM Node: Smart Exception to Prevent Proliferation

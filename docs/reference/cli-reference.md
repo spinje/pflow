@@ -9,7 +9,7 @@ This document is the authoritative reference for pflow's command-line interface.
 ## Table of Contents
 
 - [Basic Syntax](#basic-syntax)
-- [The `>>` Operator](#the--operator)
+- [The Arrow Operator](#the-arrow-operator)
 - [Command Structure](#command-structure)
 - [Flag Resolution](#flag-resolution)
 - [Template Variables](#template-variables)
@@ -41,7 +41,7 @@ node_name ::= ( namespace "/" )? name ( "@" version )?
 flag      ::= "--" key ( "=" value )?
 ```
 
-## The `>>` Operator
+## The Arrow Operator
 
 The `>>` operator is pflow's primary composition mechanism, inspired by Unix pipes but operating at a higher level:
 

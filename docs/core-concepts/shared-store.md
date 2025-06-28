@@ -5,7 +5,7 @@
 **Related Documents:**
 - **Architecture**: [PRD](../prd.md) | [Architecture](../architecture/architecture.md) | [MVP Scope](../features/mvp-scope.md)
 - **Components**: [Planner](../features/planner.md) | [Runtime](./runtime.md) | [CLI Runtime](../features/cli-runtime.md)
-- **Node Design**: [Simple Nodes](../features/simple-nodes.md) | [Node Packages](../core-node-packages/)
+- **Node Design**: [Simple Nodes](../features/simple-nodes.md) | [Node Packages](../core-node-packages/llm-nodes.md)
 - **Implementation**: [PocketFlow Integration](../architecture/pflow-pocketflow-integration-guide.md)
 
 ## Overview
@@ -30,7 +30,7 @@ Before diving into the autonomy principle, it's crucial to understand when to us
 
 ### Best Practice Pattern:
 
-> **Implementation**: See [Node Reference](../reference/node-reference.md#shared-store-access) for the recommended pattern of checking shared store first, then params
+> **Implementation**: See [Node Reference](../reference/node-reference.md#check-shared-store-first-pattern) for the recommended pattern of checking shared store first, then params
 
 **Shared store takes precedence** - this allows dynamic workflow data to override static configuration when needed.
 
@@ -200,6 +200,8 @@ validator - "complete" >> finalizer
 - It serves as the coordination bus between otherwise isolated node executions.
 - It holds transient memory, intermediate results, configuration, error logs, and final outputs.
 
+## Proxy Pattern
+
 ### 2. NodeAwareSharedStore Proxy
 
 - **Purpose**: Transparent mapping layer that enables simple node code while supporting complex flow routing
@@ -215,7 +217,7 @@ validator - "complete" >> finalizer
 - Node-local parameters that don't affect shared store
 - Simple access via `self.params.get("temperature", 0.7)`
 
-> **Framework Integration**: See [Node Reference](../reference/node-reference.md#base-node-class) for pocketflow integration details
+> **Framework Integration**: See [Node Reference](../reference/node-reference.md#node-lifecycle-implementation) for pocketflow integration details
 
 ## The Standalone Node Pattern
 
@@ -260,9 +262,9 @@ A crucial distinction in our implementation:
 - **Generated**: Flow orchestration code (from IR) with optional proxy setup
 - **Runtime**: CLI injection into shared store and params overrides
 
-> **Node Examples**: See [Node Reference](../reference/node-reference.md#common-node-templates) for LLMNode and other implementation examples
+> **Node Examples**: See [Node Reference](../reference/node-reference.md#common-implementation-patterns) for LLMNode and other implementation examples
 
-> **Testing Examples**: See [Node Reference](../reference/node-reference.md#testing-nodes) for node testing patterns
+> **Testing Examples**: See [Node Reference](../reference/node-reference.md#testing-pattern) for node testing patterns
 ```
 
 Compare this to complex binding setup requirements in other approaches.

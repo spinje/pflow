@@ -19,7 +19,7 @@ Our pattern leverages the lightweight **pocketflow framework** (100 lines of Pyt
 - **Flow orchestration**: Use `>>` operator and `Flow` class for wiring
 - **No modifications**: Pure pattern implementation using existing framework APIs
 
-> **See also**: [pocketflow framework](../../pocketflow/__init__.py) and [communication patterns](../../pocketflow/docs/core_abstraction/communication.md)
+> **See also**: pocketflow framework (`pocketflow/__init__.py`) and communication patterns (`pocketflow/docs/core_abstraction/communication.md`)
 
 **Framework vs Pattern**:
 
@@ -186,7 +186,7 @@ Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
 #### 9.1 Simple Scenario (No Mappings)
 
-**IR Definition** (following [IR schema](../core-concepts/schemas.md#intermediate-representation-ir)):
+**IR Definition** (following [IR schema](../core-concepts/schemas.md#document-envelope-flow-ir)):
 
 ```json
 {

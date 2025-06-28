@@ -89,7 +89,7 @@ graph TD
 ### 2.3 Foundation: pocketflow Framework
 
 The entire system is built on a 100-line Python framework that provides:
-- Node lifecycle management - see [Node Reference](../reference/node-reference.md#node-lifecycle)
+- Node lifecycle management - see [Node Reference](../reference/node-reference.md#node-lifecycle-implementation)
 - Flow orchestration via `>>` operator
 - Built-in retry mechanism for fault tolerance
 - Action-based transitions (deferred to post-MVP)
@@ -149,7 +149,7 @@ llm --prompt="Explain this concept in simple terms"
 
 When natural interfaces don't align, the `NodeAwareSharedStore` proxy provides transparent translation.
 
-> See [NodeAwareSharedStore Proxy](../core-concepts/shared-store.md#nodeawaresharedstore-proxy) for implementation details
+> See [NodeAwareSharedStore Proxy](../core-concepts/shared-store.md#proxy-pattern) for implementation details
 
 ```python
 # Node always uses natural interface
@@ -338,7 +338,7 @@ The planner operates in two modes with enhanced capabilities for template-driven
 All nodes inherit from `pocketflow.Node`:
 
 ```python
-For a complete example of node implementation including the LLMNode, see [Node Implementation Examples](../reference/node-reference.md#common-node-templates).
+For a complete example of node implementation including the LLMNode, see [Node Implementation Examples](../reference/node-reference.md#common-implementation-patterns).
 ```
 
 #### 5.3.2 Node Metadata

@@ -9,7 +9,40 @@ copyright: Maintained by <a href="https://spinje.com">spinje</a>.
 
 nav:
   - Home: index.md
-  - Modules: modules.md
+  - Architecture:
+    - Overview: architecture/architecture.md
+    - Components: architecture/components.md
+    - Integration Guide: architecture/pflow-pocketflow-integration-guide.md
+  - Core Concepts:
+    - Registry: core-concepts/registry.md
+    - Runtime: core-concepts/runtime.md
+    - Schemas: core-concepts/schemas.md
+    - Shared Store: core-concepts/shared-store.md
+  - Features:
+    - MVP Scope: features/mvp-scope.md
+    - Implementation Roadmap: features/implementation-roadmap.md
+    - CLI Runtime: features/cli-runtime.md
+    - Simple Nodes: features/simple-nodes.md
+    - Shell Pipes: features/shell-pipes.md
+    - Planner: features/planner.md
+    - Workflow Analysis: features/workflow-analysis.md
+    - Autocomplete: features/autocomplete.md
+    - MCP Integration: features/mcp-integration.md
+  - Reference:
+    - CLI Reference: reference/cli-reference.md
+    - Node Reference: reference/node-reference.md
+    - Execution Reference: reference/execution-reference.md
+  - Node Packages:
+    - LLM Nodes: core-node-packages/llm-nodes.md
+    - CI Nodes: core-node-packages/ci-nodes.md
+    - GitHub Nodes: core-node-packages/github-nodes.md
+    - Claude Nodes: core-node-packages/claude-nodes.md
+  - Future Features:
+    - LLM Node Generation: future-version/llm-node-gen.md
+    - JSON Extraction: future-version/json-extraction.md
+  - Implementation Details:
+    - Metadata Extraction: implementation-details/metadata-extraction.md
+    - Autocomplete Implementation: implementation-details/autocomplete-impl.md
 plugins:
   - search
   - mkdocstrings:

@@ -52,7 +52,7 @@ class McpGithubSearchCodeNode(Node):  # Standard pocketflow inheritance
     # Compatible with proxy mappings and JSON IR
 ```
 
-> **See also**: [pocketflow framework](../../pocketflow/__init__.py) for core implementation details
+> **See also**: pocketflow framework (`pocketflow/__init__.py`) for core implementation details
 
 ---
 
