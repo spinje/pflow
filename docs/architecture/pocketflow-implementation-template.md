@@ -14,7 +14,7 @@ src/pflow/flows/{component_name}/
 │   ├── process_nodes.py  # Core processing nodes
 │   ├── output_nodes.py   # Output/persistence nodes
 │   └── error_nodes.py    # Error handling nodes
-└── README.md             # Component-specific documentation
+└── CLAUDE.md             # Component-specific documentation
 ```
 
 ## Basic Flow Template
