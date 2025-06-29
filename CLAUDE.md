@@ -50,6 +50,8 @@ We are building a modular, CLI-first system called `pflow`.
 
 pflow is a workflow compiler that transforms natural language and CLI pipe syntax into permanent, deterministic CLI commands. It follows a "Plan Once, Run Forever" philosophy - capturing user intent once and compiling it into reproducible workflows that run instantly without AI overhead.
 
+**What pflow produces**: Executable PocketFlow workflows - users describe what they want, and pflow generates the corresponding PocketFlow Flow objects that can be saved and reused.
+
 The goal is to enable local execution of intelligent workflows with the **minimal viable set of features**. This MVP will later evolve into a scalable cloud-native service.
 
 **Core Principle**: Fight complexity at every step. Build minimal, purposeful components that extend without rewrites.
@@ -60,6 +62,8 @@ pflow is built on the **PocketFlow** framework (100-line Python library in `pock
 
 > If you need to implement a new feature that includes using pocketflow, and dont have a good understanding of what pocketflow is or how it works always start by reading the source code in `pocketflow/__init__.py` and then the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
 
+> **Note**: PocketFlow serves a dual role in this project - see "The PocketFlow Meta Layer" section below for important architectural context.
+
 - **Nodes**: Self-contained tasks (`prep()` → `exec()` → `post()`) that communicate through a shared store using intuitive keys (`shared["text"]`, `shared["url"]`)
 - **Flows**: Orchestrate nodes into workflows using the pocketflow framework with `>>` operator chaining
 - **CLI**: Primary interface for composing and executing flows with pipe syntax
@@ -67,6 +71,24 @@ pflow is built on the **PocketFlow** framework (100-line Python library in `pock
 - **Shared Store**: In-memory dictionary for inter-node communication, keeping data handling separate from computation logic
 
 For a more indepth understanding of what documentation and examples that are available in the `pocketflow` folder, please read the `pocketflow/CLAUDE.md` for a detailed repository map and inventory.
+
+### The PocketFlow Meta Layer
+
+**Important Architectural Note**: pflow has a unique relationship with PocketFlow that operates on two distinct levels:
+
+1. **User Level (The Product)**: pflow's purpose is to help users create and execute PocketFlow workflows. Users describe what they want in natural language or CLI syntax, and pflow compiles this into executable PocketFlow Flow objects. The end product is always a PocketFlow workflow.
+
+2. **Implementation Level (The Tool)**: pflow itself uses PocketFlow internally for its own complex operations. Components like the workflow planner, IR compiler, and shell integration are implemented as PocketFlow flows.
+
+This creates an intentional meta architecture: **we use PocketFlow to build a tool that helps users build PocketFlow workflows**. This is similar to how compilers are often written in their own language (bootstrapping).
+
+**Benefits of this approach**:
+- We validate PocketFlow's capabilities by using it ourselves (dogfooding)
+- We ensure deep understanding of the framework we're exposing to users
+- We get the same reliability benefits (retry logic, error handling) that we provide to users
+- Complex orchestrations in pflow are as robust as the workflows it produces
+
+**Clarity for implementers**: When you see PocketFlow used in pflow's codebase, it's our internal implementation choice. When users interact with pflow, they're creating their own PocketFlow workflows. These are separate but philosophically aligned uses of the same framework.
 
 ### Development Commands
 
@@ -394,7 +416,9 @@ Document for user decision:
 
 ### PocketFlow Internal Usage
 
-**CRITICAL**: pflow uses PocketFlow internally for complex orchestrations.
+**CRITICAL**: pflow uses PocketFlow internally for complex orchestrations (see "The PocketFlow Meta Layer" section for architectural context).
+
+This internal usage is separate from the user-facing PocketFlow workflows that pflow helps create. We use PocketFlow as an implementation detail to make pflow itself more reliable and maintainable.
 
 6 tasks use PocketFlow for orchestration (Tasks 4, 8, 17, 20, 22, 23), while all other components use traditional Python patterns.
 
