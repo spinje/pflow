@@ -12,10 +12,8 @@ docs/
 │   ├── architecture.md        # Core system design
 │   ├── components.md          # MVP vs v2.0 breakdown
 │   ├── pflow-pocketflow-integration-guide.md  # Critical integration patterns
-│   ├── adr/                   # Architectural Decision Records
-│   │   └── 001-use-pocketflow-for-orchestration.md  # PocketFlow usage decision
-│   ├── pocketflow-interface-guide.md     # How to interface with PocketFlow components
-│   └── pocketflow-implementation-template.md  # Template for PocketFlow tasks
+│   └── adr/                   # Architectural Decision Records
+│       └── 001-use-pocketflow-for-orchestration.md  # PocketFlow usage decision
 ├── core-concepts/             # Fundamental patterns
 │   ├── registry.md            # Node discovery system
 │   ├── runtime.md             # Execution engine
@@ -71,9 +69,9 @@ docs/
 
 **PocketFlow architecture decision**
 - **Decision record**: `architecture/adr/001-use-pocketflow-for-orchestration.md`
-- **Implementation guide**: `architecture/pocketflow-implementation-template.md`
-- **Interface guide**: `architecture/pocketflow-interface-guide.md`
-- Key insight: 6 tasks use PocketFlow  for internal orchestration (4, 8, 17, 20, 22, 23), others use traditional code
+- Key insight: ONLY Task 17 (Natural Language Planner) uses PocketFlow internally
+- All other components use traditional Python patterns
+- Focused approach: Use PocketFlow only where complex orchestration adds real value
 
 **The data flow between nodes**
 - Primary: `core-concepts/shared-store.md`

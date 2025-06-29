@@ -115,9 +115,52 @@
           5
         ],
         "priority": "high",
-        "details": "Create src/pflow/runtime/compiler.py with compile_ir_to_flow(ir_json, registry) function. This function converts JSON IR to executable pocketflow.Flow objects. CRITICAL: The registry provides metadata ONLY (module path, class name) - NOT class references. Implementation: 1) Parse and validate IR JSON. 2) For each node in IR, look up metadata in registry (from Task 5). 3) Use importlib.import_module(registry[node_type]['module']) to dynamically import node modules. 4) Use getattr(module, registry[node_type]['class_name']) to get node class. 5) Verify the class inherits from pocketflow.BaseNode. 6) Instantiate nodes and set parameters. 7) Connect nodes using pocketflow's >> operator based on edges. 8) Return complete Flow object. Include proper error handling for missing nodes, import failures, and invalid IR. Handle ImportError and AttributeError with clear messages. Reference: pflow-pocketflow-integration-guide.md",
+        "details": "Create src/pflow/runtime/compiler.py with compile_ir_to_flow(ir_json, registry) function. This function converts JSON IR to executable pocketflow.Flow objects. CRITICAL: The registry provides metadata ONLY (module path, class name) - NOT class references. Implementation: 1) Parse and validate IR JSON. 2) For each node in IR, look up metadata in registry (from Task 5). 3) Use importlib.import_module(registry[node_type]['module']) to dynamically import node modules. 4) Use getattr(module, registry[node_type]['class_name']) to get node class. 5) Verify the class inherits from pocketflow.BaseNode. 6) Instantiate nodes and set parameters. 7) Connect nodes using pocketflow's >> operator based on edges. 8) Return complete Flow object. Include proper error handling for missing nodes, import failures, and invalid IR. Handle ImportError and AttributeError with clear messages. Reference: pflow-pocketflow-integration-guide.md. This is a medium complexity task with multiple discrete steps but straightforward transformation logic.",
         "testStrategy": "Test IR parsing and validation, dynamic module importing from registry metadata (NOT class references), BaseNode inheritance verification, node instantiation with proper error messages, flow construction with >> operator, handling of missing nodes in registry, import errors (ImportError, AttributeError), and invalid IR structures. Mock importlib for testing without real node files. Verify the converter produces valid, executable pocketflow.Flow objects.",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create Compiler Foundation with IR Loading",
+            "description": "Set up the compiler module structure in src/pflow/runtime/compiler.py and implement IR loading with basic validation. Handle both dict and JSON string inputs, verify basic structure (nodes/edges arrays), and create custom CompilationError exception class.",
+            "dependencies": [],
+            "details": "Create compile_ir_to_flow(ir_json, registry) function signature. Implement JSON parsing for string inputs and pass-through for dict inputs. Verify 'nodes' and 'edges' keys exist in IR. Create CompilationError class that includes context (node_id, node_type). Set up structured logging for debugging compilation steps. Focus on establishing the foundation without implementing actual compilation logic.\n<info added on 2025-06-29T17:06:19.629Z>\nTest Strategy:\n- Create tests/test_compiler_foundation.py as the primary test file\n- Test IR loading functionality with both valid JSON strings and dict objects using pytest\n- Implement error handling tests for malformed JSON (should raise JSONDecodeError) and missing required keys ('nodes', 'edges')\n- Verify CompilationError class includes proper context attributes (node_id, node_type) when raised\n- Test that structured logging is properly configured and captures compilation steps\n- Mock the actual compilation logic to test the foundation components independently without dependencies on node implementation\n</info added on 2025-06-29T17:06:19.629Z>",
+            "status": "done",
+            "testStrategy": "Test IR loading with valid JSON strings and dicts. Test error handling for malformed JSON and missing required keys. Verify CompilationError includes proper context. Mock actual compilation logic to test the foundation independently."
+          },
+          {
+            "id": 2,
+            "title": "Implement Dynamic Node Import System",
+            "description": "Build the core dynamic import functionality that loads node classes from registry metadata using importlib. For each node type in the IR, look up metadata in registry, dynamically import the module, get the class reference, and verify it inherits from pocketflow.BaseNode.",
+            "dependencies": [
+              1
+            ],
+            "details": "Create helper function import_node_class(node_type, registry) that: 1) Looks up registry[node_type] for module/class_name, 2) Uses importlib.import_module() to load module, 3) Uses getattr() to get class reference, 4) Verifies inheritance with issubclass(cls, pocketflow.BaseNode). Handle ImportError (module not found), AttributeError (class not found), TypeError (wrong inheritance). Include rich error messages with node context.\n<info added on 2025-06-29T17:06:43.798Z>\nTest Strategy:\n- Create tests/test_dynamic_imports.py with comprehensive test coverage\n- Mock importlib.import_module to simulate various failure scenarios without requiring real imports\n- Test successful import scenarios using mock modules that contain proper BaseNode subclasses\n- Test error handling for ImportError when modules are not found\n- Test error handling for AttributeError when specified classes don't exist in the module\n- Test error handling for TypeError when classes don't inherit from BaseNode\n- Use actual test nodes from Task 5's src/pflow/nodes/test_node.py for integration testing to ensure real-world compatibility\n- Verify that all error messages include complete context: node ID, node type, module path, and the specific error that occurred\n- Test that the issubclass check properly validates BaseNode inheritance and rejects invalid classes\n</info added on 2025-06-29T17:06:43.798Z>",
+            "status": "pending",
+            "testStrategy": "Mock importlib.import_module to test various failure scenarios. Test with actual test nodes from Task 5 registry. Verify inheritance checking catches non-BaseNode classes. Test error messages include proper context (node ID, type, specific failure reason)."
+          },
+          {
+            "id": 3,
+            "title": "Build Flow Construction and Wiring",
+            "description": "Implement node instantiation from imported classes, parameter setting using set_params(), and flow wiring using PocketFlow's >> operator based on edges array. Handle both default connections and action-based routing.",
+            "dependencies": [
+              2
+            ],
+            "details": "Store instantiated nodes in dict keyed by node_id. For each node: instantiate using imported class, call set_params() if params exist (pass template vars like $var unchanged). For edges: use >> for action='default', use - operator for named actions. Identify start_node (first in nodes array if not specified). Create pocketflow.Flow object with connected nodes. Add debug logging for each connection made.\n<info added on 2025-06-29T17:07:03.637Z>\nTest Strategy:\n- Create tests/test_flow_construction.py\n- Test simple linear flows (A >> B >> C) using mock nodes\n- Test action-based routing (A - 'error' >> B, A - 'success' >> C)\n- Test parameter passing with set_params() including template variables like $var\n- Test that template variables are passed unchanged (no resolution at compile time)\n- Test invalid edge references (non-existent node IDs) raise clear errors\n- Test start_node detection (explicit vs first node fallback)\n- Verify the resulting Flow object has correct structure and can be executed\n- Use pocketflow's test utilities if available\n</info added on 2025-06-29T17:07:03.637Z>",
+            "status": "pending",
+            "testStrategy": "Test simple linear flows (A >> B >> C). Test action-based routing (A - 'success' >> B). Test parameter passing including template variables. Test invalid edge references raise clear errors. Verify Flow object is properly constructed."
+          },
+          {
+            "id": 4,
+            "title": "Add Integration Tests and Polish",
+            "description": "Create comprehensive integration tests using real IR examples and mock nodes. Improve error messages based on test scenarios, ensure performance targets are met, and add documentation.",
+            "dependencies": [
+              3
+            ],
+            "details": "Create integration tests that compile actual IR examples from examples/ directory. Test end-to-end with mock nodes that inherit from BaseNode. Ensure compilation time < 100ms for typical workflows. Polish error messages to be actionable (include suggestions for fixes). Add docstrings and inline comments explaining the compilation process. Verify all code follows project conventions (type hints, error handling patterns).\n<info added on 2025-06-29T17:07:35.672Z>\nTest Strategy:\n- Create tests/test_compiler_integration.py for comprehensive end-to-end testing\n- Load actual IR examples from examples/ directory (create directory with sample IR files if it doesn't exist)\n- Implement mock nodes that inherit from pocketflow.BaseNode to test compilation without real node implementations\n- Add performance benchmarking to ensure compilation completes in < 100ms for typical 5-10 node workflows\n- Test error message quality with assertions that error messages include actionable suggestions (e.g., 'Node type \"llm\" not found in registry. Did you mean \"llm-node\"?')\n- Integrate with actual registry implementation from Task 5 to verify real-world compatibility\n- Create smoke test that compiles and executes a simple flow end-to-end to validate the entire pipeline\n- Document performance benchmarks in test comments for future regression tracking\n- Ensure 95%+ code coverage across all compiler modules (use pytest-cov to measure and enforce)\n</info added on 2025-06-29T17:07:35.672Z>",
+            "status": "pending",
+            "testStrategy": "Integration tests with complete IR->Flow compilation. Performance tests measuring compilation time. Error scenario tests covering all failure modes. Test with actual registry from Task 5. Verify compiled flows can be executed (smoke test)."
+          }
+        ]
       },
       {
         "id": 5,
@@ -678,7 +721,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-29T15:18:52.633Z",
+      "updated": "2025-06-29T17:39:58.846Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }

@@ -313,6 +313,49 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: Structured Logging with Phase Tracking
+- **Date**: 2025-06-29
+- **Discovered in**: Task 4.1
+- **Problem**: Multi-phase operations (compilation, validation, execution) need clear debugging trails and phase-specific error context
+- **Solution**: Use Python's logging extra dict to attach structured metadata including phase information
+- **Example**:
+  ```python
+  import logging
+
+  logger = logging.getLogger(__name__)
+
+  # Log with phase context
+  logger.debug("Starting IR compilation", extra={"phase": "init"})
+  logger.debug("IR structure validated", extra={
+      "phase": "validation",
+      "node_count": len(ir_dict["nodes"]),
+      "edge_count": len(ir_dict["edges"])
+  })
+  logger.error("Compilation failed", extra={
+      "phase": "node_creation",
+      "node_id": "failing_node",
+      "error_type": "ImportError"
+  })
+
+  # In tests, verify with caplog:
+  for record in caplog.records:
+      if "Starting IR compilation" in record.message:
+          assert record.phase == "init"
+  ```
+- **When to use**: Any multi-step process where tracking progress and debugging failures requires phase context:
+  - Compilers and parsers
+  - Validation pipelines
+  - Workflow execution engines
+  - Any process with distinct stages
+- **Benefits**:
+  - Structured data enables log analysis and filtering
+  - Phase tracking helps pinpoint where failures occur
+  - Extra attributes accessible in tests via caplog
+  - Compatible with log aggregation systems (ELK, Datadog)
+  - Clear separation between message and metadata
+
+---
+
 <!-- New patterns are appended below this line -->
 
 ## Pattern: Layered Validation with Custom Business Logic

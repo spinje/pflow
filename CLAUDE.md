@@ -414,14 +414,6 @@ Document for user decision:
 3. Your recommendation and why
 4. Reversibility of each option
 
-### PocketFlow Internal Usage
-
-**CRITICAL**: pflow uses PocketFlow internally for complex orchestrations (see "The PocketFlow Meta Layer" section for architectural context).
-
-This internal usage is separate from the user-facing PocketFlow workflows that pflow helps create. We use PocketFlow as an implementation detail to make pflow itself more reliable and maintainable.
-
-6 tasks use PocketFlow for orchestration (Tasks 4, 8, 17, 20, 22, 23), while all other components use traditional Python patterns.
-
 ### Project-specific Memories
 
 - **CLI Development Principle**: never commit code unless explicitly instructed by the user

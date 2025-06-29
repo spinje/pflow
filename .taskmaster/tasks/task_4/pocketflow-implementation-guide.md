@@ -1,6 +1,12 @@
 # Task 4: IR-to-PocketFlow Compiler - PocketFlow Implementation Guide
 
-## Overview
+**⚠️ ARCHITECTURAL DECISION UPDATE (2025-06-29)**: This guide represents Option B (PocketFlow-based implementation) which was NOT chosen. The actual implementation uses Option A (traditional function approach). This document is preserved for reference but should NOT be followed for implementation.
+
+**ACTUAL APPROACH**: See the project-context.md file for the chosen traditional function implementation approach.
+
+---
+
+## Overview (DEPRECATED - NOT USED)
 This task implements a compiler that transforms pflow's JSON IR format into executable PocketFlow objects. The compiler uses PocketFlow itself for orchestration, making it self-hosted and demonstrating the pattern's reliability.
 
 ## PocketFlow Architecture

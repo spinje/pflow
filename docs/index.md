@@ -150,63 +150,15 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 **Critical Insights**:
 - PocketFlow is ~100 lines - it's a pattern, not a heavy framework
-- 6 tasks use PocketFlow: Tasks 4, 8, 17, 20, 22, 23
+- ONLY Task 17 (Natural Language Planner) uses PocketFlow internally
 - All other components use traditional Python patterns
-- Use PocketFlow for multi-step I/O operations with retry needs
-- Use traditional code for pure computations and utilities
+- PocketFlow chosen for planner due to complex LLM retry strategies
+- Focused approach avoids over-engineering simple operations
 
 **When to Use**: Understanding architecture decisions, determining implementation approach, choosing between PocketFlow and traditional code
 
 **Status**: ✅ Architecture Decision
 
----
-
-### [pocketflow-interface-guide.md](./architecture/pocketflow-interface-guide.md)
-**Purpose**: Guide for implementers of traditional (non-PocketFlow) components on how to interface with PocketFlow-based components.
-
-**Key Contents**:
-- Shared store interface patterns
-- Expected input/output keys for each PocketFlow component
-- Error handling from PocketFlow components
-- Integration examples for all 6 PocketFlow tasks
-- Common patterns (wrapping, async, configuration)
-- What you DON'T need to know about PocketFlow
-
-**Critical Insights**:
-- Interface is simple: dictionaries in, dictionaries out
-- No need to understand PocketFlow internals
-- Check for "error" key in results
-- Each component documents its shared store interface
-- Can wrap PocketFlow in traditional APIs
-
-**When to Use**: Calling PocketFlow components, integrating traditional and PocketFlow code, testing integrations
-
-**Status**: ✅ Implementation Guide
-
----
-
-### [pocketflow-implementation-template.md](./architecture/pocketflow-implementation-template.md)
-**Purpose**: Standard template and patterns for implementing pflow components using PocketFlow.
-
-**Key Contents**:
-- Directory structure for PocketFlow components
-- Flow template with error handling
-- Node implementation patterns
-- Testing templates
-- Best practices (node design, state management, error handling)
-- Common patterns (multi-path, progressive enhancement, accumulation)
-- Migration checklist
-
-**Critical Insights**:
-- Each node should have single responsibility
-- Document shared store keys clearly
-- Use exec_fallback for graceful degradation
-- Test nodes in isolation
-- Keep error paths explicit
-
-**When to Use**: Implementing Tasks 4, 8, 17, 20, 22, or 23; creating new PocketFlow components
-
-**Status**: ✅ Implementation Template
 
 ## Core Concepts Directory (`/core-concepts/`)
 

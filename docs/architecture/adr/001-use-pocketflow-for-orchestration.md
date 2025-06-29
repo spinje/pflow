@@ -1,60 +1,47 @@
-# ADR-001: Use PocketFlow for Internal Orchestration
+# ADR-001: Use PocketFlow for Natural Language Planning Only
 
-Date: 2025-06-29
+Date: 2025-06-29 (Revised: 2025-06-29)
 
 ## Status
 
-Accepted
+Accepted (Revised)
 
 ## Context
 
 pflow is a workflow compiler that transforms natural language and CLI syntax into executable workflows using the PocketFlow framework. During development, we faced an architectural decision: should we use PocketFlow internally to build pflow itself, or use traditional imperative Python code?
 
-Initial reaction was to avoid using PocketFlow internally, based on the principle "don't use your output format to build your compiler." However, deeper analysis revealed that PocketFlow is not just an output format - it's a lightweight pattern for reliable orchestration.
+Initial analysis suggested using PocketFlow for 6 internal tasks. However, further reflection revealed that only the natural language planner (Task 17) has the complex orchestration patterns that genuinely benefit from PocketFlow.
 
 ### Key Observations
 
 1. **PocketFlow is minimal**: The entire framework is ~100 lines of Python code
-2. **Many pflow operations are multi-step orchestrations**: compilation, planning, execution, tracing
-3. **These operations have common needs**: retry logic, error handling, state accumulation
-4. **Traditional code leads to complexity**: Nested try/catch blocks, manual retry loops, hidden control flow
+2. **Only the planner has complex orchestration**: Multiple LLM retries, self-correcting loops, branching logic
+3. **Other tasks are straightforward**: Simple I/O, linear execution, basic error handling
+4. **Risk of over-engineering**: Using PocketFlow everywhere violates "simplicity first" principle
 
 ## Decision
 
-Use PocketFlow for complex orchestration tasks within pflow, while keeping simple utilities and data structures as traditional code.
+Use PocketFlow ONLY for the Natural Language Planner (Task 17), which has genuine complex orchestration needs. All other components use traditional Python patterns.
 
-### Components Using PocketFlow
+### Component Using PocketFlow
 
-The following 6 core orchestration tasks will use PocketFlow:
+**LLM Workflow Generation** (Task 17)
+- Parse input → Call LLM → Validate → Retry on errors
+- Self-correcting loops with multiple retry strategies
+- Complex branching based on LLM responses
+- Progressive enhancement of generated workflows
+- Multiple fallback paths for different error types
 
-1. **IR-to-PocketFlow Compiler** (Task 4)
-   - Load JSON → Validate → Import Nodes → Build Flow
-   - Multiple I/O operations with failure modes
-   - Dynamic imports need retry logic
-
-2. **Shell Integration** (Task 8)
-   - Detect stdin → Read/Stream → Handle signals → Exit codes
-   - Complex I/O with timeouts and branching
-
-3. **LLM Workflow Generation** (Task 17)
-   - Parse input → Call LLM → Validate → Retry on errors
-   - Self-correcting loops with multiple retry strategies
-
-4. **Approval and Storage** (Task 20)
-   - Present → User decision → Validate → Store → Index
-   - Interactive flow with multiple paths
-
-5. **Named Workflow Execution** (Task 22)
-   - Load → Validate lockfile → Apply params → Execute
-   - Multi-step with various failure modes
-
-6. **Execution Tracing** (Task 23)
-   - Monitor → Capture → Format → Output to multiple destinations
-   - Parallel output streams without interfering with execution
+This is the ONLY component that truly benefits from PocketFlow's orchestration capabilities.
 
 ### Components Using Traditional Code
 
-All other components use traditional Python patterns:
+ALL other components use traditional Python patterns:
+- **IR Compiler (Task 4)**: Simple JSON loading and module imports
+- **Shell Integration (Task 8)**: Linear stdin processing
+- **Approval System (Task 20)**: Basic user interaction
+- **Workflow Execution (Task 22)**: Straightforward flow running
+- **Execution Tracing (Task 23)**: Output formatting and capture
 - Pure utilities (validators, formatters)
 - Data structures (schemas, registries)
 - Simple CLI commands
@@ -64,24 +51,24 @@ All other components use traditional Python patterns:
 
 ### Positive
 
-1. **Built-in Reliability**: Automatic retry/fallback for I/O operations
-2. **Clear Control Flow**: Visual representation with `>>` operator
-3. **Better Testing**: Isolated nodes are independently testable
-4. **Consistent Error Handling**: Explicit error paths with action-based routing
-5. **Easy Extension**: New steps can be added without modifying existing code
-6. **Dogfooding**: We prove PocketFlow works by using it ourselves
+1. **Focused Complexity**: PocketFlow used only where it adds real value
+2. **Lower Learning Curve**: Most developers work with familiar patterns
+3. **Simplified Architecture**: Fewer abstraction layers
+4. **Planner Reliability**: The one complex component gets retry/fallback benefits
+5. **Easier Debugging**: Most code has direct stack traces
+6. **Selective Dogfooding**: We validate PocketFlow for its best use case
 
 ### Negative
 
-1. **Learning Curve**: Developers need to understand PocketFlow patterns
-2. **Debugging**: Stack traces go through PocketFlow orchestration
-3. **Potential Over-engineering**: Some simple operations might feel heavyweight as nodes
+1. **Manual Retry Logic**: Other components need explicit error handling
+2. **Less Consistency**: Two different patterns in the codebase
+3. **Potential Duplication**: Some retry patterns might be reimplemented
 
 ### Neutral
 
-1. **Different Programming Style**: Flow-based vs imperative
-2. **More Files**: Each flow has multiple node files
-3. **Explicit State**: Shared store makes all state visible
+1. **Hybrid Approach**: Mix of traditional and flow-based code
+2. **Clear Boundaries**: Only the planner uses PocketFlow
+3. **Documentation Needs**: Must explain why planner is different
 
 ## Implementation Guidelines
 
@@ -90,13 +77,14 @@ All other components use traditional Python patterns:
 ```
 src/pflow/
 ├── flows/              # PocketFlow-based orchestration
-│   ├── planner/        # Natural language workflow generation
-│   ├── compiler/       # IR to PocketFlow compilation
-│   ├── shell/          # Shell integration
-│   ├── approval/       # User approval and storage
-│   ├── execution/      # Named workflow execution
-│   └── tracing/        # Execution monitoring
-├── core/               # Traditional code
+│   └── planner/        # Natural language workflow generation (ONLY)
+├── core/               # Traditional code (most components)
+├── runtime/            # Traditional runtime components
+│   ├── compiler.py     # IR compilation
+│   ├── shell.py        # Shell integration
+│   └── tracing.py      # Execution monitoring
+├── planning/           # Traditional planning components
+│   └── approval.py     # User approval
 ├── nodes/              # Platform nodes
 └── cli/                # Entry points
 ```
@@ -104,18 +92,19 @@ src/pflow/
 ### Decision Criteria
 
 Use PocketFlow when the component has:
-- Multiple discrete steps with data flow
-- External dependencies that might fail
-- Multiple execution paths
-- State that accumulates
-- Retry/fallback requirements
+- Complex retry strategies with multiple approaches
+- Self-correcting loops (e.g., LLM validation)
+- Genuinely complex branching logic
+- Multiple interdependent external API calls
 - Benefits from visual flow representation
 
-Use traditional code when:
-- Pure computation with no external dependencies
-- Single-purpose utilities
-- Performance-critical inner loops
-- Simple data structures
+Use traditional code for:
+- Everything else
+- Simple I/O operations
+- Linear execution flows
+- Basic error handling
+- User interactions
+- Pure computations
 
 ## References
 
@@ -123,94 +112,13 @@ _Note: The detailed analysis documents referenced here were part of the decision
 
 ## Notes
 
-This decision was made after extensive analysis comparing PocketFlow and traditional implementations for each task. The key insight was recognizing that PocketFlow is not a heavy framework but a lightweight pattern that makes unreliable operations reliable - exactly what pflow's internal operations need.
+This decision was revised after recognizing that only the natural language planner has the complex orchestration patterns that genuinely benefit from PocketFlow. Using it for simpler tasks would violate our "simplicity first" principle and add unnecessary cognitive overhead.
 
-## Comments
+The planner's complexity justifies PocketFlow:
+- Multiple LLM API calls with different prompts
+- Self-correcting validation loops
+- Retry with progressive prompt enhancement
+- Fallback strategies for different failure modes
+- Complex state accumulation across attempts
 
-Honest Assessment: Is PocketFlow for Internal Use Actually Good?
-
-  The Real Benefits (Not Hype)
-
-  1. Retry logic is genuinely useful
-    - Writing manual retry loops is tedious and error-prone
-    - PocketFlow's 8-line retry implementation is simple and works
-    - For operations like dynamic imports or API calls, this is a real win
-  2. The overhead is truly minimal
-    - It's literally 100 lines of code
-    - Just method calls and a while loop
-    - No serialization, no framework magic
-  3. Testing isolated nodes is easier
-    - Each node can be tested independently
-    - Mocking is straightforward with the shared dict
-
-  The Real Drawbacks
-
-  1. It's different from what most Python developers expect
-    - New developers need to learn the pattern
-    - Debugging through the flow orchestration adds a layer
-    - Stack traces are less direct
-  2. Simple operations do feel over-engineered
-  # This feels silly for a simple operation
-  class LoadFileNode(Node):
-      def exec(self, shared):
-          with open(shared["path"]) as f:
-              shared["content"] = f.read()
-          return "next"
-  3. The visual flow benefit is overstated
-    - load >> validate >> compile looks nice
-    - But modern IDEs can show call graphs anyway
-    - The benefit is marginal for understanding
-  4. We might be drinking our own Kool-Aid
-    - Using PocketFlow because we're building for PocketFlow
-    - Risk of hammer-nail syndrome
-
-  The Realistic Middle Ground
-
-  Where it actually makes sense:
-  - Task 17 (LLM Planner): Multiple retry strategies, complex branching
-  - Task 8 (Shell Integration): Genuinely complex I/O with timeouts
-  - Maybe Task 4 (Compiler): The retry on imports is useful
-
-  Where it's questionable:
-  - Task 20 (Approval): User interaction doesn't really need this
-  - Task 22 (Execution): Could be a simple function with try/catch
-  - Task 23 (Tracing): Observability could be middleware/decorators
-
-  The Uncomfortable Truth
-
-  1. We could build pflow without PocketFlow internally
-    - Good error handling libraries exist (tenacity, retrying)
-    - Middleware patterns work well for cross-cutting concerns
-    - Traditional code would be more familiar to contributors
-  2. The main argument is philosophical
-    - "Eating our own dog food"
-    - Proving the pattern works
-    - But this isn't necessarily a technical win
-  3. The 6 tasks might be too many
-    - Starting with 2-3 would be more prudent
-    - See how it goes before committing to all 6
-
-  My Honest Recommendation
-
-  Scale it back:
-  1. Use PocketFlow for Task 17 (LLM Planner) - This genuinely benefits from the retry/branching
-  2. Maybe Task 8 (Shell Integration) - Complex I/O handling
-  3. Keep everything else traditional for now
-  4. Revisit after implementing these two
-
-  Why:
-  - Less cognitive overhead for developers
-  - Prove the value incrementally
-  - Easier to change direction if needed
-  - Focus PocketFlow where it truly shines
-
-  The Bottom Line
-
-  PocketFlow for internal orchestration isn't bad, but I oversold it. It's a decent pattern that
-  helps with specific problems (retry logic, complex branching), but it's not revolutionary. The
-  honest take is:
-
-  - Good for: Complex orchestrations with lots of I/O and branching
-  - Unnecessary for: Most of pflow's internals
-  - Real benefit: Mainly the retry mechanism and testing isolation
-  - Real cost: Different pattern that developers need to learn
+Other tasks are straightforward enough that traditional Python code with good error handling is clearer and simpler.
