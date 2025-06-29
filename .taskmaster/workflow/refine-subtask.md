@@ -98,6 +98,8 @@ Example for subtask 3.3:
 - Assumptions already made
 - Context from completed siblings
 
+> Note: These files contains Knowledge Synthesis for the subtask and should be read with absolute care. Think hard about these insights and how they can be applied to the current subtask.
+
 #### 0.4 Synthesize Patterns
 Create knowledge synthesis file at:
 `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/knowledge-synthesis.md`
