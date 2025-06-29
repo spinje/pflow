@@ -28,7 +28,7 @@ Prerequisites:
 Key outputs in `.taskmaster/tasks/task_X/subtask_$ARGUMENTS/implementation/`:
 - `implementation-plan.md`
 - `progress-log.md` (update continuously!)
-- `subtask-review.md`
+- `subtask-review.md` (provides invaluable insights for future tasks, especially for the next subtask)
 - If encountering new important patterns, pitfalls or decisions: modify files in `.taskmaster/knowledge/`
 - If final subtask: create `task-review.md`
 

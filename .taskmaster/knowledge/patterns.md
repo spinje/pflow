@@ -350,6 +350,34 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 <!-- New patterns are appended below this line -->
 
+## Pattern: Avoid Reserved Logging Field Names
+- **Date**: 2025-06-29
+- **Discovered in**: Task 4.2
+- **Problem**: Python's logging module has reserved field names in LogRecord that cannot be overridden in the extra dict
+- **Solution**: Use alternative field names that don't conflict with LogRecord attributes
+- **Example**:
+  ```python
+  # List of reserved fields to avoid:
+  # name, msg, args, created, filename, funcName, levelname, levelno,
+  # lineno, module, msecs, pathname, process, processName, thread, threadName
+
+  # DON'T DO THIS - raises KeyError
+  logger.debug("Found module", extra={"module": module_path})
+
+  # DO THIS - use non-conflicting names
+  logger.debug("Found module", extra={"module_path": module_path})
+  logger.debug("Processing file", extra={"file_path": filename})  # not "filename"
+  logger.debug("In function", extra={"function_name": func})     # not "funcName"
+  ```
+- **When to use**: Always when adding structured logging with extra fields
+- **Benefits**:
+  - Prevents runtime KeyError exceptions
+  - Allows rich context in log messages
+  - Maintains compatibility with log aggregation systems
+  - Enables structured log queries
+
+---
+
 ## Pattern: Layered Validation with Custom Business Logic
 - **Date**: 2025-06-29
 - **Discovered in**: Task 6.1
