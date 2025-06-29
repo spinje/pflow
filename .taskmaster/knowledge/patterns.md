@@ -153,4 +153,36 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: Context Manager for Dynamic sys.path Modification
+- **Date**: 2025-06-29
+- **Discovered in**: Task 5.1
+- **Problem**: Dynamic imports require modifying sys.path but this pollutes global state and can cause issues if not restored
+- **Solution**: Use a context manager to temporarily modify sys.path with guaranteed restoration
+- **Example**:
+  ```python
+  @contextmanager
+  def temporary_syspath(paths: List[Path]):
+      """Temporarily add paths to sys.path for imports."""
+      original_path = sys.path.copy()
+      try:
+          # Add paths at the beginning for priority
+          for path in reversed(paths):
+              sys.path.insert(0, str(path))
+          yield
+      finally:
+          sys.path = original_path
+
+  # Usage:
+  with temporary_syspath([project_root, plugin_dir]):
+      module = importlib.import_module('some.dynamic.module')
+  ```
+- **When to use**: Any time you need dynamic imports from non-standard locations
+- **Benefits**:
+  - No global state pollution
+  - Exception-safe (path restored even on errors)
+  - Can add multiple paths with priority ordering
+  - Clear scope of path modifications
+
+---
+
 <!-- New patterns are appended below this line -->
