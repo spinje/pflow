@@ -101,4 +101,40 @@ A chronological record of significant architectural and design decisions made du
 
 ---
 
+## Decision: Use PocketFlow for Internal Orchestration
+- **Date**: 2025-06-29
+- **Made during**: Architecture analysis before task implementation
+- **Status**: Accepted
+- **Context**: pflow is built on PocketFlow framework, but we needed to decide whether to use PocketFlow internally for pflow's own implementation or stick to traditional imperative Python code
+- **Alternatives considered**:
+  1. **Traditional imperative code** - Standard Python functions and classes
+     - Pros: Familiar patterns, no learning curve, direct control
+     - Cons: Manual retry loops, nested try/catch blocks, hidden control flow, inconsistent error handling
+  2. **PocketFlow for everything** - Use PocketFlow for all components
+     - Pros: Consistent patterns everywhere
+     - Cons: Over-engineering simple operations, performance overhead for utilities
+  3. **Hybrid approach** - PocketFlow for orchestration, traditional for utilities
+     - Pros: Right tool for right job, clear architecture zones, optimal performance
+     - Cons: Two patterns to understand, need clear decision criteria
+- **Decision**: Use hybrid approach - PocketFlow for complex orchestrations (6 specific tasks), traditional code for utilities
+- **Rationale**:
+  - PocketFlow is only ~100 lines - it's a pattern, not a heavy framework
+  - Many pflow operations are multi-step orchestrations that need retry logic
+  - Built-in retry/fallback eliminates manual error handling code
+  - Visual flow representation with >> operator aids understanding
+  - Isolated nodes improve testability
+  - We prove PocketFlow works by using it ourselves
+  - Traditional code remains best for pure computations and data structures
+- **Consequences**:
+  - 6 core orchestration tasks will use PocketFlow: Tasks 4, 8, 17, 20, 22, 23
+  - Tasks 17 (planner) and 8 (shell integration) has been identified as the best candidates for PocketFlow orchestration
+  - Clear directory structure: flows/ for PocketFlow, core/ for traditional
+  - Each PocketFlow component follows the implementation template
+  - Developers need to understand both patterns
+  - Architecture is explicit in CLAUDE.md and ADR-001
+  - Future tasks must evaluate which pattern fits best
+- **Review date**: After MVP completion
+
+---
+
 <!-- New decisions are appended below this line -->

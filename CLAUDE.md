@@ -386,6 +386,17 @@ Document for user decision:
 3. Your recommendation and why
 4. Reversibility of each option
 
+### PocketFlow Internal Usage
+
+**CRITICAL**: pflow itself uses PocketFlow internally for complex orchestrations.
+
+**When to use PocketFlow**: Multi-step operations with I/O, retry needs, or branching logic.
+**When to use traditional code**: Pure functions, data structures, simple utilities.
+
+PocketFlow provides built-in retry, visual flow (`>>` operator), and explicit error paths - eliminating nested try/catch blocks.
+
+See `/docs/architecture/adr/001-use-pocketflow-for-orchestration.md` for decision details.
+
 ### Project-specific Memories
 
 - **CLI Development Principle**: never commit code unless explicitly instructed by the user
