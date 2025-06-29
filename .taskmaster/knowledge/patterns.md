@@ -350,6 +350,57 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 <!-- New patterns are appended below this line -->
 
+## Pattern: Connection Tracking in Mock Nodes
+- **Date**: 2025-06-29
+- **Discovered in**: Task 4.3
+- **Problem**: Testing PocketFlow node wiring requires verifying connections without executing real node logic
+- **Solution**: Override >> and - operators in mock nodes to track connections in a list
+- **Example**:
+  ```python
+  class MockNode(BaseNode):
+      def __init__(self):
+          super().__init__()
+          self.connections = []  # Track connections
+
+      def __rshift__(self, other):
+          """Override >> to track default connections."""
+          self.connections.append(("default", other))
+          return super().__rshift__(other)
+
+      def __sub__(self, action):
+          """Override - to track action-based connections."""
+          class MockTransition:
+              def __init__(self, source, action):
+                  self.source = source
+                  self.action = action
+
+              def __rshift__(self, target):
+                  self.source.connections.append((self.action, target))
+                  return self.source.next(target, self.action)
+
+          return MockTransition(self, action)
+
+  # Usage in tests:
+  node_a >> node_b
+  assert ("default", node_b) in node_a.connections
+
+  node_a - "error" >> node_c
+  assert ("error", node_c) in node_a.connections
+  ```
+- **When to use**: Testing any PocketFlow-based component that wires nodes together:
+  - Flow compilers
+  - Node orchestration logic
+  - Dynamic flow builders
+  - Visual flow editors
+- **Benefits**:
+  - No need for real node implementations in tests
+  - Can verify complex wiring patterns
+  - Fast test execution (no real logic)
+  - Clear assertions about connections
+  - Catches wiring bugs early
+
+---
+
 ## Pattern: Avoid Reserved Logging Field Names
 - **Date**: 2025-06-29
 - **Discovered in**: Task 4.2
