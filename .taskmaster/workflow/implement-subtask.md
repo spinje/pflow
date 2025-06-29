@@ -376,7 +376,22 @@ task-master set-status --id=<subtaskId> --status=done
 
 This is the ONLY time you update task-master during the entire workflow.
 
-#### 2.13 Git Commit
+#### 2.13 Review and Next Step
+
+Provide the user with a short summart of what you have done and what you have learned and ask the user to review the changes.
+
+Also let the user know that the next step is to run the following slash command:
+```
+/refine-subtask <nextSubtaskId> (If not last subtask)
+# OR
+/refine-task <nextTaskId> (If Last Subtask)
+```
+
+You can get the next task by running `task-master next`
+
+Example last line to the user: Subtask 1.1 is now ready for review, let me know if I can commit the changes. After that the next step is to run the following slash command: `/refine-subtask 1.2`
+
+#### 2.14 Git Commit (if user accepts your changes)
 
 Create meaningful commit with context:
 
@@ -392,19 +407,6 @@ See .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/sub
 ```
 
 Do NOT include "Generated with [Claude Code](https://claude.ai/code)" in the commit message.
-
-#### 2.14 Notify the user of the next step
-
-Let the user know that the next step is to run the following slash command:
-```
-/refine-subtask <nextSubtaskId> (If not last subtask)
-# OR
-/refine-task <nextTaskId> (If Last Subtask)
-```
-
-You can get the next task by running `task-master next`
-
-Example last line to the user: I just finished implementing subtask 1.1, the next step is to run the following slash command: `/refine-subtask 1.2`
 
 ## Learning Capture Best Practices
 
