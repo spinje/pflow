@@ -170,7 +170,7 @@
         "status": "pending",
         "dependencies": [],
         "priority": "high",
-        "details": "Create src/pflow/core/ir_schema.py with Pydantic models or JSON Schema definitions. Define minimal IR structure: nodes[] with id, type, params; edges[] with from, to, action (default 'default'); start_node id; optional mappings{} for NodeAwareSharedStore proxy. Keep it simple - just enough to represent a workflow graph. Use standard JSON Schema for validation. Don't overengineer - we can extend later. Example: {'nodes': [{'id': 'n1', 'type': 'read-file', 'params': {'file_path': 'input.txt'}}], 'edges': [], 'start_node': 'n1'}. Reference docs: schemas.md, planner.md#10.1",
+        "details": "Create src/pflow/core/ir_schema.py with JSON Schema definitions. Define minimal IR structure: nodes[] with id, type, params; edges[] with from, to, action (default 'default'); start_node id; optional mappings{} for NodeAwareSharedStore proxy. Keep it simple - just enough to represent a workflow graph. Use standard JSON Schema for validation. Don't overengineer - we can extend later. Example: {'nodes': [{'id': 'n1', 'type': 'read-file', 'params': {'file_path': 'input.txt'}}], 'edges': [], 'start_node': 'n1'}. Reference docs: schemas.md, planner.md#10.1",
         "testStrategy": "Test schema validation with valid and invalid IR examples, verify all required fields, test edge cases. Write schema validation tests."
       },
       {
