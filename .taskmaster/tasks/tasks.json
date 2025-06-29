@@ -354,7 +354,40 @@
         "dependencies": [],
         "priority": "high",
         "details": "Create file nodes in src/pflow/nodes/file/, all inheriting from pocketflow.BaseNode: read_file.py, write_file.py, copy_file.py, move_file.py, and delete_file.py. Each node should have explicit name attribute (e.g., class ReadFileNode(BaseNode): name = 'read-file') or rely on kebab-case conversion from class name. Simple interfaces: read-file uses shared['file_path'] \u2192 shared['content'], write-file uses shared['content'] + shared['file_path'], copy/move use shared['source_path'] + shared['dest_path'], delete uses shared['file_path']. Include safety checks for all destructive operations. Fail fast on missing required inputs. Natural interface pattern for file operations. Reference docs: simple-nodes.md",
-        "testStrategy": "Test file operations, permission handling, and safety validations. Test fail-fast behavior. Write comprehensive unit tests."
+        "testStrategy": "Test file operations, permission handling, and safety validations. Test fail-fast behavior. Write comprehensive unit tests.",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement foundational read-file and write-file nodes",
+            "description": "Create the core file I/O nodes (read-file and write-file) in src/pflow/nodes/file/, establishing the patterns and conventions that will be used by all file nodes. These foundational nodes will handle the most common file operations and set the standard for error handling and interface design.",
+            "dependencies": [],
+            "details": "Create src/pflow/nodes/file/ directory structure. Implement read_file.py with ReadFileNode class inheriting from pocketflow.Node, using shared['file_path'] as input and writing to shared['content']. Support encoding parameter (default UTF-8), add line numbers when displaying content, and handle missing files gracefully. Implement write_file.py with WriteFileNode class, reading from shared['content'] and shared['file_path'], creating directories automatically with os.makedirs(exist_ok=True), supporting append mode via params, and validating content before writing. Follow node lifecycle: prep (validate inputs) \u2192 exec (file operation) \u2192 post (update shared store). Use error handling pattern returning tuples (result, success) from exec. Create __init__.py to expose nodes for registry discovery.",
+            "status": "done",
+            "testStrategy": "Test successful read/write operations, missing file handling for read, directory creation for write, various encodings, empty files, fail-fast behavior on missing inputs, and integration with shared store. Write tests alongside implementation using pytest."
+          },
+          {
+            "id": 2,
+            "title": "Implement file manipulation nodes (copy, move, delete)",
+            "description": "Build on the foundation from subtask 1 to implement the remaining file manipulation nodes (copy-file, move-file, delete-file), following established patterns and adding appropriate safety checks for destructive operations.",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement copy_file.py with CopyFileNode class using shared['source_path'] and shared['dest_path'], verifying source exists before operation, creating destination directory if needed, and preserving file attributes using shutil. Implement move_file.py with MoveFileNode class using same interface as copy, preferring atomic operation when possible (os.rename), with fallback to copy+delete for cross-filesystem moves, and adding safety check for overwriting existing files. Implement delete_file.py with DeleteFileNode class using shared['file_path'] input, adding safety parameter to prevent accidental deletions, providing clear error messages for missing files, and logging destructive operations. All nodes follow the same lifecycle pattern established in subtask 1 with consistent error handling and shared store conventions.",
+            "status": "pending",
+            "testStrategy": "Test successful copy/move/delete operations, safety checks and confirmations, cross-filesystem operations, permission errors, operations on non-existent files, preservation of file attributes, and atomic vs non-atomic move operations. Include integration tests demonstrating node interaction."
+          },
+          {
+            "id": 3,
+            "title": "Polish with comprehensive error handling and edge cases",
+            "description": "Enhance all file nodes with robust error handling, comprehensive edge case coverage, and polished user experience. Add any missing tests and ensure all nodes handle permission errors, special characters, and large files gracefully.",
+            "dependencies": [
+              2
+            ],
+            "details": "Add comprehensive error handling across all nodes: permission denied errors with helpful messages, disk space errors, invalid path characters, symbolic link handling, and network drive considerations. Enhance logging with structured metadata using phase tracking (reading, writing, validating), including file sizes and paths, avoiding reserved field names. Add performance considerations for handling large files efficiently, progress indicators for long operations, and reasonable timeouts. Polish user experience with clear, actionable error messages, consistent action returns ('default' for success, 'error' for failures), and helpful docstrings with examples. Create integration tests demonstrating node chaining and document all nodes in module docstrings.",
+            "status": "pending",
+            "testStrategy": "Test permission error scenarios, special characters in filenames, symbolic links, large file handling, timeout scenarios, and full workflow integration. Ensure comprehensive test coverage across all edge cases and error conditions. Verify nodes are discoverable by registry scanner."
+          }
+        ]
       },
       {
         "id": 12,
@@ -721,7 +754,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-29T20:18:46.862Z",
+      "updated": "2025-06-29T21:17:04.953Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }

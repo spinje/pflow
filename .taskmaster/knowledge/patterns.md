@@ -348,6 +348,39 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: Truthiness-Safe Parameter Fallback
+- **Date**: 2025-06-29
+- **Discovered in**: Task 11.1
+- **Problem**: Python's `or` operator treats empty strings, 0, False, and None as falsy, causing incorrect fallbacks when these are valid values
+- **Solution**: Check for key existence explicitly instead of relying on truthiness
+- **Example**:
+  ```python
+  # DON'T DO THIS - treats empty string as missing
+  content = shared.get("content") or self.params.get("content")
+  if content is None:
+      raise ValueError("Missing content")
+
+  # DO THIS - properly handles empty string as valid
+  if "content" in shared:
+      content = shared["content"]
+  elif "content" in self.params:
+      content = self.params["content"]
+  else:
+      raise ValueError("Missing required 'content'")
+  ```
+- **When to use**: Always when parameters could have valid falsy values:
+  - Text content that could be empty strings
+  - Numbers that could be 0
+  - Booleans that need to distinguish False from missing
+  - Any optional parameter with a falsy default
+- **Benefits**:
+  - Correctly handles all valid Python values
+  - Clear distinction between "not provided" and "provided as falsy"
+  - Prevents subtle bugs in parameter handling
+  - More explicit about intent
+
+---
+
 <!-- New patterns are appended below this line -->
 
 ## Pattern: Connection Tracking in Mock Nodes
