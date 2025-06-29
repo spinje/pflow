@@ -135,29 +135,6 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 **Status**: ✅ MVP Critical
 
----
-
-### [adr/001-use-pocketflow-for-orchestration.md](./architecture/adr/001-use-pocketflow-for-orchestration.md)
-**Purpose**: Architectural Decision Record documenting the decision to use PocketFlow internally for pflow's complex orchestrations.
-
-**Key Contents**:
-- Context and initial skepticism analysis
-- Decision to use hybrid approach (PocketFlow + traditional)
-- List of 6 components using PocketFlow
-- Components using traditional code
-- Positive/negative consequences
-- Implementation guidelines
-
-**Critical Insights**:
-- PocketFlow is ~100 lines - it's a pattern, not a heavy framework
-- ONLY Task 17 (Natural Language Planner) uses PocketFlow internally
-- All other components use traditional Python patterns
-- PocketFlow chosen for planner due to complex LLM retry strategies
-- Focused approach avoids over-engineering simple operations
-
-**When to Use**: Understanding architecture decisions, determining implementation approach, choosing between PocketFlow and traditional code
-
-**Status**: ✅ Architecture Decision
 
 
 ## Core Concepts Directory (`/core-concepts/`)

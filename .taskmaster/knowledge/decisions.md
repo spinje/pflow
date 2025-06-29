@@ -104,7 +104,7 @@ A chronological record of significant architectural and design decisions made du
 ## Decision: Use PocketFlow for Internal Orchestration
 - **Date**: 2025-06-29
 - **Made during**: Architecture analysis before task implementation
-- **Status**: Accepted
+- **Status**: Superseded (see "Limit PocketFlow Internal Usage to Natural Language Planner Only")
 - **Context**: pflow is built on PocketFlow framework, but we needed to decide whether to use PocketFlow internally for pflow's own implementation or stick to traditional imperative Python code
 - **Alternatives considered**:
   1. **Traditional imperative code** - Standard Python functions and classes
@@ -126,13 +126,8 @@ A chronological record of significant architectural and design decisions made du
   - We prove PocketFlow works by using it ourselves
   - Traditional code remains best for pure computations and data structures
 - **Consequences**:
-  - 5 core orchestration tasks will use PocketFlow: Tasks 8, 17, 20, 22, 23 (Task 4 removed - see separate decision)
-  - Tasks 17 (planner) and 8 (shell integration) has been identified as the best candidates for PocketFlow orchestration
-  - Clear directory structure: flows/ for PocketFlow, core/ for traditional
-  - Each PocketFlow component follows the implementation template
-  - Developers need to understand both patterns
-  - Architecture is explicit in CLAUDE.md and ADR-001
-  - Future tasks must evaluate which pattern fits best
+  - Originally planned for 6 tasks: 4, 8, 17, 20, 22, 23
+  - This decision was later refined to only Task 17 - see next decision
 - **Review date**: After MVP completion
 
 ---

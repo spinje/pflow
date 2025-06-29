@@ -246,70 +246,62 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
-## Pattern: PocketFlow for Internal Orchestration
-- **Date**: 2025-06-29
-- **Discovered in**: Architecture analysis
-- **Problem**: Complex multi-step operations with I/O and error handling lead to deeply nested try/catch blocks and manual retry loops
-- **Solution**: Use PocketFlow as an internal orchestration framework for complex operations while keeping simple utilities as traditional code
+## Pattern: PocketFlow for Complex AI Orchestration (Task 17 Only)
+- **Date**: 2025-06-29 (Revised)
+- **Discovered in**: Architecture analysis and refinement
+- **Problem**: Natural language planning with LLMs requires complex retry strategies, self-correcting loops, and branching paths that lead to deeply nested code
+- **Solution**: Use PocketFlow ONLY for Task 17 (Natural Language Planner) where complex orchestration genuinely adds value
 - **Example**:
   ```python
-  # Instead of nested traditional code:
-  def compile_workflow(ir_path):
-      try:
-          with open(ir_path) as f:
-              try:
-                  ir_json = json.load(f)
-                  try:
-                      validate(ir_json)
-                      # More nesting...
-                  except ValidationError:
-                      # Handle...
-              except JSONError:
-                  # Handle...
-      except IOError:
-          # Handle...
-
-  # Use PocketFlow orchestration:
-  class LoadIRNode(Node):
+  # Task 17: Natural Language Planner needs complex orchestration
+  class GenerateWorkflowNode(Node):
       def __init__(self):
           super().__init__(max_retries=3)  # Built-in retry!
 
       def exec(self, shared):
-          with open(shared["ir_path"]) as f:
-              shared["ir_json"] = json.load(f)
+          response = call_llm(shared["prompt"], shared["context"])
+          shared["workflow"] = response
           return "validate"
 
       def exec_fallback(self, shared, exc):
-          shared["error"] = f"Failed to load: {exc}"
-          return "error"
+          # Progressive enhancement on failure
+          shared["prompt"] = enhance_prompt(shared["prompt"], exc)
+          return "retry" if self.cur_retry < 3 else "error"
 
-  # Visual flow
-  load >> validate >> compile >> execute
+  class ValidateWorkflowNode(Node):
+      def exec(self, shared):
+          if validate_workflow(shared["workflow"]):
+              return "success"
+          else:
+              # Self-correcting loop
+              shared["validation_errors"] = get_errors(shared["workflow"])
+              return "regenerate"
+
+  # Visual flow with complex branching
+  generate >> validate >> success
+  generate - "error" >> fallback_strategy
+  validate - "invalid" >> regenerate >> validate
   ```
-- **When to use**: Components with:
-  - Multiple discrete steps with data flow
-  - External dependencies (file I/O, network, APIs)
-  - Multiple execution paths (branching)
-  - Retry/fallback requirements
-  - State accumulation through process
-- **When NOT to use**:
-  - Simple utilities or pure functions (unnecessary complexity)
-  - Performance-critical code paths (method call overhead)
-  - Components with linear flow and no error cases
-- **Benefits**:
-  - Built-in retry mechanism for I/O operations
-  - Visual flow representation with >> operator
-  - Isolated, testable nodes
-  - Explicit error handling paths
-  - No manual retry loops or nested error handling
-  - Proves PocketFlow works by using it ourselves
-- **Implementation Guides**:
-  - [Task 4: IR Compiler](../../.taskmaster/tasks/task_4/pocketflow-implementation-guide.md)
-  - [Task 8: Shell Integration](../../.taskmaster/tasks/task_8/pocketflow-implementation-guide.md)
-  - [Task 17: Workflow Generator](../../.taskmaster/tasks/task_17/pocketflow-implementation-guide.md)
-  - [Task 20: Storage System](../../.taskmaster/tasks/task_20/pocketflow-implementation-guide.md)
-  - [Task 22: Runtime Engine](../../.taskmaster/tasks/task_22/pocketflow-implementation-guide.md)
-  - [Task 23: Tracing System](../../.taskmaster/tasks/task_23/pocketflow-implementation-guide.md)
+- **When to use**: ONLY for components with ALL of these characteristics:
+  - Multiple LLM API calls with different retry strategies
+  - Self-correcting validation loops
+  - Complex branching based on external responses
+  - Progressive enhancement on failures
+  - Multiple fallback paths
+- **When NOT to use** (use traditional Python instead):
+  - Simple I/O operations (file reading, API calls)
+  - Linear execution flows
+  - Basic error handling
+  - Pure transformations (IR compilation, JSON parsing)
+  - User interactions (approval flows)
+  - Observability/tracing
+- **Benefits for Task 17**:
+  - Built-in retry mechanism for flaky LLM APIs
+  - Visual representation of complex planning flow
+  - Isolated nodes for testing different strategies
+  - Explicit paths for all failure modes
+  - Progressive prompt enhancement support
+- **Architectural Decision**: Originally planned for 6 tasks, refined to only Task 17 after recognizing that other tasks are straightforward enough for traditional Python patterns
 
 ---
 

@@ -62,8 +62,6 @@ pflow is built on the **PocketFlow** framework (100-line Python library in `pock
 
 > If you need to implement a new feature that includes using pocketflow, and dont have a good understanding of what pocketflow is or how it works always start by reading the source code in `pocketflow/__init__.py` and then the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
 
-
-
 - **Nodes**: Self-contained tasks (`prep()` → `exec()` → `post()`) that communicate through a shared store using intuitive keys (`shared["text"]`, `shared["url"]`)
 - **Flows**: Orchestrate nodes into workflows using the pocketflow framework with `>>` operator chaining
 - **CLI**: Primary interface for composing and executing flows with pipe syntax
@@ -170,11 +168,7 @@ pflow/
 │   ├── architecture/                  # System architecture documentation
 │   │   ├── architecture.md        # **CORE: Complete system architecture**
 │   │   ├── components.md              # Complete MVP vs v2.0 breakdown
-│   │   ├── pflow-pocketflow-integration-guide.md  # Integration patterns
-│   │   ├── adr/                   # Architectural Decision Records
-│   │   │   └── 001-use-pocketflow-for-orchestration.md  # PocketFlow usage decision
-│   │   ├── pocketflow-interface-guide.md     # How to interface with PocketFlow components
-│   │   └── pocketflow-implementation-template.md  # Template for PocketFlow tasks
+│   │   └── pflow-pocketflow-integration-guide.md  # Integration patterns
 │   ├── core-concepts/                 # Core system concepts
 │   │   ├── registry.md                # Node discovery, namespacing, versioning
 │   │   ├── runtime.md                 # Execution engine, caching, safety
