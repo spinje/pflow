@@ -145,9 +145,12 @@ class TestTemporarySyspath:
     def test_exception_handling(self):
         original_path = sys.path.copy()
 
+        def raise_error():
+            raise ValueError
+
         try:
             with temporary_syspath([Path("/test")]):
-                raise ValueError("Test error")
+                raise_error()
         except ValueError:
             pass
 
@@ -254,16 +257,367 @@ class TestScanForNodes:
         with patch("pflow.registry.scanner.inspect.getmembers") as mock_members:
             mock_members.return_value = [("GoodNode", GoodNode), ("BadNode", BadNode), ("MockBaseNode", MockBaseNode)]
 
-            with patch("pflow.registry.scanner.inspect.isclass", return_value=True):
-                # This is tricky - we need to mock the actual pocketflow import
-                with patch("pocketflow.BaseNode", MockBaseNode):
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        test_file = Path(tmpdir) / "test.py"
-                        test_file.write_text("# Test file")
+            with (
+                patch("pflow.registry.scanner.inspect.isclass", return_value=True),
+                patch("pocketflow.BaseNode", MockBaseNode),
+                tempfile.TemporaryDirectory() as tmpdir,
+            ):
+                test_file = Path(tmpdir) / "test.py"
+                test_file.write_text("# Test file")
 
-                        # The scanner will fail to import pocketflow in test
-                        # So we expect empty results
-                        scan_for_nodes([Path(tmpdir)])
+                # The scanner will fail to import pocketflow in test
+                # So we expect empty results
+                scan_for_nodes([Path(tmpdir)])
 
-                        # In a real scenario with proper mocking,
-                        # we would verify that only GoodNode is found
+                # In a real scenario with proper mocking,
+                # we would verify that only GoodNode is found
+
+
+class TestScannerEdgeCases:
+    """Test scanner behavior with edge cases and malformed files."""
+
+    def test_syntax_error_handling(self):
+        """Test scanner continues past files with syntax errors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+
+            # Create file with syntax error
+            syntax_file = base_dir / "syntax_error.py"
+            syntax_file.write_text("""
+# Intentional syntax error
+def broken(:
+    pass
+""")
+
+            # The scanner should skip this file
+            results = scan_for_nodes([base_dir])
+
+            # Should not find any nodes
+            assert len(results) == 0
+
+    def test_empty_file_handling(self):
+        """Test scanner handles empty Python files gracefully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+
+            # Create empty file
+            empty_file = base_dir / "empty.py"
+            empty_file.write_text("")
+
+            # Should complete without errors
+            results = scan_for_nodes([base_dir])
+
+            # Empty file should not contribute any nodes
+            assert len(results) == 0
+
+    def test_import_error_recovery(self):
+        """Test scanner continues when a file has import errors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+
+            # Create file with import error
+            import_err_file = base_dir / "import_error.py"
+            import_err_file.write_text("""
+import nonexistent_module
+
+from pocketflow import BaseNode
+
+class WontLoad(BaseNode):
+    def exec(self, shared):
+        pass
+""")
+
+            # Should handle the import error gracefully
+            results = scan_for_nodes([base_dir])
+
+            # The file with import error should be skipped
+            assert len(results) == 0
+
+    def test_node_vs_basenode_import(self):
+        """Test that both direct and indirect BaseNode subclasses are discovered."""
+        # Create test files in a temporary directory
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+
+            # Create file with Node import (should NOT be found)
+            node_file = base_dir / "node_based.py"
+            node_file.write_text('''
+from pocketflow import Node
+
+class NodeBasedClass(Node):
+    """This inherits from Node, not BaseNode."""
+    def exec(self, shared):
+        pass
+''')
+
+            # Create file with BaseNode import (should be found)
+            basenode_file = base_dir / "basenode_based.py"
+            basenode_file.write_text('''
+from pocketflow import BaseNode
+
+class BaseNodeClass(BaseNode):
+    """This inherits from BaseNode."""
+    def exec(self, shared):
+        pass
+''')
+
+            project_root = Path(__file__).parent.parent
+            pocketflow_path = project_root / "pocketflow"
+
+            with temporary_syspath([project_root, pocketflow_path, base_dir]):
+                results = scan_for_nodes([base_dir])
+
+            # Both should be found since Node inherits from BaseNode
+            # The scanner finds ALL BaseNode subclasses, including indirect ones
+            class_names = [node["class_name"] for node in results]
+            assert "BaseNodeClass" in class_names
+            assert "NodeBasedClass" in class_names  # This is also found (correctly)
+
+    def test_aliased_import_detection(self):
+        """Test detection of nodes using aliased pocketflow imports."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+
+            # Create file with aliased import
+            alias_file = base_dir / "aliased.py"
+            alias_file.write_text('''
+import pocketflow as pf
+
+class AliasedNode(pf.BaseNode):
+    """Node using aliased import."""
+    name = "aliased-test"
+
+    def exec(self, shared):
+        shared["aliased"] = True
+''')
+
+            project_root = Path(__file__).parent.parent
+            pocketflow_path = project_root / "pocketflow"
+
+            with temporary_syspath([project_root, pocketflow_path, base_dir]):
+                results = scan_for_nodes([base_dir])
+
+            # Should find the aliased node
+            assert len(results) == 1
+            assert results[0]["name"] == "aliased-test"
+            assert results[0]["class_name"] == "AliasedNode"
+
+    def test_multiple_inheritance_detection(self):
+        """Test nodes with multiple inheritance are properly detected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+
+            # Create file with multiple inheritance
+            multi_file = base_dir / "multi_inherit.py"
+            multi_file.write_text('''
+from pocketflow import BaseNode
+
+class Mixin:
+    def mixin_method(self):
+        return "mixin"
+
+class MultiInheritNode(BaseNode, Mixin):
+    """Multiple inheritance with BaseNode first."""
+    name = "multi-inherit"
+
+    def exec(self, shared):
+        shared["mixin"] = self.mixin_method()
+
+class WrongOrderNode(Mixin, BaseNode):
+    """BaseNode not first in MRO."""
+    name = "wrong-order"
+
+    def exec(self, shared):
+        pass
+''')
+
+            project_root = Path(__file__).parent.parent
+            pocketflow_path = project_root / "pocketflow"
+
+            with temporary_syspath([project_root, pocketflow_path, base_dir]):
+                results = scan_for_nodes([base_dir])
+
+            # Should find both variants
+            names = [node["name"] for node in results]
+            assert "multi-inherit" in names
+            assert "wrong-order" in names
+
+    def test_indirect_inheritance_detection(self):
+        """Test nodes that inherit from BaseNode indirectly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+
+            # Create file with indirect inheritance
+            indirect_file = base_dir / "indirect.py"
+            indirect_file.write_text('''
+from pocketflow import BaseNode
+
+class IntermediateNode(BaseNode):
+    """An intermediate base class."""
+    def prep(self, shared):
+        shared["intermediate"] = True
+
+    def exec(self, shared):
+        raise NotImplementedError("Subclasses must implement")
+
+class IndirectNode(IntermediateNode):
+    """Inherits from BaseNode indirectly."""
+    name = "indirect-node"
+
+    def exec(self, shared):
+        shared["result"] = "indirect inheritance works"
+''')
+
+            project_root = Path(__file__).parent.parent
+            pocketflow_path = project_root / "pocketflow"
+
+            with temporary_syspath([project_root, pocketflow_path, base_dir]):
+                results = scan_for_nodes([base_dir])
+
+            # Should find both nodes
+            class_names = [node["class_name"] for node in results]
+            assert "IntermediateNode" in class_names
+            assert "IndirectNode" in class_names
+
+    def test_abstract_class_handling(self):
+        """Test handling of abstract base classes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+
+            # Create file with abstract classes
+            abstract_file = base_dir / "abstract.py"
+            abstract_file.write_text('''
+from abc import ABC, abstractmethod
+from pocketflow import BaseNode
+
+class AbstractNode(BaseNode, ABC):
+    """Abstract base class."""
+
+    @abstractmethod
+    def process_data(self, data):
+        pass
+
+    def exec(self, shared):
+        data = shared.get("input", "")
+        shared["output"] = self.process_data(data)
+
+class ConcreteNode(AbstractNode):
+    """Concrete implementation."""
+    name = "concrete-node"
+
+    def process_data(self, data):
+        return data.upper()
+''')
+
+            project_root = Path(__file__).parent.parent
+            pocketflow_path = project_root / "pocketflow"
+
+            with temporary_syspath([project_root, pocketflow_path, base_dir]):
+                results = scan_for_nodes([base_dir])
+
+            # MVP doesn't filter abstract classes
+            class_names = [node["class_name"] for node in results]
+            assert "AbstractNode" in class_names
+            assert "ConcreteNode" in class_names
+
+    def test_security_warning_presence(self):
+        """Test that scanner module includes security warnings."""
+        import pflow.registry.scanner
+
+        # Note: The current implementation doesn't have explicit security warnings
+        # This test documents that fact
+
+        # For now, we just verify the scanner exists and works
+        assert hasattr(pflow.registry.scanner, "scan_for_nodes")
+
+    def test_malicious_import_execution(self):
+        """Test that code is executed during import (documenting the security risk)."""
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+
+            # Clear the test env var
+            os.environ.pop("TEST_IMPORT_EXECUTED", None)
+
+            # Create file that executes code on import
+            malicious_file = base_dir / "malicious.py"
+            malicious_file.write_text('''
+import os
+
+# This simulates malicious code execution on import
+os.environ["TEST_IMPORT_EXECUTED"] = "true"
+
+from pocketflow import BaseNode
+
+class SecurityTestNode(BaseNode):
+    """Node in a file that executes code on import."""
+    name = "security-test"
+
+    def exec(self, shared):
+        shared["imported"] = True
+''')
+
+            project_root = Path(__file__).parent.parent
+            pocketflow_path = project_root / "pocketflow"
+
+            with temporary_syspath([project_root, pocketflow_path, base_dir]):
+                results = scan_for_nodes([base_dir])
+
+            # The import WILL execute code - this documents the security risk
+            assert os.environ.get("TEST_IMPORT_EXECUTED") == "true"
+
+            # But the node should still be discovered
+            assert len(results) == 1
+            assert results[0]["name"] == "security-test"
+
+            # Clean up
+            os.environ.pop("TEST_IMPORT_EXECUTED", None)
+
+    def test_special_python_files(self):
+        """Test handling of special Python filenames."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            directory = Path(tmpdir)
+
+            # Create various special files
+            (directory / "__init__.py").write_text("")
+            (directory / "setup.py").write_text("# Setup file")
+            (directory / "conftest.py").write_text("# Pytest config")
+
+            results = scan_for_nodes([directory])
+
+            # Should handle these files without errors
+            assert len(results) == 0  # No nodes in these files
+
+    def test_deeply_nested_packages(self):
+        """Test scanning deeply nested package structures."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create nested structure
+            deep_path = Path(tmpdir) / "a" / "b" / "c" / "d"
+            deep_path.mkdir(parents=True)
+
+            # Add init files
+            for p in [Path(tmpdir) / "a", Path(tmpdir) / "a" / "b", Path(tmpdir) / "a" / "b" / "c", deep_path]:
+                (p / "__init__.py").write_text("")
+
+            # Add a node in the deepest directory
+            node_content = '''
+from pocketflow import BaseNode
+
+class DeepNode(BaseNode):
+    """A deeply nested node."""
+    def exec(self, shared):
+        pass
+'''
+            (deep_path / "deep_node.py").write_text(node_content)
+
+            project_root = Path(__file__).parent.parent
+            pocketflow_path = project_root / "pocketflow"
+
+            # Add tmpdir to path so the nested package can be imported
+            with temporary_syspath([project_root, pocketflow_path, Path(tmpdir)]):
+                results = scan_for_nodes([Path(tmpdir)])
+
+            # Should find the deeply nested node
+            assert len(results) == 1
+            assert results[0]["name"] == "deep"

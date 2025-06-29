@@ -43,8 +43,6 @@ class Registry:
                 return {}
 
             data = json.loads(content)
-            logger.info(f"Loaded {len(data)} nodes from registry")
-            return data
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse registry JSON: {e}")
@@ -52,6 +50,9 @@ class Registry:
         except Exception as e:
             logger.warning(f"Error reading registry file: {e}")
             return {}
+        else:
+            logger.info(f"Loaded {len(data)} nodes from registry")
+            return data
 
     def save(self, nodes: dict[str, dict[str, Any]]) -> None:
         """Save nodes dictionary to registry JSON file.
@@ -74,7 +75,7 @@ class Registry:
             content = json.dumps(nodes, indent=2, sort_keys=True)
             self.registry_path.write_text(content)
             logger.info(f"Saved {len(nodes)} nodes to registry")
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to save registry")
             raise
 

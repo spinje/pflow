@@ -247,3 +247,36 @@ A consolidated collection of successful patterns and approaches discovered durin
 ---
 
 <!-- New patterns are appended below this line -->
+
+## Pattern: Tempfile-Based Dynamic Test Data
+- **Date**: 2025-06-29
+- **Discovered in**: Task 5.3
+- **Problem**: Testing file-based operations (scanners, parsers) with edge cases requires complex fixture management
+- **Solution**: Create test files dynamically in each test using tempfile.TemporaryDirectory()
+- **Example**:
+  ```python
+  def test_scanner_edge_case(self):
+      with tempfile.TemporaryDirectory() as tmpdir:
+          # Create test file with exact content needed
+          test_file = Path(tmpdir) / "test.py"
+          test_file.write_text('''
+  from pocketflow import BaseNode
+
+  class TestNode(BaseNode):
+      """Test node with specific characteristics."""
+      def exec(self, shared):
+          pass
+  ''')
+
+          # Test the scanner
+          results = scan_for_nodes([Path(tmpdir)])
+          assert len(results) == 1
+  ```
+- **When to use**: Testing any file-based operations, especially with many edge cases
+- **Benefits**:
+  - Each test is self-contained with its data
+  - No fixture directory management
+  - Tests are more readable with inline data
+  - Automatic cleanup via context manager
+
+---

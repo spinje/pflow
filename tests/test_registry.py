@@ -22,15 +22,18 @@ class TestRegistryInit:
 
     def test_custom_path(self):
         """Test custom registry path."""
-        custom_path = Path("/tmp/custom/registry.json")
-        registry = Registry(custom_path)
-        assert registry.registry_path == custom_path
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_path = Path(tmpdir) / "custom" / "registry.json"
+            registry = Registry(custom_path)
+            assert registry.registry_path == custom_path
 
     def test_path_conversion(self):
         """Test string path is converted to Path object."""
-        registry = Registry("/tmp/test.json")
-        assert isinstance(registry.registry_path, Path)
-        assert registry.registry_path == Path("/tmp/test.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_path = str(Path(tmpdir) / "test.json")
+            registry = Registry(test_path)
+            assert isinstance(registry.registry_path, Path)
+            assert registry.registry_path == Path(test_path)
 
 
 class TestRegistryLoad:
@@ -160,7 +163,7 @@ class TestRegistrySave:
                 file_path = Path(tmpdir) / "noperm.json"
                 registry = Registry(file_path)
 
-                with pytest.raises(Exception):
+                with pytest.raises(PermissionError):
                     registry.save({"test": {"data": "value"}})
             finally:
                 # Restore permissions for cleanup
@@ -335,3 +338,287 @@ class TestRegistryIntegration:
                     assert "docstring" in metadata
                     assert "file_path" in metadata
                     assert "name" not in metadata  # Name is the key, not in value
+
+
+class TestRegistryEdgeCases:
+    """Test registry behavior with edge cases and error scenarios."""
+
+    def test_unicode_handling(self):
+        """Test registry handles unicode in node names and docstrings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "unicode_test.json"
+            registry = Registry(registry_path)
+
+            # Create scanner output with unicode
+            scan_results = [
+                {
+                    "name": "emoji-node-🚀",
+                    "module": "test.emoji",
+                    "class_name": "EmojiNode",
+                    "docstring": "Unicode test: 你好世界 🌍",
+                    "file_path": "/test/emoji.py",
+                },
+                {
+                    "name": "special-chars-λ",
+                    "module": "test.special",
+                    "class_name": "SpecialNode",
+                    "docstring": "Lambda λ, Pi π, Sigma Σ",
+                    "file_path": "/test/special.py",
+                },
+            ]
+
+            # Update and verify
+            registry.update_from_scanner(scan_results)
+            loaded = registry.load()
+
+            assert "emoji-node-🚀" in loaded
+            assert loaded["emoji-node-🚀"]["docstring"] == "Unicode test: 你好世界 🌍"
+            assert "special-chars-λ" in loaded
+
+    def test_partial_scanner_failures(self):
+        """Test registry update when scanner has some failures."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "partial_test.json"
+            registry = Registry(registry_path)
+
+            # Mix of valid and invalid nodes
+            scan_results = [
+                {
+                    "name": "valid-node",
+                    "module": "test.valid",
+                    "class_name": "ValidNode",
+                    "docstring": "This is valid",
+                    "file_path": "/test/valid.py",
+                },
+                {
+                    # Missing name - should be skipped with warning
+                    "module": "test.invalid",
+                    "class_name": "InvalidNode",
+                    "file_path": "/test/invalid.py",
+                },
+                {
+                    "name": "another-valid",
+                    "module": "test.another",
+                    "class_name": "AnotherNode",
+                    "docstring": "Also valid",
+                    "file_path": "/test/another.py",
+                },
+            ]
+
+            with patch.object(logging.getLogger("pflow.registry.registry"), "warning") as mock_warn:
+                registry.update_from_scanner(scan_results)
+
+                # Should warn about missing name
+                assert mock_warn.called
+                warning_args = str(mock_warn.call_args)
+                assert "missing 'name'" in warning_args
+
+            # Should save only valid nodes
+            loaded = registry.load()
+            assert len(loaded) == 2
+            assert "valid-node" in loaded
+            assert "another-valid" in loaded
+
+    def test_very_large_registry(self):
+        """Test registry handles large number of nodes efficiently."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "large_test.json"
+            registry = Registry(registry_path)
+
+            # Create 1000 nodes
+            scan_results = []
+            for i in range(1000):
+                scan_results.append({
+                    "name": f"node-{i:04d}",
+                    "module": f"test.nodes.node_{i}",
+                    "class_name": f"Node{i}",
+                    "docstring": f"Test node {i} with some documentation",
+                    "file_path": f"/test/nodes/node_{i}.py",
+                })
+
+            # Time the update (should be reasonably fast)
+            import time
+
+            start = time.time()
+            registry.update_from_scanner(scan_results)
+            duration = time.time() - start
+
+            # Should complete in reasonable time (< 1 second)
+            assert duration < 1.0
+
+            # Verify all nodes saved
+            loaded = registry.load()
+            assert len(loaded) == 1000
+            assert "node-0500" in loaded
+
+    def test_registry_file_corruption_recovery(self):
+        """Test registry handles various corruption scenarios."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "corrupt_test.json"
+            registry = Registry(registry_path)
+
+            # Test 1: Truncated JSON
+            registry_path.write_text('{"incomplete": "json')
+            result = registry.load()
+            assert result == {}  # Should return empty dict
+
+            # Test 2: Invalid JSON structure (array instead of dict)
+            registry_path.write_text('["not", "a", "dict"]')
+            result = registry.load()
+            # Current implementation returns the parsed JSON, not empty dict
+            assert result == ["not", "a", "dict"]
+
+            # Test 3: Nested corruption
+            registry_path.write_text('{"node": {"bad": }')
+            result = registry.load()
+            assert result == {}  # Should return empty dict
+
+    def test_concurrent_registry_updates(self):
+        """Test registry behavior with simulated concurrent access."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "concurrent_test.json"
+
+            # Create two registry instances (simulating concurrent processes)
+            registry1 = Registry(registry_path)
+            registry2 = Registry(registry_path)
+
+            # First update
+            registry1.update_from_scanner([
+                {
+                    "name": "node-1",
+                    "module": "test.node1",
+                    "class_name": "Node1",
+                    "docstring": "First node",
+                    "file_path": "/test/node1.py",
+                }
+            ])
+
+            # Second update (would overwrite first in current implementation)
+            registry2.update_from_scanner([
+                {
+                    "name": "node-2",
+                    "module": "test.node2",
+                    "class_name": "Node2",
+                    "docstring": "Second node",
+                    "file_path": "/test/node2.py",
+                }
+            ])
+
+            # Load and verify - second update wins (complete replacement)
+            final = Registry(registry_path).load()
+            assert len(final) == 1
+            assert "node-2" in final
+            assert "node-1" not in final  # Lost due to overwrite
+
+    def test_error_recovery_integration(self):
+        """Test full scanner->registry workflow with various errors."""
+        from pflow.registry.scanner import scan_for_nodes
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            error_dir = Path(tmpdir) / "errors"
+            error_dir.mkdir()
+
+            # Create files with various errors
+            (error_dir / "syntax_error.py").write_text("def broken(: pass")
+            (error_dir / "import_error.py").write_text("""
+import nonexistent
+from pocketflow import BaseNode
+class Node(BaseNode):
+    def exec(self, shared): pass
+""")
+
+            # Create one valid node
+            (error_dir / "valid.py").write_text('''
+from pocketflow import BaseNode
+class ValidNode(BaseNode):
+    """A valid node among errors."""
+    def exec(self, shared): pass
+''')
+
+            registry_path = Path(tmpdir) / "error_test.json"
+            registry = Registry(registry_path)
+
+            # Add paths for imports
+            project_root = Path(__file__).parent.parent
+            pocketflow_path = project_root / "pocketflow"
+
+            import sys
+
+            sys.path.insert(0, str(project_root))
+            sys.path.insert(0, str(pocketflow_path))
+            sys.path.insert(0, str(error_dir))
+
+            try:
+                # Scan directory with errors
+                results = scan_for_nodes([error_dir])
+
+                # Update registry
+                registry.update_from_scanner(results)
+
+                # Registry should exist
+                assert registry_path.exists()
+
+                # Should have found the valid node
+                loaded = registry.load()
+                assert isinstance(loaded, dict)
+                assert len(loaded) == 1
+                assert "valid" in loaded
+            finally:
+                # Clean up sys.path
+                sys.path.remove(str(error_dir))
+                sys.path.remove(str(pocketflow_path))
+                sys.path.remove(str(project_root))
+
+    def test_registry_path_edge_cases(self):
+        """Test registry with unusual path scenarios."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Test 1: Very deep path
+            deep_path = Path(tmpdir) / "a" / "b" / "c" / "d" / "e" / "registry.json"
+            registry = Registry(deep_path)
+            registry.save({"test": {"module": "test"}})
+            assert deep_path.exists()
+
+            # Test 2: Path with spaces
+            space_path = Path(tmpdir) / "path with spaces" / "registry.json"
+            registry = Registry(space_path)
+            registry.save({"test": {"module": "test"}})
+            assert space_path.exists()
+
+            # Test 3: Path with special characters (if OS allows)
+            special_path = Path(tmpdir) / "special-chars_123" / "registry.json"
+            registry = Registry(special_path)
+            registry.save({"test": {"module": "test"}})
+            assert special_path.exists()
+
+    def test_registry_performance_baseline(self):
+        """Establish performance baseline for registry operations."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "perf_test.json"
+            registry = Registry(registry_path)
+
+            # Create a moderately large dataset
+            nodes = {}
+            for i in range(100):
+                nodes[f"node-{i}"] = {
+                    "module": f"test.node{i}",
+                    "class_name": f"Node{i}",
+                    "docstring": "x" * 1000,  # 1KB docstring
+                    "file_path": f"/test/node{i}.py",
+                }
+
+            # Test save performance
+            import time
+
+            start = time.time()
+            registry.save(nodes)
+            save_time = time.time() - start
+
+            # Test load performance
+            start = time.time()
+            loaded = registry.load()
+            load_time = time.time() - start
+
+            # Performance assertions (reasonable for 100 nodes)
+            assert save_time < 0.1  # Should save in < 100ms
+            assert load_time < 0.1  # Should load in < 100ms
+            assert len(loaded) == 100

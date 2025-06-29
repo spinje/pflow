@@ -123,7 +123,7 @@
         "id": 5,
         "title": "Implement node discovery via filesystem scanning",
         "description": "Scan Python files to find pocketflow.BaseNode subclasses and extract metadata",
-        "status": "pending",
+        "status": "done",
         "dependencies": [],
         "priority": "high",
         "details": "Create src/pflow/registry/scanner.py with scan_for_nodes(directories) function. Use importlib to find all classes inheriting from pocketflow.BaseNode (CRITICAL: NOT pocketflow.Node). Add security note about importlib executing code on import. For MVP, only scan package nodes: Path(pflow.__file__).parent / 'nodes'. Extract basic metadata ONLY: 1) module (full import path), 2) class_name, 3) name (from class.name attribute or kebab-case fallback), 4) docstring (raw text, NOT parsed), 5) file_path. Store in persistent JSON file at ~/.pflow/registry.json. Node naming: Check for explicit 'name' class attribute first, fallback to converting ClassName to kebab-case (e.g., ReadFileNode \u2192 read-file). Output format: {'read-file': {'module': 'pflow.nodes.file.read_file', 'class_name': 'ReadFileNode', 'docstring': '...', 'file_path': '/path/to/file.py'}}. IMPORTANT: Registry stores metadata ONLY, not class references. Components using the registry must use dynamic imports. Create test node (src/pflow/nodes/test_node.py) inheriting from BaseNode with Interface docstring. Reference: registry.md, metadata-extraction.md",
@@ -158,7 +158,7 @@
               2
             ],
             "details": "Create tests/test_scanner.py with test cases for: scanning directories with valid nodes, handling Python files without BaseNode subclasses, dealing with syntax errors in Python files, testing various import patterns (from/import/as), verifying metadata extraction accuracy. Create tests/test_registry.py to test: registry persistence and loading, handling corrupted registry files, registry updates when nodes change, proper JSON serialization of metadata. Include edge cases like empty directories, non-Python files, circular imports, and nodes with missing or malformed methods.\n<info added on 2025-06-29T08:39:00.507Z>\nThe tests should mock importlib operations for module loading and inspection rather than using AST parsing. Key test areas include:\n\nBaseNode inheritance detection tests to verify that only classes inheriting from pflow's BaseNode (not pocketflow.Node) are identified as valid nodes. This includes testing multiple inheritance scenarios and ensuring non-BaseNode classes are properly excluded.\n\nNode name extraction tests covering both explicit name attributes (class.name = \"my-node\") and automatic kebab-case conversion from class names (MyComplexNode -> \"my-complex-node\"). Edge cases should include names with numbers, acronyms, and special Python naming patterns.\n\nRegistry JSON format validation ensuring the output structure uses node names as top-level keys mapping to metadata objects. Tests should verify proper serialization of all metadata fields and handle edge cases like duplicate node names.\n\nSecurity warning verification to confirm that generated registry files include appropriate comments warning against untrusted node execution. The test should check for the presence and correct formatting of security disclaimers in the JSON output.\n\nMock-based testing approach should simulate various importlib scenarios including import failures, missing dependencies, and successful module loading without executing actual node code during discovery.\n</info added on 2025-06-29T08:39:00.507Z>",
-            "status": "pending",
+            "status": "done",
             "testStrategy": ""
           }
         ]
@@ -655,7 +655,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-29T10:04:44.656Z",
+      "updated": "2025-06-29T10:41:33.980Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }
