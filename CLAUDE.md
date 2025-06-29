@@ -182,7 +182,8 @@ pflow/
 │   │   ├── shell-pipes.md             # Unix pipe support and stdin handling
 │   │   ├── autocomplete.md            # CLI autocomplete specification (v2.0)
 │   │   ├── mcp-integration.md         # MCP server integration (v2.0)
-│   │   └── workflow-analysis.md       # Technical analysis of AI workflow inefficiencies
+│   │   ├── workflow-analysis.md       # Technical analysis of AI workflow inefficiencies
+│   │   └── implementation-roadmap.md  # High-level roadmap
 │   ├── reference/                     # Reference documentation
 │   │   ├── cli-reference.md           # CLI commands and syntax
 │   │   ├── execution-reference.md     # Execution model and flow control
@@ -206,7 +207,6 @@ pflow/
 │   │   │   └── (same structure)
 │   │   └── tasks.json    # Detailed task list with subtasks
 │   ├── docs/             # Planning documentation
-│   │   └── implementation-roadmap.md  # High-level roadmap
 │   ├── workflow/         # Epistemic workflow system
 │   │   ├── workflow-overview.md       # Complete workflow guide
 │   │   ├── refine-task.md            # Main task workflow
