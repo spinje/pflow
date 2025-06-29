@@ -246,6 +246,176 @@ def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
     return cast(type[BaseNode], node_class)
 
 
+def _instantiate_nodes(ir_dict: dict[str, Any], registry: Registry) -> dict[str, BaseNode]:
+    """Instantiate node objects from IR node definitions.
+
+    This function creates pocketflow node instances for each node in the IR,
+    using the registry to look up node classes and setting any provided parameters.
+
+    Args:
+        ir_dict: The IR dictionary containing nodes array
+        registry: Registry instance for node class lookup
+
+    Returns:
+        Dictionary mapping node_id to instantiated node objects
+
+    Raises:
+        CompilationError: If node instantiation fails
+    """
+    logger.debug("Starting node instantiation", extra={"phase": "node_instantiation"})
+    nodes: dict[str, BaseNode] = {}
+
+    for node_data in ir_dict["nodes"]:
+        node_id = node_data["id"]
+        node_type = node_data["type"]
+
+        logger.debug(
+            "Creating node instance",
+            extra={"phase": "node_instantiation", "node_id": node_id, "node_type": node_type},
+        )
+
+        try:
+            # Get the node class using our import function
+            node_class = import_node_class(node_type, registry)
+
+            # Instantiate the node (no parameters to constructor)
+            node_instance = node_class()
+
+            # Set parameters if provided
+            if node_data.get("params"):
+                logger.debug(
+                    "Setting node parameters",
+                    extra={"phase": "node_instantiation", "node_id": node_id, "param_count": len(node_data["params"])},
+                )
+                node_instance.set_params(node_data["params"])
+
+            nodes[node_id] = node_instance
+
+        except CompilationError as e:
+            # Add node_id context if not already present
+            if not e.node_id:
+                e.node_id = node_id
+            raise
+
+    logger.debug(
+        "Node instantiation complete",
+        extra={"phase": "node_instantiation", "node_count": len(nodes)},
+    )
+
+    return nodes
+
+
+def _wire_nodes(nodes: dict[str, BaseNode], edges: list[dict[str, Any]]) -> None:
+    """Wire nodes together based on edge definitions.
+
+    This function connects nodes using PocketFlow's >> operator for default
+    connections and - operator for action-based routing.
+
+    Args:
+        nodes: Dictionary of instantiated nodes keyed by node_id
+        edges: List of edge definitions from IR
+
+    Raises:
+        CompilationError: If edge references non-existent nodes
+    """
+    logger.debug("Starting node wiring", extra={"phase": "flow_wiring", "edge_count": len(edges)})
+
+    for edge in edges:
+        source_id = edge["source"]
+        target_id = edge["target"]
+        action = edge.get("action", "default")
+
+        logger.debug(
+            "Wiring nodes",
+            extra={"phase": "flow_wiring", "source": source_id, "target": target_id, "action": action},
+        )
+
+        # Look up source node
+        if source_id not in nodes:
+            raise CompilationError(
+                f"Edge references non-existent source node '{source_id}'",
+                phase="flow_wiring",
+                node_id=source_id,
+                details={"edge": edge, "available_nodes": list(nodes.keys())},
+                suggestion=f"Available nodes: {', '.join(sorted(nodes.keys()))}",
+            )
+
+        # Look up target node
+        if target_id not in nodes:
+            raise CompilationError(
+                f"Edge references non-existent target node '{target_id}'",
+                phase="flow_wiring",
+                node_id=target_id,
+                details={"edge": edge, "available_nodes": list(nodes.keys())},
+                suggestion=f"Available nodes: {', '.join(sorted(nodes.keys()))}",
+            )
+
+        source = nodes[source_id]
+        target = nodes[target_id]
+
+        # Wire the nodes based on action
+        if action == "default":
+            source >> target
+        else:
+            source - action >> target
+
+    logger.debug("Node wiring complete", extra={"phase": "flow_wiring"})
+
+
+def _get_start_node(nodes: dict[str, BaseNode], ir_dict: dict[str, Any]) -> BaseNode:
+    """Identify the start node for the flow.
+
+    This function determines which node should be the entry point for the flow.
+    Currently uses the first node in the nodes array as a simple fallback.
+
+    Args:
+        nodes: Dictionary of instantiated nodes
+        ir_dict: The IR dictionary (for future start_node field support)
+
+    Returns:
+        The node to use as flow start
+
+    Raises:
+        CompilationError: If no nodes exist to start from
+    """
+    logger.debug("Identifying start node", extra={"phase": "start_detection"})
+
+    # Check if we have any nodes at all
+    if not nodes:
+        raise CompilationError(
+            "Cannot create flow with no nodes",
+            phase="start_detection",
+            suggestion="Add at least one node to the workflow",
+        )
+
+    # Future: Check for explicit start_node field
+    start_node_id = ir_dict.get("start_node")
+
+    # Fallback: Use first node in the nodes array
+    if not start_node_id and ir_dict.get("nodes"):
+        start_node_id = ir_dict["nodes"][0]["id"]
+        logger.debug(
+            "Using first node as start (no explicit start_node specified)",
+            extra={"phase": "start_detection", "start_node_id": start_node_id},
+        )
+
+    if not start_node_id or start_node_id not in nodes:
+        # This shouldn't happen with valid IR, but handle gracefully
+        raise CompilationError(
+            "Could not determine start node",
+            phase="start_detection",
+            details={"start_node_id": start_node_id, "available_nodes": list(nodes.keys())},
+            suggestion="Ensure at least one node exists in the workflow",
+        )
+
+    logger.debug(
+        "Start node identified",
+        extra={"phase": "start_detection", "start_node_id": start_node_id},
+    )
+
+    return nodes[start_node_id]
+
+
 def compile_ir_to_flow(ir_json: Union[str, dict[str, Any]], registry: Registry) -> Flow:
     """Compile JSON IR to executable pocketflow.Flow object.
 
@@ -295,5 +465,38 @@ def compile_ir_to_flow(ir_json: Union[str, dict[str, Any]], registry: Registry) 
         },
     )
 
-    # Step 4: Raise NotImplementedError (compilation not yet implemented)
-    raise NotImplementedError("Compilation not yet implemented")
+    # Step 4: Instantiate nodes
+    try:
+        nodes = _instantiate_nodes(ir_dict, registry)
+    except CompilationError:
+        logger.exception("Node instantiation failed", extra={"phase": "node_instantiation"})
+        raise
+
+    # Step 5: Wire nodes together
+    try:
+        _wire_nodes(nodes, ir_dict.get("edges", []))
+    except CompilationError:
+        logger.exception("Node wiring failed", extra={"phase": "flow_wiring"})
+        raise
+
+    # Step 6: Get start node
+    try:
+        start_node = _get_start_node(nodes, ir_dict)
+    except CompilationError:
+        logger.exception("Start node detection failed", extra={"phase": "start_detection"})
+        raise
+
+    # Step 7: Create and return Flow
+    logger.debug("Creating Flow object", extra={"phase": "flow_creation"})
+    flow = Flow(start=start_node)
+
+    logger.info(
+        "Compilation successful",
+        extra={
+            "phase": "complete",
+            "node_count": len(nodes),
+            "edge_count": len(ir_dict.get("edges", [])),
+        },
+    )
+
+    return flow

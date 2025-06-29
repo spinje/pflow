@@ -7,7 +7,7 @@ logic will be tested in future subtasks.
 
 import json
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -179,24 +179,28 @@ class TestCompileIrToFlow:
     """Test the main compile_ir_to_flow function."""
 
     def test_compile_with_dict_input(self):
-        """Test compilation with dict input (currently raises NotImplementedError)."""
+        """Test compilation with dict input and empty nodes."""
         registry = MagicMock()
         ir_dict = {"nodes": [], "edges": []}
 
-        with pytest.raises(NotImplementedError) as exc_info:
+        # Now that compilation is implemented, empty nodes should raise CompilationError
+        with pytest.raises(CompilationError) as exc_info:
             compile_ir_to_flow(ir_dict, registry)
 
-        assert str(exc_info.value) == "Compilation not yet implemented"
+        assert exc_info.value.phase == "start_detection"
+        assert "Cannot create flow with no nodes" in str(exc_info.value)
 
     def test_compile_with_string_input(self):
-        """Test compilation with JSON string input."""
+        """Test compilation with JSON string input and empty nodes."""
         registry = MagicMock()
         ir_string = '{"nodes": [], "edges": []}'
 
-        with pytest.raises(NotImplementedError) as exc_info:
+        # Now that compilation is implemented, empty nodes should raise CompilationError
+        with pytest.raises(CompilationError) as exc_info:
             compile_ir_to_flow(ir_string, registry)
 
-        assert str(exc_info.value) == "Compilation not yet implemented"
+        assert exc_info.value.phase == "start_detection"
+        assert "Cannot create flow with no nodes" in str(exc_info.value)
 
     def test_compile_with_malformed_json(self):
         """Test that malformed JSON raises JSONDecodeError (not CompilationError)."""
@@ -233,25 +237,43 @@ class TestCompileIrToFlow:
     def test_compile_logging(self, caplog):
         """Test that compilation logs appropriate messages."""
         registry = MagicMock()
-        ir_dict = {"nodes": [{"id": "n1"}], "edges": []}
+        # Need a valid node structure now that compilation is implemented
+        ir_dict = {"nodes": [{"id": "n1", "type": "test-node"}], "edges": []}
 
-        with caplog.at_level(logging.DEBUG), pytest.raises(NotImplementedError):
-            compile_ir_to_flow(ir_dict, registry)
+        # Mock the import_node_class to return a mock node class
+        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
+            from pocketflow import BaseNode
 
-        # Check log messages
-        log_messages = [record.message for record in caplog.records]
-        assert any("Starting IR compilation" in msg for msg in log_messages)
-        assert any("IR structure validated" in msg for msg in log_messages)
-        assert any("ready for compilation" in msg for msg in log_messages)
+            # Create a simple mock node class
+            class MockNode(BaseNode):
+                def __init__(self):
+                    super().__init__()
 
-        # Check structured logging extras
-        for record in caplog.records:
-            if "Starting IR compilation" in record.message:
-                assert record.phase == "init"
-            elif "IR structure validated" in record.message:
-                assert record.phase == "validation"
-                assert hasattr(record, "node_count")
-                assert record.node_count == 1
+                def set_params(self, params):
+                    self.params = params
+
+            mock_import.return_value = MockNode
+
+            with caplog.at_level(logging.DEBUG):
+                # This should now succeed
+                flow = compile_ir_to_flow(ir_dict, registry)
+                assert flow is not None
+
+            # Check log messages
+            log_messages = [record.message for record in caplog.records]
+            assert any("Starting IR compilation" in msg for msg in log_messages)
+            assert any("IR structure validated" in msg for msg in log_messages)
+            assert any("ready for compilation" in msg for msg in log_messages)
+            assert any("Compilation successful" in msg for msg in log_messages)
+
+            # Check structured logging extras
+            for record in caplog.records:
+                if "Starting IR compilation" in record.message:
+                    assert record.phase == "init"
+                elif "IR structure validated" in record.message:
+                    assert record.phase == "validation"
+                    assert hasattr(record, "node_count")
+                    assert record.node_count == 1
 
     def test_compile_with_complex_ir(self):
         """Test compilation with a more realistic IR structure."""
@@ -263,10 +285,25 @@ class TestCompileIrToFlow:
                 {"id": "proc", "type": "transform", "params": {"format": "json"}},
                 {"id": "save", "type": "write-file", "params": {"path": "output.txt"}},
             ],
-            "edges": [{"from": "read", "to": "proc"}, {"from": "proc", "to": "save"}],
+            "edges": [{"source": "read", "target": "proc"}, {"source": "proc", "target": "save"}],
         }
 
-        with pytest.raises(NotImplementedError):
-            compile_ir_to_flow(ir_dict, registry)
+        # Mock the import_node_class to return a mock node class
+        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
+            from pocketflow import BaseNode
 
-        # The fact that we get to NotImplementedError means validation passed
+            class MockNode(BaseNode):
+                def __init__(self):
+                    super().__init__()
+
+                def set_params(self, params):
+                    self.params = params
+
+            mock_import.return_value = MockNode
+
+            # Should now compile successfully
+            flow = compile_ir_to_flow(ir_dict, registry)
+            assert flow is not None
+
+            # Verify import was called for all three node types
+            assert mock_import.call_count == 3
