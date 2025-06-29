@@ -1,7 +1,7 @@
-# Task 5: Ready for Implementation ✓
+# Task 5: Implementation Specification
 
 ## Summary
-Task 5 is now fully specified and ready for implementation. All ambiguities have been resolved through user clarifications.
+Task 5 is now fully specified and ready for implementation. Hopefully all ambiguities have been resolved through user clarifications.
 
 ## Final Specification
 
@@ -17,7 +17,7 @@ Task 5 is now fully specified and ready for implementation. All ambiguities have
    - `name`: Node name from class.name attribute or kebab-case conversion
    - `docstring`: Raw docstring text (NOT parsed)
    - `file_path`: Path to the Python file
-5. **Stores** in persistent JSON file (location TBD - likely ~/.pflow/registry.json)
+5. **Stores** in persistent JSON file at ~/.pflow/registry.json
 
 ### Output Format
 ```json
