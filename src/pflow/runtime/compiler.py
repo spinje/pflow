@@ -321,9 +321,19 @@ def _wire_nodes(nodes: dict[str, BaseNode], edges: list[dict[str, Any]]) -> None
     logger.debug("Starting node wiring", extra={"phase": "flow_wiring", "edge_count": len(edges)})
 
     for edge in edges:
-        source_id = edge["source"]
-        target_id = edge["target"]
+        # Support both edge field formats for compatibility
+        source_id = edge.get("source") or edge.get("from")
+        target_id = edge.get("target") or edge.get("to")
         action = edge.get("action", "default")
+
+        # Validate we have both IDs
+        if not source_id or not target_id:
+            raise CompilationError(
+                "Edge missing source or target node ID",
+                phase="flow_wiring",
+                details={"edge": edge},
+                suggestion="Ensure edges have 'source'/'target' or 'from'/'to' fields",
+            )
 
         logger.debug(
             "Wiring nodes",

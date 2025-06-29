@@ -508,3 +508,36 @@ A consolidated collection of successful patterns and approaches discovered durin
   - Platform-dependent behavior (Windows vs Unix paths)
 
 ---
+
+
+## Pattern: Multiple Input Format Compatibility
+- **Date**: 2025-06-29
+- **Discovered in**: Task 4.4
+- **Problem**: Need to support multiple field naming conventions in input data (e.g., API evolution, backwards compatibility)
+- **Solution**: Use Python's or operator to check multiple field names in order of preference
+- **Example**:
+  ```python
+  # Support both old and new field names
+  def parse_edge(edge_data):
+      source_id = edge_data.get("source") or edge_data.get("from")
+      target_id = edge_data.get("target") or edge_data.get("to")
+
+      # Validate we got valid values
+      if not source_id or not target_id:
+          raise ValueError("Edge missing required fields")
+
+      return source_id, target_id
+  ```
+- **When to use**:
+  - API versioning without breaking changes
+  - Migrating field names gradually
+  - Supporting multiple input sources with different conventions
+  - Reading configuration from various formats
+- **Benefits**:
+  - Clean, readable code without nested if statements
+  - Short-circuit evaluation for performance
+  - Easy to extend with more alternatives
+  - No breaking changes for existing users
+- **Caution**: Document which format is preferred/canonical to avoid confusion
+
+---

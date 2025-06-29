@@ -1,5 +1,5 @@
 """Runtime module for executing pflow workflows."""
 
-from .compiler import compile_ir_to_flow, import_node_class
+from .compiler import CompilationError, compile_ir_to_flow, import_node_class
 
-__all__ = ["compile_ir_to_flow", "import_node_class"]
+__all__ = ["CompilationError", "compile_ir_to_flow", "import_node_class"]
