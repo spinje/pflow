@@ -535,15 +535,15 @@ When implementing a task with PocketFlow:
 
 Detailed implementation guides are available for each PocketFlow-based task:
 
-- **Task 4**: [IR-to-PocketFlow Compiler](/.taskmaster/tasks/task_4/pocketflow-implementation-guide.md)
-- **Task 8**: [Shell Integration](/.taskmaster/tasks/task_8/pocketflow-implementation-guide.md)
-- **Task 17**: [LLM-based Workflow Generation](/.taskmaster/tasks/task_17/pocketflow-implementation-guide.md)
-- **Task 20**: [Lockfile and Plan Storage](/.taskmaster/tasks/task_20/pocketflow-implementation-guide.md)
-- **Task 22**: [Shared Store Runtime](/.taskmaster/tasks/task_22/pocketflow-implementation-guide.md)
-- **Task 23**: [Tracing and Logging](/.taskmaster/tasks/task_23/pocketflow-implementation-guide.md)
+- **Task 4**: [IR-to-PocketFlow Compiler](../../.taskmaster/tasks/task_4/pocketflow-implementation-guide.md)
+- **Task 8**: [Shell Integration](../../.taskmaster/tasks/task_8/pocketflow-implementation-guide.md)
+- **Task 17**: [LLM-based Workflow Generation](../../.taskmaster/tasks/task_17/pocketflow-implementation-guide.md)
+- **Task 20**: [Lockfile and Plan Storage](../../.taskmaster/tasks/task_20/pocketflow-implementation-guide.md)
+- **Task 22**: [Shared Store Runtime](../../.taskmaster/tasks/task_22/pocketflow-implementation-guide.md)
+- **Task 23**: [Tracing and Logging](../../.taskmaster/tasks/task_23/pocketflow-implementation-guide.md)
 
 ## References
 
-- [PocketFlow Documentation](pocketflow/docs/)
-- [PocketFlow Cookbook](pocketflow/cookbook/)
-- [ADR-001: Use PocketFlow for Orchestration](docs/architecture/adr/001-use-pocketflow-for-orchestration.md)
+- [PocketFlow Documentation](../../pocketflow/docs/)
+- [PocketFlow Cookbook](../../pocketflow/cookbook/)
+- [ADR-001: Use PocketFlow for Orchestration](./adr/001-use-pocketflow-for-orchestration.md)

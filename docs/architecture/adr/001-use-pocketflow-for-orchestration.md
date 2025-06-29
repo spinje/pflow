@@ -119,9 +119,7 @@ Use traditional code when:
 
 ## References
 
-- [PocketFlow Architecture Manifesto](./001-analysis/pocketflow-architecture-manifesto.md)
-- [Comprehensive Task Analysis](./001-analysis/comprehensive-pocketflow-task-analysis.md)
-- [Task-specific Implementation Analyses](./001-analysis/task-specific-implementation-analyses.md)
+_Note: The detailed analysis documents referenced here were part of the decision-making process but have been consolidated into this ADR._
 
 ## Notes
 
