@@ -381,6 +381,42 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: Safety Flags Must Be Explicitly Set in Shared Store
+- **Date**: 2025-06-29
+- **Discovered in**: Task 11.2
+- **Problem**: Destructive operations (delete, overwrite) need safety mechanisms that can't be accidentally triggered by default parameters or config files
+- **Solution**: Require safety confirmation flags to be explicitly set in shared store, with no fallback to params
+- **Example**:
+  ```python
+  def prep(self, shared: dict) -> tuple[str, bool]:
+      # File path can come from shared or params
+      file_path = shared.get("file_path") or self.params.get("file_path")
+      if not file_path:
+          raise ValueError("Missing required 'file_path'")
+
+      # Safety flag MUST come from shared store only
+      if "confirm_delete" not in shared:
+          raise ValueError("Missing required 'confirm_delete' in shared store. "
+                         "This safety flag must be explicitly set in shared store.")
+
+      confirm_delete = shared["confirm_delete"]
+      # Note: We do NOT fallback to self.params here
+
+      return (str(file_path), bool(confirm_delete))
+  ```
+- **When to use**:
+  - Any destructive file operations (delete, overwrite, truncate)
+  - Database operations that modify or drop data
+  - Any irreversible action that could cause data loss
+  - Operations that could affect system stability
+- **Benefits**:
+  - Prevents accidental operations from config files or defaults
+  - Forces explicit user intent for dangerous operations
+  - Clear error messages guide correct usage
+  - Audit trail shows deliberate action
+
+---
+
 <!-- New patterns are appended below this line -->
 
 ## Pattern: Connection Tracking in Mock Nodes

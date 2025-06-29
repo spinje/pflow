@@ -5,7 +5,13 @@ import tempfile
 
 import pytest
 
-from src.pflow.nodes.file import ReadFileNode, WriteFileNode
+from src.pflow.nodes.file import (
+    CopyFileNode,
+    DeleteFileNode,
+    MoveFileNode,
+    ReadFileNode,
+    WriteFileNode,
+)
 
 
 class TestReadFileNode:
@@ -375,3 +381,369 @@ class TestIntegration:
             # Clean up temp file if it exists
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
+
+
+class TestCopyFileNode:
+    """Test CopyFileNode functionality."""
+
+    def test_successful_copy(self):
+        """Test successful file copy."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create source file
+            source_path = os.path.join(tmpdir, "source.txt")
+            with open(source_path, "w") as f:
+                f.write("Test content")
+
+            dest_path = os.path.join(tmpdir, "dest.txt")
+
+            node = CopyFileNode()
+            shared = {"source_path": source_path, "dest_path": dest_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+            assert "copied" in shared
+            assert "Successfully copied" in shared["copied"]
+
+            # Verify both files exist
+            assert os.path.exists(source_path)
+            assert os.path.exists(dest_path)
+
+            # Verify content matches
+            with open(dest_path) as f:
+                assert f.read() == "Test content"
+
+    def test_copy_with_directory_creation(self):
+        """Test copy creates parent directories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "source.txt")
+            with open(source_path, "w") as f:
+                f.write("Test content")
+
+            # Destination in non-existent subdirectory
+            dest_path = os.path.join(tmpdir, "subdir", "nested", "dest.txt")
+
+            node = CopyFileNode()
+            shared = {"source_path": source_path, "dest_path": dest_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+            assert os.path.exists(dest_path)
+
+    def test_copy_overwrite_protection(self):
+        """Test copy fails when destination exists without overwrite."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "source.txt")
+            dest_path = os.path.join(tmpdir, "dest.txt")
+
+            # Create both files
+            with open(source_path, "w") as f:
+                f.write("Source content")
+            with open(dest_path, "w") as f:
+                f.write("Existing content")
+
+            node = CopyFileNode()
+            shared = {"source_path": source_path, "dest_path": dest_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "error"
+            assert "already exists" in shared["error"]
+
+            # Verify destination wasn't overwritten
+            with open(dest_path) as f:
+                assert f.read() == "Existing content"
+
+    def test_copy_with_overwrite(self):
+        """Test copy succeeds with overwrite=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "source.txt")
+            dest_path = os.path.join(tmpdir, "dest.txt")
+
+            # Create both files
+            with open(source_path, "w") as f:
+                f.write("New content")
+            with open(dest_path, "w") as f:
+                f.write("Old content")
+
+            node = CopyFileNode()
+            shared = {"source_path": source_path, "dest_path": dest_path, "overwrite": True}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+
+            # Verify destination was overwritten
+            with open(dest_path) as f:
+                assert f.read() == "New content"
+
+    def test_copy_source_not_found(self):
+        """Test error when source doesn't exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "missing.txt")
+            dest_path = os.path.join(tmpdir, "dest.txt")
+
+            node = CopyFileNode()
+            shared = {"source_path": source_path, "dest_path": dest_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "error"
+            assert "does not exist" in shared["error"]
+
+
+class TestMoveFileNode:
+    """Test MoveFileNode functionality."""
+
+    def test_successful_move(self):
+        """Test successful file move."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create source file
+            source_path = os.path.join(tmpdir, "source.txt")
+            with open(source_path, "w") as f:
+                f.write("Test content")
+
+            dest_path = os.path.join(tmpdir, "dest.txt")
+
+            node = MoveFileNode()
+            shared = {"source_path": source_path, "dest_path": dest_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+            assert "moved" in shared
+            assert "Successfully moved" in shared["moved"]
+
+            # Verify source no longer exists
+            assert not os.path.exists(source_path)
+            # Verify destination exists
+            assert os.path.exists(dest_path)
+
+            # Verify content
+            with open(dest_path) as f:
+                assert f.read() == "Test content"
+
+    def test_move_with_directory_creation(self):
+        """Test move creates parent directories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "source.txt")
+            with open(source_path, "w") as f:
+                f.write("Test content")
+
+            # Destination in non-existent subdirectory
+            dest_path = os.path.join(tmpdir, "subdir", "nested", "dest.txt")
+
+            node = MoveFileNode()
+            shared = {"source_path": source_path, "dest_path": dest_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+            assert not os.path.exists(source_path)
+            assert os.path.exists(dest_path)
+
+    def test_move_overwrite_protection(self):
+        """Test move fails when destination exists without overwrite."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "source.txt")
+            dest_path = os.path.join(tmpdir, "dest.txt")
+
+            # Create both files
+            with open(source_path, "w") as f:
+                f.write("Source content")
+            with open(dest_path, "w") as f:
+                f.write("Existing content")
+
+            node = MoveFileNode()
+            shared = {"source_path": source_path, "dest_path": dest_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "error"
+            assert "already exists" in shared["error"]
+
+            # Verify source still exists
+            assert os.path.exists(source_path)
+            # Verify destination wasn't overwritten
+            with open(dest_path) as f:
+                assert f.read() == "Existing content"
+
+    def test_move_source_not_found(self):
+        """Test error when source doesn't exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "missing.txt")
+            dest_path = os.path.join(tmpdir, "dest.txt")
+
+            node = MoveFileNode()
+            shared = {"source_path": source_path, "dest_path": dest_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "error"
+            assert "does not exist" in shared["error"]
+
+
+class TestDeleteFileNode:
+    """Test DeleteFileNode functionality."""
+
+    def test_successful_delete(self):
+        """Test successful file deletion with confirmation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "test.txt")
+            with open(file_path, "w") as f:
+                f.write("Test content")
+
+            node = DeleteFileNode()
+            shared = {"file_path": file_path, "confirm_delete": True}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+            assert "deleted" in shared
+            assert "Successfully deleted" in shared["deleted"]
+
+            # Verify file no longer exists
+            assert not os.path.exists(file_path)
+
+    def test_delete_without_confirmation(self):
+        """Test delete fails without confirmation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "test.txt")
+            with open(file_path, "w") as f:
+                f.write("Test content")
+
+            node = DeleteFileNode()
+            shared = {"file_path": file_path, "confirm_delete": False}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "error"
+            assert "not confirmed" in shared["error"]
+
+            # Verify file still exists
+            assert os.path.exists(file_path)
+
+    def test_delete_missing_confirmation_flag(self):
+        """Test delete fails when confirmation flag is missing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "test.txt")
+            with open(file_path, "w") as f:
+                f.write("Test content")
+
+            node = DeleteFileNode()
+            shared = {"file_path": file_path}  # No confirm_delete
+
+            with pytest.raises(ValueError, match="Missing required 'confirm_delete'"):
+                node.prep(shared)
+
+    def test_delete_nonexistent_file(self):
+        """Test delete succeeds for non-existent file (idempotent)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "missing.txt")
+
+            node = DeleteFileNode()
+            shared = {"file_path": file_path, "confirm_delete": True}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+            assert "deleted" in shared
+            assert "did not exist" in shared["deleted"]
+
+    def test_delete_with_params_safety(self):
+        """Test that confirm_delete cannot come from params."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "test.txt")
+            with open(file_path, "w") as f:
+                f.write("Test content")
+
+            node = DeleteFileNode()
+            node.set_params({"file_path": file_path, "confirm_delete": True})
+            shared = {}  # Empty shared store
+
+            # Should fail because confirm_delete must be in shared
+            with pytest.raises(ValueError, match="Missing required 'confirm_delete'"):
+                node.prep(shared)
+
+
+class TestFileNodeIntegration:
+    """Test integration between all file nodes."""
+
+    def test_copy_move_delete_workflow(self):
+        """Test a complete workflow using all file manipulation nodes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create initial file
+            original_path = os.path.join(tmpdir, "original.txt")
+            with open(original_path, "w") as f:
+                f.write("Original content")
+
+            shared = {}
+
+            # Step 1: Copy to backup
+            copy_node = CopyFileNode()
+            backup_path = os.path.join(tmpdir, "backup.txt")
+            shared["source_path"] = original_path
+            shared["dest_path"] = backup_path
+
+            prep_res = copy_node.prep(shared)
+            exec_res = copy_node.exec(prep_res)
+            action = copy_node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+            assert os.path.exists(backup_path)
+
+            # Step 2: Move original to new location
+            move_node = MoveFileNode()
+            new_path = os.path.join(tmpdir, "new_location.txt")
+            shared["source_path"] = original_path
+            shared["dest_path"] = new_path
+
+            prep_res = move_node.prep(shared)
+            exec_res = move_node.exec(prep_res)
+            action = move_node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+            assert not os.path.exists(original_path)
+            assert os.path.exists(new_path)
+
+            # Step 3: Delete the backup
+            delete_node = DeleteFileNode()
+            shared["file_path"] = backup_path
+            shared["confirm_delete"] = True
+
+            prep_res = delete_node.prep(shared)
+            exec_res = delete_node.exec(prep_res)
+            action = delete_node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+            assert not os.path.exists(backup_path)
+
+            # Only new_path should remain
+            assert os.path.exists(new_path)
+            with open(new_path) as f:
+                assert f.read() == "Original content"
