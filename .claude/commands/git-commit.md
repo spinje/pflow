@@ -16,7 +16,7 @@ Your first step is to get a clear picture of the repository's state.
 - **Identify unrelated changes:** Look for changes that serve different purposes (e.g., documentation updates vs. code refactoring vs. new features).
 - **Analyze order of changes:** Analyze what the most logical order of commiting the changes is.
 - **Plan for Multiple Commits:** If you identify multiple logical changes, you must **propose a plan to the users chat window** for how you will split the work into a series of separate commits. Wait for approval before proceeding.
-- **Test Pre-commit Hooks First:** Run `.venv/bin/python -m pre_commit run --all-files` on the files you plan to commit. This often makes automatic changes (formatting, trailing whitespace, etc.), so run it BEFORE staging to avoid having to re-stage files.
+- **Test Pre-commit Hooks First:** Always run `make check` on the files you plan to commit FIRST. This often makes automatic changes (formatting, trailing whitespace, etc.), so run it BEFORE staging to avoid having to re-stage files.
 
 ### 2. Prepare the Staging Area for the Commit
 
