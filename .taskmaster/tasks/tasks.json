@@ -352,7 +352,7 @@
         "description": "Create basic file I/O nodes for reading and writing files",
         "status": "pending",
         "dependencies": [],
-        "priority": "medium",
+        "priority": "high",
         "details": "Create file nodes in src/pflow/nodes/file/, all inheriting from pocketflow.BaseNode: read_file.py, write_file.py, copy_file.py, move_file.py, and delete_file.py. Each node should have explicit name attribute (e.g., class ReadFileNode(BaseNode): name = 'read-file') or rely on kebab-case conversion from class name. Simple interfaces: read-file uses shared['file_path'] \u2192 shared['content'], write-file uses shared['content'] + shared['file_path'], copy/move use shared['source_path'] + shared['dest_path'], delete uses shared['file_path']. Include safety checks for all destructive operations. Fail fast on missing required inputs. Natural interface pattern for file operations. Reference docs: simple-nodes.md",
         "testStrategy": "Test file operations, permission handling, and safety validations. Test fail-fast behavior. Write comprehensive unit tests."
       },
