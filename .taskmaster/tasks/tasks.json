@@ -171,7 +171,40 @@
         "dependencies": [],
         "priority": "high",
         "details": "Create src/pflow/core/ir_schema.py with JSON Schema definitions. Define minimal IR structure: nodes[] with id, type, params; edges[] with from, to, action (default 'default'); start_node id; optional mappings{} for NodeAwareSharedStore proxy. Keep it simple - just enough to represent a workflow graph. Use standard JSON Schema for validation. Don't overengineer - we can extend later. Example: {'nodes': [{'id': 'n1', 'type': 'read-file', 'params': {'file_path': 'input.txt'}}], 'edges': [], 'start_node': 'n1'}. Reference docs: schemas.md, planner.md#10.1",
-        "testStrategy": "Test schema validation with valid and invalid IR examples, verify all required fields, test edge cases. Write schema validation tests."
+        "testStrategy": "Test schema validation with valid and invalid IR examples, verify all required fields, test edge cases. Write schema validation tests.",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define Core JSON Schema Structure",
+            "description": "Create the foundational JSON schema definitions for workflow IR in src/pflow/core/ir_schema.py. Define the minimal IR structure including nodes array (with id, type, params), edges array (with from, to, action), start_node, and optional mappings. Use standard JSON Schema Draft 7 format following the decisions in the research files.",
+            "dependencies": [],
+            "details": "Create src/pflow/core/__init__.py and src/pflow/core/ir_schema.py. Define schema as Python dictionary using JSON Schema Draft 7 format. Include minimal envelope with schema version for future compatibility. Use 'type' field for nodes (not 'registry_id') per task example. Make start_node optional with sensible default behavior. Include optional action field in edges with 'default' as default value. Define mappings structure for proxy pattern support. Write initial validation tests alongside implementation.",
+            "status": "pending",
+            "testStrategy": "Test valid minimal IR (single node, no edges). Test valid complex IR (multiple nodes with edges). Test invalid IR (missing required fields, invalid references). Test edge cases (empty nodes array, self-referential edges)."
+          },
+          {
+            "id": 2,
+            "title": "Implement Validation Functions and Error Handling",
+            "description": "Add validation functions that use the jsonschema library to validate IR against the schema. Implement robust JSON loading with graceful error handling. Create custom validation error messages that provide clear guidance for fixing issues.",
+            "dependencies": [
+              1
+            ],
+            "details": "Add jsonschema to project dependencies if not present. Implement validate_ir() function using jsonschema. Create custom ValidationError with helpful error messages. Add JSON loading function with proper error handling. Include path to invalid field in error messages. Suggest fixes for common mistakes. Write comprehensive validation tests.",
+            "status": "pending",
+            "testStrategy": "Test validation of all schema constraints. Test clear error messages for various failure modes. Test JSON loading with malformed files. Test helpful error suggestions."
+          },
+          {
+            "id": 3,
+            "title": "Create Examples and Documentation",
+            "description": "Develop comprehensive valid and invalid IR examples for testing and documentation. Add detailed docstrings to all functions. Create example workflows that demonstrate all features of the IR schema including template variables, mappings, and action-based routing.",
+            "dependencies": [
+              2
+            ],
+            "details": "Create multiple valid IR examples (simple to complex). Create invalid IR examples for each validation rule. Add comprehensive module and function docstrings. Include examples in docstrings. Document template variable support ($variable syntax). Create examples showing mappings usage. Polish error messages based on example testing.",
+            "status": "pending",
+            "testStrategy": "All examples must be tested programmatically. Valid examples must pass validation. Invalid examples must fail with expected errors. Documentation examples must be executable."
+          }
+        ]
       },
       {
         "id": 7,
