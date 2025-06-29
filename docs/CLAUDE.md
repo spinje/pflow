@@ -11,7 +11,11 @@ docs/
 ├── architecture/              # System design and integration
 │   ├── architecture.md        # Core system design
 │   ├── components.md          # MVP vs v2.0 breakdown
-│   └── pflow-pocketflow-integration-guide.md  # Critical integration patterns
+│   ├── pflow-pocketflow-integration-guide.md  # Critical integration patterns
+│   ├── adr/                   # Architectural Decision Records
+│   │   └── 001-use-pocketflow-for-orchestration.md  # PocketFlow usage decision
+│   ├── pocketflow-interface-guide.md     # How to interface with PocketFlow components
+│   └── pocketflow-implementation-template.md  # Template for PocketFlow tasks
 ├── core-concepts/             # Fundamental patterns
 │   ├── registry.md            # Node discovery system
 │   ├── runtime.md             # Execution engine
@@ -64,6 +68,12 @@ docs/
 **How pflow uses pocketflow**
 - **Must read**: `architecture/pflow-pocketflow-integration-guide.md`
 - This prevents common implementation mistakes
+
+**PocketFlow architecture decision**
+- **Decision record**: `architecture/adr/001-use-pocketflow-for-orchestration.md`
+- **Implementation guide**: `architecture/pocketflow-implementation-template.md`
+- **Interface guide**: `architecture/pocketflow-interface-guide.md`
+- Key insight: 6 tasks use PocketFlow  for internal orchestration (4, 8, 17, 20, 22, 23), others use traditional code
 
 **The data flow between nodes**
 - Primary: `core-concepts/shared-store.md`

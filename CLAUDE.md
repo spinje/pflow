@@ -166,7 +166,11 @@ pflow/
 │   ├── architecture/                  # System architecture documentation
 │   │   ├── architecture.md        # **CORE: Complete system architecture**
 │   │   ├── components.md              # Complete MVP vs v2.0 breakdown
-│   │   └── pflow-pocketflow-integration-guide.md  # Integration patterns
+│   │   ├── pflow-pocketflow-integration-guide.md  # Integration patterns
+│   │   ├── adr/                   # Architectural Decision Records
+│   │   │   └── 001-use-pocketflow-for-orchestration.md  # PocketFlow usage decision
+│   │   ├── pocketflow-interface-guide.md     # How to interface with PocketFlow components
+│   │   └── pocketflow-implementation-template.md  # Template for PocketFlow tasks
 │   ├── core-concepts/                 # Core system concepts
 │   │   ├── registry.md                # Node discovery, namespacing, versioning
 │   │   ├── runtime.md                 # Execution engine, caching, safety
@@ -315,7 +319,9 @@ The codebase is in early development with:
 - ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap
 - ✅ Establish epistemic workflow for task execution in `.taskmaster/workflow/`
 - ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
-- ⏳ Implementing features for the MVP using the epistemic workflow (next: Task 5 - Node discovery)
+- ✅ Task 2 complete: Basic CLI run command with stdio/stdin support
+- ✅ Task 5 complete: Node discovery and registry implementation
+- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 6 - Define JSON IR schema)
 
 ## Task Implementation Workflow
 
@@ -388,14 +394,9 @@ Document for user decision:
 
 ### PocketFlow Internal Usage
 
-**CRITICAL**: pflow itself uses PocketFlow internally for complex orchestrations.
+**CRITICAL**: pflow uses PocketFlow internally for complex orchestrations.
 
-**When to use PocketFlow**: Multi-step operations with I/O, retry needs, or branching logic.
-**When to use traditional code**: Pure functions, data structures, simple utilities.
-
-PocketFlow provides built-in retry, visual flow (`>>` operator), and explicit error paths - eliminating nested try/catch blocks.
-
-See `/docs/architecture/adr/001-use-pocketflow-for-orchestration.md` for decision details.
+6 tasks use PocketFlow for orchestration (Tasks 4, 8, 17, 20, 22, 23), while all other components use traditional Python patterns.
 
 ### Project-specific Memories
 
