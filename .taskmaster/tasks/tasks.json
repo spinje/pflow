@@ -146,7 +146,7 @@
               1
             ],
             "details": "Extend the scanner to extract metadata from each discovered node: class name, docstring, prep/exec/post method signatures, file path, and last modified time. Create a Registry class that manages the discovered nodes and handles persistence to ~/.pflow/registry.json. Implement load() and save() methods with proper JSON serialization. Ensure the registry directory (~/.pflow/) is created if it doesn't exist. Handle cases where nodes might not have all three methods (prep/exec/post).\n<info added on 2025-06-29T08:38:36.558Z>\nThe scanner should extract only the following basic metadata from each discovered node:\n- module: The full import path (e.g., 'pflow.nodes.file.read_file')\n- class_name: The class name (e.g., 'ReadFileNode')\n- name: From the class's name attribute, or derive from class name using kebab-case conversion as fallback\n- docstring: The raw docstring text without any parsing or processing\n- file_path: The filesystem path to the node file\n\nThe Registry class should store nodes in a dictionary format with the node name as the key, mapping to the metadata dictionary. Method signatures and last modified timestamps should not be extracted or stored.\n</info added on 2025-06-29T08:38:36.558Z>",
-            "status": "pending",
+            "status": "done",
             "testStrategy": ""
           },
           {
@@ -655,7 +655,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-29T09:19:06.020Z",
+      "updated": "2025-06-29T10:04:44.656Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }

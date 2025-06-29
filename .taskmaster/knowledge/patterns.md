@@ -185,4 +185,65 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: Registry Storage Without Key Duplication
+- **Date**: 2025-06-29
+- **Discovered in**: Task 5.2
+- **Problem**: When converting a list of objects to a dictionary keyed by an identifier, the identifier gets duplicated in both key and value
+- **Solution**: Remove the identifier field from the value before storing since the key already provides it
+- **Example**:
+  ```python
+  # Convert list to dict, removing 'name' from values
+  nodes = {}
+  for item in items:
+      name = item.get("name")
+      # Store without the key field
+      node_data = {k: v for k, v in item.items() if k != "name"}
+      nodes[name] = node_data
+  ```
+- **When to use**: Any registry or index where objects are keyed by one of their properties
+- **Benefits**:
+  - Cleaner data structure without redundancy
+  - Smaller storage footprint
+  - No risk of key/value mismatch
+  - Simpler updates (only one place to change)
+
+---
+
+## Pattern: Graceful JSON Configuration Loading
+- **Date**: 2025-06-29
+- **Discovered in**: Task 5.2
+- **Problem**: JSON configuration files might be missing, empty, corrupt, or have permission issues, causing application crashes
+- **Solution**: Chain multiple fallbacks with specific handling for each failure mode
+- **Example**:
+  ```python
+  def load_config(self) -> dict:
+      if not self.path.exists():
+          logger.debug(f"Config file not found at {self.path}")
+          return {}
+
+      try:
+          content = self.path.read_text()
+          if not content.strip():
+              logger.debug("Config file is empty")
+              return {}
+
+          data = json.loads(content)
+          logger.info(f"Loaded {len(data)} items from config")
+          return data
+      except json.JSONDecodeError as e:
+          logger.warning(f"Failed to parse JSON: {e}")
+          return {}
+      except Exception as e:
+          logger.warning(f"Error reading config: {e}")
+          return {}
+  ```
+- **When to use**: Loading any user-editable or optional configuration files
+- **Benefits**:
+  - Application never crashes due to config issues
+  - Clear logging helps debugging
+  - Consistent fallback behavior
+  - Easy to extend with migration logic
+
+---
+
 <!-- New patterns are appended below this line -->
