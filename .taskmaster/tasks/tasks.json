@@ -127,7 +127,41 @@
         "dependencies": [],
         "priority": "high",
         "details": "Create src/pflow/registry/scanner.py with scan_for_nodes(directories) function. Use importlib to find all classes inheriting from pocketflow.BaseNode (CRITICAL: NOT pocketflow.Node). Add security note about importlib executing code on import. For MVP, only scan package nodes: Path(pflow.__file__).parent / 'nodes'. Extract basic metadata ONLY: 1) module (full import path), 2) class_name, 3) name (from class.name attribute or kebab-case fallback), 4) docstring (raw text, NOT parsed), 5) file_path. Store in persistent JSON file at ~/.pflow/registry.json. Node naming: Check for explicit 'name' class attribute first, fallback to converting ClassName to kebab-case (e.g., ReadFileNode \u2192 read-file). Output format: {'read-file': {'module': 'pflow.nodes.file.read_file', 'class_name': 'ReadFileNode', 'docstring': '...', 'file_path': '/path/to/file.py'}}. IMPORTANT: Registry stores metadata ONLY, not class references. Components using the registry must use dynamic imports. Create test node (src/pflow/nodes/test_node.py) inheriting from BaseNode with Interface docstring. Reference: registry.md, metadata-extraction.md",
-        "testStrategy": "Test node discovery with real and mock node files, verify BaseNode inheritance detection, test name extraction (both explicit attribute and kebab-case conversion), verify registry JSON persistence and loading, test with various node structures and edge cases (no docstring, no name attribute, multiple inheritance). Mock importlib where needed to avoid executing untrusted code. Ensure scanner correctly identifies only BaseNode subclasses and ignores other classes."
+        "testStrategy": "Test node discovery with real and mock node files, verify BaseNode inheritance detection, test name extraction (both explicit attribute and kebab-case conversion), verify registry JSON persistence and loading, test with various node structures and edge cases (no docstring, no name attribute, multiple inheritance). Mock importlib where needed to avoid executing untrusted code. Ensure scanner correctly identifies only BaseNode subclasses and ignores other classes.",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create test node and implement core scanner",
+            "description": "Set up the nodes directory structure with a test node that subclasses pocketflow.BaseNode, then implement the core filesystem scanning logic in src/pflow/planning/scanner.py to recursively find Python files and identify BaseNode subclasses",
+            "dependencies": [],
+            "details": "Create src/pflow/nodes/ directory if it doesn't exist. Create src/pflow/nodes/test_node.py with a simple BaseNode subclass for testing. Implement src/pflow/planning/scanner.py with scan_directory() function that uses ast module to parse Python files and identify classes that inherit from pocketflow.BaseNode. The scanner should handle import variations (from pocketflow import BaseNode, import pocketflow, etc.) and return a list of discovered node classes with their file paths.\n<info added on 2025-06-29T08:38:20.409Z>\nImplementation location and approach changes:\n- Create src/pflow/registry/scanner.py instead of src/pflow/planning/scanner.py\n- Implement scan_for_nodes(directories) function that accepts a list of directory paths\n- Use importlib.import_module() to dynamically import Python modules from the discovered files\n- Add security warning comment that importlib executes module code on import\n- Use inspect.isclass() to check if objects are classes and issubclass() to verify BaseNode inheritance\n- The function should iterate through directories, find .py files, convert file paths to module names, import them dynamically, and inspect their contents for BaseNode subclasses\n</info added on 2025-06-29T08:38:20.409Z>",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Implement metadata extraction and persistence",
+            "description": "Extract metadata from discovered BaseNode subclasses including class name, docstring, method signatures, and file location, then implement persistence to ~/.pflow/registry.json with proper serialization",
+            "dependencies": [
+              1
+            ],
+            "details": "Extend the scanner to extract metadata from each discovered node: class name, docstring, prep/exec/post method signatures, file path, and last modified time. Create a Registry class that manages the discovered nodes and handles persistence to ~/.pflow/registry.json. Implement load() and save() methods with proper JSON serialization. Ensure the registry directory (~/.pflow/) is created if it doesn't exist. Handle cases where nodes might not have all three methods (prep/exec/post).\n<info added on 2025-06-29T08:38:36.558Z>\nThe scanner should extract only the following basic metadata from each discovered node:\n- module: The full import path (e.g., 'pflow.nodes.file.read_file')\n- class_name: The class name (e.g., 'ReadFileNode')\n- name: From the class's name attribute, or derive from class name using kebab-case conversion as fallback\n- docstring: The raw docstring text without any parsing or processing\n- file_path: The filesystem path to the node file\n\nThe Registry class should store nodes in a dictionary format with the node name as the key, mapping to the metadata dictionary. Method signatures and last modified timestamps should not be extracted or stored.\n</info added on 2025-06-29T08:38:36.558Z>",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Add comprehensive tests",
+            "description": "Write thorough unit tests for the scanner and registry functionality covering various edge cases, malformed nodes, and filesystem scenarios",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Create tests/test_scanner.py with test cases for: scanning directories with valid nodes, handling Python files without BaseNode subclasses, dealing with syntax errors in Python files, testing various import patterns (from/import/as), verifying metadata extraction accuracy. Create tests/test_registry.py to test: registry persistence and loading, handling corrupted registry files, registry updates when nodes change, proper JSON serialization of metadata. Include edge cases like empty directories, non-Python files, circular imports, and nodes with missing or malformed methods.\n<info added on 2025-06-29T08:39:00.507Z>\nThe tests should mock importlib operations for module loading and inspection rather than using AST parsing. Key test areas include:\n\nBaseNode inheritance detection tests to verify that only classes inheriting from pflow's BaseNode (not pocketflow.Node) are identified as valid nodes. This includes testing multiple inheritance scenarios and ensuring non-BaseNode classes are properly excluded.\n\nNode name extraction tests covering both explicit name attributes (class.name = \"my-node\") and automatic kebab-case conversion from class names (MyComplexNode -> \"my-complex-node\"). Edge cases should include names with numbers, acronyms, and special Python naming patterns.\n\nRegistry JSON format validation ensuring the output structure uses node names as top-level keys mapping to metadata objects. Tests should verify proper serialization of all metadata fields and handle edge cases like duplicate node names.\n\nSecurity warning verification to confirm that generated registry files include appropriate comments warning against untrusted node execution. The test should check for the presence and correct formatting of security disclaimers in the JSON output.\n\nMock-based testing approach should simulate various importlib scenarios including import failures, missing dependencies, and successful module loading without executing actual node code during discovery.\n</info added on 2025-06-29T08:39:00.507Z>",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
       },
       {
         "id": 6,
