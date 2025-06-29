@@ -251,6 +251,7 @@ pflow/
 **Development Standards and process**:
 - Start small, build minimal components that can be expanded into reusable components
 - Each task includes its own test strategy. This ensures functionality is validated immediately and helps catch regressions when implementing future tasks.
+- Run `make test` (pytest) and `make check` (linting, type checking, etc.) before finalizing any implementation to ensure code quality
 - Document decisions and tradeoffs
 - Create `CLAUDE.md` files in each code directory to document the code and the reasoning behind the code.
 - Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/` directory.

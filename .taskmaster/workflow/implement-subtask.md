@@ -213,11 +213,21 @@ This pattern might affect other input validation across the system.
 
 #### 2.7 Testing and Validation
 
-Execute test strategy from refined spec and run your newly created tests:
+1. Execute test strategy from refined spec and run your newly created tests:
 
-- Run tests using appropriate commands (e.g., `make test`, `pytest`, etc.)
+- Run tests using appropriate commands (e.g., `make test`)
 - Document test discoveries in your progress log
 - Add section "## Test Insights" with findings
+
+2. Make sure to run `make check` after running the tests to ensure the code quality is good and code is ready to be committed.
+
+If `make check` fails:
+1. Read the error messages carefully
+2. Fix each issue (most formatting issues are auto-fixed)
+3. Run `make check` again until all checks pass
+4. Document any non-obvious fixes in your progress log
+
+**Note**: Even though pre-commit hooks run on `git commit`, running `make check` early saves time and prevents failed commits.
 
 #### 2.8 Extract Patterns
 
@@ -406,6 +416,8 @@ Key learnings:
 See .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/implementation/subtask-review.md for details"
 ```
 
+**Note**: Pre-commit hooks will run automatically during `git commit`. If you followed step 2.7a and ran `make check`, the commit should succeed without issues. If pre-commit hooks fail, fix the issues and run `git add` and `git commit` again.
+
 Do NOT include "Generated with [Claude Code](https://claude.ai/code)" in the commit message.
 
 ## Learning Capture Best Practices
@@ -473,6 +485,7 @@ Your implementation is successful when:
 - [ ] All success criteria from refined spec are met
 - [ ] Critical functionality has tests
 - [ ] All tests pass (both existing and new)
+- [ ] Code passes all quality checks (`make check`)
 - [ ] Learnings are captured in real-time
 - [ ] Patterns are extracted and documented
 - [ ] Review document is comprehensive
