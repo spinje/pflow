@@ -1,0 +1,53 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "reader",
+      "type": "csv-reader",
+      "params": {
+        "path": "data.csv",
+        "delimiter": ","
+      }
+    },
+    {
+      "id": "analyzer",
+      "type": "sentiment-analyzer",
+      "params": {
+        "model": "vader"
+      }
+    },
+    {
+      "id": "formatter",
+      "type": "report-generator",
+      "params": {
+        "template": "sentiment_report"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "reader",
+      "to": "analyzer"
+    },
+    {
+      "from": "analyzer",
+      "to": "formatter"
+    }
+  ],
+  "mappings": {
+    "analyzer": {
+      "input_mappings": {
+        "text": "csv_content"
+      },
+      "output_mappings": {
+        "sentiment_scores": "analysis_results"
+      }
+    },
+    "formatter": {
+      "input_mappings": {
+        "data": "analysis_results",
+        "metadata": "csv_metadata"
+      }
+    }
+  }
+}

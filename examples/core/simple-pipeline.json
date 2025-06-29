@@ -1,0 +1,34 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "reader",
+      "type": "read-file",
+      "params": {
+        "path": "input.txt"
+      }
+    },
+    {
+      "id": "transformer",
+      "type": "uppercase",
+      "params": {}
+    },
+    {
+      "id": "writer",
+      "type": "write-file",
+      "params": {
+        "path": "output.txt"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "reader",
+      "to": "transformer"
+    },
+    {
+      "from": "transformer",
+      "to": "writer"
+    }
+  ]
+}

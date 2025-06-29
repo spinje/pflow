@@ -1,0 +1,42 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http-get",
+      "params": {
+        "url": "$api_endpoint",
+        "headers": {
+          "Authorization": "Bearer $api_token"
+        }
+      }
+    },
+    {
+      "id": "extract",
+      "type": "json-extract",
+      "params": {
+        "path": "$data_path",
+        "default": "$default_value"
+      }
+    },
+    {
+      "id": "notify",
+      "type": "send-email",
+      "params": {
+        "to": "$recipient_email",
+        "subject": "Data extracted from $api_endpoint",
+        "body": "Extracted value: $result\n\nProcessed at: $timestamp"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "fetch",
+      "to": "extract"
+    },
+    {
+      "from": "extract",
+      "to": "notify"
+    }
+  ]
+}

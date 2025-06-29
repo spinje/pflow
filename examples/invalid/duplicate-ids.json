@@ -1,0 +1,19 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "processor",
+      "type": "transform",
+      "params": {
+        "mode": "uppercase"
+      }
+    },
+    {
+      "id": "processor",
+      "type": "validate",
+      "params": {
+        "rules": "strict"
+      }
+    }
+  ]
+}

@@ -4,6 +4,22 @@ This module provides the schema and validation functions for workflow IR,
 which is the standardized format for representing workflows before they
 are compiled to executable pocketflow.Flow objects.
 
+The IR format is designed to be:
+- Human-readable and editable
+- Validated before execution
+- Extensible for future features
+- Compatible with template variables ($variable syntax)
+
+Design Decisions:
+- **'type' vs 'registry_id'**: We use 'type' for node identification to keep
+  the MVP simple. This may evolve to 'registry_id' in future versions.
+- **Nodes as array**: Nodes are stored as an array with 'id' fields rather
+  than a dictionary to preserve order and simplify duplicate detection.
+- **Optional start_node**: If not specified, execution begins with the first
+  node in the array, following the principle of least surprise.
+- **Action-based routing**: Edges support an 'action' field for conditional
+  flow control, inspired by pocketflow's execution model.
+
 Example usage:
     >>> from pflow.core import validate_ir
     >>>
@@ -16,12 +32,36 @@ Example usage:
     ... }
     >>> validate_ir(ir)  # No exception raised
     >>>
+    >>> # IR with edges and template variables
+    >>> pipeline = {
+    ...     "ir_version": "0.1.0",
+    ...     "nodes": [
+    ...         {"id": "read", "type": "read-file", "params": {"path": "$input_file"}},
+    ...         {"id": "proc", "type": "transform", "params": {"format": "json"}},
+    ...         {"id": "save", "type": "write-file", "params": {"path": "$output_file"}}
+    ...     ],
+    ...     "edges": [
+    ...         {"from": "read", "to": "proc"},
+    ...         {"from": "proc", "to": "save"}
+    ...     ]
+    ... }
+    >>> validate_ir(pipeline)  # Template variables are valid strings
+    >>>
     >>> # Invalid IR (missing required field)
     >>> bad_ir = {"nodes": [{"id": "n1"}]}
     >>> try:
     ...     validate_ir(bad_ir)
     >>> except ValidationError as e:
     ...     print(e)  # "Validation error at root: 'ir_version' is required"
+
+Common Validation Errors:
+- Missing 'ir_version': Every IR must specify its version
+- Empty nodes array: At least one node is required
+- Duplicate node IDs: Each node must have a unique identifier
+- Invalid edge references: All 'from' and 'to' must reference existing nodes
+- Wrong types: Ensure strings for IDs, objects for params, etc.
+
+For comprehensive examples, see the examples/ directory.
 """
 
 import json
@@ -33,7 +73,24 @@ from jsonschema import ValidationError as JsonSchemaValidationError
 
 
 class ValidationError(Exception):
-    """Custom validation error with helpful messages and field paths."""
+    """Custom validation error with helpful messages and field paths.
+
+    This exception provides structured error information to help users
+    quickly identify and fix validation issues in their IR.
+
+    Attributes:
+        message (str): The validation error message
+        path (str): Dotted path to the invalid field (e.g., "nodes[0].type")
+        suggestion (str): Optional suggestion for fixing the error
+
+    Example:
+        >>> try:
+        ...     validate_ir({"nodes": []})
+        ... except ValidationError as e:
+        ...     print(f"Error at {e.path}: {e.message}")
+        ...     if e.suggestion:
+        ...         print(f"Suggestion: {e.suggestion}")
+    """
 
     def __init__(self, message: str, path: str = "", suggestion: str = ""):
         """Initialize validation error.
@@ -182,12 +239,41 @@ def _get_suggestion(error: JsonSchemaValidationError) -> str:
 def validate_ir(data: Union[dict[str, Any], str]) -> None:
     """Validate workflow IR against the schema.
 
+    This function performs both structural validation (via JSON Schema) and
+    business logic validation (node references, duplicate IDs). It accepts
+    either a dictionary or a JSON string.
+
     Args:
         data: The IR data to validate (dict or JSON string)
 
     Raises:
-        ValidationError: If the IR is invalid
+        ValidationError: If the IR is invalid with details about the error
         ValueError: If JSON parsing fails
+
+    Examples:
+        >>> # Valid IR passes silently
+        >>> validate_ir({"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test"}]})
+
+        >>> # Missing required field
+        >>> try:
+        ...     validate_ir({"nodes": []})
+        ... except ValidationError as e:
+        ...     print(e.path)    # "root"
+        ...     print(e.message) # "'ir_version' is a required property"
+
+        >>> # Invalid node reference
+        >>> try:
+        ...     validate_ir({
+        ...         "ir_version": "0.1.0",
+        ...         "nodes": [{"id": "n1", "type": "test"}],
+        ...         "edges": [{"from": "n1", "to": "n2"}]
+        ...     })
+        ... except ValidationError as e:
+        ...     print(e.path)    # "edges[0].to"
+        ...     print("n2" in e.message)  # True
+
+        >>> # JSON string input
+        >>> validate_ir('{"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test"}]}')
     """
     # Parse JSON string if needed
     if isinstance(data, str):

@@ -1,0 +1,25 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "input",
+      "params": {}
+    },
+    {
+      "id": "end",
+      "type": "output",
+      "params": {}
+    }
+  ],
+  "edges": [
+    {
+      "from": "start",
+      "to": "middle"
+    },
+    {
+      "from": "middle",
+      "to": "end"
+    }
+  ]
+}

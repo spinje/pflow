@@ -1,0 +1,12 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "hello",
+      "type": "echo",
+      "params": {
+        "message": "Hello, pflow!"
+      }
+    }
+  ]
+}
