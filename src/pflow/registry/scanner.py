@@ -5,6 +5,7 @@ import inspect
 import logging
 import re
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def temporary_syspath(paths: list[Path]):
+def temporary_syspath(paths: list[Path]) -> Iterator[None]:
     """Temporarily add paths to sys.path for imports."""
     original_path = sys.path.copy()
     try:
@@ -36,7 +37,7 @@ def camel_to_kebab(name: str) -> str:
     return result.lower()
 
 
-def get_node_name(cls) -> str:
+def get_node_name(cls: type) -> str:
     """Extract node name from class (explicit or kebab-case)."""
     # Check for explicit name attribute
     if hasattr(cls, "name") and isinstance(cls.name, str):
@@ -68,7 +69,7 @@ def path_to_module(file_path: Path, base_path: Path) -> str:
     return ".".join(parts)
 
 
-def extract_metadata(cls, module_path: str, file_path: Path) -> dict[str, Any]:
+def extract_metadata(cls: type, module_path: str, file_path: Path) -> dict[str, Any]:
     """Extract metadata from a node class."""
     return {
         "module": module_path,
@@ -77,6 +78,39 @@ def extract_metadata(cls, module_path: str, file_path: Path) -> dict[str, Any]:
         "docstring": inspect.getdoc(cls) or "",
         "file_path": str(file_path.absolute()),
     }
+
+
+def _calculate_module_path(py_file: Path, directory: Path) -> str:
+    """Calculate the module path for a Python file."""
+    if "pflow" in str(py_file):
+        # For pflow modules, calculate from src/
+        src_path = py_file.parent
+        while src_path.name != "src" and src_path.parent != src_path:
+            src_path = src_path.parent
+        if src_path.name == "src":
+            return "pflow." + path_to_module(py_file, src_path / "pflow")
+    return path_to_module(py_file, directory)
+
+
+def _should_skip_file(py_file: Path) -> bool:
+    """Check if a Python file should be skipped."""
+    return "__pycache__" in str(py_file) or py_file.name.startswith("__")
+
+
+def _scan_module_for_nodes(module: Any, module_path: str, py_file: Path, BaseNode: type) -> list[dict[str, Any]]:
+    """Scan a single module for BaseNode subclasses."""
+    nodes = []
+    for _name, obj in inspect.getmembers(module):
+        if (
+            inspect.isclass(obj)
+            and issubclass(obj, BaseNode)
+            and obj is not BaseNode
+            and obj.__module__ == module.__name__
+        ):
+            metadata = extract_metadata(obj, module_path, py_file)
+            nodes.append(metadata)
+            logger.info(f"Discovered node: {metadata['name']} ({metadata['class_name']})")
+    return nodes
 
 
 def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
@@ -97,7 +131,6 @@ def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
     discovered_nodes = []
 
     # Prepare paths for sys.path modification
-    # We need both the project root (for pflow imports) and pocketflow
     project_root = Path(__file__).parent.parent.parent.parent
     pocketflow_path = project_root / "pocketflow"
 
@@ -122,22 +155,10 @@ def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
 
             # Find all Python files
             for py_file in directory.rglob("*.py"):
-                # Skip __pycache__ and test files
-                if "__pycache__" in str(py_file) or py_file.name.startswith("__"):
+                if _should_skip_file(py_file):
                     continue
 
-                # Calculate module path
-                if "pflow" in str(py_file):
-                    # For pflow modules, calculate from src/
-                    src_path = py_file.parent
-                    while src_path.name != "src" and src_path.parent != src_path:
-                        src_path = src_path.parent
-                    if src_path.name == "src":
-                        module_path = "pflow." + path_to_module(py_file, src_path / "pflow")
-                    else:
-                        module_path = path_to_module(py_file, directory)
-                else:
-                    module_path = path_to_module(py_file, directory)
+                module_path = _calculate_module_path(py_file, directory)
 
                 # Try to import the module
                 try:
@@ -148,16 +169,6 @@ def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
                     continue
 
                 # Inspect module for BaseNode subclasses
-                for _name, obj in inspect.getmembers(module):
-                    if (
-                        inspect.isclass(obj)
-                        and issubclass(obj, BaseNode)
-                        and obj is not BaseNode
-                        and obj.__module__ == module.__name__
-                    ):
-                        # Extract metadata
-                        metadata = extract_metadata(obj, module_path, py_file)
-                        discovered_nodes.append(metadata)
-                        logger.info(f"Discovered node: {metadata['name']} ({metadata['class_name']})")
+                discovered_nodes.extend(_scan_module_for_nodes(module, module_path, py_file, BaseNode))
 
     return discovered_nodes

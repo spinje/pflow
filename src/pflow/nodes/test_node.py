@@ -6,6 +6,8 @@ from pathlib import Path
 # Add pocketflow to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+from typing import Any
+
 from pocketflow import BaseNode
 
 
@@ -23,15 +25,15 @@ class TestNode(BaseNode):
     - Actions: default, error
     """
 
-    def prep(self, shared):
+    def prep(self, shared: dict) -> str:
         """Prepare by reading input from shared store."""
-        return shared.get("test_input", "default value")
+        return str(shared.get("test_input", "default value"))
 
-    def exec(self, input_data):
+    def exec(self, input_data: str) -> str:
         """Process the input (pure computation)."""
         return f"Processed: {input_data}"
 
-    def post(self, shared, prep_res, exec_res):
+    def post(self, shared: dict, prep_res: str, exec_res: str) -> str:
         """Store result in shared store."""
         shared["test_output"] = exec_res
         # Return default action
@@ -41,7 +43,7 @@ class TestNode(BaseNode):
 class NotANode:
     """Regular class that should not be detected as a node."""
 
-    def some_method(self):
+    def some_method(self) -> None:
         """This is not a node."""
         pass
 
@@ -56,5 +58,5 @@ class NamedNode(BaseNode):
 
     name = "custom-name"
 
-    def exec(self, prep_res):
+    def exec(self, prep_res: Any) -> str:
         return "Named node executed"

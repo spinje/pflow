@@ -84,7 +84,7 @@ def _parse_ir_input(ir_json: Union[str, dict[str, Any]]) -> dict[str, Any]:
     """
     if isinstance(ir_json, str):
         logger.debug("Parsing IR from JSON string", extra={"phase": "parsing"})
-        return json.loads(ir_json)
+        return json.loads(ir_json)  # type: ignore[no-any-return]
 
     logger.debug("IR provided as dictionary", extra={"phase": "parsing"})
     return ir_json
@@ -107,13 +107,13 @@ def _validate_ir_structure(ir_dict: dict[str, Any]) -> None:
 
     # Check for required 'nodes' key
     if "nodes" not in ir_dict:
-        raise CompilationError(  # noqa: TRY003
+        raise CompilationError(
             "Missing 'nodes' key in IR", phase="validation", suggestion="IR must contain 'nodes' array"
         )
 
     # Check nodes is a list
     if not isinstance(ir_dict["nodes"], list):
-        raise CompilationError(  # noqa: TRY003
+        raise CompilationError(
             f"'nodes' must be an array, got {type(ir_dict['nodes']).__name__}",
             phase="validation",
             suggestion="Ensure 'nodes' is an array of node objects",
@@ -121,13 +121,13 @@ def _validate_ir_structure(ir_dict: dict[str, Any]) -> None:
 
     # Check for required 'edges' key
     if "edges" not in ir_dict:
-        raise CompilationError(  # noqa: TRY003
+        raise CompilationError(
             "Missing 'edges' key in IR", phase="validation", suggestion="IR must contain 'edges' array (can be empty)"
         )
 
     # Check edges is a list
     if not isinstance(ir_dict["edges"], list):
-        raise CompilationError(  # noqa: TRY003
+        raise CompilationError(
             f"'edges' must be an array, got {type(ir_dict['edges']).__name__}",
             phase="validation",
             suggestion="Ensure 'edges' is an array of edge objects",

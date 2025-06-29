@@ -280,7 +280,7 @@ def validate_ir(data: Union[dict[str, Any], str]) -> None:
         try:
             data = json.loads(data)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON: {e}") from e  # noqa: TRY003
+            raise ValueError(f"Invalid JSON: {e}") from e
 
     # Create validator
     validator = Draft7Validator(FLOW_IR_SCHEMA)
@@ -289,14 +289,15 @@ def validate_ir(data: Union[dict[str, Any], str]) -> None:
     try:
         validator.check_schema(FLOW_IR_SCHEMA)
     except jsonschema.SchemaError as e:
-        raise RuntimeError(f"Schema definition error: {e}") from e  # noqa: TRY003
+        raise RuntimeError(f"Schema definition error: {e}") from e
 
     # Validate the data
     errors = list(validator.iter_errors(data))
     if not errors:
         # Additional custom validations
-        _validate_node_references(data)
-        _validate_duplicate_node_ids(data)
+        if isinstance(data, dict):
+            _validate_node_references(data)
+            _validate_duplicate_node_ids(data)
         return
 
     # Format the first error with helpful message

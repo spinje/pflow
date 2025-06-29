@@ -52,7 +52,7 @@ class Registry:
             return {}
         else:
             logger.info(f"Loaded {len(data)} nodes from registry")
-            return data
+            return data  # type: ignore[no-any-return]
 
     def save(self, nodes: dict[str, dict[str, Any]]) -> None:
         """Save nodes dictionary to registry JSON file.
