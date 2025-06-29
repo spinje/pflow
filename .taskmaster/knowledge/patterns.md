@@ -315,6 +315,45 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 <!-- New patterns are appended below this line -->
 
+## Pattern: Layered Validation with Custom Business Logic
+- **Date**: 2025-06-29
+- **Discovered in**: Task 6.1
+- **Problem**: JSON Schema validation alone cannot enforce complex business rules like referential integrity or uniqueness constraints
+- **Solution**: Use a three-layer validation approach that separates concerns
+- **Example**:
+  ```python
+  def validate_ir(data: Union[Dict, str]) -> None:
+      # Layer 1: JSON parsing (if string input)
+      if isinstance(data, str):
+          try:
+              data = json.loads(data)
+          except json.JSONDecodeError as e:
+              raise ValueError(f"Invalid JSON: {e}")
+
+      # Layer 2: Schema validation (structure and types)
+      validator = Draft7Validator(SCHEMA)
+      errors = list(validator.iter_errors(data))
+      if errors:
+          raise ValidationError(format_error(errors[0]))
+
+      # Layer 3: Business logic validation
+      _validate_node_references(data)  # Check edges reference existing nodes
+      _validate_duplicate_ids(data)     # Check for unique IDs
+  ```
+- **When to use**: Any validation scenario where JSON Schema alone is insufficient:
+  - Referential integrity checks (foreign keys)
+  - Uniqueness constraints across arrays
+  - Cross-field dependencies
+  - Complex business rules
+- **Benefits**:
+  - Clear separation of structural vs business validation
+  - Each layer can be tested independently
+  - Easy to add new business rules without touching schema
+  - Better error messages for each type of failure
+  - Reusable pattern for any JSON validation task
+
+---
+
 ## Pattern: Tempfile-Based Dynamic Test Data
 - **Date**: 2025-06-29
 - **Discovered in**: Task 5.3

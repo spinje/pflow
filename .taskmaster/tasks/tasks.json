@@ -179,7 +179,7 @@
             "description": "Create the foundational JSON schema definitions for workflow IR in src/pflow/core/ir_schema.py. Define the minimal IR structure including nodes array (with id, type, params), edges array (with from, to, action), start_node, and optional mappings. Use standard JSON Schema Draft 7 format following the decisions in the research files.",
             "dependencies": [],
             "details": "Create src/pflow/core/__init__.py and src/pflow/core/ir_schema.py. Define schema as Python dictionary using JSON Schema Draft 7 format. Include minimal envelope with schema version for future compatibility. Use 'type' field for nodes (not 'registry_id') per task example. Make start_node optional with sensible default behavior. Include optional action field in edges with 'default' as default value. Define mappings structure for proxy pattern support. Write initial validation tests alongside implementation.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test valid minimal IR (single node, no edges). Test valid complex IR (multiple nodes with edges). Test invalid IR (missing required fields, invalid references). Test edge cases (empty nodes array, self-referential edges)."
           },
           {
@@ -688,7 +688,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-29T10:41:33.980Z",
+      "updated": "2025-06-29T14:27:24.483Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }

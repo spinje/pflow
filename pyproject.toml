@@ -20,6 +20,7 @@ classifiers = [
 
 dependencies = [
     "click",          # CLI framework (more flexible than Typer)
+    "jsonschema>=4.20.0",  # JSON Schema validation for workflow IR
     # "pydantic",       # IR/metadata validation (future: for JSON schema validation)
     # "llm>=0.26",      # Simon W simple prompts native integration (future: for natural language planning)
 ]
