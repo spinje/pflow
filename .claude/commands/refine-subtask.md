@@ -3,7 +3,7 @@ description: Refine a subtask before implementation using epistemic workflow
 allowed-tools: Bash(task-master show:*), Bash(task-master update-subtask:*), Read, Write, Edit
 ---
 
-Refine subtask $ARGUMENTS using the epistemic refinement workflow.
+Refine subtask #$ARGUMENTS using the epistemic refinement workflow.
 
 **FOUNDATION** (required reading in order):
 1. **Mindset**: Read `.taskmaster/workflow/epistemic-manifesto.md` to understand the epistemic approach

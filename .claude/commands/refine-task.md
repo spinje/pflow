@@ -3,7 +3,7 @@ description: Refine and decompose a main task using the epistemic workflow
 allowed-tools: Bash(task-master show:*), Bash(task-master update-task:*), Bash(task-master expand:*), Bash(task-master update-subtask:*), Task, Read, Write, Edit
 ---
 
-Follow the epistemic task decomposition workflow for task $ARGUMENTS.
+Follow the epistemic task decomposition workflow for task #$ARGUMENTS.
 
 **FOUNDATION** (required reading in order):
 1. **Mindset**: Read `.taskmaster/workflow/epistemic-manifesto.md` to understand the epistemic approach

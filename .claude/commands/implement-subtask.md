@@ -3,7 +3,7 @@ description: Implement a refined subtask using epistemic workflow
 allowed-tools: Bash(*), Read, Write, Edit, MultiEdit, Task, TodoRead, TodoWrite
 ---
 
-Implement subtask $ARGUMENTS following the epistemic implementation workflow.
+Implement subtask #$ARGUMENTS following the epistemic implementation workflow.
 
 **FOUNDATION** (required reading in order):
 1. **Mindset**: Read `.taskmaster/workflow/epistemic-manifesto.md` to understand the epistemic approach
@@ -29,6 +29,7 @@ Key outputs in `.taskmaster/tasks/task_X/subtask_$ARGUMENTS/implementation/`:
 - `implementation-plan.md`
 - `progress-log.md` (update continuously!)
 - `subtask-review.md`
+- If encountering new important patterns, pitfalls or decisions: modify files in `.taskmaster/knowledge/`
 - If final subtask: create `task-review.md`
 
 Remember: Capture learnings IN REAL-TIME for compound effect!
