@@ -350,16 +350,6 @@
         "testStrategy": "Mock git commands, test safety measures and error handling. Test both interactive and batch modes."
       },
       {
-        "id": 15,
-        "title": "Implement LLM API client",
-        "description": "Create simple client for calling LLM APIs during planning",
-        "status": "pending",
-        "dependencies": [],
-        "priority": "high",
-        "details": "Create src/pflow/planning/llm_client.py with simple functions: call_llm(prompt, model='claude-3-sonnet') that makes API calls to Claude or OpenAI. IMPLEMENTATION NOTE: Consider using Simon Willison's 'llm' package for simplified implementation and model flexibility. If using custom implementation: Use httpx or requests for API calls. Basic retry with exponential backoff (max 3 retries). Read API keys from environment variables. Return just the text response. Keep it simple - this is not a framework, just utility functions for the planner. Reference docs: planner.md#6.2",
-        "testStrategy": "Mock LLM API calls, test retry logic and error handling. Test with different model providers."
-      },
-      {
         "id": 16,
         "title": "Create planning context builder",
         "description": "Format node metadata for LLM-based workflow planning",
@@ -377,7 +367,7 @@
         "description": "Create the core engine that transforms natural language into template-driven workflows",
         "status": "pending",
         "dependencies": [
-          15,
+          12,
           16,
           18,
           19

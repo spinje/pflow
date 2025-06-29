@@ -2,7 +2,7 @@
 
 ## Task Group Context
 
-- **Tasks**: 15 (LLM Client), 16 (Context Builder), 17 (Workflow Generation), 18 (Prompts), 19 (Template Resolver)
+- **Tasks**: 16 (Context Builder), 17 (Workflow Generation), 18 (Prompts), 19 (Template Resolver)
 - **Goal**: Create the planning system that transforms natural language into template-driven workflows
 - **Dependencies**: Task 7 (metadata extraction provides node info)
 - **Constraints**: MVP uses LLM for all input (natural language and CLI syntax)
