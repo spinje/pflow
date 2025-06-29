@@ -101,7 +101,7 @@
           11
         ],
         "priority": "high",
-        "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 6). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 11) that inherit from pocketflow.BaseNode with proper naming (class.name attribute or kebab-case). 3. Adding a basic 'pflow --file <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object using dynamic imports from registry metadata. 5. Initialize a clean shared store dictionary and run the flow with it.",
+        "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 7). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 11). 3. Adding a basic 'pflow --file <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object. 5. Initialize a clean shared store dictionary and run the flow with it.",
         "testStrategy": "Create a tests/test_e2e_workflow.py. Define a simple workflow IR file for 'read-file => write-file'. Use CliRunner to invoke 'pflow --file <ir_file>'. Create mock nodes that write to the shared store. Verify the flow executes correctly and the final shared store contains expected values. Test with temporary files to ensure file I/O works as expected.",
         "subtasks": []
       },
@@ -115,18 +115,18 @@
           5
         ],
         "priority": "high",
-        "details": "Create src/pflow/runtime/compiler.py with compile_ir_to_flow(ir_json, registry) function. This function converts JSON IR to executable pocketflow.Flow objects. CRITICAL: The registry provides metadata ONLY (module path, class name) - NOT class references. Implementation: 1) Parse and validate IR JSON. 2) For each node in IR, look up metadata in registry (from Task 5). 3) Use importlib.import_module(registry[node_type]['module']) to dynamically import node modules. 4) Use getattr(module, registry[node_type]['class_name']) to get node class. 5) Verify the class inherits from pocketflow.BaseNode. 6) Instantiate nodes and set parameters. 7) Connect nodes using pocketflow's >> operator based on edges. 8) Return complete Flow object. Include proper error handling for missing nodes, import failures, and invalid IR. Handle ImportError and AttributeError with clear messages. Reference: pflow-pocketflow-integration-guide.md",
-        "testStrategy": "Test IR parsing and validation, dynamic module importing from registry metadata (NOT class references), BaseNode inheritance verification, node instantiation with proper error messages, flow construction with >> operator, handling of missing nodes in registry, import errors (ImportError, AttributeError), and invalid IR structures. Mock importlib for testing without real node files. Verify the converter produces valid, executable pocketflow.Flow objects.",
+        "details": "Create src/pflow/runtime/compiler.py with compile_ir_to_flow(ir_json, registry) function. This function converts JSON IR to executable pocketflow.Flow objects. Implementation: 1) Parse and validate IR JSON. 2) For each node in IR, look up metadata in registry (from Task 5). 3) Use importlib.import_module(registry[node_type]['module']) to dynamically import node modules. 4) Use getattr(module, registry[node_type]['class_name']) to get node class. 5) Instantiate nodes and set parameters. 6) Connect nodes using pocketflow's >> operator based on edges. 7) Return complete Flow object. Include proper error handling for missing nodes, import failures, and invalid IR. The registry provides metadata only (module path, class name) - NOT class references. Reference: pflow-pocketflow-integration-guide.md",
+        "testStrategy": "Test IR parsing and validation, dynamic module importing from registry metadata, node instantiation with proper error messages, flow construction with >> operator, handling of missing nodes in registry, import errors, and invalid IR structures. Mock importlib for testing without real node files. Verify the converter produces valid, executable pocketflow.Flow objects.",
         "subtasks": []
       },
       {
         "id": 5,
         "title": "Implement node discovery via filesystem scanning",
-        "description": "Scan Python files to find pocketflow.BaseNode subclasses and extract metadata",
+        "description": "Scan Python files to find pocketflow.Node subclasses and extract metadata",
         "status": "pending",
         "dependencies": [],
         "priority": "high",
-        "details": "Create src/pflow/registry/scanner.py with scan_for_nodes(directories) function. Use importlib to find all classes inheriting from pocketflow.BaseNode (CRITICAL: NOT pocketflow.Node). Add security note about importlib executing code on import. For MVP, only scan package nodes: Path(pflow.__file__).parent / 'nodes'. Extract basic metadata ONLY: 1) module (full import path), 2) class_name, 3) name (from class.name attribute or kebab-case fallback), 4) docstring (raw text, NOT parsed), 5) file_path. Store in persistent JSON file at ~/.pflow/registry.json. Node naming: Check for explicit 'name' class attribute first, fallback to converting ClassName to kebab-case (e.g., ReadFileNode \u2192 read-file). Output format: {'read-file': {'module': 'pflow.nodes.file.read_file', 'class_name': 'ReadFileNode', 'docstring': '...', 'file_path': '/path/to/file.py'}}. IMPORTANT: Registry stores metadata ONLY, not class references. Components using the registry must use dynamic imports. Create test node (src/pflow/nodes/test_node.py) inheriting from BaseNode with Interface docstring. Reference: registry.md, metadata-extraction.md",
+        "details": "Create src/pflow/registry/scanner.py with scan_for_nodes(directories) function. Use importlib to find all classes inheriting from pocketflow.BaseNode (note: NOT pocketflow.Node). Add security note about importlib executing code on import. For MVP, only scan package nodes: Path(pflow.__file__).parent / 'nodes'. Extract basic metadata ONLY: 1) module (full import path), 2) class_name, 3) name (from class.name attribute or kebab-case fallback), 4) docstring (raw text, NOT parsed), 5) file_path. Store in persistent JSON file (location TBD - likely ~/.pflow/registry.json). Node naming: Check for explicit 'name' class attribute first, fallback to converting ClassName to kebab-case (e.g., ReadFileNode → read-file). Output format: {'read-file': {'module': 'pflow.nodes.file.read_file', 'class_name': 'ReadFileNode', 'docstring': '...', 'file_path': '/path/to/file.py'}}. Create test node (src/pflow/nodes/test_node.py) inheriting from BaseNode with Interface docstring. Reference: registry.md, metadata-extraction.md",
         "testStrategy": "Test node discovery with real and mock node files, verify BaseNode inheritance detection, test name extraction (both explicit attribute and kebab-case conversion), verify registry JSON persistence and loading, test with various node structures and edge cases (no docstring, no name attribute, multiple inheritance). Mock importlib where needed to avoid executing untrusted code. Ensure scanner correctly identifies only BaseNode subclasses and ignores other classes."
       },
       {
@@ -148,8 +148,8 @@
           5
         ],
         "priority": "medium",
-        "details": "Create src/pflow/registry/metadata_extractor.py with extract_metadata(node_class) function. IMPORTANT: Takes a node CLASS as input (not registry data). Since Task 5 only stores metadata, this function will be called by components that have already imported the class (e.g., Task 4 after dynamic import, or during testing). Parse the class's __doc__ to extract: 1) Description (first paragraph), 2) Interface section parsing (Reads/Writes/Params/Actions), 3) Classification of parameters (shared store vs node.set_params). Verify the class inherits from pocketflow.BaseNode. Use docstring_parser library with custom regex for Interface sections. Output format: {'description': 'Get GitHub issue', 'inputs': ['issue_number', 'repo'], 'outputs': ['issue'], 'params': ['token'], 'actions': ['default', 'not_found']}. This parsed metadata is used by the planner for intelligent node selection and connection. Do NOT duplicate Task 5's work - only parse docstrings. Reference: metadata-extraction.md, simple-nodes.md#interface-pattern",
-        "testStrategy": "Test extraction from various docstring formats (Google, NumPy, custom Interface style), verify correct parsing of Interface sections, test parameter classification (shared vs params), verify BaseNode inheritance check, handle edge cases (missing sections, malformed docstrings, no Interface section). Create test nodes that inherit from BaseNode for testing. Ensure extractor is resilient to docstring variations while extracting accurate metadata."
+        "details": "Create src/pflow/registry/metadata_extractor.py with extract_metadata(node_class) function. IMPORTANT: Takes a node CLASS as input (not registry data) - Task 5 provides the class reference or Task 4 imports it. Parse the class's __doc__ to extract: 1) Description (first paragraph), 2) Interface section parsing (Reads/Writes/Params/Actions), 3) Classification of parameters (shared store vs node.set_params). Use docstring_parser library with custom regex for Interface sections. Output format: {'description': 'Get GitHub issue', 'inputs': ['issue_number', 'repo'], 'outputs': ['issue'], 'params': ['token'], 'actions': ['default', 'not_found']}. This parsed metadata is used by the planner for intelligent node selection and connection. Do NOT duplicate Task 5's work - only parse docstrings. Reference: metadata-extraction.md, simple-nodes.md#interface-pattern",
+        "testStrategy": "Test extraction from various docstring formats (Google, NumPy, custom Interface style), verify correct parsing of Interface sections, test parameter classification (shared vs params), handle edge cases (missing sections, malformed docstrings, no Interface section). Use real node classes from Task 5's test node as test cases. Ensure extractor is resilient to docstring variations while extracting accurate metadata."
       },
       {
         "id": 8,
@@ -229,7 +229,6 @@
         "status": "pending",
         "dependencies": [
           2,
-          5,
           7
         ],
         "priority": "medium",
@@ -243,7 +242,7 @@
         "status": "pending",
         "dependencies": [],
         "priority": "medium",
-        "details": "Create file nodes in src/pflow/nodes/file/, all inheriting from pocketflow.BaseNode: read_file.py, write_file.py, copy_file.py, move_file.py, and delete_file.py. Each node should have explicit name attribute (e.g., class ReadFileNode(BaseNode): name = 'read-file') or rely on kebab-case conversion from class name. Simple interfaces: read-file uses shared['file_path'] \u2192 shared['content'], write-file uses shared['content'] + shared['file_path'], copy/move use shared['source_path'] + shared['dest_path'], delete uses shared['file_path']. Include safety checks for all destructive operations. Fail fast on missing required inputs. Natural interface pattern for file operations. Reference docs: simple-nodes.md",
+        "details": "Create file nodes in src/pflow/nodes/file/, all inheriting from pocketflow.BaseNode: read_file.py, write_file.py, copy_file.py, move_file.py, and delete_file.py. Simple interfaces: read-file uses shared['file_path'] \u2192 shared['content'], write-file uses shared['content'] + shared['file_path'], copy/move use shared['source_path'] + shared['dest_path'], delete uses shared['file_path']. Include safety checks for all destructive operations. Fail fast on missing required inputs. Natural interface pattern for file operations. Reference docs: simple-nodes.md",
         "testStrategy": "Test file operations, permission handling, and safety validations. Test fail-fast behavior. Write comprehensive unit tests."
       },
       {
@@ -255,7 +254,7 @@
           9
         ],
         "priority": "high",
-        "details": "Create src/pflow/nodes/llm.py inheriting from pocketflow.BaseNode. Set explicit name attribute: class LLMNode(BaseNode): name = 'llm'. Simple interface for general text processing. Natural interface: shared['prompt'] \u2192 shared['response']. Support multiple providers (Claude API, OpenAI). Fail fast on missing prompt with clear error message asking user for input. Smart exception to prevent prompt node proliferation. Reference docs: core-node-packages/llm-nodes.md, architecture.md#3.4",
+        "details": "Create src/pflow/nodes/llm.py inheriting from pocketflow.BaseNode. Simple interface for general text processing. Natural interface: shared['prompt'] \u2192 shared['response']. Support multiple providers (Claude API, OpenAI). Fail fast on missing prompt with clear error message asking user for input. Smart exception to prevent prompt node proliferation. Reference docs: core-node-packages/llm-nodes.md, architecture.md#3.4",
         "testStrategy": "Mock LLM API responses, test different providers and parameter configurations. Test retry logic and error handling."
       },
       {
@@ -267,7 +266,7 @@
           9
         ],
         "priority": "high",
-        "details": "Create src/pflow/nodes/github/github_get_issue.py inheriting from pocketflow.BaseNode. Set explicit name attribute: class GitHubGetIssueNode(BaseNode): name = 'github-get-issue'. Implement simple single-purpose node that reads issue_number and repo from shared store or params (check shared first, then params). Use PyGithub or requests for API calls. Natural interface: shared['repo'], shared['issue_number'] \u2192 shared['issue_data'], shared['issue_title']. Authentication via environment variables (GITHUB_TOKEN). Error handling for API failures and rate limits with clear error messages. Fail fast on missing required inputs. Part of Phase 3 Simple Platform Nodes. Reference docs: simple-nodes.md",
+        "details": "Create src/pflow/nodes/github/github_get_issue.py inheriting from pocketflow.BaseNode. Implement simple single-purpose node that reads issue_number and repo from shared store or params (check shared first, then params). Use PyGithub or requests for API calls. Natural interface: shared['repo'], shared['issue_number'] \u2192 shared['issue_data'], shared['issue_title']. Authentication via environment variables (GITHUB_TOKEN). Error handling for API failures and rate limits with clear error messages. Fail fast on missing required inputs. Part of Phase 3 Simple Platform Nodes. Reference docs: simple-nodes.md",
         "testStrategy": "Mock GitHub API responses, test parameter handling and error cases. Test fail-fast behavior on missing inputs. Write comprehensive unit tests."
       },
       {
@@ -279,7 +278,7 @@
           9
         ],
         "priority": "medium",
-        "details": "Create src/pflow/nodes/git/git_commit.py inheriting from pocketflow.BaseNode. Set explicit name attribute: class GitCommitNode(BaseNode): name = 'git-commit'. Simple node reading shared['message'] and optional shared['files']. Execute git commands with safety checks and confirmation prompts in interactive mode. Natural interface: shared['message'] \u2192 shared['commit_hash']. Fail fast on missing commit message. Each node focused on single git operation. Reference docs: simple-nodes.md",
+        "details": "Create src/pflow/nodes/git/git_commit.py inheriting from pocketflow.BaseNode. Simple node reading shared['message'] and optional shared['files']. Execute git commands with safety checks and confirmation prompts in interactive mode. Natural interface: shared['message'] \u2192 shared['commit_hash']. Fail fast on missing commit message. Each node focused on single git operation. Reference docs: simple-nodes.md",
         "testStrategy": "Mock git commands, test safety measures and error handling. Test both interactive and batch modes."
       },
       {
@@ -409,7 +408,7 @@
           9
         ],
         "priority": "high",
-        "details": "Create src/pflow/nodes/claude_code.py inheriting from pocketflow.BaseNode. Set explicit name attribute: class ClaudeCodeNode(BaseNode): name = 'claude-code'. Single powerful node with instruction-based interface for AI-assisted development with full project context and file system access. Complex prompt generation from planner templates with structured instructions. Integration with headless Claude Code CLI for workflow automation. Natural interface: shared['prompt'] \u2192 shared['code_report'] (comprehensive development report). Model selection and parameter handling. Fail fast on missing required inputs (prompt) with clear error message. Part of two-tier AI approach. Reference docs: core-node-packages/claude-nodes.md",
+        "details": "Create src/pflow/nodes/claude_code.py inheriting from pocketflow.BaseNode. Single powerful node with instruction-based interface for AI-assisted development with full project context and file system access. Complex prompt generation from planner templates with structured instructions. Integration with headless Claude Code CLI for workflow automation. Natural interface: shared['prompt'] \u2192 shared['code_report'] (comprehensive development report). Model selection and parameter handling. Fail fast on missing required inputs (prompt) with clear error message. Part of two-tier AI approach. Reference docs: core-node-packages/claude-nodes.md",
         "testStrategy": "Mock Claude Code CLI responses, test template processing and output parsing. Test error handling and timeout scenarios."
       },
       {
@@ -421,7 +420,7 @@
           13
         ],
         "priority": "low",
-        "details": "Create GitHub nodes in src/pflow/nodes/github/, all inheriting from pocketflow.BaseNode: github_create_pr.py, github_list_prs.py, github_add_comment.py, and github_merge_pr.py. Each node should have explicit name attribute (e.g., class GitHubCreatePRNode(BaseNode): name = 'github-create-pr'). Each with focused single purpose and natural interfaces: shared['pr_title'], shared['pr_body'], shared['repo']. github_merge_pr includes safety checks and conflict handling with shared['pr_number'], shared['merge_method']. Reference docs: simple-nodes.md",
+        "details": "Create GitHub nodes in src/pflow/nodes/github/, all inheriting from pocketflow.BaseNode: github_create_pr.py, github_list_prs.py, github_add_comment.py, and github_merge_pr.py. Each with focused single purpose and natural interfaces: shared['pr_title'], shared['pr_body'], shared['repo']. github_merge_pr includes safety checks and conflict handling with shared['pr_number'], shared['merge_method']. Reference docs: simple-nodes.md",
         "testStrategy": "Mock API responses for each operation, test error handling. Write unit tests for each node."
       },
       {
@@ -433,7 +432,7 @@
           14
         ],
         "priority": "low",
-        "details": "Create git nodes in src/pflow/nodes/git/, all inheriting from pocketflow.BaseNode: git_push.py, git_create_branch.py, git_merge.py, and git_status.py. Each node should have explicit name attribute (e.g., class GitPushNode(BaseNode): name = 'git-push'). Each node follows simple single-purpose pattern: git-push reads shared['branch'] and executes push, git-create-branch reads shared['branch_name'] and creates branch, git-merge reads shared['source_branch'] and shared['target_branch'], git-status writes shared['git_status']. Include safety checks and confirmation prompts for destructive operations. Reference docs: simple-nodes.md",
+        "details": "Create git nodes in src/pflow/nodes/git/, all inheriting from pocketflow.BaseNode: git_push.py, git_create_branch.py, git_merge.py, and git_status.py. Each node follows simple single-purpose pattern: git-push reads shared['branch'] and executes push, git-create-branch reads shared['branch_name'] and creates branch, git-merge reads shared['source_branch'] and shared['target_branch'], git-status writes shared['git_status']. Include safety checks and confirmation prompts for destructive operations. Reference docs: simple-nodes.md",
         "testStrategy": "Mock git commands for each operation, test safety measures and edge cases. Write unit tests."
       },
       {
@@ -445,7 +444,7 @@
           9
         ],
         "priority": "low",
-        "details": "Create CI and shell nodes, all inheriting from pocketflow.BaseNode. CI nodes in src/pflow/nodes/ci/: ci_run_tests.py, ci_get_status.py, ci_trigger_build.py, ci_get_logs.py. Shell nodes in src/pflow/nodes/shell/: shell_exec.py, shell_pipe.py, shell_background.py. Each node should have explicit name attribute (e.g., class CIRunTestsNode(BaseNode): name = 'ci-run-tests'). CI nodes use natural interface: shared['test_command'] \u2192 shared['test_results'], support multiple CI systems (GitHub Actions, Jenkins, local). Shell nodes use shared['command'] \u2192 shared['output'] with shell_background also writing shared['pid']. Auto-detect test frameworks, handle exit codes, timeout handling, and security considerations. Reference docs: simple-nodes.md",
+        "details": "Create CI and shell nodes, all inheriting from pocketflow.BaseNode. CI nodes in src/pflow/nodes/ci/: ci_run_tests.py, ci_get_status.py, ci_trigger_build.py, ci_get_logs.py. Shell nodes in src/pflow/nodes/shell/: shell_exec.py, shell_pipe.py, shell_background.py. CI nodes use natural interface: shared['test_command'] \u2192 shared['test_results'], support multiple CI systems (GitHub Actions, Jenkins, local). Shell nodes use shared['command'] \u2192 shared['output'] with shell_background also writing shared['pid']. Auto-detect test frameworks, handle exit codes, timeout handling, and security considerations. Reference docs: simple-nodes.md",
         "testStrategy": "Mock test framework responses, test command execution and timeout handling. Write security-focused tests."
       },
       {

@@ -100,19 +100,26 @@ Resolution occurs in **two phases** aligned with pflow's dual-mode operation, in
 
 ## 3 · File-system Layout
 
+### MVP Scope
 ```
-~/.pflow/nodes/
-  ├─ core/
-  │   └─ yt-transcript/1.2.4/node.py
-  ├─ mcp/
-  │   └─ weather-get/0.3.2/node.py
-  └─ <user ns>/...
-site-packages/pflow/nodes/core/   # built-ins (read-only)
-/usr/local/share/pflow/nodes/     # system registry
-./nodes/                          # flow-local overrides
+src/pflow/nodes/              # Platform nodes (MVP focus)
+├── llm.py
+├── read_file.py
+├── write_file.py
+└── github_get_issue.py
+
+~/.pflow/registry.json        # Persistent registry storage
 ```
 
-**Search order**: flow-local → user → system → built-in
+### Future Extensions (v2.0+)
+```
+~/.pflow/nodes/               # User-installed nodes
+site-packages/pflow/nodes/    # Package nodes
+/usr/local/share/pflow/nodes/ # System registry
+./nodes/                      # Flow-local overrides
+```
+
+**Search order (v2.0+)**: flow-local → user → system → built-in
 
 **Registry Integration**: Planner scans these locations during metadata extraction to build unified registry for LLM selection and validation.
 
@@ -158,7 +165,7 @@ During installation, planner-compatible metadata is extracted:
 
 Installation validates:
 
-- Node inherits from `pocketflow.Node`
+- Node inherits from `pocketflow.BaseNode` (or `pocketflow.Node`)
 - Natural interface documentation present
 - Version number follows semver
 - No conflicts with existing versions
@@ -323,7 +330,7 @@ Versioning enables robust integration with pflow's core architectural principles
 
 ```python
 # From versioned node file
-class YTTranscriptNode(Node):
+class YTTranscriptNode(BaseNode):  # or Node
     """Fetches YouTube transcript.
     Interface:
     - Reads: shared["url"] - YouTube video URL

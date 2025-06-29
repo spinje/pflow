@@ -51,10 +51,9 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
 {
   "node": {
     "id": "yt-transcript",
-    "namespace": "core",
-    "version": "1.0.0",
-    "python_file": "nodes/core/yt-transcript/1.0.0/node.py",
-    "class_name": "YTTranscript"
+    "module": "pflow.nodes.yt_transcript",
+    "class_name": "YTTranscriptNode",
+    "name": "yt-transcript"  // from class.name or kebab-case conversion
   },
   "interface": {
     "inputs": {
@@ -241,6 +240,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 **Interface Resolution:**
 
 - Planner resolves inputs/outputs from node metadata during validation
+- Nodes may inherit from either BaseNode or Node from pocketflow
 - Registry metadata validates params and execution config eligibility
 - Node interfaces declared through docstring metadata, not IR params
 

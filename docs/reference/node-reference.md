@@ -31,10 +31,10 @@ This pattern allows nodes to:
 
 ### Node Lifecycle Implementation
 
-All nodes inherit from `pocketflow.Node` and implement the three-phase lifecycle:
+All nodes inherit from `pocketflow.BaseNode` (or `pocketflow.Node`) and implement the three-phase lifecycle:
 
 ```python
-class MyNode(Node):
+class MyNode(BaseNode):  # or Node
     """Brief description of what this node does.
 
     Interface:

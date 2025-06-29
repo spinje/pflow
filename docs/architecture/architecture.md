@@ -335,7 +335,7 @@ The planner operates in two modes with enhanced capabilities for template-driven
 
 #### 5.3.1 Node Structure
 
-All nodes inherit from `pocketflow.Node`:
+All nodes inherit from `pocketflow.BaseNode` (or `pocketflow.Node`):
 
 ```python
 For a complete example of node implementation including the LLMNode, see [Node Implementation Examples](../reference/node-reference.md#common-implementation-patterns).
@@ -362,29 +362,42 @@ Extracted from docstrings and stored as JSON:
 
 #### 5.3.3 Registry Structure
 
+### MVP Registry Structure
+
 ```
-~/.pflow/registry/
-├── nodes/
-│   ├── core/
-│   │   ├── llm/
-│   │   │   ├── node.py
-│   │   │   └── metadata.json
-│   │   ├── read-file/
-│   │   │   ├── node.py
-│   │   │   └── metadata.json
-│   │   └── write-file/
-│   │       ├── node.py
-│   │       └── metadata.json
-│   ├── github/
-│   │   ├── github-get-issue/
-│   │   │   ├── node.py
-│   │   │   └── metadata.json
-│   │   └── github-create-issue/
-│   │       ├── node.py
-│   │       └── metadata.json
-│   └── custom/
-└── index.json
+src/pflow/nodes/              # Platform nodes (scanned on startup)
+├── llm.py
+├── read_file.py
+├── write_file.py
+└── github_get_issue.py
+
+~/.pflow/registry.json        # Persistent registry cache
 ```
+
+The registry.json contains:
+```json
+{
+  "nodes": [
+    {
+      "id": "llm",
+      "module": "pflow.nodes.llm",
+      "class_name": "LLMNode",
+      "name": "llm",
+      "metadata": { ... }
+    }
+  ],
+  "last_updated": "2025-01-01T12:00:00Z"
+}
+```
+
+#### 5.3.4 Node Discovery (MVP)
+
+In the MVP, node discovery:
+1. Scans only `src/pflow/nodes/` directory on startup
+2. Loads each Python file and finds BaseNode/Node subclasses
+3. Extracts metadata from docstrings
+4. Stores results in `~/.pflow/registry.json` for fast access
+5. Uses class.name attribute or kebab-case class name for node ID
 
 ### 5.4 Execution Engine
 

@@ -65,10 +65,10 @@ The `llm` node is our general-purpose solution for all text processing tasks:
 
 ### Node Implementation Pattern
 
-Nodes follow the interface patterns defined in our [metadata schema](../core-concepts/schemas.md#node-metadata-schema). All nodes inherit from `pocketflow.Node` and use the [shared store pattern](../core-concepts/shared-store.md) for communication.
+Nodes follow the interface patterns defined in our [metadata schema](../core-concepts/schemas.md#node-metadata-schema). All nodes inherit from `pocketflow.BaseNode` (or `pocketflow.Node`) and use the [shared store pattern](../core-concepts/shared-store.md) for communication.
 
 ```python
-class GitHubGetIssueNode(Node):
+class GitHubGetIssueNode(BaseNode):  # or Node
     """Get GitHub issue details.
 
     Interface:
@@ -76,6 +76,11 @@ class GitHubGetIssueNode(Node):
     - Writes: shared["issue"]
     - Params: repo, token, issue_number (optional)
     """
+
+    # Node name is determined by:
+    # 1. class.name attribute if present
+    # 2. Otherwise, kebab-case conversion of class name
+    name = "github-get-issue"  # Optional explicit name
 
     def prep(self, shared):
         # Check shared store first (dynamic), then params (static)
