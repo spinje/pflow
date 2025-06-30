@@ -350,7 +350,7 @@
         "id": 11,
         "title": "Implement read-file and write-file nodes",
         "description": "Create basic file I/O nodes for reading and writing files",
-        "status": "pending",
+        "status": "done",
         "dependencies": [],
         "priority": "high",
         "details": "Create file nodes in src/pflow/nodes/file/, all inheriting from pocketflow.BaseNode: read_file.py, write_file.py, copy_file.py, move_file.py, and delete_file.py. Each node should have explicit name attribute (e.g., class ReadFileNode(BaseNode): name = 'read-file') or rely on kebab-case conversion from class name. Simple interfaces: read-file uses shared['file_path'] \u2192 shared['content'], write-file uses shared['content'] + shared['file_path'], copy/move use shared['source_path'] + shared['dest_path'], delete uses shared['file_path']. Include safety checks for all destructive operations. Fail fast on missing required inputs. Natural interface pattern for file operations. Reference docs: simple-nodes.md",
@@ -384,7 +384,7 @@
               2
             ],
             "details": "Add comprehensive error handling across all nodes: permission denied errors with helpful messages, disk space errors, invalid path characters, symbolic link handling, and network drive considerations. Enhance logging with structured metadata using phase tracking (reading, writing, validating), including file sizes and paths, avoiding reserved field names. Add performance considerations for handling large files efficiently, progress indicators for long operations, and reasonable timeouts. Polish user experience with clear, actionable error messages, consistent action returns ('default' for success, 'error' for failures), and helpful docstrings with examples. Create integration tests demonstrating node chaining and document all nodes in module docstrings.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test permission error scenarios, special characters in filenames, symbolic links, large file handling, timeout scenarios, and full workflow integration. Ensure comprehensive test coverage across all edge cases and error conditions. Verify nodes are discoverable by registry scanner."
           }
         ]
@@ -754,7 +754,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-06-29T21:41:14.307Z",
+      "updated": "2025-06-29T22:05:00.721Z",
       "description": "Reorganized task list based on the phased refinement plan in scratchpads/task-refinement-plan.md. Tasks are now ordered logically, dependencies are corrected, and descriptions are clarified to align with project architecture."
     }
   }
