@@ -89,7 +89,7 @@ class TestReadFileNode:
             action = node.post(shared, prep_res, exec_res)
 
             assert action == "error"
-            assert "Encoding error" in shared["error"]
+            assert "encoding" in shared["error"].lower() or "Cannot read" in shared["error"]
         finally:
             os.unlink(temp_path)
 
@@ -601,6 +601,47 @@ class TestMoveFileNode:
             assert action == "error"
             assert "does not exist" in shared["error"]
 
+    def test_path_normalization(self):
+        """Test that paths are normalized (expanduser, abspath)."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("Test content")
+            temp_path = f.name
+
+        try:
+            # Get the base name to test relative path
+            base_name = os.path.basename(temp_path)
+            rel_path = os.path.join(".", base_name)
+
+            # Change to the directory containing the file
+            old_cwd = os.getcwd()
+            os.chdir(os.path.dirname(temp_path))
+
+            try:
+                node = ReadFileNode()
+                shared = {"file_path": rel_path}
+
+                prep_res = node.prep(shared)
+                # prep_res should contain normalized absolute path
+                assert os.path.isabs(prep_res[0])
+
+                exec_res = node.exec(prep_res)
+                action = node.post(shared, prep_res, exec_res)
+
+                assert action == "default"
+                assert "1: Test content" in shared["content"]
+            finally:
+                os.chdir(old_cwd)
+        finally:
+            os.unlink(temp_path)
+
+    def test_atomic_write_behavior(self):
+        """Test that write operations are atomic."""
+        # This is hard to test directly, but we can verify the implementation
+        # exists by checking that _atomic_write method is present
+        node = WriteFileNode()
+        assert hasattr(node, "_atomic_write")
+        assert callable(node._atomic_write)
+
 
 class TestDeleteFileNode:
     """Test DeleteFileNode functionality."""
@@ -693,6 +734,47 @@ class TestDeleteFileNode:
 
 class TestFileNodeIntegration:
     """Test integration between all file nodes."""
+
+    def test_path_normalization(self):
+        """Test that paths are normalized (expanduser, abspath)."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("Test content")
+            temp_path = f.name
+
+        try:
+            # Get the base name to test relative path
+            base_name = os.path.basename(temp_path)
+            rel_path = os.path.join(".", base_name)
+
+            # Change to the directory containing the file
+            old_cwd = os.getcwd()
+            os.chdir(os.path.dirname(temp_path))
+
+            try:
+                node = ReadFileNode()
+                shared = {"file_path": rel_path}
+
+                prep_res = node.prep(shared)
+                # prep_res should contain normalized absolute path
+                assert os.path.isabs(prep_res[0])
+
+                exec_res = node.exec(prep_res)
+                action = node.post(shared, prep_res, exec_res)
+
+                assert action == "default"
+                assert "1: Test content" in shared["content"]
+            finally:
+                os.chdir(old_cwd)
+        finally:
+            os.unlink(temp_path)
+
+    def test_atomic_write_behavior(self):
+        """Test that write operations are atomic."""
+        # This is hard to test directly, but we can verify the implementation
+        # exists by checking that _atomic_write method is present
+        node = WriteFileNode()
+        assert hasattr(node, "_atomic_write")
+        assert callable(node._atomic_write)
 
     def test_copy_move_delete_workflow(self):
         """Test a complete workflow using all file manipulation nodes."""

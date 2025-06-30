@@ -1,5 +1,6 @@
 """Read file node implementation."""
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -8,6 +9,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pocketflow import Node
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 
 class ReadFileNode(Node):
@@ -38,9 +42,15 @@ class ReadFileNode(Node):
         if not file_path:
             raise ValueError("Missing required 'file_path' in shared store or params")
 
+        # Normalize the path
+        file_path = os.path.expanduser(file_path)  # Expand ~
+        file_path = os.path.abspath(file_path)  # Resolve .. and make absolute
+        file_path = os.path.normpath(file_path)  # Clean up separators
+
         # Get encoding with UTF-8 default
         encoding = shared.get("encoding") or self.params.get("encoding", "utf-8")
 
+        logger.debug("Preparing to read file", extra={"file_path": file_path, "encoding": encoding, "phase": "prep"})
         return (str(file_path), encoding)
 
     def exec(self, prep_res: tuple[str, str]) -> tuple[str, bool]:
@@ -54,29 +64,66 @@ class ReadFileNode(Node):
 
         # Check if file exists
         if not os.path.exists(file_path):
-            return f"Error: File {file_path} does not exist", False
+            logger.error("File not found", extra={"file_path": file_path, "phase": "exec"})
+            return f"Error: File '{file_path}' does not exist. Please check the path and try again.", False
+
+        # Log file size for large files
+        try:
+            file_size = os.path.getsize(file_path)
+            if file_size > 1024 * 1024:  # 1MB
+                logger.info(
+                    "Reading large file",
+                    extra={"file_path": file_path, "size_mb": round(file_size / (1024 * 1024), 2), "phase": "exec"},
+                )
+        except OSError:
+            pass  # Continue with read attempt
 
         try:
+            logger.info("Reading file", extra={"file_path": file_path, "encoding": encoding, "phase": "exec"})
             # Read file content
             with open(file_path, encoding=encoding) as f:
                 lines = f.readlines()
         except UnicodeDecodeError as e:
-            return f"Error reading file {file_path}: Encoding error - {e!s}", False
+            logger.error(
+                "Encoding error", extra={"file_path": file_path, "encoding": encoding, "error": str(e), "phase": "exec"}
+            )
+            return (
+                f"Error: Cannot read '{file_path}' with {encoding} encoding. Try a different encoding or check the file format.",
+                False,
+            )
         except PermissionError:
-            return f"Error reading file {file_path}: Permission denied", False
+            logger.error("Permission denied", extra={"file_path": file_path, "phase": "exec"})
+            return (
+                f"Error: Permission denied when reading '{file_path}'. Check file permissions or run with appropriate privileges.",
+                False,
+            )
         except Exception as e:
+            logger.warning(
+                "Unexpected error, will retry", extra={"file_path": file_path, "error": str(e), "phase": "exec"}
+            )
             # This will trigger retry logic in Node
             raise RuntimeError(f"Error reading file {file_path}: {e!s}") from e
         else:
             # Add 1-indexed line numbers
             numbered_lines = [f"{i + 1}: {line}" for i, line in enumerate(lines)]
             content = "".join(numbered_lines)
+            logger.info(
+                "File read successfully",
+                extra={"file_path": file_path, "size_bytes": len(content), "line_count": len(lines), "phase": "exec"},
+            )
             return content, True
 
     def exec_fallback(self, prep_res: tuple[str, str], exc: Exception) -> tuple[str, bool]:
         """Handle final failure after all retries."""
         file_path, _ = prep_res
-        return f"Failed to read file {file_path} after retries: {exc!s}", False
+        logger.error(
+            f"Failed to read file after {self.max_retries} retries",
+            extra={"file_path": file_path, "error": str(exc), "phase": "fallback"},
+        )
+        return (
+            f"Error: Could not read '{file_path}' after {self.max_retries} retries. {exc!s}. Please check if the file is locked or if there are system issues.",
+            False,
+        )
 
     def post(self, shared: dict, prep_res: tuple[str, str], exec_res: tuple[str, bool]) -> str:
         """Update shared store based on result and return action."""

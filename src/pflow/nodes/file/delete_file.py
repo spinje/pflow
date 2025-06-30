@@ -45,6 +45,11 @@ class DeleteFileNode(Node):
         if not file_path:
             raise ValueError("Missing required 'file_path' in shared store or params")
 
+        # Normalize the path
+        file_path = os.path.expanduser(file_path)
+        file_path = os.path.abspath(file_path)
+        file_path = os.path.normpath(file_path)
+
         # Confirmation flag MUST come from shared store only (not params)
         if "confirm_delete" not in shared:
             raise ValueError(
@@ -53,6 +58,11 @@ class DeleteFileNode(Node):
             )
 
         confirm_delete = shared["confirm_delete"]
+
+        logger.debug(
+            "Preparing to delete file",
+            extra={"file_path": file_path, "confirm_delete": confirm_delete, "phase": "prep"},
+        )
 
         return (str(file_path), bool(confirm_delete))
 
@@ -67,42 +77,76 @@ class DeleteFileNode(Node):
 
         # Check confirmation
         if not confirm_delete:
-            return f"Error: Deletion of {file_path} not confirmed (set shared['confirm_delete'] = True)", False
+            logger.error(
+                "Delete not confirmed",
+                extra={"file_path": file_path, "confirm_delete": confirm_delete, "phase": "exec"},
+            )
+            return (
+                f"Error: Deletion of '{file_path}' not confirmed. Set shared['confirm_delete'] = True to confirm.",
+                False,
+            )
 
         # Check if file exists
         if not os.path.exists(file_path):
             # Idempotent behavior - already deleted is success
-            logger.info(
-                f"File {file_path} does not exist (already deleted)", extra={"phase": "delete", "file_path": file_path}
-            )
-            return f"Successfully deleted {file_path} (file did not exist)", True
+            logger.info("File does not exist (idempotent success)", extra={"file_path": file_path, "phase": "exec"})
+            return f"Successfully deleted '{file_path}' (file did not exist)", True
 
         # Check if it's actually a file (not directory)
         if not os.path.isfile(file_path):
-            return f"Error: Path {file_path} is not a file", False
+            logger.error("Path is not a file", extra={"file_path": file_path, "phase": "exec"})
+            return f"Error: Path '{file_path}' is not a file. This node only deletes files, not directories.", False
+
+        # Get file info for logging
+        try:
+            file_size = os.path.getsize(file_path)
+            logger.info("Deleting file", extra={"file_path": file_path, "size_bytes": file_size, "phase": "exec"})
+        except OSError:
+            file_size = 0
 
         try:
             # Delete the file
             os.remove(file_path)
             # Log the deletion for audit trail
             logger.info(
-                f"Deleted file: {file_path}", extra={"phase": "delete", "file_path": file_path, "action": "deleted"}
+                "File deleted successfully",
+                extra={"file_path": file_path, "size_bytes": file_size, "action": "deleted", "phase": "exec"},
             )
         except PermissionError:
-            return f"Error deleting file {file_path}: Permission denied", False
+            logger.error("Permission denied", extra={"file_path": file_path, "phase": "exec"})
+            return (
+                f"Error: Permission denied when deleting '{file_path}'. Check file permissions or run with appropriate privileges.",
+                False,
+            )
         except OSError as e:
-            # File system errors are non-retryable
-            return f"Error deleting file {file_path}: {e!s}", False
+            # Handle race condition where file was deleted between check and delete
+            if not os.path.exists(file_path):
+                logger.info(
+                    "File deleted by another process (race condition)", extra={"file_path": file_path, "phase": "exec"}
+                )
+                return f"Successfully deleted '{file_path}' (deleted by another process)", True
+            logger.error("Delete failed", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
+            return f"Error: Failed to delete '{file_path}': {e!s}", False
         except Exception as e:
+            logger.warning(
+                "Unexpected error, will retry", extra={"file_path": file_path, "error": str(e), "phase": "exec"}
+            )
             # This will trigger retry logic in Node
-            raise RuntimeError(f"Error deleting file {file_path}: {e!s}") from e
+            raise RuntimeError(f"Error deleting file '{file_path}': {e!s}") from e
         else:
-            return f"Successfully deleted {file_path}", True
+            return f"Successfully deleted '{file_path}'", True
 
     def exec_fallback(self, prep_res: tuple[str, bool], exc: Exception) -> tuple[str, bool]:
         """Handle final failure after all retries."""
         file_path, _ = prep_res
-        return f"Failed to delete {file_path} after retries: {exc!s}", False
+        logger.error(
+            f"Failed to delete file after {self.max_retries} retries",
+            extra={"file_path": file_path, "error": str(exc), "phase": "fallback"},
+        )
+        return (
+            f"Error: Could not delete '{file_path}' after {self.max_retries} retries. {exc!s}. Check if the file is locked or if there are system issues.",
+            False,
+        )
 
     def post(self, shared: dict, prep_res: tuple[str, bool], exec_res: tuple[str, bool]) -> str:
         """Update shared store based on result and return action."""
