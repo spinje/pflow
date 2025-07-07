@@ -2,15 +2,21 @@
 
 **Turn expensive, one-off AI prompts into permanent, instant CLI commands.**
 
-Workflows that take an AI agent 2 minutes and $1.00 to figure out *every time*, pflow figures out once, then runs in 2 seconds for free, forever.
+Workflows that take an AI agent 2 minutes and $1.00 to figure out *every time*, pflow figures out once, then runs in 2 seconds (at least the planning part) for free, forever.
+
+One command that finds your workflow or builds it for you. Describe what you want—pflow either runs your existing workflow or creates it on the spot.
 
 ```bash
-# First time: AI plans your workflow (30 seconds)
+# Describe what you want:
 $ pflow "analyze customer churn from stripe and hubspot"
-✨ Generated flow saved as 'analyze-churn'
 
-# Every time after: Instant execution (2 seconds)
-$ pflow analyze-churn
+# First time: Creates the workflow (30 seconds)
+→ No existing workflow found. Building one for you...
+✨ Created and saved as 'analyze-churn'
+
+# Every time after: Finds and runs it instantly (2 seconds)
+$ pflow "analyze customer churn" # or just pflow analyze-churn if you remember the name
+→ Found 'analyze-churn'. Running...
 ✅ Analyzing customer churn... done!
 ```
 
@@ -42,17 +48,16 @@ This is not just another AI wrapper. `pflow` fundamentally changes the economics
 # Install pflow
 pip install pflow
 
-# Describe what you want in plain English
+# Just describe what you want:
 pflow "check my github PRs and summarize them for standup"
 
-# pflow generates and shows you the workflow:
-# → github-list-prs --state=open >> llm --prompt="summarize for standup"
-#
-# Run this flow? [Y/n] y
-✅ Flow saved as 'standup-prep'
+# If it's new, pflow builds it:
+# → Creating workflow: github-list-prs --state=open >> llm --prompt="summarize for standup"
+# Save as 'standup-prep'? [Y/n] y
 
-# Tomorrow morning, just run:
-pflow standup-prep
+# If it exists, pflow runs it:
+pflow "summarize my PRs for standup"
+# → Found 'standup-prep'. Running...
 ```
 
 ### 2\. Build Complex Workflows
@@ -88,13 +93,13 @@ kubectl logs my-pod | pflow "check for errors and notify if critical"
 
 ## Why use `pflow`?
 
-The real competition for `pflow` isn't just the AI chat window—it's the `.py` script you ask an AI to write. Here's why a `pflow` flow is a better artifact.
+The real competition for `pflow` isn't just the AI chat window—it's the combination of scattered scripts and repeated AI prompts. Here's why `pflow` is better than both:
 
 | Feature | AI-Generated `script.py` | `pflow` Flow |
 | :--- | :--- | :--- |
 | **Boilerplate** | Full of `argparse`, `requests`, and auth code you have to maintain. | **Zero boilerplate.** Nodes are pure logic. |
 | **Composability**| Hard. Chaining two scripts requires manual edits and plumbing. | **Native.** `flow1 >> flow2` just works. |
-| **Discoverability**| A messy folder of scripts (`do-thing.py`, `analysis_v2_final.py`). | Ask `pflow` what it can do in plain English. |
+| **Discoverability**| A messy folder of scripts (`do-thing.py`, `analysis_v2_final.py`). | Describe what you want—pflow finds or creates it. |
 | **Maintenance** | An API changes? You hunt down and fix 10 different scripts. | An API changes? You update **one node.** |
 
 > No more hunting through a dark forest of scripts for that `analysis_final_v2.py`
@@ -108,9 +113,27 @@ Why is it better than letting an AI agent call tools and mcp servers for you?
 | **Reliability** | Non-deterministic; agent might change its mind | **100% Deterministic**; same input, same output |
 | **Workflow** | Copy-paste from a chat log; hard to share | A shareable command: `pflow my-flow` |
 
+## The Universal Automation Interface
+
+`pflow` unifies workflow discovery and creation. One command does it all:
+
+```bash
+# Describe any task in natural language
+pflow "analyze our AWS costs by service"
+
+# If you've built it before:
+→ Found 'aws-cost-analyzer'. Running...
+
+# If it's new:
+→ No workflow found. Creating: aws-costs >> llm-analyze >> report
+→ Save as 'aws-cost-analyzer'? [Y/n]
+```
+
+No more wondering "do I have a script for this?" Just describe what you want—pflow handles the rest.
+
 ## How It Works
 
-`pflow` captures your intent and compiles it into a reliable tool, ready to be used by you, your team, or even other AI agents. Use as a simple CLI command or invoked by using natural language.
+`pflow` captures your intent and compiles it into a reliable tool, ready to be used by you, your team, or even other AI agents.
 
 ```mermaid
 graph TD
