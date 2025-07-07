@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import signal
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 import click
+
+from pflow.core import ValidationError, validate_ir
+from pflow.registry import Registry
+from pflow.runtime import CompilationError, compile_ir_to_flow
 
 
 def handle_sigint(signum: int, frame: object) -> None:
@@ -30,12 +35,96 @@ def read_workflow_from_file(file_path: str) -> str:
         raise click.ClickException(f"cli: Unable to read file: '{file_path}'. File must be valid UTF-8 text.") from None
 
 
+def get_input_source(file: str | None, workflow: tuple[str, ...]) -> tuple[str, str]:
+    """Determine input source and read workflow input."""
+    if file and workflow:
+        raise click.ClickException(
+            "cli: Cannot specify both --file and command arguments. Use either --file OR provide a workflow as arguments."
+        )
+
+    if file:
+        # Read from file
+        return read_workflow_from_file(file), "file"
+    elif not sys.stdin.isatty():
+        # Read from stdin
+        raw_input = sys.stdin.read().strip()
+        if raw_input:  # Only use stdin if it has content
+            if workflow:
+                raise click.ClickException(
+                    "cli: Cannot use stdin input when command arguments are provided. Use either piped input OR command arguments."
+                )
+            return raw_input, "stdin"
+        else:
+            # Empty stdin, treat as command arguments
+            return " ".join(workflow), "args"
+    else:
+        # Use command arguments
+        return " ".join(workflow), "args"
+
+
+def execute_json_workflow(ctx: click.Context, ir_data: dict[str, Any]) -> None:
+    """Execute a JSON workflow if it's valid."""
+    # If it's valid JSON with workflow structure, execute it
+    if isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data:
+        # Load registry (with helpful error if missing)
+        registry = Registry()
+        if not registry.registry_path.exists():
+            click.echo("cli: Error - Node registry not found.", err=True)
+            click.echo("cli: Run 'python scripts/populate_registry.py' to populate the registry.", err=True)
+            click.echo("cli: Note: This is temporary until 'pflow registry' commands are implemented.", err=True)
+            ctx.exit(1)
+
+        # Validate IR
+        validate_ir(ir_data)
+
+        # Compile to Flow
+        flow = compile_ir_to_flow(ir_data, registry)
+
+        # Execute with empty shared storage
+        shared_storage: dict[str, Any] = {}
+        flow.run(shared_storage)
+
+        # Simple success message
+        click.echo("Workflow executed successfully")
+    else:
+        # Valid JSON but not a workflow - treat as text
+        click.echo(f"Collected workflow from {ctx.obj['input_source']}: {ctx.obj['raw_input']}")
+
+
+def process_file_workflow(ctx: click.Context, raw_input: str) -> None:
+    """Process file-based workflow, handling JSON and errors."""
+    try:
+        # Try to parse as JSON
+        ir_data = json.loads(raw_input)
+        execute_json_workflow(ctx, ir_data)
+
+    except json.JSONDecodeError:
+        # Not JSON - treat as plain text (for future natural language processing)
+        click.echo(f"Collected workflow from file: {raw_input}")
+
+    except ValidationError as e:
+        click.echo(f"cli: Invalid workflow - {e.message}", err=True)
+        if hasattr(e, "path") and e.path:
+            click.echo(f"cli: Error at: {e.path}", err=True)
+        if hasattr(e, "suggestion") and e.suggestion:
+            click.echo(f"cli: Suggestion: {e.suggestion}", err=True)
+        ctx.exit(1)
+
+    except CompilationError as e:
+        click.echo(f"cli: Compilation failed - {e}", err=True)
+        ctx.exit(1)
+
+    except Exception as e:
+        click.echo(f"cli: Unexpected error - {e}", err=True)
+        ctx.exit(1)
+
+
 @click.command(context_settings={"allow_interspersed_args": False})
 @click.pass_context
 @click.option("--version", is_flag=True, help="Show the pflow version")
 @click.option("--file", "-f", type=str, help="Read workflow from file")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
-def main(ctx: click.Context, version: bool, file: Optional[str], workflow: tuple[str, ...]) -> None:  # noqa: UP007
+def main(ctx: click.Context, version: bool, file: str | None, workflow: tuple[str, ...]) -> None:
     """pflow - Plan Once, Run Forever
 
     Natural language to deterministic workflows.
@@ -81,32 +170,7 @@ def main(ctx: click.Context, version: bool, file: Optional[str], workflow: tuple
         ctx.obj = {}
 
     # Determine input source and read workflow
-    if file and workflow:
-        raise click.ClickException(
-            "cli: Cannot specify both --file and command arguments. Use either --file OR provide a workflow as arguments."
-        )
-
-    if file:
-        # Read from file
-        raw_input = read_workflow_from_file(file)
-        source = "file"
-    elif not sys.stdin.isatty():
-        # Read from stdin
-        raw_input = sys.stdin.read().strip()
-        if raw_input:  # Only use stdin if it has content
-            if workflow:
-                raise click.ClickException(
-                    "cli: Cannot use stdin input when command arguments are provided. Use either piped input OR command arguments."
-                )
-            source = "stdin"
-        else:
-            # Empty stdin, treat as command arguments
-            raw_input = " ".join(workflow)
-            source = "args"
-    else:
-        # Use command arguments
-        raw_input = " ".join(workflow)
-        source = "args"
+    raw_input, source = get_input_source(file, workflow)
 
     # Validate workflow is not empty
     if not raw_input:
@@ -122,5 +186,9 @@ def main(ctx: click.Context, version: bool, file: Optional[str], workflow: tuple
     ctx.obj["raw_input"] = raw_input
     ctx.obj["input_source"] = source
 
-    # Temporary output
-    click.echo(f"Collected workflow from {source}: {raw_input}")
+    # Process workflow based on input type
+    if file and source == "file":
+        process_file_workflow(ctx, raw_input)
+    else:
+        # Temporary output for non-file inputs
+        click.echo(f"Collected workflow from {source}: {raw_input}")

@@ -198,4 +198,42 @@ A chronological record of significant architectural and design decisions made du
 
 ---
 
+## Decision: Modify PocketFlow Instead of Using Wrapper for Parameter Handling
+- **Date**: 2025-01-07
+- **Made during**: Task 3 (Execute a Hardcoded 'Hello World' Workflow)
+- **Status**: Accepted (Temporary)
+- **Context**: PocketFlow's Flow._orch() method overwrites node parameters with flow parameters, preventing pflow nodes from maintaining their configuration values set during compilation
+- **Deep Dive**: See detailed analysis in `decision-deep-dives/pocketflow-parameter-handling/`
+- **Alternatives considered**:
+  1. **PreservingFlow wrapper** - Custom Flow subclass that preserves node parameters
+     - Pros: Clean separation, no framework modification, clear intent
+     - Cons: Extra wrapper layer, diverges from standard PocketFlow usage
+  2. **Store configuration in shared store** - Use shared store for all configuration
+     - Pros: Aligns with PocketFlow design, no modifications needed
+     - Cons: Mixes config with runtime data, requires major refactoring, cluttered shared store
+  3. **Modify PocketFlow directly** - Add conditional check in _orch()
+     - Pros: Minimal change (3 lines), fixes root cause, no wrapper needed
+     - Cons: Modifies external framework, breaks BatchFlow, temporary solution
+  4. **Use Flow-level parameters** - Set all params on Flow instead of nodes
+     - Pros: Works with current design
+     - Cons: All nodes share params, no node-specific config, doesn't match pflow's model
+- **Decision**: Modify PocketFlow's _orch() method to only override node parameters when explicitly passed
+- **Rationale**:
+  - MVP doesn't need BatchFlow functionality, so breaking it is acceptable temporarily
+  - Minimal change (3 lines) reduces complexity
+  - Direct fix is clearer than wrapper indirection
+  - Easy to revert when BatchFlow support is needed
+  - Pragmatic solution for current scope
+  - Well-documented as temporary modification
+- **Consequences**:
+  - BatchFlow functionality will not work until this is addressed
+  - Must document this modification clearly (PFLOW_MODIFICATIONS.md created)
+  - Need to revisit before implementing any batch processing features
+  - Future options include: reverting to wrapper, enhancing condition, redesigning parameter model, or forking
+  - All pflow developers must be aware of this modification
+  - Cannot update PocketFlow without careful consideration
+- **Review date**: Before implementing BatchFlow support or at MVP completion
+
+---
+
 <!-- New decisions are appended below this line -->

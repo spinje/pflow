@@ -113,7 +113,7 @@ class DeleteFileNode(Node):
                 extra={"file_path": file_path, "size_bytes": file_size, "action": "deleted", "phase": "exec"},
             )
         except PermissionError:
-            logger.error("Permission denied", extra={"file_path": file_path, "phase": "exec"})
+            logger.exception("Permission denied", extra={"file_path": file_path, "phase": "exec"})
             return (
                 f"Error: Permission denied when deleting '{file_path}'. Check file permissions or run with appropriate privileges.",
                 False,
@@ -125,7 +125,7 @@ class DeleteFileNode(Node):
                     "File deleted by another process (race condition)", extra={"file_path": file_path, "phase": "exec"}
                 )
                 return f"Successfully deleted '{file_path}' (deleted by another process)", True
-            logger.error("Delete failed", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
+            logger.exception("Delete failed", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
             return f"Error: Failed to delete '{file_path}': {e!s}", False
         except Exception as e:
             logger.warning(

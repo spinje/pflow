@@ -98,7 +98,11 @@ class Flow(BaseNode):
     def _orch(self, shared, params=None):
         curr, p, last_action = copy.copy(self.start_node), (params or {**self.params}), None
         while curr:
-            curr.set_params(p)
+            # Only override node params if explicitly passed (not for default empty flow params)
+            # TODO: This is a temporary modification for pflow. When implementing BatchFlow support,
+            # this will need to be revisited to ensure proper parameter inheritance.
+            if params is not None:
+                curr.set_params(p)
             last_action = curr._run(shared)
             curr = copy.copy(self.get_next_node(curr, last_action))
         return last_action

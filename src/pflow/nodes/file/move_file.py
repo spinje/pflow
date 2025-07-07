@@ -91,7 +91,6 @@ class MoveFileNode(Node):
                     "Cross-device move completed",
                     extra={"source_path": source_path, "dest_path": dest_path, "phase": "cross_device_move"},
                 )
-                return f"Successfully moved '{source_path}' to '{dest_path}' (cross-device)", True
             except Exception as e:
                 # Copy succeeded but delete failed - partial success
                 warning_msg = f"File copied but source deletion failed: {e!s}"
@@ -100,10 +99,12 @@ class MoveFileNode(Node):
                 )
                 # Store warning but still return success
                 return f"Successfully moved '{source_path}' to '{dest_path}' (warning: {warning_msg})", True
+            else:
+                return f"Successfully moved '{source_path}' to '{dest_path}' (cross-device)", True
 
         except Exception as e:
             # Copy failed
-            logger.error(
+            logger.exception(
                 "Cross-device move failed during copy",
                 extra={
                     "source_path": source_path,
@@ -114,15 +115,8 @@ class MoveFileNode(Node):
             )
             return f"Error: Failed to copy '{source_path}' to '{dest_path}' during cross-device move: {e!s}", False
 
-    def exec(self, prep_res: tuple[str, str, bool]) -> tuple[str, bool]:
-        """
-        Move file from source to destination.
-
-        Returns:
-            Tuple of (result_message, success_bool)
-        """
-        source_path, dest_path, overwrite = prep_res
-
+    def _validate_move(self, source_path: str, dest_path: str, overwrite: bool) -> tuple[str, bool] | None:
+        """Validate source and destination for move operation."""
         # Check if source exists
         if not os.path.exists(source_path):
             logger.error("Source file not found", extra={"source_path": source_path, "phase": "exec"})
@@ -144,6 +138,40 @@ class MoveFileNode(Node):
             )
             return f"Error: Destination file '{dest_path}' already exists. Set overwrite=True to replace it.", False
 
+        return None
+
+    def _ensure_parent_directory(self, dest_path: str) -> tuple[str, bool] | None:
+        """Create parent directories if needed."""
+        parent_dir = os.path.dirname(dest_path)
+        if parent_dir:
+            try:
+                logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
+                os.makedirs(parent_dir, exist_ok=True)
+            except PermissionError:
+                logger.exception(
+                    "Permission denied creating directory", extra={"dir_path": parent_dir, "phase": "exec"}
+                )
+                return f"Error: Permission denied when creating directory '{parent_dir}'. Check permissions.", False
+            except OSError as e:
+                logger.exception(
+                    "Failed to create directory", extra={"dir_path": parent_dir, "error": str(e), "phase": "exec"}
+                )
+                return f"Error: Cannot create directory '{parent_dir}': {e!s}", False
+        return None
+
+    def exec(self, prep_res: tuple[str, str, bool]) -> tuple[str, bool]:
+        """
+        Move file from source to destination.
+
+        Returns:
+            Tuple of (result_message, success_bool)
+        """
+        source_path, dest_path, overwrite = prep_res
+
+        # Validate the move operation
+        if error := self._validate_move(source_path, dest_path, overwrite):
+            return error
+
         # Get file size for logging
         try:
             file_size = os.path.getsize(source_path)
@@ -161,19 +189,8 @@ class MoveFileNode(Node):
             file_size = 0
 
         # Create parent directories if needed
-        parent_dir = os.path.dirname(dest_path)
-        if parent_dir:
-            try:
-                logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
-                os.makedirs(parent_dir, exist_ok=True)
-            except PermissionError:
-                logger.error("Permission denied creating directory", extra={"dir_path": parent_dir, "phase": "exec"})
-                return f"Error: Permission denied when creating directory '{parent_dir}'. Check permissions.", False
-            except OSError as e:
-                logger.error(
-                    "Failed to create directory", extra={"dir_path": parent_dir, "error": str(e), "phase": "exec"}
-                )
-                return f"Error: Cannot create directory '{parent_dir}': {e!s}", False
+        if error := self._ensure_parent_directory(dest_path):
+            return error
 
         try:
             logger.info("Moving file", extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"})
@@ -193,13 +210,13 @@ class MoveFileNode(Node):
                 # Handle cross-filesystem move
                 return self._cross_device_move(source_path, dest_path)
             # Other OS errors are non-retryable
-            logger.error(
+            logger.exception(
                 "Move failed",
                 extra={"source_path": source_path, "dest_path": dest_path, "error": str(e), "phase": "exec"},
             )
             return f"Error: Failed to move '{source_path}' to '{dest_path}': {e!s}", False
         except PermissionError:
-            logger.error(
+            logger.exception(
                 "Permission denied during move",
                 extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"},
             )

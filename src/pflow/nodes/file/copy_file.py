@@ -67,6 +67,58 @@ class CopyFileNode(Node):
         )
         return (str(source_path), str(dest_path), bool(overwrite))
 
+    def _validate_source(self, source_path: str) -> tuple[str, bool] | None:
+        """Validate source file exists and is a file."""
+        if not os.path.exists(source_path):
+            logger.error("Source file not found", extra={"source_path": source_path, "phase": "exec"})
+            return f"Error: Source file '{source_path}' does not exist. Please check the path.", False
+
+        if not os.path.isfile(source_path):
+            logger.error("Source is not a file", extra={"source_path": source_path, "phase": "exec"})
+            return (
+                f"Error: Source path '{source_path}' is not a file. This node only copies files, not directories.",
+                False,
+            )
+        return None
+
+    def _validate_destination(self, dest_path: str, overwrite: bool, source_path: str) -> tuple[str, bool] | None:
+        """Validate destination doesn't exist or can be overwritten."""
+        if os.path.exists(dest_path) and not overwrite:
+            logger.error(
+                "Destination exists, overwrite not allowed",
+                extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"},
+            )
+            return f"Error: Destination file '{dest_path}' already exists. Set overwrite=True to replace it.", False
+        return None
+
+    def _check_disk_space(
+        self, file_size: int, parent_dir: str | None, source_path: str, dest_path: str
+    ) -> tuple[str, bool] | None:
+        """Check if there's enough disk space for the copy."""
+        if file_size > 0:
+            try:
+                stat = os.statvfs(parent_dir or ".")
+                free_bytes = stat.f_bavail * stat.f_frsize
+                if free_bytes < file_size * 1.5:  # Want at least 1.5x file size
+                    logger.error(
+                        "Insufficient disk space",
+                        extra={
+                            "source_path": source_path,
+                            "dest_path": dest_path,
+                            "required_bytes": file_size,
+                            "free_bytes": free_bytes,
+                            "phase": "exec",
+                        },
+                    )
+                    return (
+                        f"Error: Insufficient disk space. Need {file_size} bytes but only {free_bytes} available.",
+                        False,
+                    )
+            except (AttributeError, OSError):
+                # statvfs not available on Windows or other error - continue anyway
+                pass
+        return None
+
     def exec(self, prep_res: tuple[str, str, bool]) -> tuple[str, bool]:
         """
         Copy file from source to destination with disk space checks.
@@ -76,26 +128,13 @@ class CopyFileNode(Node):
         """
         source_path, dest_path, overwrite = prep_res
 
-        # Check if source exists
-        if not os.path.exists(source_path):
-            logger.error("Source file not found", extra={"source_path": source_path, "phase": "exec"})
-            return f"Error: Source file '{source_path}' does not exist. Please check the path.", False
+        # Validate source
+        if error := self._validate_source(source_path):
+            return error
 
-        # Check if source is a file (not directory)
-        if not os.path.isfile(source_path):
-            logger.error("Source is not a file", extra={"source_path": source_path, "phase": "exec"})
-            return (
-                f"Error: Source path '{source_path}' is not a file. This node only copies files, not directories.",
-                False,
-            )
-
-        # Check if destination already exists
-        if os.path.exists(dest_path) and not overwrite:
-            logger.error(
-                "Destination exists, overwrite not allowed",
-                extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"},
-            )
-            return f"Error: Destination file '{dest_path}' already exists. Set overwrite=True to replace it.", False
+        # Validate destination
+        if error := self._validate_destination(dest_path, overwrite, source_path):
+            return error
 
         # Get source file size
         try:
@@ -125,38 +164,25 @@ class CopyFileNode(Node):
                 logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
                 os.makedirs(parent_dir, exist_ok=True)
             except PermissionError:
-                logger.error("Permission denied creating directory", extra={"dir_path": parent_dir, "phase": "exec"})
+                logger.exception(
+                    "Permission denied creating directory", extra={"dir_path": parent_dir, "phase": "exec"}
+                )
                 return f"Error: Permission denied when creating directory '{parent_dir}'. Check permissions.", False
             except OSError as e:
-                logger.error(
+                logger.exception(
                     "Failed to create directory", extra={"dir_path": parent_dir, "error": str(e), "phase": "exec"}
                 )
                 return f"Error: Cannot create directory '{parent_dir}': {e!s}", False
 
-        # Check disk space if file size is known
-        if file_size > 0:
-            try:
-                stat = os.statvfs(parent_dir or ".")
-                free_bytes = stat.f_bavail * stat.f_frsize
-                if free_bytes < file_size * 1.5:  # Want at least 1.5x file size
-                    logger.error(
-                        "Insufficient disk space",
-                        extra={
-                            "source_path": source_path,
-                            "dest_path": dest_path,
-                            "required_bytes": file_size,
-                            "free_bytes": free_bytes,
-                            "phase": "exec",
-                        },
-                    )
-                    return (
-                        f"Error: Insufficient disk space. Need {file_size} bytes but only {free_bytes} available.",
-                        False,
-                    )
-            except (AttributeError, OSError):
-                # statvfs not available on Windows or other error - continue anyway
-                pass
+        # Check disk space
+        if disk_error := self._check_disk_space(file_size, parent_dir, source_path, dest_path):
+            return disk_error
 
+        # Perform the actual copy
+        return self._perform_copy(source_path, dest_path, file_size)
+
+    def _perform_copy(self, source_path: str, dest_path: str, file_size: int) -> tuple[str, bool]:
+        """Perform the actual file copy operation."""
         try:
             logger.info("Copying file", extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"})
             # Copy the file preserving metadata
@@ -167,7 +193,7 @@ class CopyFileNode(Node):
                 extra={"source_path": source_path, "dest_path": dest_path, "size_bytes": file_size, "phase": "exec"},
             )
         except PermissionError:
-            logger.error(
+            logger.exception(
                 "Permission denied during copy",
                 extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"},
             )
@@ -177,12 +203,12 @@ class CopyFileNode(Node):
             )
         except OSError as e:
             if "No space left" in str(e) or "disk full" in str(e).lower():
-                logger.error(
+                logger.exception(
                     "Disk full during copy",
                     extra={"source_path": source_path, "dest_path": dest_path, "error": str(e), "phase": "exec"},
                 )
                 return f"Error: No space left on device when copying to '{dest_path}'.", False
-            logger.error(
+            logger.exception(
                 "Copy failed",
                 extra={"source_path": source_path, "dest_path": dest_path, "error": str(e), "phase": "exec"},
             )

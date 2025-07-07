@@ -1,0 +1,25 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "read",
+      "type": "read-file",
+      "params": {
+        "file_path": "input.txt"
+      }
+    },
+    {
+      "id": "write",
+      "type": "write-file",
+      "params": {
+        "file_path": "output.txt"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "read",
+      "to": "write"
+    }
+  ]
+}

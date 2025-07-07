@@ -138,6 +138,11 @@ def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
     if pocketflow_path.exists():
         syspaths.append(pocketflow_path)
 
+    # Add src directory to sys.path so Python can find the pflow package
+    src_path = project_root / "src"
+    if src_path.exists():
+        syspaths.append(src_path)
+
     with temporary_syspath(syspaths):
         # Import pocketflow to get BaseNode reference
         try:

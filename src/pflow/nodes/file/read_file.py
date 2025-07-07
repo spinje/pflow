@@ -84,7 +84,7 @@ class ReadFileNode(Node):
             with open(file_path, encoding=encoding) as f:
                 lines = f.readlines()
         except UnicodeDecodeError as e:
-            logger.error(
+            logger.exception(
                 "Encoding error", extra={"file_path": file_path, "encoding": encoding, "error": str(e), "phase": "exec"}
             )
             return (
@@ -92,7 +92,7 @@ class ReadFileNode(Node):
                 False,
             )
         except PermissionError:
-            logger.error("Permission denied", extra={"file_path": file_path, "phase": "exec"})
+            logger.exception("Permission denied", extra={"file_path": file_path, "phase": "exec"})
             return (
                 f"Error: Permission denied when reading '{file_path}'. Check file permissions or run with appropriate privileges.",
                 False,

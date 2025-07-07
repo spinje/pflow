@@ -1,5 +1,6 @@
 """Write file node implementation."""
 
+import contextlib
 import logging
 import os
 import shutil
@@ -79,34 +80,31 @@ class WriteFileNode(Node):
         )
         return (str(content), str(file_path), encoding, append)
 
-    def exec(self, prep_res: tuple[str, str, str, bool]) -> tuple[str, bool]:
-        """
-        Write content to file atomically.
-
-        Returns:
-            Tuple of (result_message, success_bool)
-        """
-        content, file_path, encoding, append = prep_res
-
-        # Create parent directories if needed
+    def _ensure_parent_directory(self, file_path: str) -> tuple[str, bool] | None:
+        """Create parent directories if needed."""
         parent_dir = os.path.dirname(file_path)
         if parent_dir:
             try:
                 logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
                 os.makedirs(parent_dir, exist_ok=True)
             except PermissionError:
-                logger.error("Permission denied creating directory", extra={"dir_path": parent_dir, "phase": "exec"})
+                logger.exception(
+                    "Permission denied creating directory", extra={"dir_path": parent_dir, "phase": "exec"}
+                )
                 return (
                     f"Error: Permission denied when creating directory '{parent_dir}'. Check permissions or run with appropriate privileges.",
                     False,
                 )
             except OSError as e:
-                logger.error(
+                logger.exception(
                     "Failed to create directory", extra={"dir_path": parent_dir, "error": str(e), "phase": "exec"}
                 )
                 return f"Error: Cannot create directory '{parent_dir}': {e!s}", False
+        return None
 
-        # Check disk space (basic check)
+    def _check_disk_space(self, content: str, encoding: str, file_path: str) -> tuple[str, bool] | None:
+        """Check if there's enough disk space for writing."""
+        parent_dir = os.path.dirname(file_path)
         try:
             stat = os.statvfs(parent_dir or ".")
             free_bytes = stat.f_bavail * stat.f_frsize
@@ -128,6 +126,24 @@ class WriteFileNode(Node):
         except (AttributeError, OSError):
             # statvfs not available on Windows or other error - continue anyway
             pass
+        return None
+
+    def exec(self, prep_res: tuple[str, str, str, bool]) -> tuple[str, bool]:
+        """
+        Write content to file atomically.
+
+        Returns:
+            Tuple of (result_message, success_bool)
+        """
+        content, file_path, encoding, append = prep_res
+
+        # Create parent directories if needed
+        if error := self._ensure_parent_directory(file_path):
+            return error
+
+        # Check disk space
+        if error := self._check_disk_space(content, encoding, file_path):
+            return error
 
         # Log operation start for large content
         if len(content) > 1024 * 1024:  # 1MB
@@ -146,21 +162,22 @@ class WriteFileNode(Node):
                     "File append successful",
                     extra={"file_path": file_path, "bytes_written": len(content), "phase": "exec"},
                 )
-                return f"Successfully appended to '{file_path}'", True
             except PermissionError:
-                logger.error("Permission denied", extra={"file_path": file_path, "phase": "exec"})
+                logger.exception("Permission denied", extra={"file_path": file_path, "phase": "exec"})
                 return f"Error: Permission denied when writing to '{file_path}'. Check file permissions.", False
             except OSError as e:
                 if "No space left" in str(e) or "disk full" in str(e).lower():
-                    logger.error("Disk full", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
+                    logger.exception("Disk full", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
                     return f"Error: No space left on device when writing to '{file_path}'.", False
-                logger.error("Write failed", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
+                logger.exception("Write failed", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
                 return f"Error: Failed to write to '{file_path}': {e!s}", False
             except Exception as e:
                 logger.warning(
                     "Unexpected error, will retry", extra={"file_path": file_path, "error": str(e), "phase": "exec"}
                 )
                 raise RuntimeError(f"Error writing file {file_path}: {e!s}") from e
+            else:
+                return f"Successfully appended to '{file_path}'", True
         else:
             # For write mode, use atomic write with temp file
             return self._atomic_write(file_path, content, encoding)
@@ -191,22 +208,21 @@ class WriteFileNode(Node):
                 "File written atomically",
                 extra={"file_path": file_path, "temp_path": temp_path, "bytes_written": len(content), "phase": "exec"},
             )
-            return f"Successfully wrote to '{file_path}'", True
 
         except PermissionError:
-            logger.error(
+            logger.exception(
                 "Permission denied during atomic write",
                 extra={"file_path": file_path, "temp_path": temp_path, "phase": "exec"},
             )
             return f"Error: Permission denied when writing to '{file_path}'. Check directory permissions.", False
         except OSError as e:
             if "No space left" in str(e) or "disk full" in str(e).lower():
-                logger.error(
+                logger.exception(
                     "Disk full during atomic write",
                     extra={"file_path": file_path, "temp_path": temp_path, "error": str(e), "phase": "exec"},
                 )
                 return f"Error: No space left on device when writing to '{file_path}'.", False
-            logger.error(
+            logger.exception(
                 "Atomic write failed",
                 extra={"file_path": file_path, "temp_path": temp_path, "error": str(e), "phase": "exec"},
             )
@@ -217,19 +233,17 @@ class WriteFileNode(Node):
                 extra={"file_path": file_path, "temp_path": temp_path, "error": str(e), "phase": "exec"},
             )
             raise RuntimeError(f"Error during atomic write to {file_path}: {e!s}") from e
+        else:
+            return f"Successfully wrote to '{file_path}'", True
         finally:
             # Clean up temp file if still exists
             if temp_fd is not None:
-                try:
+                with contextlib.suppress(Exception):
                     os.close(temp_fd)
-                except:
-                    pass
             if temp_path and os.path.exists(temp_path):
-                try:
+                with contextlib.suppress(Exception):
                     os.unlink(temp_path)
                     logger.debug("Cleaned up temp file", extra={"temp_path": temp_path, "phase": "exec"})
-                except:
-                    pass
 
     def exec_fallback(self, prep_res: tuple[str, str, str, bool], exc: Exception) -> tuple[str, bool]:
         """Handle final failure after all retries."""
