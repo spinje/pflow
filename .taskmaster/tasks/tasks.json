@@ -109,7 +109,7 @@
         "id": 4,
         "title": "Implement IR-to-PocketFlow Object Converter",
         "description": "Build the compiler that converts JSON IR to pocketflow.Flow objects with template resolution",
-        "status": "pending",
+        "status": "done",
         "dependencies": [
           6,
           5

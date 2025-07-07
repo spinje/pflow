@@ -75,3 +75,11 @@ If you see `$file_path` in params, pass it through unchanged. Compiler handles t
 Just use shared storage. Check shared first, then self.params as fallback.
 
 That's it. Keep nodes simple, inherit from BaseNode, set name attribute, use the right shared storage access pattern.
+
+Most relevant examples:
+
+  1. pocketflow/cookbook/Tutorial-Cursor/
+  2. pocketflow/cookbook/pocketflow-communication/
+  3. pocketflow/cookbook/pocketflow-batch-flow/
+  4. pocketflow/cookbook/pocketflow-node/
+  5. pocketflow/cookbook/pocketflow-map-reduce/
