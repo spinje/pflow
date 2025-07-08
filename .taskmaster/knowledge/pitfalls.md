@@ -99,4 +99,31 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
+## Pitfall: Making Assumptions About Code Structure in Handoff Documents
+- **Date**: 2025-07-08
+- **Discovered in**: Task 7 to Task 16 handoff
+- **What we tried**: Writing detailed handoff memos with specific code examples and data structures based on memory/assumptions
+- **Why it seemed good**: Wanted to provide comprehensive guidance to help the next agent
+- **Why it failed**: Made factual errors about field names, function signatures, and data structures that would cause immediate failures
+- **Symptoms**:
+  - Implementing agent tries to access non-existent fields (`type`, `description`)
+  - Function calls fail due to wrong parameter names (`node_name` vs `node_type`)
+  - Time wasted debugging discrepancies between handoff and reality
+  - False confidence in incorrect information
+- **Better approach**: In handoffs, verify every code example and data structure against actual implementation. When uncertain, point to files rather than showing potentially wrong examples
+- **Example of failure**:
+  ```python
+  # DON'T DO THIS - Assumed structure
+  registry_data = {
+      "type": "file",  # DOESN'T EXIST
+      "description": "..."  # WRONG - it's "docstring"
+  }
+
+  # DON'T DO THIS - Wrong parameter name
+  import_node_class(node_name, registry)  # WRONG - it's node_type
+  ```
+- **Key Lesson**: Handoff documents have high impact - errors multiply downstream. Always verify against code, especially for integration points between tasks.
+
+---
+
 <!-- New pitfalls are appended below this line -->
