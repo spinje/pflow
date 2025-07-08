@@ -371,3 +371,142 @@ class TestInterfaceParsing:
         assert "overwrite" in result["inputs"]
         assert "copied" in result["outputs"]
         assert result["actions"] == ["default", "error"]
+
+    def test_real_move_file_node_interface(self):
+        """Test parsing the real MoveFileNode Interface with multi-line Writes."""
+        from src.pflow.nodes.file.move_file import MoveFileNode
+
+        result = self.extractor.extract_metadata(MoveFileNode)
+
+        assert result["description"] == "Move a file to a new location with automatic directory creation."
+        assert result["inputs"] == ["source_path", "dest_path", "overwrite"]
+        # MoveFileNode has a 3-line Writes section
+        assert result["outputs"] == ["moved", "error", "warning"]
+        assert result["params"] == ["source_path", "dest_path", "overwrite"]
+        assert result["actions"] == ["default", "error"]
+
+    def test_real_delete_file_node_interface(self):
+        """Test parsing the real DeleteFileNode Interface with safety notes."""
+        from src.pflow.nodes.file.delete_file import DeleteFileNode
+
+        result = self.extractor.extract_metadata(DeleteFileNode)
+
+        assert result["description"] == "Delete a file from the filesystem with safety confirmation."
+        assert result["inputs"] == ["file_path", "confirm_delete"]
+        assert result["outputs"] == ["deleted", "error"]
+        assert result["params"] == ["file_path"]  # Note: confirm_delete is NOT a param
+        assert result["actions"] == ["default", "error"]
+
+    def test_no_docstring_node_from_codebase(self):
+        """Test parsing NoDocstringNode from the actual codebase."""
+        from src.pflow.nodes.test_node import NoDocstringNode
+
+        result = self.extractor.extract_metadata(NoDocstringNode)
+
+        assert result["description"] == "No description"
+        assert result["inputs"] == []
+        assert result["outputs"] == []
+        assert result["params"] == []
+        assert result["actions"] == []
+
+    def test_named_node_from_codebase(self):
+        """Test parsing NamedNode which has a name but no Interface."""
+        from src.pflow.nodes.test_node import NamedNode
+
+        result = self.extractor.extract_metadata(NamedNode)
+
+        assert result["description"] == "Node with explicit name attribute."
+        assert result["inputs"] == []
+        assert result["outputs"] == []
+        assert result["params"] == []
+        assert result["actions"] == []
+
+    def test_non_english_characters_in_docstring(self):
+        """Test parsing node with non-English characters (Japanese, emoji)."""
+
+        class UnicodeNode(pocketflow.Node):
+            """ユニコード対応ノード 🎯 Unicode-enabled node.
+
+            このノードは日本語を含みます。
+
+            Interface:
+            - Reads: shared["入力"] (必須), shared["データ"]
+            - Writes: shared["結果"] on success ✅, shared["エラー"] on failure ❌
+            - Params: パラメータ, encoding (default: utf-8)
+            - Actions: default (成功), error (失敗)
+            """
+
+            pass
+
+        result = self.extractor.extract_metadata(UnicodeNode)
+
+        assert result["description"] == "ユニコード対応ノード 🎯 Unicode-enabled node."
+        assert result["inputs"] == ["入力", "データ"]
+        assert result["outputs"] == ["結果", "エラー"]
+        assert result["params"] == ["パラメータ", "encoding"]
+        assert result["actions"] == ["default", "error"]
+
+    def test_extremely_long_docstring(self):
+        """Test parsing node with extremely long docstring (1000+ lines)."""
+
+        # Generate a very long docstring programmatically
+        long_description = "Node with extremely long documentation."
+        additional_lines = [
+            f"Line {i}: This is additional documentation that makes the docstring very long." for i in range(1000)
+        ]
+
+        docstring_parts = [
+            long_description,
+            "",
+            *additional_lines,
+            "",
+            "Interface:",
+            '- Reads: shared["input"]',
+            '- Writes: shared["output"]',
+            "- Params: param",
+            "- Actions: default",
+        ]
+        docstring = "\n".join(docstring_parts)
+
+        class LongDocstringNode(pocketflow.Node):
+            pass
+
+        # Manually set the docstring
+        LongDocstringNode.__doc__ = docstring
+
+        result = self.extractor.extract_metadata(LongDocstringNode)
+
+        assert result["description"] == long_description
+        assert result["inputs"] == ["input"]
+        assert result["outputs"] == ["output"]
+        assert result["params"] == ["param"]
+        assert result["actions"] == ["default"]
+
+    def test_malformed_interface_section(self):
+        """Test parsing node with malformed Interface section."""
+
+        class MalformedNode(pocketflow.Node):
+            """Node with malformed Interface.
+
+            Interface:
+            - Reads shared["input"] (missing colon)
+            - Writes: shared["output"
+            - Params: param1, param2,, param3 (double comma)
+            - Actions default, error (missing colon)
+            - Unknown: some value (unknown component)
+            """
+
+            pass
+
+        result = self.extractor.extract_metadata(MalformedNode)
+
+        # Should handle gracefully and extract what it can
+        assert result["description"] == "Node with malformed Interface."
+        # Reads line is malformed (no colon), so won't be parsed
+        assert result["inputs"] == []
+        # Writes line has unclosed bracket but pattern should still match
+        assert result["outputs"] == []  # Malformed shared key
+        # Params should handle double comma gracefully
+        assert result["params"] == ["param1", "param2", "param3"]
+        # Actions line is malformed (no colon)
+        assert result["actions"] == []

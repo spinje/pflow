@@ -7,10 +7,14 @@ to extract interface information.
 """
 
 import inspect
+import logging
 import re
 from typing import Any
 
 import pocketflow
+
+# Set up module logger
+logger = logging.getLogger(__name__)
 
 
 class PflowMetadataExtractor:
@@ -40,35 +44,81 @@ class PflowMetadataExtractor:
         Raises:
             ValueError: If node_class is not a valid node class
         """
+        logger.debug(
+            "Starting metadata extraction",
+            extra={
+                "phase": "init",
+                "node_class": node_class.__name__ if hasattr(node_class, "__name__") else str(node_class),
+            },
+        )
+
         # Phase 1: Validate input type
         if not inspect.isclass(node_class):
+            logger.error(
+                "Invalid node class type", extra={"phase": "validation", "class_type": type(node_class).__name__}
+            )
             raise ValueError(f"metadata_extractor: Expected a class, got {type(node_class).__name__}")
 
         # Phase 2: Validate node inheritance
         try:
             if not issubclass(node_class, pocketflow.BaseNode):
+                logger.error(
+                    "Class does not inherit from BaseNode",
+                    extra={"phase": "validation", "class_name": node_class.__name__},
+                )
                 raise ValueError(  # noqa: TRY004
                     f"metadata_extractor: Class {node_class.__name__} does not inherit from pocketflow.BaseNode"
                 )
         except TypeError as e:
             # issubclass can raise TypeError for non-class arguments
+            logger.exception("Invalid class type for issubclass", extra={"phase": "validation", "error": str(e)})
             raise ValueError(f"metadata_extractor: Invalid class type for {node_class}") from e
+
+        logger.debug("Node class validated", extra={"phase": "validation", "class_name": node_class.__name__})
 
         # Phase 3: Extract description
         docstring = inspect.getdoc(node_class)
+        logger.debug(
+            "Docstring extracted",
+            extra={
+                "phase": "docstring_parsing",
+                "has_docstring": bool(docstring),
+                "docstring_length": len(docstring) if docstring else 0,
+            },
+        )
+
         description = self._extract_description(docstring)
 
         # Phase 4: Parse Interface section
         interface_data = self._parse_interface_section(docstring)
 
+        logger.debug(
+            "Interface data extracted",
+            extra={
+                "phase": "interface_extraction",
+                "sections_found": list(interface_data.keys()),
+                "input_count": len(interface_data.get("inputs", [])),
+                "output_count": len(interface_data.get("outputs", [])),
+                "param_count": len(interface_data.get("params", [])),
+                "action_count": len(interface_data.get("actions", [])),
+            },
+        )
+
         # Return complete metadata structure
-        return {
+        result = {
             "description": description,
             "inputs": interface_data.get("inputs", []),
             "outputs": interface_data.get("outputs", []),
             "params": interface_data.get("params", []),
             "actions": interface_data.get("actions", []),
         }
+
+        logger.info(
+            "Metadata extraction complete",
+            extra={"phase": "complete", "node_class": node_class.__name__, "metadata_keys": list(result.keys())},
+        )
+
+        return result
 
     def _extract_description(self, docstring: str | None) -> str:
         """
@@ -103,11 +153,13 @@ class PflowMetadataExtractor:
             Dictionary with inputs, outputs, params, and actions lists
         """
         if not docstring:
+            logger.debug("No docstring provided for Interface parsing", extra={"phase": "interface_extraction"})
             return {"inputs": [], "outputs": [], "params": [], "actions": []}
 
         # Extract the Interface section
         interface_match = re.search(self.INTERFACE_PATTERN, docstring)
         if not interface_match:
+            logger.debug("No Interface section found", extra={"phase": "interface_extraction"})
             return {"inputs": [], "outputs": [], "params": [], "actions": []}
 
         interface_content = interface_match.group(1)
