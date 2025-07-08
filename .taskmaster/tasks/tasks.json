@@ -286,63 +286,136 @@
           5
         ],
         "priority": "medium",
-        "details": "Create src/pflow/registry/metadata_extractor.py with extract_metadata(node_class) function. IMPORTANT: Takes a node CLASS as input (not registry data). Since Task 5 only stores metadata, this function will be called by components that have already imported the class (e.g., Task 4 after dynamic import, or during testing). Parse the class's __doc__ to extract: 1) Description (first paragraph), 2) Interface section parsing (Reads/Writes/Params/Actions), 3) Classification of parameters (shared store vs node.set_params). Verify the class inherits from pocketflow.BaseNode. Use docstring_parser library with custom regex for Interface sections. Output format: {'description': 'Get GitHub issue', 'inputs': ['issue_number', 'repo'], 'outputs': ['issue'], 'params': ['token'], 'actions': ['default', 'not_found']}. This parsed metadata is used by the planner for intelligent node selection and connection. Do NOT duplicate Task 5's work - only parse docstrings. Reference: metadata-extraction.md, simple-nodes.md#interface-pattern",
-        "testStrategy": "Test extraction from various docstring formats (Google, NumPy, custom Interface style), verify correct parsing of Interface sections, test parameter classification (shared vs params), verify BaseNode inheritance check, handle edge cases (missing sections, malformed docstrings, no Interface section). Create test nodes that inherit from BaseNode for testing. Ensure extractor is resilient to docstring variations while extracting accurate metadata."
+        "details": "Create src/pflow/registry/metadata_extractor.py with extract_metadata(node_class) function. IMPORTANT: Takes a node CLASS as input (not registry data). Since Task 5 only stores metadata, this function will be called by components that have already imported the class (e.g., Task 4 after dynamic import, or during testing). Parse the class's __doc__ to extract: 1) Description (first paragraph), 2) Interface section parsing (Reads/Writes/Params/Actions), 3) Classification of parameters (shared store vs node.set_params). Verify the class inherits from pocketflow.BaseNode. Use regex patterns to parse the simple bullet list format used in pflow docstrings (- Reads:, - Writes:, - Params:, - Actions:). Output format: {'description': 'Get GitHub issue', 'inputs': ['issue_number', 'repo'], 'outputs': ['issue'], 'params': ['token'], 'actions': ['default', 'not_found']}. This parsed metadata is used by the planner for intelligent node selection and connection. Do NOT duplicate Task 5's work - only parse docstrings. Reference: metadata-extraction.md, simple-nodes.md#interface-pattern",
+        "testStrategy": "Test extraction from various docstring formats focusing on the simple bullet list format (- Reads:, - Writes:, - Params:, - Actions:), verify correct parsing of Interface sections using regex patterns, test parameter classification (shared vs params), verify BaseNode inheritance check, handle edge cases (missing sections, malformed docstrings, no Interface section). Create test nodes that inherit from BaseNode for testing. Ensure extractor is resilient to docstring variations while extracting accurate metadata.",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Core Metadata Extractor with Node Validation",
+            "description": "Create the foundational metadata extractor class with basic docstring parsing functionality. Implement the main extract_metadata() method that validates node inheritance from pocketflow.BaseNode and extracts the description from docstrings.",
+            "dependencies": [],
+            "details": "Create src/pflow/registry/metadata_extractor.py with PflowMetadataExtractor class. Implement extract_metadata(node_class) that: 1) Validates the class inherits from pocketflow.BaseNode (or Node which inherits from BaseNode), 2) Extracts the first paragraph of the docstring as description, 3) Returns the specified output format {'description': str, 'inputs': [], 'outputs': [], 'params': [], 'actions': []} with empty lists for unparsed sections. Include proper error handling for missing docstrings and non-node classes.",
+            "status": "done",
+            "testStrategy": "Create tests/test_registry/test_metadata_extractor.py with tests for: node inheritance validation (both Node and BaseNode), description extraction from various docstring formats, handling of missing docstrings, rejection of non-node classes"
+          },
+          {
+            "id": 2,
+            "title": "Implement Interface Section Parsing with Regex Patterns",
+            "description": "Add regex-based parsing for the Interface section of docstrings. Parse the bullet-list format used in actual pflow nodes to extract Reads, Writes, Params, and Actions from the standardized docstring format.",
+            "dependencies": [
+              1
+            ],
+            "details": "Extend the extractor to parse Interface sections using regex patterns. Implement parsing for: '- Reads:' lines to extract shared store keys (e.g., shared['key']), '- Writes:' lines for output keys, '- Params:' lines for node parameters (distinguish required/optional), '- Actions:' lines for action names. Handle multi-line continuations and gracefully handle missing or partial Interface sections. Use patterns like r'- Reads:\\s*(.+)' and extract keys from shared['key'] syntax.",
+            "status": "done",
+            "testStrategy": "Test with actual node docstrings from /src/pflow/nodes/file/*.py, verify extraction of shared['key'] patterns, test parameter parsing with optional/required markers, test action parsing with descriptions, test partial Interface sections"
+          },
+          {
+            "id": 3,
+            "title": "Add Comprehensive Tests and Edge Case Handling",
+            "description": "Create a comprehensive test suite covering all edge cases and ensure the extractor works with all existing pflow nodes. Polish error messages and add structured logging for debugging.",
+            "dependencies": [
+              2
+            ],
+            "details": "Complete the test suite in tests/test_registry/test_metadata_extractor.py. Test all file nodes (read_file, write_file, copy_file, move_file, delete_file) and test nodes. Add structured logging with phase tracking ('docstring_parse', 'field_extraction', 'validation'). Implement graceful fallbacks for malformed docstrings, non-English characters, and extremely long docstrings. Ensure exact output format compliance and add performance considerations.",
+            "status": "pending",
+            "testStrategy": "Achieve 100% test coverage of metadata extractor, test malformed docstrings and recovery, test non-English characters, verify all existing nodes can be parsed successfully, ensure error messages are clear and actionable"
+          }
+        ]
       },
       {
         "id": 8,
         "title": "Build comprehensive shell pipe integration",
-        "description": "Implement full Unix pipe support for stdin/stdout handling and shell integration",
-        "status": "pending",
+        "description": "Implement dual-mode Unix pipe support for stdin handling (workflow definitions OR data) and shell integration, building on existing stdin detection infrastructure",
+        "status": "in-progress",
         "dependencies": [
           3
         ],
         "priority": "high",
-        "details": "Create src/pflow/core/shell_integration.py with comprehensive Unix pipe support. Implement stdin detection and reading when data is piped to pflow. Support streaming for large data (not just reading entire stdin at once). Handle stdout output for chaining pflow with other Unix tools. Implement proper exit code propagation and signal handling (Ctrl+C). When stdin is detected, populate shared['stdin'] automatically. Support both batch mode (fail fast) and interactive mode (prompt for missing data). Look at Simon Willison's 'llm' CLI source code for excellent pipe integration patterns. This enables both: 'cat data.txt | pflow process' AND 'pflow node1 => node2'. Reference docs: shell-pipes.md, architecture.md#5.1.1",
-        "testStrategy": "Create tests/test_shell_integration.py. Use pytest fixtures to mock sys.stdin. Test stdin detection (distinguishing between piped data and interactive terminal input). Test reading various content sizes from stdin (empty, small, large). Verify that node output is correctly written to stdout. Include integration tests with mocked Unix tools like echo, cat, and grep to ensure compatibility. Test exit code propagation on both success and error cases.",
+        "details": "Enhance existing CLI infrastructure to support dual-mode stdin handling where stdin can contain either workflow definitions OR data for workflows. Key implementation points: 1) Modify CLI validation at lines 52-55 in main.py to allow stdin + args combination, 2) Inject stdin data into shared storage at line 89 when detected as data (not workflow), 3) Implement smart detection to distinguish between workflow JSON and data input, 4) Use temporary files for large inputs (>10MB), 5) Auto-detect binary/text content, 6) Make output key configurable (default: 'stdin'), 7) Default to batch mode (fail fast) with optional interactive mode. The stdin detection logic already exists - focus on extending it for dual-mode support. Reference critical handover document for user decisions and implementation approach. Enable both: 'cat data.txt | pflow run workflow.json' AND 'echo {workflow} | pflow run'. Reference docs: shell-pipes.md, architecture.md#5.1.1",
+        "testStrategy": "Create comprehensive test suite in tests/test_shell_integration.py with both unit tests (using pytest fixtures and mocks for sys.stdin) AND integration tests (using subprocess for real shell behavior). Test cases: 1) Dual-mode detection - distinguish workflow JSON from data input, 2) CLI validation bypass for stdin+args combination, 3) Shared storage injection verification at the correct point, 4) Large data handling with temporary files (test >10MB threshold), 5) Binary vs text auto-detection, 6) Configurable output key functionality, 7) Exit code propagation for both success and error cases, 8) Signal handling (Ctrl+C), 9) Integration with real Unix tools (echo, cat, grep) using subprocess. Ensure tests cover the modified validation logic and shared storage injection points.",
         "subtasks": [
           {
             "id": 1,
-            "title": "Create shell_integration.py with stdin detection and content reading",
-            "description": "Implement the core shell integration module in src/pflow/core/shell_integration.py with functions to detect if stdin is piped using sys.stdin.isatty() and read piped content into shared['stdin']",
-            "status": "pending",
+            "title": "Create shell_integration.py with dual-mode stdin handling",
+            "description": "Build the foundational shell integration module that provides core utilities for stdin detection, reading, and mode determination",
             "dependencies": [],
-            "details": "Create the shell_integration module following docs/features/shell-pipes.md#internal-implementation. Key functions: detect_stdin() to check if stdin is piped, read_stdin() to read content and place in shared['stdin']. Handle text encoding (UTF-8) and empty stdin cases. Ensure the module can be imported by other pflow components.",
-            "testStrategy": ""
+            "details": "Create src/pflow/core/shell_integration.py with: detect_stdin() using not sys.stdin.isatty(), read_stdin() with UTF-8 encoding and error handling, determine_stdin_mode(content) that checks for 'ir_version' to detect workflow JSON vs data, populate_shared_store(shared, content) to add stdin data to shared['stdin']. Handle empty stdin by returning None. Include proper type hints and docstrings.",
+            "status": "pending",
+            "testStrategy": "Unit tests for all functions using pytest, mock stdin with io.StringIO and monkeypatch, test edge cases: empty stdin, very large inputs, encoding errors, binary data detection"
           },
           {
             "id": 2,
-            "title": "Add streaming support for large inputs with buffered reading",
-            "description": "Implement buffered reading using 8KB chunks to handle large piped inputs without loading entire content into memory at once",
-            "status": "pending",
+            "title": "Update CLI to allow stdin data with file/args workflows",
+            "description": "Modify the existing CLI validation logic to enable dual-mode stdin behavior where stdin can be data while workflow comes from file or args",
             "dependencies": [
               1
             ],
-            "details": "Extend shell_integration.py with stream_stdin() function that reads in 8KB chunks as specified in docs/features/shell-pipes.md#streaming-support. Support both full read mode (for small inputs) and streaming mode (for large inputs). Add configuration option to set chunk size. Ensure chunks are properly concatenated when needed.",
-            "testStrategy": ""
+            "details": "Modify get_input_source() in src/pflow/cli/main.py at lines 52-55. Update validation to allow stdin when --file is provided. Implement logic: if --file provided, stdin is data; if no --file, stdin could be workflow. Store stdin data in click context (ctx.obj) for later injection. Preserve backward compatibility for echo '{workflow}' | pflow pattern.",
+            "status": "pending",
+            "testStrategy": "Test both modes with CliRunner: stdin as workflow, stdin as data with --file. Verify validation logic changes work correctly. Ensure backward compatibility with existing usage patterns."
           },
           {
             "id": 3,
-            "title": "Implement exit code handling for shell scripting compatibility",
-            "description": "Add proper exit code propagation where 0 indicates success and non-zero indicates errors, enabling pflow to work correctly in shell scripts and pipelines",
-            "status": "pending",
+            "title": "Inject stdin data into shared storage before workflow execution",
+            "description": "Integrate stdin data population at the correct point in the workflow execution pipeline",
             "dependencies": [
-              1
+              1,
+              2
             ],
-            "details": "Following docs/features/shell-pipes.md#exit-code-propagation, implement exit code handling in shell_integration.py. Create exit_with_code() function that properly exits with given code. Define standard exit codes (0=success, 1=general error, 2=usage error, etc). Ensure all error paths in stdin handling use appropriate exit codes.",
-            "testStrategy": ""
+            "details": "Modify workflow execution around line 89 in main.py. Import shell_integration module. If stdin data exists in context and is determined to be data (not workflow), call populate_shared_store(shared_storage, stdin_data) BEFORE flow.run(shared_storage). Add debug logging when stdin is populated into shared store.",
+            "status": "pending",
+            "testStrategy": "Integration tests verifying stdin appears in shared store with correct key. Test with real workflows that access shared['stdin']. Verify injection happens before workflow execution."
           },
           {
             "id": 4,
-            "title": "Add SIGINT signal handling for graceful interruption",
-            "description": "Implement signal handling using Python's signal module to allow users to interrupt pflow execution with Ctrl+C gracefully",
+            "title": "Implement binary detection and streaming for large inputs",
+            "description": "Enhance stdin handling to support binary data and efficiently handle large files using temporary files",
+            "dependencies": [
+              1
+            ],
+            "details": "Add detect_binary_content(sample) using heuristics (check for null bytes). Implement read_stdin_with_limit(max_size=10_000_000). For inputs >10MB, write to temp file using tempfile.NamedTemporaryFile and store path in shared['stdin_path']. For binary content, use sys.stdin.buffer and store in shared['stdin_binary'] as bytes. Implement cleanup mechanism for temporary files.",
             "status": "pending",
+            "testStrategy": "Test binary detection with various file types. Test large file handling with >10MB inputs. Verify temporary file creation and cleanup. Test memory efficiency with streaming."
+          },
+          {
+            "id": 5,
+            "title": "Add configurable stdout output from shared store",
+            "description": "Enable workflows to output results to stdout for Unix pipe chaining",
             "dependencies": [
               1,
+              2,
               3
             ],
-            "details": "As per docs/features/shell-pipes.md#signal-handling, add signal handler for SIGINT in shell_integration.py. Create setup_signal_handlers() function that registers handler. Handler should clean up resources, print interruption message to stderr, and exit with code 130 (standard for SIGINT). Ensure handler works during stdin reading.",
-            "testStrategy": ""
+            "details": "Add --output-key option to CLI with default auto-detection. Implement smart key detection checking for 'response', 'output', 'result', 'text' in order. Create safe_output(text) handling encoding errors and broken pipes. After workflow execution, check if stdout is piped (not TTY) and output selected key's value. Handle binary output from shared store appropriately.",
+            "status": "pending",
+            "testStrategy": "Test output key selection logic, pipe chaining with subprocess (echo 'data' | pflow run workflow.json | grep pattern). Test encoding safety and binary output handling."
+          },
+          {
+            "id": 6,
+            "title": "Implement proper signal handling and exit codes",
+            "description": "Add Unix-compliant signal handling and exit code propagation for shell script compatibility",
+            "dependencies": [
+              1
+            ],
+            "details": "Create ExitCodes enum with standard codes (0=success, 1=error, 2=misuse, 130=SIGINT). Enhance existing SIGINT handler to exit with code 130. Add SIGPIPE handler using signal.signal(signal.SIGPIPE, signal.SIG_DFL) with hasattr check for Windows. Handle BrokenPipeError by exiting cleanly with os._exit(0). Propagate exit codes from workflow execution results.",
+            "status": "pending",
+            "testStrategy": "Test signal handling with subprocess sending SIGINT. Test broken pipe scenarios (pflow run | head -n1). Verify correct exit codes for various error conditions. Platform-specific tests for Windows vs Unix."
+          },
+          {
+            "id": 7,
+            "title": "Build complete test coverage for shell integration",
+            "description": "Create thorough test suite covering all shell integration features with both unit and integration tests",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "details": "Create tests/test_shell_integration.py with comprehensive coverage. Unit tests using pytest fixtures and mocks. Integration tests using subprocess for real shell behavior. Test dual-mode detection, large files, binary data, signals, exit codes. Test real Unix command scenarios. Platform-specific tests for differences. Performance tests for large data. Aim for >95% coverage of shell_integration module.",
+            "status": "pending",
+            "testStrategy": "Organize tests by feature area. Use parameterized tests for multiple scenarios. Mock external dependencies. Use subprocess for end-to-end tests. Include stress tests for large inputs and edge cases."
           }
         ]
       },
@@ -591,7 +664,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-07-08T13:28:03.647Z",
+      "updated": "2025-07-08T19:53:17.405Z",
       "description": "Reorganized to prioritize Natural Language Planner as core feature. Merged tasks 17-20 into comprehensive planner system. Expanded task 13 to include all platform nodes. Consolidated all v2.0 deferred features into task 32. Clear path from infrastructure to MVP delivery."
     }
   }
