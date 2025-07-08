@@ -39,6 +39,8 @@ Both schemas work together to enable metadata-driven flow planning and validatio
 - `metadata.locked_nodes` mirrors [version lockfile](./registry.md) for deterministic execution
 - `metadata.planner_version` tracks planner that generated IR for provenance
 
+> **Example**: See [examples/core/minimal.json](../../examples/core/minimal.json) for the simplest valid Flow IR - a single node with no edges or metadata.
+
 ---
 
 ## Node Metadata Schema
@@ -279,6 +281,10 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 
 > **Flow Structure**: See [planner specification](../features/planner.md) for simple node sequencing
 
+**Examples from the Repository:**
+- Sequential flow: [examples/core/simple-pipeline.json](../../examples/core/simple-pipeline.json) - Basic 3-node pipeline
+- Error handling: [examples/core/error-handling.json](../../examples/core/error-handling.json) - Action-based routing with error recovery
+
 ---
 
 ## Proxy Mapping Schema
@@ -307,6 +313,8 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 - Transparent to node code via `NodeAwareSharedStore` proxy
 
 > **Architecture Integration**: See [shared store pattern](./shared-store.md) for proxy implementation details
+
+> **Example**: See [examples/core/proxy-mappings.json](../../examples/core/proxy-mappings.json) for a complete example of using mappings to adapt incompatible node interfaces.
 
 ---
 
@@ -445,6 +453,32 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 - Version locking for reproducibility
 
 ---
+
+## Example Repository
+
+The pflow project includes a comprehensive set of examples demonstrating various IR patterns:
+
+### Core Examples (`examples/core/`)
+Basic patterns every user should understand:
+- **[minimal.json](../../examples/core/minimal.json)** - Simplest valid IR with a single node
+- **[simple-pipeline.json](../../examples/core/simple-pipeline.json)** - Basic 3-node sequential pipeline
+- **[template-variables.json](../../examples/core/template-variables.json)** - Using `$variable` syntax for dynamic values
+- **[error-handling.json](../../examples/core/error-handling.json)** - Action-based routing for error recovery
+- **[proxy-mappings.json](../../examples/core/proxy-mappings.json)** - Interface adaptation with mappings
+
+### Advanced Examples (`examples/advanced/`)
+Complex real-world workflows:
+- **[github-workflow.json](../../examples/advanced/github-workflow.json)** - Automated GitHub issue resolution
+- **[content-pipeline.json](../../examples/advanced/content-pipeline.json)** - Multi-stage content generation
+
+### Invalid Examples (`examples/invalid/`)
+Common mistakes and their error messages:
+- **[missing-version.json](../../examples/invalid/missing-version.json)** - Missing required `ir_version`
+- **[bad-edge-ref.json](../../examples/invalid/bad-edge-ref.json)** - Edge references non-existent node
+- **[duplicate-ids.json](../../examples/invalid/duplicate-ids.json)** - Multiple nodes with same ID
+- **[wrong-types.json](../../examples/invalid/wrong-types.json)** - Incorrect field types
+
+Each example includes a corresponding `.md` file explaining its purpose and patterns. Start with the core examples to understand fundamental concepts before exploring advanced patterns.
 
 ---
 
