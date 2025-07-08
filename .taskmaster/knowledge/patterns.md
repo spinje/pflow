@@ -717,3 +717,44 @@ A consolidated collection of successful patterns and approaches discovered durin
 - **Caution**: Document which format is preferred/canonical to avoid confusion
 
 ---
+
+## Pattern: Pure Utility Module Design
+- **Date**: 2024-12-19
+- **Discovered in**: Task 8.1
+- **Problem**: Need reusable utility functions that can be imported and used anywhere without side effects
+- **Solution**: Create modules with only pure functions, no top-level code execution, minimal dependencies
+- **Example**:
+  ```python
+  # shell_integration.py - pure utility module
+  import sys
+  import json
+
+  # Pure function - no side effects
+  def detect_stdin() -> bool:
+      """Check if stdin is piped."""
+      return not sys.stdin.isatty()
+
+  # Pure function - predictable output
+  def determine_stdin_mode(content: str) -> str:
+      """Categorize stdin content."""
+      try:
+          parsed = json.loads(content)
+          if isinstance(parsed, dict) and "ir_version" in parsed:
+              return "workflow"
+      except (json.JSONDecodeError, TypeError):
+          pass
+      return "data"
+
+  # Only this function has side effects (mutates dict)
+  def populate_shared_store(shared: dict, content: str) -> None:
+      """Add stdin to shared store."""
+      shared["stdin"] = content
+  ```
+- **When to use**: Creating utilities for shell integration, data transformation, validation logic
+- **Benefits**:
+  - Easy to test (no mocking globals)
+  - Safe to import anywhere
+  - Predictable behavior
+  - Can be used in any context (CLI, nodes, tests)
+
+---

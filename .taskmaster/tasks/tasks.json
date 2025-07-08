@@ -281,7 +281,7 @@
         "id": 7,
         "title": "Extract node metadata from docstrings",
         "description": "Parse node docstrings to understand inputs, outputs, and parameters",
-        "status": "pending",
+        "status": "done",
         "dependencies": [
           5
         ],
@@ -317,7 +317,7 @@
               2
             ],
             "details": "Complete the test suite in tests/test_registry/test_metadata_extractor.py. Test all file nodes (read_file, write_file, copy_file, move_file, delete_file) and test nodes. Add structured logging with phase tracking ('docstring_parse', 'field_extraction', 'validation'). Implement graceful fallbacks for malformed docstrings, non-English characters, and extremely long docstrings. Ensure exact output format compliance and add performance considerations.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Achieve 100% test coverage of metadata extractor, test malformed docstrings and recovery, test non-English characters, verify all existing nodes can be parsed successfully, ensure error messages are clear and actionable"
           }
         ]
@@ -340,7 +340,7 @@
             "description": "Build the foundational shell integration module that provides core utilities for stdin detection, reading, and mode determination",
             "dependencies": [],
             "details": "Create src/pflow/core/shell_integration.py with: detect_stdin() using not sys.stdin.isatty(), read_stdin() with UTF-8 encoding and error handling, determine_stdin_mode(content) that checks for 'ir_version' to detect workflow JSON vs data, populate_shared_store(shared, content) to add stdin data to shared['stdin']. Handle empty stdin by returning None. Include proper type hints and docstrings.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests for all functions using pytest, mock stdin with io.StringIO and monkeypatch, test edge cases: empty stdin, very large inputs, encoding errors, binary data detection"
           },
           {
@@ -664,7 +664,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-07-08T19:53:17.405Z",
+      "updated": "2025-07-08T20:26:54.977Z",
       "description": "Reorganized to prioritize Natural Language Planner as core feature. Merged tasks 17-20 into comprehensive planner system. Expanded task 13 to include all platform nodes. Consolidated all v2.0 deferred features into task 32. Clear path from infrastructure to MVP delivery."
     }
   }
