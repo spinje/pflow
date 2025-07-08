@@ -235,7 +235,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 **Purpose**: Comprehensive guide combining MVP scope and implementation roadmap - single source of truth for MVP development.
 
 **Key Contents**:
-- Executive summary with 40 MVP tasks across 4 phases
+- Executive summary with comprehensive task implementation across 4 phases
 - Core vision and value proposition with real-world use cases
 - Complete MVP feature scope with what's included/excluded
 - Detailed 4-phase implementation roadmap with task references
@@ -309,6 +309,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 **Key Contents**:
 - Dual-mode operation (NL with LLM vs CLI validation-only)
 - Template string composition and variable flow
+- **"Find or Build" pattern for semantic workflow discovery**
 - Metadata extraction from docstrings
 - Validation framework with "early and often" principle
 - Integration with shared store and proxy

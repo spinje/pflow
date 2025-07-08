@@ -163,6 +163,45 @@ proxy = NodeAwareSharedStore(
 node.prep(proxy)  # Still reads "text", proxy maps to "raw_content"
 ```
 
+### 3.6 Two-Tier AI Architecture
+
+pflow implements a two-tier AI system optimized for different use cases:
+
+#### Tier 1: General LLM Node (`llm`)
+- **Purpose**: Fast, lightweight text processing
+- **Interface**: `shared['prompt']` → `shared['response']`
+- **Use Cases**:
+  - Commit messages
+  - Text summaries
+  - Simple transformations
+  - Quick analysis
+- **Characteristics**:
+  - No project context required
+  - Minimal token usage (~100-500 tokens)
+  - Sub-second response times
+  - No file system access
+  - Stateless operation
+
+#### Tier 2: Claude Code Super Node (`claude-code`)
+- **Purpose**: Comprehensive AI-assisted development
+- **Interface**: `shared['prompt']` → `shared['code_report']`
+- **Use Cases**:
+  - Bug fixes with code changes
+  - Feature implementation
+  - Complex code analysis
+  - Multi-file refactoring
+- **Characteristics**:
+  - Full project context and file system access
+  - Higher token usage (1000-5000 tokens)
+  - 20-60 second execution times
+  - Access to all development tools
+  - Maintains conversation context
+
+This separation allows workflows to optimize for speed (llm) or capability (claude-code) as needed. Simple vs Agentic. For example:
+- Use `llm` for generating a commit message from changes
+- Use `claude-code` for implementing the fix described in an issue
+
+
 ## 4. MVP Scope Definition
 
 ### 4.1 Included in MVP

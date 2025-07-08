@@ -25,7 +25,7 @@
 pflow is an AI workflow compiler that transforms natural language and CLI pipe syntax into permanent, deterministic CLI commands, following a "Plan Once, Run Forever" philosophy.
 
 **Key Facts**:
-- **Scope**: 40 MVP tasks across 4 phases (8 tasks deferred to v2.0)
+- **Scope**: Multiple implementation phases with comprehensive task coverage
 - **Timeline**: 9 weeks total (6-7 weeks with parallelization)
 - **Core Innovation**: Natural Language Planner (Task 17) - THE feature that enables "find or build" workflows
 - **Value Proposition**: 10x efficiency improvement over slash commands through workflow compilation and reuse
@@ -113,6 +113,30 @@ pflow fix-issue --issue=5678  # 20-50s vs 50-90s, minimal tokens
 2. **For AI Agents**: Stop re-reasoning through repetitive tasks. Compile reasoning once, execute forever.
 3. **The Hidden Gem**: Parameter handling - `pflow "analyze costs for last month"` uses the same workflow as `pflow "analyze costs for this week"`
 
+### The "Find or Build" Pattern
+
+At the heart of pflow is semantic workflow discovery. When you type `pflow "analyze costs"`, the system:
+1. Searches existing workflows by semantic meaning (not exact names)
+2. If found: Suggests reuse of similar workflows
+3. If not found: Builds new workflow from your description
+
+This enables true "Plan Once, Run Forever" - workflows are discovered by intent, not memorized names.
+
+**Example**:
+```bash
+# First time:
+pflow "check AWS spending and create report"
+# → No existing workflow found
+# → Generates new workflow
+# → Saves as 'aws-cost-analyzer'
+
+# Later (different phrasing):
+pflow "analyze cloud costs"
+# → Finds 'aws-cost-analyzer' by semantic similarity
+# → Prompts: "Use existing 'aws-cost-analyzer' workflow?"
+# → Instant execution without regeneration
+```
+
 ---
 
 ## MVP Feature Scope
@@ -153,11 +177,11 @@ pflow read-file --path=data.txt => analyze => write report
    - Quick responses without file system access: `shared["response"]`
    - Lightweight alternative to claude-code
 
-**Core Simple Nodes** (Tasks 13-17):
-- **GitHub**: `github-get-issue`, `github-create-pr` (Task 13)
-- **File**: `read-file`, `write-file` (Task 14)
-- **Git**: `git-commit`, `git-push` (Tasks 15-16)
-- **Shell**: `shell-exec` (Task 17)
+**Core Simple Nodes** (Task 13):
+- **GitHub**: `github-get-issue`, `github-create-pr`
+- **File**: `read-file`, `write-file`
+- **Git**: `git-commit`, `git-push`
+- **Shell**: `shell-exec`
 
 **Simple Node Philosophy**:
 - Each node does ONE thing well
@@ -208,7 +232,7 @@ pflow read-file --path=data.txt => analyze => write report
 
 ### Overview
 
-**Total Scope**: 40 MVP tasks organized into 4 phases
+**Total Scope**: Comprehensive task implementation organized into 4 phases
 **Timeline**: 9 weeks sequential, 6-7 weeks with parallelization
 **Strategy**: Test-as-you-go - each task includes its own test strategy
 
@@ -248,10 +272,7 @@ cat /tmp/output.txt  # Shows: "HELLO FROM PFLOW"
 
 **Platform Nodes**:
 - **General LLM node** (Task 12): Fast text processing without project context
-- **GitHub nodes** (Task 13): `github-get-issue`, `github-create-pr`
-- **File nodes** (Task 14): `read-file`, `write-file`
-- **Git nodes** (Tasks 15-16): `git-commit`, `git-push`
-- **Shell node** (Task 17): `shell-exec` for command execution
+- **Core platform nodes** (Task 13): GitHub, file, git, and shell operations including `shell-exec`
 - **Claude Code Super Node** (Task 25): Comprehensive AI agent with project context
 
 **Supporting Components**:
@@ -267,15 +288,17 @@ cat /tmp/output.txt  # Shows: "HELLO FROM PFLOW"
 ### Phase 3: Natural Language Planning (Weeks 6-7)
 
 **Goal**: Enable workflow generation from natural language input - THE CORE FEATURE
-**Tasks**: 19-21, 29-31 (6 tasks)
+**Tasks**: Task 17 - Comprehensive Natural Language Planner System
 
-**Key Components**:
-- **Workflow Generation Engine** (Task 19): Transform natural language → template-driven workflows
-- **Template Resolution** (Task 20): Planner-internal variable substitution (`$var` → `shared["var"]`)
-- **Planning Context Builder** (Task 21): Format node metadata for LLM understanding
-- **Prompt Templates** (Task 29): Well-crafted prompts for reliable generation
-- **Approval & Storage System** (Task 30): User verification and workflow persistence
-- **Named Workflow Execution** (Task 31): Execute saved workflows by name with parameters
+**Key Deliverables**:
+- **Natural Language Planner System** (Task 17):
+  - Workflow Generation Engine - Transform natural language → workflows
+  - Template Resolution - Planner-internal variable substitution
+  - Workflow Discovery - Semantic "find or build" pattern
+  - Prompt Templates - Well-crafted prompts for generation
+  - Approval & Storage - User verification and persistence
+
+This single comprehensive task (formed by merging tasks 17-20) implements the core innovation that makes pflow unique.
 
 **Critical Feature - Pattern Recognition**:
 ```bash
@@ -527,11 +550,11 @@ The pflow MVP is ready when:
 
 4. **Quality Standards Achieved**:
    - Test-as-you-go strategy ensures reliability
-   - All 40 MVP tasks completed with embedded tests
+   - All MVP tasks completed with embedded tests
    - Documentation complete
 
 **pflow delivers on its promise**: Transform inefficient AI-assisted development from heavy slash commands into lightweight, deterministic CLI workflows that run forever after planning once.
 
 ---
 
-*This implementation guide combines the strategic roadmap with detailed scope definition, providing a comprehensive reference for building pflow from vision to reality. The guide reflects 40 MVP implementation tasks organized into 4 clear phases, with the Natural Language Planner (Task 17) as THE core feature that enables the "find or build" pattern.*
+*This implementation guide combines the strategic roadmap with detailed scope definition, providing a comprehensive reference for building pflow from vision to reality. The guide reflects comprehensive task implementation organized into 4 clear phases, with the Natural Language Planner (Task 17) as THE core feature that enables the "find or build" pattern.*

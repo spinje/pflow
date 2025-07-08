@@ -534,7 +534,18 @@ graph TD
 
 **Resolution Examples:**
 
+### MVP Implementation (Natural Language)
 ```bash
+# Everything after 'pflow' is sent to the LLM as natural language
+pflow "get youtube transcript from https://youtu.be/abc123"
+pflow "use temperature 0.9 for the summary"
+pflow "fetch data with 3 retries"
+echo "content" | pflow "summarize this content"
+```
+
+### Future v2.0 (Direct CLI Parsing)
+```bash
+# Direct parsing with specific resolution rules
 # Data injection (shared store)
 pflow yt-transcript --url=https://youtu.be/abc123
 # Result: shared["url"] = "https://youtu.be/abc123"
@@ -551,6 +562,8 @@ pflow fetch-data --max-retries=3 --wait=1.0
 echo "content" | pflow llm --prompt="Summarize this content"
 # Result: shared["stdin"] = "content"
 ```
+
+> **Note**: In MVP, all input is processed as natural language. Direct CLI parsing with specific resolution rules is a v2.0 optimization.
 
 ### 5.3 Natural Flag Naming
 
@@ -605,6 +618,14 @@ pflow my-data-pipeline => analysis-flow => reporting-flow
 
 **Interactive vs. Batch Mode:**
 
+### MVP Implementation (Natural Language)
+```bash
+# Natural language handling of missing data
+pflow "get youtube transcript and summarize it"
+# LLM prompts: "I need a YouTube URL to fetch the transcript. Please provide it."
+```
+
+### Future v2.0 (Direct CLI Parsing)
 ```bash
 # Interactive: missing data prompts user
 pflow yt-transcript => summarize-text
@@ -624,6 +645,13 @@ pflow yt-transcript => summarize-text
 - **Persistence**: Exists for entire flow execution
 - **Examples**: `--url`, `--text`, `--query`, `--file`
 
+### MVP Implementation (Natural Language)
+```bash
+pflow "get transcript from https://youtu.be/abc123 and summarize it"
+# LLM understands the URL and generates appropriate workflow
+```
+
+### Future v2.0 (Direct CLI Parsing)
 ```bash
 pflow yt-transcript --url=https://youtu.be/abc123 => summarize-text
 # shared["url"] available to yt-transcript
@@ -1082,11 +1110,13 @@ pflow trace run_2024-01-01_abc123 --cache-stats
 
 ---
 
-## 8 · MCP Integration & Unified Registry
+## 8 · MCP Integration & Unified Registry (v2.0 Feature)
+
+> **Note**: This feature is deferred to v2.0. See MVP scope for current implementation.
 
 pflow integrates **Model Context Protocol (MCP)** tools as native nodes through automatic wrapper generation and unified registry management. For registry details, see [Registry](./core-concepts/registry.md). For MCP integration specifics, see [MCP Integration](./features/mcp-integration.md).
 
-### 7.1 Unified Registry Approach
+### 8.1 Unified Registry Approach
 
 **Single Registry System** (eliminates standalone `mcp.json`):
 
@@ -1129,7 +1159,7 @@ pflow registry list
 }
 ```
 
-### 7.2 Wrapper Node Generation
+### 8.2 Wrapper Node Generation
 
 MCP tools become **indistinguishable from manual nodes**:
 
@@ -1174,7 +1204,7 @@ class McpGithubSearchCode(Node):
         return "default"
 ```
 
-### 7.3 Natural Interface Mapping
+### 8.3 Natural Interface Mapping
 
 **MCP Schema → Natural Keys:**
 
@@ -1199,7 +1229,7 @@ shared["message_id"]   # Output: sent message ID
 - Single primary output per tool when possible
 - Optional parameters handled gracefully
 
-### 7.4 Action-Based Error Handling
+### 8.4 Action-Based Error Handling
 
 MCP wrapper nodes participate in **pflow's action-based flow control**:
 
@@ -1224,7 +1254,7 @@ MCP_ERROR_ACTIONS = {
 }
 ```
 
-### 7.5 Planner Integration
+### 8.5 Planner Integration
 
 **Seamless LLM Selection:**
 
@@ -1245,7 +1275,7 @@ LLM Selection: mcp-github-search-code => summarize-text => mcp-slack-send
 Generated Flow: Complete action-based error handling included
 ```
 
-### 7.6 Security and Transport
+### 8.6 Security and Transport
 
 **Supported Transports:**
 
@@ -1261,7 +1291,7 @@ Generated Flow: Complete action-based error handling included
 - **Host allowlist**: Optional validation of remote server certificates
 - **Impure by default**: MCP tools marked as side-effect-bearing
 
-### 7.7 CLI Integration
+### 8.7 CLI Integration
 
 MCP wrapper nodes follow **identical CLI patterns**:
 
@@ -1303,7 +1333,7 @@ pflow registry test-mcp-connections
 
 pflow supports **progressive complexity** from natural language exploration to production automation pipelines. For detailed component breakdown, see [Components](./architecture/components.md).
 
-### 8.1 User Journey Progression
+### 9.1 User Journey Progression
 
 ```mermaid
 graph TD
@@ -1335,7 +1365,7 @@ graph TD
     style E fill:#e8f5e8
 ```
 
-### 8.2 Exploration: Natural Language Discovery
+### 9.2 Exploration: Natural Language Discovery
 
 **Goal**: Discover pflow capabilities through conversational interface.
 
@@ -1366,7 +1396,7 @@ Execute this flow? [Y/n]
 - **Flow composition**: Understand pipe syntax and data flow
 - **Parameter tuning**: Observe how temperature affects output style
 
-### 8.3 Learning: CLI Pattern Absorption
+### 9.3 Learning: CLI Pattern Absorption
 
 **Goal**: Transition from natural language to direct CLI usage.
 
@@ -1394,7 +1424,7 @@ pflow weather-comparison-flow --cities="Stockholm,Oslo" => format-report
 pflow my-data-pipeline => analysis-flow => reporting-flow
 ```
 
-### 8.4 Iteration: Parameter Tuning and Flow Evolution
+### 9.4 Iteration: Parameter Tuning and Flow Evolution
 
 **Goal**: Refine flows for specific use cases and optimize results.
 
@@ -1426,7 +1456,7 @@ pflow yt-transcript --max-retries=2 --use-cache => \
       save-markdown --file=summary.md
 ```
 
-### 8.5 Automation: Lockfile and CI/CD Integration
+### 9.5 Automation: Lockfile and CI/CD Integration
 
 **Goal**: Create reliable, reproducible automation pipelines.
 
@@ -1452,7 +1482,7 @@ pflow run my_flow.lock.json --use-cache --batch-mode
 0 * * * * pflow run hourly_summary.lock.json --use-cache --reset-cache
 ```
 
-### 8.6 Production: Monitoring and Observability
+### 9.6 Production: Monitoring and Observability
 
 **Goal**: Monitor, debug, and optimize production flows.
 
@@ -1476,7 +1506,7 @@ pflow trace run_2024-01-01_def456 --failure-analysis
 # Shows: failure node, error context, shared store state at failure
 ```
 
-### 8.7 Advanced Patterns and Future Features
+### 9.7 Advanced Patterns and Future Features
 
 **Complex Flow Composition (Future):**
 

@@ -65,11 +65,6 @@ docs/
 - **Must read**: `architecture/pflow-pocketflow-integration-guide.md`
 - This prevents common implementation mistakes
 
-**PocketFlow architecture decision**
-- **Decision record**: `architecture/adr/001-use-pocketflow-for-orchestration.md`
-- Key insight: ONLY Task 17 (Natural Language Planner) uses PocketFlow internally
-- All other components use traditional Python patterns
-- Focused approach: Use PocketFlow only where complex orchestration adds real value
 
 **The data flow between nodes**
 - Primary: `core-concepts/shared-store.md`

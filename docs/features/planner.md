@@ -408,6 +408,35 @@ When generation is required, the planner uses a **thinking model** (e.g., o1-pre
 - **Complex Requirements**: Break down into simpler sub-problems using LLM node
 - **Text Processing Tasks**: Default to LLM node with appropriate prompts
 
+### 6.6 Template Variable Resolution
+
+#### Important: Planner-Internal Only
+
+Template variables (like `$issue_number`, `$file_content`) are resolved ONLY by the planner during workflow generation. They are NOT a runtime feature.
+
+**How it works**:
+1. Planner generates workflows with template variables: `$issue_data`
+2. During planning, these are mapped to shared store keys: `shared["issue_data"]`
+3. The compiler passes template variables unchanged
+4. Only the planner performs substitution
+
+**Example**:
+```yaml
+# Planner generates:
+nodes:
+  - id: analyze
+    params:
+      prompt: "Analyze this issue: $issue_data"
+
+# Planner resolves to:
+nodes:
+  - id: analyze
+    params:
+      prompt: "Analyze this issue: {shared['issue_data']}"
+```
+
+This is NOT a runtime templating engine - it's purely for planner use during workflow generation.
+
 ---
 
 ## 7 · Flow Structure Generation
@@ -426,13 +455,13 @@ node_a => node_b => node_c          # Sequential data flow
 
 ```python
 # Text processing pipeline
-read_file => llm => write_file      # Read → Process → Write
+read-file => llm => write-file      # Read → Process → Write
 
 # API data flow
-github_get_issue => llm => github_add_comment  # Get → Analyze → Respond
+github-get-issue => llm => github-add-comment  # Get → Analyze → Respond
 
 # Multi-step analysis
-yt_transcript => llm => llm => write_file      # Get → Summarize → Expand → Save
+yt-transcript => llm => llm => write-file      # Get → Summarize → Expand → Save
 ```
 
 ### 7.2 IR Representation
@@ -763,9 +792,51 @@ yt-transcript --url $VIDEO => llm --prompt="Summarize this transcript" --tempera
 
 ---
 
-## 12 · Integration with Runtime
+## 12 · The "Find or Build" Pattern
 
-### 12.1 Shared Store Runtime Handoff
+pflow's core innovation is semantic workflow discovery that enables the "Plan Once, Run Forever" philosophy:
+
+### 12.1 How It Works
+
+1. **User Intent**: `pflow "analyze AWS costs for last month"`
+2. **Semantic Search**: System searches existing workflows by meaning, not exact names
+3. **Discovery**:
+   - Finds: `aws-cost-analyzer` workflow (even though names don't match exactly)
+   - Prompts: "Found similar workflow 'aws-cost-analyzer'. Use this?"
+4. **Or Build**: If no match found, generates new workflow from natural language
+5. **Save & Reuse**: New workflows saved for future semantic discovery
+
+### 12.2 Implementation Details
+
+The pattern is implemented in `src/pflow/planning/discovery.py`:
+- `find_similar_workflows(user_input, saved_workflows)` - semantic matching
+- Uses LLM embeddings or similarity scoring
+- Returns ranked list of potential matches
+- Enables discovery by intent, not memorized names
+
+### 12.3 Example Flow
+
+```bash
+# First user:
+pflow "check github issues and create summary"
+# → No existing workflow found
+# → Generates: github-list-issues >> filter-open >> create-summary
+# → Saves as: 'github-issue-summary'
+
+# Later user (different phrasing):
+pflow "summarize open github tickets"
+# → Finds 'github-issue-summary' by semantic similarity
+# → Suggests: "Use existing 'github-issue-summary' workflow?"
+# → Instant execution without regeneration
+```
+
+This pattern eliminates the need to remember exact workflow names while ensuring maximum reuse.
+
+---
+
+## 13 · Integration with Runtime
+
+### 13.1 Shared Store Runtime Handoff
 
 **Process**:
 
@@ -774,7 +845,7 @@ yt-transcript --url $VIDEO => llm --prompt="Summarize this transcript" --tempera
 3. Runtime loads lockfile, validates signature
 4. Runtime executes using shared store + proxy pattern
 
-### 12.2 pocketflow Framework Integration
+### 13.2 pocketflow Framework Integration
 
 **Node Execution**:
 
@@ -792,7 +863,7 @@ class GeneratedFlow(Flow):
         return node
 ```
 
-### 12.3 NodeAwareSharedStore Proxy Usage
+### 13.3 NodeAwareSharedStore Proxy Usage
 
 **Automatic Proxy Setup**:
 
@@ -806,7 +877,7 @@ for node in flow.nodes:
         node._run(shared)  # Direct access
 ```
 
-### 12.4 CLI Flag Resolution at Execution
+### 13.4 CLI Flag Resolution at Execution
 
 **Runtime Resolution**:
 
@@ -817,9 +888,9 @@ for node in flow.nodes:
 
 ---
 
-## 13 · Error Handling and Codes
+## 14 · Error Handling and Codes
 
-### 13.1 Planner Error Taxonomy
+### 14.1 Planner Error Taxonomy
 
 | Code | Description | Planner Output | Recovery |
 |---|---|---|---|
@@ -830,7 +901,7 @@ for node in flow.nodes:
 | `ACTION_UNDEFINED` | Node action has no defined transition | Missing action + available actions | Add transition or retry |
 | `VALIDATION_TIMEOUT` | Validation exceeded retry budget | Last error + suggestion | Escalate to user |
 
-### 13.2 Integration with Runtime Errors
+### 14.2 Integration with Runtime Errors
 
 **Error Code Compatibility**:
 
@@ -839,7 +910,7 @@ for node in flow.nodes:
 - Runtime errors in `EXEC_*` namespace
 - Consistent error format across all stages
 
-### 13.3 User-Friendly Error Messages
+### 14.3 User-Friendly Error Messages
 
 ```
 🔍 Planning Failed: Interface Mismatch
@@ -857,9 +928,9 @@ expects 'text'.
 
 ---
 
-## 15 · Logging and Provenance
+## 16 · Logging and Provenance
 
-### 15.1 Planner Log Structure
+### 16.1 Planner Log Structure
 
 ```json
 {
@@ -893,7 +964,7 @@ expects 'text'.
 }
 ```
 
-### 15.2 Integration with Runtime Logging
+### 16.2 Integration with Runtime Logging
 
 **Linked Provenance**:
 
@@ -902,7 +973,7 @@ expects 'text'.
 - Error correlation across planner/compiler/runtime
 - Performance analysis across all stages
 
-### 15.3 Metadata Version Tracking
+### 16.3 Metadata Version Tracking
 
 **Change Detection**:
 
@@ -913,9 +984,9 @@ expects 'text'.
 
 ---
 
-## 16 · Trust Model & Security
+## 17 · Trust Model & Security
 
-### 16.1 Flow Origin Trust Levels
+### 17.1 Flow Origin Trust Levels
 
 | Origin | Trust Level | Cache Eligible | Validation Required | Notes |
 |---|---|---|---|---|
@@ -924,7 +995,7 @@ expects 'text'.
 | **User Modified IR** | `mixed` | No | Full re-validation required | Requires manual `--force-cache` |
 | **Manual Python Code** | `untrusted` | No | Complete validation + signature check | Treated as untrusted until validated |
 
-### 16.2 Cache Safety Rules
+### 17.2 Cache Safety Rules
 
 **Caching Prerequisites** (ALL must be true):
 
@@ -933,7 +1004,7 @@ expects 'text'.
 3. All input data hashes match cache entry
 4. Node version and params match cache entry
 
-### 16.3 Node Registry Security
+### 17.3 Node Registry Security
 
 **Validation Requirements**:
 
@@ -942,7 +1013,7 @@ expects 'text'.
 - Version pinning for production environments
 - Signature verification for distributed registries
 
-### 16.4 LLM Selection Guardrails
+### 17.4 LLM Selection Guardrails
 
 **Safety Measures**:
 
@@ -953,9 +1024,9 @@ expects 'text'.
 
 ---
 
-## 17 · Metrics and Success Criteria
+## 18 · Metrics and Success Criteria
 
-### 17.1 MVP Targets
+### 18.1 MVP Targets
 
 | Metric | Target | Measurement |
 |---|---|---|
@@ -965,7 +1036,7 @@ expects 'text'.
 | **User Approval Rate** | ≥ 90% | Users approve generated CLI previews |
 | **Error Recovery** | ≥ 80% | Failed validations recover within retry budget |
 
-### 17.2 Performance Benchmarks
+### 18.2 Performance Benchmarks
 
 **Caching Effectiveness**:
 
@@ -979,7 +1050,7 @@ expects 'text'.
 - Handle ≥ 20 node flows efficiently
 - Maintain performance with ≥ 10 concurrent planners
 
-### 17.3 Quality Metrics
+### 18.3 Quality Metrics
 
 **Generated Flow Quality**:
 
@@ -990,9 +1061,9 @@ expects 'text'.
 
 ---
 
-## 18 · Future Extensibility
+## 19 · Future Extensibility
 
-### 18.1 Advanced Selection Algorithms
+### 19.1 Advanced Selection Algorithms
 
 **Semantic Vector Index**:
 
@@ -1001,7 +1072,7 @@ expects 'text'.
 - Intent clustering for common patterns
 - Multi-modal selection (text + examples)
 
-### 18.2 Enhanced User Interfaces
+### 19.2 Enhanced User Interfaces
 
 **Visual Flow Builder**:
 
@@ -1010,7 +1081,7 @@ expects 'text'.
 - Collaborative flow editing
 - Visual debugging and profiling
 
-### 18.3 Distributed Planning
+### 19.3 Distributed Planning
 
 **Remote Planner Services**:
 
@@ -1019,7 +1090,7 @@ expects 'text'.
 - Collaborative flow libraries
 - Enterprise governance and compliance
 
-### 18.4 Advanced Validation
+### 19.4 Advanced Validation
 
 **Constraint-Driven Generation**:
 
@@ -1030,7 +1101,7 @@ expects 'text'.
 
 ---
 
-## 19 · Glossary
+## 20 · Glossary
 
 | Term | Definition |
 |---|---|

@@ -175,15 +175,14 @@ pflow/
 │   │   ├── schemas.md                 # JSON IR and metadata schemas
 │   │   └── shared-store.md            # Shared store + proxy pattern
 │   ├── features/                      # Feature specifications
-│   │   ├── mvp-scope.md               # Clear MVP boundaries
+│   │   ├── mvp-implementation-guide.md  # Comprehensive MVP guide (scope + roadmap)
 │   │   ├── simple-nodes.md            # Simple node design pattern
 │   │   ├── cli-runtime.md             # CLI integration and shared store runtime
 │   │   ├── planner.md                 # Dual-mode planner (CLI + natural language)
 │   │   ├── shell-pipes.md             # Unix pipe support and stdin handling
 │   │   ├── autocomplete.md            # CLI autocomplete specification (v2.0)
 │   │   ├── mcp-integration.md         # MCP server integration (v2.0)
-│   │   ├── workflow-analysis.md       # Technical analysis of AI workflow inefficiencies
-│   │   └── implementation-roadmap.md  # High-level roadmap
+│   │   └── workflow-analysis.md       # Technical analysis of AI workflow inefficiencies
 │   ├── reference/                     # Reference documentation
 │   │   ├── cli-reference.md           # CLI commands and syntax
 │   │   ├── execution-reference.md     # Execution model and flow control

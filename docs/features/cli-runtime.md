@@ -208,9 +208,19 @@ Graph: `yt-transcript` ➜ `llm` (wired through transparent proxy mapping).
 
 **CLI Command**:
 
+### MVP Implementation (Natural Language)
 ```bash
+# Everything after 'pflow' is sent to the LLM as natural language
+pflow "get youtube transcript from https://youtu.be/abc123 and summarize it"
+```
+
+### Future v2.0 (Direct CLI Parsing)
+```bash
+# Direct parsing without LLM interpretation (optimization)
 pflow yt-transcript --url=https://youtu.be/abc123 => llm --prompt="Summarize this transcript" --temperature=0.9
 ```
+
+> **Note**: In MVP, all input is processed as natural language. Direct CLI parsing is a v2.0 optimization.
 
 **Shared Store Population**:
 
@@ -371,8 +381,15 @@ Same node code, different shared store layouts.
 
 **Pattern**: Simple data transformation pipeline
 
+### MVP Implementation (Natural Language)
 ```bash
-# CLI command
+# Everything after 'pflow' is sent to the LLM as natural language
+pflow "read data.txt, summarize the content, and write the summary to summary.md"
+```
+
+### Future v2.0 (Direct CLI Parsing)
+```bash
+# Direct parsing without LLM interpretation (optimization)
 pflow read-file --path=data.txt => llm --prompt="Summarize this data" => write-file --path=summary.md
 ```
 
@@ -397,8 +414,15 @@ def create_simple_flow():
 
 **Pattern**: Multiple LLM transformations
 
+### MVP Implementation (Natural Language)
 ```bash
-# CLI command
+# Everything after 'pflow' is sent to the LLM as natural language
+pflow "get youtube transcript, extract key points, create presentation outline, and save to outline.md"
+```
+
+### Future v2.0 (Direct CLI Parsing)
+```bash
+# Direct parsing without LLM interpretation (optimization)
 pflow yt-transcript --url=VIDEO => \
   llm --prompt="Extract key points" => \
   llm --prompt="Create presentation outline" => \
@@ -420,8 +444,15 @@ shared = {
 
 **Pattern**: Combine platform nodes with LLM processing
 
+### MVP Implementation (Natural Language)
 ```bash
-# CLI command
+# Everything after 'pflow' is sent to the LLM as natural language
+pflow "get github issue 123 from owner/repo, analyze it and suggest a fix, then add the suggestion as a comment"
+```
+
+### Future v2.0 (Direct CLI Parsing)
+```bash
+# Direct parsing without LLM interpretation (optimization)
 pflow github-get-issue --repo=owner/repo --issue=123 => \
   llm --prompt="Analyze this issue and suggest a fix" => \
   github-add-comment --issue=123
@@ -533,10 +564,18 @@ pflow load-csv --file new_data.csv => custom-analysis => export-dashboard
 
 ### 14 · Appendix — full flow walk-through
 
+### MVP Implementation (Natural Language)
 ```bash
+# Everything after 'pflow' is sent to the LLM as natural language
+pflow "get transcript from https://youtu.be/abc123 and summarize it with temperature 0.9"
+```
+
+### Future v2.0 (Direct CLI Parsing)
+```bash
+# Direct parsing without LLM interpretation (optimization)
 pflow yt-transcript \
   --url=https://youtu.be/abc123 \
-  >> summarise-text \
+  => summarise-text \
   --temperature=0.9
 ```
 
