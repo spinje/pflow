@@ -428,7 +428,7 @@
           3,
           7
         ],
-        "priority": "high",
+        "priority": "medium",
         "details": "Merge validation and proxy implementation into src/pflow/core/proxy.py. Implement: 1) get_reserved_keys() returning ['stdin'], 2) detect_collisions(node_interfaces) to find key conflicts between nodes in a flow, 3) NodeAwareSharedStore class for transparent mapping around collisions and reserved keys. The proxy uses collision detection internally to know what needs mapping. Zero overhead when no collisions exist. Support input_mappings and output_mappings. Fail fast on missing required inputs. Include basic key existence validation: when a node requires an input key, verify it exists in the shared store before execution. This prevents silent failures and provides clear error messages. This minimal validation is essential for the proxy pattern to function correctly in MVP. Note: Natural pattern validation is NOT needed - nodes define their own conventions. Only validate for reserved keys and collisions. Reference docs: shared-store.md#2, cli-runtime.md#3",
         "testStrategy": "Test collision detection with various node combinations, proxy mapping scenarios, reserved key handling, and performance overhead. Verify fail-fast behavior and zero-overhead direct access. Test key existence validation to ensure missing keys produce clear error messages before node execution.",
         "subtasks": []
@@ -498,7 +498,7 @@
         "dependencies": [
           9
         ],
-        "priority": "high",
+        "priority": "medium",
         "details": "Create src/pflow/nodes/llm.py inheriting from pocketflow.BaseNode. Set explicit name attribute: class LLMNode(BaseNode): name = 'llm'. Simple interface for general text processing. Natural interface: shared['prompt'] \u2192 shared['response']. Support multiple providers (Claude API, OpenAI). Fail fast on missing prompt with clear error message asking user for input. Smart exception to prevent prompt node proliferation. Reference docs: core-node-packages/llm-nodes.md, architecture.md#3.4",
         "testStrategy": "Mock LLM API responses, test different providers and parameter configurations. Test retry logic and error handling."
       },
@@ -510,7 +510,7 @@
         "dependencies": [
           9
         ],
-        "priority": "high",
+        "priority": "medium",
         "details": "Create all MVP platform nodes inheriting from pocketflow.BaseNode:\n\nGITHUB NODES (src/pflow/nodes/github/):\n- github_get_issue.py: shared['repo'], shared['issue_number'] \u2192 shared['issue_data'], shared['issue_title']\n- github_create_pr.py: shared['pr_title'], shared['pr_body'], shared['repo'] \u2192 shared['pr_number']\n- github_list_prs.py: shared['repo'], shared['state'] \u2192 shared['prs']\n- github_add_comment.py: shared['pr_number'], shared['comment'] \u2192 shared['comment_id']\n- github_merge_pr.py: shared['pr_number'], shared['merge_method'] \u2192 shared['merge_sha'] (with conflict handling)\n\nGIT NODES (src/pflow/nodes/git/):\n- git_commit.py: shared['message'], shared['files'] \u2192 shared['commit_hash']\n- git_push.py: shared['branch'] \u2192 shared['push_result']\n- git_create_branch.py: shared['branch_name'] \u2192 shared['branch_created']\n- git_merge.py: shared['source_branch'], shared['target_branch'] \u2192 shared['merge_result']\n- git_status.py: \u2192 shared['git_status']\n\nCI NODES (src/pflow/nodes/ci/):\n- ci_run_tests.py: shared['test_command'] \u2192 shared['test_results']\n- ci_get_status.py: shared['build_id'] \u2192 shared['build_status']\n- ci_trigger_build.py: shared['build_config'] \u2192 shared['build_id']\n- ci_get_logs.py: shared['build_id'] \u2192 shared['build_logs']\n\nSHELL NODES (src/pflow/nodes/shell/):\n- shell_exec.py: shared['command'] \u2192 shared['output'], shared['exit_code']\n- shell_pipe.py: shared['commands'] \u2192 shared['output']\n- shell_background.py: shared['command'] \u2192 shared['pid']\n\nAll nodes use:\n- Natural interfaces with intuitive shared store keys\n- Explicit name attributes (e.g., class GitHubGetIssueNode(BaseNode): name = 'github-get-issue')\n- Proper error handling with clear messages\n- Authentication via environment variables (GITHUB_TOKEN, etc.)\n- Safety checks for destructive operations\n- Fail fast on missing required inputs\n- Support for multiple CI systems (GitHub Actions, Jenkins, local)\n- Timeout handling for long-running operations\n\nReference docs: simple-nodes.md",
         "testStrategy": "Mock all external API responses and system commands. Test parameter handling, error cases, safety measures, and timeouts. Write comprehensive unit tests for each node. Test fail-fast behavior on missing inputs."
       },
@@ -522,7 +522,7 @@
         "dependencies": [
           7
         ],
-        "priority": "high",
+        "priority": "critical",
         "details": "Create src/pflow/planning/context_builder.py with build_context(registry_metadata) function. Format node information into a structured text that LLMs can understand: node names, descriptions, inputs/outputs, parameter types. Keep format simple and readable - just markdown tables or structured text. Include which parameters go to shared store vs node.set_params(). This provides the LLM with available 'tools' for building workflows. Output example: 'Available nodes:\n- read-file: Reads file from disk\n  Inputs: file_path (from shared store)\n  Outputs: content (to shared store)'. Reference docs: planner.md#6.1",
         "testStrategy": "Test context generation, metadata optimization, and LLM readability. Verify output format is parseable."
       },
