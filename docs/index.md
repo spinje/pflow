@@ -231,7 +231,33 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ## Features Directory (`/features/`)
 
-### [mvp-scope.md](./features/mvp-scope.md)
+### [mvp-implementation-guide.md](./features/mvp-implementation-guide.md)
+**Purpose**: Comprehensive guide combining MVP scope and implementation roadmap - single source of truth for MVP development.
+
+**Key Contents**:
+- Executive summary with 40 MVP tasks across 4 phases
+- Core vision and value proposition with real-world use cases
+- Complete MVP feature scope with what's included/excluded
+- Detailed 4-phase implementation roadmap with task references
+- Success metrics and acceptance criteria
+- Technical implementation details and validation strategy
+- Parallelization opportunities (9 weeks → 6-7 weeks)
+
+**Critical Insights**:
+- Natural Language Planner (Task 17) is THE core feature
+- "Find or build" pattern is the key innovation
+- 10x efficiency improvement over slash commands
+- Test-as-you-go strategy embedded in each task
+- Everything after 'pflow' treated as natural language in MVP
+
+**When to Use**: Planning MVP implementation, understanding scope and timeline, checking task dependencies, measuring success
+
+**Status**: ✅ MVP Definition
+
+---
+
+### [mvp-scope.md](./features/mvp-scope.md) *[MERGED]*
+> **Note**: This document has been merged into [MVP Implementation Guide](./features/mvp-implementation-guide.md). Please refer to that document for the most up-to-date information.
 **Purpose**: Defines focused MVP scope for AI-assisted development workflow compiler with clear boundaries.
 
 **Key Contents**:
@@ -250,7 +276,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 **When to Use**: Checking feature scope, understanding core problem, implementation planning
 
-**Status**: ✅ MVP Definition
+**Status**: ✅ MVP Definition *(Merged into mvp-implementation-guide.md)*
 
 ---
 

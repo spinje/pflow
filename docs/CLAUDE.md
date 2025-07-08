@@ -20,8 +20,7 @@ docs/
 │   ├── schemas.md             # JSON formats
 │   └── shared-store.md        # Data communication
 ├── features/                  # Feature specifications
-│   ├── mvp-scope.md           # What's in/out of MVP
-│   ├── implementation-roadmap.md  # Development phases
+│   ├── mvp-implementation-guide.md  # Comprehensive MVP guide (scope + roadmap)
 │   ├── cli-runtime.md         # CLI integration
 │   ├── planner.md             # Natural language planning
 │   ├── shell-pipes.md         # Unix pipe support
@@ -59,9 +58,8 @@ docs/
 - Key insight: Focus on shared store + proxy pattern
 
 **What we're building in MVP**
-- Start with: `features/mvp-scope.md`
-- Then read: `features/implementation-roadmap.md`
-- Reference: `architecture/components.md` for detailed breakdown
+- Start with: `features/mvp-implementation-guide.md` (comprehensive guide)
+- Reference: `architecture/components.md` for detailed technical breakdown
 
 **How pflow uses pocketflow**
 - **Must read**: `architecture/pflow-pocketflow-integration-guide.md`
@@ -96,7 +94,7 @@ docs/
 ### 🎯 Start Here (Core Understanding)
 1. `prd.md` - Vision and core concepts
 2. `architecture/pflow-pocketflow-integration-guide.md` - Critical patterns
-3. `features/mvp-scope.md` - What we're building now
+3. `features/mvp-implementation-guide.md` - What we're building (comprehensive MVP guide)
 
 ### 📐 Architecture Documents
 - System design and component relationships
@@ -156,8 +154,7 @@ prd.md
 │   ├─> core-concepts/shared-store.md
 │   ├─> core-concepts/schemas.md
 │   └─> architecture/pflow-pocketflow-integration-guide.md
-├─> features/mvp-scope.md
-│   └─> features/implementation-roadmap.md
+├─> features/mvp-implementation-guide.md
 └─> reference/cli-reference.md
     ├─> features/cli-runtime.md
     └─> features/shell-pipes.md
@@ -172,7 +169,7 @@ Each concept has ONE canonical document. Other documents link to it rather than 
 Many documents describe both MVP and future features. Look for:
 - "MVP:" or "v0.1" tags for current scope
 - "v2.0" or "Future:" for post-MVP features
-- Check `features/mvp-scope.md` when uncertain
+- Check `features/mvp-implementation-guide.md` when uncertain
 
 ### Prerequisites
 Some documents assume knowledge from others:

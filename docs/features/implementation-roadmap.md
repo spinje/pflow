@@ -1,5 +1,8 @@
 # pflow Implementation Roadmap: From Vision to Reality
 
+> **Note**: This document has been merged into [MVP Implementation Guide](./mvp-implementation-guide.md).
+> Please refer to that document for the most up-to-date information.
+
 This document provides a strategic roadmap for implementing pflow, the AI workflow compiler that transforms natural language and CLI pipe syntax into permanent, deterministic CLI commands.
 
 **Scope**: 40 MVP tasks across 4 phases (8 tasks deferred to v2.0)

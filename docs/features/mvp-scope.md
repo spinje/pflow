@@ -1,5 +1,8 @@
 # MVP Scope: AI-Assisted Development Workflow Compiler
 
+> **Note**: This document has been merged into [MVP Implementation Guide](./mvp-implementation-guide.md).
+> Please refer to that document for the most up-to-date information.
+
 ## Navigation
 
 **Related Documents:**
