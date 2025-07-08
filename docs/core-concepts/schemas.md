@@ -456,7 +456,7 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 
 ## Example Repository
 
-The pflow project includes a comprehensive set of examples demonstrating various IR patterns:
+The pflow project includes a comprehensive set of examples demonstrating various IR patterns. See [examples/README.md](../../examples/README.md) for a complete guide to all examples and how to use them.
 
 ### Core Examples (`examples/core/`)
 Basic patterns every user should understand:

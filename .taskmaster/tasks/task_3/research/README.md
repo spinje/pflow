@@ -24,6 +24,13 @@ This directory contains all research, analysis, and implementation documentation
 - **`task-4-5-implementation-analysis.md`** - Deep dive into compiler and registry implementation
 - **`task-6-11-implementation-analysis.md`** - Analysis of IR schema and file nodes
 
+### 5. Current Context Research (Added from tasks.json)
+- **`ir-schema-examples.md`** - JSON IR format examples for creating hello_workflow.json
+- **`integration-test-patterns.md`** - Testing patterns for test_e2e_workflow.py
+- **`cli-and-compiler-integration.md`** - How to add --file flag and integrate with compiler
+- **`task-3-implementation-summary.md`** - Concise implementation guide from current context
+- **`shared-store-pattern.md`** - Shared store usage patterns for file nodes
+
 ## Key Findings Summary
 
 ### ✅ All Dependencies Implemented
@@ -79,6 +86,11 @@ All 6 dependency tasks are complete and functional:
 ├── handoff-memo.md                         # Additional warnings
 ├── pocketflow-patterns.md                  # Framework patterns
 ├── pocketflow-design-clarification.md      # PocketFlow parameter design explanation
+├── ir-schema-examples.md                   # JSON IR examples
+├── integration-test-patterns.md            # E2E test patterns
+├── cli-and-compiler-integration.md         # CLI/compiler integration guide
+├── task-3-implementation-summary.md        # Concise implementation summary
+├── shared-store-pattern.md                 # Shared store patterns
 ```
 
 ---
