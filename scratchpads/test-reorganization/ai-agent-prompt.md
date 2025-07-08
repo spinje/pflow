@@ -71,4 +71,4 @@ tests/test_X/test_Y/ maps to src/pflow/X/Y/
 - [ ] No test code lost (verify with git diff)
 - [ ] CI/CD still works (run `make test`)
 
-Remember: Take your time, verify each step, and commit often. The plan has all the details you need.
+Remember: Take your time, ultra think, verify each step, before moving on. The plan has all the details you need. Dont commit until the user has verified the changes when you are all done.
