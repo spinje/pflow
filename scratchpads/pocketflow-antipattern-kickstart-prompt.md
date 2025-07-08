@@ -8,7 +8,7 @@ I need you to continue an important refactoring task that fixes critical anti-pa
 
 1. First, read the comprehensive context document:
    - `/Users/andfal/projects/pflow/scratchpads/pocketflow-antipattern-refactoring-context.md`
-   
+
 2. Then, read the detailed action plan:
    - `/Users/andfal/projects/pflow/scratchpads/pocketflow-antipattern-next-steps-plan.md`
 
@@ -39,7 +39,7 @@ Execute the plan in the "next-steps" document to:
 
 2. **NonRetriableError**: A new exception class for validation errors that should fail immediately without retries (e.g., wrong file type, missing confirmation)
 
-3. **The Double Return Pattern**: 
+3. **The Double Return Pattern**:
    - `exec()` now returns just the success value (not a tuple)
    - `exec_fallback()` returns error messages after all retries fail
    - `post()` checks if result starts with "Error:" to detect failures
@@ -71,7 +71,7 @@ Start by reading the two scratchpad documents, then execute the plan systematica
 # Check current test failures
 make test
 
-# Check linting errors  
+# Check linting errors
 make check
 
 # Run specific test file

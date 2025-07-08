@@ -11,12 +11,12 @@
    Two options:
    - Option A: Move NonRetriableError to separate file `exceptions.py`
    - Option B: Reorder to put class definition at bottom with `# noqa: E402`
-   
+
    Recommend Option A for cleaner architecture:
    ```python
    # /src/pflow/nodes/file/exceptions.py
    """File operation exceptions."""
-   
+
    class NonRetriableError(Exception):
        """Exception for errors that should not be retried."""
        pass
@@ -58,7 +58,7 @@ prep_res = node.prep(shared)
 exec_res = node.exec(prep_res)
 action = node.post(shared, prep_res, exec_res)
 
-# NEW  
+# NEW
 action = node.run(shared)
 assert action == "error"  # or "default"
 assert "error" in shared  # for error cases
@@ -113,7 +113,7 @@ def test_read_file_retry_succeeds_on_third_attempt(self):
     """Test that transient errors are retried and eventually succeed."""
     node = ReadFileNode()  # Has max_retries=3
     shared = {"file_path": "/test/file.txt"}
-    
+
     # Mock open to fail twice then succeed
     mock_file = mock_open(read_data="content")
     with patch("builtins.open") as mock_open_func:
@@ -122,9 +122,9 @@ def test_read_file_retry_succeeds_on_third_attempt(self):
             PermissionError("Still locked"),
             mock_file.return_value
         ]
-        
+
         action = node.run(shared)
-        
+
         assert action == "default"
         assert "content" in shared["content"]
         assert mock_open_func.call_count == 3
@@ -136,10 +136,10 @@ def test_validation_error_no_retry(self):
     """Test that NonRetriableError fails immediately without retry."""
     node = DeleteFileNode()
     shared = {"file_path": "/test/file.txt", "confirm_delete": False}
-    
+
     with patch("os.path.exists", return_value=True):
         action = node.run(shared)
-        
+
     assert action == "error"
     assert "not confirmed" in shared["error"]
     # Verify exec was only called once (no retries)
@@ -150,7 +150,7 @@ def test_validation_error_no_retry(self):
 def test_exec_fallback_messages(self):
     """Test that exec_fallback provides appropriate error messages."""
     node = ReadFileNode()
-    
+
     # Test each exception type
     test_cases = [
         (FileNotFoundError("test"), "does not exist"),
@@ -158,7 +158,7 @@ def test_exec_fallback_messages(self):
         (UnicodeDecodeError("utf-8", b"", 0, 1, "test"), "encoding"),
         (Exception("generic"), "Could not read")
     ]
-    
+
     for exc, expected_text in test_cases:
         result = node.exec_fallback(("/path", "utf-8"), exc)
         assert expected_text in result
@@ -252,7 +252,7 @@ make check
 ## Time Estimate
 
 - Fix linting: 5 minutes
-- Update failing tests: 30-45 minutes  
+- Update failing tests: 30-45 minutes
 - Add new tests: 45-60 minutes
 - Testing/debugging: 15-30 minutes
 - **Total: 2-2.5 hours**
@@ -273,7 +273,7 @@ make check
 ## If You Get Stuck
 
 1. Check `/Users/andfal/projects/pflow/pocketflow/tests/test_fall_back.py` for examples
-2. Read `/Users/andfal/projects/pflow/pocketflow/docs/core_abstraction/node.md` 
+2. Read `/Users/andfal/projects/pflow/pocketflow/docs/core_abstraction/node.md`
 3. Remember: Let exceptions bubble up in exec(), handle in exec_fallback()
 4. The pattern is about separating success path from error handling
 

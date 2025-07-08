@@ -16,7 +16,7 @@ PocketFlow anti-patterns are documented practices that break the framework's des
 
 All 5 file operation nodes in `/src/pflow/nodes/file/` violate this anti-pattern:
 1. `ReadFileNode` - catches UnicodeDecodeError, PermissionError
-2. `WriteFileNode` - catches PermissionError, OSError  
+2. `WriteFileNode` - catches PermissionError, OSError
 3. `CopyFileNode` - catches all file operation errors
 4. `MoveFileNode` - catches all file operation errors
 5. `DeleteFileNode` - catches all file operation errors
@@ -115,7 +115,7 @@ All tests were written for the old pattern where `exec()` returns `(message, suc
 
 Failed tests:
 - `test_missing_file` - expects error tuple, gets FileNotFoundError
-- `test_encoding_error` - expects error tuple, gets UnicodeDecodeError  
+- `test_encoding_error` - expects error tuple, gets UnicodeDecodeError
 - `test_error_propagation` - expects error in shared store
 - `test_copy_overwrite_protection` - expects error tuple, gets NonRetriableError
 - etc.
@@ -164,7 +164,7 @@ The original anti-pattern document provided by the user details all patterns to 
 
 ## Key Insights That Are Hard to Conceptualize
 
-1. **The Double Return Pattern**: 
+1. **The Double Return Pattern**:
    - Old: `exec()` returns `(message, success_bool)`
    - New: `exec()` returns just the success value, `exec_fallback()` returns error message
    - `post()` must detect if the result is an error by checking `result.startswith("Error:")`

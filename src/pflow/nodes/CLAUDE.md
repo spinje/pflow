@@ -15,25 +15,25 @@ from .exceptions import NonRetriableError
 class ExampleNode(Node):
     def __init__(self):
         super().__init__(max_retries=3, wait=0.1)
-    
+
     def prep(self, shared: dict) -> Any:
         """Validate inputs and prepare for execution."""
         # Validation logic here
         return prep_data
-    
+
     def exec(self, prep_res: Any) -> Any:
         """Execute main logic - NO try/except blocks!"""
         # Let ALL exceptions bubble up for retry mechanism
         result = some_operation()  # If this fails, it will retry
         return result  # Only return success value
-    
+
     def exec_fallback(self, prep_res: Any, exc: Exception) -> Any:
         """Handle errors AFTER all retries exhausted."""
         if isinstance(exc, SpecificError):
             return "Error: Specific error message"
         else:
             return f"Error: Operation failed: {exc!s}"
-    
+
     def post(self, shared: dict, prep_res: Any, exec_res: Any) -> str:
         """Process results and determine next action."""
         if isinstance(exec_res, str) and exec_res.startswith("Error:"):
@@ -83,7 +83,7 @@ Always test that your nodes retry correctly:
 def test_node_retries_on_failure():
     node = YourNode()
     shared = {"input": "test"}
-    
+
     with patch("some.operation") as mock_op:
         # Fail twice, then succeed
         mock_op.side_effect = [
@@ -91,9 +91,9 @@ def test_node_retries_on_failure():
             Exception("Still failing"),
             "Success!"
         ]
-        
+
         action = node.run(shared)
-        
+
         assert action == "default"
         assert mock_op.call_count == 3
 ```
