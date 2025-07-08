@@ -192,6 +192,8 @@ ls .taskmaster/tasks/task_<taskId>/research/
 - `research/pocketflow-patterns.md` - Insights from PocketFlow cookbook examples
 - `research/external-patterns.md` - Patterns from similar projects (e.g., Simon Willison's llm)
 
+Make sure to list all the files in the research folder.
+
 **Critical Thinking Required:**
 > **⚠️ IMPORTANT**: These research files contain recommendations from other AI agents. You must:
 > - **Verify all assumptions** - Don't blindly trust prior research
