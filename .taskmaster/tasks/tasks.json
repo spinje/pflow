@@ -90,46 +90,57 @@
       {
         "id": 3,
         "title": "Execute a Hardcoded 'Hello World' Workflow",
-        "description": "Create and execute a simple, hardcoded 'read-file => write-file' workflow from a local JSON file to validate the core end-to-end execution pipeline.",
+        "description": "Review and polish the implemented 'read-file => write-file' workflow execution system, ensuring all components are properly integrated and tested.",
         "status": "pending",
         "dependencies": [
           6,
           11
         ],
         "priority": "high",
-        "details": "This task integrates the core components built in Phase 1. It involves: 1. Creating a sample 'hello_workflow.json' file that conforms to the IR schema (Task 6). 2. Creating minimal 'read-file' and 'write-file' nodes (subset of Task 11) that inherit from pocketflow.BaseNode with proper naming (class.name attribute or kebab-case). 3. Adding a basic 'pflow --file <file.json>' command to the CLI (Task 2). 4. Calling the IR-to-Flow Converter (Task 4) to take the JSON and produce a pocketflow.Flow object using dynamic imports from registry metadata. 5. Initialize a clean shared store dictionary and run the flow with it.",
-        "testStrategy": "Create a tests/test_e2e_workflow.py. Define a simple workflow IR file for 'read-file => write-file'. Use CliRunner to invoke 'pflow --file <ir_file>'. Create mock nodes that write to the shared store. Verify the flow executes correctly and the final shared store contains expected values. Test with temporary files to ensure file I/O works as expected.",
+        "details": "This task has been substantially implemented (commit dff02c3). The core workflow execution pipeline is functional with: 1. A working 'hello_workflow.json' file that conforms to the IR schema. 2. Implemented 'read-file' and 'write-file' nodes inheriting from pocketflow.BaseNode. 3. The 'pflow --file <file.json>' command integrated into the CLI. 4. IR-to-Flow Converter integration for JSON to pocketflow.Flow conversion. 5. Shared store initialization and flow execution. Focus now shifts to review, polish, and ensuring completeness of the implementation.",
+        "testStrategy": "Review existing tests/test_e2e_workflow.py for completeness. Verify all edge cases are covered. Ensure mock nodes properly test shared store behavior. Validate temporary file handling. Review test coverage for the execution pipeline.",
         "subtasks": [
           {
             "id": 1,
-            "title": "Implement Workflow Execution in CLI",
-            "description": "Extend the existing CLI to execute JSON workflows by integrating IR validation, registry lookup, compilation, and PocketFlow execution. The CLI already has the `--file` option and input handling; now we need to make it actually execute workflows.",
-            "dependencies": [],
-            "details": "Modify `src/pflow/cli/main.py` to detect and process JSON workflows. Keep existing functionality for plain text input (future natural language). Integrate validation \u2192 registry \u2192 compiler \u2192 execution pipeline. Initialize empty shared store and execute the compiled flow. Handle both 'default' and 'error' action results from nodes. Create sample `hello_workflow.json` file for testing. Follow the direct command pattern: `pflow --file workflow.json`.",
+            "title": "Review and Document Existing Workflow Implementation",
+            "description": "Thoroughly review the implemented workflow execution system to understand current state, identify any gaps, and document the implementation for future reference.",
             "status": "pending",
-            "testStrategy": "Unit tests for JSON detection and routing logic. Mock tests for component integration points. Verify shared store state after execution. Test error paths (invalid JSON, missing nodes, etc.)."
+            "dependencies": [],
+            "details": "Review src/pflow/cli/main.py for JSON workflow processing implementation. Examine how validation \u2192 registry \u2192 compiler \u2192 execution pipeline is integrated. Document the shared store initialization and flow execution logic. Review hello_workflow.json structure and verify it follows IR schema. Check how 'default' and 'error' action results are handled. Create or update documentation for the workflow execution system.\n<info added on 2025-07-08T11:57:48.174Z>\nExamine the existing workflow execution implementation in src/pflow/cli/main.py (lines 80-88) to ensure it properly handles all edge cases. Verify that the try-except block catches all potential exceptions from validation, registry loading, compilation, and execution phases. Check that error messages are informative and user-friendly. Ensure the shared store is properly initialized before execution and cleaned up afterwards to prevent memory leaks. Review the flow execution result handling to confirm both successful and error outcomes are properly processed. Verify that the execution pipeline gracefully handles missing nodes, invalid action strings, and malformed workflow JSON. Test edge cases such as empty workflows, workflows with no nodes, and workflows with circular dependencies. Ensure proper logging is in place for debugging workflow execution issues. Consider adding execution timing or performance metrics if not already present. Validate that the hello_workflow.json execution path represents typical usage patterns and that the implementation generalizes well to other workflow types.\n</info added on 2025-07-08T11:57:48.174Z>",
+            "testStrategy": "Review existing test coverage in test_e2e_workflow.py. Identify any missing test scenarios. Verify documentation accurately reflects implementation."
           },
           {
             "id": 2,
-            "title": "Add Comprehensive Error Handling and User Experience",
-            "description": "Implement robust error handling throughout the execution pipeline with clear, actionable error messages. Focus on common failure modes like missing registry, invalid JSON, compilation errors, and execution failures.",
+            "title": "Enhance Error Handling and User Feedback",
+            "description": "Review and improve error handling throughout the execution pipeline, ensuring clear and actionable error messages for all failure modes.",
+            "status": "pending",
             "dependencies": [
               1
             ],
-            "details": "Add try/catch blocks for each pipeline stage with specific error types. Implement helpful error messages for missing registry (with populate instructions). Handle JSON parsing errors with line/column information. Show available nodes when requested node not found. Add structured logging with phase tracking (load \u2192 validate \u2192 compile \u2192 execute). Implement progress indicators for long-running workflows. Follow patterns from `knowledge/patterns.md`: Graceful JSON loading, structured logging.",
-            "status": "pending",
-            "testStrategy": "Test each error scenario with appropriate fixtures. Verify error messages are helpful and actionable. Test logging output includes phase information. Ensure graceful degradation (partial success reporting)."
+            "details": "Audit existing error handling in the execution pipeline. Verify helpful error messages exist for: missing registry (with populate instructions), JSON parsing errors, node not found errors, compilation failures, and execution errors. Review structured logging implementation for phase tracking. Ensure progress indicators work for long-running workflows. Verify patterns from knowledge/patterns.md are followed.\n<info added on 2025-07-08T11:58:06.787Z>\nExamined the current error handling implementation across the codebase. The CLI has basic error handling for common scenarios like missing registry files, invalid JSON, and validation errors. Error messages generally provide clear context but could be more actionable in some cases. Missing error scenarios identified: node execution failures with specific error types, partial workflow failures where some nodes succeed before failure occurs, and timeout scenarios for long-running nodes. Progress indicators are minimal - only basic print statements exist for workflow start/end. Consider adding: spinner or progress bar for long-running nodes, real-time status updates during execution, and clear phase indicators (compilation vs execution). All error handling should follow the established pattern of providing context, the specific error, and actionable next steps for the user.\n</info added on 2025-07-08T11:58:06.787Z>",
+            "testStrategy": "Review error scenario tests. Add tests for any uncovered error paths. Verify error messages provide actionable guidance. Test logging includes proper phase information."
           },
           {
             "id": 3,
-            "title": "Create End-to-End Integration Tests",
-            "description": "Implement comprehensive integration tests in `tests/test_e2e_workflow.py` that validate the entire workflow execution pipeline from CLI input to final output. Include tests for the happy path and all major error scenarios.",
+            "title": "Complete Integration Test Coverage",
+            "description": "Review and enhance the integration tests to ensure comprehensive coverage of all workflow execution scenarios.",
+            "status": "pending",
             "dependencies": [
               2
             ],
-            "details": "Create test fixtures including valid/invalid workflow JSON files. Use CliRunner to test the complete CLI flow. Test with real file operations using temporary directories. Verify shared store contents after execution. Test retry behavior for transient failures (PocketFlow feature). Create mock nodes for isolated component testing. Follow test-as-you-go pattern from `knowledge/patterns.md`. Include tests for the temporary registry population requirement.",
+            "details": "Audit tests/test_e2e_workflow.py for coverage gaps. Verify tests exist for: complete workflow execution, file I/O operations, shared store state verification, error scenarios (missing files, invalid JSON, missing nodes), and retry behavior. Add any missing test scenarios identified during review. Ensure temporary file handling is properly tested. Verify line numbering behavior from ReadFileNode is tested.\n<info added on 2025-07-08T11:58:27.991Z>\nReview existing test coverage in tests/test_e2e_workflow.py to ensure completeness. Tests already exist for workflow execution, missing registry, invalid JSON, and validation errors. Additional areas to verify and enhance:\n\n- File I/O error handling (permissions, non-existent paths, disk full scenarios)\n- Shared store state persistence and isolation between workflow runs\n- Node execution order and dependency management\n- Retry mechanism with different failure types (transient vs permanent failures)\n- Edge cases: empty workflows, circular dependencies, malformed node configurations\n- Resource cleanup after workflow completion or failure\n- Concurrent workflow execution isolation\n- Memory management for large file operations\n- Timeout handling for long-running nodes\n- Line numbering preservation in ReadFileNode output\n- Error propagation through multi-node workflows\n- Validation of node input/output contracts\n\nEnsure each test clearly documents its purpose and expected behavior. Add parametrized tests where appropriate to cover multiple scenarios efficiently.\n</info added on 2025-07-08T11:58:27.991Z>",
+            "testStrategy": "Run existing tests and analyze coverage report. Add tests for any uncovered paths. Ensure all major user scenarios are tested end-to-end."
+          },
+          {
+            "id": 4,
+            "title": "Polish and Optimize Implementation",
+            "description": "Apply final polish to the workflow execution system based on review findings, optimizing for performance and maintainability.",
             "status": "pending",
-            "testStrategy": "Complete workflow execution from JSON to output file. Missing input file handling. Invalid JSON structure. Missing nodes in registry. Compilation errors. Execution failures with retry. Verify line numbering behavior from ReadFileNode."
+            "dependencies": [
+              3
+            ],
+            "details": "Address any issues identified during review. Optimize performance bottlenecks if found. Ensure code follows project conventions and patterns. Update any outdated comments or documentation. Verify the implementation aligns with MVP scope defined in docs. Consider adding helpful CLI output formatting for better user experience.",
+            "testStrategy": "Performance benchmarks for workflow execution. Regression tests after optimizations. Manual testing of user experience improvements."
           }
         ]
       },
