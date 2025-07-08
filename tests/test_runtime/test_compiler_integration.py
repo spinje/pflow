@@ -131,31 +131,31 @@ def mock_registry():
     """Create a test registry with mock nodes."""
     return {
         "basic-node": {
-            "module": "tests.test_compiler_integration",
+            "module": "tests.test_runtime.test_compiler_integration",
             "class_name": "BasicMockNode",
             "docstring": "Basic mock node for testing",
             "file_path": __file__,
         },
         "conditional-node": {
-            "module": "tests.test_compiler_integration",
+            "module": "tests.test_runtime.test_compiler_integration",
             "class_name": "ConditionalMockNode",
             "docstring": "Conditional mock node for branching",
             "file_path": __file__,
         },
         "error-node": {
-            "module": "tests.test_compiler_integration",
+            "module": "tests.test_runtime.test_compiler_integration",
             "class_name": "ErrorMockNode",
             "docstring": "Error simulation node",
             "file_path": __file__,
         },
         "performance-node": {
-            "module": "tests.test_compiler_integration",
+            "module": "tests.test_runtime.test_compiler_integration",
             "class_name": "PerformanceMockNode",
             "docstring": "Performance testing node",
             "file_path": __file__,
         },
         "transform-node": {
-            "module": "tests.test_compiler_integration",
+            "module": "tests.test_runtime.test_compiler_integration",
             "class_name": "TransformMockNode",
             "docstring": "Data transformation node",
             "file_path": __file__,
