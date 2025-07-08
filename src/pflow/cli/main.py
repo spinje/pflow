@@ -80,12 +80,33 @@ def execute_json_workflow(ctx: click.Context, ir_data: dict[str, Any]) -> None:
         # Compile to Flow
         flow = compile_ir_to_flow(ir_data, registry)
 
+        # Show verbose execution info if requested
+        if ctx.obj.get("verbose", False):
+            node_count = len(ir_data.get("nodes", []))
+            click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
+
         # Execute with empty shared storage
         shared_storage: dict[str, Any] = {}
-        flow.run(shared_storage)
+        try:
+            result = flow.run(shared_storage)
 
-        # Simple success message
-        click.echo("Workflow executed successfully")
+            # Check if execution resulted in error
+            if result and isinstance(result, str) and result.startswith("error"):
+                click.echo("cli: Workflow execution failed - Node returned error action", err=True)
+                click.echo("cli: Check node output above for details", err=True)
+                ctx.exit(1)
+            else:
+                if ctx.obj.get("verbose", False):
+                    click.echo("cli: Workflow execution completed")
+                # Simple success message
+                click.echo("Workflow executed successfully")
+        except (click.ClickException, SystemExit):
+            # Let Click exceptions and exits propagate normally
+            raise
+        except Exception as e:
+            click.echo(f"cli: Workflow execution failed - {e}", err=True)
+            click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
+            ctx.exit(1)
     else:
         # Valid JSON but not a workflow - treat as text
         click.echo(f"Collected workflow from {ctx.obj['input_source']}: {ctx.obj['raw_input']}")
@@ -114,6 +135,9 @@ def process_file_workflow(ctx: click.Context, raw_input: str) -> None:
         click.echo(f"cli: Compilation failed - {e}", err=True)
         ctx.exit(1)
 
+    except (click.ClickException, SystemExit):
+        # Let Click exceptions and exits propagate normally
+        raise
     except Exception as e:
         click.echo(f"cli: Unexpected error - {e}", err=True)
         ctx.exit(1)
@@ -122,9 +146,10 @@ def process_file_workflow(ctx: click.Context, raw_input: str) -> None:
 @click.command(context_settings={"allow_interspersed_args": False})
 @click.pass_context
 @click.option("--version", is_flag=True, help="Show the pflow version")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed execution output")
 @click.option("--file", "-f", type=str, help="Read workflow from file")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
-def main(ctx: click.Context, version: bool, file: str | None, workflow: tuple[str, ...]) -> None:
+def main(ctx: click.Context, version: bool, verbose: bool, file: str | None, workflow: tuple[str, ...]) -> None:
     """pflow - Plan Once, Run Forever
 
     Natural language to deterministic workflows.
@@ -185,6 +210,7 @@ def main(ctx: click.Context, version: bool, file: str | None, workflow: tuple[st
     # Store in context
     ctx.obj["raw_input"] = raw_input
     ctx.obj["input_source"] = source
+    ctx.obj["verbose"] = verbose
 
     # Process workflow based on input type
     if file and source == "file":
