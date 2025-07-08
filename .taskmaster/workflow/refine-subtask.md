@@ -66,20 +66,7 @@ Load ALL relevant knowledge from previous implementations to avoid repeating mis
 
 **For NEW TASKS (first subtask of a task):**
 
-Read all task-level reviews from completed tasks:
-1. Navigate to `.taskmaster/tasks/`
-2. For each `task_*` folder (except your current task):
-   - Read `task-review.md` if it exists
-
-Example paths to check for task 3.1:
-- `.taskmaster/tasks/task_1/task-review.md`
-- `.taskmaster/tasks/task_2/task-review.md`
-
-**Focus on:**
-- Patterns that worked well
-- Approaches that failed
-- Architectural decisions made
-- Conventions established
+Go to next step 0.4.
 
 **For CONTINUING SUBTASKS (not the first subtask):**
 

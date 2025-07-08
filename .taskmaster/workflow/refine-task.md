@@ -50,7 +50,26 @@ task-master show --id=<taskId>
 - Seek clarification before proceeding
 - Never decompose based on assumptions
 
-#### 0.2 Create Project Context
+#### 0.2 Load Historical Knowledge from Completed Tasks
+
+Read all task-level reviews from completed tasks:
+1. Navigate to `.taskmaster/tasks/`
+2. For each `task_*` folder (except your current task):
+   - Read `task-review.md` if it exists
+
+Example paths to check for task 3.1:
+- `.taskmaster/tasks/task_1/task-review.md`
+- `.taskmaster/tasks/task_2/task-review.md`
+
+**Focus on:**
+- Patterns that worked well
+- Approaches that failed
+- Architectural decisions made
+- Conventions established
+
+> Use relevant knowledge when making decisions and creating the project context about the current task.
+
+#### 0.3 Create Project Context
 
 **Launch sub-agents with this mission:**
 "Analyze the main task <taskId> and create a comprehensive project context briefing that will be used by ALL subtasks. Read all relevant documentation but synthesize it into a focused brief that provides the domain understanding needed for both decomposition and implementation."
@@ -167,7 +186,7 @@ This step ensures that all previously learned patterns, pitfalls, and architectu
 ls .taskmaster/tasks/task_<taskId>/research/
 ```
 
-> Always read all the available research files. This is mandatory.
+> Always read **ALL the available research files**. This is mandatory.
 
 **Common research files (organized in `research/` subfolder):**
 - `research/pocketflow-patterns.md` - Insights from PocketFlow cookbook examples
