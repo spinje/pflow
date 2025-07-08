@@ -313,13 +313,19 @@ The codebase is in early development with:
 - ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
-- ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/implementation-roadmap.md`
+- ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/features/mvp-implementation-guide.md`
 - ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap
 - ✅ Establish epistemic workflow for task execution in `.taskmaster/workflow/`
 - ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
 - ✅ Task 2 complete: Basic CLI run command with stdio/stdin support
+- ✅ Task 3 complete: Execute a Hardcoded 'Hello World' Workflow
+- ✅ Task 4 complete: Implement IR-to-PocketFlow Object Converter
 - ✅ Task 5 complete: Node discovery and registry implementation
-- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 6 - Define JSON IR schema)
+- ✅ Task 6 complete: Define JSON IR schema
+- ✅ Task 11 complete: Implement read-file and write-file nodes
+- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 7 - Extract node metadata from docstrings)
+
+*Update this list as you complete tasks.*
 
 ## Task Implementation Workflow
 
