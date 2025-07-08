@@ -24,20 +24,19 @@ class TestFileNodeRetryBehavior:
 
         # Mock open to fail twice then succeed
         mock_file = mock_open(read_data="content\n")
-        with patch("os.path.exists", return_value=True):
-            with patch("builtins.open") as mock_open_func:
-                mock_open_func.side_effect = [
-                    PermissionError("Locked"),
-                    PermissionError("Still locked"),
-                    mock_file.return_value,
-                ]
+        with patch("os.path.exists", return_value=True), patch("builtins.open") as mock_open_func:
+            mock_open_func.side_effect = [
+                PermissionError("Locked"),
+                PermissionError("Still locked"),
+                mock_file.return_value,
+            ]
 
-                action = node.run(shared)
+            action = node.run(shared)
 
-                assert action == "default"
-                assert "content" in shared
-                assert shared["content"].strip() == "1: content"
-                assert mock_open_func.call_count == 3
+            assert action == "default"
+            assert "content" in shared
+            assert shared["content"].strip() == "1: content"
+            assert mock_open_func.call_count == 3
 
     def test_validation_error_no_retry(self):
         """Test that NonRetriableError fails immediately without retry."""
@@ -131,10 +130,12 @@ class TestFileNodeRetryBehavior:
 
                 return MockFile()
 
-            with patch("os.fdopen", side_effect=mock_fdopen_with_retry):
-                with patch("tempfile.mkstemp", return_value=(99, temp_path + ".tmp")):
-                    with patch("shutil.move"):
-                        action = node.run(shared)
+            with (
+                patch("os.fdopen", side_effect=mock_fdopen_with_retry),
+                patch("tempfile.mkstemp", return_value=(99, temp_path + ".tmp")),
+                patch("shutil.move"),
+            ):
+                action = node.run(shared)
 
             assert action == "default"
             assert call_count == 3  # Failed twice, succeeded on third
