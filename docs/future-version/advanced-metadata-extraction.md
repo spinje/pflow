@@ -1,4 +1,4 @@
-# Node Metadata Extraction Infrastructure
+# Node Metadata Extraction Infrastructure (Alternative for future version 2.0+)
 
 ## Executive Summary
 
@@ -70,66 +70,69 @@ Extracted interface data preserves natural shared store access patterns:
 
 ## Docstring Format Standard
 
-### Actual Format Used in Codebase
+### Established Format Alignment
 
-All implemented nodes in the codebase use this **single-line format** for the Interface section:
+Following the format established in `shared-store-node-proxy-architecture.md`:
 
 ```python
-class ReadFileNode(Node):
-    """
-    Read content from a file and add line numbers for display.
+class YTTranscript(Node):
+    """Fetches YouTube transcript from video URL.
 
-    This node reads a text file and formats it with 1-indexed line numbers,
-    following the Tutorial-Cursor pattern for file display.
+    Detailed explanation of behavior, use cases, and important notes
+    about the node's operation and requirements.
 
     Interface:
-    - Reads: shared["file_path"] (required), shared["encoding"] (optional)
-    - Writes: shared["content"] on success, shared["error"] on failure
-    - Params: file_path, encoding (as fallbacks if not in shared)
-    - Actions: default (success), error (failure)
+    - Reads: shared["url"] - YouTube video URL
+    - Writes: shared["transcript"] - extracted transcript text
+    - Params: language (default "en") - transcript language
+    - Actions: default, video_unavailable
 
-    Security Note: This node can read ANY accessible file on the system.
-    Do not expose to untrusted input without proper validation.
+    Examples:
+        Basic usage:
+            shared["url"] = "https://youtu.be/abc123"
+            params = {"language": "en"}
+
+    Performance:
+        - Average processing time: 2-5 seconds
+        - Memory usage: ~10MB per request
+
+    Error Handling:
+        - video_unavailable action for inaccessible videos
+        - Handles rate limiting with exponential backoff
     """
 
     def prep(self, shared):
-        # Check shared store first, then params
-        file_path = shared.get("file_path") or self.params.get("file_path")
-        encoding = shared.get("encoding") or self.params.get("encoding", "utf-8")
-        return (file_path, encoding)
+        return shared["url"]
 
     def exec(self, prep_res):
-        file_path, encoding = prep_res
-        with open(file_path, encoding=encoding) as f:
-            content = f.read()
-        return content
+        language = self.params.get("language", "en")
+        return fetch_transcript(prep_res, language)
 
     def post(self, shared, prep_res, exec_res):
-        shared["content"] = exec_res
+        if exec_res is None:
+            return "video_unavailable"
+        shared["transcript"] = exec_res
         return "default"
 ```
 
-### Key Format Characteristics
+### Enhanced Format Support (Future)
 
-1. **Single-line format**: Each Interface component is on one line starting with `- `
-2. **Required/Optional notation**: Use `(required)` or `(optional)` inline
-3. **Success/Failure conditions**: Use `on success`, `on failure` for conditional outputs
-4. **Params as fallbacks**: The "Params:" line explicitly states "as fallbacks if not in shared"
-5. **Action descriptions**: Use parentheses to describe when actions trigger
+The parser will support enhanced structured format while maintaining backward compatibility:
 
-### Interface Components
-
-- **Reads**: `shared["key"]` patterns with optional/required notation
-- **Writes**: `shared["key"]` patterns with success/failure conditions
-- **Params**: Node parameters that serve as fallbacks when values not in shared store
-- **Actions**: Transition strings with descriptive context
-
-### Examples from Codebase
-
-Real examples showing the exact format:
-- `/src/pflow/nodes/file/read_file.py` (lines 18-32)
-- `/src/pflow/nodes/file/write_file.py` (lines 21-39)
-- `/src/pflow/nodes/file/copy_file.py` (lines 21-36)
+```python
+"""
+Interface:
+    Inputs:
+        url (str): YouTube video URL, required
+    Outputs:
+        transcript (str): Extracted transcript text
+    Parameters:
+        language (str, optional): Transcript language code. Default: en
+    Actions:
+        default: Successful transcript extraction
+        video_unavailable: Video is private or unavailable
+"""
+```
 
 ---
 
@@ -137,145 +140,144 @@ Real examples showing the exact format:
 
 ### Core Architecture
 
-Based on Task 7's discoveries, the metadata extractor focuses on parsing the actual single-line Interface format used by all pflow nodes:
-
 ```python
+from docstring_parser import parse as parse_standard
 import re
-import inspect
+import json
 from typing import Dict, Any, List
-import pocketflow
+from datetime import datetime
 
 class PflowMetadataExtractor:
-    """Extract metadata from pflow node docstrings.
+    """Production-ready metadata extractor for pflow nodes."""
 
-    This implementation is based on the actual docstring format used
-    in the codebase, not theoretical formats from documentation.
-    """
+    def __init__(self):
+        self.interface_parser = InterfaceSectionParser()
 
-    def extract_metadata(self, node_class: type) -> Dict[str, Any]:
-        """Extract metadata from a node class.
+    def extract_metadata(self, node_class) -> Dict[str, Any]:
+        """Extract complete metadata from node class."""
+        docstring = node_class.__doc__ or ""
 
-        Args:
-            node_class: A class that inherits from pocketflow.BaseNode
+        # Get basic info from standard parser
+        base_metadata = self._extract_standard_sections(docstring)
 
-        Returns:
-            Dictionary with description, inputs, outputs, params, actions
+        # Extract pflow-specific Interface section
+        interface_metadata = self.interface_parser.parse_interface(docstring)
 
-        Raises:
-            ValueError: If node_class is not a valid pflow node
-        """
-        # Validate it's a node
-        if not self._is_node_class(node_class):
-            raise ValueError(f"{node_class.__name__} is not a pflow node")
+        # Extract additional sections
+        additional_metadata = self._extract_additional_sections(docstring)
 
-        docstring = inspect.getdoc(node_class) or ""
+        # Merge and normalize to schema-compliant structure
+        complete_metadata = self._normalize_metadata(
+            base_metadata, interface_metadata, additional_metadata, node_class
+        )
 
-        # Extract components
-        description = self._extract_description(docstring)
-        interface_data = self._parse_interface_section(docstring)
+        return complete_metadata
 
-        return {
-            'description': description,
-            'inputs': interface_data.get('inputs', []),
-            'outputs': interface_data.get('outputs', []),
-            'params': interface_data.get('params', []),
-            'actions': interface_data.get('actions', [])
-        }
+    def extract_from_file(self, python_file: str) -> Dict[str, Any]:
+        """Extract metadata from Python file."""
+        # Implementation for file-based extraction
+        pass
 
-    def _is_node_class(self, cls) -> bool:
-        """Check if class is a valid pflow node (Node or BaseNode)."""
+    def _extract_standard_sections(self, docstring: str) -> Dict:
+        """Use docstring_parser for standard sections."""
         try:
-            return issubclass(cls, pocketflow.BaseNode)
-        except TypeError:
-            return False
+            parsed = parse_standard(docstring)
+            return {
+                "description": parsed.short_description or "No description",
+                "long_description": parsed.long_description,
+                "standard_params": {p.arg_name: {
+                    "description": p.description,
+                    "type": p.type_name
+                } for p in parsed.params} if parsed.params else {}
+            }
+        except Exception:
+            return {"description": "No description"}
 
-    def _extract_description(self, docstring: str) -> str:
-        """Extract first line/paragraph as description."""
-        if not docstring:
-            return "No description"
+    def _extract_additional_sections(self, docstring: str) -> Dict:
+        """Extract Performance, Error Handling, Examples sections."""
+        sections = {}
 
-        # Split into lines
-        lines = docstring.strip().split('\n')
+        # Examples section
+        examples_match = re.search(r'Examples:\s*\n(.*?)(?=\n\n|\n[A-Z][a-z]+:|\Z)',
+                                  docstring, re.DOTALL)
+        if examples_match:
+            sections["examples"] = self._parse_examples(examples_match.group(1))
 
-        # First non-empty line is the description
-        for line in lines:
-            line = line.strip()
-            if line:
-                return line
+        # Performance section
+        perf_match = re.search(r'Performance:\s*\n(.*?)(?=\n\n|\n[A-Z][a-z]+:|\Z)',
+                              docstring, re.DOTALL)
+        if perf_match:
+            sections["performance"] = [line.strip().lstrip('- ')
+                                     for line in perf_match.group(1).split('\n')
+                                     if line.strip()]
 
-        return "No description"
+        # Error Handling section
+        error_match = re.search(r'Error Handling:\s*\n(.*?)(?=\n\n|\n[A-Z][a-z]+:|\Z)',
+                               docstring, re.DOTALL)
+        if error_match:
+            sections["error_handling"] = [line.strip().lstrip('- ')
+                                        for line in error_match.group(1).split('\n')
+                                        if line.strip()]
 
-    def _parse_interface_section(self, docstring: str) -> Dict[str, List[str]]:
-        """Parse the Interface: section of the docstring."""
-        # Find the Interface section
-        interface_match = re.search(r'Interface:\s*\n((?:[ \t]*-[^\n]+\n)*)', docstring, re.MULTILINE)
-        if not interface_match:
-            return {}
+        return sections
 
-        interface_text = interface_match.group(1)
-        result = {
-            'inputs': [],
-            'outputs': [],
-            'params': [],
-            'actions': []
+    def _normalize_metadata(self, base_metadata: Dict, interface_metadata: Dict,
+                           additional_metadata: Dict, node_class) -> Dict:
+        """Ensure schema compliance with json-schema-for-flows-ir-and-nodesmetadata.md"""
+
+        normalized = {
+            "node": {
+                "id": self._generate_node_id(node_class.__name__),
+                "namespace": getattr(node_class, '__namespace__', 'core'),
+                "version": getattr(node_class, '__version__', '1.0.0'),
+                "python_file": getattr(node_class, '__file__', ''),
+                "class_name": node_class.__name__
+            },
+            "interface": {
+                "inputs": interface_metadata.get("inputs", {}),
+                "outputs": interface_metadata.get("outputs", {}),
+                "params": interface_metadata.get("params", {}),
+                "actions": interface_metadata.get("actions", ["default"])
+            },
+            "documentation": {
+                "description": base_metadata.get("description", "No description"),
+                "long_description": base_metadata.get("long_description"),
+                "examples": additional_metadata.get("examples", []),
+                "performance": additional_metadata.get("performance"),
+                "error_handling": additional_metadata.get("error_handling")
+            },
+            "extraction": {
+                "source_hash": self._compute_source_hash(node_class),
+                "extracted_at": datetime.utcnow().isoformat(),
+                "extractor_version": "1.0.0"
+            }
         }
 
-        # Parse each line
-        for line in interface_text.split('\n'):
-            line = line.strip()
-            if not line or not line.startswith('-'):
-                continue
+        # Remove None values
+        return self._remove_none_values(normalized)
 
-            if line.startswith('- Reads:'):
-                result['inputs'] = self._extract_keys_from_line(line, 'Reads:')
-            elif line.startswith('- Writes:'):
-                result['outputs'] = self._extract_keys_from_line(line, 'Writes:')
-            elif line.startswith('- Params:'):
-                result['params'] = self._extract_params_from_line(line)
-            elif line.startswith('- Actions:'):
-                result['actions'] = self._extract_actions_from_line(line)
+    def _generate_node_id(self, class_name: str) -> str:
+        """Convert class name to kebab-case node ID."""
+        return re.sub(r'([a-z0-9])([A-Z])', r'\1-\2', class_name).lower()
 
-        return result
+    def _compute_source_hash(self, node_class) -> str:
+        """Compute hash of source code for staleness detection."""
+        import hashlib
+        import inspect
 
-    def _extract_keys_from_line(self, line: str, prefix: str) -> List[str]:
-        """Extract shared store keys from Reads/Writes lines."""
-        # Remove prefix
-        content = line[len(f"- {prefix}"):].strip()
+        try:
+            source = inspect.getsource(node_class)
+            return f"sha256:{hashlib.sha256(source.encode()).hexdigest()}"
+        except:
+            return "sha256:unavailable"
 
-        # Find all shared["key"] patterns
-        keys = re.findall(r'shared\["([^"]+)"\]', content)
-        return keys
-
-    def _extract_params_from_line(self, line: str) -> List[str]:
-        """Extract parameter names from Params line."""
-        # Remove "- Params:" prefix
-        content = line[len("- Params:"):].strip()
-
-        # Remove the "as fallbacks" note if present
-        content = re.sub(r'\s*\(as fallbacks.*?\)', '', content)
-
-        # Split by commas and clean up
-        params = []
-        for param in content.split(','):
-            param = param.strip()
-            if param and param != 'as fallbacks if not in shared':
-                params.append(param)
-
-        return params
-
-    def _extract_actions_from_line(self, line: str) -> List[str]:
-        """Extract action names from Actions line."""
-        # Remove "- Actions:" prefix
-        content = line[len("- Actions:"):].strip()
-
-        # Find all action names (word followed by optional parenthetical)
-        actions = []
-        for match in re.finditer(r'(\w+)(?:\s*\([^)]+\))?', content):
-            action_name = match.group(1)
-            if action_name:
-                actions.append(action_name)
-
-        return actions if actions else ['default']
+    def _remove_none_values(self, data):
+        """Recursively remove None values from dictionary."""
+        if isinstance(data, dict):
+            return {k: self._remove_none_values(v) for k, v in data.items() if v is not None}
+        elif isinstance(data, list):
+            return [self._remove_none_values(item) for item in data if item is not None]
+        return data
 
 
 class InterfaceSectionParser:
@@ -314,7 +316,7 @@ class InterfaceSectionParser:
         }
 
     def _parse_simple_format(self, text: str) -> Dict:
-        """Parse the actual single-line format used by all pflow nodes."""
+        """Parse simple format: '- Reads: key - description'."""
         inputs = {}
         outputs = {}
         params = {}
@@ -322,61 +324,47 @@ class InterfaceSectionParser:
 
         for line in text.strip().split('\n'):
             line = line.strip()
-            if not line or not line.startswith('-'):
+            if not line:
                 continue
 
-            # Parse "- Reads: shared["key"] (required), shared["key2"] (optional)"
-            if line.startswith('- Reads:'):
-                content = line[len('- Reads:'):].strip()
-                # Find all shared["key"] patterns
-                for match in re.finditer(r'shared\["([^"]+)"\](?:\s*\(([^)]+)\))?', content):
-                    key = match.group(1)
-                    modifier = match.group(2) or ""
-                    inputs[key] = {
-                        "description": key,  # Will be enhanced by full line context
-                        "type": "any",
-                        "required": "optional" not in modifier.lower()
-                    }
+            # Parse "- Reads: shared["key"] - description"
+            reads_match = re.match(r'-\s*Reads:\s*shared\["([^"]+)"\]\s*-\s*(.+)', line)
+            if reads_match:
+                key, description = reads_match.groups()
+                inputs[key] = {
+                    "description": description.strip(),
+                    "type": "any",
+                    "required": True
+                }
+                continue
 
-            # Parse "- Writes: shared["key"] on success, shared["error"] on failure"
-            elif line.startswith('- Writes:'):
-                content = line[len('- Writes:'):].strip()
-                # Find all shared["key"] patterns with conditions
-                for match in re.finditer(r'shared\["([^"]+)"\](?:\s+on\s+(\w+))?', content):
-                    key = match.group(1)
-                    condition = match.group(2) or "always"
-                    outputs[key] = {
-                        "description": f"{key} ({condition})",
-                        "type": "any",
-                        "condition": condition
-                    }
+            # Parse "- Writes: shared["key"] - description"
+            writes_match = re.match(r'-\s*Writes:\s*shared\["([^"]+)"\]\s*-\s*(.+)', line)
+            if writes_match:
+                key, description = writes_match.groups()
+                outputs[key] = {
+                    "description": description.strip(),
+                    "type": "any"
+                }
+                continue
 
-            # Parse "- Params: param1, param2 (as fallbacks if not in shared)"
-            elif line.startswith('- Params:'):
-                content = line[len('- Params:'):].strip()
-                # Remove the "as fallbacks" note if present
-                content = re.sub(r'\s*\(as fallbacks.*?\)', '', content)
-                # Split by commas and extract param names
-                for param in content.split(','):
-                    param = param.strip()
-                    if param and param != 'as fallbacks if not in shared':
-                        params[param] = {
-                            "description": f"Fallback for shared['{param}']",
-                            "type": "any",
-                            "optional": True
-                        }
+            # Parse "- Params: name (default value) - description"
+            params_match = re.match(r'-\s*Params:\s*([^(]+)(?:\(default\s+([^)]+)\))?\s*-\s*(.+)', line)
+            if params_match:
+                name, default, description = params_match.groups()
+                params[name.strip()] = {
+                    "description": description.strip(),
+                    "type": "any",
+                    "default": default.strip() if default else None,
+                    "optional": True
+                }
+                continue
 
-            # Parse "- Actions: default (success), error (failure)"
-            elif line.startswith('- Actions:'):
-                content = line[len('- Actions:'):].strip()
-                actions = []
-                # Find action names with optional descriptions
-                for match in re.finditer(r'(\w+)(?:\s*\([^)]+\))?', content):
-                    action_name = match.group(1)
-                    if action_name:
-                        actions.append(action_name)
-                if not actions:
-                    actions = ["default"]
+            # Parse "- Actions: action1, action2"
+            actions_match = re.match(r'-\s*Actions:\s*(.+)', line)
+            if actions_match:
+                action_list = [a.strip() for a in actions_match.group(1).split(',')]
+                actions = action_list if action_list else ["default"]
 
         return {
             "inputs": inputs,

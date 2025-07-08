@@ -68,13 +68,19 @@ The `llm` node is our general-purpose solution for all text processing tasks:
 Nodes follow the interface patterns defined in our [metadata schema](../core-concepts/schemas.md#node-metadata-schema). All nodes inherit from `pocketflow.BaseNode` (or `pocketflow.Node`) and use the [shared store pattern](../core-concepts/shared-store.md) for communication.
 
 ```python
-class GitHubGetIssueNode(BaseNode):  # or Node
+class GitHubGetIssueNode(Node):  # Use Node for retry support
     """Get GitHub issue details.
 
+    Fetches issue information from a GitHub repository using the GitHub API.
+    Requires authentication token for private repositories.
+
     Interface:
-    - Reads: shared["issue_number"] OR params["issue_number"]
-    - Writes: shared["issue"]
-    - Params: repo, token, issue_number (optional)
+    - Reads: shared["issue_number"] (required), shared["repo"] (optional)
+    - Writes: shared["issue"] on success, shared["error"] on failure
+    - Params: repo, token, issue_number (as fallbacks if not in shared)
+    - Actions: default (success), not_found (issue doesn't exist)
+
+    Security Note: The token parameter should be kept secure and not logged.
     """
 
     # Node name is determined by:
@@ -87,14 +93,23 @@ class GitHubGetIssueNode(BaseNode):  # or Node
         issue_number = shared.get("issue_number") or self.params.get("issue_number")
         if not issue_number:
             raise ValueError("issue_number must be in shared store or params")
-        return issue_number
 
-    def exec(self, issue_number):
-        repo = self.params.get("repo")
+        # Repository can come from shared or params
+        repo = shared.get("repo") or self.params.get("repo")
+        if not repo:
+            raise ValueError("repo must be in shared store or params")
+
+        return (issue_number, repo)
+
+    def exec(self, prep_res):
+        issue_number, repo = prep_res
         token = self.params.get("token")
         return github_api.get_issue(repo, issue_number, token)
 
     def post(self, shared, prep_res, exec_res):
+        if exec_res is None:
+            shared["error"] = "Issue not found"
+            return "not_found"
         shared["issue"] = exec_res
         return "default"
 ```
