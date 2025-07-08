@@ -236,4 +236,45 @@ A chronological record of significant architectural and design decisions made du
 
 ---
 
+## Decision: All pflow Nodes Must Follow PocketFlow Retry Pattern
+- **Date**: 2025-07-07
+- **Made during**: PocketFlow anti-pattern investigation and refactoring
+- **Status**: Accepted
+- **Context**: Discovered that all file operation nodes in pflow were violating PocketFlow's most critical anti-pattern by catching exceptions in exec() methods, completely disabling the framework's automatic retry mechanism
+- **Alternatives considered**:
+  1. **Keep current pattern** - Continue catching exceptions for user-friendly error messages
+     - Pros: Familiar error handling pattern, immediate error messages
+     - Cons: No retry for transient errors, manual retry logic needed, defeats purpose of using PocketFlow
+  2. **Partial adoption** - Only update critical nodes (file operations)
+     - Pros: Less refactoring work, focused on high-impact areas
+     - Cons: Inconsistent patterns, confusion about when to apply which pattern
+  3. **Full adoption** - All nodes must follow PocketFlow retry pattern
+     - Pros: Consistent architecture, automatic retries everywhere, simpler code
+     - Cons: Requires refactoring all existing nodes, learning curve for developers
+- **Decision**: Full adoption - ALL nodes in pflow must follow the PocketFlow retry pattern
+- **Rationale**:
+  - Retry mechanism is PocketFlow's core benefit - not using it defeats the purpose
+  - Transient errors (file locks, network issues) are common and should be retried
+  - Consistency across codebase prevents confusion and errors
+  - Framework handles retry complexity (exponential backoff, max attempts)
+  - Simpler code without manual retry loops and error handling
+  - Better reliability for all operations, not just file I/O
+- **Consequences**:
+  - Must refactor all existing nodes to remove try/except from exec()
+  - Create NonRetriableError exception class for validation errors
+  - Document pattern prominently in node implementation guides
+  - Update all tests to verify retry behavior
+  - Train developers on counter-intuitive pattern (letting exceptions bubble up)
+  - Create node implementation checklist and templates
+  - Monitor for regression to old patterns in code reviews
+- **Implementation Details**:
+  - Nodes inherit from `Node` (not `BaseNode`) for retry support
+  - exec() method lets exceptions bubble up (no try/except)
+  - exec_fallback() handles final error messages after retries exhausted
+  - NonRetriableError for validation errors that shouldn't retry
+  - post() method checks for error prefix to detect failures
+- **Review date**: After all nodes refactored (immediate priority)
+
+---
+
 <!-- New decisions are appended below this line -->

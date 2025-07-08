@@ -52,4 +52,51 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
+## Pitfall: Catching Exceptions in PocketFlow Node exec() Method
+- **Date**: 2025-07-07
+- **Discovered in**: PocketFlow anti-pattern investigation
+- **What we tried**: Traditional try/except blocks in exec() methods to handle errors gracefully and provide user-friendly messages
+- **Why it seemed good**: Responsible error handling, prevents crashes, provides helpful error messages to users
+- **Why it failed**: Completely bypasses PocketFlow's automatic retry mechanism - the framework's most powerful feature
+- **Symptoms**:
+  - Transient errors (file locks, network issues) fail immediately instead of retrying
+  - No automatic recovery from temporary failures
+  - Silent loss of retry capability - no errors, just degraded reliability
+  - Manual retry logic becomes necessary, adding complexity
+- **Better approach**: Let exceptions bubble up in exec(), implement exec_fallback() for final error handling after retries
+- **Example of failure**:
+  ```python
+  # DON'T DO THIS - Breaks retry mechanism!
+  class ReadFileNode(Node):
+      def exec(self, prep_res):
+          file_path, encoding = prep_res
+          try:
+              with open(file_path, encoding=encoding) as f:
+                  content = f.read()
+              return (content, True)  # Success tuple
+          except FileNotFoundError:
+              return (f"Error: File '{file_path}' not found", False)
+          except PermissionError:
+              # This error might be temporary! But we never retry
+              return (f"Error: Permission denied", False)
+
+  # DO THIS - Enables automatic retry
+  class ReadFileNode(Node):
+      def exec(self, prep_res):
+          file_path, encoding = prep_res
+          # No try/except - let it bubble up!
+          with open(file_path, encoding=encoding) as f:
+              content = f.read()
+          return content  # Just the success value
+
+      def exec_fallback(self, prep_res, exc):
+          # Only called after all retries exhausted
+          if isinstance(exc, FileNotFoundError):
+              return "Error: File not found"
+          # ... handle other final errors
+  ```
+- **Critical Note**: This is PocketFlow's #1 anti-pattern from their official documentation. Every node in the codebase was violating this pattern, disabling retries for all file operations.
+
+---
+
 <!-- New pitfalls are appended below this line -->

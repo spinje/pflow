@@ -417,6 +417,113 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: PocketFlow Node Error Handling for Automatic Retry
+- **Date**: 2025-07-07
+- **Discovered in**: PocketFlow anti-pattern investigation
+- **Problem**: File operations and other nodes need robust retry behavior for transient errors (temporary locks, network issues, etc.)
+- **Solution**: Let exceptions bubble up in exec() method, handle final errors in exec_fallback() after retries exhausted
+- **Example**:
+  ```python
+  # CORRECT - Enables automatic retry
+  class ReadFileNode(Node):
+      def __init__(self):
+          super().__init__(max_retries=3, wait=0.1)
+
+      def exec(self, prep_res: tuple[str, str]) -> str:
+          """Execute file read - let exceptions bubble up for retry."""
+          file_path, encoding = prep_res
+
+          # No try/except - let exceptions bubble up!
+          with open(file_path, encoding=encoding) as f:
+              content = f.read()
+
+          return content  # Only return success value
+
+      def exec_fallback(self, prep_res: tuple[str, str], exc: Exception) -> str:
+          """Handle errors AFTER all retries exhausted."""
+          file_path, _ = prep_res
+
+          if isinstance(exc, FileNotFoundError):
+              return f"Error: File '{file_path}' does not exist"
+          elif isinstance(exc, PermissionError):
+              return f"Error: Permission denied for '{file_path}'"
+          elif isinstance(exc, UnicodeDecodeError):
+              return f"Error: Cannot read file with specified encoding"
+          else:
+              return f"Error: Could not read file: {exc!s}"
+
+      def post(self, shared: dict, prep_res: Any, exec_res: str) -> str:
+          """Process results - check if error occurred."""
+          if exec_res.startswith("Error:"):
+              shared["error"] = exec_res
+              return "error"
+          else:
+              shared["content"] = exec_res
+              return "default"
+
+  # For validation errors that should NOT retry
+  from src.pflow.nodes.file.exceptions import NonRetriableError
+
+  class DeleteFileNode(Node):
+      def exec(self, prep_res: tuple[str, bool]) -> str:
+          file_path, confirm_delete = prep_res
+
+          # Validation error - will not retry
+          if not confirm_delete:
+              raise NonRetriableError(
+                  f"Deletion of '{file_path}' not confirmed"
+              )
+
+          # This WILL retry on failure
+          os.remove(file_path)
+          return f"Successfully deleted '{file_path}'"
+  ```
+- **When to use**: ALWAYS in every PocketFlow node implementation - this is the fundamental pattern
+- **Benefits**:
+  - Automatic retry for transient errors (file locks, network issues, etc.)
+  - Clean separation of success path from error handling
+  - Framework handles retry complexity (exponential backoff, max attempts)
+  - Better reliability without manual retry loops
+  - Consistent error handling across all nodes
+- **Testing Pattern**:
+  ```python
+  # Test retry behavior
+  def test_retry_on_transient_error():
+      node = ReadFileNode()
+      shared = {"file_path": "/test/file.txt"}
+
+      with patch("builtins.open") as mock_open:
+          # Fail twice, then succeed
+          mock_open.side_effect = [
+              PermissionError("Locked"),
+              PermissionError("Still locked"),
+              mock_open(read_data="content")
+          ]
+
+          action = node.run(shared)
+
+          assert action == "default"
+          assert mock_open.call_count == 3
+
+  # Test non-retriable errors
+  def test_validation_error_no_retry():
+      node = DeleteFileNode()
+      shared = {"file_path": "/test.txt", "confirm_delete": False}
+
+      with pytest.raises(NonRetriableError):
+          node.exec(node.prep(shared))
+  ```
+- **Implementation Checklist**:
+  - [ ] Inherit from `Node` (not `BaseNode`) for retry support
+  - [ ] NO try/except blocks in `exec()` method
+  - [ ] Return only success values from `exec()`
+  - [ ] Implement `exec_fallback()` for error messages
+  - [ ] Use `NonRetriableError` for validation failures
+  - [ ] Test both retry and non-retry scenarios
+  - [ ] Verify `post()` detects errors correctly
+
+---
+
 <!-- New patterns are appended below this line -->
 
 ## Pattern: Connection Tracking in Mock Nodes
