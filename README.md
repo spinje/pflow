@@ -8,16 +8,16 @@ One command that finds your workflow or builds it for you. Describe what you wan
 
 ```bash
 # Describe what you want:
-$ pflow "analyze customer churn from stripe and hubspot"
+$ pflow "analyze customer churn from stripe and hubspot for last month"
 
 # First time: Creates the workflow (30 seconds)
 → No existing workflow found. Building one for you...
 ✨ Created and saved as 'analyze-churn'
 
 # Every time after: Finds and runs it instantly (2 seconds)
-$ pflow "analyze customer churn" # or just pflow analyze-churn if you remember the name
-→ Found 'analyze-churn'. Running...
-✅ Analyzing customer churn... done!
+$ pflow "analyze customer churn for this week"  # Different time period, same workflow
+→ Found 'analyze-churn'. Running with period: this week
+✅ Analysis complete!
 ```
 
 ## What is pflow?
@@ -39,6 +39,8 @@ This is not just another AI wrapper. `pflow` fundamentally changes the economics
 2.  **COMPILE (Automatic):** `pflow` saves this plan as a reproducible, version-locked artifact. It is now a permanent part of your toolkit.
 
 3.  **EXECUTE (Every Subsequent Run):** You run your new command by name. It executes instantly with no AI, no planning, and no cost, giving you the exact same result, every time.
+
+Workflows adapt to different inputs—analyze last month, this week, or any time period with the same workflow.
 
 ## Quick Start
 
@@ -221,9 +223,19 @@ Use Simon Willison's `llm` CLI as a node:
 pflow read-file --path=data.csv >> llm --prompt="analyze trends in this data" >> write-file --path=report.md
 ```
 
-### 🚀 A Supercharger for Claude Code & other Agents
+### 🚀 AI Agent Efficiency
 
-An agent can use `pflow` to build reliable tools, drastically reducing errors and making its own work reusable. `pflow` provides the stable, structured "API" that free-running agents need.
+When AI agents use `pflow`, they stop re-reasoning through repetitive tasks:
+
+```bash
+# First time: Agent figures out the workflow
+Agent: "I'll analyze this PR by checking tests, reviewing changes..."
+
+# Every time after: Agent just runs the workflow
+Agent: `pflow analyze-pr --pr=123`
+```
+
+This reduces AI costs by 90% for repetitive tasks and lets agents work in parallel. `pflow` provides the stable, structured "API" that free-running agents need.
 
 ## Community
 
