@@ -351,7 +351,7 @@
               1
             ],
             "details": "Modify get_input_source() in src/pflow/cli/main.py at lines 52-55. Update validation to allow stdin when --file is provided. Implement logic: if --file provided, stdin is data; if no --file, stdin could be workflow. Store stdin data in click context (ctx.obj) for later injection. Preserve backward compatibility for echo '{workflow}' | pflow pattern.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test both modes with CliRunner: stdin as workflow, stdin as data with --file. Verify validation logic changes work correctly. Ensure backward compatibility with existing usage patterns."
           },
           {
@@ -379,30 +379,19 @@
           },
           {
             "id": 5,
-            "title": "Add configurable stdout output from shared store",
-            "description": "Enable workflows to output results to stdout for Unix pipe chaining",
+            "title": "Add configurable stdout output from shared store and Implement proper signal handling and exit codes",
+            "description": "Enable workflows to output results to stdout for Unix pipe chaining and Add Unix-compliant signal handling and exit code propagation for shell script compatibility",
             "dependencies": [
               1,
               2,
               3
             ],
-            "details": "Add --output-key option to CLI with default auto-detection. Implement smart key detection checking for 'response', 'output', 'result', 'text' in order. Create safe_output(text) handling encoding errors and broken pipes. After workflow execution, check if stdout is piped (not TTY) and output selected key's value. Handle binary output from shared store appropriately.",
+            "details": "Add --output-key option to CLI with default auto-detection. Implement smart key detection checking for 'response', 'output', 'result', 'text' in order. Create safe_output(text) handling encoding errors and broken pipes. After workflow execution, check if stdout is piped (not TTY) and output selected key's value. Handle binary output from shared store appropriately. Also Create ExitCodes enum with standard codes (0=success, 1=error, 2=misuse, 130=SIGINT). Enhance existing SIGINT handler to exit with code 130. Add SIGPIPE handler using signal.signal(signal.SIGPIPE, signal.SIG_DFL) with hasattr check for Windows. Handle BrokenPipeError by exiting cleanly with os._exit(0). Propagate exit codes from workflow execution results.",
             "status": "pending",
-            "testStrategy": "Test output key selection logic, pipe chaining with subprocess (echo 'data' | pflow run workflow.json | grep pattern). Test encoding safety and binary output handling."
+            "testStrategy": "Test output key selection logic, pipe chaining with subprocess (echo 'data' | pflow run workflow.json | grep pattern). Test encoding safety and binary output handling. Test signal handling with subprocess sending SIGINT. Test broken pipe scenarios (pflow run | head -n1). Verify correct exit codes for various error conditions. Platform-specific tests for Windows vs Unix."
           },
           {
             "id": 6,
-            "title": "Implement proper signal handling and exit codes",
-            "description": "Add Unix-compliant signal handling and exit code propagation for shell script compatibility",
-            "dependencies": [
-              1
-            ],
-            "details": "Create ExitCodes enum with standard codes (0=success, 1=error, 2=misuse, 130=SIGINT). Enhance existing SIGINT handler to exit with code 130. Add SIGPIPE handler using signal.signal(signal.SIGPIPE, signal.SIG_DFL) with hasattr check for Windows. Handle BrokenPipeError by exiting cleanly with os._exit(0). Propagate exit codes from workflow execution results.",
-            "status": "pending",
-            "testStrategy": "Test signal handling with subprocess sending SIGINT. Test broken pipe scenarios (pflow run | head -n1). Verify correct exit codes for various error conditions. Platform-specific tests for Windows vs Unix."
-          },
-          {
-            "id": 7,
             "title": "Build complete test coverage for shell integration",
             "description": "Create thorough test suite covering all shell integration features with both unit and integration tests",
             "dependencies": [
@@ -664,7 +653,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-07-08T20:26:54.977Z",
+      "updated": "2025-07-08T21:22:04.459Z",
       "description": "Reorganized to prioritize Natural Language Planner as core feature. Merged tasks 17-20 into comprehensive planner system. Expanded task 13 to include all platform nodes. Consolidated all v2.0 deferred features into task 32. Clear path from infrastructure to MVP delivery."
     }
   }
