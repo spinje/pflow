@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pocketflow import Node
 
+from .exceptions import NonRetriableError
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -67,33 +69,30 @@ class CopyFileNode(Node):
         )
         return (str(source_path), str(dest_path), bool(overwrite))
 
-    def _validate_source(self, source_path: str) -> tuple[str, bool] | None:
+    def _validate_source(self, source_path: str) -> None:
         """Validate source file exists and is a file."""
         if not os.path.exists(source_path):
             logger.error("Source file not found", extra={"source_path": source_path, "phase": "exec"})
-            return f"Error: Source file '{source_path}' does not exist. Please check the path.", False
+            raise FileNotFoundError(f"Source file '{source_path}' does not exist")
 
         if not os.path.isfile(source_path):
             logger.error("Source is not a file", extra={"source_path": source_path, "phase": "exec"})
-            return (
-                f"Error: Source path '{source_path}' is not a file. This node only copies files, not directories.",
-                False,
+            # This is a validation error that won't change with retries
+            raise NonRetriableError(
+                f"Source path '{source_path}' is not a file. This node only copies files, not directories."
             )
-        return None
 
-    def _validate_destination(self, dest_path: str, overwrite: bool, source_path: str) -> tuple[str, bool] | None:
+    def _validate_destination(self, dest_path: str, overwrite: bool, source_path: str) -> None:
         """Validate destination doesn't exist or can be overwritten."""
         if os.path.exists(dest_path) and not overwrite:
             logger.error(
                 "Destination exists, overwrite not allowed",
                 extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"},
             )
-            return f"Error: Destination file '{dest_path}' already exists. Set overwrite=True to replace it.", False
-        return None
+            # This is a validation error that won't change with retries
+            raise NonRetriableError(f"Destination file '{dest_path}' already exists. Set overwrite=True to replace it.")
 
-    def _check_disk_space(
-        self, file_size: int, parent_dir: str | None, source_path: str, dest_path: str
-    ) -> tuple[str, bool] | None:
+    def _check_disk_space(self, file_size: int, parent_dir: str | None, source_path: str, dest_path: str) -> None:
         """Check if there's enough disk space for the copy."""
         if file_size > 0:
             try:
@@ -110,31 +109,34 @@ class CopyFileNode(Node):
                             "phase": "exec",
                         },
                     )
-                    return (
-                        f"Error: Insufficient disk space. Need {file_size} bytes but only {free_bytes} available.",
-                        False,
-                    )
-            except (AttributeError, OSError):
+                    # Raise OSError for disk space issues
+                    raise OSError(f"No space left on device. Need {file_size} bytes but only {free_bytes} available")
+            except (AttributeError, OSError) as e:
+                if "No space left" in str(e):
+                    raise  # Re-raise disk space errors
                 # statvfs not available on Windows or other error - continue anyway
                 pass
-        return None
 
-    def exec(self, prep_res: tuple[str, str, bool]) -> tuple[str, bool]:
+    def exec(self, prep_res: tuple[str, str, bool]) -> str:
         """
         Copy file from source to destination with disk space checks.
 
         Returns:
-            Tuple of (result_message, success_bool)
+            Success message
+
+        Raises:
+            FileNotFoundError: If source file doesn't exist
+            NonRetriableError: For validation errors that won't change
+            PermissionError: If unable to read source or write destination
+            OSError: For disk space or other file system errors
         """
         source_path, dest_path, overwrite = prep_res
 
         # Validate source
-        if error := self._validate_source(source_path):
-            return error
+        self._validate_source(source_path)
 
         # Validate destination
-        if error := self._validate_destination(dest_path, overwrite, source_path):
-            return error
+        self._validate_destination(dest_path, overwrite, source_path)
 
         # Get source file size
         try:
@@ -160,88 +162,62 @@ class CopyFileNode(Node):
         # Create parent directories if needed
         parent_dir = os.path.dirname(dest_path)
         if parent_dir:
-            try:
-                logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
-                os.makedirs(parent_dir, exist_ok=True)
-            except PermissionError:
-                logger.exception(
-                    "Permission denied creating directory", extra={"dir_path": parent_dir, "phase": "exec"}
-                )
-                return f"Error: Permission denied when creating directory '{parent_dir}'. Check permissions.", False
-            except OSError as e:
-                logger.exception(
-                    "Failed to create directory", extra={"dir_path": parent_dir, "error": str(e), "phase": "exec"}
-                )
-                return f"Error: Cannot create directory '{parent_dir}': {e!s}", False
+            logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
+            # Let exceptions bubble up for retry mechanism
+            os.makedirs(parent_dir, exist_ok=True)
 
         # Check disk space
-        if disk_error := self._check_disk_space(file_size, parent_dir, source_path, dest_path):
-            return disk_error
+        self._check_disk_space(file_size, parent_dir, source_path, dest_path)
 
         # Perform the actual copy
         return self._perform_copy(source_path, dest_path, file_size)
 
-    def _perform_copy(self, source_path: str, dest_path: str, file_size: int) -> tuple[str, bool]:
+    def _perform_copy(self, source_path: str, dest_path: str, file_size: int) -> str:
         """Perform the actual file copy operation."""
-        try:
-            logger.info("Copying file", extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"})
-            # Copy the file preserving metadata
-            shutil.copy2(source_path, dest_path)
+        logger.info("Copying file", extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"})
 
-            logger.info(
-                "File copy completed",
-                extra={"source_path": source_path, "dest_path": dest_path, "size_bytes": file_size, "phase": "exec"},
-            )
-        except PermissionError:
-            logger.exception(
-                "Permission denied during copy",
-                extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"},
-            )
-            return (
-                f"Error: Permission denied when copying '{source_path}' to '{dest_path}'. Check file permissions.",
-                False,
-            )
-        except OSError as e:
-            if "No space left" in str(e) or "disk full" in str(e).lower():
-                logger.exception(
-                    "Disk full during copy",
-                    extra={"source_path": source_path, "dest_path": dest_path, "error": str(e), "phase": "exec"},
-                )
-                return f"Error: No space left on device when copying to '{dest_path}'.", False
-            logger.exception(
-                "Copy failed",
-                extra={"source_path": source_path, "dest_path": dest_path, "error": str(e), "phase": "exec"},
-            )
-            return f"Error: Failed to copy '{source_path}' to '{dest_path}': {e!s}", False
-        except Exception as e:
-            logger.warning(
-                "Unexpected error, will retry",
-                extra={"source_path": source_path, "dest_path": dest_path, "error": str(e), "phase": "exec"},
-            )
-            # This will trigger retry logic in Node
-            raise RuntimeError(f"Error copying from '{source_path}' to '{dest_path}': {e!s}") from e
-        else:
-            return f"Successfully copied '{source_path}' to '{dest_path}'", True
+        # Copy the file preserving metadata - let exceptions bubble up
+        shutil.copy2(source_path, dest_path)
 
-    def exec_fallback(self, prep_res: tuple[str, str, bool], exc: Exception) -> tuple[str, bool]:
-        """Handle final failure after all retries."""
+        logger.info(
+            "File copy completed",
+            extra={"source_path": source_path, "dest_path": dest_path, "size_bytes": file_size, "phase": "exec"},
+        )
+
+        return f"Successfully copied '{source_path}' to '{dest_path}'"
+
+    def exec_fallback(self, prep_res: tuple[str, str, bool], exc: Exception) -> str:
+        """Handle final failure after all retries with user-friendly messages."""
         source_path, dest_path, _ = prep_res
+
         logger.error(
             f"Failed to copy file after {self.max_retries} retries",
             extra={"source_path": source_path, "dest_path": dest_path, "error": str(exc), "phase": "fallback"},
         )
-        return (
-            f"Error: Could not copy '{source_path}' to '{dest_path}' after {self.max_retries} retries. {exc!s}. Check if files are locked or if there are system issues.",
-            False,
-        )
 
-    def post(self, shared: dict, prep_res: tuple[str, str, bool], exec_res: tuple[str, bool]) -> str:
-        """Update shared store based on result and return action."""
-        message, success = exec_res
-
-        if success:
-            shared["copied"] = message
-            return "default"
+        # Provide specific error messages based on exception type
+        if isinstance(exc, NonRetriableError):
+            # Pass through non-retriable error messages as-is
+            error_msg = f"Error: {exc!s}"
+        elif isinstance(exc, FileNotFoundError):
+            error_msg = f"Error: Source file '{source_path}' does not exist. Please check the path."
+        elif isinstance(exc, PermissionError):
+            error_msg = (
+                f"Error: Permission denied when copying '{source_path}' to '{dest_path}'. Check file permissions."
+            )
+        elif isinstance(exc, OSError) and ("No space left" in str(exc) or "disk full" in str(exc).lower()):
+            error_msg = f"Error: No space left on device when copying to '{dest_path}'."
         else:
-            shared["error"] = message
+            error_msg = f"Error: Could not copy '{source_path}' to '{dest_path}' after {self.max_retries} retries. {exc!s}. Check if files are locked or if there are system issues."
+
+        return error_msg
+
+    def post(self, shared: dict, prep_res: tuple[str, str, bool], exec_res: str) -> str:
+        """Update shared store based on result and return action."""
+        # Check if exec_res is an error message from exec_fallback
+        if exec_res.startswith("Error:"):
+            shared["error"] = exec_res
             return "error"
+        else:
+            shared["copied"] = exec_res
+            return "default"

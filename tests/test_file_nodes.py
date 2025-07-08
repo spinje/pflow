@@ -9,6 +9,7 @@ from src.pflow.nodes.file import (
     CopyFileNode,
     DeleteFileNode,
     MoveFileNode,
+    NonRetriableError,
     ReadFileNode,
     WriteFileNode,
 )
@@ -46,9 +47,13 @@ class TestReadFileNode:
         shared = {"file_path": "/non/existent/file.txt"}
 
         prep_res = node.prep(shared)
-        exec_res = node.exec(prep_res)
-        action = node.post(shared, prep_res, exec_res)
 
+        # Method 1: Test that exec raises FileNotFoundError
+        with pytest.raises(FileNotFoundError):
+            node.exec(prep_res)
+
+        # Method 2: Test full lifecycle with node.run()
+        action = node.run(shared)
         assert action == "error"
         assert "error" in shared
         assert "does not exist" in shared["error"]
@@ -85,9 +90,13 @@ class TestReadFileNode:
             shared = {"file_path": temp_path}
 
             prep_res = node.prep(shared)
-            exec_res = node.exec(prep_res)
-            action = node.post(shared, prep_res, exec_res)
 
+            # Method 1: Test that exec raises UnicodeDecodeError
+            with pytest.raises(UnicodeDecodeError):
+                node.exec(prep_res)
+
+            # Method 2: Test full lifecycle
+            action = node.run(shared)
             assert action == "error"
             assert "encoding" in shared["error"].lower() or "Cannot read" in shared["error"]
         finally:
@@ -360,9 +369,8 @@ class TestIntegration:
         read_node = ReadFileNode()
         shared = {"file_path": "/non/existent/path.txt"}
 
-        prep_res = read_node.prep(shared)
-        exec_res = read_node.exec(prep_res)
-        action = read_node.post(shared, prep_res, exec_res)
+        # Use node.run() for full lifecycle with error handling
+        action = read_node.run(shared)
 
         assert action == "error"
         assert "error" in shared
@@ -451,9 +459,13 @@ class TestCopyFileNode:
             shared = {"source_path": source_path, "dest_path": dest_path}
 
             prep_res = node.prep(shared)
-            exec_res = node.exec(prep_res)
-            action = node.post(shared, prep_res, exec_res)
 
+            # Method 1: Test that exec raises NonRetriableError
+            with pytest.raises(NonRetriableError):
+                node.exec(prep_res)
+
+            # Method 2: Test full lifecycle
+            action = node.run(shared)
             assert action == "error"
             assert "already exists" in shared["error"]
 
@@ -496,9 +508,13 @@ class TestCopyFileNode:
             shared = {"source_path": source_path, "dest_path": dest_path}
 
             prep_res = node.prep(shared)
-            exec_res = node.exec(prep_res)
-            action = node.post(shared, prep_res, exec_res)
 
+            # Method 1: Test that exec raises FileNotFoundError
+            with pytest.raises(FileNotFoundError):
+                node.exec(prep_res)
+
+            # Method 2: Test full lifecycle
+            action = node.run(shared)
             assert action == "error"
             assert "does not exist" in shared["error"]
 
@@ -573,9 +589,13 @@ class TestMoveFileNode:
             shared = {"source_path": source_path, "dest_path": dest_path}
 
             prep_res = node.prep(shared)
-            exec_res = node.exec(prep_res)
-            action = node.post(shared, prep_res, exec_res)
 
+            # Method 1: Test that exec raises NonRetriableError
+            with pytest.raises(NonRetriableError):
+                node.exec(prep_res)
+
+            # Method 2: Test full lifecycle
+            action = node.run(shared)
             assert action == "error"
             assert "already exists" in shared["error"]
 
@@ -595,9 +615,13 @@ class TestMoveFileNode:
             shared = {"source_path": source_path, "dest_path": dest_path}
 
             prep_res = node.prep(shared)
-            exec_res = node.exec(prep_res)
-            action = node.post(shared, prep_res, exec_res)
 
+            # Method 1: Test that exec raises FileNotFoundError
+            with pytest.raises(FileNotFoundError):
+                node.exec(prep_res)
+
+            # Method 2: Test full lifecycle
+            action = node.run(shared)
             assert action == "error"
             assert "does not exist" in shared["error"]
 
@@ -678,9 +702,13 @@ class TestDeleteFileNode:
             shared = {"file_path": file_path, "confirm_delete": False}
 
             prep_res = node.prep(shared)
-            exec_res = node.exec(prep_res)
-            action = node.post(shared, prep_res, exec_res)
 
+            # Method 1: Test that exec raises NonRetriableError
+            with pytest.raises(NonRetriableError):
+                node.exec(prep_res)
+
+            # Method 2: Test full lifecycle
+            action = node.run(shared)
             assert action == "error"
             assert "not confirmed" in shared["error"]
 

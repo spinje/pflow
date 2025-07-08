@@ -1,5 +1,6 @@
 """Delete file node implementation."""
 
+import errno
 import logging
 import os
 import sys
@@ -9,6 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pocketflow import Node
+
+from .exceptions import NonRetriableError
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +69,17 @@ class DeleteFileNode(Node):
 
         return (str(file_path), bool(confirm_delete))
 
-    def exec(self, prep_res: tuple[str, bool]) -> tuple[str, bool]:
+    def exec(self, prep_res: tuple[str, bool]) -> str:
         """
         Delete file if confirmed.
 
         Returns:
-            Tuple of (result_message, success_bool)
+            Success message
+
+        Raises:
+            NonRetriableError: For validation errors (not confirmed, not a file)
+            PermissionError: If unable to delete file
+            OSError: For other file system errors
         """
         file_path, confirm_delete = prep_res
 
@@ -81,21 +89,22 @@ class DeleteFileNode(Node):
                 "Delete not confirmed",
                 extra={"file_path": file_path, "confirm_delete": confirm_delete, "phase": "exec"},
             )
-            return (
-                f"Error: Deletion of '{file_path}' not confirmed. Set shared['confirm_delete'] = True to confirm.",
-                False,
+            # This is a validation error that won't change with retries
+            raise NonRetriableError(
+                f"Deletion of '{file_path}' not confirmed. Set shared['confirm_delete'] = True to confirm."
             )
 
         # Check if file exists
         if not os.path.exists(file_path):
             # Idempotent behavior - already deleted is success
             logger.info("File does not exist (idempotent success)", extra={"file_path": file_path, "phase": "exec"})
-            return f"Successfully deleted '{file_path}' (file did not exist)", True
+            return f"Successfully deleted '{file_path}' (file did not exist)"
 
         # Check if it's actually a file (not directory)
         if not os.path.isfile(file_path):
             logger.error("Path is not a file", extra={"file_path": file_path, "phase": "exec"})
-            return f"Error: Path '{file_path}' is not a file. This node only deletes files, not directories.", False
+            # This is a validation error that won't change with retries
+            raise NonRetriableError(f"Path '{file_path}' is not a file. This node only deletes files, not directories.")
 
         # Get file info for logging
         try:
@@ -104,57 +113,56 @@ class DeleteFileNode(Node):
         except OSError:
             file_size = 0
 
+        # Delete the file - let exceptions bubble up
+        logger.info("Deleting file", extra={"file_path": file_path, "phase": "exec"})
+
         try:
-            # Delete the file
             os.remove(file_path)
-            # Log the deletion for audit trail
-            logger.info(
-                "File deleted successfully",
-                extra={"file_path": file_path, "size_bytes": file_size, "action": "deleted", "phase": "exec"},
-            )
-        except PermissionError:
-            logger.exception("Permission denied", extra={"file_path": file_path, "phase": "exec"})
-            return (
-                f"Error: Permission denied when deleting '{file_path}'. Check file permissions or run with appropriate privileges.",
-                False,
-            )
-        except OSError as e:
+        except OSError:
             # Handle race condition where file was deleted between check and delete
             if not os.path.exists(file_path):
                 logger.info(
                     "File deleted by another process (race condition)", extra={"file_path": file_path, "phase": "exec"}
                 )
-                return f"Successfully deleted '{file_path}' (deleted by another process)", True
-            logger.exception("Delete failed", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
-            return f"Error: Failed to delete '{file_path}': {e!s}", False
-        except Exception as e:
-            logger.warning(
-                "Unexpected error, will retry", extra={"file_path": file_path, "error": str(e), "phase": "exec"}
-            )
-            # This will trigger retry logic in Node
-            raise RuntimeError(f"Error deleting file '{file_path}': {e!s}") from e
-        else:
-            return f"Successfully deleted '{file_path}'", True
+                return f"Successfully deleted '{file_path}' (deleted by another process)"
+            # Other OSErrors should be retried
+            raise
 
-    def exec_fallback(self, prep_res: tuple[str, bool], exc: Exception) -> tuple[str, bool]:
-        """Handle final failure after all retries."""
+        # Log the deletion for audit trail
+        logger.info(
+            "File deleted successfully",
+            extra={"file_path": file_path, "size_bytes": file_size, "action": "deleted", "phase": "exec"},
+        )
+        return f"Successfully deleted '{file_path}'"
+
+    def exec_fallback(self, prep_res: tuple[str, bool], exc: Exception) -> str:
+        """Handle final failure after all retries with user-friendly messages."""
         file_path, _ = prep_res
+
         logger.error(
             f"Failed to delete file after {self.max_retries} retries",
             extra={"file_path": file_path, "error": str(exc), "phase": "fallback"},
         )
-        return (
-            f"Error: Could not delete '{file_path}' after {self.max_retries} retries. {exc!s}. Check if the file is locked or if there are system issues.",
-            False,
-        )
 
-    def post(self, shared: dict, prep_res: tuple[str, bool], exec_res: tuple[str, bool]) -> str:
-        """Update shared store based on result and return action."""
-        message, success = exec_res
-
-        if success:
-            shared["deleted"] = message
-            return "default"
+        # Provide specific error messages based on exception type
+        if isinstance(exc, NonRetriableError):
+            # Pass through non-retriable error messages as-is
+            error_msg = f"Error: {exc!s}"
+        elif isinstance(exc, PermissionError):
+            error_msg = f"Error: Permission denied when deleting '{file_path}'. Check file permissions or run with appropriate privileges."
+        elif isinstance(exc, OSError) and hasattr(exc, "errno") and exc.errno == errno.EBUSY:
+            error_msg = f"Error: File '{file_path}' is in use and cannot be deleted."
         else:
-            shared["error"] = message
+            error_msg = f"Error: Could not delete '{file_path}' after {self.max_retries} retries. {exc!s}. Check if the file is locked or if there are system issues."
+
+        return error_msg
+
+    def post(self, shared: dict, prep_res: tuple[str, bool], exec_res: str) -> str:
+        """Update shared store based on result and return action."""
+        # Check if exec_res is an error message from exec_fallback
+        if exec_res.startswith("Error:"):
+            shared["error"] = exec_res
             return "error"
+        else:
+            shared["deleted"] = exec_res
+            return "default"

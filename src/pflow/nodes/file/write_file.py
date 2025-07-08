@@ -80,29 +80,15 @@ class WriteFileNode(Node):
         )
         return (str(content), str(file_path), encoding, append)
 
-    def _ensure_parent_directory(self, file_path: str) -> tuple[str, bool] | None:
+    def _ensure_parent_directory(self, file_path: str) -> None:
         """Create parent directories if needed."""
         parent_dir = os.path.dirname(file_path)
         if parent_dir:
-            try:
-                logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
-                os.makedirs(parent_dir, exist_ok=True)
-            except PermissionError:
-                logger.exception(
-                    "Permission denied creating directory", extra={"dir_path": parent_dir, "phase": "exec"}
-                )
-                return (
-                    f"Error: Permission denied when creating directory '{parent_dir}'. Check permissions or run with appropriate privileges.",
-                    False,
-                )
-            except OSError as e:
-                logger.exception(
-                    "Failed to create directory", extra={"dir_path": parent_dir, "error": str(e), "phase": "exec"}
-                )
-                return f"Error: Cannot create directory '{parent_dir}': {e!s}", False
-        return None
+            logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
+            # Let exceptions bubble up - they will be caught by retry mechanism
+            os.makedirs(parent_dir, exist_ok=True)
 
-    def _check_disk_space(self, content: str, encoding: str, file_path: str) -> tuple[str, bool] | None:
+    def _check_disk_space(self, content: str, encoding: str, file_path: str) -> None:
         """Check if there's enough disk space for writing."""
         parent_dir = os.path.dirname(file_path)
         try:
@@ -119,31 +105,32 @@ class WriteFileNode(Node):
                         "phase": "exec",
                     },
                 )
-                return (
-                    f"Error: Insufficient disk space. Need {content_bytes} bytes but only {free_bytes} available.",
-                    False,
-                )
-        except (AttributeError, OSError):
+                # Raise OSError for disk space issues
+                raise OSError(f"No space left on device. Need {content_bytes} bytes but only {free_bytes} available")
+        except (AttributeError, OSError) as e:
+            if "No space left" in str(e):
+                raise  # Re-raise disk space errors
             # statvfs not available on Windows or other error - continue anyway
             pass
-        return None
 
-    def exec(self, prep_res: tuple[str, str, str, bool]) -> tuple[str, bool]:
+    def exec(self, prep_res: tuple[str, str, str, bool]) -> str:
         """
         Write content to file atomically.
 
         Returns:
-            Tuple of (result_message, success_bool)
+            Success message
+
+        Raises:
+            PermissionError: If unable to write to file or create directories
+            OSError: For disk space or other file system errors
         """
         content, file_path, encoding, append = prep_res
 
         # Create parent directories if needed
-        if error := self._ensure_parent_directory(file_path):
-            return error
+        self._ensure_parent_directory(file_path)
 
         # Check disk space
-        if error := self._check_disk_space(content, encoding, file_path):
-            return error
+        self._check_disk_space(content, encoding, file_path)
 
         # Log operation start for large content
         if len(content) > 1024 * 1024:  # 1MB
@@ -154,35 +141,20 @@ class WriteFileNode(Node):
 
         if append:
             # For append mode, use direct write (atomic append is complex)
-            try:
-                logger.info("Appending to file", extra={"file_path": file_path, "phase": "exec"})
-                with open(file_path, "a", encoding=encoding) as f:
-                    f.write(content)
-                logger.info(
-                    "File append successful",
-                    extra={"file_path": file_path, "bytes_written": len(content), "phase": "exec"},
-                )
-            except PermissionError:
-                logger.exception("Permission denied", extra={"file_path": file_path, "phase": "exec"})
-                return f"Error: Permission denied when writing to '{file_path}'. Check file permissions.", False
-            except OSError as e:
-                if "No space left" in str(e) or "disk full" in str(e).lower():
-                    logger.exception("Disk full", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
-                    return f"Error: No space left on device when writing to '{file_path}'.", False
-                logger.exception("Write failed", extra={"file_path": file_path, "error": str(e), "phase": "exec"})
-                return f"Error: Failed to write to '{file_path}': {e!s}", False
-            except Exception as e:
-                logger.warning(
-                    "Unexpected error, will retry", extra={"file_path": file_path, "error": str(e), "phase": "exec"}
-                )
-                raise RuntimeError(f"Error writing file {file_path}: {e!s}") from e
-            else:
-                return f"Successfully appended to '{file_path}'", True
+            logger.info("Appending to file", extra={"file_path": file_path, "phase": "exec"})
+            # Let exceptions bubble up for retry mechanism
+            with open(file_path, "a", encoding=encoding) as f:
+                f.write(content)
+            logger.info(
+                "File append successful",
+                extra={"file_path": file_path, "bytes_written": len(content), "phase": "exec"},
+            )
+            return f"Successfully appended to '{file_path}'"
         else:
             # For write mode, use atomic write with temp file
             return self._atomic_write(file_path, content, encoding)
 
-    def _atomic_write(self, file_path: str, content: str, encoding: str) -> tuple[str, bool]:
+    def _atomic_write(self, file_path: str, content: str, encoding: str) -> str:
         """Write file atomically using temp file + rename."""
         dir_path = os.path.dirname(file_path) or "."
 
@@ -209,61 +181,48 @@ class WriteFileNode(Node):
                 extra={"file_path": file_path, "temp_path": temp_path, "bytes_written": len(content), "phase": "exec"},
             )
 
-        except PermissionError:
-            logger.exception(
-                "Permission denied during atomic write",
-                extra={"file_path": file_path, "temp_path": temp_path, "phase": "exec"},
-            )
-            return f"Error: Permission denied when writing to '{file_path}'. Check directory permissions.", False
-        except OSError as e:
-            if "No space left" in str(e) or "disk full" in str(e).lower():
-                logger.exception(
-                    "Disk full during atomic write",
-                    extra={"file_path": file_path, "temp_path": temp_path, "error": str(e), "phase": "exec"},
-                )
-                return f"Error: No space left on device when writing to '{file_path}'.", False
-            logger.exception(
-                "Atomic write failed",
-                extra={"file_path": file_path, "temp_path": temp_path, "error": str(e), "phase": "exec"},
-            )
-            return f"Error: Failed to write to '{file_path}': {e!s}", False
-        except Exception as e:
-            logger.warning(
-                "Unexpected error during atomic write, will retry",
-                extra={"file_path": file_path, "temp_path": temp_path, "error": str(e), "phase": "exec"},
-            )
-            raise RuntimeError(f"Error during atomic write to {file_path}: {e!s}") from e
-        else:
-            return f"Successfully wrote to '{file_path}'", True
-        finally:
-            # Clean up temp file if still exists
+            return f"Successfully wrote to '{file_path}'"
+
+        except Exception:
+            # Clean up temp file on error before re-raising
             if temp_fd is not None:
                 with contextlib.suppress(Exception):
                     os.close(temp_fd)
             if temp_path and os.path.exists(temp_path):
                 with contextlib.suppress(Exception):
                     os.unlink(temp_path)
-                    logger.debug("Cleaned up temp file", extra={"temp_path": temp_path, "phase": "exec"})
+                    logger.debug("Cleaned up temp file after error", extra={"temp_path": temp_path, "phase": "exec"})
+            raise  # Re-raise the exception for retry mechanism
 
-    def exec_fallback(self, prep_res: tuple[str, str, str, bool], exc: Exception) -> tuple[str, bool]:
-        """Handle final failure after all retries."""
-        _, file_path, _, _ = prep_res
+    def exec_fallback(self, prep_res: tuple[str, str, str, bool], exc: Exception) -> str:
+        """Handle final failure after all retries with user-friendly messages."""
+        _, file_path, _, append = prep_res
+
         logger.error(
             f"Failed to write file after {self.max_retries} retries",
             extra={"file_path": file_path, "error": str(exc), "phase": "fallback"},
         )
-        return (
-            f"Error: Could not write to '{file_path}' after {self.max_retries} retries. {exc!s}. Check if the directory is writable or if there are system issues.",
-            False,
-        )
 
-    def post(self, shared: dict, prep_res: tuple[str, str, str, bool], exec_res: tuple[str, bool]) -> str:
-        """Update shared store based on result and return action."""
-        message, success = exec_res
-
-        if success:
-            shared["written"] = message
-            return "default"
+        # Provide specific error messages based on exception type
+        if isinstance(exc, PermissionError):
+            error_msg = f"Error: Permission denied when writing to '{file_path}'. Check file and directory permissions."
+        elif isinstance(exc, OSError) and ("No space left" in str(exc) or "disk full" in str(exc).lower()):
+            error_msg = f"Error: No space left on device when writing to '{file_path}'."
+        elif isinstance(exc, IsADirectoryError):
+            error_msg = f"Error: '{file_path}' is a directory, not a file."
+        elif isinstance(exc, FileNotFoundError):
+            error_msg = f"Error: Parent directory for '{file_path}' does not exist and could not be created."
         else:
-            shared["error"] = message
+            error_msg = f"Error: Could not write to '{file_path}' after {self.max_retries} retries. {exc!s}. Check if the directory is writable or if there are system issues."
+
+        return error_msg
+
+    def post(self, shared: dict, prep_res: tuple[str, str, str, bool], exec_res: str) -> str:
+        """Update shared store based on result and return action."""
+        # Check if exec_res is an error message from exec_fallback
+        if exec_res.startswith("Error:"):
+            shared["error"] = exec_res
             return "error"
+        else:
+            shared["written"] = exec_res
+            return "default"

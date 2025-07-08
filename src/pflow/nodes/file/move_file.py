@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pocketflow import Node
 
+from .exceptions import NonRetriableError
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,65 +71,50 @@ class MoveFileNode(Node):
         )
         return (str(source_path), str(dest_path), bool(overwrite))
 
-    def _cross_device_move(self, source_path: str, dest_path: str) -> tuple[str, bool]:
+    def _cross_device_move(self, source_path: str, dest_path: str) -> str:
         """Handle cross-filesystem move by copy and delete."""
         logger.info(
             "Performing cross-device move",
             extra={"source_path": source_path, "dest_path": dest_path, "phase": "cross_device_move"},
         )
 
+        # First copy the file - let exceptions bubble up
+        shutil.copy2(source_path, dest_path)
+        logger.debug(
+            "Cross-device copy completed",
+            extra={"source_path": source_path, "dest_path": dest_path, "phase": "cross_device_move"},
+        )
+
+        # Then try to delete the source
         try:
-            # First copy the file
-            shutil.copy2(source_path, dest_path)
-            logger.debug(
-                "Cross-device copy completed",
+            os.remove(source_path)
+            logger.info(
+                "Cross-device move completed",
                 extra={"source_path": source_path, "dest_path": dest_path, "phase": "cross_device_move"},
             )
-
-            # Then try to delete the source
-            try:
-                os.remove(source_path)
-                logger.info(
-                    "Cross-device move completed",
-                    extra={"source_path": source_path, "dest_path": dest_path, "phase": "cross_device_move"},
-                )
-            except Exception as e:
-                # Copy succeeded but delete failed - partial success
-                warning_msg = f"File copied but source deletion failed: {e!s}"
-                logger.warning(
-                    warning_msg, extra={"source_path": source_path, "error": str(e), "phase": "cross_device_move"}
-                )
-                # Store warning but still return success
-                return f"Successfully moved '{source_path}' to '{dest_path}' (warning: {warning_msg})", True
-            else:
-                return f"Successfully moved '{source_path}' to '{dest_path}' (cross-device)", True
-
+            return f"Successfully moved '{source_path}' to '{dest_path}' (cross-device)"
         except Exception as e:
-            # Copy failed
-            logger.exception(
-                "Cross-device move failed during copy",
-                extra={
-                    "source_path": source_path,
-                    "dest_path": dest_path,
-                    "error": str(e),
-                    "phase": "cross_device_move",
-                },
+            # Copy succeeded but delete failed - partial success
+            warning_msg = f"File copied but source deletion failed: {e!s}"
+            logger.warning(
+                warning_msg, extra={"source_path": source_path, "error": str(e), "phase": "cross_device_move"}
             )
-            return f"Error: Failed to copy '{source_path}' to '{dest_path}' during cross-device move: {e!s}", False
+            # Store warning but still return success
+            return f"Successfully moved '{source_path}' to '{dest_path}' (warning: {warning_msg})"
 
-    def _validate_move(self, source_path: str, dest_path: str, overwrite: bool) -> tuple[str, bool] | None:
+    def _validate_move(self, source_path: str, dest_path: str, overwrite: bool) -> None:
         """Validate source and destination for move operation."""
         # Check if source exists
         if not os.path.exists(source_path):
             logger.error("Source file not found", extra={"source_path": source_path, "phase": "exec"})
-            return f"Error: Source file '{source_path}' does not exist. Please check the path.", False
+            raise FileNotFoundError(f"Source file '{source_path}' does not exist")
 
         # Check if source is a file (not directory)
         if not os.path.isfile(source_path):
             logger.error("Source is not a file", extra={"source_path": source_path, "phase": "exec"})
-            return (
-                f"Error: Source path '{source_path}' is not a file. This node only moves files, not directories.",
-                False,
+            # This is a validation error that won't change with retries
+            raise NonRetriableError(
+                f"Source path '{source_path}' is not a file. This node only moves files, not directories."
             )
 
         # Check if destination already exists
@@ -136,41 +123,34 @@ class MoveFileNode(Node):
                 "Destination exists, overwrite not allowed",
                 extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"},
             )
-            return f"Error: Destination file '{dest_path}' already exists. Set overwrite=True to replace it.", False
+            # This is a validation error that won't change with retries
+            raise NonRetriableError(f"Destination file '{dest_path}' already exists. Set overwrite=True to replace it.")
 
-        return None
-
-    def _ensure_parent_directory(self, dest_path: str) -> tuple[str, bool] | None:
+    def _ensure_parent_directory(self, dest_path: str) -> None:
         """Create parent directories if needed."""
         parent_dir = os.path.dirname(dest_path)
         if parent_dir:
-            try:
-                logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
-                os.makedirs(parent_dir, exist_ok=True)
-            except PermissionError:
-                logger.exception(
-                    "Permission denied creating directory", extra={"dir_path": parent_dir, "phase": "exec"}
-                )
-                return f"Error: Permission denied when creating directory '{parent_dir}'. Check permissions.", False
-            except OSError as e:
-                logger.exception(
-                    "Failed to create directory", extra={"dir_path": parent_dir, "error": str(e), "phase": "exec"}
-                )
-                return f"Error: Cannot create directory '{parent_dir}': {e!s}", False
-        return None
+            logger.debug("Creating parent directories", extra={"dir_path": parent_dir, "phase": "exec"})
+            # Let exceptions bubble up for retry mechanism
+            os.makedirs(parent_dir, exist_ok=True)
 
-    def exec(self, prep_res: tuple[str, str, bool]) -> tuple[str, bool]:
+    def exec(self, prep_res: tuple[str, str, bool]) -> str:
         """
         Move file from source to destination.
 
         Returns:
-            Tuple of (result_message, success_bool)
+            Success message (may include warnings)
+
+        Raises:
+            FileNotFoundError: If source file doesn't exist
+            NonRetriableError: For validation errors that won't change
+            PermissionError: If unable to move file or create directories
+            OSError: For other file system errors
         """
         source_path, dest_path, overwrite = prep_res
 
         # Validate the move operation
-        if error := self._validate_move(source_path, dest_path, overwrite):
-            return error
+        self._validate_move(source_path, dest_path, overwrite)
 
         # Get file size for logging
         try:
@@ -189,75 +169,68 @@ class MoveFileNode(Node):
             file_size = 0
 
         # Create parent directories if needed
-        if error := self._ensure_parent_directory(dest_path):
-            return error
+        self._ensure_parent_directory(dest_path)
+
+        logger.info("Moving file", extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"})
 
         try:
-            logger.info("Moving file", extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"})
             # Try to move the file
             shutil.move(source_path, dest_path)
             logger.info(
                 "File moved successfully",
                 extra={"source_path": source_path, "dest_path": dest_path, "size_bytes": file_size, "phase": "exec"},
             )
+            return f"Successfully moved '{source_path}' to '{dest_path}'"
         except OSError as e:
             # Check if it's a cross-device link error
-            if "cross-device link" in str(e).lower() or e.errno == errno.EXDEV if hasattr(e, "errno") else False:
+            if "cross-device link" in str(e).lower() or (hasattr(e, "errno") and e.errno == errno.EXDEV):
                 logger.debug(
                     "Cross-device link detected",
                     extra={"source_path": source_path, "dest_path": dest_path, "error": str(e), "phase": "exec"},
                 )
                 # Handle cross-filesystem move
                 return self._cross_device_move(source_path, dest_path)
-            # Other OS errors are non-retryable
-            logger.exception(
-                "Move failed",
-                extra={"source_path": source_path, "dest_path": dest_path, "error": str(e), "phase": "exec"},
-            )
-            return f"Error: Failed to move '{source_path}' to '{dest_path}': {e!s}", False
-        except PermissionError:
-            logger.exception(
-                "Permission denied during move",
-                extra={"source_path": source_path, "dest_path": dest_path, "phase": "exec"},
-            )
-            return (
-                f"Error: Permission denied when moving '{source_path}' to '{dest_path}'. Check file permissions.",
-                False,
-            )
-        except Exception as e:
-            logger.warning(
-                "Unexpected error, will retry",
-                extra={"source_path": source_path, "dest_path": dest_path, "error": str(e), "phase": "exec"},
-            )
-            # This will trigger retry logic in Node
-            raise RuntimeError(f"Error moving '{source_path}' to '{dest_path}': {e!s}") from e
-        else:
-            return f"Successfully moved '{source_path}' to '{dest_path}'", True
+            else:
+                # Other OS errors should be retried
+                raise
 
-    def exec_fallback(self, prep_res: tuple[str, str, bool], exc: Exception) -> tuple[str, bool]:
-        """Handle final failure after all retries."""
+    def exec_fallback(self, prep_res: tuple[str, str, bool], exc: Exception) -> str:
+        """Handle final failure after all retries with user-friendly messages."""
         source_path, dest_path, _ = prep_res
+
         logger.error(
             f"Failed to move file after {self.max_retries} retries",
             extra={"source_path": source_path, "dest_path": dest_path, "error": str(exc), "phase": "fallback"},
         )
-        return (
-            f"Error: Could not move '{source_path}' to '{dest_path}' after {self.max_retries} retries. {exc!s}. Check if files are locked or if there are system issues.",
-            False,
-        )
 
-    def post(self, shared: dict, prep_res: tuple[str, str, bool], exec_res: tuple[str, bool]) -> str:
-        """Update shared store based on result and return action."""
-        message, success = exec_res
-
-        if success:
-            shared["moved"] = message
-            # Check if there's a warning in the message
-            if "warning:" in message.lower():
-                # Extract warning part
-                warning_start = message.lower().find("warning:")
-                shared["warning"] = message[warning_start:]
-            return "default"
+        # Provide specific error messages based on exception type
+        if isinstance(exc, NonRetriableError):
+            # Pass through non-retriable error messages as-is
+            error_msg = f"Error: {exc!s}"
+        elif isinstance(exc, FileNotFoundError):
+            error_msg = f"Error: Source file '{source_path}' does not exist. Please check the path."
+        elif isinstance(exc, PermissionError):
+            error_msg = (
+                f"Error: Permission denied when moving '{source_path}' to '{dest_path}'. Check file permissions."
+            )
+        elif isinstance(exc, OSError) and ("No space left" in str(exc) or "disk full" in str(exc).lower()):
+            error_msg = f"Error: No space left on device when moving to '{dest_path}'."
         else:
-            shared["error"] = message
+            error_msg = f"Error: Could not move '{source_path}' to '{dest_path}' after {self.max_retries} retries. {exc!s}. Check if files are locked or if there are system issues."
+
+        return error_msg
+
+    def post(self, shared: dict, prep_res: tuple[str, str, bool], exec_res: str) -> str:
+        """Update shared store based on result and return action."""
+        # Check if exec_res is an error message from exec_fallback
+        if exec_res.startswith("Error:"):
+            shared["error"] = exec_res
             return "error"
+        else:
+            shared["moved"] = exec_res
+            # Check if there's a warning in the message
+            if "warning:" in exec_res.lower():
+                # Extract warning part
+                warning_start = exec_res.lower().find("warning:")
+                shared["warning"] = exec_res[warning_start:]
+            return "default"
