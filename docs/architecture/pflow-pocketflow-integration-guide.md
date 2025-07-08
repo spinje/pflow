@@ -251,23 +251,6 @@ def scan_for_nodes(directory):
 9. **Metrics system** (MVP) - Focus on working code first
 10. **Performance optimization** (MVP) - Make it work, then make it fast
 
-## PocketFlow Node Implementation Pattern
-
-**ALL nodes in pflow MUST follow the PocketFlow retry pattern. This is non-negotiable.**
-
-When implementing any node:
-1. **NO try/except blocks in exec() method** - Let exceptions bubble up for automatic retry
-2. Use `exec_fallback()` for error handling after retries exhausted
-3. Use `NonRetriableError` for validation errors that shouldn't retry
-
-This pattern enables PocketFlow's automatic retry mechanism for transient errors. Violating it silently disables retries, severely impacting reliability.
-
-See:
-- Implementation guide: `src/pflow/nodes/CLAUDE.md`
-- Full pattern: `.taskmaster/knowledge/patterns.md` - "PocketFlow Node Error Handling"
-- Anti-pattern: `.taskmaster/knowledge/pitfalls.md` - "Catching Exceptions in exec()"
-- Decision: `.taskmaster/knowledge/decisions.md` - "All pflow Nodes Must Follow PocketFlow Retry Pattern"
-
 ## Implementation Principles
 
 1. **When you see "system" or "engine" in a task** - Think "simple functions" first
