@@ -524,6 +524,54 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
+## Pattern: Self-Contained Test Workflows
+- **Date**: 2024-12-19
+- **Discovered in**: Task 8.2
+- **Problem**: Test workflows using nodes like write-file fail when they depend on data from shared store that isn't populated in tests
+- **Solution**: Create test workflows with all required data embedded in node params, making them completely self-contained
+- **Example**:
+  ```python
+  # DON'T DO THIS - depends on shared store data
+  workflow = {
+      "ir_version": "0.1.0",
+      "nodes": [{
+          "id": "writer",
+          "type": "write-file",
+          "params": {"file_path": "/tmp/out.txt"}  # Missing content!
+      }],
+      "edges": [],
+      "start_node": "writer"
+  }
+
+  # DO THIS - self-contained with all data
+  workflow = {
+      "ir_version": "0.1.0",
+      "nodes": [{
+          "id": "writer",
+          "type": "write-file",
+          "params": {
+              "file_path": str(tmp_path / "output.txt"),
+              "content": "Test content from workflow"  # Content in params
+          }
+      }],
+      "edges": [],
+      "start_node": "writer"
+  }
+  ```
+- **When to use**: Any test that executes actual workflows, especially:
+  - CLI integration tests
+  - Subprocess tests simulating real usage
+  - Backward compatibility tests
+  - End-to-end workflow tests
+- **Benefits**:
+  - Tests are predictable and repeatable
+  - No hidden dependencies on shared store state
+  - Easier to understand test intent
+  - Can verify file creation or other side effects
+  - Works in isolation without complex setup
+
+---
+
 <!-- New patterns are appended below this line -->
 
 ## Pattern: Connection Tracking in Mock Nodes
@@ -756,5 +804,35 @@ A consolidated collection of successful patterns and approaches discovered durin
   - Safe to import anywhere
   - Predictable behavior
   - Can be used in any context (CLI, nodes, tests)
+
+---
+
+## Pattern: Enhanced API Alongside Legacy
+- **Date**: 2024-12-19
+- **Discovered in**: Task 8.4
+- **Problem**: Need to enhance an existing API with new functionality (binary support, richer return types) without breaking existing code
+- **Solution**: Create a new function with "_enhanced" suffix that provides new functionality while keeping original function unchanged
+- **Example**:
+  ```python
+  # Original function - keep unchanged for compatibility
+  def read_stdin() -> str | None:
+      """Original API - returns text only."""
+      # ... original simple implementation
+
+  # Enhanced function - new functionality
+  def read_stdin_enhanced() -> StdinData | None:
+      """Enhanced API - handles binary and large files."""
+      # ... new implementation with richer return type
+
+  # Caller can choose based on needs
+  text_data = read_stdin()  # Old code continues to work
+  rich_data = read_stdin_enhanced()  # New code gets more features
+  ```
+- **When to use**: Any time you need to change an API's return type or add breaking changes
+- **Benefits**:
+  - Zero risk to existing code
+  - Clear migration path for users
+  - Can deprecate old version later
+  - Both APIs can coexist indefinitely
 
 ---

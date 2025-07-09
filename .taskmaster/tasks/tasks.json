@@ -363,7 +363,7 @@
               2
             ],
             "details": "Modify workflow execution around line 89 in main.py. Import shell_integration module. If stdin data exists in context and is determined to be data (not workflow), call populate_shared_store(shared_storage, stdin_data) BEFORE flow.run(shared_storage). Add debug logging when stdin is populated into shared store.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration tests verifying stdin appears in shared store with correct key. Test with real workflows that access shared['stdin']. Verify injection happens before workflow execution."
           },
           {
@@ -374,7 +374,7 @@
               1
             ],
             "details": "Add detect_binary_content(sample) using heuristics (check for null bytes). Implement read_stdin_with_limit(max_size=10_000_000). For inputs >10MB, write to temp file using tempfile.NamedTemporaryFile and store path in shared['stdin_path']. For binary content, use sys.stdin.buffer and store in shared['stdin_binary'] as bytes. Implement cleanup mechanism for temporary files.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test binary detection with various file types. Test large file handling with >10MB inputs. Verify temporary file creation and cleanup. Test memory efficiency with streaming."
           },
           {
@@ -653,7 +653,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-07-08T21:22:04.459Z",
+      "updated": "2025-07-08T22:17:42.493Z",
       "description": "Reorganized to prioritize Natural Language Planner as core feature. Merged tasks 17-20 into comprehensive planner system. Expanded task 13 to include all platform nodes. Consolidated all v2.0 deferred features into task 32. Clear path from infrastructure to MVP delivery."
     }
   }

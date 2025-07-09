@@ -93,31 +93,32 @@ def test_complex_workflow():
 
 # Tests for stdin input handling
 def test_from_stdin_simple():
-    """Test reading workflow from stdin."""
+    """Test reading workflow from stdin requires JSON format."""
     runner = click.testing.CliRunner()
+    # Plain text stdin is now treated as data, not workflow
     result = runner.invoke(main, [], input="node1 => node2\n")
 
-    assert result.exit_code == 0
-    assert result.output.strip() == "Collected workflow from stdin: node1 => node2"
+    assert result.exit_code == 1
+    assert "Stdin contains data but no workflow specified" in result.output
 
 
 def test_from_stdin_complex():
-    """Test reading complex workflow from stdin."""
+    """Test reading complex workflow from stdin requires JSON format."""
     runner = click.testing.CliRunner()
     stdin_input = "read-file --path=input.txt => llm --prompt='Summarize' => write-file"
     result = runner.invoke(main, [], input=stdin_input)
 
-    assert result.exit_code == 0
-    assert result.output.strip() == f"Collected workflow from stdin: {stdin_input}"
+    assert result.exit_code == 1
+    assert "Stdin contains data but no workflow specified" in result.output
 
 
 def test_from_stdin_with_newlines():
-    """Test stdin with newlines gets stripped."""
+    """Test stdin with newlines requires JSON format."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [], input="\n  node1 => node2  \n\n")
 
-    assert result.exit_code == 0
-    assert result.output.strip() == "Collected workflow from stdin: node1 => node2"
+    assert result.exit_code == 1
+    assert "Stdin contains data but no workflow specified" in result.output
 
 
 def test_from_stdin_empty():
@@ -127,6 +128,19 @@ def test_from_stdin_empty():
 
     assert result.exit_code == 0
     assert result.output.strip() == "Collected workflow from args: node1"
+
+
+def test_from_stdin_json_workflow():
+    """Test reading valid JSON workflow from stdin."""
+    runner = click.testing.CliRunner()
+    workflow_json = '{"ir_version": "0.1.0", "nodes": []}'
+    result = runner.invoke(main, [], input=workflow_json)
+
+    # This should be treated as a workflow and try to execute
+    # It will fail due to empty nodes, but that's a validation error, not stdin error
+    assert result.exit_code == 1
+    assert "Invalid workflow" in result.output
+    assert "should be non-empty" in result.output
 
 
 # Tests for file input handling
@@ -198,14 +212,15 @@ def test_error_file_and_args():
         assert "Use either --file OR provide a workflow as arguments" in result.output
 
 
-def test_error_stdin_and_args():
-    """Test error when both stdin and arguments are provided."""
+def test_stdin_data_with_args():
+    """Test that stdin is treated as data when arguments are provided."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["node1"], input="node2 => node3")
 
-    assert result.exit_code != 0
-    assert "cli: Cannot use stdin input when command arguments are provided" in result.output
-    assert "Use either piped input OR command arguments" in result.output
+    # With dual-mode stdin, this is now valid: stdin is data, args are workflow
+    assert result.exit_code == 0
+    assert "Collected workflow from args: node1" in result.output
+    assert "Also collected stdin data: node2 => node3" in result.output
 
 
 def test_stdin_ignored_with_file():
@@ -234,10 +249,10 @@ def test_context_storage_verification():
     assert result.exit_code == 0
     assert "Collected workflow from args: test workflow" in result.output
 
-    # Test stdin input
+    # Test stdin input - plain text is now treated as data, needs workflow
     result = runner.invoke(main, [], input="stdin workflow")
-    assert result.exit_code == 0
-    assert "Collected workflow from stdin: stdin workflow" in result.output
+    assert result.exit_code == 1
+    assert "Stdin contains data but no workflow specified" in result.output
 
     # Test file input
     with runner.isolated_filesystem():

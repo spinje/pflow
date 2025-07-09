@@ -10,7 +10,14 @@ from typing import Any
 
 import click
 
-from pflow.core import ValidationError, validate_ir
+from pflow.core import StdinData, ValidationError, validate_ir
+from pflow.core.shell_integration import (
+    determine_stdin_mode,
+    read_stdin_enhanced,
+)
+from pflow.core.shell_integration import (
+    read_stdin as read_stdin_content,
+)
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, compile_ir_to_flow
 
@@ -35,35 +42,77 @@ def read_workflow_from_file(file_path: str) -> str:
         raise click.ClickException(f"cli: Unable to read file: '{file_path}'. File must be valid UTF-8 text.") from None
 
 
-def get_input_source(file: str | None, workflow: tuple[str, ...]) -> tuple[str, str]:
-    """Determine input source and read workflow input."""
+def get_input_source(file: str | None, workflow: tuple[str, ...]) -> tuple[str, str, str | StdinData | None]:
+    """Determine input source and read workflow input.
+
+    Returns:
+        Tuple of (workflow_content, source, stdin_data)
+        stdin_data can be a string (backward compat), StdinData object, or None
+    """
     if file and workflow:
         raise click.ClickException(
             "cli: Cannot specify both --file and command arguments. Use either --file OR provide a workflow as arguments."
         )
 
+    # For backward compatibility, try simple text reading first
+    stdin_content = read_stdin_content()
+    stdin_data = None
+
+    # Only try enhanced reading if simple reading failed (binary/large data)
+    enhanced_stdin = None
+    if stdin_content is None:  # Only when actually None, not empty string
+        enhanced_stdin = read_stdin_enhanced()
+
     if file:
-        # Read from file
-        return read_workflow_from_file(file), "file"
-    elif not sys.stdin.isatty():
-        # Read from stdin
-        raw_input = sys.stdin.read().strip()
-        if raw_input:  # Only use stdin if it has content
+        # Read workflow from file, stdin (if present) is data
+        if stdin_content:
+            stdin_data = stdin_content
+        elif enhanced_stdin:
+            stdin_data = enhanced_stdin
+        return read_workflow_from_file(file), "file", stdin_data
+    elif stdin_content:
+        # We have text stdin content - determine its purpose
+        mode = determine_stdin_mode(stdin_content)
+
+        if mode == "workflow":
+            # stdin contains workflow definition
             if workflow:
                 raise click.ClickException(
                     "cli: Cannot use stdin input when command arguments are provided. Use either piped input OR command arguments."
                 )
-            return raw_input, "stdin"
+            return stdin_content, "stdin", None
         else:
-            # Empty stdin, treat as command arguments
-            return " ".join(workflow), "args"
+            # stdin contains data, but no workflow specified
+            if not workflow:
+                raise click.ClickException(
+                    "cli: Stdin contains data but no workflow specified. Use --file or provide a workflow name/command."
+                )
+            # stdin is data, workflow from args
+            stdin_data = stdin_content  # We already have text content
+            return " ".join(workflow), "args", stdin_data
+    elif enhanced_stdin:
+        # We have binary or large stdin but no text content
+        if not workflow and not file:
+            raise click.ClickException(
+                "cli: Binary/large stdin data received but no workflow specified. Use --file or provide a workflow name."
+            )
+        # stdin is binary/large data, workflow from args
+        return " ".join(workflow), "args", enhanced_stdin
     else:
-        # Use command arguments
-        return " ".join(workflow), "args"
+        # No stdin, use command arguments
+        return " ".join(workflow), "args", None
 
 
-def execute_json_workflow(ctx: click.Context, ir_data: dict[str, Any]) -> None:
-    """Execute a JSON workflow if it's valid."""
+def execute_json_workflow(
+    ctx: click.Context, ir_data: dict[str, Any], stdin_data: str | StdinData | None = None
+) -> None:
+    """Execute a JSON workflow if it's valid.
+
+    Args:
+        ctx: Click context
+        ir_data: Parsed workflow IR data
+        stdin_data: Optional stdin data (string or StdinData) to inject into shared storage
+    """
     # If it's valid JSON with workflow structure, execute it
     if isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data:
         # Load registry (with helpful error if missing)
@@ -85,8 +134,35 @@ def execute_json_workflow(ctx: click.Context, ir_data: dict[str, Any]) -> None:
             node_count = len(ir_data.get("nodes", []))
             click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
 
-        # Execute with empty shared storage
+        # Execute with shared storage
         shared_storage: dict[str, Any] = {}
+
+        # Inject stdin data if present
+        if stdin_data is not None:
+            if isinstance(stdin_data, str):
+                # Backward compatibility: string data
+                shared_storage["stdin"] = stdin_data
+                if ctx.obj.get("verbose", False):
+                    click.echo(f"cli: Injected stdin data ({len(stdin_data)} bytes) into shared storage")
+            elif isinstance(stdin_data, StdinData):
+                # Enhanced stdin handling
+                if stdin_data.is_text:
+                    shared_storage["stdin"] = stdin_data.text_data
+                    if ctx.obj.get("verbose", False):
+                        click.echo(
+                            f"cli: Injected text stdin data ({len(stdin_data.text_data)} bytes) into shared storage"
+                        )
+                elif stdin_data.is_binary:
+                    shared_storage["stdin_binary"] = stdin_data.binary_data
+                    if ctx.obj.get("verbose", False):
+                        click.echo(
+                            f"cli: Injected binary stdin data ({len(stdin_data.binary_data)} bytes) into shared storage"
+                        )
+                elif stdin_data.is_temp_file:
+                    shared_storage["stdin_path"] = stdin_data.temp_path
+                    if ctx.obj.get("verbose", False):
+                        click.echo(f"cli: Injected stdin temp file path: {stdin_data.temp_path}")
+
         try:
             result = flow.run(shared_storage)
 
@@ -107,17 +183,36 @@ def execute_json_workflow(ctx: click.Context, ir_data: dict[str, Any]) -> None:
             click.echo(f"cli: Workflow execution failed - {e}", err=True)
             click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
             ctx.exit(1)
+        finally:
+            # Clean up temp files if any
+            if isinstance(stdin_data, StdinData) and stdin_data.is_temp_file:
+                try:
+                    import os
+
+                    os.unlink(stdin_data.temp_path)
+                    if ctx.obj.get("verbose", False):
+                        click.echo(f"cli: Cleaned up temp file: {stdin_data.temp_path}")
+                except OSError:
+                    # Log warning but don't fail
+                    if ctx.obj.get("verbose", False):
+                        click.echo(f"cli: Warning - could not clean up temp file: {stdin_data.temp_path}", err=True)
     else:
         # Valid JSON but not a workflow - treat as text
         click.echo(f"Collected workflow from {ctx.obj['input_source']}: {ctx.obj['raw_input']}")
 
 
-def process_file_workflow(ctx: click.Context, raw_input: str) -> None:
-    """Process file-based workflow, handling JSON and errors."""
+def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | StdinData | None = None) -> None:
+    """Process file-based workflow, handling JSON and errors.
+
+    Args:
+        ctx: Click context
+        raw_input: Raw workflow content
+        stdin_data: Optional stdin data to pass to workflow
+    """
     try:
         # Try to parse as JSON
         ir_data = json.loads(raw_input)
-        execute_json_workflow(ctx, ir_data)
+        execute_json_workflow(ctx, ir_data, stdin_data)
 
     except json.JSONDecodeError:
         # Not JSON - treat as plain text (for future natural language processing)
@@ -195,7 +290,7 @@ def main(ctx: click.Context, version: bool, verbose: bool, file: str | None, wor
         ctx.obj = {}
 
     # Determine input source and read workflow
-    raw_input, source = get_input_source(file, workflow)
+    raw_input, source, stdin_data = get_input_source(file, workflow)
 
     # Validate workflow is not empty
     if not raw_input:
@@ -210,11 +305,30 @@ def main(ctx: click.Context, version: bool, verbose: bool, file: str | None, wor
     # Store in context
     ctx.obj["raw_input"] = raw_input
     ctx.obj["input_source"] = source
+    ctx.obj["stdin_data"] = stdin_data
     ctx.obj["verbose"] = verbose
 
     # Process workflow based on input type
     if file and source == "file":
-        process_file_workflow(ctx, raw_input)
+        process_file_workflow(ctx, raw_input, stdin_data)
+    elif source == "stdin":
+        # stdin contains workflow, process it
+        process_file_workflow(ctx, raw_input, stdin_data)
     else:
         # Temporary output for non-file inputs
         click.echo(f"Collected workflow from {source}: {raw_input}")
+        if stdin_data:
+            # Handle both string and StdinData objects
+            if isinstance(stdin_data, str):
+                display_data = stdin_data[:50] + "..." if len(stdin_data) > 50 else stdin_data
+                click.echo(f"Also collected stdin data: {display_data}")
+            elif isinstance(stdin_data, StdinData):
+                if stdin_data.is_text:
+                    display_data = (
+                        stdin_data.text_data[:50] + "..." if len(stdin_data.text_data) > 50 else stdin_data.text_data
+                    )
+                    click.echo(f"Also collected stdin data: {display_data}")
+                elif stdin_data.is_binary:
+                    click.echo(f"Also collected binary stdin data: {len(stdin_data.binary_data)} bytes")
+                elif stdin_data.is_temp_file:
+                    click.echo(f"Also collected stdin data (temp file): {stdin_data.temp_path}")

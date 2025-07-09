@@ -5,10 +5,14 @@ import json
 from unittest.mock import patch
 
 from pflow.core.shell_integration import (
+    StdinData,
+    detect_binary_content,
     detect_stdin,
     determine_stdin_mode,
     populate_shared_store,
     read_stdin,
+    read_stdin_enhanced,
+    read_stdin_with_limit,
 )
 
 
@@ -179,3 +183,196 @@ class TestIntegration:
             shared = {}
             populate_shared_store(shared, content)
             assert shared["stdin"] == data
+
+
+class TestBinaryDetection:
+    """Test binary content detection."""
+
+    def test_detect_binary_with_null_bytes(self):
+        """Test that null bytes are detected as binary."""
+        sample = b"Hello\x00World"
+        assert detect_binary_content(sample) is True
+
+    def test_detect_text_without_null_bytes(self):
+        """Test that text without null bytes is not detected as binary."""
+        sample = b"Hello World\nThis is text"
+        assert detect_binary_content(sample) is False
+
+    def test_detect_empty_content(self):
+        """Test that empty content is not binary."""
+        sample = b""
+        assert detect_binary_content(sample) is False
+
+    def test_detect_binary_image_header(self):
+        """Test detection of common binary file headers."""
+        # PNG header
+        png_sample = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        assert detect_binary_content(png_sample) is True
+
+        # JPEG header
+        jpeg_sample = b"\xff\xd8\xff\xe0\x00\x10JFIF"
+        assert detect_binary_content(jpeg_sample) is True
+
+
+class TestStdinDataClass:
+    """Test StdinData dataclass."""
+
+    def test_text_data(self):
+        """Test StdinData with text content."""
+        data = StdinData(text_data="Hello World")
+        assert data.is_text is True
+        assert data.is_binary is False
+        assert data.is_temp_file is False
+
+    def test_binary_data(self):
+        """Test StdinData with binary content."""
+        data = StdinData(binary_data=b"Hello\x00World")
+        assert data.is_text is False
+        assert data.is_binary is True
+        assert data.is_temp_file is False
+
+    def test_temp_file_data(self):
+        """Test StdinData with temp file path."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as tf:
+            temp_path = tf.name
+        data = StdinData(temp_path=temp_path)
+        assert data.is_text is False
+        assert data.is_binary is False
+        assert data.is_temp_file is True
+        # Clean up
+        import os
+
+        os.unlink(temp_path)
+
+    def test_empty_data(self):
+        """Test StdinData with no data."""
+        data = StdinData()
+        assert data.is_text is False
+        assert data.is_binary is False
+        assert data.is_temp_file is False
+
+
+class TestReadStdinWithLimit:
+    """Test stdin reading with size limits."""
+
+    def test_small_text_data(self):
+        """Test reading small text data."""
+        test_data = b"Hello World"
+        with patch("sys.stdin.buffer.read", side_effect=[test_data, b""]):
+            result = read_stdin_with_limit(max_size=1024)
+            assert result.is_text is True
+            assert result.text_data == "Hello World"
+
+    def test_small_binary_data(self):
+        """Test reading small binary data."""
+        test_data = b"Hello\x00World"
+        with patch("sys.stdin.buffer.read", side_effect=[test_data, b""]):
+            result = read_stdin_with_limit(max_size=1024)
+            assert result.is_binary is True
+            assert result.binary_data == test_data
+
+    def test_text_with_trailing_newline(self):
+        """Test that trailing newline is stripped from text."""
+        test_data = b"Hello World\n"
+        with patch("sys.stdin.buffer.read", side_effect=[test_data, b""]):
+            result = read_stdin_with_limit(max_size=1024)
+            assert result.is_text is True
+            assert result.text_data == "Hello World"
+
+    def test_empty_stdin(self):
+        """Test reading empty stdin."""
+        with patch("sys.stdin.buffer.read", return_value=b""):
+            result = read_stdin_with_limit()
+            assert result.is_text is True
+            assert result.text_data == ""
+
+    def test_large_file_streaming(self):
+        """Test streaming large files to temp storage."""
+        # To trigger streaming, we need data larger than 8KB (BINARY_SAMPLE_SIZE)
+        # AND larger than our memory limit (500 bytes for this test)
+
+        # Create data that's larger than 8KB
+        large_data = b"x" * 10000  # 10KB of data
+
+        # Track read positions
+        read_position = [0]
+
+        def mock_read(size):
+            start = read_position[0]
+            end = min(start + size, len(large_data))
+            chunk = large_data[start:end]
+            read_position[0] = end
+            return chunk
+
+        with patch("sys.stdin.buffer.read", side_effect=mock_read):
+            with patch("tempfile.NamedTemporaryFile") as mock_temp:
+                # Mock temp file
+                mock_file = mock_temp.return_value
+                mock_file.name = "/tmp/test_temp_file"
+
+                result = read_stdin_with_limit(max_size=500)
+
+                assert result.is_temp_file is True
+                assert result.temp_path == "/tmp/test_temp_file"
+
+                # Verify data was written
+                mock_file.write.assert_called()
+                mock_file.close.assert_called()
+
+    def test_environment_variable_limit(self):
+        """Test reading limit from environment variable."""
+        with patch.dict("os.environ", {"PFLOW_STDIN_MEMORY_LIMIT": "1000"}):
+            with patch("sys.stdin.buffer.read", side_effect=[b"x" * 500, b""]):
+                result = read_stdin_with_limit()
+                assert result.is_text is True  # Under 1000 byte limit
+
+    def test_invalid_environment_variable(self):
+        """Test fallback when env var is invalid."""
+        with patch.dict("os.environ", {"PFLOW_STDIN_MEMORY_LIMIT": "invalid"}):
+            with patch("sys.stdin.buffer.read", side_effect=[b"test", b""]):
+                result = read_stdin_with_limit()
+                assert result.is_text is True  # Should use default limit
+
+
+class TestReadStdinEnhanced:
+    """Test enhanced stdin reading."""
+
+    def test_no_stdin_available(self):
+        """Test when no stdin is available."""
+        with patch("sys.stdin.isatty", return_value=True):
+            result = read_stdin_enhanced()
+            assert result is None
+
+    def test_empty_stdin_returns_none(self):
+        """Test that empty stdin returns None."""
+        with patch("sys.stdin.isatty", return_value=False):
+            with patch("sys.stdin.buffer.read", return_value=b""):
+                result = read_stdin_enhanced()
+                assert result is None
+
+    def test_text_stdin(self):
+        """Test reading text stdin."""
+        with patch("sys.stdin.isatty", return_value=False):
+            with patch("sys.stdin.buffer.read", side_effect=[b"Hello World", b""]):
+                result = read_stdin_enhanced()
+                assert result is not None
+                assert result.is_text is True
+                assert result.text_data == "Hello World"
+
+    def test_binary_stdin(self):
+        """Test reading binary stdin."""
+        with patch("sys.stdin.isatty", return_value=False):
+            with patch("sys.stdin.buffer.read", side_effect=[b"Hello\x00World", b""]):
+                result = read_stdin_enhanced()
+                assert result is not None
+                assert result.is_binary is True
+                assert result.binary_data == b"Hello\x00World"
+
+    def test_exception_handling(self):
+        """Test exception handling returns None."""
+        with patch("sys.stdin.isatty", return_value=False):
+            with patch("sys.stdin.buffer.read", side_effect=OSError("Test error")):
+                result = read_stdin_enhanced()
+                assert result is None
