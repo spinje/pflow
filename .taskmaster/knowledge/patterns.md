@@ -836,3 +836,95 @@ A consolidated collection of successful patterns and approaches discovered durin
   - Both APIs can coexist indefinitely
 
 ---
+
+## Pattern: Shared Store Inputs as Automatic Parameter Fallbacks
+- **Date**: 2025-01-10
+- **Discovered in**: Task 16 context builder design
+- **Problem**: Nodes need to accept data from either the shared store (for inter-node communication) or parameters (for direct user configuration), leading to redundant specification in node interfaces
+- **Solution**: Establish a universal pattern where ALL shared store inputs automatically work as parameter fallbacks, with proper truthiness-safe checking and PocketFlow lifecycle compliance
+- **Example**:
+  ```python
+  class WriteFileNode(Node):
+      """
+      Interface:
+      - Reads: shared["file_path"], shared["content"]
+      - Writes: shared["result"], shared["error"]
+      - Params: file_path, content (as fallbacks), append, create_dirs, verbose (exclusive)
+      """
+
+      def prep(self, shared: dict) -> tuple[str, str, bool, bool]:
+          # Data inputs - check shared first, then params (truthiness-safe)
+          if "file_path" in shared:
+              file_path = shared["file_path"]
+          elif "file_path" in self.params:
+              file_path = self.params["file_path"]
+          else:
+              raise ValueError("Missing required 'file_path' in shared store or params")
+
+          if "content" in shared:
+              content = shared["content"]
+          elif "content" in self.params:
+              content = self.params["content"]
+          else:
+              raise ValueError("Missing required 'content' in shared store or params")
+
+          # Exclusive params - configuration only, no shared store fallback
+          append = self.params.get("append", False)        # Behavior modifier
+          create_dirs = self.params.get("create_dirs", True)  # Config option
+
+          # Return everything exec needs (can't access params there)
+          return (str(file_path), str(content), append, create_dirs)
+
+      def exec(self, prep_res: tuple[str, str, bool, bool]) -> str:
+          # NO access to self.params or shared here - pure computation
+          file_path, content, append, create_dirs = prep_res
+
+          if create_dirs:
+              os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+          mode = "a" if append else "w"
+          with open(file_path, mode) as f:
+              f.write(content)
+
+          return f"Successfully wrote to {file_path}"
+
+      def post(self, shared: dict, prep_res: Any, exec_res: str) -> str:
+          # Can access self.params again for post-processing decisions
+          if self.params.get("verbose", False):
+              print(f"Operation completed: {exec_res}")
+
+          shared["result"] = exec_res
+          return "default"
+  ```
+- **PocketFlow Lifecycle Rules**:
+  1. `prep()`: Access both `shared` and `self.params` - prepare data for exec
+  2. `exec()`: NO access to `shared` or `self.params` - pure computation only
+  3. `post()`: Access both `shared` and `self.params` - update shared store
+- **Parameter Categories**:
+  1. **Data Inputs** (from Reads): Can come from shared OR params
+     - Always check shared store first for inter-node communication
+     - Fall back to params for direct user configuration
+     - Use truthiness-safe checking to handle empty strings, 0, False
+  2. **Exclusive Parameters**: Configuration only from params
+     - Behavior modifiers that don't flow between nodes
+     - Never stored in or read from shared store
+     - Examples: `append`, `verbose`, `timeout`, `max_retries`
+- **Context Builder Impact**:
+  ```python
+  # Only show exclusive params in output
+  exclusive_params = [p for p in metadata['params'] if p not in metadata['inputs']]
+
+  # If all params are also inputs, omit Parameters section entirely
+  if not exclusive_params:
+      # No Parameters section needed
+  ```
+- **When to use**: ALWAYS - this is a fundamental pflow pattern that applies to every node
+- **Benefits**:
+  - Eliminates redundancy in node documentation
+  - Simplifies the planner's job (focuses on data flow only)
+  - Provides runtime flexibility (users can override with --param)
+  - Consistent behavior across all nodes
+  - Clear separation between data flow and configuration
+  - Truthiness-safe for all Python values (empty strings, 0, False, None)
+
+---
