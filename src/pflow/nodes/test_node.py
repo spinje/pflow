@@ -8,10 +8,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from typing import Any
 
-from pocketflow import BaseNode
+from pocketflow import Node
 
 
-class TestNode(BaseNode):
+class TestNode(Node):
     """
     Example node for testing scanner functionality.
 
@@ -48,12 +48,12 @@ class NotANode:
         pass
 
 
-class NoDocstringNode(BaseNode):
+class NoDocstringNode(Node):
     # This node has no docstring to test edge case
     pass
 
 
-class NamedNode(BaseNode):
+class NamedNode(Node):
     """Node with explicit name attribute."""
 
     name = "custom-name"
