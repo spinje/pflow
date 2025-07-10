@@ -844,60 +844,68 @@ A consolidated collection of successful patterns and approaches discovered durin
 - **Solution**: Establish a universal pattern where ALL shared store inputs automatically work as parameter fallbacks, eliminating the need to document them twice
 - **Example**:
   ```python
-  class ProcessFileNode(Node):
+  class WriteFileNode(Node):
       """
       Interface:
-      - Reads: shared["input_file"], shared["encoding"]
-      - Writes: shared["result"]
-      - Params: verbose, max_retries  # ONLY exclusive params listed!
+      - Reads: shared["file_path"], shared["content"], shared["encoding"]
+      - Writes: shared["written"], shared["error"]
+      - Params: append  # ONLY exclusive params listed!
       """
 
-      def prep(self, shared: dict) -> tuple[str, str, bool, int]:
-          # ALL inputs automatically work as params - no need to document!
-          input_file = shared.get("input_file") or self.params.get("input_file")
-          if not input_file:
-              raise ValueError("Missing required 'input_file' in shared store or params")
+      def prep(self, shared: dict) -> tuple[str, str, str, bool]:
+          # Default pattern: Use "or" for most inputs
+          file_path = shared.get("file_path") or self.params.get("file_path")
+          if not file_path:
+              raise ValueError("Missing required 'file_path' in shared store or params")
 
+          # Truthiness-safe: Only when empty strings are valid values
+          if "content" in shared:
+              content = shared["content"]
+          elif "content" in self.params:
+              content = self.params["content"]
+          else:
+              raise ValueError("Missing required 'content' in shared store or params")
+
+          # Optional with default: Use "or" with default value
           encoding = shared.get("encoding") or self.params.get("encoding", "utf-8")
 
-          # Exclusive params - ONLY these go in Params documentation
-          verbose = self.params.get("verbose", False)
-          max_retries = self.params.get("max_retries", 3)
+          # Exclusive param: Never check shared store
+          append = self.params.get("append", False)
 
-          return (input_file, encoding, verbose, max_retries)
+          return (file_path, content, encoding, append)
 
-      def exec(self, prep_res: tuple[str, str, bool, int]) -> str:
-          input_file, encoding, verbose, max_retries = prep_res
-          # Pure computation - no access to shared or params
+      def exec(self, prep_res: tuple[str, str, str, bool]) -> str:
+          file_path, content, encoding, append = prep_res
+          # Pure computation - let exceptions bubble up for retry
 
-          for attempt in range(max_retries):
-              try:
-                  with open(input_file, encoding=encoding) as f:
-                      content = f.read()
-                  if verbose:
-                      print(f"Processed {len(content)} bytes")
-                  return content
-              except Exception as e:
-                  if attempt == max_retries - 1:
-                      raise
+          mode = "a" if append else "w"
+          with open(file_path, mode, encoding=encoding) as f:
+              f.write(content)
+
+          return f"Successfully wrote to '{file_path}'"
 
       def post(self, shared: dict, prep_res: Any, exec_res: str) -> str:
-          shared["result"] = exec_res
+          shared["written"] = exec_res
           return "default"
   ```
 - **Key Insight**: Every value in "Reads" is automatically a valid parameter - no need to document it twice!
 - **The Pattern**:
   ```python
-  # For any input listed in "Reads: shared[X]"
-  value = shared.get("X") or self.params.get("X")
+  # DEFAULT: Use "or" syntax for most inputs
+  value = shared.get("key") or self.params.get("key")
+  if not value:
+      raise ValueError("Missing required 'key' in shared store or params")
 
-  # Truthiness-safe version when empty/0/False are valid:
-  if "X" in shared:
-      value = shared["X"]
-  elif "X" in self.params:
-      value = self.params["X"]
+  # OPTIONAL: With default value
+  value = shared.get("key") or self.params.get("key", "default")
+
+  # TRUTHINESS-SAFE: Only when empty/0/False are valid values
+  if "content" in shared:
+      content = shared["content"]
+  elif "content" in self.params:
+      content = self.params["content"]
   else:
-      raise ValueError("Missing required 'X'")
+      raise ValueError("Missing required 'content'")
   ```
 - **Documentation Impact**:
   - **Before**: `Reads: shared["file"], Params: file (as fallback), verbose`

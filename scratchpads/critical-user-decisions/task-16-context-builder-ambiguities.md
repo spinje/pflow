@@ -96,7 +96,7 @@ Many node parameters duplicate their inputs (can be provided via shared store OR
 
 ### Options:
 
-- [x] **Option A: Show Parameters only when different from Inputs/Outputs**
+- [ ] **Option A: Show Parameters only when different from Inputs/Outputs**
   - Omit Parameters section if all params are already listed in Inputs
   - Add note: "Parameters mirror inputs" when applicable
   - **Pros**: Reduces redundancy, cleaner output
@@ -113,7 +113,56 @@ Many node parameters duplicate their inputs (can be provided via shared store OR
   - **Pros**: Compact while preserving information
   - **Cons**: Non-standard notation might confuse
 
-**Recommendation**: Option A - Reducing redundancy keeps context focused while a single explanation at the top can clarify the pattern.
+- [x] **Option D: Show only configuration parameters**
+  - Only list params that are NOT data inputs (e.g., `append`, `overwrite`, `max_retries`)
+  - Establish pattern: ALL shared store inputs can be overridden via params
+  - Focus on behavior modifiers and execution config
+  - **Pros**: Clean separation of data flow vs configuration
+  - **Cons**: Requires understanding the distinction
+
+  **Implementation Logic**:
+  ```python
+  # Extract exclusive params by comparing with inputs
+  exclusive_params = [p for p in metadata['params'] if p not in metadata['inputs']]
+
+  # Only show Parameters section if there are exclusive params
+  if exclusive_params:
+      # Show Parameters section with only exclusive params
+  else:
+      # Omit Parameters section entirely
+  ```
+
+  **Why this works**: The pflow runtime automatically provides ALL shared store inputs as parameter fallbacks. This is implemented in every node's prep() method:
+  ```python
+  file_path = shared.get("file_path") or self.params.get("file_path")
+  ```
+  Therefore, the planner only needs to know about data flow through shared store, while params are for node-specific configuration that doesn't flow between nodes.
+
+  **Edge Cases**:
+  - If ALL params are also inputs → No Parameters section
+  - If node has NO params at all → No Parameters section
+  - If node has ONLY exclusive params → Show all in Parameters section
+
+  **Example Output**:
+  ```markdown
+  ### write-file
+  Writes content to a file.
+
+  **Inputs**: `content`, `file_path`
+  **Outputs**: `written` (success), `error` (failure)
+  **Parameters**: `append`, `create_dirs`  # Only exclusive params shown
+
+  ### read-file
+  Reads content from a file.
+
+  **Inputs**: `file_path`, `encoding`
+  **Outputs**: `content` (success), `error` (failure)
+  # No Parameters section - all params are also inputs
+  ```
+
+**Recommendation**: Option D - This aligns with pocketflow's design where params are for configuration/identifiers, not primary data flow. The planner cares about data flow (shared store), while configuration params modify behavior.
+
+> Read more about this pattern in `.taskmaster/knowledge/patterns.md` file under the `Pattern: Shared Store Inputs as Automatic Parameter Fallbacks` section.
 
 ## 5. Missing Metadata Handling - Importance: 2/5
 
@@ -221,15 +270,22 @@ src/pflow/nodes/
 
 ### Context for Decision 4: Parameter Section Redundancy
 
-**The Unique pflow Pattern**:
+**The pflow Pattern Clarified**:
 ```python
-# Nodes check shared store first, then params:
+# Data inputs can come from shared store OR params (fallback):
 file_path = shared.get("file_path") or self.params.get("file_path")
+
+# Configuration params are params-only:
+append_mode = self.params.get("append", False)  # Behavior modifier
 ```
 
-**Why This Matters**: The LLM needs to understand it can either:
-- Connect nodes via shared store: `read-file >> write-file` (automatic data flow)
-- Set params directly: `read-file --file_path=/tmp/test.txt`
+**Key Insight from PocketFlow docs**: Params are meant for "identifiers" and configuration in batch operations, while Shared Store is for "almost all cases" of data flow.
+
+**Parameter Categories**:
+1. **Data parameters** (Inputs/Outputs): Can come from shared store OR params as fallback
+2. **Configuration parameters** (true params): Behavior modifiers like `append`, `overwrite`, `max_retries`
+
+**With Option D**: We establish that ALL inputs can be overridden via params (no need to list), and only show configuration parameters that modify behavior.
 
 ### Context for Decision 5: Missing Metadata Handling
 
@@ -238,7 +294,12 @@ file_path = shared.get("file_path") or self.params.get("file_path")
 {'description': 'A utility node', 'inputs': [], 'outputs': [], 'params': [], 'actions': []}
 ```
 
-**LLM Understanding**: The LLM needs to know these nodes exist but can't effectively use them without understanding their I/O.
+**With Option B (Skip entirely)**:
+- Nodes like `NoDocstringNode` and future utility nodes without proper interfaces won't appear in the context
+- This keeps the LLM focused only on nodes it can actually use effectively
+- Trade-off: If a node works but lacks documentation, it becomes invisible to the planner
+
+**Affected Nodes**: Currently `test_node.py` has `NoDocstringNode` which would be excluded. Future nodes without Interface documentation would also be hidden until properly documented.
 
 ### Context for Decision 6: Registry Data Source
 
@@ -268,9 +329,9 @@ context = build_context(registry_data)
 1. Include only production nodes with valid Interface sections
 2. Skip failed imports with logging
 3. Group nodes by category with clear markdown structure
-4. Show Parameters only when different from Inputs
-5. Include nodes with missing metadata with a note
+4. Show only configuration parameters, not data parameters (Option D - refined based on pocketflow patterns)
+5. Skip nodes with missing metadata entirely (Option B - changed by user)
 6. Receive pre-loaded registry dict as specified
 7. No size limits but monitor usage
 
-These decisions optimize for LLM comprehension while keeping the implementation straightforward for the MVP.
+These decisions optimize for LLM comprehension while keeping the implementation straightforward for the MVP. The key insight is establishing a clear pattern: ALL shared store inputs can be overridden via params (so we don't list them), and we only show true configuration parameters that modify behavior in the execution part of the node (exec).
