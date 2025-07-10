@@ -2,6 +2,12 @@
 
 **TO THE IMPLEMENTING AGENT**: Read this entire memo before starting. When done, acknowledge you're ready to begin - DO NOT start implementing immediately.
 
+> **CORRECTIONS MADE**: This handover was updated to fix factual errors:
+> - Registry metadata format corrected (no "type" field, "docstring" not "description")
+> - Function parameter corrected (`node_type` not `node_name`)
+> - Documentation reference clarified
+> - Original task specification added for clarity
+
 ## 🎯 What Task 16 REALLY Needs to Do
 
 Task 16 creates a context builder that formats node metadata for the LLM-based planner. You're building the bridge between Task 7's metadata extractor and Task 17's natural language planner. The LLM needs to understand what "tools" (nodes) are available to build workflows.
@@ -38,7 +44,7 @@ from pflow.runtime.compiler import import_node_class
 extractor = PflowMetadataExtractor()
 
 # For each node in registry_metadata:
-node_class = import_node_class(node_name, registry)
+node_class = import_node_class(node_type, registry)  # node_type is the key like "read-file"
 metadata = extractor.extract_metadata(node_class)
 ```
 
@@ -95,11 +101,11 @@ Some nodes (like test nodes) have no Interface section. The metadata extractor r
 Task 5's registry only stores:
 ```python
 {
-    "module": "src.pflow.nodes.file.read_file",
+    "module": "pflow.nodes.file.read_file",
     "class_name": "ReadFileNode",
     "name": "read-file",
-    "type": "file",
-    "description": "Read a file from disk"  # Just first line!
+    "docstring": "Read content from a file and add line numbers for display.\n\nThis node reads...",  # Full docstring, unparsed
+    "file_path": "/path/to/pflow/src/pflow/nodes/file/read_file.py"
 }
 ```
 
@@ -111,17 +117,25 @@ You'll need to dynamically import each node class. Use the pattern from `pflow.r
 from pflow.runtime.compiler import import_node_class
 
 try:
-    node_class = import_node_class(node_name, registry)
+    node_class = import_node_class(node_type, registry)  # node_type from registry keys
 except ImportError:
     # Handle missing nodes gracefully
     pass
 ```
 
+## 📋 Original Task Specification
+
+From Task 16 in tasks.json:
+> Create src/pflow/planning/context_builder.py with build_context(registry_metadata) function. Format node information into a structured text that LLMs can understand: node names, descriptions, inputs/outputs, parameter types. Keep format simple and readable - just markdown tables or structured text. Include which parameters go to shared store vs node.set_params(). This provides the LLM with available 'tools' for building workflows.
+
+**Key requirement**: The function signature is `build_context(registry_metadata)` - it receives the registry data from Task 5.
+
 ## 🔗 Key Files and References
 
 ### Must-Read Documentation
-- `/docs/features/planner.md#6.1` - Context builder requirements
+- `/docs/features/planner.md` - Section 6.1 covers template string composition (shows how LLM uses node metadata)
 - `/docs/core-concepts/shared-store.md` - Understand shared vs params pattern
+- Task 16 description in tasks.json - The original task specification
 
 ### Code You'll Need
 - `/src/pflow/registry/metadata_extractor.py` - Task 7's extractor (use it!)
