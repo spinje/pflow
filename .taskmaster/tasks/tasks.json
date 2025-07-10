@@ -326,7 +326,7 @@
         "id": 8,
         "title": "Build comprehensive shell pipe integration",
         "description": "Implement dual-mode Unix pipe support for stdin handling (workflow definitions OR data) and shell integration, building on existing stdin detection infrastructure",
-        "status": "in-progress",
+        "status": "done",
         "dependencies": [
           3
         ],
@@ -387,7 +387,7 @@
               3
             ],
             "details": "Add --output-key option to CLI with default auto-detection. Implement smart key detection checking for 'response', 'output', 'result', 'text' in order. Create safe_output(text) handling encoding errors and broken pipes. After workflow execution, check if stdout is piped (not TTY) and output selected key's value. Handle binary output from shared store appropriately. Also Create ExitCodes enum with standard codes (0=success, 1=error, 2=misuse, 130=SIGINT). Enhance existing SIGINT handler to exit with code 130. Add SIGPIPE handler using signal.signal(signal.SIGPIPE, signal.SIG_DFL) with hasattr check for Windows. Handle BrokenPipeError by exiting cleanly with os._exit(0). Propagate exit codes from workflow execution results.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test output key selection logic, pipe chaining with subprocess (echo 'data' | pflow run workflow.json | grep pattern). Test encoding safety and binary output handling. Test signal handling with subprocess sending SIGINT. Test broken pipe scenarios (pflow run | head -n1). Verify correct exit codes for various error conditions. Platform-specific tests for Windows vs Unix."
           },
           {
@@ -403,7 +403,7 @@
               6
             ],
             "details": "Create tests/test_shell_integration.py with comprehensive coverage. Unit tests using pytest fixtures and mocks. Integration tests using subprocess for real shell behavior. Test dual-mode detection, large files, binary data, signals, exit codes. Test real Unix command scenarios. Platform-specific tests for differences. Performance tests for large data. Aim for >95% coverage of shell_integration module.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Organize tests by feature area. Use parameterized tests for multiple scenarios. Mock external dependencies. Use subprocess for end-to-end tests. Include stress tests for large inputs and edge cases."
           }
         ]
@@ -513,7 +513,40 @@
         ],
         "priority": "critical",
         "details": "Create src/pflow/planning/context_builder.py with build_context(registry_metadata) function. Format node information into a structured text that LLMs can understand: node names, descriptions, inputs/outputs, parameter types. Keep format simple and readable - just markdown tables or structured text. Include which parameters go to shared store vs node.set_params(). This provides the LLM with available 'tools' for building workflows. Output example: 'Available nodes:\n- read-file: Reads file from disk\n  Inputs: file_path (from shared store)\n  Outputs: content (to shared store)'. Reference docs: planner.md#6.1",
-        "testStrategy": "Test context generation, metadata optimization, and LLM readability. Verify output format is parseable."
+        "testStrategy": "Test context generation, metadata optimization, and LLM readability. Verify output format is parseable.",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create core context builder with basic formatting",
+            "description": "Create the initial src/pflow/planning/context_builder.py module with the build_context() function. Implement basic node formatting that transforms metadata into markdown text. Focus on the core transformation logic without worrying about categories or optimization.",
+            "dependencies": [],
+            "details": "Create the planning directory and context_builder.py file. Implement build_context(registry_metadata: dict[str, dict[str, Any]]) -> str. Format individual nodes into markdown sections. Apply the 'exclusive parameters' pattern - filter out params that are also inputs. Use simple, consistent formatting for each node.",
+            "status": "pending",
+            "testStrategy": "Test basic formatting with sample metadata. Test parameter filtering (exclusive params only). Test output format consistency. Test with minimal metadata (just description)."
+          },
+          {
+            "id": 2,
+            "title": "Integrate registry loading and metadata extraction",
+            "description": "Integrate the context builder with Task 5's registry and Task 7's metadata extractor. Add dynamic node class importing, handle import failures gracefully, and implement the production node filtering logic.",
+            "dependencies": [
+              1
+            ],
+            "details": "Import and use PflowMetadataExtractor from Task 7. Use import_node_class() from runtime.compiler for dynamic imports. Handle import failures with logging (skip failed nodes). Filter to include only production nodes with valid Interface sections. Skip nodes without metadata entirely. Add structured logging with phase tracking.",
+            "status": "pending",
+            "testStrategy": "Test integration with real registry data. Test import failure handling. Test filtering of test nodes vs production nodes. Test with nodes that have no Interface section. Verify logging for skipped nodes."
+          },
+          {
+            "id": 3,
+            "title": "Add category organization and format optimization",
+            "description": "Enhance the output format by organizing nodes into logical categories (File Operations, Git Operations, etc.). Optimize the markdown format for LLM comprehension and add monitoring for context size.",
+            "dependencies": [
+              2
+            ],
+            "details": "Implement category detection based on node paths/names. Group nodes by category in the output. Add section headers for better organization. Implement size monitoring (log warnings for large contexts). Polish the markdown format based on planner.md examples. Ensure clear distinction between shared store and configuration params.",
+            "status": "pending",
+            "testStrategy": "Test category grouping logic. Test output format matches examples in documentation. Test size monitoring warnings. Integration test with multiple node types. Verify LLM-friendly formatting."
+          }
+        ]
       },
       {
         "id": 17,
@@ -653,7 +686,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-07-08T22:17:42.493Z",
+      "updated": "2025-07-10T12:12:18.649Z",
       "description": "Reorganized to prioritize Natural Language Planner as core feature. Merged tasks 17-20 into comprehensive planner system. Expanded task 13 to include all platform nodes. Consolidated all v2.0 deferred features into task 32. Clear path from infrastructure to MVP delivery."
     }
   }
