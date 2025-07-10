@@ -204,8 +204,11 @@ class TestSubprocessIntegration:
         workflow_file.write_text(json.dumps(workflow))
 
         # Test piping data
-        result = subprocess.run(
-            ["pflow", "--file", str(workflow_file)], input="Test data from pipe", capture_output=True, text=True
+        result = subprocess.run(  # noqa: S603
+            ["pflow", "--file", str(workflow_file)],  # noqa: S607
+            input="Test data from pipe",
+            capture_output=True,
+            text=True,
         )
 
         assert result.returncode == 0
@@ -229,7 +232,7 @@ class TestSubprocessIntegration:
             "start_node": "writer",
         }
 
-        result = subprocess.run(["pflow"], input=json.dumps(workflow), capture_output=True, text=True)
+        result = subprocess.run(["pflow"], input=json.dumps(workflow), capture_output=True, text=True)  # noqa: S603, S607
 
         assert result.returncode == 0
         assert "Workflow executed successfully" in result.stdout
@@ -278,7 +281,7 @@ class TestBinaryStdinHandling:
         workflow_file.write_text('{"ir_version": "0.1.0"}')
 
         # Mock enhanced stdin to return temp file path
-        temp_path = "/tmp/pflow_stdin_test123"
+        temp_path = "/tmp/pflow_stdin_test123"  # noqa: S108
         stdin_obj = StdinData(temp_path=temp_path)
 
         # Mock isatty to indicate piped input

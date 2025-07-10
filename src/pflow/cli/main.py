@@ -42,6 +42,82 @@ def read_workflow_from_file(file_path: str) -> str:
         raise click.ClickException(f"cli: Unable to read file: '{file_path}'. File must be valid UTF-8 text.") from None
 
 
+def _read_stdin_data() -> tuple[str | None, StdinData | None]:
+    """Read stdin data, trying text first then enhanced.
+
+    Returns:
+        Tuple of (text_content, enhanced_stdin)
+    """
+    # For backward compatibility, try simple text reading first
+    stdin_content = read_stdin_content()
+
+    # Only try enhanced reading if simple reading failed (binary/large data)
+    enhanced_stdin = None
+    if stdin_content is None:  # Only when actually None, not empty string
+        enhanced_stdin = read_stdin_enhanced()
+
+    return stdin_content, enhanced_stdin
+
+
+def _determine_workflow_source(
+    file: str | None, workflow: tuple[str, ...], stdin_content: str | None
+) -> tuple[str, str]:
+    """Determine workflow source based on inputs.
+
+    Returns:
+        Tuple of (workflow_content, source)
+    """
+    if file:
+        return read_workflow_from_file(file), "file"
+    elif stdin_content and determine_stdin_mode(stdin_content) == "workflow":
+        if workflow:
+            raise click.ClickException(
+                "cli: Cannot use stdin input when command arguments are provided. Use either piped input OR command arguments."
+            )
+        return stdin_content, "stdin"
+    else:
+        return " ".join(workflow), "args"
+
+
+def _determine_stdin_data(
+    source: str,
+    workflow: tuple[str, ...],
+    file: str | None,
+    stdin_content: str | None,
+    enhanced_stdin: StdinData | None,
+) -> str | StdinData | None:
+    """Determine stdin data based on workflow source.
+
+    Returns:
+        stdin_data (string, StdinData, or None)
+    """
+    if source == "file":
+        # When reading from file, any stdin is data
+        return stdin_content or enhanced_stdin
+
+    if source == "stdin":
+        # Workflow came from stdin, no separate data
+        return None
+
+    if source != "args":
+        return None
+
+    # Workflow from args, stdin is data if present
+    if stdin_content and determine_stdin_mode(stdin_content) == "data":
+        if not workflow:
+            raise click.ClickException(
+                "cli: Stdin contains data but no workflow specified. Use --file or provide a workflow name/command."
+            )
+        return stdin_content
+
+    if enhanced_stdin and not workflow and not file:
+        raise click.ClickException(
+            "cli: Binary/large stdin data received but no workflow specified. Use --file or provide a workflow name."
+        )
+
+    return enhanced_stdin
+
+
 def get_input_source(file: str | None, workflow: tuple[str, ...]) -> tuple[str, str, str | StdinData | None]:
     """Determine input source and read workflow input.
 
@@ -54,53 +130,73 @@ def get_input_source(file: str | None, workflow: tuple[str, ...]) -> tuple[str, 
             "cli: Cannot specify both --file and command arguments. Use either --file OR provide a workflow as arguments."
         )
 
-    # For backward compatibility, try simple text reading first
-    stdin_content = read_stdin_content()
-    stdin_data = None
+    # Read stdin data
+    stdin_content, enhanced_stdin = _read_stdin_data()
 
-    # Only try enhanced reading if simple reading failed (binary/large data)
-    enhanced_stdin = None
-    if stdin_content is None:  # Only when actually None, not empty string
-        enhanced_stdin = read_stdin_enhanced()
+    # Determine workflow source
+    workflow_content, source = _determine_workflow_source(file, workflow, stdin_content)
 
-    if file:
-        # Read workflow from file, stdin (if present) is data
-        if stdin_content:
-            stdin_data = stdin_content
-        elif enhanced_stdin:
-            stdin_data = enhanced_stdin
-        return read_workflow_from_file(file), "file", stdin_data
-    elif stdin_content:
-        # We have text stdin content - determine its purpose
-        mode = determine_stdin_mode(stdin_content)
+    # Determine stdin data based on workflow source
+    stdin_data = _determine_stdin_data(source, workflow, file, stdin_content, enhanced_stdin)
 
-        if mode == "workflow":
-            # stdin contains workflow definition
-            if workflow:
-                raise click.ClickException(
-                    "cli: Cannot use stdin input when command arguments are provided. Use either piped input OR command arguments."
-                )
-            return stdin_content, "stdin", None
-        else:
-            # stdin contains data, but no workflow specified
-            if not workflow:
-                raise click.ClickException(
-                    "cli: Stdin contains data but no workflow specified. Use --file or provide a workflow name/command."
-                )
-            # stdin is data, workflow from args
-            stdin_data = stdin_content  # We already have text content
-            return " ".join(workflow), "args", stdin_data
-    elif enhanced_stdin:
-        # We have binary or large stdin but no text content
-        if not workflow and not file:
-            raise click.ClickException(
-                "cli: Binary/large stdin data received but no workflow specified. Use --file or provide a workflow name."
-            )
-        # stdin is binary/large data, workflow from args
-        return " ".join(workflow), "args", enhanced_stdin
-    else:
-        # No stdin, use command arguments
-        return " ".join(workflow), "args", None
+    return workflow_content, source, stdin_data
+
+
+def _log_stdin_injection(stdin_type: str, size_or_path: str | int) -> None:
+    """Log stdin injection details."""
+    if stdin_type == "text":
+        click.echo(f"cli: Injected stdin data ({size_or_path} bytes) into shared storage")
+    elif stdin_type == "text_data":
+        click.echo(f"cli: Injected text stdin data ({size_or_path} bytes) into shared storage")
+    elif stdin_type == "binary":
+        click.echo(f"cli: Injected binary stdin data ({size_or_path} bytes) into shared storage")
+    elif stdin_type == "temp_file":
+        click.echo(f"cli: Injected stdin temp file path: {size_or_path}")
+
+
+def _inject_stdin_object(shared_storage: dict[str, Any], stdin_data: StdinData, verbose: bool) -> None:
+    """Inject StdinData object into shared storage."""
+    if stdin_data.is_text and stdin_data.text_data is not None:
+        shared_storage["stdin"] = stdin_data.text_data
+        if verbose:
+            _log_stdin_injection("text_data", len(stdin_data.text_data))
+    elif stdin_data.is_binary and stdin_data.binary_data is not None:
+        shared_storage["stdin_binary"] = stdin_data.binary_data
+        if verbose:
+            _log_stdin_injection("binary", len(stdin_data.binary_data))
+    elif stdin_data.is_temp_file and stdin_data.temp_path is not None:
+        shared_storage["stdin_path"] = stdin_data.temp_path
+        if verbose:
+            _log_stdin_injection("temp_file", stdin_data.temp_path)
+
+
+def _inject_stdin_data(shared_storage: dict[str, Any], stdin_data: str | StdinData | None, verbose: bool) -> None:
+    """Inject stdin data into shared storage."""
+    if stdin_data is None:
+        return
+
+    if isinstance(stdin_data, str):
+        # Backward compatibility: string data
+        shared_storage["stdin"] = stdin_data
+        if verbose:
+            _log_stdin_injection("text", len(stdin_data))
+    elif isinstance(stdin_data, StdinData):
+        _inject_stdin_object(shared_storage, stdin_data, verbose)
+
+
+def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> None:
+    """Clean up temporary files if any."""
+    if isinstance(stdin_data, StdinData) and stdin_data.is_temp_file and stdin_data.temp_path is not None:
+        try:
+            import os
+
+            os.unlink(stdin_data.temp_path)
+            if verbose:
+                click.echo(f"cli: Cleaned up temp file: {stdin_data.temp_path}")
+        except OSError:
+            # Log warning but don't fail
+            if verbose:
+                click.echo(f"cli: Warning - could not clean up temp file: {stdin_data.temp_path}", err=True)
 
 
 def execute_json_workflow(
@@ -113,92 +209,61 @@ def execute_json_workflow(
         ir_data: Parsed workflow IR data
         stdin_data: Optional stdin data (string or StdinData) to inject into shared storage
     """
-    # If it's valid JSON with workflow structure, execute it
-    if isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data:
-        # Load registry (with helpful error if missing)
-        registry = Registry()
-        if not registry.registry_path.exists():
-            click.echo("cli: Error - Node registry not found.", err=True)
-            click.echo("cli: Run 'python scripts/populate_registry.py' to populate the registry.", err=True)
-            click.echo("cli: Note: This is temporary until 'pflow registry' commands are implemented.", err=True)
-            ctx.exit(1)
-
-        # Validate IR
-        validate_ir(ir_data)
-
-        # Compile to Flow
-        flow = compile_ir_to_flow(ir_data, registry)
-
-        # Show verbose execution info if requested
-        if ctx.obj.get("verbose", False):
-            node_count = len(ir_data.get("nodes", []))
-            click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
-
-        # Execute with shared storage
-        shared_storage: dict[str, Any] = {}
-
-        # Inject stdin data if present
-        if stdin_data is not None:
-            if isinstance(stdin_data, str):
-                # Backward compatibility: string data
-                shared_storage["stdin"] = stdin_data
-                if ctx.obj.get("verbose", False):
-                    click.echo(f"cli: Injected stdin data ({len(stdin_data)} bytes) into shared storage")
-            elif isinstance(stdin_data, StdinData):
-                # Enhanced stdin handling
-                if stdin_data.is_text:
-                    shared_storage["stdin"] = stdin_data.text_data
-                    if ctx.obj.get("verbose", False):
-                        click.echo(
-                            f"cli: Injected text stdin data ({len(stdin_data.text_data)} bytes) into shared storage"
-                        )
-                elif stdin_data.is_binary:
-                    shared_storage["stdin_binary"] = stdin_data.binary_data
-                    if ctx.obj.get("verbose", False):
-                        click.echo(
-                            f"cli: Injected binary stdin data ({len(stdin_data.binary_data)} bytes) into shared storage"
-                        )
-                elif stdin_data.is_temp_file:
-                    shared_storage["stdin_path"] = stdin_data.temp_path
-                    if ctx.obj.get("verbose", False):
-                        click.echo(f"cli: Injected stdin temp file path: {stdin_data.temp_path}")
-
-        try:
-            result = flow.run(shared_storage)
-
-            # Check if execution resulted in error
-            if result and isinstance(result, str) and result.startswith("error"):
-                click.echo("cli: Workflow execution failed - Node returned error action", err=True)
-                click.echo("cli: Check node output above for details", err=True)
-                ctx.exit(1)
-            else:
-                if ctx.obj.get("verbose", False):
-                    click.echo("cli: Workflow execution completed")
-                # Simple success message
-                click.echo("Workflow executed successfully")
-        except (click.ClickException, SystemExit):
-            # Let Click exceptions and exits propagate normally
-            raise
-        except Exception as e:
-            click.echo(f"cli: Workflow execution failed - {e}", err=True)
-            click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
-            ctx.exit(1)
-        finally:
-            # Clean up temp files if any
-            if isinstance(stdin_data, StdinData) and stdin_data.is_temp_file:
-                try:
-                    import os
-
-                    os.unlink(stdin_data.temp_path)
-                    if ctx.obj.get("verbose", False):
-                        click.echo(f"cli: Cleaned up temp file: {stdin_data.temp_path}")
-                except OSError:
-                    # Log warning but don't fail
-                    if ctx.obj.get("verbose", False):
-                        click.echo(f"cli: Warning - could not clean up temp file: {stdin_data.temp_path}", err=True)
-    else:
+    # Check if it's valid JSON with workflow structure
+    if not (isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data):
         # Valid JSON but not a workflow - treat as text
         click.echo(f"Collected workflow from {ctx.obj['input_source']}: {ctx.obj['raw_input']}")
+        return
+
+    # Load registry (with helpful error if missing)
+    registry = Registry()
+    if not registry.registry_path.exists():
+        click.echo("cli: Error - Node registry not found.", err=True)
+        click.echo("cli: Run 'python scripts/populate_registry.py' to populate the registry.", err=True)
+        click.echo("cli: Note: This is temporary until 'pflow registry' commands are implemented.", err=True)
+        ctx.exit(1)
+
+    # Validate IR
+    validate_ir(ir_data)
+
+    # Compile to Flow
+    flow = compile_ir_to_flow(ir_data, registry)
+
+    # Show verbose execution info if requested
+    verbose = ctx.obj.get("verbose", False)
+    if verbose:
+        node_count = len(ir_data.get("nodes", []))
+        click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
+
+    # Execute with shared storage
+    shared_storage: dict[str, Any] = {}
+
+    # Inject stdin data if present
+    _inject_stdin_data(shared_storage, stdin_data, verbose)
+
+    try:
+        result = flow.run(shared_storage)
+
+        # Check if execution resulted in error
+        if result and isinstance(result, str) and result.startswith("error"):
+            click.echo("cli: Workflow execution failed - Node returned error action", err=True)
+            click.echo("cli: Check node output above for details", err=True)
+            ctx.exit(1)
+        else:
+            if verbose:
+                click.echo("cli: Workflow execution completed")
+            # Simple success message
+            click.echo("Workflow executed successfully")
+    except (click.ClickException, SystemExit):
+        # Let Click exceptions and exits propagate normally
+        raise
+    except Exception as e:
+        click.echo(f"cli: Workflow execution failed - {e}", err=True)
+        click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
+        ctx.exit(1)
+    finally:
+        # Clean up temp files if any
+        _cleanup_temp_files(stdin_data, verbose)
 
 
 def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | StdinData | None = None) -> None:
@@ -236,6 +301,24 @@ def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | 
     except Exception as e:
         click.echo(f"cli: Unexpected error - {e}", err=True)
         ctx.exit(1)
+
+
+def _display_stdin_data(stdin_data: str | StdinData | None) -> None:
+    """Display stdin data information."""
+    if not stdin_data:
+        return
+
+    if isinstance(stdin_data, str):
+        display_data = stdin_data[:50] + "..." if len(stdin_data) > 50 else stdin_data
+        click.echo(f"Also collected stdin data: {display_data}")
+    elif isinstance(stdin_data, StdinData):
+        if stdin_data.is_text and stdin_data.text_data is not None:
+            display_data = stdin_data.text_data[:50] + "..." if len(stdin_data.text_data) > 50 else stdin_data.text_data
+            click.echo(f"Also collected stdin data: {display_data}")
+        elif stdin_data.is_binary and stdin_data.binary_data is not None:
+            click.echo(f"Also collected binary stdin data: {len(stdin_data.binary_data)} bytes")
+        elif stdin_data.is_temp_file and stdin_data.temp_path is not None:
+            click.echo(f"Also collected stdin data (temp file): {stdin_data.temp_path}")
 
 
 @click.command(context_settings={"allow_interspersed_args": False})
@@ -309,26 +392,10 @@ def main(ctx: click.Context, version: bool, verbose: bool, file: str | None, wor
     ctx.obj["verbose"] = verbose
 
     # Process workflow based on input type
-    if file and source == "file":
-        process_file_workflow(ctx, raw_input, stdin_data)
-    elif source == "stdin":
-        # stdin contains workflow, process it
+    if source in ("file", "stdin"):
+        # Process file or stdin workflows
         process_file_workflow(ctx, raw_input, stdin_data)
     else:
         # Temporary output for non-file inputs
         click.echo(f"Collected workflow from {source}: {raw_input}")
-        if stdin_data:
-            # Handle both string and StdinData objects
-            if isinstance(stdin_data, str):
-                display_data = stdin_data[:50] + "..." if len(stdin_data) > 50 else stdin_data
-                click.echo(f"Also collected stdin data: {display_data}")
-            elif isinstance(stdin_data, StdinData):
-                if stdin_data.is_text:
-                    display_data = (
-                        stdin_data.text_data[:50] + "..." if len(stdin_data.text_data) > 50 else stdin_data.text_data
-                    )
-                    click.echo(f"Also collected stdin data: {display_data}")
-                elif stdin_data.is_binary:
-                    click.echo(f"Also collected binary stdin data: {len(stdin_data.binary_data)} bytes")
-                elif stdin_data.is_temp_file:
-                    click.echo(f"Also collected stdin data (temp file): {stdin_data.temp_path}")
+        _display_stdin_data(stdin_data)

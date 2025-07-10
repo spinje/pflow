@@ -306,34 +306,37 @@ class TestReadStdinWithLimit:
             read_position[0] = end
             return chunk
 
-        with patch("sys.stdin.buffer.read", side_effect=mock_read):
-            with patch("tempfile.NamedTemporaryFile") as mock_temp:
-                # Mock temp file
-                mock_file = mock_temp.return_value
-                mock_file.name = "/tmp/test_temp_file"
+        with patch("sys.stdin.buffer.read", side_effect=mock_read), patch("tempfile.NamedTemporaryFile") as mock_temp:
+            # Mock temp file
+            mock_file = mock_temp.return_value
+            mock_file.name = "/tmp/test_temp_file"  # noqa: S108
 
-                result = read_stdin_with_limit(max_size=500)
+            result = read_stdin_with_limit(max_size=500)
 
-                assert result.is_temp_file is True
-                assert result.temp_path == "/tmp/test_temp_file"
+            assert result.is_temp_file is True
+            assert result.temp_path == "/tmp/test_temp_file"  # noqa: S108
 
-                # Verify data was written
-                mock_file.write.assert_called()
-                mock_file.close.assert_called()
+            # Verify data was written
+            mock_file.write.assert_called()
+            mock_file.close.assert_called()
 
     def test_environment_variable_limit(self):
         """Test reading limit from environment variable."""
-        with patch.dict("os.environ", {"PFLOW_STDIN_MEMORY_LIMIT": "1000"}):
-            with patch("sys.stdin.buffer.read", side_effect=[b"x" * 500, b""]):
-                result = read_stdin_with_limit()
-                assert result.is_text is True  # Under 1000 byte limit
+        with (
+            patch.dict("os.environ", {"PFLOW_STDIN_MEMORY_LIMIT": "1000"}),
+            patch("sys.stdin.buffer.read", side_effect=[b"x" * 500, b""]),
+        ):
+            result = read_stdin_with_limit()
+            assert result.is_text is True  # Under 1000 byte limit
 
     def test_invalid_environment_variable(self):
         """Test fallback when env var is invalid."""
-        with patch.dict("os.environ", {"PFLOW_STDIN_MEMORY_LIMIT": "invalid"}):
-            with patch("sys.stdin.buffer.read", side_effect=[b"test", b""]):
-                result = read_stdin_with_limit()
-                assert result.is_text is True  # Should use default limit
+        with (
+            patch.dict("os.environ", {"PFLOW_STDIN_MEMORY_LIMIT": "invalid"}),
+            patch("sys.stdin.buffer.read", side_effect=[b"test", b""]),
+        ):
+            result = read_stdin_with_limit()
+            assert result.is_text is True  # Should use default limit
 
 
 class TestReadStdinEnhanced:
@@ -347,32 +350,37 @@ class TestReadStdinEnhanced:
 
     def test_empty_stdin_returns_none(self):
         """Test that empty stdin returns None."""
-        with patch("sys.stdin.isatty", return_value=False):
-            with patch("sys.stdin.buffer.read", return_value=b""):
-                result = read_stdin_enhanced()
-                assert result is None
+        with patch("sys.stdin.isatty", return_value=False), patch("sys.stdin.buffer.read", return_value=b""):
+            result = read_stdin_enhanced()
+            assert result is None
 
     def test_text_stdin(self):
         """Test reading text stdin."""
-        with patch("sys.stdin.isatty", return_value=False):
-            with patch("sys.stdin.buffer.read", side_effect=[b"Hello World", b""]):
-                result = read_stdin_enhanced()
-                assert result is not None
-                assert result.is_text is True
-                assert result.text_data == "Hello World"
+        with (
+            patch("sys.stdin.isatty", return_value=False),
+            patch("sys.stdin.buffer.read", side_effect=[b"Hello World", b""]),
+        ):
+            result = read_stdin_enhanced()
+            assert result is not None
+            assert result.is_text is True
+            assert result.text_data == "Hello World"
 
     def test_binary_stdin(self):
         """Test reading binary stdin."""
-        with patch("sys.stdin.isatty", return_value=False):
-            with patch("sys.stdin.buffer.read", side_effect=[b"Hello\x00World", b""]):
-                result = read_stdin_enhanced()
-                assert result is not None
-                assert result.is_binary is True
-                assert result.binary_data == b"Hello\x00World"
+        with (
+            patch("sys.stdin.isatty", return_value=False),
+            patch("sys.stdin.buffer.read", side_effect=[b"Hello\x00World", b""]),
+        ):
+            result = read_stdin_enhanced()
+            assert result is not None
+            assert result.is_binary is True
+            assert result.binary_data == b"Hello\x00World"
 
     def test_exception_handling(self):
         """Test exception handling returns None."""
-        with patch("sys.stdin.isatty", return_value=False):
-            with patch("sys.stdin.buffer.read", side_effect=OSError("Test error")):
-                result = read_stdin_enhanced()
-                assert result is None
+        with (
+            patch("sys.stdin.isatty", return_value=False),
+            patch("sys.stdin.buffer.read", side_effect=OSError("Test error")),
+        ):
+            result = read_stdin_enhanced()
+            assert result is None

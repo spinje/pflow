@@ -12,6 +12,7 @@ The module supports:
 - Populating the shared store with stdin content
 """
 
+import contextlib
 import json
 import os
 import sys
@@ -180,6 +181,70 @@ def detect_binary_content(sample: bytes) -> bool:
     return b"\x00" in sample
 
 
+def _read_within_memory_limit(sample: bytes, max_size: int) -> tuple[list[bytes], int, bytes | None]:
+    """Read from stdin up to memory limit.
+
+    Args:
+        sample: Initial sample already read
+        max_size: Maximum bytes to keep in memory
+
+    Returns:
+        Tuple of (chunks, total_size, peek_byte)
+    """
+    chunks = [sample]
+    total_size = len(sample)
+
+    # Read up to the memory limit
+    while total_size < max_size:
+        chunk_size = min(max_size - total_size, 8192)  # Read in 8KB chunks
+        chunk = sys.stdin.buffer.read(chunk_size)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total_size += len(chunk)
+
+    # Check if there's more data beyond the limit
+    peek = sys.stdin.buffer.read(1)
+    return chunks, total_size, peek
+
+
+def _stream_to_temp_file(chunks: list[bytes], peek: bytes) -> str:
+    """Stream large data to temporary file.
+
+    Args:
+        chunks: Initial chunks already read
+        peek: First byte beyond memory limit
+
+    Returns:
+        Path to temporary file
+
+    Raises:
+        IOError: If temp file creation fails
+    """
+    temp_file = tempfile.NamedTemporaryFile(mode="wb", delete=False, prefix="pflow_stdin_")  # noqa: SIM115
+    try:
+        # Write what we've read so far
+        for c in chunks:
+            temp_file.write(c)
+        temp_file.write(peek)
+
+        # Stream the rest
+        while True:
+            chunk = sys.stdin.buffer.read(8192)  # 8KB chunks
+            if not chunk:
+                break
+            temp_file.write(chunk)
+
+        temp_file.close()
+        return temp_file.name
+    except Exception:
+        # Clean up on error
+        temp_file.close()
+        with contextlib.suppress(OSError):
+            os.unlink(temp_file.name)
+        raise
+
+
 def read_stdin_with_limit(max_size: int | None = None) -> StdinData:
     """Read stdin with size limit and binary detection.
 
@@ -214,46 +279,12 @@ def read_stdin_with_limit(max_size: int | None = None) -> StdinData:
     # Check if we need to stream to temp file
     if len(sample) == BINARY_SAMPLE_SIZE:
         # More data might be available, check total size
-        chunks = [sample]
-        total_size = len(sample)
+        chunks, total_size, peek = _read_within_memory_limit(sample, max_size)
 
-        # Read up to the memory limit
-        while total_size < max_size:
-            chunk_size = min(max_size - total_size, 8192)  # Read in 8KB chunks
-            chunk = sys.stdin.buffer.read(chunk_size)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total_size += len(chunk)
-
-        # Check if there's more data beyond the limit
-        peek = sys.stdin.buffer.read(1)
         if peek:
             # Need to stream to temp file
-            temp_file = tempfile.NamedTemporaryFile(mode="wb", delete=False, prefix="pflow_stdin_")
-            try:
-                # Write what we've read so far
-                for c in chunks:
-                    temp_file.write(c)
-                temp_file.write(peek)
-
-                # Stream the rest
-                while True:
-                    chunk = sys.stdin.buffer.read(8192)  # 8KB chunks
-                    if not chunk:
-                        break
-                    temp_file.write(chunk)
-
-                temp_file.close()
-                return StdinData(temp_path=temp_file.name)
-            except Exception:
-                # Clean up on error
-                temp_file.close()
-                try:
-                    os.unlink(temp_file.name)
-                except OSError:
-                    pass
-                raise
+            temp_path = _stream_to_temp_file(chunks, peek)
+            return StdinData(temp_path=temp_path)
 
         # All data fits in memory
         all_data = b"".join(chunks)
