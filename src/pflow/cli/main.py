@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -26,6 +27,32 @@ def handle_sigint(signum: int, frame: object) -> None:
     """Handle Ctrl+C gracefully."""
     click.echo("\ncli: Interrupted by user", err=True)
     sys.exit(130)  # Standard Unix exit code for SIGINT
+
+
+def safe_output(value: Any) -> bool:
+    """Safely output a value to stdout, handling broken pipes.
+
+    Returns True if output was successful, False otherwise.
+    """
+    try:
+        if isinstance(value, bytes):
+            # Skip binary output with warning
+            click.echo("cli: Skipping binary output (use --output-key with text values)", err=True)
+            return False
+        elif isinstance(value, str):
+            click.echo(value)
+            return True
+        else:
+            # Convert other types to string
+            click.echo(str(value))
+            return True
+    except BrokenPipeError:
+        # Exit cleanly when pipe is closed
+        os._exit(0)
+    except OSError as e:
+        if hasattr(e, "errno") and e.errno == 32:  # EPIPE
+            os._exit(0)
+        raise
 
 
 def read_workflow_from_file(file_path: str) -> str:
@@ -184,6 +211,26 @@ def _inject_stdin_data(shared_storage: dict[str, Any], stdin_data: str | StdinDa
         _inject_stdin_object(shared_storage, stdin_data, verbose)
 
 
+def _handle_workflow_output(shared_storage: dict[str, Any], output_key: str | None) -> bool:
+    """Handle output from workflow execution.
+
+    Returns True if output was produced, False otherwise.
+    """
+    if output_key:
+        # User specified a key to output
+        if output_key in shared_storage:
+            return safe_output(shared_storage[output_key])
+        else:
+            click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
+            return False
+    else:
+        # Auto-detect output from common keys
+        for key in ["response", "output", "result", "text"]:
+            if key in shared_storage:
+                return safe_output(shared_storage[key])
+        return False
+
+
 def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> None:
     """Clean up temporary files if any."""
     if isinstance(stdin_data, StdinData) and stdin_data.is_temp_file and stdin_data.temp_path is not None:
@@ -200,7 +247,10 @@ def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> No
 
 
 def execute_json_workflow(
-    ctx: click.Context, ir_data: dict[str, Any], stdin_data: str | StdinData | None = None
+    ctx: click.Context,
+    ir_data: dict[str, Any],
+    stdin_data: str | StdinData | None = None,
+    output_key: str | None = None,
 ) -> None:
     """Execute a JSON workflow if it's valid.
 
@@ -252,8 +302,13 @@ def execute_json_workflow(
         else:
             if verbose:
                 click.echo("cli: Workflow execution completed")
-            # Simple success message
-            click.echo("Workflow executed successfully")
+
+            # Check for output from shared store
+            output_produced = _handle_workflow_output(shared_storage, output_key)
+
+            # Only show success message if we didn't produce output
+            if not output_produced:
+                click.echo("Workflow executed successfully")
     except (click.ClickException, SystemExit):
         # Let Click exceptions and exits propagate normally
         raise
@@ -277,7 +332,7 @@ def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | 
     try:
         # Try to parse as JSON
         ir_data = json.loads(raw_input)
-        execute_json_workflow(ctx, ir_data, stdin_data)
+        execute_json_workflow(ctx, ir_data, stdin_data, ctx.obj.get("output_key"))
 
     except json.JSONDecodeError:
         # Not JSON - treat as plain text (for future natural language processing)
@@ -326,8 +381,16 @@ def _display_stdin_data(stdin_data: str | StdinData | None) -> None:
 @click.option("--version", is_flag=True, help="Show the pflow version")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed execution output")
 @click.option("--file", "-f", type=str, help="Read workflow from file")
+@click.option("--output-key", "-o", "output_key", help="Shared store key to output to stdout (default: auto-detect)")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
-def main(ctx: click.Context, version: bool, verbose: bool, file: str | None, workflow: tuple[str, ...]) -> None:
+def main(
+    ctx: click.Context,
+    version: bool,
+    verbose: bool,
+    file: str | None,
+    output_key: str | None,
+    workflow: tuple[str, ...],
+) -> None:
     """pflow - Plan Once, Run Forever
 
     Natural language to deterministic workflows.
@@ -368,6 +431,10 @@ def main(ctx: click.Context, version: bool, verbose: bool, file: str | None, wor
     # Register signal handler for Ctrl+C
     signal.signal(signal.SIGINT, handle_sigint)
 
+    # Handle broken pipe for shell compatibility
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
     # Initialize context object
     if ctx.obj is None:
         ctx.obj = {}
@@ -390,6 +457,7 @@ def main(ctx: click.Context, version: bool, verbose: bool, file: str | None, wor
     ctx.obj["input_source"] = source
     ctx.obj["stdin_data"] = stdin_data
     ctx.obj["verbose"] = verbose
+    ctx.obj["output_key"] = output_key
 
     # Process workflow based on input type
     if source in ("file", "stdin"):
