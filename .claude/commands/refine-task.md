@@ -24,6 +24,8 @@ Key outputs:
 - `.taskmaster/tasks/task_$ARGUMENTS/project-context.md`
 - `.taskmaster/tasks/task_$ARGUMENTS/decomposition-plan.md`
 
-Remember: Deep understanding drives good decomposition. Don't skip Phase 0!
+**User feedback**: If at any time during the workflow you feel like you are not sure about the task, or if clarification is needed, you need to STOP and create a markdown file in `scratchpads/critical-user-decisions/` outlining the issue and the options you are considering.
+
+Remember: Deep understanding drives good decomposition if there ever was a time to ultra think, this is it. Don't skip Phase 0 or any other phase.
 
 *Needless to say this is a very important and complex task where ultra thinking is required.*

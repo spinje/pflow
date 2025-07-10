@@ -214,6 +214,12 @@ Make sure to list all the files in the research folder.
 
 **Remember**: Prior research is a starting point, not gospel. Your understanding of the current task and codebase takes precedence over any recommendations in these files. With that said, the reasearch can be an invaluable source of inspiration and ideas to make the best possible task decomposition and implementation.
 
+#### 0.6 User Feedback and ambiguity resolution
+
+**If at any time during the workflow you feel like you are not sure about the task, or if clarification is needed, you need to STOP and create a markdown file in `scratchpads/critical-user-decisions/` outlining the issue and the options you are considering.**
+
+This is a critical step to ensure the task is fully understood and that no ambiguity remains before proceeding to the next phase.
+
 ### Exit Criteria for Phase 0
 - [ ] Current task fully understood with no ambiguities
 - [ ] Project context briefing created for the task
@@ -222,6 +228,7 @@ Make sure to list all the files in the research folder.
 - [ ] Domain understanding acquired for intelligent decomposition
 - [ ] (Optional) Similar tasks reviewed for inspiration
 - [ ] (If available) Prior research files critically reviewed and verified
+- [ ] (Optional) Critical user decisions documented in `scratchpads/critical-user-decisions/`
 
 ## Phase 1: Task Refinement
 
