@@ -2,18 +2,21 @@
 
 > **Purpose**: This guide helps AI assistants navigate the pflow documentation to quickly find the information they need. For a detailed inventory of what's in each file, see [index.md](./index.md).
 
+## 🚀 AI Agents Implementing Features?
+
+**Start here**: [ai-agent-context.md](./ai-agent-context.md) - Essential context for implementing pflow tasks correctly
+
 ## Documentation Structure
 
 ```
 docs/
 ├── prd.md                     # Product Requirements Document
 ├── index.md                   # File-by-file content inventory
+├── ai-agent-context.md        # Basic context for AI agents implementing features
 ├── architecture/              # System design and integration
 │   ├── architecture.md        # Core system design
 │   ├── components.md          # MVP vs v2.0 breakdown
-│   ├── pflow-pocketflow-integration-guide.md  # Critical integration patterns
-│   └── adr/                   # Architectural Decision Records
-│       └── 001-use-pocketflow-for-orchestration.md  # PocketFlow usage decision
+│   └── pflow-pocketflow-integration-guide.md  # Critical integration patterns
 ├── core-concepts/             # Fundamental patterns
 │   ├── registry.md            # Node discovery system
 │   ├── runtime.md             # Execution engine
