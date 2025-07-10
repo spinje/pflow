@@ -841,90 +841,79 @@ A consolidated collection of successful patterns and approaches discovered durin
 - **Date**: 2025-01-10
 - **Discovered in**: Task 16 context builder design
 - **Problem**: Nodes need to accept data from either the shared store (for inter-node communication) or parameters (for direct user configuration), leading to redundant specification in node interfaces
-- **Solution**: Establish a universal pattern where ALL shared store inputs automatically work as parameter fallbacks, with proper truthiness-safe checking and PocketFlow lifecycle compliance
+- **Solution**: Establish a universal pattern where ALL shared store inputs automatically work as parameter fallbacks, eliminating the need to document them twice
 - **Example**:
   ```python
-  class WriteFileNode(Node):
+  class ProcessFileNode(Node):
       """
       Interface:
-      - Reads: shared["file_path"], shared["content"]
-      - Writes: shared["result"], shared["error"]
-      - Params: file_path, content (as fallbacks), append, create_dirs, verbose (exclusive)
+      - Reads: shared["input_file"], shared["encoding"]
+      - Writes: shared["result"]
+      - Params: verbose, max_retries  # ONLY exclusive params listed!
       """
 
-      def prep(self, shared: dict) -> tuple[str, str, bool, bool]:
-          # Data inputs - check shared first, then params (truthiness-safe)
-          if "file_path" in shared:
-              file_path = shared["file_path"]
-          elif "file_path" in self.params:
-              file_path = self.params["file_path"]
-          else:
-              raise ValueError("Missing required 'file_path' in shared store or params")
+      def prep(self, shared: dict) -> tuple[str, str, bool, int]:
+          # ALL inputs automatically work as params - no need to document!
+          input_file = shared.get("input_file") or self.params.get("input_file")
+          if not input_file:
+              raise ValueError("Missing required 'input_file' in shared store or params")
 
-          if "content" in shared:
-              content = shared["content"]
-          elif "content" in self.params:
-              content = self.params["content"]
-          else:
-              raise ValueError("Missing required 'content' in shared store or params")
+          encoding = shared.get("encoding") or self.params.get("encoding", "utf-8")
 
-          # Exclusive params - configuration only, no shared store fallback
-          append = self.params.get("append", False)        # Behavior modifier
-          create_dirs = self.params.get("create_dirs", True)  # Config option
+          # Exclusive params - ONLY these go in Params documentation
+          verbose = self.params.get("verbose", False)
+          max_retries = self.params.get("max_retries", 3)
 
-          # Return everything exec needs (can't access params there)
-          return (str(file_path), str(content), append, create_dirs)
+          return (input_file, encoding, verbose, max_retries)
 
-      def exec(self, prep_res: tuple[str, str, bool, bool]) -> str:
-          # NO access to self.params or shared here - pure computation
-          file_path, content, append, create_dirs = prep_res
+      def exec(self, prep_res: tuple[str, str, bool, int]) -> str:
+          input_file, encoding, verbose, max_retries = prep_res
+          # Pure computation - no access to shared or params
 
-          if create_dirs:
-              os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-          mode = "a" if append else "w"
-          with open(file_path, mode) as f:
-              f.write(content)
-
-          return f"Successfully wrote to {file_path}"
+          for attempt in range(max_retries):
+              try:
+                  with open(input_file, encoding=encoding) as f:
+                      content = f.read()
+                  if verbose:
+                      print(f"Processed {len(content)} bytes")
+                  return content
+              except Exception as e:
+                  if attempt == max_retries - 1:
+                      raise
 
       def post(self, shared: dict, prep_res: Any, exec_res: str) -> str:
-          # Can access self.params again for post-processing decisions
-          if self.params.get("verbose", False):
-              print(f"Operation completed: {exec_res}")
-
           shared["result"] = exec_res
           return "default"
   ```
-- **PocketFlow Lifecycle Rules**:
-  1. `prep()`: Access both `shared` and `self.params` - prepare data for exec
-  2. `exec()`: NO access to `shared` or `self.params` - pure computation only
-  3. `post()`: Access both `shared` and `self.params` - update shared store
-- **Parameter Categories**:
-  1. **Data Inputs** (from Reads): Can come from shared OR params
-     - Always check shared store first for inter-node communication
-     - Fall back to params for direct user configuration
-     - Use truthiness-safe checking to handle empty strings, 0, False
-  2. **Exclusive Parameters**: Configuration only from params
-     - Behavior modifiers that don't flow between nodes
-     - Never stored in or read from shared store
-     - Examples: `append`, `verbose`, `timeout`, `max_retries`
-- **Context Builder Impact**:
+- **Key Insight**: Every value in "Reads" is automatically a valid parameter - no need to document it twice!
+- **The Pattern**:
   ```python
-  # Only show exclusive params in output
-  exclusive_params = [p for p in metadata['params'] if p not in metadata['inputs']]
+  # For any input listed in "Reads: shared[X]"
+  value = shared.get("X") or self.params.get("X")
 
-  # If all params are also inputs, omit Parameters section entirely
-  if not exclusive_params:
-      # No Parameters section needed
+  # Truthiness-safe version when empty/0/False are valid:
+  if "X" in shared:
+      value = shared["X"]
+  elif "X" in self.params:
+      value = self.params["X"]
+  else:
+      raise ValueError("Missing required 'X'")
   ```
-- **When to use**: ALWAYS - this is a fundamental pflow pattern that applies to every node
+- **Documentation Impact**:
+  - **Before**: `Reads: shared["file"], Params: file (as fallback), verbose`
+  - **After**: `Reads: shared["file"], Params: verbose` ✨
+- **Context Builder Implementation**:
+  ```python
+  # Filter out params that are already inputs
+  exclusive_params = [p for p in metadata['params'] if p not in metadata['inputs']]
+  # Only show these exclusive params in documentation
+  ```
+- **When to use**: ALWAYS - this is a core pflow architectural decision
 - **Benefits**:
-  - Eliminates redundancy in node documentation
-  - Simplifies the planner's job (focuses on data flow only)
-  - Provides runtime flexibility (users can override with --param)
+  - No redundant documentation
+  - Cleaner node interfaces
+  - Planner only thinks about data flow
+  - Users can override any input with --param at runtime
   - Consistent behavior across all nodes
-  - Clear separation between data flow and configuration
-  - Truthiness-safe for all Python values (empty strings, 0, False, None)
 
 ---
