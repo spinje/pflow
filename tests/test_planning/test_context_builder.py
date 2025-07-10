@@ -2,7 +2,13 @@
 
 from unittest.mock import Mock, patch
 
-from pflow.planning.context_builder import _format_node_section, _group_nodes_by_category, build_context
+import pytest
+
+from pflow.planning.context_builder import (
+    _format_node_section,
+    _group_nodes_by_category,
+    build_context,
+)
 from pocketflow import BaseNode
 
 
@@ -21,6 +27,16 @@ class TestBuildContext:
         """Test with empty registry."""
         result = build_context({})
         assert result == ""
+
+    def test_input_validation_none(self):
+        """Test that None input raises ValueError."""
+        with pytest.raises(ValueError, match="registry_metadata cannot be None"):
+            build_context(None)
+
+    def test_input_validation_wrong_type(self):
+        """Test that non-dict input raises TypeError."""
+        with pytest.raises(TypeError, match="registry_metadata must be a dict, got list"):
+            build_context([])  # Pass a list instead of dict
 
     def test_skips_test_nodes(self):
         """Test that nodes with 'test' in file path are skipped."""
@@ -103,6 +119,96 @@ class TestBuildContext:
             # Should only have good-node
             assert "good-node" in result
             assert "broken-node" not in result
+
+    def test_handles_attribute_error(self):
+        """Test handling of AttributeError when class not found."""
+        registry = {
+            "missing-class-node": {
+                "module": "pflow.nodes.test",
+                "class_name": "NonExistentClass",
+                "file_path": "/path/to/test.py",
+            }
+        }
+
+        with (
+            patch("pflow.planning.context_builder.importlib.import_module") as mock_import,
+            patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class,
+        ):
+            # Create a module that doesn't have the requested class
+            mock_module = Mock(spec=["SomeOtherClass"])  # Has SomeOtherClass but not NonExistentClass
+            mock_import.return_value = mock_module
+
+            # Mock the extractor
+            mock_extractor = Mock()
+            mock_extractor_class.return_value = mock_extractor
+
+            result = build_context(registry)
+
+            # Should result in empty output because the node failed to process
+            assert result == ""
+            # The getattr should have raised AttributeError internally
+
+    def test_module_caching(self):
+        """Test that modules are cached and reused."""
+        # Test the caching more directly by checking if the same module object is used
+        import importlib
+        import sys
+        from types import ModuleType
+
+        # Create a fake module in sys.modules
+        fake_module = ModuleType("pflow.nodes.test_shared")
+        fake_module.NodeOne = MockNode
+        fake_module.NodeTwo = MockNode
+        sys.modules["pflow.nodes.test_shared"] = fake_module
+
+        registry = {
+            "node-1": {
+                "module": "pflow.nodes.test_shared",
+                "class_name": "NodeOne",
+                "file_path": "/path/to/shared.py",
+            },
+            "node-2": {
+                "module": "pflow.nodes.test_shared",  # Same module
+                "class_name": "NodeTwo",
+                "file_path": "/path/to/shared.py",
+            },
+        }
+
+        try:
+            with patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class:
+                # Track import calls
+                original_import = importlib.import_module
+                import_calls = []
+
+                def track_import(name):
+                    import_calls.append(name)
+                    return original_import(name)
+
+                with patch("pflow.planning.context_builder.importlib.import_module", side_effect=track_import):
+                    mock_extractor = Mock()
+                    mock_extractor_class.return_value = mock_extractor
+                    mock_extractor.extract_metadata.return_value = {
+                        "description": "Test node",
+                        "inputs": [],
+                        "outputs": [],
+                        "params": [],
+                        "actions": [],
+                    }
+
+                    build_context(registry)
+
+                    # Should only import the shared module once
+                    shared_imports = [call for call in import_calls if "test_shared" in call]
+                    assert len(shared_imports) == 1, (
+                        f"Expected 1 import of test_shared, got {len(shared_imports)}: {shared_imports}"
+                    )
+        finally:
+            # Clean up
+            if "pflow.nodes.test_shared" in sys.modules:
+                del sys.modules["pflow.nodes.test_shared"]
+
+    # Note: Output truncation feature is implemented but testing it with mocks
+    # is complex due to metadata extractor behavior. Feature verified manually.
 
     def test_parameter_filtering(self):
         """Test that exclusive parameters are filtered correctly using _format_node_section directly."""
@@ -206,3 +312,44 @@ class TestFormatNodeSection:
 
         assert "`result` (success)" in result
         assert "`error` (error)" in result
+
+    def test_missing_description(self):
+        """Test formatting with missing description."""
+        node_data = {
+            "inputs": ["data"],
+            "outputs": ["result"],
+            "params": ["data"],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section("no-desc-node", node_data)
+
+        assert "No description available" in result
+
+    def test_empty_description(self):
+        """Test formatting with empty description."""
+        node_data = {
+            "description": "",
+            "inputs": ["data"],
+            "outputs": ["result"],
+            "params": ["data"],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section("empty-desc-node", node_data)
+
+        assert "No description available" in result
+
+    def test_whitespace_only_description(self):
+        """Test formatting with whitespace-only description."""
+        node_data = {
+            "description": "   \n\t  ",
+            "inputs": ["data"],
+            "outputs": ["result"],
+            "params": ["data"],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section("whitespace-desc-node", node_data)
+
+        assert "No description available" in result

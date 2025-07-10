@@ -6,14 +6,23 @@ documentation that enables natural language workflow composition.
 
 import importlib
 import logging
+import types
 from typing import Any
 
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
 logger = logging.getLogger(__name__)
 
+# Constants
+MAX_OUTPUT_SIZE = 50000  # 50KB limit for LLM context
 
-def build_context(registry_metadata: dict[str, dict[str, Any]]) -> str:
+
+# TODO: Function complexity warning (C901) is suppressed but valid
+# Consider refactoring into smaller functions:
+# - _validate_inputs()
+# - _process_single_node()
+# - _build_markdown_output()
+def build_context(registry_metadata: dict[str, dict[str, Any]]) -> str:  # noqa: C901
     """Build LLM-friendly context from registry metadata.
 
     Args:
@@ -23,14 +32,29 @@ def build_context(registry_metadata: dict[str, dict[str, Any]]) -> str:
     Returns:
         Formatted markdown string describing available nodes
     """
+    # Input validation
+    if registry_metadata is None:
+        raise ValueError("registry_metadata cannot be None")
+    if not isinstance(registry_metadata, dict):
+        raise TypeError(f"registry_metadata must be a dict, got {type(registry_metadata).__name__}")
+
     # Phase 1: Node collection and filtering
     extractor = PflowMetadataExtractor()
     processed_nodes = {}
     skipped_count = 0
+    # TODO: Consider thread safety if used in concurrent contexts
+    # The module cache could use threading.Lock() for thread-safe access
+    module_cache: dict[str, types.ModuleType] = {}  # Cache imported modules for performance
 
+    # TODO: Consider extracting this loop into a separate function to reduce complexity
+    # e.g., _process_single_node(node_type, node_info, extractor, module_cache)
     for node_type, node_info in registry_metadata.items():
         # Skip test nodes
         file_path = node_info.get("file_path", "")
+        # TODO: Consider more sophisticated test detection:
+        # - Check for __pycache__ directories
+        # - Skip .pyc files
+        # - Maybe check class name patterns (TestNode, MockNode, etc.)
         if "test" in file_path.lower():
             logger.debug(f"context: Skipping test node: {node_type}")
             skipped_count += 1
@@ -39,6 +63,10 @@ def build_context(registry_metadata: dict[str, dict[str, Any]]) -> str:
         # Phase 2: Import and metadata extraction
         try:
             # Import the node class using module path and class name
+            # NOTE: Not using import_node_class() from runtime.compiler because:
+            # 1. It requires a Registry instance, not a dict
+            # 2. We already have the module path and class name
+            # 3. This approach is simpler and avoids unnecessary dependencies
             module_path = node_info.get("module")
             class_name = node_info.get("class_name")
 
@@ -47,10 +75,18 @@ def build_context(registry_metadata: dict[str, dict[str, Any]]) -> str:
                 skipped_count += 1
                 continue
 
-            module = importlib.import_module(module_path)
+            # Use cached module if available
+            if module_path in module_cache:
+                module = module_cache[module_path]
+            else:
+                module = importlib.import_module(module_path)
+                module_cache[module_path] = module
+
             node_class = getattr(module, class_name)
 
             # Extract metadata
+            # TODO: Future optimization - cache extracted metadata to disk
+            # This is the main performance bottleneck for large registries
             metadata = extractor.extract_metadata(node_class)
 
             # Store successful extraction
@@ -63,8 +99,18 @@ def build_context(registry_metadata: dict[str, dict[str, Any]]) -> str:
                 "registry_info": node_info,
             }
 
+        except ImportError as e:
+            logger.warning(f"context: Failed to import module for node '{node_type}' (module: {module_path}): {e}")
+            skipped_count += 1
+            continue
+        except AttributeError as e:
+            logger.warning(
+                f"context: Failed to find class '{class_name}' in module '{module_path}' for node '{node_type}': {e}"
+            )
+            skipped_count += 1
+            continue
         except Exception as e:
-            logger.warning(f"context: Failed to process node '{node_type}': {e}")
+            logger.warning(f"context: Unexpected error processing node '{node_type}': {type(e).__name__}: {e}")
             skipped_count += 1
             continue
 
@@ -89,7 +135,15 @@ def build_context(registry_metadata: dict[str, dict[str, Any]]) -> str:
 
     output = "\n".join(markdown_sections)
     output_size = len(output)
-    if output_size > 10000:  # 10KB warning threshold
+
+    # Truncate if output exceeds limit
+    if output_size > MAX_OUTPUT_SIZE:
+        logger.warning(f"context: Output truncated from {output_size} to {MAX_OUTPUT_SIZE} bytes")
+        # TODO: Consider smarter truncation that respects node boundaries
+        # Current approach might cut off in the middle of a node description
+        # Better approach: track size while building and stop adding complete nodes
+        output = output[:MAX_OUTPUT_SIZE] + "\n\n... (truncated)"
+    elif output_size > 10000:  # 10KB warning threshold
         logger.warning(f"context: Large output size: {output_size} bytes")
 
     return output
@@ -122,7 +176,12 @@ def _group_nodes_by_category(nodes: dict[str, dict]) -> dict[str, list[str]]:
 def _format_node_section(node_type: str, node_data: dict) -> str:
     """Format a single node's information as markdown."""
     lines = [f"### {node_type}"]
-    lines.append(node_data["description"])
+
+    # Handle missing or empty description gracefully
+    description = node_data.get("description", "").strip()
+    if not description:
+        description = "No description available"
+    lines.append(description)
     lines.append("")
 
     # Format inputs
