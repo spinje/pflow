@@ -554,7 +554,6 @@
         "description": "Build the complete planner that transforms natural language into workflows, handles the 'find or build' pattern, and enables workflow reuse",
         "status": "pending",
         "dependencies": [
-          12,
           16
         ],
         "priority": "critical",
