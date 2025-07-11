@@ -223,7 +223,7 @@ pflow/
 │   │   │   ├── decomposition-plan.md
 │   │   │   ├── subtask_1.1/
 │   │   │   ├── subtask_1.2/
-│   │   │   └── task-review.md
+│   │   │   └── task-review.md # Read this file to understand what has been implemented in previously completed tasks
 │   │   ├── task_2/
 │   │   │   └── (same structure)
 │   │   └── tasks.json    # Detailed task list with subtasks
@@ -332,7 +332,7 @@ The codebase is in early development with:
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
 - ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/features/mvp-implementation-guide.md`
-- ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap
+- ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap (**Do not access this file directly**, always use `taskmaster list` to view the tasks or `taskmaster show  <taskId>` to view a task)
 - ✅ Establish epistemic workflow for task execution in `.taskmaster/workflow/`
 - ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
 - ✅ Task 2 complete: Basic CLI run command with stdio/stdin support
@@ -340,8 +340,11 @@ The codebase is in early development with:
 - ✅ Task 4 complete: Implement IR-to-PocketFlow Object Converter
 - ✅ Task 5 complete: Node discovery and registry implementation
 - ✅ Task 6 complete: Define JSON IR schema
+- ✅ Task 7 complete: Extract node metadata from docstrings
+- ✅ Task 8 complete: Build comprehensive shell pipe integration with stdin/stdout
 - ✅ Task 11 complete: Implement read-file and write-file nodes
-- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 7 - Extract node metadata from docstrings)
+- ✅ Task 16 complete: Create planning context builder
+- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 17 - Implement Natural Language Planner System)
 
 *Update this list as you complete tasks.*
 
@@ -383,6 +386,10 @@ Every time you need the user to make a decision, you should:
 ## 1. Decision Title - Decision importance (1-5)
 
 Describe the decision and the reasoning why it is needed.
+
+### Context:
+
+Describe the context around the problem so it can be understood clearly in isolation.
 
 ### Options:
 
