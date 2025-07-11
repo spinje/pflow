@@ -266,7 +266,7 @@ graph TD
 
 # Behavior flags → node parameters (node behavior)
 --temperature=0.3 → node.set_params({"temperature": 0.3})
---model=gpt-4 → node.set_params({"model": "gpt-4"})
+--model=claude-sonnet-4-20250514 → node.set_params({"model": "claude-sonnet-4-20250514"})
 ```
 
 #### 5.1.2 Template Resolution System
@@ -391,7 +391,7 @@ Extracted from docstrings and stored as JSON:
   "inputs": ["prompt"],
   "outputs": ["response"],
   "params": {
-    "model": {"type": "string", "default": "gpt-4"},
+    "model": {"type": "string", "default": "claude-sonnet-4-20250514"},
     "temperature": {"type": "float", "default": 0.7},
     "system": {"type": "string", "optional": true}
   },
@@ -595,7 +595,7 @@ For detailed caching implementation including cache key computation and eligibil
 def test_llm_node():
     # Simple, natural test setup
     node = LLMNode()
-    node.set_params({"model": "gpt-4", "temperature": 0.5})
+    node.set_params({"model": "claude-sonnet-4-20250514", "temperature": 0.5})
 
     shared = {"prompt": "Summarize this: Long content..."}
     node.run(shared)

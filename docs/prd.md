@@ -465,7 +465,7 @@ Every planned flow includes **complete provenance**:
   "metadata": {
     "planner_version": "1.0.0",
     "planner_run_id": "plan_2024-01-01_12:00:00_abc123",
-    "llm_model": "claude-3-5-sonnet",
+    "llm_model": "claude-sonnet-4-20250514",
     "created_at": "2024-01-01T12:00:00Z",
     "prompt": "summarize this youtube video",
     "retry_count": 1,

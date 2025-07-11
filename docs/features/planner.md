@@ -89,7 +89,7 @@ The planner operates through a **validation-first approach**, performing linting
 | **B. Intent Analysis & Template Design** | **Analyze user intent and design template-driven workflow structure.** | **Template variables and workflow architecture design.** |
 | **C. Template String Composition** | **Generate template strings that populate all node inputs with static text and $variable references.** | **Complete input templates with proper variable dependencies.** |
 | **D. Parameter Value Creation** | **Generate appropriate parameter values based on workflow context.** | **Context-specific parameter assignments and defaults.** |
-| **E. LLM Selection & Template Mapping** | Use thinking model to choose nodes and **create template variable mappings**. | Selected building blocks with **template integration**. |
+| **E. LLM Selection & Template Mapping** | Use Claude Sonnet 4 to choose nodes and **create template variable mappings**. | Selected building blocks with **template integration**. |
 | **F. Flow Structure Generation** | Create node graph with **template-driven sequencing**. | Structural IR with **template variables and data flow**. |
 | **G. Structural Validation** | Lint node compatibility, action paths, reachability, **template resolution**. | Pass → continue, Fail → retry or abort. |
 | **H. Shared Store Modeling** | Create shared store schema, generate mappings, **template variable tracking**. | Compatible shared store interface with **template support**. |
@@ -346,7 +346,7 @@ This approach anchors stability by reusing proven flows rather than regenerating
 
 ### 6.2 Thinking Model Approach
 
-When generation is required, the planner uses a **thinking model** (e.g., o1-preview):
+When generation is required, the planner uses **Claude Sonnet 4** (claude-sonnet-4-20250514):
 
 1. **Context Loading**: All available metadata JSON loaded into LLM context
 2. **Intent Analysis**: LLM analyzes user prompt for goals and requirements
@@ -396,7 +396,7 @@ When generation is required, the planner uses a **thinking model** (e.g., o1-pre
   "selected_nodes": ["github-get-issue", "claude-code", "llm", "git-commit", "git-push", "github-create-pr"],
   "parameter_values": {
     "claude-code": {"temperature": 0.2, "max_tokens": 8192},
-    "llm": {"temperature": 0.1, "model": "gpt-4"}
+    "llm": {"temperature": 0.1, "model": "claude-sonnet-4-20250514"}
   }
 }
 ```
@@ -470,7 +470,7 @@ yt-transcript => llm => llm => write-file      # Get → Summarize → Expand �
 {
   "nodes": [
     {"id": "read-file", "version": "1.0.0", "params": {"path": "data.txt"}},
-    {"id": "llm", "version": "1.0.0", "params": {"model": "gpt-4", "temperature": 0.7}},
+    {"id": "llm", "version": "1.0.0", "params": {"model": "claude-sonnet-4-20250514", "temperature": 0.7}},
     {"id": "write-file", "version": "1.0.0", "params": {"path": "summary.md"}}
   ],
   "edges": [
@@ -596,7 +596,7 @@ The planner embeds **default parameters** from node metadata into IR:
 ```json
 {
   "nodes": [
-    {"id": "llm", "version": "1.0.0", "params": {"model": "gpt-4", "temperature": 0.7}}
+    {"id": "llm", "version": "1.0.0", "params": {"model": "claude-sonnet-4-20250514", "temperature": 0.7}}
   ]
 }
 ```
@@ -939,7 +939,7 @@ expects 'text'.
   "prompt": "summarize this youtube video",
   "metadata": {
     "planner_version": "1.0.0",
-    "llm_model": "o1-preview",
+    "llm_model": "claude-sonnet-4-20250514",
     "timestamp": "2024-01-01T12:00:00Z"
   },
   "stages": [
@@ -1113,7 +1113,7 @@ expects 'text'.
 | **Params** | Node behavior settings accessed via `self.params.get()` (flat structure) |
 | **Shared store** | Per-run key-value memory for node inputs/outputs using natural key names |
 | **Simple nodes** | Single-purpose nodes with clear interfaces and natural composition |
-| **Thinking model** | Advanced LLM capable of complex reasoning (e.g., o1-preview) |
+| **Thinking model** | Advanced LLM capable of complex reasoning (claude-sonnet-4-20250514) |
 
 ---
 

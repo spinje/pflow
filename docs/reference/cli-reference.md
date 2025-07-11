@@ -117,14 +117,14 @@ for flag in cli_flags:
 
 ```bash
 # Node parameter (static)
-pflow llm --model=gpt-4 --temperature=0.7
+pflow llm --model=claude-sonnet-4-20250514 --temperature=0.7
 
 # Shared store injection (dynamic)
 pflow process --text="Hello world"
 
 # Mixed usage
 pflow read-file --path=input.txt --encoding=utf-8 => \
-      llm --prompt="Analyze this" --model=gpt-4
+      llm --prompt="Analyze this" --model=claude-sonnet-4-20250514
 ```
 
 ## Template Variables

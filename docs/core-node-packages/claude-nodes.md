@@ -59,7 +59,7 @@ echo "$generated_instructions" | pflow claude-code --temperature=0.2
 ```
 
 **Parameters**:
-- `model` (optional): Claude model (default: claude-3-5-sonnet)
+- `model` (optional): Claude model (default: claude-sonnet-4-20250514)
 - `temperature` (optional): Creativity level 0.0-1.0 (default: 0.3)
 - `max_tokens` (optional): Maximum response length (default: 8192)
 
@@ -211,7 +211,7 @@ claude --version
 
 ### Environment Variables
 - `ANTHROPIC_API_KEY`: API key for Claude access
-- `CLAUDE_MODEL`: Default model (optional)
+- `CLAUDE_MODEL`: Default model (optional, defaults to claude-sonnet-4-20250514)
 - `CLAUDE_PROJECT_PATH`: Project context path (optional)
 
 ### Error Handling

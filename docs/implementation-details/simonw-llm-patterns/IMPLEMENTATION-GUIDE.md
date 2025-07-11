@@ -170,7 +170,7 @@ class LLMNode(Node):
     """
 
     def __init__(self,
-                 model: str = "gpt-4o-mini",
+                 model: str = "claude-sonnet-4-20250514",
                  system: Optional[str] = None,
                  temperature: Optional[float] = None,
                  max_retries: int = 3,
@@ -264,10 +264,10 @@ class LLMNode(Node):
 
     def exec_fallback(self, prep_res: Dict[str, Any], exc: Exception) -> Dict[str, Any]:
         """Fallback strategy - try a simpler model."""
-        if self.model_name != "gpt-4o-mini" and "rate limit" in str(exc).lower():
+        if self.model_name != "claude-sonnet-4-20250514" and "rate limit" in str(exc).lower():
             # Try fallback model
             original = self.model_name
-            self.model_name = "gpt-4o-mini"
+            self.model_name = "claude-sonnet-4-20250514"
 
             try:
                 result = self.exec(prep_res)
@@ -313,7 +313,7 @@ import json
 from typing import Optional
 
 def call_llm_for_planning(prompt: str,
-                         model: str = "claude-3-5-sonnet-latest",
+                         model: str = "claude-sonnet-4-20250514",
                          temperature: float = 0.7) -> str:
     """
     Call LLM for workflow planning using llm library.
@@ -348,12 +348,12 @@ def call_llm_for_planning(prompt: str,
     except json.JSONDecodeError:
         # Retry with more explicit prompt
         retry_prompt = f"{prompt}\n\nPlease output ONLY valid JSON, no other text."
-        return call_llm_for_planning(retry_prompt, model="gpt-4o-mini", temperature=0.3)
+        return call_llm_for_planning(retry_prompt, model="claude-sonnet-4-20250514", temperature=0.3)
 
     except Exception as e:
         # Fallback to simpler model
-        if model != "gpt-4o-mini":
-            return call_llm_for_planning(prompt, model="gpt-4o-mini", temperature=0.5)
+        if model != "claude-sonnet-4-20250514":
+            return call_llm_for_planning(prompt, model="claude-sonnet-4-20250514", temperature=0.5)
         raise
 
 # Usage in planner
@@ -550,6 +550,7 @@ class ExecutionTracer:
         """Estimate cost from token usage."""
         # Rough estimates per 1K tokens
         rates = {
+            "claude-sonnet-4": 0.015,  # $15/1M input, $75/1M output (averaged)
             "gpt-4": 0.03,
             "gpt-4o": 0.005,
             "gpt-4o-mini": 0.00015,
@@ -645,7 +646,7 @@ def sample_workflow():
             {
                 "id": "llm1",
                 "type": "llm",
-                "params": {"model": "gpt-4o-mini"}
+                "params": {"model": "claude-sonnet-4-20250514"}
             },
             {
                 "id": "write1",
@@ -750,7 +751,7 @@ import pytest
 
 def test_llm_node_prep():
     """Test LLM node preparation phase."""
-    node = LLMNode(model="gpt-4o-mini")
+    node = LLMNode(model="claude-sonnet-4-20250514")
 
     # Test with prompt
     shared = {"prompt": "Test prompt"}
@@ -780,7 +781,7 @@ def test_llm_node_post():
     exec_res = {
         "text": "LLM response",
         "usage": {"total_tokens": 100},
-        "model": "gpt-4o-mini"
+        "model": "claude-sonnet-4-20250514"
     }
 
     action = node.post(shared, {}, exec_res)
@@ -788,7 +789,7 @@ def test_llm_node_post():
     assert shared["response"] == "LLM response"
     assert shared["text"] == "LLM response"  # For chaining
     assert shared["llm_usage"]["total_tokens"] == 100
-    assert shared["llm_model"] == "gpt-4o-mini"
+    assert shared["llm_model"] == "claude-sonnet-4-20250514"
     assert action == "default"
 ```
 

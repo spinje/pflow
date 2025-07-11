@@ -100,7 +100,7 @@ flow = (
     ReadFileNode()
         .set_params({"path": "input.txt"}) >>
     LLMNode()
-        .set_params({"model": "gpt-4"})
+        .set_params({"model": "claude-sonnet-4-20250514"})
         .with_proxy({"text": "content"})  # If mapping needed
 )
 ```
@@ -459,7 +459,7 @@ from pflow.testing import NodeTestCase
 class TestLLMNode(NodeTestCase):
     def test_execution(self):
         node = LLMNode()
-        node.set_params({"model": "gpt-4"})
+        node.set_params({"model": "claude-sonnet-4-20250514"})
 
         shared = {"prompt": "Hello"}
         result = self.execute_node(node, shared)

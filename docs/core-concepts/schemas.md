@@ -120,7 +120,7 @@ Node metadata is extracted from Python docstrings and stored as JSON for fast pl
     "params": {
       "model": {
         "type": "str",
-        "default": "gpt-4",
+        "default": "claude-sonnet-4-20250514",
         "optional": true,
         "description": "LLM model to use"
       },
@@ -429,7 +429,7 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
       "id": "create-summary",
       "registry_id": "core/llm",
       "version": "1.0.0",
-      "params": {"model": "gpt-4", "temperature": 0.7},
+      "params": {"model": "claude-sonnet-4-20250514", "temperature": 0.7},
       "execution": {"use_cache": true}
     }
   ],

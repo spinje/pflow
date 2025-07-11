@@ -49,7 +49,7 @@ shared["response"] = "The code has the following potential issues..."
 
 | Param         | Type    | Default    | Description                                                    |
 | ------------- | ------- | ---------- | -------------------------------------------------------------- |
-| `model`       | `str`   | `"gpt-4"`  | Model name to use                                             |
+| `model`       | `str`   | `"claude-sonnet-4-20250514"`  | Model name to use                                             |
 | `temperature` | `float` | `0.7`      | Sampling temperature for creativity control                    |
 | `system`      | `str?`  | `None`     | Optional system prompt for behavior guidance                   |
 | `max_tokens`  | `int?`  | `None`     | Optional output limit (model-dependent)                       |
@@ -123,7 +123,7 @@ echo "AI Safety" | pflow llm --prompt="Write an introduction paragraph about thi
 pflow llm --prompt="Write a haiku about coding" --temperature=0.9
 
 # Technical analysis (conservative)
-pflow llm --prompt="Review this code for bugs" --temperature=0.1 --model=gpt-4
+pflow llm --prompt="Review this code for bugs" --temperature=0.1 --model=claude-sonnet-4-20250514
 
 # With system prompt
 pflow llm --prompt="Explain quantum computing" --system="You are a physics professor"
@@ -156,7 +156,7 @@ The LLM node is designed for future integration with [Simon Willison's `llm` CLI
 pflow llm --prompt="Summarize this text"
 
 # Future (with llm CLI integration)
-pflow llm --model=claude-3-opus --template=summary --input=text
+pflow llm --model=claude-sonnet-4-20250514 --template=summary --input=text
 ```
 
 ---
@@ -205,7 +205,7 @@ pflow web-fetch --url=example.com/article => \
 def test_llm_node():
     node = LLMNode()
     node.set_params({
-        "model": "gpt-4",
+        "model": "claude-sonnet-4-20250514",
         "temperature": 0.5
     })
 

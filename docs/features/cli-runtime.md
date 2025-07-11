@@ -240,7 +240,7 @@ def create_flow():
 
     # Configure nodes with IR params
     fetch_node.set_params({"language": "en"})
-    process_node.set_params({"model": "gpt-4", "temperature": 0.9})  # CLI override
+    process_node.set_params({"model": "claude-sonnet-4-20250514", "temperature": 0.9})  # CLI override
 
     # Wire the flow using pocketflow operators
     fetch_node >> process_node
@@ -303,7 +303,7 @@ def create_flow():
 
     # Configure nodes
     fetch_node.set_params({"language": "en"})
-    process_node.set_params({"model": "gpt-4", "temperature": 0.9})
+    process_node.set_params({"model": "claude-sonnet-4-20250514", "temperature": 0.9})
 
     # Wire the flow
     fetch_node >> process_node
@@ -343,7 +343,7 @@ def run_with_cli():
 ```python
 # Node always uses natural interface
 # prep() reads from shared["prompt"] (proxy maps to "formatted_prompt" if needed)
-# exec() uses self.params.get("model", "gpt-4") and self.params.get("temperature") = 0.9 (CLI override)
+# exec() uses self.params.get("model", "claude-sonnet-4-20250514") and self.params.get("temperature") = 0.9 (CLI override)
 # post() writes to shared["response"] (proxy maps to "article_summary" if needed)
 ```
 
@@ -402,7 +402,7 @@ def create_simple_flow():
     writer = WriteFileNode()
 
     reader.set_params({"path": "data.txt"})
-    processor.set_params({"model": "gpt-4"})
+    processor.set_params({"model": "claude-sonnet-4-20250514"})
     writer.set_params({"path": "summary.md"})
 
     # Simple sequential composition

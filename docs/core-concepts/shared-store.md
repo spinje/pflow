@@ -278,7 +278,7 @@ Compare this to complex binding setup requirements in other approaches.
 shared = {"prompt": "Summarize this content: Input content"}
 
 llm_node = LLMNode()
-llm_node.set_params({"model": "gpt-4", "temperature": 0.7})
+llm_node.set_params({"model": "claude-sonnet-4-20250514", "temperature": 0.7})
 
 flow = Flow(start=llm_node)
 flow.run(shared)  # Node accesses shared["prompt"] directly
@@ -315,7 +315,7 @@ llm_node = LLMNode()
 
 # Set params from IR
 llm_node.set_params({
-    "model": "gpt-4",
+    "model": "claude-sonnet-4-20250514",
     "temperature": 0.3  # Conservative for academic content
 })
 
@@ -391,7 +391,7 @@ Example:
   "nodes": [
     {
       "id": "llm",
-      "params": {"model": "gpt-4", "temperature": 0.7}
+      "params": {"model": "claude-sonnet-4-20250514", "temperature": 0.7}
     },
     {
       "id": "write-file",

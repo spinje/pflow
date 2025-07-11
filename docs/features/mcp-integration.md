@@ -403,7 +403,7 @@ flow = Flow(start=github_search)
     {
       "id": "llm",
       "version": "1.0.0",
-      "params": {"model": "gpt-4", "temperature": 0.3}
+      "params": {"model": "claude-sonnet-4-20250514", "temperature": 0.3}
     },
     {
       "id": "mcp-slack-send-message",
@@ -466,7 +466,7 @@ def create_mcp_integrated_flow():
 
     # Configure with IR parameters using pocketflow's set_params()
     github_search.set_params({"max_results": 15})
-    processor.set_params({"model": "gpt-4", "temperature": 0.3})
+    processor.set_params({"model": "claude-sonnet-4-20250514", "temperature": 0.3})
     slack_sender.set_params({})  # Uses defaults
 
     # Wire simple sequential flow

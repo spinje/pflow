@@ -41,7 +41,7 @@ import llm
 class LLMNode(Node):
     """LLM node using Simon Willison's library."""
 
-    def __init__(self, model="gpt-4o-mini", system=None, **params):
+    def __init__(self, model="claude-sonnet-4-20250514", system=None, **params):
         super().__init__()
         self.model_name = model
         self.system = system
@@ -90,9 +90,9 @@ class LLMNode(Node):
 
     def exec_fallback(self, prep_res, exc):
         """Fallback for retries - could try simpler model."""
-        if self.model_name != "gpt-4o-mini":
+        if self.model_name != "claude-sonnet-4-20250514":
             # Try with simpler model
-            self.model_name = "gpt-4o-mini"
+            self.model_name = "claude-sonnet-4-20250514"
             return self.exec(prep_res)
         raise exc
 
@@ -213,7 +213,7 @@ def test_llm_node_execution():
                 {
                     "id": "llm1",
                     "type": "llm",
-                    "params": {"model": "gpt-4o-mini"}
+                    "params": {"model": "claude-sonnet-4-20250514"}
                 }
             ],
             "edges": [],
@@ -297,7 +297,7 @@ shared["response"] = "..."
 ```python
 # Create flow from nodes
 read = ReadFileNode()
-llm = LLMNode(model="claude-3-5-sonnet-latest")
+llm = LLMNode(model="claude-sonnet-4-20250514")
 write = WriteFileNode()
 
 # Compose with >> operator
@@ -311,7 +311,7 @@ flow.run(shared)
 ### Error Handling
 ```python
 class RobustLLMNode(LLMNode):
-    def __init__(self, model="gpt-4", max_retries=3):
+    def __init__(self, model="claude-sonnet-4-20250514", max_retries=3):
         # PocketFlow handles retries via Node base class
         super().__init__(max_retries=max_retries)
         self.model_name = model
