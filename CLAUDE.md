@@ -159,20 +159,19 @@ pflow/
 ├── src/pflow/             # Main pflow CLI implementation
 │   ├── __init__.py       # Package initialization
 │   ├── cli/              # CLI module
-│   │   ├── __init__.py   # Exports main CLI entry point
 │   │   └── main.py       # CLI implementation with click
 │   ├── core/             # Core utilities and schemas
-│   │   ├── __init__.py   # Core module exports
-│   │   └── ir_schema.py  # Pydantic models for JSON IR validation
+│   │   ├── ir_schema.py  # Pydantic models for JSON IR validation
+│   │   └── shell_integration.py  # Shell pipe and stdin/stdout handling
 │   ├── nodes/            # Platform node implementations
-│   │   ├── __init__.py   # Node exports and registration
 │   │   └── file/         # File operation nodes (read, write, copy, move, delete)
+│   ├── planning/         # Natural language planning system
+│   │   └── context_builder.py  # Build context for LLM planning
 │   ├── registry/         # Node discovery and management
-│   │   ├── __init__.py   # Registry module exports
 │   │   ├── registry.py   # Central registry for nodes and metadata
-│   │   └── scanner.py    # Dynamic node discovery from modules
+│   │   ├── scanner.py    # Dynamic node discovery from modules
+│   │   └── metadata_extractor.py  # Extract metadata from node docstrings
 │   └── runtime/          # Workflow execution components
-│       ├── __init__.py   # Runtime module exports
 │       └── compiler.py   # IR to PocketFlow object compilation
 ├── tests/                 # Comprehensive test suite
 │   ├── test_cli/         # CLI interface tests
@@ -181,6 +180,7 @@ pflow/
 │   ├── test_integration/ # End-to-end integration tests
 │   ├── test_nodes/       # Node implementation tests
 │   │   └── test_file/    # File node operation tests
+│   ├── test_planning/    # Planning system tests
 │   ├── test_registry/    # Registry and scanner tests
 │   └── test_runtime/     # Runtime and compiler tests
 ├── examples/              # Example workflows and usage patterns
