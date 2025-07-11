@@ -166,10 +166,8 @@ This document analyzes which pflow tasks would benefit from PocketFlow patterns,
 - **Patterns**: N/A
 
 #### Task 17: Implement LLM-based Workflow Generation Engine
-- **Relevance**: LOW
-- **Reasoning**: Generates IR but doesn't use PocketFlow directly
-- **Patterns**: Limited to understanding node capabilities
-- **Cookbook Examples**: Node interface patterns
+- **Relevance**: Extremeley High
+- **Needs reevaluation**: This task is going to be implemented as a pocket flow flow.
 
 #### Task 22: Implement named workflow execution
 - **Relevance**: MEDIUM
