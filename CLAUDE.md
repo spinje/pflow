@@ -183,6 +183,11 @@ pflow/
 │   │   └── test_file/    # File node operation tests
 │   ├── test_registry/    # Registry and scanner tests
 │   └── test_runtime/     # Runtime and compiler tests
+├── examples/              # Example workflows and usage patterns
+│   ├── README.md         # Examples overview and guide
+│   ├── core/             # Core workflow examples
+│   ├── advanced/         # Advanced workflow patterns
+│   └── invalid/          # Invalid examples for validation testing
 ├── docs/                  # Comprehensive project specifications
 │   ├── CLAUDE.md                  # Documentation navigation guide for AI
 │   ├── index.md                   # Documentation inventory and overview
