@@ -4,6 +4,11 @@
 
 Task 17 is the core feature that makes pflow unique - the Natural Language Planner that enables "Plan Once, Run Forever". After extensive research, I've identified several critical ambiguities and decisions that need to be made before implementation can begin.
 
+### Key Breakthrough Insights:
+1. The workflow discovery mechanism can reuse the exact same pattern as node discovery - the context builder already provides the perfect format.
+2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
+3. Two-phase approach separates discovery (what to use) from planning (how to connect), preventing information overload.
+
 ## 1. Template Variable Resolution Mechanism - Decision importance (5)
 
 There's a fundamental ambiguity about how template variables (`$variable`) work throughout the system.
@@ -64,35 +69,43 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
 
 **Recommendation**: Option B - Runtime resolution is ESSENTIAL. Without it, pflow would just be a one-time script generator. The ability to run `pflow fix-issue --issue=ANY_NUMBER` is the entire point of workflow compilation.
 
+**Implementation Note for Planner**: When the user says "fix github issue 1234", the planner must:
+1. Recognize "1234" as a parameter value (not part of the intent)
+2. Generate IR with `"issue_number": "$issue"` (NOT `"issue_number": "1234"`)
+3. Store the workflow with template variables intact
+4. The value "1234" is only used during the first execution, not baked into the workflow
+
 ## 2. Workflow Storage and Discovery Implementation - Decision importance (4)
 
-The "find or build" pattern is core to pflow but implementation details are vague.
+The "find or build" pattern is core to pflow but implementation details are now clearer.
 
-### The Ambiguity:
-- How exactly are workflows stored and indexed for semantic search?
-- What metadata is saved with workflows to enable discovery?
-- How does similarity matching work in practice?
+### Updated Understanding:
+- Discovery can work exactly like node discovery - using descriptions
+- The context builder already provides the pattern we need
+- Workflows just need a good description field for LLM matching
 
-### Options:
+### The Simplified Approach:
 
-- [x] **Option A: Simple JSON files with metadata**
-  - Store in `~/.pflow/workflows/<name>.json`
-  - Include description field for basic text search
-  - Use LLM for similarity matching on descriptions
-  - Simple to implement, good enough for MVP
+- [x] **Use Context Builder Pattern for Everything**
+  - For nodes: Context builder generates markdown with descriptions
+  - For workflows: Store with description field in same format
+  - LLM sees both nodes and workflows in unified format
+  - Example workflow entry:
+    ```markdown
+    ### fix-github-issue
+    Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR
+    ```
+  - Reuses existing infrastructure perfectly
 
-- [ ] **Option B: Embeddings-based similarity**
-  - Generate embeddings for workflow descriptions
-  - Store in vector database for semantic search
-  - More accurate discovery but complex for MVP
-  - Requires additional dependencies
+### Implementation:
+1. **Node Discovery**: Already works via context builder markdown
+2. **Workflow Discovery**:
+   - Load saved workflows from `~/.pflow/workflows/`
+   - Format them like nodes: name + description
+   - Append to context builder output
+   - LLM selects from both nodes and existing workflows
 
-- [ ] **Option C: Structured metadata with tags**
-  - Workflows tagged with categories, inputs, outputs
-  - Structured search plus LLM fallback
-  - Middle ground complexity
-
-**Recommendation**: Option A - Start simple with JSON files and LLM-based matching. Can upgrade to embeddings later.
+**Key Insight**: The description field is all we need for semantic matching. The LLM can understand "fix github issue 1234" matches a workflow described as "Fetches a GitHub issue, analyzes it with AI, generates a fix".
 
 ## 3. LLM Model Selection and Configuration - Decision importance (3)
 
@@ -321,7 +334,90 @@ What exactly is in scope for the MVP planner?
 
 **Recommendation**: Option A - Stick to strict MVP scope to ensure delivery.
 
-## 11. JSON IR to CLI Syntax Relationship - Decision importance (4)
+## 11. Unified Discovery Pattern - Decision importance (5)
+
+How should the planner discover both nodes and existing workflows?
+
+### The Key Insight:
+The context builder already solved this problem! We can use the same pattern for everything.
+
+### Critical Refinements:
+1. **Workflows ARE building blocks** - Other workflows can be used inside new workflows
+2. **Two different contexts needed**:
+   - **Discovery context**: Just names and descriptions (for finding what to use)
+   - **Planning context**: Full interface details (only for selected nodes/workflows)
+3. **Separation of concerns**: Discovery vs. implementation planning
+
+### The Two-Phase Approach:
+
+**Phase 1: Discovery Context (for finding nodes/workflows)**
+```markdown
+## Available Nodes
+
+### github-get-issue
+Fetches issue details from GitHub
+
+### llm
+General-purpose language model for text processing
+
+### read-file
+Reads content from a file
+
+## Available Workflows (can be used as building blocks)
+
+### fix-github-issue
+Analyzes a GitHub issue and creates a PR with the fix
+
+### analyze-error-logs
+Reads log files and summarizes errors with recommendations
+```
+
+**Phase 2: Planning Context (only selected nodes/workflows)**
+```markdown
+## Selected Components
+
+### github-get-issue
+Fetches issue details from GitHub
+**Inputs**: `issue_number`, `repo`
+**Outputs**: `issue_data`, `issue_title`
+
+### llm
+General-purpose language model for text processing
+**Inputs**: `prompt`
+**Outputs**: `response`
+**Parameters**: `model`, `temperature`
+```
+
+### Benefits:
+1. **Workflows as first-class citizens** - Can compose workflows from other workflows
+2. **Focused contexts** - Discovery gets minimal info, planning gets full details
+3. **Performance** - Don't load full interface details for 100+ nodes during discovery
+4. **Clarity** - LLM isn't overwhelmed with irrelevant interface details
+
+### Implementation:
+1. **Discovery phase**:
+   - Load all nodes (names + descriptions only)
+   - Load all workflows (names + descriptions only)
+   - LLM selects which to use
+2. **Planning phase**:
+   - Load full details ONLY for selected nodes/workflows
+   - LLM plans the shared store layout and connections
+   - Generate IR with proper mappings
+
+### Workflow Storage Format:
+```json
+{
+  "name": "fix-github-issue",
+  "description": "Analyzes a GitHub issue and creates a PR with the fix",
+  "inputs": ["issue_number"],
+  "outputs": ["pr_number"],
+  "ir": { ... }  // The actual workflow IR
+}
+```
+
+**Key Insight**: Workflows are just reusable node compositions - they should appear alongside nodes as building blocks!
+
+## 12. JSON IR to CLI Syntax Relationship - Decision importance (4)
 
 There's an implicit assumption that JSON IR can be "compiled" back to CLI syntax for user display, but this isn't straightforward.
 
@@ -352,21 +448,42 @@ There's an implicit assumption that JSON IR can be "compiled" back to CLI syntax
 ## Critical Next Steps
 
 1. **Clarify template variable resolution** - This is the most critical ambiguity
-2. **Decide on workflow storage format** - Needed for discovery implementation
-3. **Confirm MVP boundaries** - Especially regarding action-based transitions
-4. **Design concrete prompt templates** - With examples of expected outputs
-5. **Create test scenarios** - Cover all edge cases identified above
+2. ~~**Decide on workflow storage format**~~ - ✅ RESOLVED: Use simple JSON with name, description, inputs, outputs, and IR
+3. ~~**Design discovery mechanism**~~ - ✅ RESOLVED: Two-phase approach with context builder
+4. **Confirm MVP boundaries** - Especially regarding action-based transitions
+5. **Design concrete prompt templates** - With examples of expected outputs
+6. **Create test scenarios** - Cover all edge cases identified above
+7. **Implement two context builder functions**:
+   - `build_discovery_context()` - Lightweight descriptions only
+   - `build_planning_context(selected)` - Full details for selected components
 
 ## Implementation Recommendations
 
 Based on this analysis, here's the recommended approach:
 
-1. **Start with Option B for template variables** - Runtime resolution is essential
-2. **Use simple JSON storage** with LLM-based discovery
-3. **Use GPT-4** for planning with structured prompts
-4. **Show CLI syntax only** for approval
-5. **Implement smart error recovery** with specific strategies
-6. **Strictly limit to sequential workflows** for MVP
+1. **Use Option B for template variables** - Runtime resolution is essential for workflow reusability
+2. **Use unified discovery pattern** - Context builder lists both nodes and workflows
+3. **Store workflows with descriptions** - Simple JSON with name, description, and IR
+4. **Use GPT-4** for planning with structured prompts
+5. **Show CLI syntax only** for approval
+6. **Implement smart error recovery** with specific strategies
+7. **Strictly limit to sequential workflows** for MVP
+
+**Critical Implementation Detail**: The planner must be explicitly instructed to generate template variables (`$issue`, `$file_path`, etc.) rather than hardcoding values extracted from natural language input.
+
+### Key Implementation Simplifications:
+- No separate discovery system needed - reuse context builder pattern
+- Workflows are reusable building blocks alongside nodes
+- Two-phase approach: discovery (descriptions only) → planning (full details)
+- The LLM prompt structure:
+  - Discovery: "Here are available nodes and workflows. Which should we use?"
+  - Planning: "Here are the selected components' interfaces. Plan the connections."
+
+### Context Builder Evolution:
+1. **build_discovery_context()** - Names and descriptions only
+2. **build_planning_context(selected_components)** - Full interface details for selected items only
+
+This separation prevents information overload and improves LLM performance.
 
 ## Risks and Mitigations
 
