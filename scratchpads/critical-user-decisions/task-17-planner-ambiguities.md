@@ -109,32 +109,7 @@ The "find or build" pattern is core to pflow but implementation details are now 
 
 ## 3. LLM Model Selection and Configuration - Decision importance (3)
 
-Which LLM should the planner use and how should it be configured?
-
-### The Ambiguity:
-- Documentation mentions "thinking models" like o1-preview
-- But also references Claude and GPT-4
-- No clear guidance on which to use when
-
-### Options:
-
-- [ ] **Option A: Use o1-preview for all planning**
-  - Best reasoning capability
-  - Higher cost and latency
-  - May be overkill for simple workflows
-
-- [x] **Option B: Use GPT-4/Claude-3.5 for planning**
-  - Good balance of capability and speed
-  - Lower cost than o1
-  - Sufficient for workflow generation
-
-- [ ] **Option C: Tiered approach**
-  - Simple requests → GPT-3.5
-  - Complex requests → GPT-4
-  - Ambiguous requests → o1-preview
-  - Most complex to implement
-
-**Recommendation**: Option B - GPT-4 or Claude-3.5 Sonnet provides the right balance for MVP.
+✅ **RESOLVED**: We will use `claude-sonnet-4-20250514` with Simon Willison's llm library used directly from within the exec of a node in `nodes.py` (no llm client wrapper needed). All docs has been updated to reflect this.
 
 ## 4. Input Parameter Handling in Natural Language - Decision importance (5)
 
@@ -445,6 +420,97 @@ There's an implicit assumption that JSON IR can be "compiled" back to CLI syntax
 
 **Recommendation**: Option B - A separate IR-to-CLI compiler maintains separation of concerns and single source of truth.
 
+## 12. Planner Implementation Architecture - Decision importance (5)
+
+How should the planner itself be implemented?
+
+### Context
+
+This decision goes to the heart of pflow's architectural philosophy and reveals a fundamental distinction in the system:
+
+**The Two Layers of pflow:**
+1. **User Layer**: Natural language → JSON IR → Saved workflows ("Plan Once, Run Forever")
+2. **System Layer**: Infrastructure that enables the user layer
+
+The planner sits firmly in the system layer. It's not a workflow that users discover with "find me a workflow that generates workflows" - it's the infrastructure that makes workflow generation possible.
+
+**Why This Matters:**
+- JSON IR is for **what users want to do** (their workflows)
+- Python code is for **how the system works** (our infrastructure)
+- The planner is "how", not "what"
+
+**Pocketflow's Design Philosophy:**
+According to pocketflow's "Agentic Coding" guide (`pocketflow/docs/guide.md`):
+- Pocketflow is specifically designed to be **easy for AI agents to understand and modify**
+- The framework provides clear patterns for system implementation
+- Infrastructure components should follow the nodes.py + flow.py pattern
+
+**The Meta Consideration:**
+While it's intellectually appealing to use JSON IR to generate JSON IR (ultimate dogfooding), this would be using the wrong tool for the job. It's like trying to write a compiler in the language it compiles - possible but not practical for maintenance and debugging.
+
+**Key References:**
+- `pocketflow/docs/guide.md` - Shows the intended pattern for building systems
+- `pocketflow/docs/core_abstraction/node.md` - Node design principles
+- `docs/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
+- The planner specification in `docs/features/planner.md` describes it as infrastructure
+
+### The Decision
+
+### Options:
+
+- [ ] **Option A: JSON IR for the planner**
+  - Ultimate dogfooding - use JSON IR to generate JSON IR
+  - Intellectually elegant
+  - **Problems**:
+    - Bootstrap complexity (how do you generate the IR that generates IR?)
+    - Debugging nightmare (debugging generated code that generates code)
+    - Wrong abstraction level (JSON IR is for user workflows)
+    - Against pocketflow's philosophy (guide shows Python for implementation)
+
+- [x] **Option B: Python pocketflow code**
+  - Planner written as nodes.py + flow.py
+  - Follows pocketflow's "Agentic Coding" philosophy
+  - Clear separation: System layer (Python) vs User layer (JSON IR)
+  - Easy for AI agents to understand and modify (pocketflow is especially designed for this, see `pocketflow/docs/guide.md` for more details)
+  - **Benefits**:
+    - Direct debugging with Python tools
+    - Version control shows meaningful diffs
+    - Natural test writing
+    - Follows established patterns
+    - Comprehensive documentation available in the `pocketflow/` repo
+    - Source just 100 lines of code and extremely easy to grasp for AI agents
+
+- [ ] **Option C: Regular Python**
+  - Just plain Python functions, no pocketflow
+  - **Problems**:
+    - Loses orchestration benefits
+    - Harder to test individual components
+    - Inconsistent with rest of system
+    - Less clear structure for AI agents
+    - No dogfooding
+
+**Resolution**: Option B - The planner is infrastructure and belongs in the system layer as Python pocketflow code. This follows the framework's design philosophy perfectly and maintains proper architectural boundaries.
+
+### Implementation Pattern
+
+Following pocketflow's recommended structure:
+```
+src/pflow/planning/
+├── nodes.py          # Planner nodes (discovery, generation, validation)
+├── flow.py           # create_planner_flow()
+├── utils/
+│   ├── ir_utils.py   # IR manipulation utilities?
+│   └── # More utils to be added as needed
+└── prompts/
+    └── templates.py  # Prompt templates
+```
+
+This structure:
+- Follows the pattern shown in `pocketflow/docs/guide.md`
+- Keeps planner logic organized and testable
+- Makes it clear this is system infrastructure
+- Enables AI agents to easily understand and modify the planner
+
 ## Critical Next Steps
 
 1. **Clarify template variable resolution** - This is the most critical ambiguity
@@ -464,12 +530,15 @@ Based on this analysis, here's the recommended approach:
 1. **Use Option B for template variables** - Runtime resolution is essential for workflow reusability
 2. **Use unified discovery pattern** - Context builder lists both nodes and workflows
 3. **Store workflows with descriptions** - Simple JSON with name, description, and IR
-4. **Use GPT-4** for planning with structured prompts
+4. **Use claude-sonnet-4-20250514** for planning with structured prompts
 5. **Show CLI syntax only** for approval
 6. **Implement smart error recovery** with specific strategies
 7. **Strictly limit to sequential workflows** for MVP
+8. **Implement planner as Python pocketflow code** - nodes.py + flow.py pattern, not JSON IR. The implementing agent will need to read all the relevant docs in the `pocketflow/` folder to understand exactly how to implement it.
 
-**Critical Implementation Detail**: The planner must be explicitly instructed to generate template variables (`$issue`, `$file_path`, etc.) rather than hardcoding values extracted from natural language input.
+**Critical Implementation Details**:
+- The planner must be explicitly instructed to generate template variables (`$issue`, `$file_path`, etc.) rather than hardcoding values extracted from natural language input.
+- Use Simon Willison's llm library directly in the pocketflow node - no need for wrapper or using the general LLM node.
 
 ### Key Implementation Simplifications:
 - No separate discovery system needed - reuse context builder pattern
