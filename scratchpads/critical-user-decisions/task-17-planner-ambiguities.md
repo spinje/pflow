@@ -138,6 +138,135 @@ How does the planner extract and handle parameters from natural language?
   - Then generate workflow with templates
   - More structured but slower
 
+### Context:
+
+When creating a new workflow, the planner must perform several sophisticated steps:
+
+  1. Intent + Parameter Extraction
+
+  When user says "fix github issue 1234", the planner must:
+  - Recognize the intent: "fix github issue"
+  - Extract the concrete value: "1234"
+  - Critical: Generate a template variable $issue_number instead of hardcoding "1234"
+
+  2. Template Variable Generation
+
+  The planner must be intelligent about creating reusable template variables:
+  User input: "fix github issue 1234 in the pflow repo"
+  ↓
+  Planner extracts:
+  - issue_number: 1234 → creates $issue_number
+  - repo: pflow → creates $repo_name
+  ↓
+  Generates workflow with templates:
+  github-get-issue --issue=$issue_number --repo=$repo_name
+
+  3. Multi-Step Parameter Threading
+
+  Complex workflows require parameter flow between nodes:
+  User: "analyze the bug in issue 1234 and create a fix"
+
+  Planner must:
+  1. Create $issue_number from "1234"
+  2. Plan that github-get-issue outputs to shared["issue_data"]
+  3. Reference $issue_data in subsequent nodes
+  4. Create template strings like "Fix for issue #$issue_number: $issue_title"
+
+  4. Implicit Parameter Inference
+
+  Sometimes parameters aren't explicitly stated:
+  User: "summarize today's pull requests"
+
+  Planner must infer:
+  - date parameter → $date with default "today"
+  - state parameter → $state with default "open"
+  - repo parameter → $repo with prompt for user
+
+  Reusing an Existing Workflow
+
+  This is a fundamentally different process:
+
+  1. Workflow Discovery Phase
+
+  User: "fix github issue 5678"
+  ↓
+  Planner searches existing workflows:
+  - Finds "fix-issue" workflow with description "Fetches GitHub issue and creates fix"
+  - Recognizes semantic match
+
+  2. Parameter Mapping
+
+  The existing workflow already has template variables defined:
+  Existing workflow expects:
+  - $issue_number (required)
+  - $repo_name (optional, default: current)
+  - $priority (optional, default: normal)
+
+  User provided: "fix github issue 5678"
+  ↓
+  Planner maps:
+  - 5678 → $issue_number
+  - Missing: $repo_name (use default)
+  - Missing: $priority (use default)
+
+  3. Parameter Validation
+
+  Before reuse, validate all required parameters are available:
+  If workflow requires $issue_number and $repo_name:
+  - User says "fix github issue" (missing number)
+  - Planner must prompt: "What issue number?"
+  - Or suggest: "Recent issues: #1234, #5678, #9012"
+
+  Key Differences and Nuances
+
+  Creation Challenges:
+
+  1. Template Variable Naming: Must create meaningful, reusable variable names
+  2. Parameter Flow Design: Must plan how data flows between nodes via templates
+  3. Default Value Strategy: Must decide which params need defaults vs runtime values
+  4. Comprehensiveness: Must capture ALL dynamic aspects as templates, not just obvious ones
+
+  Reuse Challenges:
+
+  1. Semantic Matching: "fix bug 123" should match "fix-github-issue" workflow
+  2. Parameter Extraction Context: Same NL might map differently based on workflow expectations
+  3. Missing Parameter Handling: Interactive prompting vs smart defaults
+  4. Parameter Type Coercion: "issue twenty-three" → 23
+
+  Critical Edge Cases:
+  1. Ambiguous Parameter Extraction:
+    - "fix the latest issue" → need to resolve "latest"
+    - "analyze yesterday's data" → need date calculation
+
+  Here the planner should identify that it should reuse an existing workflow but wrap it in a new workflow that has a node that resolves the "latest" parameter or a node that resolves the date.
+
+  2. Multi-Value Parameters:
+    - "fix issues 123, 456, and 789" → array handling
+
+  The planner should identify that it should reuse an existing workflow but wrap it in BatchFlow that invokes the existing workflow for each issue number.
+
+  > This essentially creates alternative workflows that extend an existing workflow. We dont have to implement this in the planner, but we should be able to identify that this is a valid use case and handle it appropriately or create comments in the code to indicate this is a valid use case and should be implemented in the future.
+
+  What the planner should NOT do:
+  1. Contextual Parameters:
+    - "fix this issue" (referring to previous context)
+    - "use the same settings as last time"
+
+  Pocketflow does not have any state, so it cannot refer to previous context. These types of queries can however be handled perfectly when the user is interacting with an AI agent like Claude Code and the agent uses pflow as a tool. If the agent has an understanding of pflow, it can translate the user's query into a pflow query using its own state.
+
+  The Two-Phase Approach:
+
+  Phase 1 - Discovery/Selection:
+  - For new: "What nodes should I use?"
+  - For reuse: "Which existing workflow matches?"
+
+  Phase 2 - Parameter Resolution:
+  - For new: "What template variables do I need?"
+  - For reuse: "How do parameters map to templates?"
+
+  This separation is crucial because parameter handling strategy completely changes based on
+  whether you're creating or reusing.
+
 **Recommendation**: Option B - Smart inference makes the natural language interface more intuitive.
 
 ## 5. Prompt Template Design and Management - Decision importance (4)
@@ -211,6 +340,7 @@ How should the approval process work in practice?
 
 - [x] **Option A: Show CLI syntax only**
   - Display generated CLI pipe syntax
+  - Show parameters with actual values (and visible default values) not template variables
   - Simple Y/n prompt for approval
   - Save on approval, execute after
   - Clearest for users
