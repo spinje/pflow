@@ -75,7 +75,114 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
 3. Store the workflow with template variables intact
 4. The value "1234" is only used during the first execution, not baked into the workflow
 
-## 2. Workflow Storage and Discovery Implementation - Decision importance (4)
+## 2. Data Flow Orchestration and Proxy Mapping Strategy - Decision importance (5)
+
+How should the planner orchestrate data flow between nodes with incompatible interfaces?
+
+### Context:
+Nodes are black boxes with fixed interfaces. When chaining nodes together, their inputs and outputs rarely align perfectly. This creates a fundamental data flow challenge that the planner must solve.
+
+**The Core Problem:**
+```
+youtube-transcript writes: shared["transcript"]
+llm reads: shared["prompt"]
+↓
+How does transcript → prompt?
+```
+
+**Why This Matters:**
+Without a sophisticated solution, workflows would need many intermediate "glue" nodes just to move data around, making them complex and hard to maintain.
+
+### The Ambiguity:
+- Should the planner use template strings to compose data?
+- Should proxy mappings just do simple key renaming?
+- Can proxy mappings handle complex data extraction?
+- Who is responsible for avoiding/managing shared store collisions?
+
+### Options:
+
+- [ ] **Option A: Template String Composition Only**
+  - All data transformation via template strings
+  - Example: `"prompt": "Summarize: $transcript"`
+  - Simple but limited to string concatenation
+  - Can't handle nested data or complex transformations
+
+- [ ] **Option B: Simple Key-to-Key Proxy Mappings**
+  - Basic renaming: `{"prompt": "transcript"}`
+  - Handles 1:1 mappings only
+  - Clean but limited flexibility
+  - Can't compose multiple values or extract nested data
+
+- [x] **Option C: Path-Based Proxy Mappings with Nested Extraction**
+  - Support JSONPath/dot notation: `{"prompt": "api_response.data.content"}`
+  - Extract from arrays: `{"labels": "issue.labels[*].name"}`
+  - Combine with templates: `"prompt": "Analyze: ${issue.title}"`
+  - Most powerful and flexible approach
+
+### Examples of Path-Based Power:
+
+**1. Nested JSON Extraction:**
+```json
+// github-get-issue writes to shared["issue_data"]:
+{
+  "id": 1234,
+  "title": "Fix login",
+  "user": {"login": "john"},
+  "labels": [{"name": "bug"}, {"name": "urgent"}]
+}
+
+// Proxy mapping extracts what's needed:
+{
+  "mappings": {
+    "analyzer": {
+      "input_mappings": {
+        "title": "issue_data.title",
+        "author": "issue_data.user.login",
+        "is_urgent": "issue_data.labels[?name=='urgent']"
+      }
+    }
+  }
+}
+```
+
+**2. Eliminating Extract Nodes:**
+```
+// Without path-based mappings:
+api-call >> json-extract-content >> json-extract-author >> llm
+
+// With path-based mappings:
+api-call >> llm
+```
+
+**3. Handling Multiple Node Outputs:**
+```json
+{
+  "mappings": {
+    "summarizer": {
+      "input_mappings": {
+        "content": "analyzer.response",  // Namespaced to avoid collision
+        "metadata": "fetcher.headers"
+      }
+    }
+  }
+}
+```
+
+### Critical Insights:
+1. **Proxy mappings enable data flow, not prevent it** - They connect incompatible interfaces
+2. **Path extraction eliminates intermediate nodes** - Cleaner, simpler workflows
+3. **The planner must understand data shapes** - To generate appropriate paths
+4. **Namespacing prevents collisions** - `node_id.output_key` pattern
+
+### Planner Responsibilities:
+1. Track what each node outputs (data shape)
+2. Understand what each node needs (input requirements)
+3. Generate appropriate mappings (paths, templates, or both)
+4. Detect and resolve collisions via namespacing
+
+**Recommendation**: Option C - Path-based proxy mappings provide maximum power with minimal workflow complexity. The planner should leverage this to create clean, maintainable workflows.
+
+## 3. Workflow Storage and Discovery Implementation - Decision importance (4)
 
 The "find or build" pattern is core to pflow but implementation details are now clearer.
 
@@ -107,11 +214,11 @@ The "find or build" pattern is core to pflow but implementation details are now 
 
 **Key Insight**: The description field is all we need for semantic matching. The LLM can understand "fix github issue 1234" matches a workflow described as "Fetches a GitHub issue, analyzes it with AI, generates a fix".
 
-## 3. LLM Model Selection and Configuration - Decision importance (3)
+## 4. LLM Model Selection and Configuration - Decision importance (3)
 
 ✅ **RESOLVED**: We will use `claude-sonnet-4-20250514` with Simon Willison's llm library used directly from within the exec of a node in `nodes.py` (no llm client wrapper needed). All docs has been updated to reflect this.
 
-## 4. Input Parameter Handling in Natural Language - Decision importance (5)
+## 5. Input Parameter Handling in Natural Language - Decision importance (5)
 
 How does the planner extract and handle parameters from natural language?
 
@@ -269,7 +376,7 @@ When creating a new workflow, the planner must perform several sophisticated ste
 
 **Recommendation**: Option B - Smart inference makes the natural language interface more intuitive.
 
-## 5. Prompt Template Design and Management - Decision importance (4)
+## 6. Prompt Template Design and Management - Decision importance (4)
 
 How should prompt templates be structured and managed?
 
@@ -298,7 +405,7 @@ How should prompt templates be structured and managed?
 
 **Recommendation**: Option A - Simple f-strings are sufficient for MVP prompts.
 
-## 6. JSON IR Generation Validation - Decision importance (4)
+## 7. JSON IR Generation Validation - Decision importance (4)
 
 How to ensure LLM generates valid JSON IR every time?
 
@@ -327,7 +434,7 @@ How to ensure LLM generates valid JSON IR every time?
 
 **Recommendation**: Option B - Liberal parsing with retry gives best user experience.
 
-## 7. User Approval Flow Implementation - Decision importance (3)
+## 8. User Approval Flow Implementation - Decision importance (3)
 
 How should the approval process work in practice?
 
@@ -357,7 +464,7 @@ How should the approval process work in practice?
 
 **Recommendation**: Option A - Simple CLI display with Y/n approval is clearest.
 
-## 8. Error Recovery Strategy - Decision importance (4)
+## 9. Error Recovery Strategy - Decision importance (4)
 
 How should the planner handle and recover from errors?
 
@@ -386,7 +493,7 @@ How should the planner handle and recover from errors?
 
 **Recommendation**: Option B - Smart error recovery improves user experience significantly.
 
-## 9. Integration with Existing Context Builder - Decision importance (2)
+## 10. Integration with Existing Context Builder - Decision importance (2)
 
 How should the planner use the context builder from Task 16?
 
@@ -413,7 +520,7 @@ How should the planner use the context builder from Task 16?
 
 **Recommendation**: Option A - Use existing context builder to avoid duplication.
 
-## 10. MVP Feature Boundaries - Decision importance (5)
+## 11. MVP Feature Boundaries - Decision importance (5)
 
 What exactly is in scope for the MVP planner?
 
@@ -439,7 +546,7 @@ What exactly is in scope for the MVP planner?
 
 **Recommendation**: Option A - Stick to strict MVP scope to ensure delivery.
 
-## 11. Unified Discovery Pattern - Decision importance (5)
+## 12. Unified Discovery Pattern - Decision importance (5)
 
 How should the planner discover both nodes and existing workflows?
 
@@ -522,7 +629,7 @@ General-purpose language model for text processing
 
 **Key Insight**: Workflows are just reusable node compositions - they should appear alongside nodes as building blocks!
 
-## 12. JSON IR to CLI Syntax Relationship - Decision importance (4)
+## 13. JSON IR to CLI Syntax Relationship - Decision importance (4)
 
 There's an implicit assumption that JSON IR can be "compiled" back to CLI syntax for user display, but this isn't straightforward.
 
@@ -550,7 +657,7 @@ There's an implicit assumption that JSON IR can be "compiled" back to CLI syntax
 
 **Recommendation**: Option B - A separate IR-to-CLI compiler maintains separation of concerns and single source of truth.
 
-## 12. Planner Implementation Architecture - Decision importance (5)
+## 14. Planner Implementation Architecture - Decision importance (5)
 
 How should the planner itself be implemented?
 
@@ -644,14 +751,16 @@ This structure:
 ## Critical Next Steps
 
 1. **Clarify template variable resolution** - This is the most critical ambiguity
-2. ~~**Decide on workflow storage format**~~ - ✅ RESOLVED: Use simple JSON with name, description, inputs, outputs, and IR
-3. ~~**Design discovery mechanism**~~ - ✅ RESOLVED: Two-phase approach with context builder
-4. **Confirm MVP boundaries** - Especially regarding action-based transitions
-5. **Design concrete prompt templates** - With examples of expected outputs
-6. **Create test scenarios** - Cover all edge cases identified above
-7. **Implement two context builder functions**:
+2. **Implement path-based proxy mappings** - Enable nested JSON extraction (new from section 2)
+3. ~~**Decide on workflow storage format**~~ - ✅ RESOLVED: Use simple JSON with name, description, inputs, outputs, and IR
+4. ~~**Design discovery mechanism**~~ - ✅ RESOLVED: Two-phase approach with context builder
+5. **Confirm MVP boundaries** - Especially regarding action-based transitions
+6. **Design concrete prompt templates** - With examples of expected outputs
+7. **Create test scenarios** - Cover all edge cases identified above
+8. **Implement two context builder functions**:
    - `build_discovery_context()` - Lightweight descriptions only
    - `build_planning_context(selected)` - Full details for selected components
+9. **Design data flow tracking** - Planner must understand node outputs for mapping generation
 
 ## Implementation Recommendations
 
