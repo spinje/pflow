@@ -438,6 +438,27 @@ How to ensure LLM generates valid JSON IR every time?
 
 How should the approval process work in practice?
 
+### Context:
+A critical insight: Proxy mappings are internal-only. Users always interact with nodes using their natural parameter names, regardless of how data flows internally. This dramatically simplifies the CLI display.
+
+### How CLI Parameters Work:
+1. **Each node has its own parameter namespace** - `--prompt` on one node doesn't conflict with `--prompt` on another
+2. **Natural keys everywhere** - Users see `--url`, `--prompt`, `--message` etc., not internal shared store keys
+3. **Data routing is invisible** - Proxy mappings connect the data behind the scenes
+4. **No disambiguation needed** - The node context makes each parameter clear
+
+### Example:
+```bash
+# What user sees (simple, natural):
+youtube-transcript --url=https://youtube.com/watch?v=123 >>
+llm --prompt="Summarize this transcript"
+
+# What happens internally (hidden complexity):
+# 1. youtube-transcript writes to shared["transcript"]
+# 2. Proxy mapping {"prompt": "transcript"} connects the data
+# 3. llm reads its --prompt from shared["transcript"]
+```
+
 ### The Ambiguity:
 - Show JSON? CLI syntax? Both?
 - How to handle modifications?
@@ -445,12 +466,13 @@ How should the approval process work in practice?
 
 ### Options:
 
-- [x] **Option A: Show CLI syntax only**
-  - Display generated CLI pipe syntax
-  - Show parameters with actual values (and visible default values) not template variables
+- [x] **Option A: Show natural CLI syntax**
+  - Display each node with its natural parameters
+  - Show resolved values (not template variables) for this execution
+  - Template variables shown in saved workflow name for reuse
   - Simple Y/n prompt for approval
   - Save on approval, execute after
-  - Clearest for users
+  - **Key benefit**: No complex notation needed for mappings or data flow
 
 - [ ] **Option B: Interactive modification**
   - Show CLI syntax
@@ -462,7 +484,23 @@ How should the approval process work in practice?
   - Toggle between views
   - Too complex for CLI interface
 
-**Recommendation**: Option A - Simple CLI display with Y/n approval is clearest.
+### What Users See:
+```bash
+$ pflow "fix github issue 1234"
+
+Generated workflow:
+
+github-get-issue --issue=1234 >>
+claude-code --prompt="Fix this issue: $issue" >>
+llm --prompt="Write commit message for: $code_report" >>
+git-commit --message="$commit_message"
+
+Save as 'fix-issue' and execute? [Y/n]: y
+```
+
+**Note**: The `$variables` shown are template placeholders that will be resolved from the workflow's data flow, not CLI parameters the user needs to provide.
+
+**Recommendation**: Option A - Natural CLI syntax is clearest because it shows exactly what each node expects, hiding all internal complexity of data routing and proxy mappings.
 
 ## 9. Error Recovery Strategy - Decision importance (4)
 
