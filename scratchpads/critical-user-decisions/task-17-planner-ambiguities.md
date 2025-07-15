@@ -8,6 +8,7 @@ Task 17 is the core feature that makes pflow unique - the Natural Language Plann
 1. The workflow discovery mechanism can reuse the exact same pattern as node discovery - the context builder already provides the perfect format.
 2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
 3. Two-phase approach separates discovery (what to use) from planning (how to connect), preventing information overload.
+4. Hybrid validation approach: Use Pydantic models for type-safe IR generation with Simon Willison's LLM library, then validate with JSONSchema for comprehensive checking.
 
 ## 1. Template Variable Resolution Mechanism - Decision importance (5)
 
@@ -413,6 +414,7 @@ How to ensure LLM generates valid JSON IR every time?
 - LLMs can generate malformed JSON
 - How to handle validation failures?
 - How many retries are acceptable?
+- Should we use structured outputs with Pydantic?
 
 ### Options:
 
@@ -421,18 +423,30 @@ How to ensure LLM generates valid JSON IR every time?
   - Reject any deviation
   - Most reliable but may reject valid variations
 
-- [x] **Option B: Liberal parsing with correction**
+- [ ] **Option B: Liberal parsing with correction**
   - Try to parse and fix common issues
   - Validate essential fields only
   - Retry with error feedback to LLM
   - More forgiving and user-friendly
 
-- [ ] **Option C: Structured output formats**
-  - Use function calling or structured outputs
-  - Depends on specific LLM capabilities
-  - Most reliable but limits LLM choice
+- [x] **Option C: Pydantic with Structured Output (Hybrid Approach)**
+  - Use Pydantic models with LLM's structured output feature
+  - Type-safe construction with `model.prompt(prompt, schema=FlowIR)`
+  - Validate final output with existing JSONSchema
+  - Best of both worlds: type safety + comprehensive validation
+  - Leverages Simon Willison's LLM library capabilities
 
-**Recommendation**: Option B - Liberal parsing with retry gives best user experience.
+**Recommendation**: Option C - Pydantic models provide type safety during generation while JSONSchema ensures comprehensive validation. This leverages the LLM library's structured output capabilities optimally.
+
+### Implementation Pattern:
+```python
+# Use Pydantic for generation
+response = model.prompt(prompt, schema=FlowIR)
+flow_dict = json.loads(response.text())
+
+# Validate with JSONSchema for comprehensive checking
+validate_ir(flow_dict)
+```
 
 ## 8. User Approval Flow Implementation - Decision importance (3)
 
@@ -773,6 +787,7 @@ Following pocketflow's recommended structure:
 src/pflow/planning/
 ├── nodes.py          # Planner nodes (discovery, generation, validation)
 ├── flow.py           # create_planner_flow()
+├── ir_models.py      # Pydantic models for IR generation
 ├── utils/
 │   ├── ir_utils.py   # IR manipulation utilities?
 │   └── # More utils to be added as needed
@@ -785,6 +800,71 @@ This structure:
 - Keeps planner logic organized and testable
 - Makes it clear this is system infrastructure
 - Enables AI agents to easily understand and modify the planner
+- Separates Pydantic models for clean architecture
+
+### Implementation with Pydantic Models
+
+The planner will use a hybrid approach combining Pydantic's type safety with JSONSchema validation:
+
+```python
+# src/pflow/planning/ir_models.py
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Optional
+
+class NodeIR(BaseModel):
+    """Node representation for IR generation."""
+    id: str = Field(..., pattern="^[a-zA-Z0-9_-]+$")
+    type: str = Field(..., description="Node type from registry")
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+class EdgeIR(BaseModel):
+    """Edge representation for IR generation."""
+    from_node: str = Field(..., alias="from")
+    to_node: str = Field(..., alias="to")
+    action: str = Field(default="default")
+
+class FlowIR(BaseModel):
+    """Flow IR for planner output generation."""
+    ir_version: str = Field(default="0.1.0", pattern=r'^\d+\.\d+\.\d+$')
+    nodes: List[NodeIR] = Field(..., min_items=1)
+    edges: List[EdgeIR] = Field(default_factory=list)
+    start_node: Optional[str] = None
+    mappings: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Convert to dict for validation with existing schema."""
+        return self.model_dump(by_alias=True, exclude_none=True)
+
+# src/pflow/planning/nodes.py
+import llm
+from pflow.core import validate_ir
+from .ir_models import FlowIR
+
+class WorkflowGeneratorNode(Node):
+    def exec(self, shared, prep_res):
+        model = llm.get_model("claude-sonnet-4-20250514")
+
+        # Generate with Pydantic schema for type safety
+        response = model.prompt(
+            prompt=shared["planning_prompt"],
+            schema=FlowIR,
+            system="Generate a valid pflow workflow"
+        )
+
+        # Parse and convert to dict
+        flow_dict = json.loads(response.text())
+
+        # Validate with existing JSONSchema
+        validate_ir(flow_dict)
+
+        return flow_dict
+```
+
+This hybrid approach:
+- Uses Pydantic for structured output generation with the LLM
+- Validates the final result with JSONSchema for comprehensive checking
+- Maintains compatibility with the existing validation system
+- Provides type safety during development
 
 ## Critical Next Steps
 
@@ -811,11 +891,14 @@ Based on this analysis, here's the recommended approach:
 5. **Show CLI syntax only** for approval
 6. **Implement smart error recovery** with specific strategies
 7. **Strictly limit to sequential workflows** for MVP
-8. **Implement planner as Python pocketflow code** - nodes.py + flow.py pattern, not JSON IR. The implementing agent will need to read all the relevant docs in the `pocketflow/` folder to understand exactly how to implement it.
+8. **Implement planner as Python pocketflow code** - nodes.py + flow.py pattern, not JSON IR
+9. **Use Pydantic models for IR generation** - Hybrid approach with JSONSchema validation
 
 **Critical Implementation Details**:
 - The planner must be explicitly instructed to generate template variables (`$issue`, `$file_path`, etc.) rather than hardcoding values extracted from natural language input.
-- Use Simon Willison's llm library directly in the pocketflow node - no need for wrapper or using the general LLM node.
+- Use Simon Willison's llm library directly in the pocketflow node with Pydantic schemas for structured output.
+- Generate workflows using Pydantic models for type safety, then validate with JSONSchema for comprehensive checking.
+- The implementing agent will need to read all the relevant docs in the `pocketflow/` folder to understand exactly how to implement it.
 
 ### Key Implementation Simplifications:
 - No separate discovery system needed - reuse context builder pattern
