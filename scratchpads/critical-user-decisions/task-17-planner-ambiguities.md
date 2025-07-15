@@ -9,6 +9,7 @@ Task 17 is the core feature that makes pflow unique - the Natural Language Plann
 2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
 3. Two-phase approach separates discovery (what to use) from planning (how to connect), preventing information overload.
 4. Hybrid validation approach: Use Pydantic models for type-safe IR generation with Simon Willison's LLM library, then validate with JSONSchema for comprehensive checking.
+5. Progressive validation with mock execution ensures generated workflows actually work before showing them to users, combining Pydantic type safety with semantic validation.
 
 ## 1. Template Variable Resolution Mechanism - Decision importance (5)
 
@@ -69,6 +70,8 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
   - Most flexible but most complex
 
 **Recommendation**: Option B - Runtime resolution is ESSENTIAL. Without it, pflow would just be a one-time script generator. The ability to run `pflow fix-issue --issue=ANY_NUMBER` is the entire point of workflow compilation.
+
+**Validation Note**: The validation pipeline (Section 9) ensures all template variables can be resolved by tracking data flow through mock execution.
 
 **Implementation Note for Planner**: When the user says "fix github issue 1234", the planner must:
 1. Recognize "1234" as a parameter value (not part of the intent)
@@ -182,6 +185,8 @@ api-call >> llm
 4. Detect and resolve collisions via namespacing
 
 **Recommendation**: Option C - Path-based proxy mappings provide maximum power with minimal workflow complexity. The planner should leverage this to create clean, maintainable workflows.
+
+**Validation Integration**: The mock execution framework (Section 9) specifically tests that proxy mappings correctly connect data between nodes, catching mapping errors before execution.
 
 ## 3. Workflow Storage and Discovery Implementation - Decision importance (4)
 
@@ -438,6 +443,8 @@ How to ensure LLM generates valid JSON IR every time?
 
 **Recommendation**: Option C - Pydantic models provide type safety during generation while JSONSchema ensures comprehensive validation. This leverages the LLM library's structured output capabilities optimally.
 
+**Note**: While Pydantic ensures syntactically valid JSON, semantic validation (data flow, template resolution, proxy mapping verification) is handled by the comprehensive validation pipeline described in Section 9.
+
 ### Implementation Pattern:
 ```python
 # Use Pydantic for generation
@@ -516,14 +523,15 @@ Save as 'fix-issue' and execute? [Y/n]: y
 
 **Recommendation**: Option A - Natural CLI syntax is clearest because it shows exactly what each node expects, hiding all internal complexity of data routing and proxy mappings.
 
-## 9. Error Recovery Strategy - Decision importance (4)
+## 9. Error Recovery and Validation Strategy - Decision importance (5)
 
-How should the planner handle and recover from errors?
+How should the planner handle errors and ensure generated workflows will actually execute?
 
 ### The Ambiguity:
 - What errors are recoverable vs fatal?
-- How many retries for each error type?
-- How to provide useful feedback?
+- How to ensure workflows will execute correctly before showing to users?
+- How to provide useful feedback for recovery?
+- How deep should validation go?
 
 ### Options:
 
@@ -532,18 +540,172 @@ How should the planner handle and recover from errors?
   - Exponential backoff
   - Simple but may waste time on unrecoverable errors
 
-- [x] **Option B: Error-specific recovery**
+- [x] **Option B: Error-specific recovery with validation pipeline**
   - Different strategies for different errors
-  - - Malformed JSON: retry with format hint
-  - - Invalid nodes: suggest alternatives
-  - - Missing params: prompt for input
+  - Three-tier validation before showing to user
+  - Mock execution to verify data flow
+  - Comprehensive error feedback for targeted fixes
   - More sophisticated and user-friendly
 
 - [ ] **Option C: Fail fast with clear errors**
   - No retries, just clear error messages
   - Fastest but least helpful
 
-**Recommendation**: Option B - Smart error recovery improves user experience significantly.
+### The Three-Tier Validation Pipeline:
+
+The planner uses a progressive validation approach that catches issues at the earliest possible stage:
+
+#### 1. **Syntactic Validation** (via Pydantic - see Section 7)
+- Ensures well-formed JSON structure through Pydantic models
+- Type-safe generation with `model.prompt(prompt, schema=FlowIR)`
+- Immediate feedback on structural issues
+- **Catches**: Malformed JSON, missing required fields, type mismatches
+
+#### 2. **Static Analysis** (fast, no execution)
+```python
+def validate_static(ir, registry_metadata):
+    errors = []
+
+    # Check all nodes exist
+    for node in ir['nodes']:
+        if node['type'] not in registry_metadata:
+            errors.append(f"Unknown node type: {node['type']}")
+
+    # Check template variables resolve
+    template_vars = extract_template_variables(ir)
+    available_vars = compute_available_variables(ir)
+    for var in template_vars:
+        if var not in available_vars:
+            errors.append(f"Template variable ${var} never defined")
+
+    # Build data dependency graph
+    deps = build_dependency_graph(ir)
+    if has_cycles(deps):
+        errors.append("Circular dependency detected")
+
+    return errors
+```
+**Catches**: Unknown nodes, unresolved template variables, circular dependencies, orphaned nodes
+
+#### 3. **Mock Execution** (thorough validation)
+```python
+class MockNode:
+    """Simulates node execution for validation"""
+
+    def __init__(self, node_metadata):
+        self.inputs = node_metadata.get('inputs', [])
+        self.outputs = node_metadata.get('outputs', [])
+
+    def mock_run(self, shared, proxy_mappings, execution_log):
+        # Apply proxy mappings if present
+        if proxy_mappings:
+            shared = NodeAwareSharedStore(shared, **proxy_mappings)
+
+        # Verify all inputs are available
+        for input_key in self.inputs:
+            if input_key not in shared:
+                raise ValueError(f"Missing required input: {input_key}")
+            execution_log.append(f"READ: shared['{input_key}']")
+
+        # Simulate outputs
+        for output_key in self.outputs:
+            shared[output_key] = f"<mock_{output_key}>"
+            execution_log.append(f"WRITE: shared['{output_key}']")
+```
+
+**Mock Execution Benefits**:
+- Verifies all data dependencies are satisfied
+- Tests proxy mappings actually connect the data
+- Catches runtime issues without side effects
+- Generates detailed execution log for debugging
+
+**Example Mock Execution Log**:
+```
+[Mock Execution Started]
+Node: github-get-issue
+  READ: shared['issue_number'] = "1234"
+  WRITE: shared['issue_data'] = <mock_issue_data>
+  WRITE: shared['issue_title'] = <mock_issue_title>
+
+Node: claude-code
+  Proxy mapping applied: {"prompt": "issue_data"}
+  READ: shared['issue_data'] via proxy
+  WRITE: shared['code_report'] = <mock_code_report>
+
+Node: llm
+  READ: shared['code_report']
+  Template resolution: $code_report → <mock_code_report>
+  WRITE: shared['commit_message'] = <mock_commit_message>
+
+[Mock Execution Successful] ✓
+All data flows verified
+Template variables resolved
+No missing dependencies
+```
+
+### Integration with Error Recovery:
+
+Each validation tier provides specific error information that guides recovery:
+
+1. **Pydantic/Syntactic Errors** → Retry with format hints
+   - "Expected 'nodes' array, got object"
+   - "Missing required field 'type' in node"
+
+2. **Static Analysis Errors** → Retry with specific fixes
+   - "Node 'analyze-code' not found. Did you mean 'claude-code'?"
+   - "Template variable $issue_data is never created"
+   - "Circular dependency: A → B → C → A"
+
+3. **Mock Execution Errors** → Retry with data flow fixes
+   - "Node 'llm' expects shared['prompt'] but it's never written"
+   - "Proxy mapping references non-existent key 'transcript'"
+   - "Template variable $code_report unresolved at execution"
+
+### Error-Specific Recovery Strategies:
+
+| Error Type | Recovery Strategy | Max Retries |
+|------------|------------------|-------------|
+| Malformed JSON | Add format example to prompt | 2 |
+| Unknown node | Suggest similar nodes from registry | 3 |
+| Missing data flow | Add hint about node outputs | 3 |
+| Template unresolved | Show available variables | 2 |
+| Circular dependency | Simplify to sequential flow | 1 |
+
+### Implementation Approach:
+
+```python
+class WorkflowValidator:
+    """Progressive validation pipeline for generated workflows"""
+
+    def validate(self, ir, registry_metadata):
+        validation_log = ValidationLog()
+
+        # Level 1: Structure (handled by Pydantic, see Section 7)
+        # Already done during generation
+
+        # Level 2: Static analysis (fast)
+        static_errors = self._validate_static(ir, registry_metadata)
+        if static_errors:
+            validation_log.add_errors(static_errors, level="static")
+            return validation_log  # Fail fast on static errors
+
+        # Level 3: Mock execution (thorough)
+        mock_errors = self._mock_execute(ir, registry_metadata)
+        if mock_errors:
+            validation_log.add_errors(mock_errors, level="execution")
+
+        return validation_log
+
+    def generate_retry_hint(self, validation_log):
+        """Generate specific hints for the LLM based on validation errors"""
+        if validation_log.has_error_type("unknown_node"):
+            return "Use only these available nodes: " + list_available_nodes()
+        elif validation_log.has_error_type("missing_data"):
+            return "Ensure all nodes that read data run after nodes that write it"
+        # ... more specific hints
+```
+
+**Recommendation**: Option B with three-tier validation provides the best user experience. The combination of Pydantic for syntactic validation (Section 7) and our custom validation pipeline for semantic validation ensures workflows are both well-formed and executable. This approach catches issues early and provides specific, actionable feedback for recovery.
 
 ## 10. Integration with Existing Context Builder - Decision importance (2)
 
@@ -879,6 +1041,9 @@ This hybrid approach:
    - `build_discovery_context()` - Lightweight descriptions only
    - `build_planning_context(selected)` - Full details for selected components
 9. **Design data flow tracking** - Planner must understand node outputs for mapping generation
+10. **Implement three-tier validation pipeline** - Static analysis, data flow verification, mock execution
+11. **Create mock execution framework** - Simulate nodes for validation without side effects
+12. **Design validation error feedback system** - Specific hints for each error type
 
 ## Implementation Recommendations
 
@@ -893,6 +1058,8 @@ Based on this analysis, here's the recommended approach:
 7. **Strictly limit to sequential workflows** for MVP
 8. **Implement planner as Python pocketflow code** - nodes.py + flow.py pattern, not JSON IR
 9. **Use Pydantic models for IR generation** - Hybrid approach with JSONSchema validation
+10. **Implement three-tier validation pipeline** - Syntactic (Pydantic) + Static analysis + Mock execution
+11. **Use progressive validation** - Fail fast on cheap checks, thorough validation only when needed
 
 **Critical Implementation Details**:
 - The planner must be explicitly instructed to generate template variables (`$issue`, `$file_path`, etc.) rather than hardcoding values extracted from natural language input.
@@ -929,3 +1096,22 @@ This separation prevents information overload and improves LLM performance.
    - **Mitigation**: Strict MVP checklist, defer everything else
 
 This analysis should provide the clarity needed to begin implementation of Task 17.
+
+## How It All Fits Together: The Complete Planner Pipeline
+
+The planner combines all these decisions into a cohesive workflow generation system:
+
+1. **Input Processing**: Natural language → intent + parameter extraction
+2. **Discovery Phase**: Context builder provides nodes + workflows → LLM selects components
+3. **Generation Phase**:
+   - Pydantic models ensure syntactically valid JSON (Section 7)
+   - Template variables preserved for reusability (Section 1)
+   - Path-based proxy mappings connect data flow (Section 2)
+4. **Validation Phase** (Section 9):
+   - Static analysis catches structural issues
+   - Mock execution verifies data flow
+   - Specific error feedback enables targeted recovery
+5. **Presentation**: IR compiled to natural CLI syntax (Section 8)
+6. **Storage**: Workflow saved with template variables for "Plan Once, Run Forever"
+
+This architecture ensures that every generated workflow is not only syntactically correct but also semantically valid and ready for execution.
