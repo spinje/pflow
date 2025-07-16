@@ -349,7 +349,7 @@ The codebase is in early development with:
 - ✅ Task 8 complete: Build comprehensive shell pipe integration with stdin/stdout
 - ✅ Task 11 complete: Implement read-file and write-file nodes
 - ✅ Task 16 complete: Create planning context builder
-- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 17 - Implement Natural Language Planner System)
+- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 14 - Implement type, structure, and semantic documentation for all Interface components)
 
 *Update this list as you complete tasks.*
 
