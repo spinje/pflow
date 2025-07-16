@@ -113,6 +113,12 @@ guardrail_node - "process" >> llm_node         # Continue on valid input
 
 ## Node-Level Error Handling
 
+**Important Note on `prep_res` Parameter:**
+The `prep_res` parameter in `exec()` and `exec_fallback()` methods contains whatever the `prep()` method returns:
+- If `prep()` returns the shared dictionary directly: `prep_res` IS the shared dict
+- If `prep()` returns specific data (tuple, string, etc.): `prep_res` contains that data
+- In most examples below, we assume `prep()` returns the shared dict for simplicity
+
 ### 1. **Graceful Fallback Implementation**
 
 #### Basic Fallback Pattern
@@ -130,9 +136,13 @@ class RobustNode(Node):
 #### Advanced Fallback with Error Context
 ```python
 class APINode(Node):
+    def prep(self, shared):
+        # Return shared dict directly
+        return shared
+
     def exec_fallback(self, prep_res, exc):
         """Fallback with error context in shared store."""
-        shared = prep_res.get('shared', {})
+        shared = prep_res  # Since prep() returns shared dict
 
         # Store error details
         shared['last_error'] = str(exc)
@@ -272,7 +282,67 @@ class DebugSQL(Node):
 
 *Reference: `pocketflow/cookbook/37-pocketflow-text2sql/`*
 
-### 3. **Circuit Breaker Pattern**
+### 3. **Flow as Node Pattern**
+
+#### Using Flows as Nodes for Error Isolation
+
+PocketFlow allows entire Flows to be used as nodes within other flows, enabling sophisticated error boundaries:
+
+```python
+# From pocketflow-supervisor example
+def create_agent_flow():
+    # Create inner flow with its own error handling
+    agent_flow = create_agent_inner_flow()  # Returns a Flow object
+
+    # Create supervisor node
+    supervisor = SupervisorNode()
+
+    # Use flow as a node - the entire agent_flow acts as a single node
+    agent_flow >> supervisor
+    supervisor - "retry" >> agent_flow  # Can retry entire flow
+
+    return Flow(start=agent_flow)
+```
+
+**Benefits of Flow as Node:**
+- **Error Isolation**: Inner flow errors don't directly affect outer flow
+- **Reusability**: Complex flows can be composed into larger workflows
+- **Clean Retry Logic**: Retry entire sub-workflows as a unit
+- **Modular Design**: Separate concerns between flow layers
+
+**Example Implementation:**
+```python
+# Inner flow handles its own errors
+inner_flow = Flow(
+    validation_node,
+    {
+        validation_node: {
+            "valid": processing_node,
+            "error": inner_error_handler
+        },
+        processing_node: {"default": None},
+        inner_error_handler: {"default": None}
+    }
+)
+
+# Outer flow treats inner flow as atomic operation
+outer_flow = Flow(
+    prepare_node,
+    {
+        prepare_node: {"default": inner_flow},
+        inner_flow: {
+            "success": success_handler,
+            "error": outer_error_handler
+        }
+    }
+)
+```
+
+*Reference: `pocketflow/cookbook/36-pocketflow-supervisor/flow.py`*
+
+### 4. **Circuit Breaker Pattern** *(Conceptual Example)*
+
+> **Note**: This is a suggested implementation pattern, not from the PocketFlow cookbook examples.
 
 #### Flow-Level Failure Protection
 ```python
@@ -446,7 +516,7 @@ class AsyncNode(Node):
 
     async def exec_fallback_async(self, prep_res, exc):
         """Async fallback handling."""
-        shared = prep_res.get('shared', {})
+        shared = prep_res  # prep_res is typically the shared dict
 
         # Async cleanup if needed
         await self.async_cleanup()
@@ -457,9 +527,27 @@ class AsyncNode(Node):
         return "async_fallback_result"
 ```
 
+**Important Note on Async Retry Mechanism:**
+Unlike sync nodes, async nodes use a local loop variable `i` instead of `self.cur_retry`:
+```python
+# From pocketflow/__init__.py lines 141-148
+async def _exec(self, prep_res):
+    for i in range(self.max_retries):  # Uses 'i' not 'self.cur_retry'
+        try:
+            return await self.exec_async(prep_res)
+        except Exception as e:
+            if i == self.max_retries - 1:
+                return await self.exec_fallback_async(prep_res, e)
+            if self.wait > 0:
+                await asyncio.sleep(self.wait)
+```
+This means async nodes cannot access the current retry attempt number in `exec_async()`.
+
 *Reference: `pocketflow/__init__.py` lines 127-162*
 
-### 2. **Hierarchical Error Handling**
+### 2. **Hierarchical Error Handling** *(Conceptual Example)*
+
+> **Note**: This is a suggested implementation pattern for nested flows, not from the PocketFlow cookbook examples.
 
 #### Nested Flow Error Propagation
 ```python
@@ -497,7 +585,9 @@ class SubFlowNode(Node):
                 return {"sub_flow_failed": True, "fallback_used": True}
 ```
 
-### 3. **Compensating Actions Pattern**
+### 3. **Compensating Actions Pattern** *(Conceptual Example)*
+
+> **Note**: This is a suggested pattern for implementing transaction-like behavior, not from the PocketFlow cookbook examples.
 
 #### Transactional Error Recovery
 ```python
@@ -637,7 +727,7 @@ def test_node_error_handling():
     node.max_retries = 3
     shared["simulate_error"] = "transient_error"
     result = node.run(shared)
-    assert node.cur_retry == 2  # Verify retries occurred
+    assert node.cur_retry == 2  # Correct: attempts 0, 1, 2 (total 3 attempts)
 
     # Test fallback behavior
     shared["simulate_error"] = "fatal_error"
