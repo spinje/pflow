@@ -630,7 +630,9 @@ Save as 'fix-issue' and execute? [Y/n]: y
 
 **Recommendation**: Option A - Natural CLI syntax is clearest because it shows exactly what each node expects, hiding all internal complexity of data routing and proxy mappings.
 
-## 9. Error Recovery and Validation Strategy - Decision importance (5)
+## 9. Error Recovery, Error Handling and Validation Strategy - Decision importance (5)
+
+**Architecture Context**: The planner itself is implemented as a pocketflow flow with multiple nodes (discovery, generation, validation, approval). This section covers how these planner nodes handle errors and how the validation node ensures generated workflows are correct. All error handling and validation happens within the planner flow using pocketflow's patterns.
 
 How should the planner handle errors and ensure generated workflows will actually execute?
 
@@ -660,6 +662,8 @@ How should the planner handle errors and ensure generated workflows will actuall
 
 ### The Three-Tier Validation Pipeline:
 
+**Implementation Note**: This validation is performed by a `ValidatorNode` within the planner flow. When validation fails, it returns actions like "validation_failed" that route back to the generator node with specific error feedback.
+
 The planner uses a progressive static validation approach that catches issues at the earliest possible stage:
 
 #### 1. **Syntactic Validation** (via Pydantic - see Section 7)
@@ -682,6 +686,8 @@ This is NOT mock execution - it's static analysis that tracks data flow through 
 - **How it works**: Uses node metadata (inputs/outputs) to verify data dependencies are satisfied
 - **Generic approach**: No per-node implementation needed - just uses the metadata from registry
 - **Catches**: Missing inputs, overwritten outputs, unresolved template variables, incorrect proxy mappings
+
+**Path-Based Mapping Limitation**: Currently, nodes only declare simple outputs (e.g., `outputs: ["issue_data"]`) without structure information. This means validation can only check that root keys exist, not nested paths like `"issue_data.user.login"`. See `scratchpads/task-17-path-based-mappings-context.md` for full context on this limitation.
 
 **Example Data Flow Analysis Log**:
 ```
@@ -734,7 +740,29 @@ Each validation tier provides specific error information that guides recovery:
 | Template unresolved | Show available variables | 2 |
 | Circular dependency | Simplify to sequential flow | 1 |
 
-**Recommendation**: Option B with three-tier static validation provides the best user experience. All three tiers are forms of static analysis with different focuses:
+### Planner Flow Implementation example:
+
+The error recovery strategies above are implemented through pocketflow's action-based routing:
+
+```python
+# Planner flow structure with error handling
+discovery_node >> generator_node >> validator_node >> approval_node
+
+# Error recovery routes
+generator_node - "malformed_json" >> generator_node  # Self-retry with hint
+validator_node - "unknown_nodes" >> error_feedback >> generator_node
+validator_node - "data_flow_error" >> error_feedback >> generator_node
+validator_node - "success" >> approval_node
+
+# Each node uses pocketflow's retry mechanism
+class GeneratorNode(Node):
+    def __init__(self):
+        super().__init__(max_retries=3, wait=1.0)  # For LLM API failures
+```
+
+> Note: This example might differ from the actual implementation, but the idea is that the planner flow is a pocketflow flow with multiple nodes. See this as sudo code that will need heavy adaptation to the actual requirements.
+
+**Recommendation**: Option B with three-tier static validation provides the best user experience. The validation is implemented as a node within the planner flow, using pocketflow's action-based routing to handle different validation outcomes. All three tiers are forms of static analysis with different focuses:
 1. Structure (Pydantic)
 2. Components (Static Analysis)
 3. Data Flow (Data Flow Analysis)
