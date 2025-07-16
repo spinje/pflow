@@ -27,15 +27,38 @@ outputs: ["issue_data", "issue_number"]  # Just key names!
 
 The planner needs:
 ```python
-outputs: {
-  "issue_data": {
-    "id": int,
-    "title": str,
-    "user": {"login": str, "id": int},
-    "labels": [{"name": str, "color": str}]
+outputs: [
+  {
+    "key": "issue_data",
+    "type": "dict",
+    "description": "GitHub issue details",
+    "structure": {
+      "id": {"type": "int", "description": "Issue ID"},
+      "title": {"type": "str", "description": "Issue title"},
+      "user": {
+        "type": "dict",
+        "description": "Issue author",
+        "structure": {
+          "login": {"type": "str", "description": "GitHub username"},
+          "id": {"type": "int", "description": "User ID"}
+        }
+      },
+      "labels": {
+        "type": "list[dict]",
+        "description": "Issue labels",
+        "structure": {
+          "name": {"type": "str", "description": "Label name"},
+          "color": {"type": "str", "description": "Hex color"}
+        }
+      }
+    }
   },
-  "issue_number": int
-}
+  {
+    "key": "issue_number",
+    "type": "int",
+    "description": "Issue number for API calls"
+  }
+]
 ```
 
 Without this, path-based proxy mappings are limited to well-known APIs where the LLM already knows the structure. Your task enables them to work for ANY API.
@@ -76,16 +99,18 @@ I explored several formats. The winner needs to be:
 - Not too verbose (docstrings get long)
 - Python-dict-like but not eval-dangerous
 
-The suggested format uses a dict-like syntax without being actual Python:
+The suggested format uses an indentation-based syntax with types for all Interface components:
 ```python
 """
-Outputs:
-- issue_data: {
-    "id": int,
-    "title": str,
-    "user": {"login": str}
-  }
-- simple_key: str
+Interface:
+- Reads: shared["issue_number"]: int, shared["repo"]: str
+- Writes: shared["issue_data"]: dict
+    - id: int  # Issue ID
+    - title: str  # Issue title
+    - user: dict  # Issue author
+      - login: str  # GitHub username
+- Writes: shared["simple_key"]: str  # Simple output
+- Params: token: str  # API token
 """
 ```
 
@@ -94,7 +119,7 @@ The context builder has two modes (see Task 15):
 - Discovery context: Lightweight, no structures needed
 - Planning context: Full details including structures
 
-Only include structures in the planning context. The `build_planning_context()` function (from Task 15) is where you'll add structure information.
+For Task 14, make only minimal changes to display the new type/structure information. Major redesigns (like splitting into two files) are future work. The existing context builder should show types and structures in its current format.
 
 ### 4. The LLM Comprehension Challenge
 The planner needs to understand paths. Format structures with examples:
@@ -161,7 +186,7 @@ Test this entire path, not just the extractor in isolation.
 
 - The format in the task description is a suggestion - feel free to improve it
 - Prioritize getting basic structure support working over perfect parsing
-- The 'output_structures' key in metadata dict is where structures go
+- Types and structures are stored directly in outputs/inputs/params arrays as objects
 - Remember: backward compatibility with simple format is non-negotiable
 
 **IMPORTANT REMINDER**: Read this entire handoff and confirm you understand the context before beginning implementation. Do not start coding until you've absorbed this knowledge.
