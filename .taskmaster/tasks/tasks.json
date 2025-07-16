@@ -504,6 +504,20 @@
         "testStrategy": "Mock all external API responses and system commands. Test parameter handling, error cases, safety measures, and timeouts. Write comprehensive unit tests for each node. Test fail-fast behavior on missing inputs."
       },
       {
+        "id": 14,
+        "title": "Implement structured output metadata support for nodes",
+        "description": "Enhance node docstring format to support structured output declarations, enabling the planner to generate valid proxy mapping paths for complex data structures.",
+        "details": "This task addresses the critical limitation where the planner cannot generate valid proxy mapping paths (like 'issue_data.user.login') without knowing the structure of node outputs.\n\n1. DOCSTRING FORMAT ENHANCEMENT\n   - Design backward-compatible docstring format supporting both simple (outputs: ['key']) and structured formats\n   - Structure format example:\n     '''\n     Outputs:\n     - issue_data: {\n         'id': int,\n         'title': str,\n         'user': {'login': str, 'id': int},\n         'labels': [{'name': str, 'color': str}]\n       }\n     - issue_number: int\n     '''\n   - Ensure human-readable and parseable format\n   - Support nested objects and arrays\n\n2. METADATA EXTRACTOR UPDATES (src/pflow/registry/metadata_extractor.py)\n   - Extend extract_metadata() to parse structured output declarations\n   - Implement robust parsing for JSON-like structures in docstrings\n   - Handle both simple list format and structured dictionary format\n   - Add validation for structure syntax with clear error messages\n   - Store parsed structures in metadata dict under 'output_structures' key\n   - Maintain backward compatibility with existing docstrings\n\n3. CONTEXT BUILDER INTEGRATION (src/pflow/planning/context_builder.py)\n   - Update build_planning_context() to include output structure information\n   - Format structures for optimal LLM comprehension in selected nodes context\n   - Present structures with clear path examples (e.g., 'issue_data.user.login')\n   - Only include structures for nodes selected by the planner\n   - Add structure information to node descriptions in a clear, concise format\n\n4. UPDATE EXISTING NODE DOCSTRINGS\n   - Priority nodes requiring structure documentation:\n     - github-get-issue: Full issue_data structure with nested user, labels, etc.\n     - github-list-prs: Array of PR objects with structure\n     - Any file operation nodes returning metadata objects\n   - Keep simple nodes unchanged (single primitive outputs don't need structures)\n   - Ensure all API response nodes document their output structure\n\n5. TESTING AND VALIDATION\n   - Create comprehensive tests for metadata extraction:\n     - Test parsing of various structure formats\n     - Test error handling for malformed structures\n     - Verify backward compatibility with simple format\n   - Test context builder output includes structures correctly\n   - Create example nodes with deeply nested structures\n   - Integration test: Verify planner can use structure info to generate valid proxy mappings\n   - Test that validation pipeline can verify paths against declared structures",
+        "testStrategy": "1. Unit tests for metadata_extractor.py: Test parsing of simple outputs list, structured outputs with nested objects, arrays of objects, mixed simple and structured outputs, malformed structure syntax (should fail gracefully), backward compatibility with existing docstrings. 2. Unit tests for context_builder.py: Verify structure information is included for selected nodes, test formatting of structures for LLM consumption, ensure structures are omitted from discovery context. 3. Integration tests: Create test nodes with complex structures, verify metadata extraction captures full structure, test that context includes structure information, mock planner responses using structure paths, verify generated paths are valid according to declared structures. 4. End-to-end test: Create workflow using github-get-issue with proxy mapping 'issue_data.user.login', verify validation accepts the path based on declared structure.",
+        "status": "pending",
+        "dependencies": [
+          7,
+          16
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
         "id": 16,
         "title": "Create planning context builder",
         "description": "Format node metadata for LLM-based workflow planning",
@@ -685,7 +699,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-07-10T21:36:34.759Z",
+      "updated": "2025-07-15T20:11:03.531Z",
       "description": "Reorganized to prioritize Natural Language Planner as core feature. Merged tasks 17-20 into comprehensive planner system. Expanded task 13 to include all platform nodes. Consolidated all v2.0 deferred features into task 32. Clear path from infrastructure to MVP delivery."
     }
   }

@@ -186,7 +186,114 @@ api-call >> llm
 
 **Recommendation**: Option C - Path-based proxy mappings provide maximum power with minimal workflow complexity. The planner should leverage this to create clean, maintainable workflows.
 
-**Validation Integration**: The mock execution framework (Section 9) specifically tests that proxy mappings correctly connect data between nodes, catching mapping errors before execution.
+**MVP Scope Clarification for Path-Based Mappings**:
+While the planner can generate sophisticated path-based mappings like `"issue_data.user.login"`, validation in MVP will be limited:
+- Current metadata only provides simple key lists (e.g., `outputs: ["issue_data"]`)
+- No structured data shape definitions exist in node docstrings yet
+- MVP validation will only check that root keys exist (e.g., verify `issue_data` exists, but not `.user.login`)
+- The planner relies on the LLM's knowledge of common API structures (GitHub, etc.) to generate valid paths
+- Full path validation with structured metadata is deferred to v2.0
+
+This is acceptable for MVP because:
+1. The LLM generally knows common API response structures
+2. Invalid paths will fail at runtime with clear errors
+3. It keeps the metadata extraction simple for MVP
+4. Nodes can be enhanced with structure documentation post-MVP without breaking changes
+
+**Validation Integration**: The mock execution framework (Section 9) specifically tests that proxy mappings correctly connect data between nodes, catching mapping errors before execution. For MVP, this means validating root key presence, not full path traversal.
+
+## 2.1 Critical Discovery: Structure Documentation for Path-Based Mappings - Decision importance (5)
+
+After deeper analysis, we've discovered that path-based mappings have a fundamental dependency: **the planner cannot generate valid paths without knowing data structures**.
+
+### The Generation Problem (Not Just Validation)
+
+When the planner needs to generate:
+```json
+{
+  "input_mappings": {
+    "author_name": "issue_data.user.login"
+  }
+}
+```
+
+It needs to know that `issue_data` has this structure. Otherwise, it's just guessing based on:
+- LLM training data (works for GitHub, fails for custom APIs)
+- Variable naming conventions (unreliable)
+- Hope and prayer (not a strategy)
+
+### Our Options:
+
+- [ ] **Option A: Status Quo - Hope LLM Knows**
+  - Keep simple metadata: `outputs: ["issue_data"]`
+  - Rely on LLM knowledge of common APIs
+  - Document limitation: "Works best with well-known APIs"
+  - **Problems**:
+    - Fails for internal/custom APIs
+    - No way to validate paths
+    - Poor user experience when it fails
+
+- [x] **Option B: Implement Structure Documentation in MVP**
+  - Extend docstrings to include structure information
+  - Update metadata extraction to parse structures
+  - Provide structure in context builder
+  - **Benefits**:
+    - Planner can generate correct paths
+    - Validation becomes possible
+    - Works for any API
+  - **Implementation approach**:
+    ```python
+    """
+    Outputs:
+    - issue_data: {
+        "id": number,
+        "title": string,
+        "user": {"login": string},
+        "labels": [{"name": string}]
+      }
+    """
+    ```
+
+- [ ] **Option C: Defer Path-Based Mappings Entirely**
+  - MVP only supports simple key-to-key mappings
+  - No nested path support at all
+  - Add as v2.0 feature with proper structure support
+  - **Problems**: Significantly limits workflow power
+
+### Why Option B is Necessary
+
+1. **Generation Requires Visibility**: The planner can't generate what it can't see
+2. **Validation is Secondary**: Even with perfect validation, wrong paths still get generated
+3. **User Trust**: Saying "it works for known APIs" isn't good enough
+4. **Future Proof**: Structure docs benefit many future features
+
+### Implementation Strategy for Option B
+
+1. **Minimal Docstring Format**:
+   ```python
+   """
+   Outputs:
+   - issue_data: {"user": {"login": str}, "labels": [{"name": str}]}
+   """
+   ```
+
+2. **Progressive Enhancement**:
+   - Start with key nodes (github, file operations)
+   - Simple nodes stay simple (just key names)
+   - Add structure as needed
+
+3. **Context Builder Update**:
+   - Parse structure when available
+   - Present in LLM-friendly format
+   - Gracefully handle missing structure
+
+4. **Backwards Compatible**:
+   - Old format still works: `outputs: ["key"]`
+   - New format is additive: `outputs: {"key": {...}}`
+
+**Recommendation**: Option B - Implement basic structure documentation in MVP. Without it, path-based mappings are effectively limited to well-known APIs, which severely limits the feature's value. The implementation can be minimal - just enough structure for the planner to generate valid paths.
+
+**Critical Insight**: This isn't about perfect validation or type safety. It's about giving the planner enough information to generate correct paths instead of guessing. Even basic structure documentation dramatically improves the planner's ability to create working workflows.
 
 ## 3. Workflow Storage and Discovery Implementation - Decision importance (4)
 
@@ -542,8 +649,8 @@ How should the planner handle errors and ensure generated workflows will actuall
 
 - [x] **Option B: Error-specific recovery with validation pipeline**
   - Different strategies for different errors
-  - Three-tier validation before showing to user
-  - Mock execution to verify data flow
+  - Three-tier static validation before showing to user
+  - Data flow analysis to verify execution order
   - Comprehensive error feedback for targeted fixes
   - More sophisticated and user-friendly
 
@@ -553,7 +660,7 @@ How should the planner handle errors and ensure generated workflows will actuall
 
 ### The Three-Tier Validation Pipeline:
 
-The planner uses a progressive validation approach that catches issues at the earliest possible stage:
+The planner uses a progressive static validation approach that catches issues at the earliest possible stage:
 
 #### 1. **Syntactic Validation** (via Pydantic - see Section 7)
 - Ensures well-formed JSON structure through Pydantic models
@@ -561,86 +668,42 @@ The planner uses a progressive validation approach that catches issues at the ea
 - Immediate feedback on structural issues
 - **Catches**: Malformed JSON, missing required fields, type mismatches
 
-#### 2. **Static Analysis** (fast, no execution)
-```python
-def validate_static(ir, registry_metadata):
-    errors = []
+#### 2. **Static Analysis** (node and parameter validation)
+- Verifies all referenced nodes exist in registry
+- Checks parameter names and types match node metadata
+- Validates template variable syntax
+- Detects circular dependencies and unreachable nodes
+- **Catches**: Unknown nodes, invalid parameters, structural issues
 
-    # Check all nodes exist
-    for node in ir['nodes']:
-        if node['type'] not in registry_metadata:
-            errors.append(f"Unknown node type: {node['type']}")
+#### 3. **Data Flow Analysis** (execution order validation)
+This is NOT mock execution - it's static analysis that tracks data flow through the workflow:
 
-    # Check template variables resolve
-    template_vars = extract_template_variables(ir)
-    available_vars = compute_available_variables(ir)
-    for var in template_vars:
-        if var not in available_vars:
-            errors.append(f"Template variable ${var} never defined")
+- **What it does**: Traverses nodes in execution order, tracking which keys are available in the shared store at each step
+- **How it works**: Uses node metadata (inputs/outputs) to verify data dependencies are satisfied
+- **Generic approach**: No per-node implementation needed - just uses the metadata from registry
+- **Catches**: Missing inputs, overwritten outputs, unresolved template variables, incorrect proxy mappings
 
-    # Build data dependency graph
-    deps = build_dependency_graph(ir)
-    if has_cycles(deps):
-        errors.append("Circular dependency detected")
-
-    return errors
+**Example Data Flow Analysis Log**:
 ```
-**Catches**: Unknown nodes, unresolved template variables, circular dependencies, orphaned nodes
-
-#### 3. **Mock Execution** (thorough validation)
-```python
-class MockNode:
-    """Simulates node execution for validation"""
-
-    def __init__(self, node_metadata):
-        self.inputs = node_metadata.get('inputs', [])
-        self.outputs = node_metadata.get('outputs', [])
-
-    def mock_run(self, shared, proxy_mappings, execution_log):
-        # Apply proxy mappings if present
-        if proxy_mappings:
-            shared = NodeAwareSharedStore(shared, **proxy_mappings)
-
-        # Verify all inputs are available
-        for input_key in self.inputs:
-            if input_key not in shared:
-                raise ValueError(f"Missing required input: {input_key}")
-            execution_log.append(f"READ: shared['{input_key}']")
-
-        # Simulate outputs
-        for output_key in self.outputs:
-            shared[output_key] = f"<mock_{output_key}>"
-            execution_log.append(f"WRITE: shared['{output_key}']")
-```
-
-**Mock Execution Benefits**:
-- Verifies all data dependencies are satisfied
-- Tests proxy mappings actually connect the data
-- Catches runtime issues without side effects
-- Generates detailed execution log for debugging
-
-**Example Mock Execution Log**:
-```
-[Mock Execution Started]
+[Data Flow Analysis]
 Node: github-get-issue
-  READ: shared['issue_number'] = "1234"
-  WRITE: shared['issue_data'] = <mock_issue_data>
-  WRITE: shared['issue_title'] = <mock_issue_title>
+  Requires: issue_number ✓ (from CLI parameter)
+  Produces: issue_data, issue_title
 
 Node: claude-code
-  Proxy mapping applied: {"prompt": "issue_data"}
-  READ: shared['issue_data'] via proxy
-  WRITE: shared['code_report'] = <mock_code_report>
+  Proxy mapping: {"prompt": "issue_data"}
+  Requires: issue_data ✓ (from github-get-issue)
+  Produces: code_report
 
 Node: llm
-  READ: shared['code_report']
-  Template resolution: $code_report → <mock_code_report>
-  WRITE: shared['commit_message'] = <mock_commit_message>
+  Requires: code_report ✓ (from claude-code)
+  Template: $code_report resolves to shared['code_report']
+  Produces: commit_message
 
-[Mock Execution Successful] ✓
-All data flows verified
+[Analysis Complete] ✓
+All data dependencies satisfied
+No overwritten keys
 Template variables resolved
-No missing dependencies
 ```
 
 ### Integration with Error Recovery:
@@ -653,13 +716,13 @@ Each validation tier provides specific error information that guides recovery:
 
 2. **Static Analysis Errors** → Retry with specific fixes
    - "Node 'analyze-code' not found. Did you mean 'claude-code'?"
-   - "Template variable $issue_data is never created"
+   - "Parameter 'temp' invalid. Did you mean 'temperature'?"
    - "Circular dependency: A → B → C → A"
 
-3. **Mock Execution Errors** → Retry with data flow fixes
-   - "Node 'llm' expects shared['prompt'] but it's never written"
-   - "Proxy mapping references non-existent key 'transcript'"
-   - "Template variable $code_report unresolved at execution"
+3. **Data Flow Errors** → Retry with flow corrections
+   - "Node 'llm' requires 'prompt' but no node produces it"
+   - "Key 'summary' is written by multiple nodes"
+   - "Template variable $code_report has no source"
 
 ### Error-Specific Recovery Strategies:
 
@@ -671,41 +734,12 @@ Each validation tier provides specific error information that guides recovery:
 | Template unresolved | Show available variables | 2 |
 | Circular dependency | Simplify to sequential flow | 1 |
 
-### Implementation Approach:
+**Recommendation**: Option B with three-tier static validation provides the best user experience. All three tiers are forms of static analysis with different focuses:
+1. Structure (Pydantic)
+2. Components (Static Analysis)
+3. Data Flow (Data Flow Analysis)
 
-```python
-class WorkflowValidator:
-    """Progressive validation pipeline for generated workflows"""
-
-    def validate(self, ir, registry_metadata):
-        validation_log = ValidationLog()
-
-        # Level 1: Structure (handled by Pydantic, see Section 7)
-        # Already done during generation
-
-        # Level 2: Static analysis (fast)
-        static_errors = self._validate_static(ir, registry_metadata)
-        if static_errors:
-            validation_log.add_errors(static_errors, level="static")
-            return validation_log  # Fail fast on static errors
-
-        # Level 3: Mock execution (thorough)
-        mock_errors = self._mock_execute(ir, registry_metadata)
-        if mock_errors:
-            validation_log.add_errors(mock_errors, level="execution")
-
-        return validation_log
-
-    def generate_retry_hint(self, validation_log):
-        """Generate specific hints for the LLM based on validation errors"""
-        if validation_log.has_error_type("unknown_node"):
-            return "Use only these available nodes: " + list_available_nodes()
-        elif validation_log.has_error_type("missing_data"):
-            return "Ensure all nodes that read data run after nodes that write it"
-        # ... more specific hints
-```
-
-**Recommendation**: Option B with three-tier validation provides the best user experience. The combination of Pydantic for syntactic validation (Section 7) and our custom validation pipeline for semantic validation ensures workflows are both well-formed and executable. This approach catches issues early and provides specific, actionable feedback for recovery.
+This approach catches issues early without the complexity of runtime simulation, providing specific, actionable feedback for recovery.
 
 ## 10. Integration with Existing Context Builder - Decision importance (2)
 
