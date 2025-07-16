@@ -518,6 +518,20 @@
         "subtasks": []
       },
       {
+        "id": 15,
+        "title": "Extend context builder for two-phase discovery and structure documentation support",
+        "description": "Split context builder into discovery and planning phases, add workflow discovery support, and implement structure documentation parsing for path-based proxy mappings.",
+        "details": "This task extends the existing context builder (from Task 16) to support sophisticated requirements for the Natural Language Planner. Key components:\n\n1. SPLIT CONTEXT BUILDER INTO TWO FUNCTIONS\n   - build_discovery_context(registry_metadata, saved_workflows=None): Returns lightweight markdown with just names and descriptions for ALL available nodes and workflows to prevent LLM overwhelm during component selection\n   - build_planning_context(selected_components): Returns full interface details (inputs, outputs, params) ONLY for components selected during discovery phase\n\n2. ADD WORKFLOW DISCOVERY SUPPORT\n   - Load saved workflows from ~/.pflow/workflows/*.json\n   - Extract name and description from workflow files\n   - Include workflows alongside nodes in discovery context as reusable building blocks\n   - Format: '### workflow-name\\nDescription of what the workflow does'\n   - Enable workflow composition into other workflows\n\n3. IMPLEMENT STRUCTURE DOCUMENTATION PARSING (Critical for path-based proxy mappings)\n   - Extend metadata extraction to parse structure information from docstrings\n   - Support format: 'Outputs:\\n- key: {nested: {structure: type}}'\n   - Enable planner to generate valid path-based mappings like 'issue_data.user.login'\n   - Maintain backward compatibility with existing 'outputs: [key]' format\n\nImplementation:\n- Modify src/pflow/planning/context_builder.py to add the two new functions\n- Extend src/pflow/registry/metadata_extractor.py for structure parsing\n- Maintain backward compatibility with existing build_context() function\n- Add comprehensive unit tests for both context functions and structure parsing\n- Document the new docstring format for structure documentation\n\nContext Structure Examples:\nDiscovery: '### github-get-issue\\nFetches issue details from GitHub\\n\\n### fix-issue (workflow)\\nAnalyzes GitHub issue and creates PR with fix'\nPlanning: '### github-get-issue\\n**Inputs**: issue_number, repo\\n**Outputs**: issue_data: {id: int, title: str, user: {login: str}}'",
+        "testStrategy": "1. Unit tests for context_builder.py: Test build_discovery_context() returns lightweight format with names and descriptions only, test build_planning_context() returns full interface details for selected components, test workflow loading and formatting in discovery context, verify backward compatibility with existing build_context() function. 2. Unit tests for metadata_extractor.py: Test parsing of structured output declarations from docstrings, test nested object structure parsing, test backward compatibility with simple outputs list format, test malformed structure syntax handling. 3. Integration tests: Test two-phase context building workflow, verify structure documentation enables valid proxy mapping generation, test with real workflow files and node metadata. 4. Performance tests: Verify discovery context is lightweight enough to avoid LLM token limits, measure context generation performance for large node registries.",
+        "status": "pending",
+        "dependencies": [
+          16,
+          7
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
         "id": 16,
         "title": "Create planning context builder",
         "description": "Format node metadata for LLM-based workflow planning",
@@ -699,7 +713,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-07-15T20:11:03.531Z",
+      "updated": "2025-07-16T12:18:13.493Z",
       "description": "Reorganized to prioritize Natural Language Planner as core feature. Merged tasks 17-20 into comprehensive planner system. Expanded task 13 to include all platform nodes. Consolidated all v2.0 deferred features into task 32. Clear path from infrastructure to MVP delivery."
     }
   }
