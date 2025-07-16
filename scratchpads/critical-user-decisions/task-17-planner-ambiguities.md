@@ -4,6 +4,10 @@
 
 Task 17 is the core feature that makes pflow unique - the Natural Language Planner that enables "Plan Once, Run Forever". After extensive research, I've identified several critical ambiguities and decisions that need to be made before implementation can begin.
 
+**Update**: Tasks 14 and 15 have been added to address critical dependencies:
+- **Task 14**: Implements structured output metadata support, enabling the planner to generate valid path-based proxy mappings
+- **Task 15**: Extends the context builder for two-phase discovery, preventing LLM overwhelm while supporting workflow reuse
+
 ### Key Breakthrough Insights:
 1. The workflow discovery mechanism can reuse the exact same pattern as node discovery - the context builder already provides the perfect format.
 2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
@@ -206,6 +210,8 @@ This is acceptable for MVP because:
 
 After deeper analysis, we've discovered that path-based mappings have a fundamental dependency: **the planner cannot generate valid paths without knowing data structures**.
 
+**UPDATE**: This critical limitation is being addressed by **Task 14: Implement structured output metadata support for nodes**, which will enhance node docstrings to include structure documentation, enabling the planner to generate valid proxy mapping paths.
+
 ### The Generation Problem (Not Just Validation)
 
 When the planner needs to generate:
@@ -294,6 +300,8 @@ It needs to know that `issue_data` has this structure. Otherwise, it's just gues
 **Recommendation**: Option B - Implement basic structure documentation in MVP. Without it, path-based mappings are effectively limited to well-known APIs, which severely limits the feature's value. The implementation can be minimal - just enough structure for the planner to generate valid paths.
 
 **Critical Insight**: This isn't about perfect validation or type safety. It's about giving the planner enough information to generate correct paths instead of guessing. Even basic structure documentation dramatically improves the planner's ability to create working workflows.
+
+**Resolution**: Task 14 implements Option B, providing the structure documentation support that enables the planner to generate valid path-based proxy mappings for any API, not just well-known ones.
 
 ## 3. Workflow Storage and Discovery Implementation - Decision importance (4)
 
@@ -829,6 +837,8 @@ How should the planner discover both nodes and existing workflows?
 ### The Key Insight:
 The context builder already solved this problem! We can use the same pattern for everything.
 
+**UPDATE**: This pattern is being formalized by **Task 15: Extend context builder for two-phase discovery**, which splits the context builder into discovery and planning phases, preventing LLM overwhelm while enabling workflow reuse.
+
 ### Critical Refinements:
 1. **Workflows ARE building blocks** - Other workflows can be used inside new workflows
 2. **Two different contexts needed**:
@@ -883,11 +893,11 @@ General-purpose language model for text processing
 4. **Clarity** - LLM isn't overwhelmed with irrelevant interface details
 
 ### Implementation:
-1. **Discovery phase**:
+1. **Discovery phase** (via Task 15's `build_discovery_context()`):
    - Load all nodes (names + descriptions only)
    - Load all workflows (names + descriptions only)
    - LLM selects which to use
-2. **Planning phase**:
+2. **Planning phase** (via Task 15's `build_planning_context(selected_components)`):
    - Load full details ONLY for selected nodes/workflows
    - LLM plans the shared store layout and connections
    - Generate IR with proper mappings
@@ -1138,10 +1148,10 @@ Based on this analysis, here's the recommended approach:
   - Planning: "Here are the selected components' interfaces. Plan the connections."
 
 ### Context Builder Evolution:
-1. **build_discovery_context()** - Names and descriptions only
-2. **build_planning_context(selected_components)** - Full interface details for selected items only
+1. **build_discovery_context()** - Names and descriptions only (implemented in Task 15)
+2. **build_planning_context(selected_components)** - Full interface details for selected items only (implemented in Task 15)
 
-This separation prevents information overload and improves LLM performance.
+This separation prevents information overload and improves LLM performance. Task 15 provides exactly this two-phase approach, including workflow discovery support and structure documentation parsing for path-based proxy mappings.
 
 ## Risks and Mitigations
 
