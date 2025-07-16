@@ -178,6 +178,74 @@ The planner's success depends on getting the right information at the right time
 
 This task is about finding that balance.
 
+## What is NOT in Scope (Critical Boundaries)
+
+### 1. Planner Implementation Details
+- **NOT**: Implementing the actual workflow selection logic
+- **NOT**: Creating LLM prompts for workflow generation
+- **NOT**: Building the component selection algorithm
+- **Just**: Providing the context data in the right format
+
+### 2. Proxy Mapping and Execution
+- **NOT**: Generating actual proxy mappings from structure documentation
+- **NOT**: Validating that paths in proxy mappings are correct
+- **NOT**: Implementing the path resolution logic (e.g., `issue_data.user.login`)
+- **Just**: Parsing and exposing the structure information
+
+### 3. Workflow Management
+- **NOT**: Creating workflows or modifying how they're stored
+- **NOT**: Implementing workflow validation or execution
+- **NOT**: Building workflow versioning or history tracking
+- **NOT**: Creating a workflow management CLI
+- **Just**: Reading existing workflows and extracting name/description
+
+### 4. Registry Modifications
+- **NOT**: Changing how nodes are registered or discovered
+- **NOT**: Modifying the registry's storage format
+- **NOT**: Adding new node types or categories
+- **Just**: Extending metadata extraction for structure documentation
+
+### 5. Runtime Features
+- **NOT**: Template variable resolution (that's runtime's job)
+- **NOT**: Actual data flow tracking during execution
+- **NOT**: Implementing caching for context building
+- **Just**: Static analysis of what nodes declare
+
+### 6. Search and Discovery Logic
+- **NOT**: Implementing semantic search or similarity matching
+- **NOT**: Building embeddings or vector storage
+- **NOT**: Creating the "find or build" decision logic
+- **Just**: Formatting the available options for the planner
+
+### 7. User-Facing Features
+- **NOT**: Creating end-user documentation for structure format
+- **NOT**: Building migration tools for old docstring formats
+- **NOT**: Creating workflow templates or examples
+- **NOT**: Implementing any CLI commands
+- **Just**: Internal functions for the planner to use
+
+### 8. Validation and Type Checking
+- **NOT**: Validating that structure documentation matches actual node behavior
+- **NOT**: Type checking the structure definitions
+- **NOT**: Enforcing structure documentation requirements
+- **Just**: Parsing what's there and passing it along
+
+### Why These Boundaries Matter
+
+The context builder's job is to be a **data provider**, not a **decision maker**. It should:
+- Format information clearly
+- Make no judgments about what's "better"
+- Not implement any business logic
+- Stay focused on extraction and presentation
+
+If you find yourself writing code that:
+- Makes decisions about which nodes to use
+- Validates workflow correctness
+- Generates IR or proxy mappings
+- Implements search algorithms
+
+**STOP** - that's outside this task's scope.
+
 ---
 
 **Remember**: Don't start implementing yet. Just acknowledge you've read this handoff and are ready to begin when instructed.
