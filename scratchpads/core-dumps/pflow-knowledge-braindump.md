@@ -56,12 +56,6 @@ pflow is a workflow compiler that transforms natural language into permanent, de
 - `docs/core-concepts/shared-store.md` - The communication pattern
 - `.taskmaster/tasks/tasks.json` - Recently reorganized task list
 
-**Recent Changes**:
-- Tasks 17-20 merged into comprehensive Natural Language Planner task
-- Task 13 expanded to include all platform nodes
-- All v2.0 features consolidated into Task 32
-- Dependencies simplified (Task 3 now only needs tasks 6 and 11)
-
 ### Architecture Decisions
 
 1. **MVP Simplification**: Everything after 'pflow' is sent as natural language to the LLM. No direct CLI parsing in MVP.
@@ -69,14 +63,10 @@ pflow is a workflow compiler that transforms natural language into permanent, de
 2. **Simple Nodes Philosophy**: Each node does ONE thing well. Exception: general `llm` node to prevent prompt proliferation.
 
 3. **Two-Tier AI**:
-   - `claude-code` node: Comprehensive development with project context
-   - `llm` node: Fast text processing without context
+   - `claude-code` node: Comprehensive development with project context (agentic tasks - can execute multiple steps in a workflow agentically)
+   - `llm` node: Fast text processing without context (for simple llm processing - one step in a workflow)
 
 4. **Test-as-You-Go**: Every task includes its own test strategy. No separate testing phase.
-
-### The Overthinking Problem
-
-The developer (based on code analysis) has spent 6-8 weeks building perfect infrastructure but avoiding the core planner. There are 350+ tests for ~15% of features. Classic overthinking paralysis - building a fortress of tests around the easy parts while avoiding the core innovation.
 
 ### What Makes pflow Unique
 
@@ -94,12 +84,7 @@ The developer (based on code analysis) has spent 6-8 weeks building perfect infr
 
 ### Current Momentum
 
-The README was just updated to emphasize:
-- "One command that finds your workflow or builds it for you"
-- Parameter flexibility (same workflow, different inputs)
-- AI agent efficiency (90% cost reduction for repetitive tasks)
-
-The project is at a critical juncture - beautiful infrastructure built, but the core planner (the actual value) needs to be implemented.
+The project is at a critical juncture - beautiful infrastructure built, but the core planner (the actual value) needs to be implemented as soon as possible.
 
 ### Key Questions Being Explored
 
