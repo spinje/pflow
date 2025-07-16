@@ -760,7 +760,7 @@ class GeneratorNode(Node):
         super().__init__(max_retries=3, wait=1.0)  # For LLM API failures
 ```
 
-> Note: This example might differ from the actual implementation, but the idea is that the planner flow is a pocketflow flow with multiple nodes. See this as sudo code that will need heavy adaptation to the actual requirements.
+> Note: This example might differ from the actual implementation, but the idea is that the planner flow is a pocketflow flow with multiple nodes. See this as pseudo code code that will need heavy adaptation to the actual requirements.
 
 **Recommendation**: Option B with three-tier static validation provides the best user experience. The validation is implemented as a node within the planner flow, using pocketflow's action-based routing to handle different validation outcomes. All three tiers are forms of static analysis with different focuses:
 1. Structure (Pydantic)
