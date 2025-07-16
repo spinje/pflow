@@ -968,7 +968,9 @@ There's an implicit assumption that JSON IR can be "compiled" back to CLI syntax
   - Hide complex details
   - Less informative for users
 
-**Recommendation**: Option B - A separate IR-to-CLI compiler maintains separation of concerns and single source of truth.
+  more information in ## 8. IR to CLI syntax relationship
+
+**Recommendation**: Option B - A separate IR-to-CLI compiler maintains separation of concerns and single source of truth. (see [8. IR to CLI syntax relationship](#13-json-ir-to-cli-syntax-relationship---decision-importance-4) for more information)
 
 ## 14. Planner Implementation Architecture - Decision importance (5)
 
