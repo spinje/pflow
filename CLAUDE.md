@@ -251,6 +251,22 @@ pflow/
 
 ### Claude's Operating Guidelines
 
+**Show Before You Code**: For any task that changes user-visible output:
+1. Show concrete before/after examples of the expected output when the task is complete
+2. Ask for confirmation before implementing
+3. This takes 30 seconds but saves hours of rework
+
+Example:
+```
+Current output:
+...
+
+Planned output:
+...
+
+Is this what you're expecting?
+```
+
 **Reasoning-First Approach**: Every code generation task must:
 1. Be part of MVP (unless explicitly requested by the user)
 2. Include rationale of *why* the task is needed
@@ -429,3 +445,8 @@ Document for user decision:
 ### Project-specific Memories
 
 - **CLI Development Principle**: never commit code unless explicitly instructed by the user
+
+### Project-specific Design Principles and Memories
+
+- **Expectation Setting**: I think it is important that the agent (you) show what the expected output will be BEFORE you start implementing. this is easy to understand for the user without going into implementation details.
+```

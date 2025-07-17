@@ -309,6 +309,47 @@ touch .taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/ready-for-implem
 
 Note: We do NOT update task-master during refinement. Task-master is only updated when the entire subtask is complete.
 
+#### 1.7 Show Expected Output when writing the final message to the user
+
+**Show concrete before/after examples of the expected output when the task is complete**
+
+Before starting implementation, demonstrate what the end result will look like. This creates a shared understanding between you and the user, catching misalignments early.
+
+**What to show:**
+- For output format changes: Show current format vs. new format side-by-side
+- For new features: Mock up the expected behavior or interface
+- For API/data structure changes: Display example requests/responses
+- For CLI changes: Show example commands and their outputs
+- For refactoring: Explain what will change from the user's perspective
+
+**How to present it:**
+1. Use clear "Before" and "After" sections
+2. Include realistic examples, not just minimal cases
+3. Show edge cases if they're relevant to the task
+4. Keep examples concise but complete enough to convey the change
+
+**Why this matters:**
+- Prevents implementing the wrong solution
+- Allows early course correction
+- Reduces wasted effort on misunderstood requirements
+- Creates explicit agreement on deliverables
+- Helps identify missing requirements or constraints
+
+**Example format:**
+```
+Based on my understanding, here's what the output will look like:
+
+**Current State**:
+[show current behavior/format]
+
+**After Implementation**:
+[show expected new behavior/format]
+
+Does this match your expectations?
+```
+
+This final check can save hours of implementation work and ensures everyone is aligned on the expected outcome.
+
 ### Exit Criteria for Phase 1
 - [ ] All code validated against task requirements
 - [ ] Relevant cookbook patterns analyzed and documented (2-3 examples minimum for PocketFlow tasks)
@@ -319,6 +360,7 @@ Note: We do NOT update task-master during refinement. Task-master is only update
 - [ ] Test strategy identified
 - [ ] Knowledge from previous tasks incorporated
 - [ ] Marker file created for ready-for-implementation
+- [ ] Expected output shown to the user
 
 ## Handoff to Implementation
 
@@ -330,12 +372,14 @@ Once ALL exit criteria are met:
    - `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/refinement/refined-spec.md`
    - `.taskmaster/tasks/task_<parentTaskId>/subtask_<subtaskId>/ready-for-implementation`
 
-2. Proceed to read and follow `implement-subtask.md` if instructed to do so or by notifying the user of the next step
+2. Proceed to read and follow `implement-subtask.md` if specifically instructed to do so, or by notifying the user of the next step
 
    Let the user know that the next step is to run the following slash command:
    ```
    /implement-subtask <subtaskId>
    ```
+
+   Remember to show the expected output in the same message as you present the next step.
 
 ## Common Refinement Patterns
 
