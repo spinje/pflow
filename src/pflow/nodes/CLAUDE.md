@@ -115,6 +115,38 @@ def test_node_retries_on_failure():
 5. Test retry behavior
 6. Document parameters in docstrings
 
+## Nested Structure support
+
+Nested JSON/Object Outputs Are Fully Supported:
+
+You can write this in a node's docstring:
+  Interface:
+  - Writes: shared["issue_data"]: dict  # GitHub issue information
+      - number: int  # Issue number
+      - title: str  # Issue title
+      - user: dict  # Author information
+        - login: str  # GitHub username
+        - id: int  # User ID
+        - avatar_url: str  # Profile picture URL
+      - labels: list  # Array of label objects
+      - milestone: dict  # Milestone info (optional)
+        - id: int  # Milestone ID
+        - title: str  # Milestone title
+
+  And the context builder will display it as:
+  **Outputs**: `issue_data: dict` - GitHub issue information
+    Structure of issue_data:
+      - number: int - Issue number
+      - title: str - Issue title
+      - user: dict - Author information
+        - login: str - GitHub username
+        - id: int - User ID
+        - avatar_url: str - Profile picture URL
+      - labels: list - Array of label objects
+      - milestone: dict - Milestone info (optional)
+        - id: int - Milestone ID
+        - title: str - Milestone title
+
 ## Common Mistakes
 
 1. **Catching exceptions in exec()** - This is the #1 anti-pattern!

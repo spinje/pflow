@@ -24,9 +24,10 @@ class DeleteFileNode(Node):
     Treats non-existent files as success for idempotent behavior.
 
     Interface:
-    - Reads: shared["file_path"] (required), shared["confirm_delete"] (required)
-    - Writes: shared["deleted"] on success, shared["error"] on failure
-    - Params: file_path (as fallback if not in shared)
+    - Reads: shared["file_path"]: str  # Path to the file to delete
+    - Reads: shared["confirm_delete"]: bool  # Must be true to confirm deletion
+    - Writes: shared["deleted"]: bool  # True if delete succeeded
+    - Writes: shared["error"]: str  # Error message if operation failed
     - Actions: default (success), error (failure)
 
     Security Note: This node can delete ANY accessible file on the system.

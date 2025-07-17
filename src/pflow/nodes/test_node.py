@@ -20,8 +20,8 @@ class TestNode(Node):
     special characters to test edge cases.
 
     Interface:
-    - Reads: shared["test_input"]
-    - Writes: shared["test_output"]
+    - Reads: shared["test_input"]: str  # Input for testing
+    - Writes: shared["test_output"]: str  # Processed test output
     - Actions: default, error
     """
 

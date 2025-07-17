@@ -25,10 +25,12 @@ class WriteFileNode(Node):
     as needed. Supports both write and append modes.
 
     Interface:
-    - Reads: shared["content"] (required), shared["file_path"] (required),
-            shared["encoding"] (optional)
-    - Writes: shared["written"] on success, shared["error"] on failure
-    - Params: content, file_path, encoding, append (as fallbacks if not in shared)
+    - Reads: shared["content"]: str  # Content to write to the file
+    - Reads: shared["file_path"]: str  # Path to the file to write
+    - Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
+    - Writes: shared["written"]: bool  # True if write succeeded
+    - Writes: shared["error"]: str  # Error message if operation failed
+    - Params: append: bool  # Append to file instead of overwriting (default: false)
     - Actions: default (success), error (failure)
 
     Security Note: This node can write to ANY accessible path on the system.

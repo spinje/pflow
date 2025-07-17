@@ -25,10 +25,11 @@ class CopyFileNode(Node):
     and creating parent directories as needed. Supports overwrite control.
 
     Interface:
-    - Reads: shared["source_path"] (required), shared["dest_path"] (required),
-            shared["overwrite"] (optional, default False)
-    - Writes: shared["copied"] on success, shared["error"] on failure
-    - Params: source_path, dest_path, overwrite (as fallbacks if not in shared)
+    - Reads: shared["source_path"]: str  # Source file path
+    - Reads: shared["dest_path"]: str  # Destination file path
+    - Reads: shared["overwrite"]: bool  # Whether to overwrite existing files (optional, default: false)
+    - Writes: shared["copied"]: bool  # True if copy succeeded
+    - Writes: shared["error"]: str  # Error message if operation failed
     - Actions: default (success), error (failure)
 
     Security Note: This node can copy ANY accessible file on the system.

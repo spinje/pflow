@@ -175,11 +175,38 @@ class PflowMetadataExtractor:
             item_content = match.group(2)
 
             if item_type == "reads":
-                result["inputs"] = self._extract_interface_component(item_content, "inputs")
+                new_items = self._extract_interface_component(item_content, "inputs")
+                if isinstance(result["inputs"], list) and isinstance(new_items, list):
+                    if all(isinstance(item, dict) for item in new_items):
+                        # Enhanced format - extend the list
+                        result["inputs"].extend(new_items)
+                    else:
+                        # Simple format strings - extend the list
+                        result["inputs"].extend(new_items)
+                else:
+                    result["inputs"] = new_items
             elif item_type == "writes":
-                result["outputs"] = self._extract_interface_component(item_content, "outputs")
+                new_items = self._extract_interface_component(item_content, "outputs")
+                if isinstance(result["outputs"], list) and isinstance(new_items, list):
+                    if all(isinstance(item, dict) for item in new_items):
+                        # Enhanced format - extend the list
+                        result["outputs"].extend(new_items)
+                    else:
+                        # Simple format strings - extend the list
+                        result["outputs"].extend(new_items)
+                else:
+                    result["outputs"] = new_items
             elif item_type == "params":
-                result["params"] = self._extract_interface_component(item_content, "params")
+                new_items = self._extract_interface_component(item_content, "params")
+                if isinstance(result["params"], list) and isinstance(new_items, list):
+                    if all(isinstance(item, dict) for item in new_items):
+                        # Enhanced format - extend the list
+                        result["params"].extend(new_items)
+                    else:
+                        # Simple format strings - extend the list
+                        result["params"].extend(new_items)
+                else:
+                    result["params"] = new_items
             elif item_type == "actions":
                 result["actions"] = self._extract_actions(item_content)
 
@@ -344,8 +371,10 @@ class PflowMetadataExtractor:
                 # Remove the shared comment for easier parsing
                 content = before_comment
 
-        # Split by comma to handle each item separately
-        segments = [seg.strip() for seg in content.split(",")]
+        # Split by comma only when followed by shared["..."] pattern
+        # This preserves commas inside descriptions
+        segments = re.split(r",\s*(?=shared\[)", content)
+        segments = [seg.strip() for seg in segments if seg.strip()]
 
         for _i, segment in enumerate(segments):
             if not segment:
@@ -411,24 +440,34 @@ class PflowMetadataExtractor:
         results = []
 
         # Pattern: param_name: type  # description
-        param_pattern = r"(\w+)\s*:\s*([^,#\n]+)(?:\s*#\s*([^\n,]+))?"
+        # Split params properly first, then parse each one
+        param_segments = re.split(r",\s*(?=\w+\s*:)", content)
 
-        for match in re.finditer(param_pattern, content):
-            key = match.group(1)
-            type_str = match.group(2).strip()
-            description = match.group(3).strip() if match.group(3) else ""
+        for segment in param_segments:
+            segment = segment.strip()
+            if not segment:
+                continue
 
-            results.append({"key": key, "type": type_str, "description": description})
+            # Now parse each param: name: type  # description
+            param_pattern = r"(\w+)\s*:\s*([^#\n]+)(?:\s*#\s*(.*))?$"
+            match = re.match(param_pattern, segment)
 
-            logger.debug(
-                f"Extracted enhanced param: {key}",
-                extra={
-                    "phase": "enhanced_extraction",
-                    "key": key,
-                    "type": type_str,
-                    "has_description": bool(description),
-                },
-            )
+            if match:
+                key = match.group(1)
+                type_str = match.group(2).strip()
+                description = match.group(3).strip() if match.group(3) else ""
+
+                results.append({"key": key, "type": type_str, "description": description})
+
+                logger.debug(
+                    f"Extracted enhanced param: {key}",
+                    extra={
+                        "phase": "enhanced_extraction",
+                        "key": key,
+                        "type": type_str,
+                        "has_description": bool(description),
+                    },
+                )
 
         # If no results from enhanced format, fall back
         if not results:

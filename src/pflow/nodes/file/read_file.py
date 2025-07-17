@@ -22,9 +22,10 @@ class ReadFileNode(Node):
     following the Tutorial-Cursor pattern for file display.
 
     Interface:
-    - Reads: shared["file_path"] (required), shared["encoding"] (optional)
-    - Writes: shared["content"] on success, shared["error"] on failure
-    - Params: file_path, encoding (as fallbacks if not in shared)
+    - Reads: shared["file_path"]: str  # Path to the file to read
+    - Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
+    - Writes: shared["content"]: str  # File contents with line numbers
+    - Writes: shared["error"]: str  # Error message if operation failed
     - Actions: default (success), error (failure)
 
     Security Note: This node can read ANY accessible file on the system.

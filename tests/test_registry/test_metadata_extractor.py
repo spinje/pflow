@@ -160,19 +160,21 @@ class TestRealNodeIntegration:
 
         # The actual first line from the docstring
         assert result["description"] == "Read content from a file and add line numbers for display."
-        # Now expecting rich format with defaults for simple format nodes
-        assert result["inputs"] == [
-            {"key": "file_path", "type": "any", "description": ""},
-            {"key": "encoding", "type": "any", "description": ""},
-        ]
+        # Now expecting enhanced format with types and descriptions
+        assert len(result["inputs"]) == 2
+        assert result["inputs"][0] == {"key": "file_path", "type": "str", "description": "Path to the file to read"}
+        # Check second input with fixed parser
+        assert result["inputs"][1] == {
+            "key": "encoding",
+            "type": "str",
+            "description": "File encoding (optional, default: utf-8)",
+        }
         assert result["outputs"] == [
-            {"key": "content", "type": "any", "description": ""},
-            {"key": "error", "type": "any", "description": ""},
+            {"key": "content", "type": "str", "description": "File contents with line numbers"},
+            {"key": "error", "type": "str", "description": "Error message if operation failed"},
         ]
-        assert result["params"] == [
-            {"key": "file_path", "type": "any", "description": ""},
-            {"key": "encoding", "type": "any", "description": ""},
-        ]
+        # Check params - with exclusive params pattern, should be empty
+        assert result["params"] == []  # All params are automatic fallbacks from Reads!
         assert result["actions"] == ["default", "error"]
 
     def test_extract_from_write_file_node(self):
@@ -377,18 +379,20 @@ class TestInterfaceParsing:
         result = self.extractor.extract_metadata(ReadFileNode)
 
         assert result["description"] == "Read content from a file and add line numbers for display."
-        assert result["inputs"] == [
-            {"key": "file_path", "type": "any", "description": ""},
-            {"key": "encoding", "type": "any", "description": ""},
-        ]
-        assert result["outputs"] == [
-            {"key": "content", "type": "any", "description": ""},
-            {"key": "error", "type": "any", "description": ""},
-        ]
-        assert result["params"] == [
-            {"key": "file_path", "type": "any", "description": ""},
-            {"key": "encoding", "type": "any", "description": ""},
-        ]
+        # Now using enhanced format
+        assert len(result["inputs"]) == 2
+        assert result["inputs"][0]["key"] == "file_path"
+        assert result["inputs"][0]["type"] == "str"
+        assert result["inputs"][1]["key"] == "encoding"
+        assert result["inputs"][1]["type"] == "str"
+        # Check outputs use enhanced format too
+        assert len(result["outputs"]) == 2
+        assert result["outputs"][0]["key"] == "content"
+        assert result["outputs"][0]["type"] == "str"
+        assert result["outputs"][1]["key"] == "error"
+        assert result["outputs"][1]["type"] == "str"
+        # Check params - with exclusive params pattern, should be empty
+        assert result["params"] == []  # All params are automatic fallbacks from Reads!
         assert result["actions"] == ["default", "error"]
 
     def test_real_write_file_node_interface(self):
@@ -439,9 +443,8 @@ class TestInterfaceParsing:
         # MoveFileNode has a 3-line Writes section
         output_keys = [item["key"] for item in result["outputs"]]
         assert output_keys == ["moved", "error", "warning"]
-        # Check params in rich format
-        param_keys = [item["key"] for item in result["params"]]
-        assert param_keys == ["source_path", "dest_path", "overwrite"]
+        # Check params - with exclusive params pattern, should be empty
+        assert result["params"] == []  # All params are automatic fallbacks from Reads!
         assert result["actions"] == ["default", "error"]
 
     def test_real_delete_file_node_interface(self):
@@ -459,7 +462,7 @@ class TestInterfaceParsing:
         assert output_keys == ["deleted", "error"]
         # Check params in rich format
         param_keys = [item["key"] for item in result["params"]]
-        assert param_keys == ["file_path"]  # Note: confirm_delete is NOT a param
+        assert param_keys == []  # All params are automatic fallbacks from Reads!
         assert result["actions"] == ["default", "error"]
 
     def test_no_docstring_node_from_codebase(self):
