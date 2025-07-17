@@ -126,4 +126,37 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
+## Pitfall: Implementing Without Understanding Related Tasks
+- **Date**: 2025-01-17
+- **Discovered in**: Task 14.2
+- **What we tried**: Implemented "minimal changes" as specified - added navigation hints to show data structure paths
+- **Why it seemed good**: Task specification explicitly said "minimal changes", seemed clear and focused
+- **Why it failed**: User revealed Task 15 would split output into two formats, requiring ALL descriptions to be shown, not just navigation paths
+- **Symptoms**:
+  - Complete implementation thrown away halfway through
+  - Major refactoring from navigation hints to hierarchical display
+  - Time wasted on wrong approach
+  - Had to update all tests twice
+- **Better approach**: Show expected output format BEFORE implementing. Users can easily spot misunderstandings without reading code.
+- **Example of failure**:
+  ```markdown
+  # DON'T DO THIS - Jump straight to implementation
+  # Implemented: "Navigate: .number, .user.login"
+  # When user actually wanted full hierarchical descriptions
+
+  # DO THIS - Show expected output first:
+  "I plan to change the output from:
+  **Outputs**: `issue_data: dict`
+
+  To:
+  **Outputs**: `issue_data: dict` - Navigate: .number, .user.login
+
+  Is this what you're looking for?"
+
+  # User can immediately correct: "No, show ALL fields with descriptions"
+  ```
+- **Key Lesson**: Tasks don't exist in isolation. Infrastructure tasks especially impact multiple downstream consumers. A few clarifying questions early saves major rework later.
+
+---
+
 <!-- New pitfalls are appended below this line -->

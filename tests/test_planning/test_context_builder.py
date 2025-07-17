@@ -5,7 +5,9 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.planning.context_builder import (
+    _extract_navigation_paths,
     _format_node_section,
+    _format_structure,
     _group_nodes_by_category,
     build_context,
 )
@@ -353,3 +355,261 @@ class TestFormatNodeSection:
         result = _format_node_section("whitespace-desc-node", node_data)
 
         assert "No description available" in result
+
+    def test_rich_format_handling(self):
+        """Test formatting with rich format metadata from extractor."""
+        node_data = {
+            "description": "Handles rich metadata format",
+            "inputs": [
+                {"key": "file_path", "type": "str", "description": "Path to the file"},
+                {"key": "encoding", "type": "any", "description": ""},  # Default type
+            ],
+            "outputs": [
+                {"key": "content", "type": "str", "description": "File contents"},
+                {"key": "error", "type": "str", "description": "Error message"},
+            ],
+            "params": [
+                {"key": "file_path", "type": "str", "description": "Path to the file"},
+                {"key": "encoding", "type": "any", "description": ""},
+                {"key": "strip_lines", "type": "bool", "description": "Strip whitespace"},
+            ],
+            "actions": ["default", "error"],
+        }
+
+        result = _format_node_section("rich-node", node_data)
+
+        # Check that types and descriptions are included
+        assert "**Inputs**: `file_path: str` - Path to the file, `encoding`" in result
+        assert "**Outputs**: `content: str` - File contents, `error: str` - Error message (error)" in result
+        # Only exclusive params should be shown (strip_lines)
+        assert "**Parameters**: `strip_lines: bool` - Strip whitespace" in result
+        # file_path should not be in parameters (it's in inputs)
+        assert "`file_path`" not in result.split("**Parameters**:")[1]
+
+    def test_mixed_format_backward_compatibility(self):
+        """Test that mixing string and dict formats works (edge case)."""
+        node_data = {
+            "description": "Mixed format test",
+            "inputs": [
+                "legacy_input",  # String format
+                {"key": "new_input", "type": "dict", "description": "New style"},
+            ],
+            "outputs": ["result"],
+            "params": [
+                "legacy_input",
+                "legacy_param",
+                {"key": "new_param", "type": "int", "description": "New param"},
+            ],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section("mixed-node", node_data)
+
+        # Both formats should be handled
+        assert "**Inputs**: `legacy_input`, `new_input: dict`" in result
+        assert "**Outputs**: `result`" in result
+        # Only exclusive params (not in inputs)
+        assert "**Parameters**: `legacy_param`, `new_param: int`" in result
+        # legacy_input should not be in parameters
+        assert "legacy_input" not in result.split("**Parameters**:")[1]
+
+
+class TestNavigationPaths:
+    """Test the navigation path extraction functionality."""
+
+    def test_extract_simple_structure(self):
+        """Test extracting paths from a simple structure."""
+        structure = {
+            "field1": {"type": "str", "description": "Field 1"},
+            "field2": {"type": "int", "description": "Field 2"},
+            "field3": {"type": "bool", "description": "Field 3"},
+        }
+
+        paths = _extract_navigation_paths(structure)
+
+        assert paths == ["field1", "field2", "field3"]
+
+    def test_extract_nested_structure(self):
+        """Test extracting paths from nested structures."""
+        structure = {
+            "user": {
+                "type": "dict",
+                "description": "User info",
+                "structure": {
+                    "name": {"type": "str"},
+                    "email": {"type": "str"},
+                    "profile": {
+                        "type": "dict",
+                        "structure": {
+                            "bio": {"type": "str"},
+                            "avatar": {"type": "str"},
+                        },
+                    },
+                },
+            },
+            "count": {"type": "int"},
+        }
+
+        paths = _extract_navigation_paths(structure)
+
+        # Should include nested paths up to max depth
+        assert "user" in paths
+        assert "user.name" in paths
+        assert "user.email" in paths
+        assert "user.profile" in paths
+        assert "user.profile.bio" in paths  # max_depth=2 by default
+        assert "count" in paths
+
+    def test_max_depth_limiting(self):
+        """Test that max_depth prevents infinite recursion."""
+        deep_structure = {
+            "level1": {
+                "type": "dict",
+                "structure": {
+                    "level2": {
+                        "type": "dict",
+                        "structure": {"level3": {"type": "dict", "structure": {"level4": {"type": "str"}}}},
+                    }
+                },
+            }
+        }
+
+        paths = _extract_navigation_paths(deep_structure, max_depth=2)
+
+        assert "level1" in paths
+        assert "level1.level2" in paths
+        assert "level1.level2.level3" not in paths  # Beyond max_depth
+
+    def test_path_limiting(self):
+        """Test that total paths are limited to prevent explosion."""
+        # Create structure with many fields
+        large_structure = {f"field{i}": {"type": "str"} for i in range(20)}
+
+        paths = _extract_navigation_paths(large_structure)
+
+        # Should be limited to 10 paths
+        assert len(paths) == 10
+
+    def test_empty_structure(self):
+        """Test handling of empty or invalid structures."""
+        assert _extract_navigation_paths({}) == []
+        assert _extract_navigation_paths(None) == []
+        assert _extract_navigation_paths("not a dict") == []
+
+
+class TestFormatStructure:
+    """Test the structure formatting function."""
+
+    def test_format_simple_structure(self):
+        """Test formatting a simple flat structure."""
+        structure = {
+            "name": {"type": "str", "description": "User name"},
+            "age": {"type": "int", "description": "User age"},
+            "active": {"type": "bool", "description": ""},
+        }
+
+        lines = _format_structure(structure)
+
+        assert "    - name: str - User name" in lines
+        assert "    - age: int - User age" in lines
+        assert "    - active: bool" in lines  # No description
+
+    def test_format_nested_structure(self):
+        """Test formatting nested structures."""
+        structure = {
+            "user": {
+                "type": "dict",
+                "description": "User information",
+                "structure": {
+                    "login": {"type": "str", "description": "Username"},
+                    "profile": {
+                        "type": "dict",
+                        "description": "Profile data",
+                        "structure": {"bio": {"type": "str", "description": "Biography"}},
+                    },
+                },
+            }
+        }
+
+        lines = _format_structure(structure)
+
+        assert "    - user: dict - User information" in lines
+        assert "      - login: str - Username" in lines
+        assert "      - profile: dict - Profile data" in lines
+        assert "        - bio: str - Biography" in lines
+
+
+class TestStructureHints:
+    """Test structure hint integration in formatting."""
+
+    def test_format_with_structure_hints(self):
+        """Test that structure hints appear in formatted output."""
+        node_data = {
+            "description": "GitHub issue fetcher",
+            "inputs": [{"key": "repo", "type": "str"}],
+            "outputs": [
+                {
+                    "key": "issue_data",
+                    "type": "dict",
+                    "structure": {
+                        "number": {"type": "int"},
+                        "title": {"type": "str"},
+                        "user": {
+                            "type": "dict",
+                            "structure": {
+                                "login": {"type": "str"},
+                                "id": {"type": "int"},
+                            },
+                        },
+                    },
+                }
+            ],
+            "params": [],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section("github-issue", node_data)
+
+        # Should include structure section
+        assert "Structure of issue_data:" in result
+        assert "- number: int" in result
+        assert "- user: dict" in result
+        assert "- login: str" in result
+
+    def test_no_hints_for_simple_types(self):
+        """Test that simple types don't get navigation hints."""
+        node_data = {
+            "description": "Simple node",
+            "inputs": [
+                {"key": "text", "type": "str"},
+                {"key": "count", "type": "int"},
+            ],
+            "outputs": [{"key": "result", "type": "bool"}],
+            "params": [],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section("simple-node", node_data)
+
+        # Should not have any structure sections
+        assert "Structure of" not in result
+
+    def test_hint_count_tracking(self):
+        """Test that hint count is properly tracked and limited."""
+        # Create outputs with structures
+        outputs = []
+        for i in range(5):
+            outputs.append({"key": f"data_{i}", "type": "dict", "structure": {"field": {"type": "str"}}})
+
+        node_data = {
+            "description": "Multi-structure node",
+            "inputs": [],
+            "outputs": outputs,
+            "params": [],
+            "actions": ["default"] * 5,
+        }
+
+        result = _format_node_section("test-node", node_data)
+
+        # Should have structure sections for all complex outputs
+        assert result.count("Structure of data_") == 5

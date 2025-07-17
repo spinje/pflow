@@ -457,7 +457,8 @@ class PflowMetadataExtractor:
 
         # Check if already in rich format
         if isinstance(items[0], dict):
-            return items
+            # Type narrowing: if first item is dict, all items are dicts
+            return items  # type: ignore[return-value]
 
         # Convert simple strings to rich format with defaults
         return [{"key": item, "type": "any", "description": ""} for item in items]

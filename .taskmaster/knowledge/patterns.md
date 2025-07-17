@@ -959,3 +959,73 @@ A consolidated collection of successful patterns and approaches discovered durin
   - Clear detection logic prevents ambiguity
 
 ---
+
+## Pattern: Modular Processing and Formatting Separation
+- **Date**: 2025-01-17
+- **Discovered in**: Task 14.2
+- **Problem**: Need to support multiple output formats from the same data source without duplicating processing logic
+- **Solution**: Separate data extraction/processing from formatting. Process once, format many ways.
+- **Example**:
+  ```python
+  def _process_data(raw_data: dict) -> dict:
+      """Extract and enrich data (expensive operation)."""
+      processed = {}
+      # Complex processing logic here
+      return processed
+
+  def build_output(raw_data: dict, format: str = "detailed") -> str:
+      """Build output in specified format."""
+      # Process once
+      processed_data = _process_data(raw_data)
+
+      # Format based on need
+      if format == "detailed":
+          return _format_detailed(processed_data)
+      elif format == "summary":
+          return _format_summary(processed_data)
+      else:
+          return _format_basic(processed_data)
+  ```
+- **When to use**:
+  - Multiple output formats from same data
+  - Expensive processing that shouldn't be repeated
+  - Future-proofing for additional formats
+  - Clean separation of concerns
+- **Benefits**:
+  - Easy to add new formats without touching processing
+  - Processing bugs fixed in one place
+  - Can unit test processing and formatting separately
+  - Makes major pivots possible (as we experienced)
+
+---
+
+## Pattern: Show Expected Output Before Implementation
+- **Date**: 2025-01-17
+- **Discovered in**: Task 14.2 (learned from major refactoring)
+- **Problem**: Misunderstandings about requirements often only surface after implementation is complete, leading to wasted work
+- **Solution**: Always show concrete before/after examples of expected output BEFORE starting implementation
+- **Example**:
+  ```markdown
+  # Before implementing any UI/output changes:
+  "Current output:
+  **Inputs**: file_path, encoding
+
+  Planned output:
+  **Inputs**: `file_path: str` - Path to the file, `encoding: str` - File encoding
+
+  Does this match what you're expecting?"
+  ```
+- **When to use**:
+  - Any task that changes user-visible output
+  - Infrastructure that affects downstream formatting
+  - CLI output modifications
+  - Documentation generation
+  - Any ambiguous requirements
+- **Benefits**:
+  - Users understand output without reading code
+  - Catches misunderstandings before implementation
+  - Creates clear agreement on deliverables
+  - Saves massive refactoring time
+  - No technical knowledge required to review
+
+---
