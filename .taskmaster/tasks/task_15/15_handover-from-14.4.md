@@ -14,16 +14,16 @@ Interface:
 - Writes: shared["content"]: str  # File contents
 ```
 
-**BUT HERE'S THE CRITICAL PART**: Structure parsing is NOT implemented. The parser sets a `_has_structure` flag for complex types but does NOT parse the indented structure:
+**BUT HERE'S THE CRITICAL PART**: Structure parsing IS implemented. The parser sets a `_has_structure` flag for complex types and DOES parse the indented structure:
 
 ```python
-# This is recognized but NOT parsed:
+# This is recognized AND parsed:
 - Writes: shared["data"]: dict  # User data
     - name: str  # User name
     - age: int  # User age
 ```
 
-The `_parse_structure()` method exists in `metadata_extractor.py` but returns empty dict. This is a **known limitation** documented everywhere as "future enhancement".
+The `_parse_structure()` method exists in `metadata_extractor.py` with a full 70-line recursive implementation. Tests confirm it works for nested structures.
 
 ### Current Context Builder State
 
@@ -38,10 +38,10 @@ The context builder (modified in 14.2) already:
 ## Critical Files and Their State
 
 ### 1. `/src/pflow/registry/metadata_extractor.py`
-- **Lines 543-591**: `_parse_structure()` method exists but is EMPTY SCAFFOLDING
-- **Line 250**: Sets `_has_structure` flag for dict/list types
-- **Lines 177-211**: Multi-line support via `.extend()` (critical fix from 14.3)
-- **Line 376**: Comma-aware regex splitting (preserves commas in descriptions)
+- **Lines 543-612**: `_parse_structure()` method is FULLY IMPLEMENTED with recursive parsing
+- **Line 397**: Sets `_has_structure` flag for dict/list types
+- **Lines 166, 170**: Multi-line support via `.extend()` (critical fix from 14.3)
+- **Line 374**: Comma-aware regex splitting (preserves commas in descriptions)
 
 ### 2. `/src/pflow/planning/context_builder.py`
 - **Lines 58-199**: `_process_nodes()` already extracts all metadata
@@ -57,17 +57,17 @@ The context builder (modified in 14.2) already:
 
 ## Warnings and Gotchas
 
-### 1. Structure Parsing is Harder Than It Looks
-The regex-based approach won't work well for nested structures. Consider:
-- Indentation-based parsing (like YAML)
-- Recursive descent parser
-- Don't try to extend the regex patterns - they're already at their limit
+### 1. Structure Parsing Works But Has Complexity
+The implementation uses indentation-based parsing with recursion. It handles:
+- Indentation-based parsing (like YAML) - already implemented
+- Recursive descent parser - working in `_parse_structure()`
+- The regex patterns handle format detection and field parsing
 
 ### 2. The User Expects Structure Support
-Task 15's description assumes structure parsing works. You'll need to either:
-- Implement it properly (recommended)
-- Clearly scope it out and document why
-- The planner NEEDS this for proxy mappings like `data.user.login`
+Task 15's description correctly assumes structure parsing works. You can:
+- Use the existing implementation directly
+- Test edge cases if any are discovered
+- The planner can use this for proxy mappings like `data.user.login`
 
 ### 3. Backward Compatibility is Sacred
 The current `build_context()` must keep working. When you split into two functions:
@@ -116,11 +116,11 @@ def build_planning_context(self, selected_components):
 - Handle malformed JSON gracefully
 - Workflows need clear visual distinction from nodes
 
-### 3. Tackle Structure Parsing Last
-It's the hardest part. Consider:
-- Start with single-level structures
-- Use indentation counting, not regex
-- Test with the GitHub example everyone expects to work
+### 3. Use Existing Structure Parsing
+It's already implemented. You can:
+- Test with nested structures (they work)
+- The implementation uses indentation counting with recursion
+- Verify with the GitHub example that tests confirm works
 
 ## Files You'll Need
 
@@ -166,8 +166,8 @@ Analyzes and fixes GitHub issues automatically
 1. Read the files I've listed to understand current state
 2. Run existing tests to see what's working
 3. Start with the easy win: two-phase split
-4. Leave structure parsing for last (it's the hardest)
+4. Verify structure parsing works with your use cases
 
-**Remember**: Do NOT start implementing until you've absorbed this context and confirmed you're ready. The structure parsing everyone expects is NOT implemented despite all the setup.
+**Remember**: Do NOT start implementing until you've absorbed this context and confirmed you're ready. The structure parsing everyone expects IS implemented with tests confirming it works.
 
 Good luck\! Task 15 is crucial for making the planner actually useful.

@@ -17,20 +17,20 @@ Interface:
 - Actions: default (success), error (failure)
 ```
 
-**CRITICAL LIMITATION #1**: Structure parsing is NOT implemented. The parser sets a `_has_structure` flag for complex types but does NOT parse the indented structure:
+**CRITICAL CONTEXT #1**: Structure parsing IS implemented. The parser sets a `_has_structure` flag for complex types and DOES parse the indented structure:
 
 ```python
-# This is recognized but NOT parsed:
+# This is recognized AND parsed:
 - Writes: shared["data"]: dict  # User data
     - name: str  # User name
     - age: int  # User age
 ```
 
-The `_parse_structure()` method exists in `metadata_extractor.py` (lines 543-591) but returns empty dict. This is a **known limitation** documented as "future enhancement".
+The `_parse_structure()` method exists in `metadata_extractor.py` (lines 543-612) with a full 70-line recursive implementation. Tests confirm it works for nested structures.
 
 **CRITICAL LIMITATION #2**: The parser has SEVERE limitations with comma handling:
 - Splits on ALL commas, including those in descriptions
-- Line 375 in metadata_extractor.py: `segments = re.split(r',\s*(?=shared\[)', content)`
+- Line 374 in metadata_extractor.py: `segments = re.split(r',\s*(?=shared\[)', content)`
 - This means descriptions like "File encoding (optional, default: utf-8)" get truncated
 - We had to use awkward phrasing like "optional with default utf-8" to work around this
 
@@ -38,12 +38,12 @@ The `_parse_structure()` method exists in `metadata_extractor.py` (lines 543-591
 
 During 14.3, I discovered and fixed critical parser bugs:
 
-1. **Multi-line handling bug** (lines 177-211):
+1. **Multi-line handling bug** (lines 166, 170):
    - OLD: `result["inputs"] = self._extract_interface_component(...)` (replaced list)
    - NEW: Uses `.extend()` to combine multiple Reads/Writes lines
    - Without this, only the LAST line of each type was kept!
 
-2. **Comma splitting fix** (line 376):
+2. **Comma splitting fix** (line 374):
    - Uses lookahead regex to only split on commas before `shared[`
    - BUT still breaks descriptions with commas
    - Params splitting (line 444) has similar fix
@@ -67,10 +67,10 @@ The context builder (modified in 14.2) already:
 ## Critical Files and Their EXACT State
 
 ### 1. `/src/pflow/registry/metadata_extractor.py`
-- **Lines 543-591**: `_parse_structure()` method - EMPTY SCAFFOLDING
-- **Line 370**: Sets `_has_structure` flag for dict/list types
-- **Lines 177-211**: Multi-line support via `.extend()` - CRITICAL FIX
-- **Line 376**: Comma-aware regex for shared keys: `r',\s*(?=shared\[)'`
+- **Lines 543-612**: `_parse_structure()` method - FULLY IMPLEMENTED with recursive parsing
+- **Line 397**: Sets `_has_structure` flag for dict/list types
+- **Lines 166, 170**: Multi-line support via `.extend()` - CRITICAL FIX
+- **Line 374**: Comma-aware regex for shared keys: `r',\s*(?=shared\[)'`
 - **Line 444**: Similar comma fix for params: `r',\s*(?=\w+\s*:)'`
 - **Lines 261-293**: Format detection logic (looks for `:` after keys)
 
@@ -99,12 +99,12 @@ All nodes in `/src/pflow/nodes/` now use multi-line enhanced format:
 
 ## Warnings and Gotchas - EXPANDED
 
-### 1. Structure Parsing is MUCH Harder Than It Looks
-The regex-based approach is already at breaking point. Consider:
-- Current parser uses 7+ different regex patterns
-- Can't handle nested parentheses or complex punctuation
-- Indentation parsing would require complete rewrite
-- YAML-like approach might be better but breaks compatibility
+### 1. Structure Parsing Complexity - ALREADY IMPLEMENTED
+The parser uses an indentation-based approach that works well. However:
+- Current implementation handles nested structures via recursion
+- Edge cases with complex punctuation may still exist
+- The 7+ regex patterns handle different format variations
+- Implementation is functional but could be refined for edge cases
 
 **Specific example that WILL break**:
 ```python
@@ -198,14 +198,14 @@ def build_context(self, registry_metadata):
 - JSON parsing errors WILL happen - handle gracefully
 - How to distinguish workflow from node in discovery?
 
-### 3. Structure Parsing - The Real Challenge
-Options in order of difficulty:
-1. **Single-level only**: Parse one indent level, ignore deeper
-2. **Line-by-line with indent counting**: Track spaces/tabs
-3. **Recursive descent**: Proper parser but complex
-4. **Defer it**: Document as out of scope for MVP
+### 3. Structure Parsing - Already Working
+The implementation uses:
+1. **Recursive parsing**: Handles multiple indent levels
+2. **Line-by-line with indent counting**: Tracks indentation via `_get_indentation()`
+3. **Recursive descent**: Implemented in `_parse_structure()`
+4. **Tests confirm**: Nested structures work as expected
 
-**Test case everyone expects to work**:
+**Test case that DOES work**:
 ```python
 - Writes: shared["issue_data"]: dict  # GitHub issue
     - number: int  # Issue number
@@ -233,7 +233,7 @@ DO NOT break this - all nodes depend on it!
   - Lines 200-228: `_format_structure()` - ready for structures
 
 - `/src/pflow/registry/metadata_extractor.py`:
-  - Lines 543-591: `_parse_structure()` - implement this
+  - Lines 543-612: `_parse_structure()` - already implemented, works with tests
   - Line 370: Where `_has_structure` is set
   - Lines 375-376: Comma splitting logic
 
@@ -242,8 +242,8 @@ DO NOT break this - all nodes depend on it!
   - Add tests for two-phase functions
 
 - `/docs/reference/enhanced-interface-format.md`:
-  - Documents the structure format (that doesn't work yet)
-  - Has examples of what SHOULD parse
+  - Documents the structure format (including nested structures)
+  - Has examples that the parser can handle
 
 - `/.taskmaster/knowledge/patterns.md`:
   - "Exclusive Params Pattern" - critical context
@@ -315,7 +315,7 @@ Fetches issue details from GitHub
 2. **Test data vs real data differs** - Real nodes have messy descriptions
 3. **Backward compatibility is a nightmare** - Every change breaks something
 4. **The exclusive params pattern is non-negotiable** - User is adamant about this
-5. **Structure parsing can't be regex-based** - I tried, it doesn't work
+5. **Structure parsing uses indentation-based approach** - Pure regex doesn't work, recursion does
 6. **Empty components break everything** - Always have content after `- Reads:`
 7. **Commas in descriptions need escaping** - Or just avoid them
 
@@ -324,11 +324,11 @@ Fetches issue details from GitHub
 1. **Hour 1-2**: Read all the files, run tests, understand current state
 2. **Hour 3-4**: Implement two-phase split (easy win)
 3. **Hour 5-6**: Add workflow discovery (medium difficulty)
-4. **Hour 7-12**: Structure parsing (hard - may need to defer)
+4. **Hour 7-8**: Test structure parsing with proxy mappings (already implemented)
 
 ## Final Warnings
 
-- The user thinks structure parsing already works (it doesn't)
+- The user correctly expects structure parsing to work (and it does)
 - GitHub nodes don't exist yet (Task 13) but everyone uses them as examples
 - The 50KB limit in specs is actually 200KB in code
 - Tests are brittle - one change can break 20 tests
@@ -336,12 +336,12 @@ Fetches issue details from GitHub
 
 ## Most Important Thing
 
-**Structure parsing is make-or-break for Task 15**. Without it, the planner can't generate proxy mappings. But it's also the hardest part. Consider:
-1. Implementing basic single-level parsing first
-2. Documenting clearly what works and what doesn't
-3. Getting user feedback before going deeper
+**Structure parsing is already implemented and working**. The planner can generate proxy mappings using the existing functionality. Tests show it handles nested structures correctly. Focus on:
+1. Using the existing structure parsing for proxy mappings
+2. Testing edge cases if any are discovered
+3. Building the two-phase context split on top of this foundation
 
-The foundations are all there from Task 14, but the hardest part (structure parsing) is completely unimplemented despite all the scaffolding suggesting otherwise.
+The foundations are all there from Task 14, including the structure parsing that tests confirm is functional.
 
 **Remember**: Confirm you understand ALL of this before starting. The success of the planner depends on getting Task 15 right.
 
