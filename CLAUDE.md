@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with code and documentation in this repository.
 
 ## Core Directive - Epistemic Manifesto
 
@@ -213,6 +213,7 @@ pflow/
 │   ├── reference/                     # Reference documentation
 │   │   ├── cli-reference.md           # CLI commands and syntax
 │   │   ├── execution-reference.md     # Execution model and flow control
+│   │   ├── enhanced-interface-format.md # Docstring format for pflow nodes
 │   │   └── node-reference.md          # Node types and configurations
 │   ├── core-node-packages/            # Platform node package specifications
 │   ├── implementation-details/        # Implementation specifics
@@ -365,7 +366,8 @@ The codebase is in early development with:
 - ✅ Task 8 complete: Build comprehensive shell pipe integration with stdin/stdout
 - ✅ Task 11 complete: Implement read-file and write-file nodes
 - ✅ Task 16 complete: Create planning context builder
-- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 14 - Implement type, structure, and semantic documentation for all Interface components)
+- ✅ Task 14 complete: Implement type, structure, description and semantic documentation for all Interface components
+- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 15 - Extend context builder for two-phase discovery and structure documentation support)
 
 *Update this list as you complete tasks.*
 
