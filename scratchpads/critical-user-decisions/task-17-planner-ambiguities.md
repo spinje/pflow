@@ -5,7 +5,7 @@
 Task 17 is the core feature that makes pflow unique - the Natural Language Planner that enables "Plan Once, Run Forever". After extensive research, I've identified several critical ambiguities and decisions that need to be made before implementation can begin.
 
 **Update**: Tasks 14 and 15 have been added to address critical dependencies:
-- **Task 14**: Implements structured output metadata support, enabling the planner to generate valid path-based proxy mappings
+- **Task 14**: Implements structured output metadata support, enabling the planner to generate valid path-based proxy mappings (✅ Done)
 - **Task 15**: Extends the context builder for two-phase discovery, preventing LLM overwhelm while supporting workflow reuse
 
 ### Key Breakthrough Insights:
