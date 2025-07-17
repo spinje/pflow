@@ -10,6 +10,8 @@ Task 14 successfully implemented enriched metadata extraction that provides:
 
 1. **Structured Node Information**
    - Clear input/output specifications with types
+   - Nested structure, support for complex objects and arrays
+   - Semantic descriptions for each field
    - Example usage patterns
    - Common workflow patterns where nodes are used together
    - Prerequisites and constraints
@@ -27,7 +29,7 @@ During Task 14 implementation, we identified that the context builder could bene
 
 **Phase 1: Discovery Context**
 - Lightweight context focused on finding relevant nodes
-- Includes node names, brief descriptions, and tags
+- Includes node names, brief descriptions, and possibly tags (tags not implemented yet, and not needed for the MVP)
 - Optimized for quick LLM processing to identify candidates
 - Similar to a "search index" for nodes
 
@@ -61,14 +63,9 @@ Specifically, the context builder will create exactly **two markdown files**:
 2. **Detailed Mapping File** (for implementation phase)
    - Contains full inputs/outputs/params with types
    - Includes structure information for complex outputs
+   - Descriptions (if available) for each field
+   - Nested structures (if available, mimics the structure of the node's interface)
    - Provides everything needed for the planner to map connections
-   - Example:
-     ```markdown
-     ### github-get-issue
-     **Inputs**: issue_number (int), repo (str)
-     **Outputs**: issue_data (dict) - Contains id, title, user.login, etc.
-     **Params**: token (str)
-     ```
 
 This split serves a specific purpose:
 - First file helps planner SELECT components without overwhelming detail
