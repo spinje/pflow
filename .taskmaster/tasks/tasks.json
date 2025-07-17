@@ -507,7 +507,7 @@
         "id": 14,
         "title": "Implement type, structure, and semantic documentation for all Interface components",
         "description": "Enhance node docstring format to support structured declarations with types for ALL Interface components (Reads, Writes, Params), enabling the planner to generate valid proxy mapping paths and understand data types across the entire node interface.",
-        "status": "pending",
+        "status": "done",
         "dependencies": [
           7,
           16
@@ -522,7 +522,7 @@
             "description": "Create the core parsing functionality to extract types, structures, and descriptions from the enhanced Interface format while maintaining backward compatibility with the existing simple format. This parser will handle indentation-based structure parsing and inline comment extraction.",
             "dependencies": [],
             "details": "Extend parsing logic in src/pflow/registry/metadata_extractor.py. Implement detection logic for old vs new format based on colon presence. Create indentation-based parser for nested structures (not complex regex). Add comment parsing for semantic descriptions using # syntax. Ensure graceful fallback for malformed structures. Focus on the _extract_list_section() method as the extension point.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test both old format (Writes: shared[\"key1\"], shared[\"key2\"]) and new format with types. Test nested structure parsing with various indentation levels. Test comment extraction and handling. Test error cases and graceful degradation. Test with real node docstrings from the codebase."
           },
           {
@@ -544,7 +544,7 @@
               2
             ],
             "details": "Start with priority nodes: github-get-issue (most complex), github-list-prs (arrays). Add types to all Interface components (Reads, Writes, Params). Document nested structures for API response nodes. Add semantic descriptions using # comments for clarity. Update file operation nodes with metadata structure documentation. Update all workflow examples to use typed nodes. Follow consistent format established in subtasks 1-2.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Verify each migrated node's metadata extracts correctly. Test that examples work with the new format. Ensure no regression in node functionality. Test complex proxy mappings work with documented structures."
           },
           {
@@ -555,7 +555,7 @@
               3
             ],
             "details": "Extend tests in test_metadata_extractor.py for all new functionality. Create integration tests with mock planner scenarios. Add end-to-end test with github-get-issue proxy mapping example. Write migration guide for developers. Document the enhanced Interface format specification. Update any affected documentation in docs/.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "100% coverage of new parser functionality. Integration tests covering all format variations. Performance tests for parsing overhead. Documentation validates against actual implementation."
           }
         ]

@@ -4,10 +4,10 @@
 
 **Chosen Approach**: Structured docstring parsing with hybrid extraction
 **Primary Format**: Interface sections in Python docstrings
-**Parsing Strategy**: `docstring_parser` + custom regex for pflow-specific sections
+**Parsing Strategy**: Custom regex patterns with support for both simple and enhanced formats
 **Purpose**: Enable metadata-driven planner selection from static node library
 
-This document defines the infrastructure for extracting structured metadata from developer-written pflow nodes to support the planner's discovery and validation capabilities.
+This document defines the infrastructure for extracting structured metadata from developer-written pflow nodes to support the planner's discovery and validation capabilities. The system now supports an enhanced format with type annotations and semantic descriptions while maintaining backward compatibility.
 
 ---
 
@@ -26,6 +26,7 @@ This document defines the infrastructure for extracting structured metadata from
 3. **Framework Integration** - Works with established pocketflow patterns
 4. **Registry Compatible** - Integrates with versioning and discovery systems
 5. **Planner Ready** - Enables metadata-driven LLM selection and validation
+6. **Type Aware** - Enhanced format provides type information for better planning
 
 ---
 
@@ -40,9 +41,10 @@ This metadata extraction infrastructure directly supports several core pflow sys
 The extraction process feeds the planner's metadata-driven selection:
 
 - Builds registry of available nodes with natural language descriptions
-- Provides interface compatibility data for validation
+- Provides interface compatibility data with type information for validation
 - Enables LLM context generation for intelligent selection
 - Supports both natural language and CLI pipe syntax validation
+- Type annotations enable better proxy mapping generation
 
 ### Registry Integration
 >
@@ -54,6 +56,7 @@ Metadata extraction occurs during node installation:
 - Version changes invalidate cached metadata for re-extraction
 - Registry commands use pre-extracted metadata for rich CLI experience
 - Supports namespace and versioning requirements
+- Enhanced format metadata stored in same JSON structure
 
 ### Shared Store Compatibility
 >
@@ -62,17 +65,20 @@ Metadata extraction occurs during node installation:
 Extracted interface data preserves natural shared store access patterns:
 
 - Documents `shared["key"]` usage from actual node code
-- Enables proxy mapping generation when needed for complex flows
+- Type information enables proxy mapping generation for complex flows
 - Validates interface consistency across flow components
 - Maintains natural interface simplicity for node writers
+- Exclusive params pattern reduces redundancy
 
 ---
 
-## Docstring Format Standard
+## Docstring Format Standards
 
-### Actual Format Used in Codebase
+The metadata extractor supports both the simple format (for backward compatibility) and the enhanced format (recommended for new nodes).
 
-All implemented nodes in the codebase use this **single-line format** for the Interface section:
+### Enhanced Format (Recommended)
+
+All new nodes should use the enhanced format with type annotations and descriptions:
 
 ```python
 class ReadFileNode(Node):
@@ -83,9 +89,10 @@ class ReadFileNode(Node):
     following the Tutorial-Cursor pattern for file display.
 
     Interface:
-    - Reads: shared["file_path"] (required), shared["encoding"] (optional)
-    - Writes: shared["content"] on success, shared["error"] on failure
-    - Params: file_path, encoding (as fallbacks if not in shared)
+    - Reads: shared["file_path"]: str  # Path to the file to read
+    - Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
+    - Writes: shared["content"]: str  # File contents with line numbers
+    - Writes: shared["error"]: str  # Error message if operation failed
     - Actions: default (success), error (failure)
 
     Security Note: This node can read ANY accessible file on the system.
@@ -109,27 +116,34 @@ class ReadFileNode(Node):
         return "default"
 ```
 
+### Simple Format (Legacy/Backward Compatible)
+
+The original format without type annotations is still supported:
+
+```python
+Interface:
+- Reads: shared["file_path"], shared["encoding"]
+- Writes: shared["content"], shared["error"]
+- Params: file_path, encoding (as fallbacks)
+- Actions: default (success), error (failure)
+```
+
 ### Key Format Characteristics
 
-1. **Single-line format**: Each Interface component is on one line starting with `- `
-2. **Required/Optional notation**: Use `(required)` or `(optional)` inline
-3. **Success/Failure conditions**: Use `on success`, `on failure` for conditional outputs
-4. **Params as fallbacks**: The "Params:" line explicitly states "as fallbacks if not in shared"
+1. **Multi-line support**: Each Interface component can be on its own line
+2. **Type annotations**: Use `: type` after shared keys or param names
+3. **Semantic descriptions**: Use `# comment` for descriptions
+4. **Exclusive params pattern**: Only list params NOT already in Reads
 5. **Action descriptions**: Use parentheses to describe when actions trigger
 
 ### Interface Components
 
-- **Reads**: `shared["key"]` patterns with optional/required notation
-- **Writes**: `shared["key"]` patterns with success/failure conditions
-- **Params**: Node parameters that serve as fallbacks when values not in shared store
-- **Actions**: Transition strings with descriptive context
+- **Reads**: `shared["key"]: type  # description` - inputs from shared store
+- **Writes**: `shared["key"]: type  # description` - outputs to shared store
+- **Params**: `param: type  # description` - configuration parameters (exclusive)
+- **Actions**: `action_name (description)` - transition strings
 
-### Examples from Codebase
-
-Real examples showing the exact format:
-- `/src/pflow/nodes/file/read_file.py` (lines 18-32)
-- `/src/pflow/nodes/file/write_file.py` (lines 21-39)
-- `/src/pflow/nodes/file/copy_file.py` (lines 21-36)
+For complete format specification, see [Enhanced Interface Format](../reference/enhanced-interface-format.md).
 
 ---
 
@@ -137,7 +151,7 @@ Real examples showing the exact format:
 
 ### Core Architecture
 
-Based on Task 7's discoveries, the metadata extractor focuses on parsing the actual single-line Interface format used by all pflow nodes:
+The metadata extractor has been enhanced to support both simple and enhanced formats with automatic detection:
 
 ```python
 import re
@@ -148,24 +162,24 @@ import pocketflow
 class PflowMetadataExtractor:
     """Extract metadata from pflow node docstrings.
 
-    This implementation is based on the actual docstring format used
-    in the codebase, not theoretical formats from documentation.
+    Supports both simple and enhanced formats with automatic detection.
+    Enhanced format includes type annotations and semantic descriptions.
     """
+
+    # Regex patterns for Interface parsing
+    INTERFACE_PATTERN = r"Interface:\s*\n((?:[ \t]*-[^\n]+(?:\n(?![ \t]*-)[ \t]+[^\n]+)*\n?)*)"
+    INTERFACE_ITEM_PATTERN = r"-\s*(\w+):\s*([^\n]*(?:\n(?![ \t]*-)[ \t]+[^\n]+)*)"
+    SHARED_KEY_PATTERN = r'shared\["([^"]+)"\]'
+    ACTIONS_PATTERN = r"(\w+)(?:\s*\([^)]+\))?"
 
     def extract_metadata(self, node_class: type) -> Dict[str, Any]:
         """Extract metadata from a node class.
 
-        Args:
-            node_class: A class that inherits from pocketflow.BaseNode
-
-        Returns:
-            Dictionary with description, inputs, outputs, params, actions
-
-        Raises:
-            ValueError: If node_class is not a valid pflow node
+        Returns rich format with type information when available.
+        Falls back gracefully for simple format nodes.
         """
         # Validate it's a node
-        if not self._is_node_class(node_class):
+        if not issubclass(node_class, pocketflow.BaseNode):
             raise ValueError(f"{node_class.__name__} is not a pflow node")
 
         docstring = inspect.getdoc(node_class) or ""
@@ -182,344 +196,243 @@ class PflowMetadataExtractor:
             'actions': interface_data.get('actions', [])
         }
 
-    def _is_node_class(self, cls) -> bool:
-        """Check if class is a valid pflow node (Node or BaseNode)."""
-        try:
-            return issubclass(cls, pocketflow.BaseNode)
-        except TypeError:
-            return False
+    def _detect_interface_format(self, content: str, component_type: str) -> bool:
+        """Detect if content uses enhanced format with type annotations."""
+        if component_type in ("inputs", "outputs"):
+            # Check for colon after shared["key"]
+            if re.search(r'shared\["[^"]+"\]\s*:', content):
+                return True
+        elif component_type == "params":
+            # Check for colon after param name (not within parentheses)
+            content_no_parens = re.sub(r"\([^)]+\)", "", content)
+            if re.search(r"\b\w+\s*:\s*\w+", content_no_parens):
+                return True
+        return False
 
-    def _extract_description(self, docstring: str) -> str:
-        """Extract first line/paragraph as description."""
-        if not docstring:
-            return "No description"
+    def _extract_enhanced_shared_keys(self, content: str) -> List[Dict[str, Any]]:
+        """Extract shared store keys with type annotations and descriptions.
 
-        # Split into lines
-        lines = docstring.strip().split('\n')
+        Uses comma-aware splitting to preserve commas in descriptions.
+        """
+        results = []
 
-        # First non-empty line is the description
-        for line in lines:
-            line = line.strip()
-            if line:
-                return line
+        # Check for shared comment at end of line
+        shared_comment = ""
+        comment_match = re.search(r"#\s*([^\n]+)$", content)
+        if comment_match:
+            before_comment = content[:comment_match.start()].strip()
+            if "," in before_comment:
+                shared_comment = comment_match.group(1).strip()
+                content = before_comment
 
-        return "No description"
+        # Split by comma only when followed by shared["..."] pattern
+        # This preserves commas inside descriptions
+        segments = re.split(r',\s*(?=shared\[)', content)
 
-    def _parse_interface_section(self, docstring: str) -> Dict[str, List[str]]:
-        """Parse the Interface: section of the docstring."""
-        # Find the Interface section
-        interface_match = re.search(r'Interface:\s*\n((?:[ \t]*-[^\n]+\n)*)', docstring, re.MULTILINE)
-        if not interface_match:
-            return {}
-
-        interface_text = interface_match.group(1)
-        result = {
-            'inputs': [],
-            'outputs': [],
-            'params': [],
-            'actions': []
-        }
-
-        # Parse each line
-        for line in interface_text.split('\n'):
-            line = line.strip()
-            if not line or not line.startswith('-'):
+        for segment in segments:
+            if not segment.strip():
                 continue
 
-            if line.startswith('- Reads:'):
-                result['inputs'] = self._extract_keys_from_line(line, 'Reads:')
-            elif line.startswith('- Writes:'):
-                result['outputs'] = self._extract_keys_from_line(line, 'Writes:')
-            elif line.startswith('- Params:'):
-                result['params'] = self._extract_params_from_line(line)
-            elif line.startswith('- Actions:'):
-                result['actions'] = self._extract_actions_from_line(line)
+            # Pattern: shared["key"]: type  # description
+            item_pattern = r'shared\["([^"]+)"\]\s*:\s*([^\s#]+)(?:\s*#\s*(.*))?'
+            match = re.match(item_pattern, segment.strip())
 
-        return result
-
-    def _extract_keys_from_line(self, line: str, prefix: str) -> List[str]:
-        """Extract shared store keys from Reads/Writes lines."""
-        # Remove prefix
-        content = line[len(f"- {prefix}"):].strip()
-
-        # Find all shared["key"] patterns
-        keys = re.findall(r'shared\["([^"]+)"\]', content)
-        return keys
-
-    def _extract_params_from_line(self, line: str) -> List[str]:
-        """Extract parameter names from Params line."""
-        # Remove "- Params:" prefix
-        content = line[len("- Params:"):].strip()
-
-        # Remove the "as fallbacks" note if present
-        content = re.sub(r'\s*\(as fallbacks.*?\)', '', content)
-
-        # Split by commas and clean up
-        params = []
-        for param in content.split(','):
-            param = param.strip()
-            if param and param != 'as fallbacks if not in shared':
-                params.append(param)
-
-        return params
-
-    def _extract_actions_from_line(self, line: str) -> List[str]:
-        """Extract action names from Actions line."""
-        # Remove "- Actions:" prefix
-        content = line[len("- Actions:"):].strip()
-
-        # Find all action names (word followed by optional parenthetical)
-        actions = []
-        for match in re.finditer(r'(\w+)(?:\s*\([^)]+\))?', content):
-            action_name = match.group(1)
-            if action_name:
-                actions.append(action_name)
-
-        return actions if actions else ['default']
-
-
-class InterfaceSectionParser:
-    """Specialized parser for Interface: sections with format flexibility."""
-
-    def parse_interface(self, docstring: str) -> Dict:
-        """Parse Interface section with support for multiple formats."""
-        interface_match = re.search(
-            r'Interface:\s*\n(.*?)(?=\n\n|\n[A-Z][a-z]+:|\Z)',
-            docstring,
-            re.DOTALL
-        )
-
-        if not interface_match:
-            return {"inputs": {}, "outputs": {}, "params": {}, "actions": ["default"]}
-
-        interface_text = interface_match.group(1)
-
-        # Try structured format first, fall back to simple format
-        if self._is_structured_format(interface_text):
-            return self._parse_structured_format(interface_text)
-        else:
-            return self._parse_simple_format(interface_text)
-
-    def _is_structured_format(self, text: str) -> bool:
-        """Detect if using structured (Inputs:/Outputs:) format."""
-        return bool(re.search(r'\s*(Inputs|Outputs|Parameters):\s*\n', text))
-
-    def _parse_structured_format(self, text: str) -> Dict:
-        """Parse structured format with Inputs:/Outputs: subsections."""
-        return {
-            "inputs": self._parse_inputs(text),
-            "outputs": self._parse_outputs(text),
-            "params": self._parse_params(text),
-            "actions": self._parse_actions(text)
-        }
-
-    def _parse_simple_format(self, text: str) -> Dict:
-        """Parse the actual single-line format used by all pflow nodes."""
-        inputs = {}
-        outputs = {}
-        params = {}
-        actions = ["default"]
-
-        for line in text.strip().split('\n'):
-            line = line.strip()
-            if not line or not line.startswith('-'):
-                continue
-
-            # Parse "- Reads: shared["key"] (required), shared["key2"] (optional)"
-            if line.startswith('- Reads:'):
-                content = line[len('- Reads:'):].strip()
-                # Find all shared["key"] patterns
-                for match in re.finditer(r'shared\["([^"]+)"\](?:\s*\(([^)]+)\))?', content):
-                    key = match.group(1)
-                    modifier = match.group(2) or ""
-                    inputs[key] = {
-                        "description": key,  # Will be enhanced by full line context
-                        "type": "any",
-                        "required": "optional" not in modifier.lower()
-                    }
-
-            # Parse "- Writes: shared["key"] on success, shared["error"] on failure"
-            elif line.startswith('- Writes:'):
-                content = line[len('- Writes:'):].strip()
-                # Find all shared["key"] patterns with conditions
-                for match in re.finditer(r'shared\["([^"]+)"\](?:\s+on\s+(\w+))?', content):
-                    key = match.group(1)
-                    condition = match.group(2) or "always"
-                    outputs[key] = {
-                        "description": f"{key} ({condition})",
-                        "type": "any",
-                        "condition": condition
-                    }
-
-            # Parse "- Params: param1, param2 (as fallbacks if not in shared)"
-            elif line.startswith('- Params:'):
-                content = line[len('- Params:'):].strip()
-                # Remove the "as fallbacks" note if present
-                content = re.sub(r'\s*\(as fallbacks.*?\)', '', content)
-                # Split by commas and extract param names
-                for param in content.split(','):
-                    param = param.strip()
-                    if param and param != 'as fallbacks if not in shared':
-                        params[param] = {
-                            "description": f"Fallback for shared['{param}']",
-                            "type": "any",
-                            "optional": True
-                        }
-
-            # Parse "- Actions: default (success), error (failure)"
-            elif line.startswith('- Actions:'):
-                content = line[len('- Actions:'):].strip()
-                actions = []
-                # Find action names with optional descriptions
-                for match in re.finditer(r'(\w+)(?:\s*\([^)]+\))?', content):
-                    action_name = match.group(1)
-                    if action_name:
-                        actions.append(action_name)
-                if not actions:
-                    actions = ["default"]
-
-        return {
-            "inputs": inputs,
-            "outputs": outputs,
-            "params": params,
-            "actions": actions
-        }
-
-    def _parse_inputs(self, text: str) -> Dict[str, Dict]:
-        """Parse Inputs subsection."""
-        inputs_match = re.search(r'Inputs:\s*\n(.*?)(?=\n\s*[A-Z][a-z]+:|\Z)',
-                                text, re.DOTALL)
-        if not inputs_match:
-            return {}
-
-        inputs = {}
-        for line in inputs_match.group(1).strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-
-            # Pattern: "key (type): description, required/optional"
-            match = re.match(r'(\w+)\s*(?:\(([^)]+)\))?\s*:\s*(.+)', line)
             if match:
-                key, type_info, description = match.groups()
-                inputs[key] = {
-                    "description": description.strip(),
-                    "type": type_info.strip() if type_info else "any",
-                    "required": "optional" not in description.lower()
-                }
+                key = match.group(1)
+                type_str = match.group(2).strip()
+                individual_comment = match.group(3).strip() if match.group(3) else ""
+                description = individual_comment if individual_comment else shared_comment
 
-        return inputs
+                result = {"key": key, "type": type_str, "description": description}
 
-    def _parse_outputs(self, text: str) -> Dict[str, Dict]:
-        """Parse Outputs subsection."""
-        outputs_match = re.search(r'Outputs:\s*\n(.*?)(?=\n\s*[A-Z][a-z]+:|\Z)',
-                                 text, re.DOTALL)
-        if not outputs_match:
-            return {}
+                # Mark complex types for structure parsing (future enhancement)
+                if type_str in ("dict", "list", "list[dict]"):
+                    result["_has_structure"] = True
 
-        outputs = {}
-        for line in outputs_match.group(1).strip().split('\n'):
-            line = line.strip()
-            if not line:
+                results.append(result)
+
+        return results
+
+    def _extract_enhanced_params(self, content: str) -> List[Dict[str, Any]]:
+        """Extract parameters with type annotations and descriptions.
+
+        Uses specialized regex to handle commas in descriptions.
+        """
+        results = []
+
+        # Split params properly, preserving commas in descriptions
+        param_segments = re.split(r',\s*(?=\w+\s*:)', content)
+
+        for segment in param_segments:
+            segment = segment.strip()
+            if not segment:
                 continue
 
-            match = re.match(r'(\w+)\s*(?:\(([^)]+)\))?\s*:\s*(.+)', line)
+            # Pattern: param_name: type  # description
+            param_pattern = r"(\w+)\s*:\s*([^#\n]+)(?:\s*#\s*(.*))?$"
+            match = re.match(param_pattern, segment)
+
             if match:
-                key, type_info, description = match.groups()
-                outputs[key] = {
-                    "description": description.strip(),
-                    "type": type_info.strip() if type_info else "any"
-                }
+                key = match.group(1)
+                type_str = match.group(2).strip()
+                description = match.group(3).strip() if match.group(3) else ""
 
-        return outputs
+                results.append({"key": key, "type": type_str, "description": description})
 
-    def _parse_params(self, text: str) -> Dict[str, Dict]:
-        """Parse Parameters subsection."""
-        params_match = re.search(r'Parameters:\s*\n(.*?)(?=\n\s*[A-Z][a-z]+:|\Z)',
-                                text, re.DOTALL)
-        if not params_match:
-            return {}
+        return results
 
-        params = {}
-        for line in params_match.group(1).strip().split('\n'):
-            line = line.strip()
-            if not line or line.lower() == "none":
-                continue
+    def _process_interface_item(self, item_type: str, item_content: str, result: dict):
+        """Process a single interface item with multi-line support.
 
-            match = re.match(r'(\w+)\s*(?:\(([^)]+)\))?\s*:\s*(.+)', line)
-            if match:
-                key, type_info, description = match.groups()
+        Critical fix: Uses extend() instead of replace to support multiple
+        lines of the same type (e.g., multiple Reads: lines).
+        """
+        type_map = {"reads": "inputs", "writes": "outputs", "params": "params"}
+        result_key = type_map[item_type]
 
-                # Extract default value if present
-                default_match = re.search(r'Default:\s*([^.]+)', description)
-                default_value = default_match.group(1).strip() if default_match else None
+        # Extract component based on format
+        is_enhanced = self._detect_interface_format(item_content, result_key)
 
-                # Clean description
-                clean_desc = re.sub(r'\.\s*Default:.*', '', description).strip()
-
-                params[key] = {
-                    "description": clean_desc,
-                    "type": type_info.strip() if type_info else "any",
-                    "optional": "optional" in (type_info or "").lower(),
-                    "default": default_value
-                }
-
-        return params
-
-    def _parse_actions(self, text: str) -> List[str]:
-        """Parse Actions subsection."""
-        actions_match = re.search(r'Actions:\s*\n(.*?)(?=\n\s*[A-Z][a-z]+:|\Z)',
-                                 text, re.DOTALL)
-        if not actions_match:
-            return ["default"]
-
-        actions = []
-        for line in actions_match.group(1).strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-
-            # Extract action name (before colon if present)
-            action_match = re.match(r'(\w+)\s*:?', line)
-            if action_match:
-                actions.append(action_match.group(1))
-
-        return actions or ["default"]
-
-    def _parse_examples(self, examples_text: str) -> List[Dict]:
-        """Parse Examples section into structured format."""
-        examples = []
-        current_example = None
-        current_code = []
-
-        for line in examples_text.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-
-            # New example starts (description followed by colon)
-            if ':' in line and not line.startswith(' '):
-                if current_example:
-                    examples.append({
-                        "description": current_example,
-                        "code": current_code
-                    })
-                current_example = line.rstrip(':')
-                current_code = []
+        if result_key in ("inputs", "outputs"):
+            if is_enhanced:
+                new_items = self._extract_enhanced_shared_keys(item_content)
             else:
-                # Code line (indented)
-                if line.startswith(' ') or 'shared[' in line or 'params' in line:
-                    current_code.append(line.strip())
+                # Simple format - convert to rich format
+                keys = self._extract_shared_keys(item_content)
+                new_items = [{"key": k, "type": "any", "description": ""} for k in keys]
+        else:  # params
+            if is_enhanced:
+                new_items = self._extract_enhanced_params(item_content)
+            else:
+                # Simple format - convert to rich format
+                params = self._extract_params(item_content)
+                new_items = [{"key": p, "type": "any", "description": ""} for p in params]
 
-        # Add last example
-        if current_example:
-            examples.append({
-                "description": current_example,
-                "code": current_code
-            })
-
-        return examples
+        # Multi-line support: extend instead of replace
+        if isinstance(result[result_key], list) and isinstance(new_items, list):
+            result[result_key].extend(new_items)
+        else:
+            result[result_key] = new_items
 ```
+
+### Parser Implementation Details
+
+#### Format Detection Logic
+
+The parser automatically detects which format is being used:
+
+1. **For Reads/Writes**: Looks for `:` after `shared["key"]`
+2. **For Params**: Looks for `:` after parameter name (ignoring colons in parentheses)
+
+#### Multi-line Support Fix
+
+A critical bug was fixed in subtask 14.3 to support multiple lines of the same type:
+
+```python
+# OLD (broken) - replaced data:
+result["inputs"] = self._extract_interface_component(...)
+
+# NEW (fixed) - extends data:
+result["inputs"].extend(self._extract_interface_component(...))
+```
+
+This allows nodes to have multiple `Reads:` or `Writes:` lines that combine properly.
+
+#### Comma-aware Splitting
+
+Another critical fix handles commas in descriptions:
+
+```python
+# OLD (broken on commas in descriptions):
+content.split(",")
+
+# NEW (preserves commas in descriptions):
+re.split(r',\s*(?=shared\[)', content)  # For shared keys
+re.split(r',\s*(?=\w+\s*:)', content)   # For params
+```
+
+This regex uses positive lookahead to split only on commas followed by the expected pattern.
+
+---
+
+## The Exclusive Params Pattern
+
+A key feature of the enhanced format is the exclusive params pattern, which eliminates redundancy:
+
+### Pattern Description
+
+Parameters that are already listed in `Reads` are automatically available as fallbacks and should NOT be repeated in `Params`.
+
+### Implementation
+
+```python
+def _apply_exclusive_params_pattern(self, result: dict) -> dict:
+    """Apply exclusive params pattern to filter redundant parameters."""
+    # Get all input keys
+    input_keys = set()
+    for inp in result.get("inputs", []):
+        if isinstance(inp, dict):
+            input_keys.add(inp["key"])
+        else:
+            input_keys.add(inp)
+
+    # Filter params to only exclusive ones
+    exclusive_params = []
+    for param in result.get("params", []):
+        if isinstance(param, dict):
+            if param["key"] not in input_keys:
+                exclusive_params.append(param)
+        else:
+            if param not in input_keys:
+                exclusive_params.append(param)
+
+    result["params"] = exclusive_params
+    return result
+```
+
+### Example
+
+```python
+# Before exclusive params pattern:
+Interface:
+- Reads: shared["file_path"]: str  # Path to file
+- Params: file_path: str, encoding: str, append: bool
+
+# After exclusive params pattern:
+Interface:
+- Reads: shared["file_path"]: str  # Path to file
+- Params: encoding: str, append: bool  # file_path removed as redundant
+```
+
+---
+
+## Known Limitations
+
+The current parser has some MVP-acceptable limitations:
+
+### 1. Empty Components Bug
+Empty lines like `- Reads:` with no content can cause parsing misalignment.
+
+### 2. Long Line Handling
+Very long lines (>500 characters) may not parse completely due to regex limitations.
+
+### 3. Malformed Enhanced Format
+Invalid syntax may create unexpected nested structures in the output.
+
+### 4. Structure Parsing Not Implemented
+While the parser recognizes complex types (`dict`, `list`) and sets a `_has_structure` flag, it does not yet parse the indented structure documentation:
+
+```python
+# Recognized but not parsed:
+- Writes: shared["data"]: dict  # User data
+    - name: str  # User name
+    - age: int  # User age
+```
+
+### 5. Mixed Format Limitations
+Mixing simple and enhanced format in the same Interface section may produce inconsistent results.
+
+These limitations are documented and acceptable for the MVP as they don't affect normal usage patterns.
 
 ---
 
@@ -527,628 +440,189 @@ class InterfaceSectionParser:
 
 ### Metadata Storage Schema
 
-Aligned with `json-schema-for-flows-ir-and-nodesmetadata.md`:
+The enhanced format data is stored in the same JSON structure, now with type information:
 
 ```json
 {
   "node": {
-    "id": "yt-transcript",
+    "id": "read-file",
     "namespace": "core",
     "version": "1.0.0",
-    "python_file": "nodes/core/yt-transcript/1.0.0/node.py",
-    "class_name": "YTTranscript"
+    "python_file": "nodes/file/read_file.py",
+    "class_name": "ReadFileNode"
   },
   "interface": {
-    "inputs": {
-      "url": {
-        "description": "YouTube video URL",
-        "type": "str",
-        "required": true
-      }
-    },
-    "outputs": {
-      "transcript": {
-        "description": "Extracted transcript text",
-        "type": "str"
-      }
-    },
-    "params": {
-      "language": {
-        "description": "Transcript language code",
-        "type": "str",
-        "optional": true,
-        "default": "en"
-      }
-    },
-    "actions": ["default", "video_unavailable"]
-  },
-  "documentation": {
-    "description": "Fetches YouTube transcript from video URL",
-    "long_description": "Downloads and extracts transcript text...",
-    "examples": [
+    "inputs": [
       {
-        "description": "Basic usage",
-        "code": ["shared[\"url\"] = \"https://youtu.be/abc123\""]
+        "key": "file_path",
+        "type": "str",
+        "description": "Path to the file to read"
+      },
+      {
+        "key": "encoding",
+        "type": "str",
+        "description": "File encoding (optional, default: utf-8)"
       }
     ],
-    "performance": [
-      "Average processing time: 2-5 seconds",
-      "Memory usage: ~10MB per request"
-    ]
+    "outputs": [
+      {
+        "key": "content",
+        "type": "str",
+        "description": "File contents with line numbers"
+      },
+      {
+        "key": "error",
+        "type": "str",
+        "description": "Error message if operation failed"
+      }
+    ],
+    "params": [],  // Empty due to exclusive params pattern
+    "actions": ["default", "error"]
   },
-  "extraction": {
-    "source_hash": "sha256:abc123...",
-    "extracted_at": "2025-01-01T12:00:00Z",
-    "extractor_version": "1.0.0"
+  "documentation": {
+    "description": "Read content from a file and add line numbers for display"
   }
 }
 ```
 
-### Installation Integration
-
-```python
-def registry_install_with_metadata_extraction(node_file: str, namespace: str = None):
-    """Install node with automatic metadata extraction."""
-
-    # 1. Load and validate node class
-    node_class = load_node_class(node_file)
-
-    # 2. Extract metadata
-    extractor = PflowMetadataExtractor()
-    metadata = extractor.extract_metadata(node_class)
-
-    # 3. Validate extracted metadata
-    validation_errors = validate_metadata(metadata)
-    if validation_errors:
-        raise ValidationError(f"Metadata validation failed: {validation_errors}")
-
-    # 4. Install to registry with metadata
-    registry_path = get_registry_path(namespace or metadata["node"]["namespace"])
-    install_node_files(node_file, metadata, registry_path)
-
-    # 5. Update registry index
-    update_registry_index(metadata)
-
-    return metadata
-```
-
 ---
 
-## CLI Commands
+## Integration with Context Builder
 
-### Registry Integration Commands
+The context builder has been updated to display the enhanced metadata:
+
+### Context Builder Flow
+
+1. **Metadata Extraction**: Parser extracts types and descriptions
+2. **Registry Storage**: Enhanced metadata stored in JSON
+3. **Context Building**: Formats metadata for planner consumption
+4. **Type Display**: Shows types inline with keys
+5. **Description Display**: Includes semantic descriptions
+6. **Structure Hints**: For complex types, shows hierarchical structure
+
+### Example Context Output
+
+```markdown
+### read-file
+Read content from a file and add line numbers for display
+
+**Inputs**: `file_path: str` - Path to the file to read, `encoding: str` - File encoding (optional, default: utf-8)
+**Outputs**: `content: str` - File contents with line numbers, `error: str` - Error message if operation failed
+**Actions**: default (success), error (failure)
+```
+
+### Exclusive Params in Context
+
+The context builder also implements the exclusive params pattern:
 
 ```python
-# pflow/cli/registry.py
-import click
-import json
-from pathlib import Path
-from rich.console import Console
-from rich.table import Table
-
-console = Console()
-
-@click.group()
-def registry():
-    """Node registry management commands."""
-    pass
-
-@registry.command()
-@click.argument('python_file', type=click.Path(exists=True))
-@click.option('--output', '-o', type=click.Path(), help='Output file')
-def extract_metadata(python_file, format, output):
-    """Extract metadata from Python node file."""
-    extractor = PflowMetadataExtractor()
-    metadata = extractor.extract_from_file(python_file)
-    content = json.dumps(metadata, indent=2)
-
-    if output:
-        Path(output).write_text(content)
-        console.print(f"✅ Metadata extracted to {output}")
+# Build input keys set
+input_keys = set()
+for inp in inputs:
+    if isinstance(inp, dict):
+        input_keys.add(inp["key"])
     else:
-        console.print(content)
+        input_keys.add(inp)
 
-@registry.command()
-@click.argument('python_file', type=click.Path(exists=True))
-def validate_metadata(python_file):
-    """Validate that docstring metadata matches actual code."""
-    extractor = PflowMetadataExtractor()
-    validator = CodeValidator()
+# Filter to exclusive params only
+exclusive_params = []
+for param in params:
+    if isinstance(param, dict):
+        key = param["key"]
+        if key not in input_keys:
+            exclusive_params.append(param)
+```
 
-    # Extract metadata from docstring
-    documented = extractor.extract_from_file(python_file)
+This ensures the planner only sees truly exclusive parameters, reducing confusion.
 
-    # Analyze actual code behavior
-    actual = validator.analyze_code_behavior(python_file)
+---
 
-    # Compare and report
-    issues = validator.compare_metadata(documented, actual)
+## Testing Approach
 
-    if not issues:
-        console.print("✅ Metadata is consistent with code")
-    else:
-        console.print("⚠️  Found metadata inconsistencies:")
-        for issue in issues:
-            console.print(f"  - {issue}")
+The enhanced metadata extraction system has comprehensive test coverage:
 
-@registry.command()
-def refresh_metadata():
-    """Re-extract metadata for all installed nodes."""
-    registry = NodeRegistry()
-    extractor = PflowMetadataExtractor()
+### Test Categories
 
-    updated_count = 0
-    for node_path in registry.get_all_node_paths():
-        try:
-            node_class = registry.load_node_class(node_path)
-            new_metadata = extractor.extract_metadata(node_class)
+1. **Format Detection Tests**: Verify correct format identification
+2. **Enhanced Parsing Tests**: Test type and description extraction
+3. **Multi-line Tests**: Verify multiple lines combine correctly
+4. **Comma Handling Tests**: Test descriptions with complex punctuation
+5. **Backward Compatibility Tests**: Ensure simple format still works
+6. **Edge Case Tests**: Malformed input, empty components, long lines
+7. **Integration Tests**: Full flow from docstring to context output
 
-            # Check if metadata changed
-            current_metadata = registry.get_metadata(node_path)
-            if metadata_changed(current_metadata, new_metadata):
-                registry.update_metadata(node_path, new_metadata)
-                updated_count += 1
-                console.print(f"Updated: {node_path}")
+### Example Test Cases
 
-        except Exception as e:
-            console.print(f"Failed to update {node_path}: {e}")
+```python
+def test_enhanced_format_comma_handling(self):
+    """Test that commas in descriptions are preserved."""
+    class CommaNode(pocketflow.Node):
+        """
+        Interface:
+        - Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
+        """
 
-    console.print(f"✅ Updated metadata for {updated_count} nodes")
+    result = self.extractor.extract_metadata(CommaNode)
+    assert result["inputs"][0]["description"] == "File encoding (optional, default: utf-8)"
 
-@registry.command()
-def list():
-    """List nodes with rich metadata."""
-    registry = NodeRegistry()
-    nodes = registry.list_all()
+def test_exclusive_params_pattern(self):
+    """Test that params already in Reads are filtered out."""
+    class ExclusiveNode(pocketflow.Node):
+        """
+        Interface:
+        - Reads: shared["input"]: str
+        - Params: input: str, extra: bool  # input should be filtered
+        """
 
-    table = Table()
-    table.add_column("Node ID")
-    table.add_column("Description")
-    table.add_column("Inputs")
-    table.add_column("Outputs")
-    table.add_column("Version")
-
-    for node in nodes:
-        metadata = node.get("metadata", {})
-        interface = metadata.get("interface", {})
-
-        inputs = ", ".join(interface.get("inputs", {}).keys()) or "none"
-        outputs = ", ".join(interface.get("outputs", {}).keys()) or "none"
-
-        table.add_row(
-            node["node"]["id"],
-            metadata.get("documentation", {}).get("description", "No description")[:50],
-            inputs,
-            outputs,
-            node["node"]["version"]
-        )
-
-    console.print(table)
-
-@registry.command()
-@click.argument('node_id')
-def describe(node_id):
-    """Show detailed node information."""
-    registry = NodeRegistry()
-    node = registry.get_node(node_id)
-
-    if not node:
-        console.print(f"❌ Node not found: {node_id}")
-        return
-
-    metadata = node.get("metadata", {})
-    interface = metadata.get("interface", {})
-    documentation = metadata.get("documentation", {})
-
-    # Rich formatted output
-    console.print(f"[bold]{node['node']['id']}[/bold] (v{node['node']['version']})")
-    console.print(f"Description: {documentation.get('description')}")
-    console.print()
-
-    if interface.get("inputs"):
-        console.print("[bold]Inputs:[/bold]")
-        for key, info in interface["inputs"].items():
-            req = "required" if info.get("required") else "optional"
-            console.print(f"  {key} ({info.get('type', 'any')}) - {info.get('description')} [{req}]")
-        console.print()
-
-    if interface.get("outputs"):
-        console.print("[bold]Outputs:[/bold]")
-        for key, info in interface["outputs"].items():
-            console.print(f"  {key} ({info.get('type', 'any')}) - {info.get('description')}")
-        console.print()
-
-    if interface.get("params"):
-        console.print("[bold]Parameters:[/bold]")
-        for key, info in interface["params"].items():
-            default = f" (default: {info.get('default')})" if info.get('default') else ""
-            console.print(f"  {key} ({info.get('type', 'any')}) - {info.get('description')}{default}")
-        console.print()
-
-    if documentation.get("examples"):
-        console.print("[bold]Examples:[/bold]")
-        for example in documentation["examples"]:
-            console.print(f"  {example.get('description', 'Example')}:")
-            for line in example.get("code", []):
-                console.print(f"    {line}")
-            console.print()
+    result = self.extractor.extract_metadata(ExclusiveNode)
+    param_keys = [p["key"] for p in result["params"]]
+    assert "input" not in param_keys  # Filtered out
+    assert "extra" in param_keys      # Kept as exclusive
 ```
 
 ---
 
-## Performance & Caching
+## Migration Guide Summary
 
-### Fast Planner Context Generation
+For developers updating nodes to the enhanced format:
 
-```python
-class PlannerContextBuilder:
-    """Build optimized LLM context from pre-extracted metadata."""
+1. **Add type annotations**: `shared["key"]` → `shared["key"]: str`
+2. **Add descriptions**: Use `# comment` after the type
+3. **Use multi-line format**: Each item on its own line for clarity
+4. **Apply exclusive params**: Remove params that duplicate Reads
+5. **Test extraction**: Verify metadata extracts correctly
 
-    def __init__(self, registry_path: str):
-        self.registry = NodeRegistry(registry_path)
-        self.metadata_cache = {}
-
-    def build_context(self, available_nodes: List[str]) -> str:
-        """Build LLM-optimized context from node metadata."""
-        context_parts = []
-
-        context_parts.append("Available pflow nodes:\n")
-
-        for node_id in available_nodes:
-            metadata = self._get_cached_metadata(node_id)
-            if not metadata:
-                continue
-
-            interface = metadata.get("interface", {})
-            documentation = metadata.get("documentation", {})
-
-            # Compact format for LLM
-            inputs = self._format_interface_keys(interface.get("inputs", {}))
-            outputs = self._format_interface_keys(interface.get("outputs", {}))
-            params = self._format_params(interface.get("params", {}))
-            actions = ", ".join(interface.get("actions", ["default"]))
-
-            context_parts.append(f"""
-{node_id}: {documentation.get('description', 'No description')}
-  Reads: {inputs}
-  Writes: {outputs}
-  Params: {params}
-  Actions: {actions}
-            """.strip())
-
-        return "\n".join(context_parts)
-
-    def _get_cached_metadata(self, node_id: str) -> Dict:
-        """Get metadata with caching for performance."""
-        if node_id not in self.metadata_cache:
-            self.metadata_cache[node_id] = self.registry.get_metadata(node_id)
-        return self.metadata_cache[node_id]
-
-    def _format_interface_keys(self, interface_dict: Dict) -> str:
-        """Format interface keys for compact display."""
-        if not interface_dict:
-            return "none"
-
-        keys = []
-        for key, info in interface_dict.items():
-            req = "" if info.get("required", True) else " (optional)"
-            keys.append(f'shared["{key}"]{req}')
-
-        return ", ".join(keys)
-
-    def _format_params(self, params_dict: Dict) -> str:
-        """Format parameters for compact display."""
-        if not params_dict:
-            return "none"
-
-        params = []
-        for key, info in params_dict.items():
-            default = info.get("default")
-            if default:
-                params.append(f'{key}="{default}"')
-            else:
-                params.append(key)
-
-        return ", ".join(params)
-
-    def invalidate_cache(self, node_id: str = None):
-        """Invalidate metadata cache."""
-        if node_id:
-            self.metadata_cache.pop(node_id, None)
-        else:
-            self.metadata_cache.clear()
-```
-
-### Registry Performance Optimizations
-
-```python
-class NodeRegistry:
-    """High-performance node registry with metadata caching."""
-
-    def __init__(self, registry_path: str):
-        self.registry_path = Path(registry_path)
-        self.index_file = self.registry_path / "index.json"
-        self._index_cache = None
-        self._metadata_cache = {}
-
-    def get_fast_index(self) -> Dict:
-        """Get fast lookup index for registry operations."""
-        if self._index_cache is None:
-            if self.index_file.exists():
-                with open(self.index_file) as f:
-                    self._index_cache = json.load(f)
-            else:
-                self._index_cache = self._build_index()
-                self._save_index()
-        return self._index_cache
-
-    def _build_index(self) -> Dict:
-        """Build fast lookup index from filesystem."""
-        index = {"nodes": {}, "last_updated": datetime.utcnow().isoformat()}
-
-        for namespace_dir in self.registry_path.glob("*"):
-            if not namespace_dir.is_dir():
-                continue
-
-            for node_dir in namespace_dir.glob("*"):
-                if not node_dir.is_dir():
-                    continue
-
-                for version_dir in node_dir.glob("*"):
-                    metadata_file = version_dir / "metadata.json"
-                    if metadata_file.exists():
-                        with open(metadata_file) as f:
-                            metadata = json.load(f)
-
-                        node_id = metadata["node"]["id"]
-                        index["nodes"][node_id] = {
-                            "path": str(metadata_file),
-                            "version": metadata["node"]["version"],
-                            "hash": metadata["extraction"]["source_hash"]
-                        }
-
-        return index
-
-    def invalidate_index(self):
-        """Force index rebuild on next access."""
-        self._index_cache = None
-        self._metadata_cache.clear()
-```
+For the complete migration guide, see [Interface Migration Guide](../reference/interface-migration-guide.md).
 
 ---
 
-## Validation & Quality
+## Future Enhancements
 
-### Code-Metadata Consistency Validation
+The following features are planned for future versions:
 
-```python
-class CodeValidator:
-    """Validate that extracted metadata matches actual node behavior."""
-
-    def analyze_code_behavior(self, python_file: str) -> Dict:
-        """Analyze actual node code to extract real interface."""
-        import ast
-
-        with open(python_file) as f:
-            tree = ast.parse(f.read())
-
-        # Find node class
-        node_class = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                for base in node.bases:
-                    if isinstance(base, ast.Name) and base.id == 'Node':
-                        node_class = node
-                        break
-
-        if not node_class:
-            raise ValueError("No Node class found")
-
-        # Analyze methods
-        actual_interface = {
-            "inputs": self._find_shared_reads(node_class),
-            "outputs": self._find_shared_writes(node_class),
-            "params": self._find_param_accesses(node_class),
-            "actions": self._find_action_returns(node_class)
-        }
-
-        return actual_interface
-
-    def _find_shared_reads(self, node_class) -> Set[str]:
-        """Find shared["key"] reads in prep() method."""
-        reads = set()
-
-        for method in node_class.body:
-            if isinstance(method, ast.FunctionDef) and method.name == 'prep':
-                for node in ast.walk(method):
-                    if (isinstance(node, ast.Subscript) and
-                        isinstance(node.value, ast.Name) and
-                        node.value.id == 'shared' and
-                        isinstance(node.slice, ast.Constant)):
-                        reads.add(node.slice.value)
-
-        return reads
-
-    def _find_shared_writes(self, node_class) -> Set[str]:
-        """Find shared["key"] writes in post() method."""
-        writes = set()
-
-        for method in node_class.body:
-            if isinstance(method, ast.FunctionDef) and method.name == 'post':
-                for node in ast.walk(method):
-                    if (isinstance(node, ast.Assign) and
-                        len(node.targets) == 1 and
-                        isinstance(node.targets[0], ast.Subscript) and
-                        isinstance(node.targets[0].value, ast.Name) and
-                        node.targets[0].value.id == 'shared' and
-                        isinstance(node.targets[0].slice, ast.Constant)):
-                        writes.add(node.targets[0].slice.value)
-
-        return writes
-
-    def _find_param_accesses(self, node_class) -> Dict[str, str]:
-        """Find self.params.get() calls."""
-        params = {}
-
-        for method in node_class.body:
-            if isinstance(method, ast.FunctionDef):
-                for node in ast.walk(method):
-                    if (isinstance(node, ast.Call) and
-                        isinstance(node.func, ast.Attribute) and
-                        isinstance(node.func.value, ast.Attribute) and
-                        isinstance(node.func.value.value, ast.Name) and
-                        node.func.value.value.id == 'self' and
-                        node.func.value.attr == 'params' and
-                        node.func.attr == 'get' and
-                        len(node.args) >= 1 and
-                        isinstance(node.args[0], ast.Constant)):
-
-                        param_name = node.args[0].value
-                        default_value = None
-                        if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
-                            default_value = node.args[1].value
-
-                        params[param_name] = default_value
-
-        return params
-
-    def _find_action_returns(self, node_class) -> Set[str]:
-        """Find return statements in post() method."""
-        actions = set()
-
-        for method in node_class.body:
-            if isinstance(method, ast.FunctionDef) and method.name == 'post':
-                for node in ast.walk(method):
-                    if (isinstance(node, ast.Return) and
-                        isinstance(node.value, ast.Constant) and
-                        isinstance(node.value.value, str)):
-                        actions.add(node.value.value)
-
-        return actions or {"default"}
-
-    def compare_metadata(self, documented: Dict, actual: Dict) -> List[str]:
-        """Compare documented vs actual interfaces."""
-        issues = []
-
-        # Check inputs
-        doc_inputs = set(documented.get("interface", {}).get("inputs", {}).keys())
-        actual_inputs = actual.get("inputs", set())
-
-        if doc_inputs != actual_inputs:
-            missing = actual_inputs - doc_inputs
-            extra = doc_inputs - actual_inputs
-            if missing:
-                issues.append(f"Undocumented inputs: {', '.join(missing)}")
-            if extra:
-                issues.append(f"Documented but unused inputs: {', '.join(extra)}")
-
-        # Check outputs
-        doc_outputs = set(documented.get("interface", {}).get("outputs", {}).keys())
-        actual_outputs = actual.get("outputs", set())
-
-        if doc_outputs != actual_outputs:
-            missing = actual_outputs - doc_outputs
-            extra = doc_outputs - actual_outputs
-            if missing:
-                issues.append(f"Undocumented outputs: {', '.join(missing)}")
-            if extra:
-                issues.append(f"Documented but unused outputs: {', '.join(extra)}")
-
-        # Check params
-        doc_params = documented.get("interface", {}).get("params", {})
-        actual_params = actual.get("params", {})
-
-        for param, actual_default in actual_params.items():
-            if param not in doc_params:
-                issues.append(f"Undocumented parameter: {param}")
-            else:
-                doc_default = doc_params[param].get("default")
-                if str(actual_default) != str(doc_default):
-                    issues.append(f"Parameter {param} default mismatch: documented '{doc_default}', actual '{actual_default}'")
-
-        return issues
-```
-
----
-
-## Future Integration Points
-
-### Planner Integration Example
-
-```python
-# Example showing how planner uses extracted metadata
-def planner_node_selection(user_prompt: str) -> List[str]:
-    """Example of planner using extracted metadata for node selection."""
-
-    # 1. Build LLM context from pre-extracted metadata
-    context_builder = PlannerContextBuilder()
-    available_nodes = registry.list_node_ids()
-    llm_context = context_builder.build_context(available_nodes)
-
-    # 2. LLM selection using rich metadata
-    llm_response = thinking_model.generate(f"""
-    {llm_context}
-
-    User request: {user_prompt}
-
-    Select appropriate nodes for this request.
-    """)
-
-    # 3. Validate selected nodes using metadata
-    selected_nodes = parse_llm_selection(llm_response)
-    validation_errors = validate_node_compatibility(selected_nodes)
-
-    return selected_nodes if not validation_errors else []
-
-def validate_node_compatibility(selected_nodes: List[str]) -> List[str]:
-    """Validate interface compatibility using metadata."""
-    errors = []
-
-    for i, node_id in enumerate(selected_nodes[:-1]):
-        current_metadata = registry.get_metadata(node_id)
-        next_metadata = registry.get_metadata(selected_nodes[i + 1])
-
-        current_outputs = set(current_metadata["interface"]["outputs"].keys())
-        next_inputs = set(next_metadata["interface"]["inputs"].keys())
-
-        # Check for interface mismatches
-        missing_inputs = next_inputs - current_outputs
-        if missing_inputs:
-            errors.append(f"Node {selected_nodes[i + 1]} expects inputs {missing_inputs} not provided by {node_id}")
-
-    return errors
-```
-
----
-
-## Dependencies and Tools
-
-### Required Libraries
-
-```bash
-pip install docstring-parser>=0.15    # Standard docstring parsing
-pip install rich>=13.0                # CLI formatting
-pip install click>=8.0                # CLI framework
-```
+1. **Full Structure Parsing**: Parse indented structure documentation for complex types
+2. **Type Validation**: Validate that specified types are valid Python types
+3. **Enum Support**: Handle enumerated values like `Literal['fast', 'slow']`
+4. **Advanced Type Syntax**: Support for `Optional[str]`, `Union[str, int]`, etc.
+5. **Performance Optimization**: Cached parsing for large registries
 
 ---
 
 ## Conclusion
 
-This metadata extraction infrastructure provides the foundation for pflow's metadata-driven planner capabilities while maintaining perfect alignment with the established static node architecture.
+The enhanced metadata extraction infrastructure provides rich type information while maintaining perfect backward compatibility. This enables:
 
-**Key Benefits**:
+- **Better Planning**: Type-aware workflow generation with valid proxy mappings
+- **Clearer Documentation**: Semantic descriptions for all interface components
+- **Reduced Redundancy**: Exclusive params pattern eliminates duplication
+- **Future Ready**: Foundation for advanced type features
 
-- **Zero architectural conflicts** - Fully aligned with source documents
-- **Production ready** - Robust parsing with comprehensive error handling
-- **Performance optimized** - Pre-extracted metadata for fast planner context
-- **Registry integrated** - Seamless workflow with node installation and versioning
-- **Validation enabled** - Code-metadata consistency checking for quality assurance
-
-The infrastructure enables intelligent flow planning while preserving the simplicity and reliability of pflow's curated node ecosystem.
+The infrastructure continues to enable intelligent flow planning while preserving the simplicity and reliability of pflow's curated node ecosystem.
 
 ## See Also
 
+- **Specification**: [Enhanced Interface Format](../reference/enhanced-interface-format.md) - Complete format specification
+- **Migration**: [Interface Migration Guide](../reference/interface-migration-guide.md) - Step-by-step migration guide
 - **Architecture**: [JSON Schemas](../core-concepts/schemas.md) - Node metadata schema definitions
 - **Architecture**: [Registry System](../core-concepts/registry.md) - How metadata integrates with node discovery
 - **Patterns**: [Simple Nodes](../features/simple-nodes.md) - Node design patterns that guide metadata extraction

@@ -124,6 +124,8 @@ Interface:
 """
 ```
 
+See `docs/reference/enhanced-interface-format.md` for more details of the docstring format for pflow nodes.
+
 ### Key Rules:
 
 1. **Multi-line format**: Each input/output on its own line for readability

@@ -34,6 +34,7 @@ docs/
 ├── reference/                 # Technical references
 │   ├── cli-reference.md       # CLI syntax and commands
 │   ├── node-reference.md      # Node implementation guide
+│   ├── enhanced-interface-format.md # Docstring format for pflow nodes
 │   └── execution-reference.md # Execution model
 ├── core-node-packages/        # Platform node specs
 │   ├── llm-nodes.md           # LLM integration
