@@ -251,9 +251,9 @@ class YTTranscriptNode(Node):
     """Fetches YouTube transcript.
 
     Interface:
-    - Reads: shared["url"] - YouTube video URL
-    - Writes: shared["transcript"] - extracted transcript text
-    - Params: language (default "en") - transcript language
+    - Reads: shared["url"]: str  # YouTube video URL
+    - Writes: shared["transcript"]: str  # Extracted transcript text
+    - Params: language: str  # Transcript language (default: "en")
     """
 ```
 

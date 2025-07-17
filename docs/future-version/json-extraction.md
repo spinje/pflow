@@ -588,7 +588,7 @@ Improve the planner's ability to suggest mappings without automatic extraction:
 class SummarizeText(Node):
     """
     Interface:
-    - Reads: shared["text"] - content to summarize
+    - Reads: shared["text"]: str  # Content to summarize
     - Semantic hints: content, description, body, message, article
     """
 ```

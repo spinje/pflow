@@ -75,9 +75,11 @@ class GitHubGetIssueNode(Node):  # Use Node for retry support
     Requires authentication token for private repositories.
 
     Interface:
-    - Reads: shared["issue_number"] (required), shared["repo"] (optional)
-    - Writes: shared["issue"] on success, shared["error"] on failure
-    - Params: repo, token, issue_number (as fallbacks if not in shared)
+    - Reads: shared["issue_number"]: int  # GitHub issue number
+    - Reads: shared["repo"]: str  # Repository name (owner/repo format)
+    - Writes: shared["issue"]: dict  # Issue data from GitHub
+    - Writes: shared["error"]: str  # Error message if operation failed
+    - Params: token: str  # GitHub authentication token
     - Actions: default (success), not_found (issue doesn't exist)
 
     Security Note: The token parameter should be kept secure and not logged.
@@ -379,9 +381,10 @@ class GitHubGetCommitsNode(Node):
     """Get repository commit history.
 
     Interface:
-    - Reads: shared["repo"]
-    - Writes: shared["commits"]
-    - Params: repo, token, limit
+    - Reads: shared["repo"]: str  # Repository name (owner/repo format)
+    - Writes: shared["commits"]: list  # List of commit data
+    - Params: token: str  # GitHub authentication token
+    - Params: limit: int  # Maximum number of commits to retrieve (default: 30)
     """
 
     def exec(self, prep_res):

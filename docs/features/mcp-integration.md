@@ -120,10 +120,10 @@ class McpGithubSearchCodeNode(Node):
     """Search code in GitHub repositories via MCP.
 
     Interface:
-    - Reads: shared["query"] - search query string
-    - Reads: shared["language"] - programming language filter (optional)
-    - Writes: shared["search_results"] - array of code search results
-    - Params: max_results (default 10) - maximum results to return
+    - Reads: shared["query"]: str  # Search query string
+    - Reads: shared["language"]: str  # Programming language filter (optional)
+    - Writes: shared["search_results"]: list  # Array of code search results
+    - Params: max_results: int  # Maximum results to return (default: 10)
 
     MCP Source: github-server/search_code v1.2.0
     """
@@ -184,10 +184,10 @@ def generate_node_docstring(mcp_tool):
     """{mcp_tool.description}
 
     Interface:
-    {format_shared_store_inputs(mcp_tool.input_schema)}
-    {format_shared_store_outputs(mcp_tool.output_schema)}
-    {format_params(mcp_tool.parameters)}
-    {format_actions(mcp_tool.error_types)}
+    {format_shared_store_inputs(mcp_tool.input_schema)}  # With type annotations
+    {format_shared_store_outputs(mcp_tool.output_schema)}  # With type annotations
+    {format_params(mcp_tool.parameters)}  # Exclusive params only
+    {format_actions(mcp_tool.error_types)}  # Action descriptions
 
     MCP Source: {mcp_tool.server_id}/{mcp_tool.name} v{mcp_tool.version}
     """

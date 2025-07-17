@@ -268,10 +268,10 @@ class NodeName(Node):
     Detailed explanation of behavior, use cases, and important notes.
 
     Interface:
-    - Reads: shared["key"] - description
-    - Writes: shared["key"] - description
-    - Params: param_name (default value) - description
-    - Actions: action_name - when this occurs
+    - Reads: shared["key"]: any  # Description of input
+    - Writes: shared["key"]: any  # Description of output
+    - Params: param_name: any  # Description (default: value)
+    - Actions: action_name (when this occurs)
 
     Examples:
         Example description:

@@ -1169,11 +1169,11 @@ class McpGithubSearchCode(Node):
     """Search code in GitHub repositories via MCP.
 
     Interface:
-    - Reads: shared["query"] - search query string
-    - Reads: shared["language"] - programming language filter (optional)
-    - Writes: shared["search_results"] - array of code search results
-    - Params: max_results (default 10) - maximum results to return
-    - Actions: "default", "rate_limited", "auth_failed", "resource_missing"
+    - Reads: shared["query"]: str  # Search query string
+    - Reads: shared["language"]: str  # Programming language filter (optional)
+    - Writes: shared["search_results"]: list  # Array of code search results
+    - Params: max_results: int  # Maximum results to return (default: 10)
+    - Actions: default (success), rate_limited, auth_failed, resource_missing
 
     MCP Source: github-server/search_code v1.2.0
     """

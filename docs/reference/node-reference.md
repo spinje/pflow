@@ -38,9 +38,12 @@ class MyNode(BaseNode):  # or Node
     """Brief description of what this node does.
 
     Interface:
-    - Reads: shared["input_key"] (required), shared["optional_key"] (optional)
-    - Writes: shared["output_key"] on success, shared["error"] on failure
-    - Params: param1, param2 (as fallbacks if not in shared)
+    - Reads: shared["input_key"]: any  # Required input data
+    - Reads: shared["optional_key"]: any  # Optional configuration
+    - Writes: shared["output_key"]: any  # Processed output result
+    - Writes: shared["error"]: str  # Error message if operation failed
+    - Params: param1: any  # Additional parameter 1
+    - Params: param2: any  # Additional parameter 2
     - Actions: default (success), error (failure)
     """
 
@@ -117,9 +120,11 @@ This node reads YAML or JSON configuration files and validates
 them against a schema before making them available to other nodes.
 
 Interface:
-- Reads: shared["config_path"] (required), shared["schema_path"] (optional)
-- Writes: shared["config"] on success, shared["validation_error"] on failure
-- Params: config_path, schema_path, strict_mode (as fallbacks if not in shared)
+- Reads: shared["config_path"]: str  # Path to the configuration file
+- Reads: shared["schema_path"]: str  # Path to validation schema (optional)
+- Writes: shared["config"]: dict  # Parsed configuration data
+- Writes: shared["validation_error"]: str  # Validation error message if failed
+- Params: strict_mode: bool  # Enable strict validation mode (default: false)
 - Actions: default (success), invalid (validation failed), missing (file not found)
 
 Performance Note: Large config files (>10MB) may cause slowdowns.

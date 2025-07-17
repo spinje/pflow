@@ -406,8 +406,8 @@ class HybridNode(TypedNode):
     # Docstring interface (backward compatibility)
     """
     Interface:
-    - Reads: shared["url"]
-    - Writes: shared["content"]
+    - Reads: shared["url"]: str  # URL to fetch content from
+    - Writes: shared["content"]: str  # Fetched content
     """
 ```
 

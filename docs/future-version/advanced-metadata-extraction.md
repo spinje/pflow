@@ -82,10 +82,10 @@ class YTTranscript(Node):
     about the node's operation and requirements.
 
     Interface:
-    - Reads: shared["url"] - YouTube video URL
-    - Writes: shared["transcript"] - extracted transcript text
-    - Params: language (default "en") - transcript language
-    - Actions: default, video_unavailable
+    - Reads: shared["url"]: str  # YouTube video URL
+    - Writes: shared["transcript"]: str  # Extracted transcript text
+    - Params: language: str  # Transcript language (default: "en")
+    - Actions: default (success), video_unavailable
 
     Examples:
         Basic usage:

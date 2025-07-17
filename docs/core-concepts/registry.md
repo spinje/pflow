@@ -333,8 +333,8 @@ Versioning enables robust integration with pflow's core architectural principles
 class YTTranscriptNode(BaseNode):  # or Node
     """Fetches YouTube transcript.
     Interface:
-    - Reads: shared["url"] - YouTube video URL
-    - Writes: shared["transcript"] - extracted transcript text
+    - Reads: shared["url"]: str  # YouTube video URL
+    - Writes: shared["transcript"]: str  # Extracted transcript text
     """
 
 # To planner metadata

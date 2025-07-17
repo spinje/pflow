@@ -23,9 +23,14 @@ The CI node package provides essential CI/CD functionality through individual, f
 **Purpose**: Execute test suites with automatic framework detection
 
 **Interface**:
-- Reads: `shared["test_command"]` (optional), `shared["project_path"]` (optional)
-- Writes: `shared["test_results"]` - structured test results and summary
-- Params: `framework`, `path`, `timeout`, `verbose`, `coverage`
+- Reads: `shared["test_command"]`: str  # Test command to execute (optional)
+- Reads: `shared["project_path"]`: str  # Path to project directory (optional)
+- Writes: `shared["test_results"]`: dict  # Structured test results and summary
+- Params: `framework`: str  # Test framework (pytest, npm, jest, cargo, etc.)
+- Params: `path`: str  # Test directory/file path (default: current directory)
+- Params: `timeout`: int  # Test execution timeout in seconds (default: 300)
+- Params: `verbose`: bool  # Enable verbose output (default: false)
+- Params: `coverage`: bool  # Enable coverage reporting (default: true)
 
 **CLI Examples**:
 ```bash
@@ -51,9 +56,11 @@ echo "/path/to/tests" | pflow ci-run-tests --verbose=true
 **Purpose**: Check CI build/test status for repositories
 
 **Interface**:
-- Reads: `shared["repo"]`, `shared["branch"]` (optional)
-- Writes: `shared["build_status"]` - current build status information
-- Params: `platform`, `repo`, `branch`, `timeout`
+- Reads: `shared["repo"]`: str  # Repository name (format: owner/repo)
+- Reads: `shared["branch"]`: str  # Branch name (optional)
+- Writes: `shared["build_status"]`: dict  # Current build status information
+- Params: `platform`: str  # CI platform (github-actions, travis, circleci, etc.)
+- Params: `timeout`: int  # API timeout in seconds (default: 30)
 
 **CLI Examples**:
 ```bash
@@ -78,9 +85,12 @@ pflow github-get-repo => ci-get-status
 **Purpose**: Trigger CI pipeline execution
 
 **Interface**:
-- Reads: `shared["repo"]`, `shared["workflow"]` (optional)
-- Writes: `shared["build_id"]` - triggered build identifier
-- Params: `platform`, `repo`, `workflow`, `branch`, `inputs`
+- Reads: `shared["repo"]`: str  # Repository name (format: owner/repo)
+- Reads: `shared["workflow"]`: str  # Workflow name or ID (optional)
+- Writes: `shared["build_id"]`: str  # Triggered build identifier
+- Params: `platform`: str  # CI platform
+- Params: `branch`: str  # Branch to trigger build on
+- Params: `inputs`: dict  # Custom workflow inputs
 
 **CLI Examples**:
 ```bash
@@ -99,9 +109,11 @@ pflow ci-trigger-build --repo=owner/project --inputs='{"environment":"staging"}'
 **Purpose**: Retrieve build/test logs from CI systems
 
 **Interface**:
-- Reads: `shared["build_id"]`
-- Writes: `shared["logs"]` - build execution logs
-- Params: `platform`, `build_id`, `lines`, `format`
+- Reads: `shared["build_id"]`: str  # Build identifier
+- Writes: `shared["logs"]`: str  # Build execution logs
+- Params: `platform`: str  # CI platform
+- Params: `lines`: int  # Number of log lines to retrieve
+- Params: `format`: str  # Log output format
 
 **CLI Examples**:
 ```bash
@@ -120,9 +132,12 @@ pflow ci-trigger-build --repo=owner/project => ci-get-logs
 **Purpose**: Analyze test coverage reports and metrics
 
 **Interface**:
-- Reads: `shared["coverage_file"]` OR `shared["test_results"]`
-- Writes: `shared["coverage_report"]` - analyzed coverage metrics
-- Params: `threshold`, `format`, `fail_under`
+- Reads: `shared["coverage_file"]`: str  # Path to coverage file
+- Reads: `shared["test_results"]`: dict  # Test results with coverage data
+- Writes: `shared["coverage_report"]`: dict  # Analyzed coverage metrics
+- Params: `threshold`: float  # Coverage threshold percentage
+- Params: `format`: str  # Report format
+- Params: `fail_under`: float  # Fail if coverage is below this percentage
 
 **CLI Examples**:
 ```bash

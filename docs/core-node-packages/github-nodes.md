@@ -26,9 +26,10 @@ The GitHub node package provides essential GitHub functionality through individu
 **Purpose**: Retrieve GitHub issue details by issue number
 
 **Interface**:
-- Reads: `shared["issue_number"]`, `shared["repo"]` (optional)
-- Writes: `shared["issue"]` - complete issue object with metadata
-- Params: `repo`, `token`, `issue_number` (optional if in shared store)
+- Reads: `shared["issue_number"]`: int  # GitHub issue number
+- Reads: `shared["repo"]`: str  # Repository name (owner/repo format)
+- Writes: `shared["issue"]`: dict  # Complete issue object with metadata
+- Params: `token`: str  # GitHub API token (default: GITHUB_TOKEN env var)
 
 **CLI Examples**:
 ```bash
@@ -52,9 +53,13 @@ pflow github-get-repo => github-get-issue --issue-number=789
 **Purpose**: Create new GitHub issue
 
 **Interface**:
-- Reads: `shared["title"]`, `shared["body"]` (optional), `shared["repo"]` (optional)
-- Writes: `shared["issue"]` - created issue object
-- Params: `repo`, `token`, `title`, `body`, `labels`, `assignees`
+- Reads: `shared["title"]`: str  # Issue title
+- Reads: `shared["body"]`: str  # Issue description (optional)
+- Reads: `shared["repo"]`: str  # Repository name (owner/repo format)
+- Writes: `shared["issue"]`: dict  # Created issue object
+- Params: `token`: str  # GitHub API token
+- Params: `labels`: list  # Issue labels
+- Params: `assignees`: list  # User logins to assign
 
 **CLI Examples**:
 ```bash
@@ -73,9 +78,12 @@ pflow llm --prompt="Generate bug report for login issue" => github-create-issue 
 **Purpose**: List pull requests for a repository
 
 **Interface**:
-- Reads: `shared["repo"]`, `shared["state"]` (optional)
-- Writes: `shared["prs"]` - array of pull request objects
-- Params: `repo`, `token`, `state`, `per_page`, `sort`
+- Reads: `shared["repo"]`: str  # Repository name (owner/repo format)
+- Reads: `shared["state"]`: str  # PR state filter (optional)
+- Writes: `shared["prs"]`: list  # Array of pull request objects
+- Params: `token`: str  # GitHub API token
+- Params: `per_page`: int  # Results per page
+- Params: `sort`: str  # Sort order
 
 **CLI Examples**:
 ```bash
@@ -94,9 +102,14 @@ pflow github-get-repo => github-list-prs --state=closed
 **Purpose**: Create new pull request
 
 **Interface**:
-- Reads: `shared["title"]`, `shared["body"]` (optional), `shared["head"]`, `shared["base"]` (optional)
-- Writes: `shared["pr"]` - created pull request object
-- Params: `repo`, `token`, `title`, `body`, `head`, `base`, `draft`
+- Reads: `shared["title"]`: str  # Pull request title
+- Reads: `shared["body"]`: str  # Pull request description (optional)
+- Reads: `shared["head"]`: str  # Head branch name
+- Reads: `shared["base"]`: str  # Base branch name (optional)
+- Writes: `shared["pr"]`: dict  # Created pull request object
+- Params: `repo`: str  # Repository name
+- Params: `token`: str  # GitHub API token
+- Params: `draft`: bool  # Create as draft PR
 
 **CLI Examples**:
 ```bash
@@ -117,9 +130,12 @@ pflow github-get-issue --issue-number=123 =>
 **Purpose**: Get repository files and content
 
 **Interface**:
-- Reads: `shared["repo"]`, `shared["path"]` (optional)
-- Writes: `shared["files"]` - file listing or content
-- Params: `repo`, `token`, `path`, `ref`, `recursive`
+- Reads: `shared["repo"]`: str  # Repository name (owner/repo format)
+- Reads: `shared["path"]`: str  # File or directory path (optional)
+- Writes: `shared["files"]`: any  # File listing or content
+- Params: `token`: str  # GitHub API token
+- Params: `ref`: str  # Branch or commit reference
+- Params: `recursive`: bool  # Recursive directory listing
 
 **CLI Examples**:
 ```bash
@@ -138,9 +154,12 @@ pflow github-get-files --repo=owner/project --path=src --recursive=true
 **Purpose**: Merge pull request
 
 **Interface**:
-- Reads: `shared["pr_number"]`, `shared["repo"]` (optional)
-- Writes: `shared["merge_result"]` - merge operation result
-- Params: `repo`, `token`, `pr_number`, `merge_method`, `commit_title`
+- Reads: `shared["pr_number"]`: int  # Pull request number
+- Reads: `shared["repo"]`: str  # Repository name (owner/repo format)
+- Writes: `shared["merge_result"]`: dict  # Merge operation result
+- Params: `token`: str  # GitHub API token
+- Params: `merge_method`: str  # Merge method (merge, squash, rebase)
+- Params: `commit_title`: str  # Custom commit title
 
 **CLI Examples**:
 ```bash
@@ -159,9 +178,11 @@ pflow github-create-pr --title="Auto fix" => github-merge-pr --merge-method=squa
 **Purpose**: Add comment to issue or pull request
 
 **Interface**:
-- Reads: `shared["comment"]`, `shared["issue_number"]`, `shared["repo"]` (optional)
-- Writes: `shared["comment_id"]` - created comment ID
-- Params: `repo`, `token`, `issue_number`, `comment`
+- Reads: `shared["comment"]`: str  # Comment text
+- Reads: `shared["issue_number"]`: int  # Issue or PR number
+- Reads: `shared["repo"]`: str  # Repository name (owner/repo format)
+- Writes: `shared["comment_id"]`: int  # Created comment ID
+- Params: `token`: str  # GitHub API token
 
 **CLI Examples**:
 ```bash
@@ -179,9 +200,14 @@ pflow github-get-issue --issue-number=123 =>
 **Purpose**: Search code in GitHub repositories
 
 **Interface**:
-- Reads: `shared["query"]`, `shared["repo"]` (optional)
-- Writes: `shared["search_results"]` - code search results
-- Params: `query`, `repo`, `language`, `filename`, `extension`, `size`, `path`
+- Reads: `shared["query"]`: str  # Search query string
+- Reads: `shared["repo"]`: str  # Repository scope (optional)
+- Writes: `shared["search_results"]`: list  # Code search results
+- Params: `language`: str  # Programming language filter
+- Params: `filename`: str  # Filename pattern
+- Params: `extension`: str  # File extension filter
+- Params: `size`: str  # File size filter
+- Params: `path`: str  # Path filter
 
 **CLI Examples**:
 ```bash
