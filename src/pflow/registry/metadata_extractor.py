@@ -9,7 +9,7 @@ to extract interface information.
 import inspect
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 import pocketflow
 
@@ -142,6 +142,35 @@ class PflowMetadataExtractor:
 
         return "No description"
 
+    def _process_interface_item(
+        self, item_type: str, item_content: str, result: dict[str, list[str] | list[dict[str, Any]]]
+    ) -> None:
+        """
+        Process a single interface item (reads/writes/params).
+
+        Args:
+            item_type: The type of item ("reads", "writes", or "params")
+            item_content: The content after the item type
+            result: The result dictionary to update
+        """
+        # Map item types to result keys
+        type_map = {"reads": "inputs", "writes": "outputs", "params": "params"}
+
+        result_key = type_map[item_type]
+        new_items = self._extract_interface_component(item_content, result_key)
+
+        if isinstance(result[result_key], list) and isinstance(new_items, list):
+            if all(isinstance(item, dict) for item in new_items):
+                # Enhanced format - extend the list
+                # Use cast to help mypy understand the types
+                cast(list[dict[str, Any]], result[result_key]).extend(cast(list[dict[str, Any]], new_items))
+            else:
+                # Simple format strings - extend the list
+                # Use cast to help mypy understand the types
+                cast(list[str], result[result_key]).extend(cast(list[str], new_items))
+        else:
+            result[result_key] = new_items
+
     def _parse_interface_section(self, docstring: str | None) -> dict[str, list[str] | list[dict[str, Any]]]:
         """
         Parse the Interface section of a docstring.
@@ -174,39 +203,8 @@ class PflowMetadataExtractor:
             item_type = match.group(1).lower()
             item_content = match.group(2)
 
-            if item_type == "reads":
-                new_items = self._extract_interface_component(item_content, "inputs")
-                if isinstance(result["inputs"], list) and isinstance(new_items, list):
-                    if all(isinstance(item, dict) for item in new_items):
-                        # Enhanced format - extend the list
-                        result["inputs"].extend(new_items)
-                    else:
-                        # Simple format strings - extend the list
-                        result["inputs"].extend(new_items)
-                else:
-                    result["inputs"] = new_items
-            elif item_type == "writes":
-                new_items = self._extract_interface_component(item_content, "outputs")
-                if isinstance(result["outputs"], list) and isinstance(new_items, list):
-                    if all(isinstance(item, dict) for item in new_items):
-                        # Enhanced format - extend the list
-                        result["outputs"].extend(new_items)
-                    else:
-                        # Simple format strings - extend the list
-                        result["outputs"].extend(new_items)
-                else:
-                    result["outputs"] = new_items
-            elif item_type == "params":
-                new_items = self._extract_interface_component(item_content, "params")
-                if isinstance(result["params"], list) and isinstance(new_items, list):
-                    if all(isinstance(item, dict) for item in new_items):
-                        # Enhanced format - extend the list
-                        result["params"].extend(new_items)
-                    else:
-                        # Simple format strings - extend the list
-                        result["params"].extend(new_items)
-                else:
-                    result["params"] = new_items
+            if item_type in ["reads", "writes", "params"]:
+                self._process_interface_item(item_type, item_content, result)
             elif item_type == "actions":
                 result["actions"] = self._extract_actions(item_content)
 
