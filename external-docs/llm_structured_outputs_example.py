@@ -12,7 +12,7 @@ Requirements:
 """
 
 import json
-from typing import List, Optional
+from typing import Optional
 
 import llm
 from pydantic import BaseModel, Field
@@ -31,7 +31,7 @@ class Dog(BaseModel):
 class DogList(BaseModel):
     """A list of dogs"""
 
-    dogs: List[Dog] = Field(description="List of dogs")
+    dogs: list[Dog] = Field(description="List of dogs")
 
 
 # Example 2: Using dictionary schemas (JSON Schema format)
@@ -114,7 +114,7 @@ def example_nested_schema():
         employee_count: Optional[int] = None
 
     class TechCompanies(BaseModel):
-        companies: List[Company]
+        companies: list[Company]
 
     model = llm.get_model("gpt-4o-mini")
 
@@ -133,9 +133,9 @@ def example_extraction_from_text():
         title: str = Field(description="Meeting title or subject")
         date: str = Field(description="Date in YYYY-MM-DD format")
         time: str = Field(description="Time in HH:MM format")
-        attendees: List[str] = Field(description="List of attendee names")
-        key_topics: List[str] = Field(description="Main topics discussed")
-        action_items: List[str] = Field(description="Action items or next steps")
+        attendees: list[str] = Field(description="List of attendee names")
+        key_topics: list[str] = Field(description="Main topics discussed")
+        action_items: list[str] = Field(description="Action items or next steps")
 
     # Sample unstructured text
     meeting_notes = """
@@ -172,8 +172,8 @@ def example_with_system_prompt():
         prep_time_minutes: int
         cooking_time_minutes: int
         servings: int
-        ingredients: List[str]
-        instructions: List[str]
+        ingredients: list[str]
+        instructions: list[str]
         difficulty: str = Field(description="Easy, Medium, or Hard")
 
     model = llm.get_model("gpt-4o-mini")
@@ -228,7 +228,7 @@ def main():
 
     # Make sure we have a valid model
     try:
-        model = llm.get_model("gpt-4o-mini")
+        llm.get_model("gpt-4o-mini")
     except llm.UnknownModelError:
         print("Error: gpt-4o-mini model not available")
         print("Available models:")

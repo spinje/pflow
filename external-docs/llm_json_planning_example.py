@@ -8,7 +8,7 @@ needed in the pflow planning system.
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import llm
 from pydantic import BaseModel, Field
@@ -32,9 +32,9 @@ class NodeDefinition(BaseModel):
     name: str = Field(description="Human-readable name of the node")
     type: str = Field(description="Node type (e.g., 'read_file', 'llm', 'write_file')")
     description: str = Field(description="What this node does")
-    parameters: Dict[str, Any] = Field(description="Parameters for this node")
-    inputs: List[str] = Field(description="Required inputs from shared store")
-    outputs: List[str] = Field(description="Outputs written to shared store")
+    parameters: dict[str, Any] = Field(description="Parameters for this node")
+    inputs: list[str] = Field(description="Required inputs from shared store")
+    outputs: list[str] = Field(description="Outputs written to shared store")
 
 
 class WorkflowTransition(BaseModel):
@@ -50,13 +50,13 @@ class WorkflowPlan(BaseModel):
 
     name: str = Field(description="Workflow name")
     description: str = Field(description="What this workflow accomplishes")
-    nodes: List[NodeDefinition] = Field(description="List of nodes in the workflow")
-    transitions: List[WorkflowTransition] = Field(description="Transitions between nodes")
-    initial_inputs: List[str] = Field(description="Required initial inputs to shared store")
-    final_outputs: List[str] = Field(description="Expected final outputs in shared store")
+    nodes: list[NodeDefinition] = Field(description="List of nodes in the workflow")
+    transitions: list[WorkflowTransition] = Field(description="Transitions between nodes")
+    initial_inputs: list[str] = Field(description="Required initial inputs to shared store")
+    final_outputs: list[str] = Field(description="Expected final outputs in shared store")
 
 
-def plan_workflow_with_llm(user_request: str, available_nodes: List[str]) -> WorkflowPlan:
+def plan_workflow_with_llm(user_request: str, available_nodes: list[str]) -> WorkflowPlan:
     """
     Use LLM to generate a structured workflow plan based on user request.
 
@@ -87,7 +87,7 @@ Rules:
     return json.loads(response.text())
 
 
-def generate_node_metadata(node_type: str) -> Dict[str, Any]:
+def generate_node_metadata(node_type: str) -> dict[str, Any]:
     """
     Use LLM to generate metadata for a specific node type.
     """
@@ -99,10 +99,10 @@ def generate_node_metadata(node_type: str) -> Dict[str, Any]:
         display_name: str = Field(description="Human-friendly display name")
         description: str = Field(description="Detailed description of what the node does")
         category: str = Field(description="Category (e.g., 'file', 'text', 'llm', 'data')")
-        parameters: List[NodeParameter] = Field(description="Available parameters")
-        input_keys: List[str] = Field(description="Expected shared store input keys")
-        output_keys: List[str] = Field(description="Shared store output keys produced")
-        examples: List[Dict[str, Any]] = Field(description="Usage examples")
+        parameters: list[NodeParameter] = Field(description="Available parameters")
+        input_keys: list[str] = Field(description="Expected shared store input keys")
+        output_keys: list[str] = Field(description="Shared store output keys produced")
+        examples: list[dict[str, Any]] = Field(description="Usage examples")
 
     model = llm.get_model("gpt-4o-mini")
 
@@ -115,7 +115,7 @@ def generate_node_metadata(node_type: str) -> Dict[str, Any]:
     return json.loads(response.text())
 
 
-def extract_workflow_from_description(description: str) -> Dict[str, Any]:
+def extract_workflow_from_description(description: str) -> dict[str, Any]:
     """
     Extract a structured workflow from a natural language description.
     """
@@ -143,7 +143,7 @@ def extract_workflow_from_description(description: str) -> Dict[str, Any]:
     return json.loads(response.text())
 
 
-def validate_workflow_connections(workflow: WorkflowPlan) -> Dict[str, Any]:
+def validate_workflow_connections(workflow: WorkflowPlan) -> dict[str, Any]:
     """
     Use LLM to validate workflow connections and suggest improvements.
     """
@@ -152,10 +152,10 @@ def validate_workflow_connections(workflow: WorkflowPlan) -> Dict[str, Any]:
         """Workflow validation result"""
 
         is_valid: bool = Field(description="Whether the workflow is valid")
-        issues: List[str] = Field(description="List of identified issues")
-        suggestions: List[str] = Field(description="Suggestions for improvement")
-        missing_connections: List[Dict[str, str]] = Field(description="Missing connections between nodes")
-        redundant_nodes: List[str] = Field(description="Nodes that might be redundant")
+        issues: list[str] = Field(description="List of identified issues")
+        suggestions: list[str] = Field(description="Suggestions for improvement")
+        missing_connections: list[dict[str, str]] = Field(description="Missing connections between nodes")
+        redundant_nodes: list[str] = Field(description="Nodes that might be redundant")
 
     model = llm.get_model("gpt-4o-mini")
 
