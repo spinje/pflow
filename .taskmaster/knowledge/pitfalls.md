@@ -159,4 +159,31 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
+## Pitfall: Assuming String Processing is Trivial Without Considering Edge Cases
+- **Date**: 2025-07-17
+- **Discovered in**: Task 14.3
+- **What we tried**: Simple string splitting and regex patterns for parsing structured text formats
+- **Why it seemed good**: Standard library functions like `split()` are simple and well-understood
+- **Why it failed**: Real-world text contains the delimiter characters in unexpected places (commas in descriptions, parentheses in defaults, colons in examples)
+- **Symptoms**:
+  - Descriptions truncated at first comma: "File encoding (optional, default: utf-8)" → "File encoding (optional"
+  - Extra "phantom" parameters created from split fragments
+  - Parser silently producing incorrect results
+  - Complex workarounds needed everywhere
+- **Better approach**: Design formats and parsers together. Use proper tokenization, escape sequences, or unambiguous delimiters. Consider existing robust formats (JSON, YAML) before creating new ones.
+- **Example of failure**:
+  ```python
+  # DON'T DO THIS - Naive splitting
+  segments = content.split(",")  # Breaks on ALL commas
+  # Input: 'shared["key"]: type # Description with comma, more text'
+  # Result: ['shared["key"]: type # Description with comma', ' more text']
+
+  # DO THIS - Context-aware splitting
+  segments = re.split(r',\s*(?=shared\[)', content)  # Only split between items
+  # Or better: Use a proper parser/tokenizer
+  ```
+- **Key Lesson**: String processing that "looks simple" often hides complexity. Any parser dealing with human-written text needs to handle natural language punctuation. Test with realistic data early.
+
+---
+
 <!-- New pitfalls are appended below this line -->
