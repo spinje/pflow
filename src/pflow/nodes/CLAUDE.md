@@ -106,14 +106,53 @@ def test_node_retries_on_failure():
 - **network/** - HTTP requests and API calls
 - **system/** - System operations
 
+## Interface Documentation Format
+
+All nodes MUST use the enhanced Interface format with type annotations:
+
+```python
+"""
+Node description here.
+
+Interface:
+- Reads: shared["file_path"]: str  # Path to the file to read
+- Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
+- Writes: shared["content"]: str  # File contents
+- Writes: shared["error"]: str  # Error message if operation failed
+- Params: append: bool  # Append mode (default: false)
+- Actions: default (success), error (failure)
+"""
+```
+
+### Key Rules:
+
+1. **Multi-line format**: Each input/output on its own line for readability
+2. **Type annotations**: Always include `: type` after the key
+3. **Descriptions**: Use `# Description` after the type
+4. **Optional/defaults**: Document in description like `(optional, default: value)`
+5. **Exclusive params pattern**: Only list params that are NOT in Reads
+   - Every value in Reads is automatically a parameter fallback
+   - Don't list `file_path` in Params if it's already in Reads!
+
+### Example with Exclusive Params:
+
+```python
+Interface:
+- Reads: shared["content"]: str  # Content to write
+- Reads: shared["file_path"]: str  # Path to the file
+- Writes: shared["written"]: bool  # True if succeeded
+- Params: append: bool  # Append instead of overwrite (default: false)
+# Note: content and file_path are NOT in Params - they're automatic fallbacks!
+```
+
 ## Creating New Nodes
 
-1. Copy the pattern above
+1. Copy the retry pattern above
 2. Inherit from `Node` (not `BaseNode`)
 3. NO try/except in exec()
 4. Use `NonRetriableError` for validation failures
 5. Test retry behavior
-6. Document parameters in docstrings
+6. Document using the Interface format above
 
 ## Nested Structure support
 
@@ -172,5 +211,7 @@ Before committing any node:
 - [ ] Uses `NonRetriableError` for validation errors?
 - [ ] Tests verify retry behavior?
 - [ ] `post()` checks for "Error:" prefix?
+- [ ] Interface uses enhanced format with types?
+- [ ] Only exclusive params listed (not in Reads)?
 
 Remember: **Let exceptions bubble up!** The framework handles retries for you.
