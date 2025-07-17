@@ -107,6 +107,8 @@ Create knowledge synthesis file at:
 - [What changed]: [When] - [Impact on this task]
 ```
 
+**Important**: Always use sub-agents to gather information from previous tasks or from files in `.taskmaster/knowledge/`. Never try to access these files yourself since it will pollute your context window with irrelevant information. Using sub-agents means that they can fetch curated information from the knowledge base or the other tasks folders.
+
 ### Exit Criteria for Phase 0
 - [ ] Project context read and understood
 - [ ] Relevant components and concepts clear

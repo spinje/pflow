@@ -925,3 +925,37 @@ A consolidated collection of successful patterns and approaches discovered durin
   - Consistent behavior across all nodes
 
 ---
+
+## Pattern: Format Detection with Graceful Enhancement
+- **Date**: 2025-01-16
+- **Discovered in**: Task 14.1
+- **Problem**: Need to support both old (simple) and new (enhanced) input formats in a parser without breaking existing users
+- **Solution**: Detect format based on type indicators (like colons), then route to appropriate parser. Always return enhanced format for consistency.
+- **Example**:
+  ```python
+  def _detect_interface_format(self, content: str, component_type: str) -> bool:
+      """Detect format based on presence of type indicators."""
+      if component_type in ("inputs", "outputs"):
+          # Check for new format indicator (colon after key)
+          if re.search(r'shared\[\"[^\"]+\"\]\s*:', content):
+              return True  # Enhanced format
+      # Default to simple format
+      return False
+
+  def _extract_interface_component(self, content: str, component_type: str):
+      """Route to appropriate parser based on format."""
+      if self._detect_interface_format(content, component_type):
+          return self._extract_enhanced_format(content)
+      else:
+          # Parse simple format but return as enhanced
+          simple_keys = self._extract_simple_format(content)
+          return [{"key": k, "type": "any", "description": ""} for k in simple_keys]
+  ```
+- **When to use**: Adding optional enhancements to existing parsers, API evolution, gradual feature rollouts
+- **Benefits**:
+  - Zero breaking changes for existing users
+  - Allows gradual migration to new format
+  - Single consistent output format simplifies downstream code
+  - Clear detection logic prevents ambiguity
+
+---

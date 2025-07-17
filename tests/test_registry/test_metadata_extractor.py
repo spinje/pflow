@@ -25,6 +25,7 @@ class TestPflowMetadataExtractor:
 
         result = self.extractor.extract_metadata(TestNode)
 
+        # Updated to expect rich format
         assert result == {
             "description": "Test node for validation.",
             "inputs": [],
@@ -159,9 +160,19 @@ class TestRealNodeIntegration:
 
         # The actual first line from the docstring
         assert result["description"] == "Read content from a file and add line numbers for display."
-        assert result["inputs"] == ["file_path", "encoding"]
-        assert result["outputs"] == ["content", "error"]
-        assert result["params"] == ["file_path", "encoding"]
+        # Now expecting rich format with defaults for simple format nodes
+        assert result["inputs"] == [
+            {"key": "file_path", "type": "any", "description": ""},
+            {"key": "encoding", "type": "any", "description": ""},
+        ]
+        assert result["outputs"] == [
+            {"key": "content", "type": "any", "description": ""},
+            {"key": "error", "type": "any", "description": ""},
+        ]
+        assert result["params"] == [
+            {"key": "file_path", "type": "any", "description": ""},
+            {"key": "encoding", "type": "any", "description": ""},
+        ]
         assert result["actions"] == ["default", "error"]
 
     def test_extract_from_write_file_node(self):
@@ -202,9 +213,18 @@ class TestInterfaceParsing:
 
         result = self.extractor.extract_metadata(CompleteNode)
 
-        assert result["inputs"] == ["input1", "input2"]
-        assert result["outputs"] == ["output", "error"]
-        assert result["params"] == ["param1", "param2"]
+        assert result["inputs"] == [
+            {"key": "input1", "type": "any", "description": ""},
+            {"key": "input2", "type": "any", "description": ""},
+        ]
+        assert result["outputs"] == [
+            {"key": "output", "type": "any", "description": ""},
+            {"key": "error", "type": "any", "description": ""},
+        ]
+        assert result["params"] == [
+            {"key": "param1", "type": "any", "description": ""},
+            {"key": "param2", "type": "any", "description": ""},
+        ]
         assert result["actions"] == ["default", "error"]
 
     def test_parse_multiline_interface(self):
@@ -226,9 +246,21 @@ class TestInterfaceParsing:
 
         result = self.extractor.extract_metadata(MultilineNode)
 
-        assert result["inputs"] == ["key1", "key2", "key3"]
-        assert result["outputs"] == ["result", "error", "warning"]
-        assert result["params"] == ["param1", "param2", "param3"]
+        assert result["inputs"] == [
+            {"key": "key1", "type": "any", "description": ""},
+            {"key": "key2", "type": "any", "description": ""},
+            {"key": "key3", "type": "any", "description": ""},
+        ]
+        assert result["outputs"] == [
+            {"key": "result", "type": "any", "description": ""},
+            {"key": "error", "type": "any", "description": ""},
+            {"key": "warning", "type": "any", "description": ""},
+        ]
+        assert result["params"] == [
+            {"key": "param1", "type": "any", "description": ""},
+            {"key": "param2", "type": "any", "description": ""},
+            {"key": "param3", "type": "any", "description": ""},
+        ]
         assert result["actions"] == ["default", "error", "retry"]
 
     def test_missing_interface_section(self):
@@ -265,7 +297,7 @@ class TestInterfaceParsing:
 
         result = self.extractor.extract_metadata(PartialNode)
 
-        assert result["inputs"] == ["data"]
+        assert result["inputs"] == [{"key": "data", "type": "any", "description": ""}]
         assert result["outputs"] == []  # Missing Writes
         assert result["params"] == []  # Missing Params
         assert result["actions"] == ["default"]
@@ -287,9 +319,11 @@ class TestInterfaceParsing:
 
         result = self.extractor.extract_metadata(SomeEmptyComponentsNode)
 
-        assert result["inputs"] == ["input"]
-        assert result["outputs"] == ["output"]
-        assert result["params"] == ["None"]  # Will be treated as a param name
+        assert result["inputs"] == [{"key": "input", "type": "any", "description": ""}]
+        assert result["outputs"] == [{"key": "output", "type": "any", "description": ""}]
+        assert result["params"] == [
+            {"key": "None", "type": "any", "description": ""}
+        ]  # Will be treated as a param name
         assert result["actions"] == ["default"]
 
     def test_complex_param_descriptions(self):
@@ -310,7 +344,11 @@ class TestInterfaceParsing:
         result = self.extractor.extract_metadata(ComplexParamsNode)
 
         # Should extract just the param names
-        assert result["params"] == ["simple", "with_default", "complex"]
+        assert result["params"] == [
+            {"key": "simple", "type": "any", "description": ""},
+            {"key": "with_default", "type": "any", "description": ""},
+            {"key": "complex", "type": "any", "description": ""},
+        ]
 
     def test_actions_with_descriptions(self):
         """Test parsing actions with various description formats."""
@@ -339,9 +377,18 @@ class TestInterfaceParsing:
         result = self.extractor.extract_metadata(ReadFileNode)
 
         assert result["description"] == "Read content from a file and add line numbers for display."
-        assert result["inputs"] == ["file_path", "encoding"]
-        assert result["outputs"] == ["content", "error"]
-        assert result["params"] == ["file_path", "encoding"]
+        assert result["inputs"] == [
+            {"key": "file_path", "type": "any", "description": ""},
+            {"key": "encoding", "type": "any", "description": ""},
+        ]
+        assert result["outputs"] == [
+            {"key": "content", "type": "any", "description": ""},
+            {"key": "error", "type": "any", "description": ""},
+        ]
+        assert result["params"] == [
+            {"key": "file_path", "type": "any", "description": ""},
+            {"key": "encoding", "type": "any", "description": ""},
+        ]
         assert result["actions"] == ["default", "error"]
 
     def test_real_write_file_node_interface(self):
@@ -351,12 +398,16 @@ class TestInterfaceParsing:
         result = self.extractor.extract_metadata(WriteFileNode)
 
         assert result["description"] == "Write content to a file with automatic directory creation."
-        # WriteFileNode has multi-line Reads section
-        assert "content" in result["inputs"]
-        assert "file_path" in result["inputs"]
-        assert "encoding" in result["inputs"]
-        assert "written" in result["outputs"]
-        assert "error" in result["outputs"]
+        # WriteFileNode has multi-line Reads section - check keys exist
+        input_keys = [item["key"] for item in result["inputs"]]
+        assert "content" in input_keys
+        assert "file_path" in input_keys
+        assert "encoding" in input_keys
+
+        output_keys = [item["key"] for item in result["outputs"]]
+        assert "written" in output_keys
+        assert "error" in output_keys
+
         assert result["actions"] == ["default", "error"]
 
     def test_real_copy_file_node_interface(self):
@@ -366,10 +417,13 @@ class TestInterfaceParsing:
         result = self.extractor.extract_metadata(CopyFileNode)
 
         assert result["description"] == "Copy a file to a new location with automatic directory creation."
-        assert "source_path" in result["inputs"]
-        assert "dest_path" in result["inputs"]
-        assert "overwrite" in result["inputs"]
-        assert "copied" in result["outputs"]
+        # Extract keys from rich format
+        input_keys = [item["key"] for item in result["inputs"]]
+        assert "source_path" in input_keys
+        assert "dest_path" in input_keys
+        assert "overwrite" in input_keys
+        output_keys = [item["key"] for item in result["outputs"]]
+        assert "copied" in output_keys
         assert result["actions"] == ["default", "error"]
 
     def test_real_move_file_node_interface(self):
@@ -379,10 +433,15 @@ class TestInterfaceParsing:
         result = self.extractor.extract_metadata(MoveFileNode)
 
         assert result["description"] == "Move a file to a new location with automatic directory creation."
-        assert result["inputs"] == ["source_path", "dest_path", "overwrite"]
+        # Check inputs in rich format
+        input_keys = [item["key"] for item in result["inputs"]]
+        assert input_keys == ["source_path", "dest_path", "overwrite"]
         # MoveFileNode has a 3-line Writes section
-        assert result["outputs"] == ["moved", "error", "warning"]
-        assert result["params"] == ["source_path", "dest_path", "overwrite"]
+        output_keys = [item["key"] for item in result["outputs"]]
+        assert output_keys == ["moved", "error", "warning"]
+        # Check params in rich format
+        param_keys = [item["key"] for item in result["params"]]
+        assert param_keys == ["source_path", "dest_path", "overwrite"]
         assert result["actions"] == ["default", "error"]
 
     def test_real_delete_file_node_interface(self):
@@ -392,9 +451,15 @@ class TestInterfaceParsing:
         result = self.extractor.extract_metadata(DeleteFileNode)
 
         assert result["description"] == "Delete a file from the filesystem with safety confirmation."
-        assert result["inputs"] == ["file_path", "confirm_delete"]
-        assert result["outputs"] == ["deleted", "error"]
-        assert result["params"] == ["file_path"]  # Note: confirm_delete is NOT a param
+        # Check inputs in rich format
+        input_keys = [item["key"] for item in result["inputs"]]
+        assert input_keys == ["file_path", "confirm_delete"]
+        # Check outputs in rich format
+        output_keys = [item["key"] for item in result["outputs"]]
+        assert output_keys == ["deleted", "error"]
+        # Check params in rich format
+        param_keys = [item["key"] for item in result["params"]]
+        assert param_keys == ["file_path"]  # Note: confirm_delete is NOT a param
         assert result["actions"] == ["default", "error"]
 
     def test_no_docstring_node_from_codebase(self):
@@ -441,9 +506,13 @@ class TestInterfaceParsing:
         result = self.extractor.extract_metadata(UnicodeNode)
 
         assert result["description"] == "ユニコード対応ノード 🎯 Unicode-enabled node."
-        assert result["inputs"] == ["入力", "データ"]
-        assert result["outputs"] == ["結果", "エラー"]
-        assert result["params"] == ["パラメータ", "encoding"]
+        # Check in rich format
+        input_keys = [item["key"] for item in result["inputs"]]
+        assert input_keys == ["入力", "データ"]
+        output_keys = [item["key"] for item in result["outputs"]]
+        assert output_keys == ["結果", "エラー"]
+        param_keys = [item["key"] for item in result["params"]]
+        assert param_keys == ["パラメータ", "encoding"]
         assert result["actions"] == ["default", "error"]
 
     def test_extremely_long_docstring(self):
@@ -477,9 +546,10 @@ class TestInterfaceParsing:
         result = self.extractor.extract_metadata(LongDocstringNode)
 
         assert result["description"] == long_description
-        assert result["inputs"] == ["input"]
-        assert result["outputs"] == ["output"]
-        assert result["params"] == ["param"]
+        # Check in rich format
+        assert [item["key"] for item in result["inputs"]] == ["input"]
+        assert [item["key"] for item in result["outputs"]] == ["output"]
+        assert [item["key"] for item in result["params"]] == ["param"]
         assert result["actions"] == ["default"]
 
     def test_malformed_interface_section(self):
@@ -507,6 +577,134 @@ class TestInterfaceParsing:
         # Writes line has unclosed bracket but pattern should still match
         assert result["outputs"] == []  # Malformed shared key
         # Params should handle double comma gracefully
-        assert result["params"] == ["param1", "param2", "param3"]
+        param_keys = [item["key"] for item in result["params"]]
+        assert param_keys == ["param1", "param2", "param3"]
         # Actions line is malformed (no colon)
         assert result["actions"] == []
+
+    def test_extract_metadata_with_enhanced_format(self):
+        """Test extraction with enhanced format including types and descriptions."""
+
+        class EnhancedNode(pocketflow.Node):
+            """
+            Node with enhanced Interface format.
+
+            Interface:
+            - Reads: shared["file_path"]: str  # Path to the file
+            - Writes: shared["content"]: str, shared["error"]: str  # File contents or error message
+            - Params: encoding: str  # File encoding (default: utf-8)
+            - Actions: default (success), error (failure)
+            """
+
+            pass
+
+        result = self.extractor.extract_metadata(EnhancedNode)
+
+        assert result["description"] == "Node with enhanced Interface format."
+
+        # Check inputs are in rich format
+        assert result["inputs"] == [{"key": "file_path", "type": "str", "description": "Path to the file"}]
+
+        # Check outputs are in rich format
+        assert result["outputs"] == [
+            {"key": "content", "type": "str", "description": "File contents or error message"},
+            {"key": "error", "type": "str", "description": "File contents or error message"},
+        ]
+
+        # Check params are in rich format
+        assert result["params"] == [{"key": "encoding", "type": "str", "description": "File encoding (default: utf-8)"}]
+
+        # Actions remain as simple list
+        assert result["actions"] == ["default", "error"]
+
+    def test_enhanced_format_with_nested_structure(self):
+        """Test extraction with nested dict structure."""
+
+        class StructuredNode(pocketflow.Node):
+            """
+            Node with nested structure in Interface.
+
+            Interface:
+            - Reads: shared["repo"]: str  # Repository name
+            - Writes: shared["issue_data"]: dict
+                - number: int  # Issue number
+                - user: dict  # Author info
+                  - login: str  # GitHub username
+                  - id: int  # User ID
+                - labels: list  # Issue labels
+            - Params: token: str  # GitHub token
+            - Actions: default, error
+            """
+
+            pass
+
+        result = self.extractor.extract_metadata(StructuredNode)
+
+        assert result["description"] == "Node with nested structure in Interface."
+
+        # Check input
+        assert result["inputs"] == [{"key": "repo", "type": "str", "description": "Repository name"}]
+
+        # Check output with structure
+        assert len(result["outputs"]) == 1
+        output = result["outputs"][0]
+        assert output["key"] == "issue_data"
+        assert output["type"] == "dict"
+        assert output["description"] == ""
+
+        # Check nested structure
+        assert "structure" in output
+        structure = output["structure"]
+
+        # Check first level fields
+        assert structure["number"] == {"type": "int", "description": "Issue number"}
+        assert structure["labels"] == {"type": "list", "description": "Issue labels"}
+
+        # Check nested user dict
+        assert "user" in structure
+        assert structure["user"]["type"] == "dict"
+        assert structure["user"]["description"] == "Author info"
+        assert "structure" in structure["user"]
+
+        # Check nested user fields
+        user_structure = structure["user"]["structure"]
+        assert user_structure["login"] == {"type": "str", "description": "GitHub username"}
+        assert user_structure["id"] == {"type": "int", "description": "User ID"}
+
+    def test_backward_compatibility_simple_format(self):
+        """Test that simple format is converted to rich format with defaults."""
+
+        class SimpleNode(pocketflow.Node):
+            """
+            Node with simple Interface format.
+
+            Interface:
+            - Reads: shared["input1"], shared["input2"]
+            - Writes: shared["output1"], shared["output2"]
+            - Params: param1, param2
+            - Actions: default
+            """
+
+            pass
+
+        result = self.extractor.extract_metadata(SimpleNode)
+
+        assert result["description"] == "Node with simple Interface format."
+
+        # Simple format should be converted to rich format with defaults
+        assert result["inputs"] == [
+            {"key": "input1", "type": "any", "description": ""},
+            {"key": "input2", "type": "any", "description": ""},
+        ]
+
+        assert result["outputs"] == [
+            {"key": "output1", "type": "any", "description": ""},
+            {"key": "output2", "type": "any", "description": ""},
+        ]
+
+        assert result["params"] == [
+            {"key": "param1", "type": "any", "description": ""},
+            {"key": "param2", "type": "any", "description": ""},
+        ]
+
+        assert result["actions"] == ["default"]
