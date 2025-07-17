@@ -42,7 +42,7 @@ The handoff mentions `~/.pflow/workflows/` but doesn't specify:
     - Directory creation in `_load_saved_workflows()`
     - Basic JSON loading functionality
     - Support for manually created test workflows
-    - Test workflows limited to file operations only
+    - Test workflows limited to file operations or test nodes only
   - **Benefits**: Unblocks Task 15, foundation for Task 17, enables testing
   - **Drawbacks**: No save functionality yet, limited node types
 
@@ -90,17 +90,18 @@ The handoff shows a basic structure but leaves questions:
 
 ### Options:
 
-- [x] **Option A: Minimal required fields + IR**
+- [ ] **Option A: Minimal required fields + IR**
   - Only: name, description, inputs, outputs, ir_version, ir
   - Skip timestamps, versions, tags for MVP
   - **Benefits**: Simple, focused on core need
   - **Drawbacks**: Less metadata for future features
 
-- [ ] **Option B: Full metadata schema**
-  - Include all fields above
+- [x] **Option B: Full metadata schema**
+  - Include all fields: name, description, inputs, outputs, created_at, updated_at, version, ir_version, tags, ir
   - Rich metadata for discovery
-  - **Benefits**: Future-proof, better UX
-  - **Drawbacks**: More to validate, complexity
+  - **Benefits**: Future-proof, better UX, debugging info, version tracking
+  - **Drawbacks**: Slightly more validation (but minimal extra work)
+  - **Implementation note**: Tags can default to empty array, version to "1.0.0"
 
 - [ ] **Option C: Just wrap the IR**
   - Store IR directly with minimal wrapper
@@ -108,7 +109,7 @@ The handoff shows a basic structure but leaves questions:
   - **Benefits**: No duplication
   - **Drawbacks**: Expensive to scan
 
-**Recommendation**: Option A - Start minimal. Can add fields later without breaking compatibility.
+**Recommendation**: Option B - The extra fields are simple to implement now and provide valuable metadata for debugging, versioning, and future features. Timestamps help track workflow age, version field allows user-controlled versioning, and tags enable future categorization.
 
 ## 3. Structure Parsing Format Specification - Decision importance (5)
 
@@ -494,7 +495,7 @@ These test workflows are better because:
 The key decisions for Task 15:
 
 1. ✓ Use flat `~/.pflow/workflows/` directory with minimal loading implementation
-2. ✓ Minimal workflow schema (name, description, inputs, outputs, ir)
+2. ✓ Full metadata schema (name, description, inputs, outputs, created_at, updated_at, version, ir_version, tags, ir)
 3. ✓ Nested structure format from parser
 4. ✓ Name + one-line description for discovery
 5. ✓ Indented structure display for planning
