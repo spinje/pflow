@@ -539,3 +539,452 @@ def _format_node_section(node_type: str, node_data: dict) -> str:  # noqa: C901
 
     lines.append("")  # Empty line between nodes
     return "\n".join(lines)
+
+
+def _format_structure_combined(
+    structure: dict[str, Any], parent_path: str = ""
+) -> tuple[dict[str, Any], list[tuple[str, str, str]]]:
+    """Transform nested structure into JSON representation and path list.
+
+    Args:
+        structure: Nested structure dict from metadata
+        parent_path: Parent path for recursion (e.g., "issue_data")
+
+    Returns:
+        Tuple of:
+        - JSON dict with types only (for clean display)
+        - List of (path, type, description) tuples
+    """
+    json_struct: dict[str, Any] = {}
+    paths: list[tuple[str, str, str]] = []
+
+    for field_name, field_info in structure.items():
+        if isinstance(field_info, dict):
+            field_type = field_info.get("type", "any")
+            field_desc = field_info.get("description", "")
+
+            # Build current path
+            current_path = f"{parent_path}.{field_name}" if parent_path else field_name
+
+            # Add to paths list
+            paths.append((current_path, field_type, field_desc))
+
+            # Handle nested structures
+            if "structure" in field_info and isinstance(field_info["structure"], dict):
+                # For JSON representation
+                if field_type == "dict":
+                    nested_json, nested_paths = _format_structure_combined(field_info["structure"], current_path)
+                    json_struct[field_name] = nested_json
+                    paths.extend(nested_paths)
+                elif field_type in ("list", "list[dict]"):
+                    # For lists, show the item structure
+                    nested_json, nested_paths = _format_structure_combined(field_info["structure"], f"{current_path}[]")
+                    json_struct[field_name] = [nested_json] if nested_json else []
+                    paths.extend(nested_paths)
+                else:
+                    # Fallback for other types
+                    json_struct[field_name] = field_type
+            elif field_type in ("list", "list[dict]") and "items" in field_info:
+                # Handle legacy list format with items
+                items_struct = field_info["items"]
+                if isinstance(items_struct, dict):
+                    nested_json, nested_paths = _format_structure_combined(items_struct, f"{current_path}[]")
+                    json_struct[field_name] = [nested_json] if nested_json else []
+                    paths.extend(nested_paths)
+                else:
+                    json_struct[field_name] = [field_type]
+            else:
+                # Simple type
+                json_struct[field_name] = field_type
+        else:
+            # Fallback for non-dict entries
+            json_struct[field_name] = "any"
+
+    return json_struct, paths
+
+
+def build_discovery_context(
+    node_ids: Optional[list[str]] = None,
+    workflow_names: Optional[list[str]] = None,
+    registry_metadata: Optional[dict[str, dict[str, Any]]] = None,
+) -> str:
+    """Build lightweight discovery context with names and descriptions only.
+
+    This function provides a browsing-friendly view of available components,
+    helping the planner understand what's available without overwhelming detail.
+
+    Args:
+        node_ids: List of node IDs to include (None = all nodes)
+        workflow_names: List of workflow names to include (None = all workflows)
+        registry_metadata: Optional registry metadata dict. If not provided,
+                          will attempt to load from default registry.
+
+    Returns:
+        Markdown formatted discovery context showing names and descriptions
+    """
+    # Get registry metadata if not provided
+    if registry_metadata is None:
+        from pflow.registry import Registry
+
+        registry = Registry()
+        registry_metadata = registry.load()
+
+    # Process nodes to get metadata
+    processed_nodes, _ = _process_nodes(registry_metadata)
+
+    # Filter nodes if specific IDs provided
+    if node_ids is not None:
+        filtered_nodes = {nid: data for nid, data in processed_nodes.items() if nid in node_ids}
+    else:
+        filtered_nodes = processed_nodes
+
+    # Group nodes by category
+    categories = _group_nodes_by_category(filtered_nodes)
+
+    # Load workflows
+    saved_workflows = _load_saved_workflows()
+
+    # Filter workflows if specific names provided
+    if workflow_names is not None:
+        filtered_workflows = [w for w in saved_workflows if w["name"] in workflow_names]
+    else:
+        filtered_workflows = saved_workflows
+
+    # Build markdown sections
+    markdown_sections = ["## Available Nodes\n"]
+
+    # Add nodes by category (lightweight format)
+    for category, nodes in sorted(categories.items()):
+        markdown_sections.append(f"### {category}")
+        for node_id in sorted(nodes):
+            node_data = filtered_nodes[node_id]
+            markdown_sections.append(f"### {node_id}")
+
+            # Only show description, omit if missing
+            description = node_data.get("description", "").strip()
+            if description and description != "No description":
+                markdown_sections.append(description)
+
+            markdown_sections.append("")  # Empty line
+
+    # Add workflows section
+    if filtered_workflows:
+        markdown_sections.append("## Available Workflows\n")
+        for workflow in sorted(filtered_workflows, key=lambda w: w["name"]):
+            markdown_sections.append(f"### {workflow['name']} (workflow)")
+
+            # Only show description, omit if missing
+            description = workflow.get("description", "").strip()
+            if description:
+                markdown_sections.append(description)
+
+            markdown_sections.append("")  # Empty line
+
+    return "\n".join(markdown_sections).strip()
+
+
+def _check_missing_components(
+    selected_node_ids: list[str],
+    selected_workflow_names: list[str],
+    registry_metadata: dict[str, dict[str, Any]],
+    saved_workflows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Check for missing components and return error dict if any found.
+
+    Args:
+        selected_node_ids: Node IDs to check
+        selected_workflow_names: Workflow names to check
+        registry_metadata: Registry metadata to check against
+        saved_workflows: Workflows to check against
+
+    Returns:
+        Error dict if components missing, None otherwise
+    """
+    missing_nodes = []
+    missing_workflows = []
+
+    # Check nodes
+    for node_id in selected_node_ids:
+        if node_id not in registry_metadata:
+            missing_nodes.append(node_id)
+
+    # Check workflows
+    for workflow_name in selected_workflow_names:
+        if not any(w["name"] == workflow_name for w in saved_workflows):
+            missing_workflows.append(workflow_name)
+
+    # Return error dict if any components missing
+    if missing_nodes or missing_workflows:
+        error_msg = "Missing components detected:\n"
+        if missing_nodes:
+            error_msg += f"- Unknown nodes: {', '.join(missing_nodes)}\n"
+            error_msg += "  (Check spelling, use hyphens not underscores)\n"
+        if missing_workflows:
+            error_msg += f"- Unknown workflows: {', '.join(missing_workflows)}\n"
+
+        return {
+            "error": error_msg.strip(),
+            "missing_nodes": missing_nodes,
+            "missing_workflows": missing_workflows,
+        }
+
+    return None
+
+
+def build_planning_context(
+    selected_node_ids: list[str],
+    selected_workflow_names: list[str],
+    registry_metadata: dict[str, dict[str, Any]],
+    saved_workflows: Optional[list[dict[str, Any]]] = None,
+) -> str | dict[str, Any]:
+    """Build detailed planning context for selected components.
+
+    This function provides complete interface details for components selected
+    during the discovery phase, enabling accurate workflow generation.
+
+    Args:
+        selected_node_ids: Node IDs to include (required)
+        selected_workflow_names: Workflow names to include (required)
+        registry_metadata: Full registry metadata dict
+        saved_workflows: Pre-loaded workflow list (optional, will load if None)
+
+    Returns:
+        Either:
+        - Markdown formatted planning context with full details
+        - Error dict with keys: "error", "missing_nodes", "missing_workflows"
+    """
+    # Load workflows if not provided
+    if saved_workflows is None:
+        saved_workflows = _load_saved_workflows()
+
+    # Check for missing components
+    error_dict = _check_missing_components(
+        selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows
+    )
+    if error_dict:
+        return error_dict
+
+    # Process selected nodes to extract metadata
+    selected_registry = {nid: registry_metadata[nid] for nid in selected_node_ids}
+    processed_nodes, _ = _process_nodes(selected_registry)
+
+    # Build markdown sections
+    markdown_sections = ["## Selected Components\n"]
+
+    # Add detailed node information with enhanced structure display
+    for node_id in sorted(selected_node_ids):
+        if node_id in processed_nodes:
+            node_data = processed_nodes[node_id]
+            section = _format_node_section_enhanced(node_id, node_data)
+            markdown_sections.append(section)
+
+    # Add detailed workflow information
+    selected_workflows = [w for w in saved_workflows if w["name"] in selected_workflow_names]
+    if selected_workflows:
+        markdown_sections.append("## Selected Workflows\n")
+        for workflow in sorted(selected_workflows, key=lambda w: w["name"]):
+            section = _format_workflow_section(workflow)
+            markdown_sections.append(section)
+
+    return "\n".join(markdown_sections).strip()
+
+
+def _format_exclusive_parameters(node_data: dict, inputs: list, lines: list[str]) -> None:
+    """Format parameters that are not in inputs (exclusive params).
+
+    Args:
+        node_data: Node metadata containing params
+        inputs: List of inputs to exclude from params
+        lines: List to append formatted lines to
+    """
+    params = node_data["params"]
+    input_keys = set()
+    for inp in inputs:
+        if isinstance(inp, dict):
+            input_keys.add(inp["key"])
+        else:
+            input_keys.add(inp)
+
+    exclusive_params = []
+    for param in params:
+        if isinstance(param, dict):
+            key = param["key"]
+            if key not in input_keys:
+                type_str = param.get("type", "any")
+                desc = param.get("description", "")
+
+                line = f"- `{key}: {type_str}`"
+                if desc:
+                    line += f" - {desc}"
+                exclusive_params.append(line)
+        else:
+            if param not in input_keys:
+                exclusive_params.append(f"- `{param}`")
+
+    if exclusive_params:
+        lines.append("**Parameters**:")
+        lines.extend(exclusive_params)
+    else:
+        lines.append("**Parameters**: none")
+
+
+def _format_interface_item(item: dict | str, item_type: str, lines: list[str]) -> None:
+    """Format a single interface item (input/output/param).
+
+    Args:
+        item: The item to format (dict or string)
+        item_type: Type of item ("input", "output", "param")
+        lines: List to append formatted lines to
+    """
+    if isinstance(item, dict):
+        key = item["key"]
+        type_str = item.get("type", "any")
+        desc = item.get("description", "")
+
+        line = f"- `{key}: {type_str}`"
+        if desc:
+            line += f" - {desc}"
+        lines.append(line)
+
+        # Enhanced structure display for complex types
+        if type_str in ("dict", "list", "list[dict]") and "structure" in item:
+            _add_enhanced_structure_display(lines, key, item["structure"])
+    else:
+        lines.append(f"- `{item}`")
+
+
+def _format_node_section_enhanced(node_type: str, node_data: dict) -> str:
+    """Format a node with enhanced structure display (JSON + paths).
+
+    This is similar to _format_node_section but uses the combined
+    structure format for complex types.
+
+    Args:
+        node_type: The type/name of the node
+        node_data: Node metadata dictionary
+
+    Returns:
+        Formatted markdown string for the node
+    """
+    lines = [f"### {node_type}"]
+
+    # Add description
+    description = node_data.get("description", "").strip()
+    if not description:
+        description = "No description available"
+    lines.append(description)
+    lines.append("")
+
+    # Format inputs
+    inputs = node_data["inputs"]
+    if inputs:
+        lines.append("**Inputs**:")
+        for inp in inputs:
+            _format_interface_item(inp, "input", lines)
+    else:
+        lines.append("**Inputs**: none")
+
+    lines.append("")
+
+    # Format outputs
+    outputs = node_data["outputs"]
+    if outputs:
+        lines.append("**Outputs**:")
+        for out in outputs:
+            _format_interface_item(out, "output", lines)
+    else:
+        lines.append("**Outputs**: none")
+
+    lines.append("")
+
+    # Format exclusive parameters
+    _format_exclusive_parameters(node_data, inputs, lines)
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _add_enhanced_structure_display(lines: list[str], key: str, structure: dict[str, Any]) -> None:
+    """Add combined JSON + paths format for structure display.
+
+    Args:
+        lines: List to append formatted lines to
+        key: The key name (e.g., "issue_data")
+        structure: The structure dict to format
+    """
+    lines.append("")
+    lines.append("Structure (JSON format):")
+    lines.append("```json")
+
+    # Generate JSON representation
+    json_struct, paths = _format_structure_combined(structure)
+
+    # Create wrapper object with the key
+    wrapper = {key: json_struct}
+
+    # Pretty print the JSON
+    import json
+
+    json_str = json.dumps(wrapper, indent=2)
+    lines.append(json_str)
+    lines.append("```")
+    lines.append("")
+
+    # Add paths list
+    lines.append("Available paths:")
+    for path, type_str, desc in paths:
+        # Prepend the key to each path
+        full_path = f"{key}.{path}" if path else key
+        line = f"- {full_path} ({type_str})"
+        if desc:
+            line += f" - {desc}"
+        lines.append(line)
+
+
+def _format_workflow_section(workflow: dict[str, Any]) -> str:
+    """Format a workflow's information for planning context.
+
+    Args:
+        workflow: Workflow metadata dict
+
+    Returns:
+        Formatted markdown string for the workflow
+    """
+    lines = [f"### {workflow['name']} (workflow)"]
+
+    # Add description
+    description = workflow.get("description", "").strip()
+    if description:
+        lines.append(description)
+    else:
+        lines.append("No description available")
+    lines.append("")
+
+    # Format inputs
+    inputs = workflow.get("inputs", [])
+    if inputs:
+        lines.append("**Inputs**:")
+        for inp in inputs:
+            lines.append(f"- `{inp}`")
+    else:
+        lines.append("**Inputs**: none")
+    lines.append("")
+
+    # Format outputs
+    outputs = workflow.get("outputs", [])
+    if outputs:
+        lines.append("**Outputs**:")
+        for out in outputs:
+            lines.append(f"- `{out}`")
+    else:
+        lines.append("**Outputs**: none")
+    lines.append("")
+
+    # Add metadata if available
+    if "version" in workflow:
+        lines.append(f"**Version**: {workflow['version']}")
+    if workflow.get("tags"):
+        lines.append(f"**Tags**: {', '.join(workflow['tags'])}")
+
+    lines.append("")
+    return "\n".join(lines)

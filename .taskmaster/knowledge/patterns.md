@@ -1029,3 +1029,49 @@ A consolidated collection of successful patterns and approaches discovered durin
   - No technical knowledge required to review
 
 ---
+
+## Pattern: Optional Dependency Injection
+- **Date**: 2025-01-18
+- **Discovered in**: Task 15.2
+- **Problem**: Functions need external dependencies (like registries) that may not always be available or may need mocking for tests
+- **Solution**: Accept the dependency as an optional parameter with a fallback to load it if not provided
+- **Example**:
+  ```python
+  def build_discovery_context(
+      node_ids: Optional[list[str]] = None,
+      registry_metadata: Optional[dict[str, dict[str, Any]]] = None
+  ) -> str:
+      # Get registry metadata if not provided
+      if registry_metadata is None:
+          from pflow.registry import Registry
+          registry = Registry()
+          registry_metadata = registry.load()
+      # Use registry_metadata...
+  ```
+- **When to use**: When building functions that depend on external services, singletons, or registries that need flexibility for testing
+- **Benefits**: Enables easy testing with mocks, supports different usage contexts, avoids tight coupling
+
+---
+
+## Pattern: Structured Error Return for Recovery
+- **Date**: 2025-01-18
+- **Discovered in**: Task 15.2
+- **Problem**: Need to handle validation failures in a way that enables the caller to understand what went wrong and retry with corrections
+- **Solution**: Return a structured error dict with specific keys instead of raising exceptions or returning partial results
+- **Example**:
+  ```python
+  def build_planning_context(...) -> str | dict[str, Any]:
+      # Check for missing components
+      if missing_nodes or missing_workflows:
+          return {
+              "error": "Missing components detected:\n...",
+              "missing_nodes": ["node-id-1", "node-id-2"],
+              "missing_workflows": ["workflow-name-1"]
+          }
+      # Normal return if all valid
+      return markdown_content
+  ```
+- **When to use**: When building validation or planning functions where the caller can recover from errors by fixing inputs
+- **Benefits**: Enables graceful error recovery, provides actionable error information, maintains workflow integrity
+
+---

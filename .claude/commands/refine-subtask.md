@@ -24,9 +24,8 @@ Key outputs in `.taskmaster/tasks/task_X/subtask_$ARGUMENTS/refinement/`:
 - `knowledge-synthesis.md`
 - `evaluation.md`
 - `refined-spec.md`
-- `cookbook-patterns.md` (for PocketFlow tasks)
 - Create marker: `ready-for-implementation`
 
 Always READ the project context from parent task first!
 
-*Needless to say this is a very important and complex task where ultra thinking is required.*
+*Needless to say this is a very important and complex task where you need to ultrathink.*
