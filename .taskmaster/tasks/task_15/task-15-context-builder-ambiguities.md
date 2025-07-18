@@ -1091,3 +1091,7 @@ The key decisions for Task 15:
 10. ✓ No artificial limits in MVP - avoid premature optimization
 
 These decisions prioritize simplicity, LLM comprehension, and pragmatic implementation while enabling the two-phase discovery pattern that Task 17's planner requires.
+
+## Notes
+
+*When referring to this document to sub-agents or other agents implementing sub-tasks, they can find this document in `.taskmaster/tasks/task_15/task-15-context-builder-ambiguities.md` file.*

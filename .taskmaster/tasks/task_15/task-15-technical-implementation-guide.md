@@ -342,6 +342,93 @@ The ambiguities document focuses on:
 
 Use both documents together for complete understanding.
 
+## Suggested Implementation Approach
+
+**Note**: This is just one suggested approach. Feel free to adapt based on what makes sense as you implement.
+
+**⚠️ CRITICAL REMINDER**: This list is NOT exhaustive! As the implementing agent, you must:
+- Verify every detail from both this guide and the ambiguities document
+- Think through edge cases and error scenarios
+- Add any missing steps discovered during implementation
+- Double-check that nothing is forgotten or omitted
+- Be prepared for unexpected complexities that may require additional work
+- Read the actual code to understand current implementation details
+- Run existing tests to see what's expected
+
+Remember: These documents provide guidance, but YOU are responsible for ensuring completeness and correctness of the implementation.
+
+### Subtask 1: Workflow Infrastructure Foundation
+**Rationale**: Other features depend on being able to load workflows. Start here to unblock everything else.
+
+**Components to implement**:
+- Workflow directory utilities
+  - Create `~/.pflow/workflows/` if missing
+  - Safe path operations
+
+- `_load_saved_workflows()` function
+  - Parse JSON files from workflow directory
+  - Validate required fields (name, description, inputs, outputs, ir)
+  - Skip invalid files with warnings (don't crash)
+  - Return consistent format for use by context builders
+
+- Test workflow creation
+  - Use test nodes (test_node, test_node_structured)
+  - Create 2-3 valid test workflows
+  - Create 1-2 invalid ones for error case testing
+
+### Subtask 2: Two-Phase Context Builder Functions
+**Rationale**: These are the main deliverables. Build on workflow loading from Subtask 1.
+
+**Components to implement**:
+- `build_discovery_context()` function
+  - Extract just names/descriptions from nodes
+  - Include workflows from `_load_saved_workflows()`
+  - Group by categories using existing logic
+  - Omit missing descriptions (no placeholders)
+
+- `build_planning_context()` function
+  - Check for missing components first
+  - Return error dict if any missing (for discovery retry)
+  - Filter to selected components only
+  - Display full details with combined JSON + paths format
+  - Leverage existing `_format_structure()` for hierarchical data
+
+- Update `build_context()` for backward compatibility
+  - Delegate to new functions internally
+  - Maintain exact same output format
+  - Ensure all existing tests pass
+
+### Subtask 3: Comprehensive Testing
+**Rationale**: Verify everything works together and catches edge cases.
+
+**Components to implement**:
+- Unit tests for new functions
+  - Workflow loading edge cases (invalid JSON, missing fields)
+  - Discovery with various component counts (0, 10, 100)
+  - Planning with missing components
+  - Structure display formatting
+
+- Integration tests
+  - Full discovery → planning flow
+  - Error recovery scenarios
+  - Backward compatibility verification
+
+- Final verification
+  - All existing tests still pass
+  - Performance acceptable with realistic data
+  - Structure parsing still works correctly
+
+## Why This Order?
+
+1. **Workflow loading is independent** - Can be built and tested in isolation
+2. **Discovery is simpler than planning** - Good warmup for the pattern
+3. **Backward compatibility is easier** - Once new functions work, delegation is straightforward
+4. **Testing throughout is critical** - But comprehensive suite at end catches integration issues
+
+Remember: Reuse existing methods, don't modify the fragile parser, keep it simple for MVP.
+
+## Notes
+
 *Don't treat this document as a checklist, it's a guide to help you understand the code and the context. When implementing, you should be able to think through the code, adapt to changing circumstances and make the best decisions based on common sense, architectural best practices and the user's goals and guidance.*
 
-When referring to this document to sub-agents or other agents implementing sub-tasks, they can find this document in `.taskmaster/tasks/task_15/task-15-technical-implementation-guide.md` file.
+*When referring to this document to sub-agents or other agents implementing sub-tasks, they can find this document in `.taskmaster/tasks/task_15/task-15-technical-implementation-guide.md` file.*
