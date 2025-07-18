@@ -257,7 +257,7 @@ Planner generates:
 
 ### Backward Compatibility
 
-The existing `build_context()` continues working by internally calling both new functions, ensuring tests don't break while enabling the new two-phase approach.
+**CLARIFICATION**: The existing `build_context()` does NOT need backward compatibility. It can be refactored or rewritten to essentially become `build_planning_context()` for all components. This simplifies the implementation significantly.
 
 ## 1. Workflow Storage Location and Management - Decision importance (4)
 
@@ -363,6 +363,8 @@ The handoff shows a basic structure but leaves questions:
   - **Drawbacks**: Expensive to scan
 
 **Recommendation**: Option B - The extra fields are simple to implement now and provide valuable metadata for debugging, versioning, and future features. Timestamps help track workflow age, version field allows user-controlled versioning, and tags enable future categorization.
+
+**Implementation Note**: For MVP, only validate the essential fields (name, description, inputs, outputs, ir). Optional fields like tags, timestamps, and version can be included in the schema but won't be validated - they're for future use.
 
 ## 3. Structure Parsing Format Specification - Decision importance (5)
 
@@ -545,54 +547,37 @@ How should existing `build_context()` continue working?
 ### Context:
 **Reality Check**: Only tests use `build_context()`, no production code depends on it yet.
 
+**IMPORTANT CLARIFICATION**: `build_context()` does NOT need backward compatibility. It can be refactored to essentially become `build_planning_context()` for all components.
+
 **Terminology Issues**: Current code incorrectly uses `node_type` when these are actually node IDs/names. We should:
 1. Document this terminology issue
 2. Suggest refactoring to `node_id` or `node_name` while implementing Task 15
 3. Use correct terminology in new functions
 
-### Options:
+### Updated Approach:
 
-- [ ] **Option A: Keep completely independent**
-  - Three separate functions, no code sharing
-  - **Benefits**: No regression risk
-  - **Drawbacks**: Code duplication
+```python
+def build_discovery_context(node_ids=None, workflow_names=None):
+    """Build lightweight discovery context.
 
-- [x] **Option B: Delegate internally with explicit lists**
-  ```python
-  def build_discovery_context(node_ids=None, workflow_names=None):
-      """Build lightweight discovery context.
+    Args:
+        node_ids: List of node IDs to include (None = all nodes)
+        workflow_names: List of workflow names to include (None = all workflows)
+    """
+    # Build lightweight view
 
-      Args:
-          node_ids: List of node IDs to include (None = all nodes)
-          workflow_names: List of workflow names to include (None = all workflows)
-      """
-      # Flexibility: Can filter or use all
+def build_planning_context(selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows=None):
+    """Build detailed context for selected items."""
+    # Build detailed view with structures
 
-  def build_planning_context(selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows=None):
-      """Build detailed context for selected items."""
-      # Explicit about what's included
+def build_context(registry_metadata):
+    """Refactored to use planning context for all components."""
+    # Can simply call build_planning_context with all components
+    # OR be refactored to match its functionality
+    # No backward compatibility needed!
+```
 
-  def build_context(registry_metadata):
-      """Existing function - maintains compatibility."""
-      # Delegate to new functions
-      all_node_ids = list(registry_metadata.keys())
-      discovery = build_discovery_context(all_node_ids, [])  # No workflows in old version
-      planning = build_planning_context(all_node_ids, [], registry_metadata)
-      return f"{discovery}\n\n{planning}"
-  ```
-  - **Benefits**:
-    - Reuse code, consistent behavior
-    - Explicit lists provide future flexibility
-    - Can add filtering/exclusions later
-    - Clear parameter names
-  - **Refactor Note**: Consider renaming `node_type` → `node_id` throughout codebase
-
-- [ ] **Option C: Break compatibility**
-  - Since only tests use it, just replace
-  - **Benefits**: Clean slate
-  - **Drawbacks**: Need to update all tests
-
-**Recommendation**: Option B - Internal delegation with explicit list parameters provides flexibility and maintains compatibility. Document terminology issues for future cleanup.
+**Recommendation**: Refactor `build_context()` to essentially be `build_planning_context()` for all components. This is much cleaner than complex delegation strategies.
 
 ## 7. Workflow Loading Error Handling - Decision importance (3)
 
@@ -830,6 +815,8 @@ The implementing agent will need to create these transformation functions in the
 
 **Recommendation**: Option E - Combined format provides optimal LLM comprehension through redundant representations. Each format complements the other, reducing errors and improving proxy mapping accuracy.
 
+**Implementation Note**: The existing `_format_structure()` method will need enhancement to produce this combined JSON + paths format. This is a HARD REQUIREMENT for the planner to generate accurate proxy mappings.
+
 ## 10. Performance Constraints - Decision importance (2)
 
 What are the performance boundaries?
@@ -1048,7 +1035,7 @@ Instead of using file operation nodes (which would be slow and create real files
 ### Available Test Nodes:
 - **test_node** - Basic string input/output
 - **test_node_retry** - Node with retry capabilities and parameters
-- **test_node_structured** - Node with nested structure outputs (created for testing)
+- **test_node_structured** - Node with nested structure outputs (already exists)
 
 ### Example Test Workflows:
 1. **test-data-pipeline**
@@ -1084,7 +1071,7 @@ The key decisions for Task 15:
 3. ✓ Nested structure format from parser
 4. ✓ Name + description for discovery (no length limits)
 5. ✓ Combined JSON + paths display for optimal LLM comprehension
-6. ✓ Internal delegation for backward compatibility with better terminology
+6. ✓ Refactor build_context() - no backward compatibility needed
 7. ✓ Skip invalid workflow files with warnings
 8. ✓ Return error info when components missing (for discovery retry)
 9. ✓ Use test nodes for creating test workflows (faster, safer, better for structure testing)

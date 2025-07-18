@@ -72,11 +72,12 @@ def _load_saved_workflows():
 
 ### Phase 3: Integration (Hours 7-8)
 
-#### Backward Compatibility
+#### Refactor build_context()
 ```python
 def build_context(registry_metadata):
-    """Delegate to new functions while maintaining exact output format."""
-    # Must pass all existing tests unchanged
+    """Refactor to essentially be build_planning_context for all components."""
+    # No backward compatibility needed - can be rewritten
+    # This simplifies implementation significantly
 ```
 
 ## Critical Parser Fixes to Preserve
@@ -176,7 +177,7 @@ From tests, this successfully parses:
 ### Critical Test Expectations
 1. **Empty params arrays**: Lines 173, 391, 443, 461 in test_metadata_extractor.py
 2. **Full descriptions preserved**: Including commas (line 166)
-3. **Backward compatibility**: All existing tests must pass
+3. **Updated functionality**: Tests may need updates for refactored build_context()
 
 ### New Test Coverage
 1. **Discovery Context**
@@ -253,7 +254,7 @@ From tests, this successfully parses:
 
 ### Methods to Reuse
 - `_process_nodes()` - Metadata extraction and categorization
-- `_format_structure()` - Structure display (already handles hierarchical data)
+- `_format_structure()` - Structure display (needs enhancement for combined JSON + paths format)
 - `_parse_structure()` - Already works with tests!
 - `_group_nodes_by_category()` - Category logic
 - `_get_indentation()` - Helper for structure parsing
@@ -272,17 +273,18 @@ From tests, this successfully parses:
 ### Must Complete
 - [ ] Create workflow directory structure
 - [ ] Implement three functions (discovery, planning, load)
-- [ ] Update build_context() delegation
+- [ ] Refactor build_context() to use planning context approach
+- [ ] Enhance _format_structure() for combined JSON + paths format (HARD REQUIREMENT)
 - [ ] Maintain all parser fixes
 - [ ] Add comprehensive tests
-- [ ] Verify structure display works
+- [ ] Verify structure display works with combined format
 
 ### Common Pitfalls
 1. **Don't reimplement structure parsing** - Use existing
 2. **Don't break exclusive params** - Tests depend on it
 3. **Don't modify regex carelessly** - Very fragile
 4. **Don't forget empty params arrays** - Expected by tests
-5. **Don't skip backward compatibility** - Critical
+5. **Don't forget to enhance _format_structure()** - Combined format is required
 
 ## Success Verification
 
@@ -295,7 +297,7 @@ From tests, this successfully parses:
 
 ### Integration Tests
 - Discovery → Planning flow works
-- Backward compatibility maintained
+- build_context() properly refactored
 - Performance acceptable (<1s for 100 nodes)
 
 ## Additional Critical Details
@@ -310,7 +312,7 @@ From tests, this successfully parses:
 ### Node Examples Reference
 - **GitHub nodes don't exist yet** (Task 13) but used in all examples
 - **/src/pflow/nodes/CLAUDE.md** lines 119-136: Shows ideal enhanced format
-- **Test nodes available**: test_node.py, test_node_retry.py for testing
+- **Test nodes available**: test_node.py, test_node_retry.py, test_node_structured.py (already exists with nested structure outputs)
 
 ### Workflow Discovery Context
 - No standard location exists yet - Task 15 defines it as `~/.pflow/workflows/`
@@ -367,7 +369,7 @@ Remember: These documents provide guidance, but YOU are responsible for ensuring
 
 - `_load_saved_workflows()` function
   - Parse JSON files from workflow directory
-  - Validate required fields (name, description, inputs, outputs, ir)
+  - Validate essential fields only (name, description, inputs, outputs, ir) - ignore optional fields for MVP
   - Skip invalid files with warnings (don't crash)
   - Return consistent format for use by context builders
 
@@ -393,10 +395,10 @@ Remember: These documents provide guidance, but YOU are responsible for ensuring
   - Display full details with combined JSON + paths format
   - Leverage existing `_format_structure()` for hierarchical data
 
-- Update `build_context()` for backward compatibility
-  - Delegate to new functions internally
-  - Maintain exact same output format
-  - Ensure all existing tests pass
+- Refactor `build_context()`
+  - No backward compatibility needed
+  - Can rewrite to match `build_planning_context()` approach
+  - Update tests as needed
 
 ### Subtask 3: Comprehensive Testing
 **Rationale**: Verify everything works together and catches edge cases.
