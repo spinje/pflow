@@ -448,7 +448,13 @@ This approach:
 How should structures be displayed in the planning context markdown?
 
 ### Context:
-The planner needs to understand structure to generate proxy mappings.
+The planning context will be read ONLY by an LLM (not humans). The LLM needs to understand data structures to generate valid proxy mappings like `"author": "issue_data.user.login"`. We must optimize for LLM comprehension and accuracy.
+
+### LLM Processing Considerations:
+- LLMs excel at pattern matching from training data
+- Direct copying is more reliable than path reconstruction
+- Multiple representations reduce errors through redundancy
+- API documentation patterns are highly familiar from training
 
 ### Options:
 
@@ -457,10 +463,9 @@ The planner needs to understand structure to generate proxy mappings.
   **Outputs**:
   - `issue_data: dict` - {"number": "int", "user": {"login": "str"}}
   ```
-  - **Benefits**: Compact
-  - **Drawbacks**: Hard to read
+  - **LLM perspective**: Requires path reconstruction, error-prone
 
-- [x] **Option B: Indented structure**
+- [ ] **Option B: Indented structure**
   ```markdown
   **Outputs**:
   - `issue_data: dict` - Complete issue data
@@ -469,20 +474,68 @@ The planner needs to understand structure to generate proxy mappings.
       - user: dict - Author info
         - login: str - Username
   ```
-  - **Benefits**: Human readable, clear hierarchy
-  - **Drawbacks**: More lines
+  - **LLM perspective**: Must track indentation, reconstruct paths mentally
 
 - [ ] **Option C: Table format**
   ```markdown
   | Path | Type | Description |
   |------|------|-------------|
-  | issue_data | dict | Complete issue |
-  | issue_data.number | int | Issue number |
+  | issue_data.user.login | str | Username |
   ```
-  - **Benefits**: Structured
-  - **Drawbacks**: Verbose, hard to generate
+  - **LLM perspective**: Good but verbose, less common in training
 
-**Recommendation**: Option B - Indented structure is most readable and aligns with the parser.
+- [ ] **Option D: Explicit paths only**
+  ```markdown
+  **Outputs**:
+  - issue_data.user.login (str) - GitHub username
+  - issue_data.user.id (int) - User ID
+  ```
+  - **LLM perspective**: Direct copying possible, but lacks structure context
+
+- [x] **Option E: Combined format (JSON + Paths)** ✓ **SELECTED**
+  ```markdown
+  **Outputs**:
+  - `issue_data: dict` - Complete issue data from GitHub API
+
+  Structure (JSON format):
+  ```json
+  {
+    "issue_data": {
+      "number": "int",
+      "title": "str",
+      "user": {
+        "login": "str",
+        "id": "int"
+      },
+      "labels": [
+        {
+          "name": "str",
+          "color": "str"
+        }
+      ]
+    }
+  }
+  ```
+
+  Available paths:
+  - issue_data.number (int) - Issue number
+  - issue_data.title (str) - Issue title
+  - issue_data.user.login (str) - GitHub username
+  - issue_data.user.id (int) - User ID
+  - issue_data.labels[].name (str) - Label name
+  - issue_data.labels[].color (str) - Label color
+  ```
+
+**LLM Benefits of Combined Approach**:
+1. **Dual pattern recognition**: JSON for structure understanding, paths for mapping generation
+2. **Error reduction**: Redundancy allows cross-validation between formats
+3. **Zero reconstruction**: Can copy paths directly for proxy mappings
+4. **Training familiarity**: This exact combination appears in countless API docs
+5. **Cognitive flexibility**: Use JSON when understanding relationships, use paths when generating mappings
+
+**Implementation Note**: With typical workflows using 5-20 nodes, the token overhead of dual representation is negligible compared to the accuracy improvements. This also enables A/B testing of which format performs better in practice.
+
+**Recommendation**: Option E - Combined format provides optimal LLM comprehension through redundant representations. Each format complements the other, reducing errors and improving proxy mapping accuracy.
 
 ## 10. Performance Constraints - Decision importance (2)
 
