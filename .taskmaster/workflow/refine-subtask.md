@@ -54,6 +54,7 @@ Load ALL relevant knowledge from previous implementations to avoid repeating mis
 - Subtasks may include paths like `.taskmaster/tasks/task_5/research/pocketflow-patterns.md`
 - These are **suggestions from task decomposition**, not mandates
 - Research provides options to consider, not instructions to follow
+- These may or may not be relevant to the current subtask and need careful consideration
 
 **Critical understanding:**
 > Research references are ONE INPUT among many. During refinement, you will:
@@ -139,7 +140,11 @@ Note: This is the primary use of task-master in the refinement phase.
 - What assumptions are being made?
 - Where might ambiguities hide?
 
-#### 1.2 Code Validation & Cookbook Pattern Analysis
+Ultrathink about all these questions and make sure you have a clear understanding of the task. If you feel confident that you have a clear understanding of the task you can go directly to 1.3.
+
+#### 1.2 Code Validation & Cookbook Pattern Analysis (Optional)
+
+In some cases, you have been given extensive information about the task as part of your brief and handoff. In this case, you can skip this step (1.2) and go to 1.3. **Only skip this step if you feel like you have enough information to proceed.**
 
 **Deploy sub-agents** to analyze the codebase, documentation and identify relevant cookbook patterns.
 
@@ -150,7 +155,7 @@ Note: This is the primary use of task-master in the refinement phase.
 - Agents search for relevant source files in `src/pflow/`
 - And search documentation in `docs/` for accuracy and cross-references
 
-**Part C: Cookbook Pattern Discovery (only for tasks where PocketFlow can potentially be used):**
+**Part C (Optional): Cookbook Pattern Discovery (only for tasks where PocketFlow can potentially be used):**
 - **Sub-agents read** `pocketflow/cookbook/CLAUDE.md` to understand available examples and `pocketflow/__init__.py` to understand core framework
 - **Sub-agents search** `pocketflow/docs/` for conceptual understanding that can be applied to the current task
 - **Sub-agents search** `pocketflow/cookbook/` for relevant examples
@@ -267,7 +272,7 @@ Create refined specification at:
 - Building on: [Previous patterns being reused]
 - Avoiding: [Known pitfalls being sidestepped]
 - Following: [Conventions being maintained]
-- **Cookbook patterns to apply**: [List specific examples, e.g., "pocketflow-batch-node for file processing"]
+- Cookbook patterns to apply: [List specific examples, e.g., "pocketflow-batch-node for file processing"] (only if applicable)
 
 ## Technical Specification
 ### Inputs
@@ -352,15 +357,17 @@ This final check can save hours of implementation work and ensures everyone is a
 
 ### Exit Criteria for Phase 1
 - [ ] All code validated against task requirements
-- [ ] Relevant cookbook patterns analyzed and documented (2-3 examples minimum for PocketFlow tasks)
 - [ ] All ambiguities identified and resolved
 - [ ] User decisions obtained and documented
-- [ ] Refined specification created with cookbook patterns listed
 - [ ] Success criteria clearly defined
 - [ ] Test strategy identified
 - [ ] Knowledge from previous tasks incorporated
 - [ ] Marker file created for ready-for-implementation
-- [ ] Expected output shown to the user
+- [ ] Expected output shown to the user along with all key decisions made
+
+For tasks where PocketFlow should be used in implementation:
+- [ ] Relevant cookbook patterns analyzed and documented (2-3 examples minimum)
+- [ ] Refined specification created with cookbook patterns listed
 
 ## Handoff to Implementation
 
