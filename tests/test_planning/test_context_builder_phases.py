@@ -1,18 +1,45 @@
 """Tests for two-phase context building functions."""
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
 from pflow.planning.context_builder import (
+    _format_exclusive_parameters,
+    _format_node_section_enhanced,
     _format_structure_combined,
+    _group_nodes_by_category,
+    _process_nodes,
     build_discovery_context,
     build_planning_context,
 )
+from pocketflow import BaseNode
+
+
+class MockNode(BaseNode):
+    """Mock node class for testing."""
+
+    def exec(self, shared: dict) -> str:
+        """Mock exec implementation."""
+        return "default"
 
 
 class TestDiscoveryContext:
     """Tests for build_discovery_context function."""
+
+    def test_discovery_context_input_validation(self):
+        """Test input validation for discovery context."""
+        # Test invalid node_ids type
+        with pytest.raises(TypeError, match="node_ids must be a list or None, got str"):
+            build_discovery_context(node_ids="github-node")
+
+        # Test invalid workflow_names type
+        with pytest.raises(TypeError, match="workflow_names must be a list or None, got dict"):
+            build_discovery_context(workflow_names={"workflow": "name"})
+
+        # Test invalid registry_metadata type
+        with pytest.raises(TypeError, match="registry_metadata must be a dict or None, got list"):
+            build_discovery_context(registry_metadata=[])
 
     def test_discovery_context_empty_registry(self):
         """Test discovery context with no nodes."""
@@ -179,6 +206,26 @@ class TestDiscoveryContext:
 
 class TestPlanningContext:
     """Tests for build_planning_context function."""
+
+    def test_planning_context_input_validation(self):
+        """Test input validation for planning context."""
+        registry = {"node1": {"module": "test", "class_name": "Test"}}
+
+        # Test invalid selected_node_ids type
+        with pytest.raises(TypeError, match="selected_node_ids must be a list, got str"):
+            build_planning_context("node1", [], registry)
+
+        # Test invalid selected_workflow_names type
+        with pytest.raises(TypeError, match="selected_workflow_names must be a list, got str"):
+            build_planning_context([], "workflow", registry)
+
+        # Test invalid registry_metadata type
+        with pytest.raises(TypeError, match="registry_metadata must be a dict, got list"):
+            build_planning_context([], [], [])
+
+        # Test invalid saved_workflows type
+        with pytest.raises(TypeError, match="saved_workflows must be a list or None, got str"):
+            build_planning_context([], [], registry, saved_workflows="invalid")
 
     def test_planning_context_missing_nodes(self):
         """Test error dict returned when nodes are missing."""
@@ -448,3 +495,386 @@ class TestStructureCombined:
 
         assert json_struct == {}
         assert paths == []
+
+
+class TestSharedFunctionality:
+    """Tests for shared functionality used by both old and new context builders."""
+
+    # Note: The new discovery/planning functions don't have input validation
+    # They use Optional types and handle None by loading from Registry
+    # This is different from the old build_context() function
+
+    def test_process_nodes_handles_import_failures(self):
+        """Test _process_nodes gracefully handles import failures."""
+        registry = {
+            "broken-node": {
+                "module": "pflow.nodes.broken",
+                "class_name": "BrokenNode",
+                "file_path": "/path/to/broken.py",
+            },
+            "good-node": {
+                "module": "pflow.nodes.good",
+                "class_name": "GoodNode",
+                "file_path": "/path/to/good.py",
+            },
+        }
+
+        with (
+            patch("pflow.planning.context_builder.importlib.import_module") as mock_import,
+            patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class,
+        ):
+            # Make first import fail, second succeed
+            def side_effect(module_path):
+                if "broken" in module_path:
+                    raise ImportError("Module not found")
+                mock_module = Mock()
+                mock_module.GoodNode = MockNode
+                return mock_module
+
+            mock_import.side_effect = side_effect
+
+            mock_extractor = Mock()
+            mock_extractor_class.return_value = mock_extractor
+            mock_extractor.extract_metadata.return_value = {
+                "description": "A good node",
+                "inputs": [],
+                "outputs": [],
+                "params": [],
+                "actions": [],
+            }
+
+            nodes, truncated_count = _process_nodes(registry)
+
+            # Should only have good-node
+            assert "good-node" in nodes
+            assert "broken-node" not in nodes
+            # broken-node was skipped due to import failure
+            assert truncated_count == 1
+
+    def test_process_nodes_handles_attribute_error(self):
+        """Test _process_nodes handling of AttributeError when class not found."""
+        registry = {
+            "missing-class-node": {
+                "module": "pflow.nodes.test",
+                "class_name": "NonExistentClass",
+                "file_path": "/path/to/test.py",
+            }
+        }
+
+        with (
+            patch("pflow.planning.context_builder.importlib.import_module") as mock_import,
+            patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class,
+        ):
+            # Create a module that doesn't have the requested class
+            mock_module = Mock(spec=["SomeOtherClass"])  # Has SomeOtherClass but not NonExistentClass
+            mock_import.return_value = mock_module
+
+            # Mock the extractor
+            mock_extractor = Mock()
+            mock_extractor_class.return_value = mock_extractor
+
+            nodes, truncated_count = _process_nodes(registry)
+
+            # Should result in empty because the node failed to process
+            assert nodes == {}
+            # Node is skipped due to missing class, so skipped_count should be 1
+            assert truncated_count == 1
+
+    def test_process_nodes_module_caching(self):
+        """Test that modules are cached and reused in _process_nodes."""
+        # Test the caching more directly by checking if the same module object is used
+        import importlib
+        import sys
+        from types import ModuleType
+
+        # Create a fake module in sys.modules
+        fake_module = ModuleType("pflow.nodes.test_shared")
+        fake_module.NodeOne = MockNode
+        fake_module.NodeTwo = MockNode
+        sys.modules["pflow.nodes.test_shared"] = fake_module
+
+        registry = {
+            "node-1": {
+                "module": "pflow.nodes.test_shared",
+                "class_name": "NodeOne",
+                "file_path": "/path/to/shared.py",
+            },
+            "node-2": {
+                "module": "pflow.nodes.test_shared",  # Same module
+                "class_name": "NodeTwo",
+                "file_path": "/path/to/shared.py",
+            },
+        }
+
+        try:
+            with patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class:
+                # Track import calls
+                original_import = importlib.import_module
+                import_calls = []
+
+                def track_import(name):
+                    import_calls.append(name)
+                    return original_import(name)
+
+                with patch("pflow.planning.context_builder.importlib.import_module", side_effect=track_import):
+                    mock_extractor = Mock()
+                    mock_extractor_class.return_value = mock_extractor
+                    mock_extractor.extract_metadata.return_value = {
+                        "description": "Test node",
+                        "inputs": [],
+                        "outputs": [],
+                        "params": [],
+                        "actions": [],
+                    }
+
+                    _process_nodes(registry)
+
+                    # Should only import the shared module once
+                    shared_imports = [call for call in import_calls if "test_shared" in call]
+                    assert len(shared_imports) == 1, (
+                        f"Expected 1 import of test_shared, got {len(shared_imports)}: {shared_imports}"
+                    )
+        finally:
+            # Clean up
+            if "pflow.nodes.test_shared" in sys.modules:
+                del sys.modules["pflow.nodes.test_shared"]
+
+    def test_process_nodes_skips_test_nodes(self):
+        """Test that _process_nodes skips nodes with 'test' in file path."""
+        registry = {
+            "test-node": {
+                "module": "tests.test_node",
+                "class_name": "TestNode",
+                "file_path": "/path/to/tests/test_node.py",
+            },
+            "real-node": {
+                "module": "pflow.nodes.real",
+                "class_name": "RealNode",
+                "file_path": "/path/to/pflow/nodes/real.py",
+            },
+        }
+
+        with (
+            patch("pflow.planning.context_builder.importlib.import_module") as mock_import,
+            patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class,
+        ):
+            # Setup mocks
+            mock_extractor = Mock()
+            mock_extractor_class.return_value = mock_extractor
+            mock_extractor.extract_metadata.return_value = {
+                "description": "A real node",
+                "inputs": [],
+                "outputs": [],
+                "params": [],
+                "actions": [],
+            }
+
+            mock_module = Mock()
+            mock_module.RealNode = MockNode
+            mock_import.return_value = mock_module
+
+            nodes, truncated_count = _process_nodes(registry)
+
+            # Should only process real-node (test-node should be skipped)
+            assert "real-node" in nodes
+            assert "test-node" not in nodes
+
+
+class TestHelperFunctions:
+    """Tests for helper functions."""
+
+    def test_group_nodes_by_category_file_operations(self):
+        """Test nodes with file-related names are grouped correctly."""
+        nodes = {
+            "read-file": {},
+            "write-file": {},
+            "copy-file": {},
+            "process-data": {},
+        }
+
+        categories = _group_nodes_by_category(nodes)
+
+        assert "File Operations" in categories
+        assert set(categories["File Operations"]) == {"read-file", "write-file", "copy-file"}
+        assert "process-data" in categories["General Operations"]
+
+    def test_group_nodes_by_category_llm_operations(self):
+        """Test LLM/AI nodes are grouped correctly."""
+        nodes = {
+            "llm": {},
+            "ai-processor": {},
+            "gpt-node": {},
+        }
+
+        categories = _group_nodes_by_category(nodes)
+
+        assert "AI/LLM Operations" in categories
+        assert set(categories["AI/LLM Operations"]) == {"llm", "ai-processor"}
+
+    def test_group_nodes_by_category_git_operations(self):
+        """Test git-related nodes are grouped correctly."""
+        nodes = {
+            "git-commit": {},
+            "github-issue": {},
+            "gitlab-merge": {},
+        }
+
+        categories = _group_nodes_by_category(nodes)
+
+        assert "Git Operations" in categories
+        assert set(categories["Git Operations"]) == {"git-commit", "github-issue", "gitlab-merge"}
+
+    def test_format_exclusive_parameters(self):
+        """Test that exclusive parameters are filtered correctly."""
+        node_data = {
+            "params": [
+                {"key": "file_path", "type": "str"},
+                {"key": "encoding", "type": "str"},
+                {"key": "validate", "type": "bool"},
+            ]
+        }
+
+        inputs = [
+            {"key": "file_path", "type": "str"},
+            {"key": "encoding", "type": "str"},
+        ]
+
+        lines = []
+        _format_exclusive_parameters(node_data, inputs, lines)
+
+        # Should only show validate (exclusive param)
+        result = "\n".join(lines)
+        assert "validate: bool" in result
+        assert result.count("file_path") == 0
+        assert result.count("encoding") == 0
+
+
+class TestEnhancedFormatter:
+    """Tests for the enhanced node section formatter."""
+
+    def test_format_node_section_enhanced_basic(self):
+        """Test basic node formatting with enhanced formatter."""
+        node_data = {
+            "description": "Reads a file from disk",
+            "inputs": [{"key": "file_path", "type": "str", "description": "Path to file"}],
+            "outputs": [{"key": "content", "type": "str", "description": "File contents"}],
+            "params": [
+                {"key": "file_path", "type": "str"},
+                {"key": "encoding", "type": "str", "description": "File encoding"},
+            ],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section_enhanced("read-file", node_data)
+
+        assert "### read-file" in result
+        assert "Reads a file from disk" in result
+        assert "**Inputs**:" in result
+        assert "`file_path: str` - Path to file" in result
+        assert "**Outputs**:" in result
+        assert "`content: str` - File contents" in result
+        assert "**Parameters**:" in result
+        assert "`encoding: str` - File encoding" in result
+        # file_path should not be in parameters
+        assert result.split("**Parameters**:")[1].count("file_path") == 0
+
+    def test_format_node_section_enhanced_missing_description(self):
+        """Test formatting with missing description."""
+        node_data = {
+            "inputs": [{"key": "data"}],
+            "outputs": [{"key": "result"}],
+            "params": [],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section_enhanced("no-desc-node", node_data)
+
+        assert "No description available" in result
+
+    def test_format_node_section_enhanced_empty_description(self):
+        """Test formatting with empty description."""
+        node_data = {
+            "description": "",
+            "inputs": [{"key": "data"}],
+            "outputs": [{"key": "result"}],
+            "params": [],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section_enhanced("empty-desc-node", node_data)
+
+        assert "No description available" in result
+
+    def test_format_node_section_enhanced_whitespace_description(self):
+        """Test formatting with whitespace-only description."""
+        node_data = {
+            "description": "   \n\t  ",
+            "inputs": [{"key": "data"}],
+            "outputs": [{"key": "result"}],
+            "params": [],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section_enhanced("whitespace-desc-node", node_data)
+
+        assert "No description available" in result
+
+    def test_format_node_section_enhanced_no_interface(self):
+        """Test formatting with no inputs, outputs, or params."""
+        node_data = {
+            "description": "Does something",
+            "inputs": [],
+            "outputs": [],
+            "params": [],
+            "actions": [],
+        }
+
+        result = _format_node_section_enhanced("empty-node", node_data)
+
+        assert "**Inputs**: none" in result
+        assert "**Outputs**: none" in result
+        assert "**Parameters**: none" in result
+
+    def test_format_node_section_enhanced_outputs_with_actions(self):
+        """Test formatting outputs with corresponding actions."""
+        node_data = {
+            "description": "Processes data",
+            "inputs": [{"key": "data"}],
+            "outputs": [
+                {"key": "result", "type": "str"},
+                {"key": "error", "type": "str"},
+            ],
+            "params": [],
+            "actions": ["success", "error"],
+        }
+
+        result = _format_node_section_enhanced("processor", node_data)
+
+        # Check for outputs with actions - the enhanced formatter doesn't include action mapping
+        assert "`result: str`" in result
+        assert "`error: str`" in result
+
+    def test_format_node_section_enhanced_mixed_formats(self):
+        """Test that mixing string and dict formats works."""
+        node_data = {
+            "description": "Mixed format test",
+            "inputs": [
+                "legacy_input",  # String format
+                {"key": "new_input", "type": "dict", "description": "New style"},
+            ],
+            "outputs": ["result"],
+            "params": [
+                "legacy_param",
+                {"key": "new_param", "type": "int", "description": "New param"},
+            ],
+            "actions": ["default"],
+        }
+
+        result = _format_node_section_enhanced("mixed-node", node_data)
+
+        # Both formats should be handled
+        assert "legacy_input" in result
+        assert "`new_input: dict` - New style" in result
+        assert "result" in result
+        assert "legacy_param" in result
+        assert "`new_param: int` - New param" in result

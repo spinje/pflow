@@ -8,7 +8,7 @@ This tests the integration between:
 """
 
 import pocketflow
-from pflow.planning.context_builder import _format_node_section
+from pflow.planning.context_builder import _format_node_section_enhanced
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
 
@@ -56,7 +56,7 @@ class TestMetadataFlow:
             "actions": metadata["actions"],
         }
 
-        formatted = _format_node_section("read-file", node_data)
+        formatted = _format_node_section_enhanced("read-file", node_data)
 
         # Verify formatted output includes type information
         assert "### read-file" in formatted
@@ -101,7 +101,7 @@ class TestMetadataFlow:
             "actions": metadata["actions"],
         }
 
-        formatted = _format_node_section("github-get-issue", node_data)
+        formatted = _format_node_section_enhanced("github-get-issue", node_data)
 
         # Verify context shows dict type
         assert "`issue_data: dict`" in formatted
@@ -143,10 +143,11 @@ class TestMetadataFlow:
             "actions": metadata["actions"],
         }
 
-        formatted = _format_node_section("write-file", node_data)
+        formatted = _format_node_section_enhanced("write-file", node_data)
 
         # Verify exclusive params shown correctly
-        assert "**Parameters**: `append: bool`" in formatted
+        assert "**Parameters**:" in formatted
+        assert "- `append: bool`" in formatted
         assert "Append mode" in formatted
         # file_path and content should NOT be in parameters (they're in inputs)
         assert "**Inputs**:" in formatted
@@ -189,11 +190,11 @@ class TestMetadataFlow:
             "actions": metadata["actions"],
         }
 
-        formatted = _format_node_section("old-node", node_data)
+        formatted = _format_node_section_enhanced("old-node", node_data)
 
-        # Old format should still display (without explicit types since type is "any")
-        assert "`input1`" in formatted
-        assert "`output`" in formatted
+        # Old format should still display (with explicit types even if "any")
+        assert "`input1: any`" in formatted
+        assert "`output: any`" in formatted
 
     def test_multi_line_format_flow(self):
         """Test multi-line enhanced format through the flow."""
@@ -237,7 +238,7 @@ class TestMetadataFlow:
             "actions": metadata["actions"],
         }
 
-        formatted = _format_node_section("multi-line-node", node_data)
+        formatted = _format_node_section_enhanced("multi-line-node", node_data)
 
         # Verify all inputs/outputs shown with types
         assert "`config: dict`" in formatted

@@ -110,127 +110,6 @@ def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[s
     return processed_nodes, skipped_count
 
 
-def build_context(registry_metadata: dict[str, dict[str, Any]]) -> str:
-    """Build LLM-friendly context from registry metadata.
-
-    Args:
-        registry_metadata: Dict mapping node types to metadata dicts
-                          (as returned by Registry.load())
-
-    Returns:
-        Formatted markdown string describing available nodes
-    """
-    # Input validation
-    if registry_metadata is None:
-        raise ValueError("registry_metadata cannot be None")
-    if not isinstance(registry_metadata, dict):
-        raise TypeError(f"registry_metadata must be a dict, got {type(registry_metadata).__name__}")
-
-    # Process nodes to extract metadata
-    processed_nodes, skipped_count = _process_nodes(registry_metadata)
-
-    # Group by category
-    categories = _group_nodes_by_category(processed_nodes)
-
-    # Phase 4: Format as markdown
-    markdown_sections = []
-
-    for category, nodes in sorted(categories.items()):
-        markdown_sections.append(f"## {category}\n")
-
-        for node_type in sorted(nodes):
-            node_data = processed_nodes[node_type]
-            section = _format_node_section(node_type, node_data)
-            markdown_sections.append(section)
-
-    # Log summary
-    total_nodes = len(registry_metadata)
-    processed_count = len(processed_nodes)
-    logger.info(f"context: Processed {processed_count}/{total_nodes} nodes ({skipped_count} skipped)")
-
-    output = "\n".join(markdown_sections)
-    output_size = len(output)
-
-    # Truncate if output exceeds limit
-    if output_size > MAX_OUTPUT_SIZE:
-        logger.warning(f"context: Output truncated from {output_size} to {MAX_OUTPUT_SIZE} bytes")
-        # TODO: Consider smarter truncation that respects node boundaries
-        # Current approach might cut off in the middle of a node description
-        # Better approach: track size while building and stop adding complete nodes
-        output = output[:MAX_OUTPUT_SIZE] + "\n\n... (truncated)"
-    elif output_size > 10000:  # 10KB warning threshold
-        logger.warning(f"context: Large output size: {output_size} bytes")
-
-    return output
-
-
-def _extract_navigation_paths(
-    structure: dict[str, Any], prefix: str = "", max_depth: int = 3, current_depth: int = 0
-) -> list[str]:
-    """Extract navigation paths from structure dict.
-
-    Args:
-        structure: Dict containing field definitions with optional nested structures
-        prefix: Path prefix for recursive calls
-        max_depth: Maximum depth to include in paths (default 3 for 3 levels)
-        current_depth: Current recursion depth
-
-    Returns:
-        List of navigation paths (e.g., ["number", "user.login", "user.id"])
-    """
-    paths: list[str] = []
-    if current_depth >= max_depth or not isinstance(structure, dict):
-        return paths
-
-    for field_name, field_info in structure.items():
-        # Build the current path
-        current_path = f"{prefix}.{field_name}" if prefix else field_name
-        paths.append(current_path)
-
-        # Recurse for nested structures if they exist
-        if isinstance(field_info, dict) and "structure" in field_info:
-            nested_structure = field_info["structure"]
-            if isinstance(nested_structure, dict):
-                nested_paths = _extract_navigation_paths(nested_structure, current_path, max_depth, current_depth + 1)
-                # Limit nested paths to prevent explosion
-                paths.extend(nested_paths[:5])
-
-    # Limit total paths to keep output manageable
-    return paths[:10]
-
-
-def _format_structure(structure: dict[str, Any], indent_level: int = 2) -> list[str]:
-    """Format nested structure with descriptions in hierarchical format.
-
-    Args:
-        structure: Dict containing field definitions with nested structures
-        indent_level: Current indentation level (2 spaces per level)
-
-    Returns:
-        List of formatted lines showing structure hierarchy
-    """
-    lines = []
-    indent = "  " * indent_level
-
-    for field_name, field_info in structure.items():
-        if isinstance(field_info, dict):
-            type_str = field_info.get("type", "any")
-            desc = field_info.get("description", "")
-
-            # Format: "- field: type - description"
-            line = f"{indent}- {field_name}: {type_str}"
-            if desc:
-                line += f" - {desc}"
-            lines.append(line)
-
-            # Recurse for nested structures
-            if "structure" in field_info and isinstance(field_info["structure"], dict):
-                nested_lines = _format_structure(field_info["structure"], indent_level + 1)
-                lines.extend(nested_lines)
-
-    return lines
-
-
 def _group_nodes_by_category(nodes: dict[str, dict]) -> dict[str, list[str]]:
     """Group nodes by category based on simple pattern matching."""
     categories: dict[str, list[str]] = {}
@@ -385,166 +264,17 @@ def _load_saved_workflows() -> list[dict[str, Any]]:
     return workflows
 
 
-def _format_node_section(node_type: str, node_data: dict) -> str:  # noqa: C901
-    """Format a single node's information as markdown with full structure details.
-
-    Args:
-        node_type: The type/name of the node
-        node_data: Node metadata dictionary
-
-    Returns:
-        Formatted markdown string for the node
-    """
-    lines = [f"### {node_type}"]
-
-    # Handle missing or empty description gracefully
-    description = node_data.get("description", "").strip()
-    if not description:
-        description = "No description available"
-    lines.append(description)
-    lines.append("")
-
-    # Format inputs (handle both string list and rich format)
-    inputs = node_data["inputs"]
-    if inputs:
-        formatted_inputs = []
-        structures_to_display = []  # Complex types that need structure sections
-
-        for inp in inputs:
-            # Handle rich format (dict) or simple format (string)
-            if isinstance(inp, dict):
-                key = inp["key"]
-                type_str = inp.get("type", "any")
-                desc = inp.get("description", "")
-
-                # Format: key: type - description
-                input_str = f"`{key}: {type_str}`" if type_str != "any" else f"`{key}`"
-
-                if desc:
-                    input_str += f" - {desc}"
-
-                formatted_inputs.append(input_str)
-
-                # Track complex types for structure display
-                if type_str in ("dict", "list", "list[dict]") and "structure" in inp:
-                    structures_to_display.append((key, inp["structure"]))
-            else:
-                # Backward compatibility for string format
-                formatted_inputs.append(f"`{inp}`")
-
-        lines.append(f"**Inputs**: {', '.join(formatted_inputs)}")
-
-        # Add structure sections for complex inputs
-        for key, structure in structures_to_display:
-            lines.append(f"  Structure of {key}:")
-            structure_lines = _format_structure(structure)
-            lines.extend(structure_lines)
-    else:
-        lines.append("**Inputs**: none")
-
-    # Format outputs with actions (handle both string list and rich format)
-    outputs = node_data["outputs"]
-    actions = node_data["actions"]
-    if outputs:
-        formatted_outputs = []
-        structures_to_display = []  # Complex types that need structure sections
-
-        for i, out in enumerate(outputs):
-            # Handle rich format (dict) or simple format (string)
-            if isinstance(out, dict):
-                key = out["key"]
-                type_str = out.get("type", "any")
-                desc = out.get("description", "")
-
-                # Format: key: type - description
-                output_str = f"`{key}: {type_str}`" if type_str != "any" else f"`{key}`"
-
-                if desc:
-                    output_str += f" - {desc}"
-
-                # Map outputs to actions if possible
-                if i < len(actions) and actions[i] != "default":
-                    output_str += f" ({actions[i]})"
-
-                formatted_outputs.append(output_str)
-
-                # Track complex types for structure display
-                if type_str in ("dict", "list", "list[dict]") and "structure" in out:
-                    structures_to_display.append((key, out["structure"]))
-            else:
-                # Backward compatibility for string format
-                output_str = f"`{out}`"
-                # Map outputs to actions if possible
-                if i < len(actions) and actions[i] != "default":
-                    output_str += f" ({actions[i]})"
-                formatted_outputs.append(output_str)
-
-        lines.append(f"**Outputs**: {', '.join(formatted_outputs)}")
-
-        # Add structure sections for complex outputs
-        for key, structure in structures_to_display:
-            lines.append(f"  Structure of {key}:")
-            structure_lines = _format_structure(structure)
-            lines.extend(structure_lines)
-    else:
-        lines.append("**Outputs**: none")
-
-    # Format exclusive parameters (params not in inputs)
-    params = node_data["params"]
-    # Build input keys set for exclusion check
-    input_keys = set()
-    for inp in inputs:
-        if isinstance(inp, dict):
-            input_keys.add(inp["key"])
-        else:
-            input_keys.add(inp)
-
-    exclusive_params = []
-    structures_to_display = []  # Complex params that need structure sections
-
-    for param in params:
-        # Handle rich format (dict) or simple format (string)
-        if isinstance(param, dict):
-            key = param["key"]
-            if key not in input_keys:
-                type_str = param.get("type", "any")
-                desc = param.get("description", "")
-
-                # Format: key: type - description
-                param_str = f"`{key}: {type_str}`" if type_str != "any" else f"`{key}`"
-
-                if desc:
-                    param_str += f" - {desc}"
-
-                exclusive_params.append(param_str)
-
-                # Track complex types for structure display (rare for params)
-                if type_str in ("dict", "list", "list[dict]") and "structure" in param:
-                    structures_to_display.append((key, param["structure"]))
-        else:
-            # Backward compatibility for string format
-            if param not in input_keys:
-                exclusive_params.append(f"`{param}`")
-
-    if exclusive_params:
-        lines.append(f"**Parameters**: {', '.join(exclusive_params)}")
-
-        # Add structure sections for complex params
-        for key, structure in structures_to_display:
-            lines.append(f"  Structure of {key}:")
-            structure_lines = _format_structure(structure)
-            lines.extend(structure_lines)
-    else:
-        lines.append("**Parameters**: none")
-
-    lines.append("")  # Empty line between nodes
-    return "\n".join(lines)
-
-
 def _format_structure_combined(
     structure: dict[str, Any], parent_path: str = ""
 ) -> tuple[dict[str, Any], list[tuple[str, str, str]]]:
     """Transform nested structure into JSON representation and path list.
+
+    This is the PREFERRED method for displaying structures in the planning phase.
+    It produces a combined JSON + paths format that is optimal for LLM comprehension
+    and enables accurate proxy mapping generation (e.g., "author": "issue_data.user.login").
+
+    The dual representation (JSON for structure understanding, paths for direct copying)
+    reduces LLM errors and improves accuracy when generating workflows.
 
     Args:
         structure: Nested structure dict from metadata
@@ -603,6 +333,59 @@ def _format_structure_combined(
     return json_struct, paths
 
 
+def _validate_discovery_inputs(
+    node_ids: Optional[list[str]],
+    workflow_names: Optional[list[str]],
+    registry_metadata: Optional[dict[str, dict[str, Any]]],
+) -> None:
+    """Validate inputs for build_discovery_context."""
+    if node_ids is not None and not isinstance(node_ids, list):
+        raise TypeError(f"node_ids must be a list or None, got {type(node_ids).__name__}")
+    if workflow_names is not None and not isinstance(workflow_names, list):
+        raise TypeError(f"workflow_names must be a list or None, got {type(workflow_names).__name__}")
+    if registry_metadata is not None and not isinstance(registry_metadata, dict):
+        raise TypeError(f"registry_metadata must be a dict or None, got {type(registry_metadata).__name__}")
+
+
+def _format_discovery_nodes(categories: dict[str, list[str]], filtered_nodes: dict[str, dict]) -> list[str]:
+    """Format nodes section for discovery context."""
+    markdown_sections = ["## Available Nodes\n"]
+
+    for category, nodes in sorted(categories.items()):
+        markdown_sections.append(f"### {category}")
+        for node_id in sorted(nodes):
+            node_data = filtered_nodes[node_id]
+            markdown_sections.append(f"### {node_id}")
+
+            # Only show description, omit if missing
+            description = node_data.get("description", "").strip()
+            if description and description != "No description":
+                markdown_sections.append(description)
+
+            markdown_sections.append("")  # Empty line
+
+    return markdown_sections
+
+
+def _format_discovery_workflows(filtered_workflows: list[dict[str, Any]]) -> list[str]:
+    """Format workflows section for discovery context."""
+    markdown_sections = []
+
+    if filtered_workflows:
+        markdown_sections.append("## Available Workflows\n")
+        for workflow in sorted(filtered_workflows, key=lambda w: w["name"]):
+            markdown_sections.append(f"### {workflow['name']} (workflow)")
+
+            # Only show description, omit if missing
+            description = workflow.get("description", "").strip()
+            if description:
+                markdown_sections.append(description)
+
+            markdown_sections.append("")  # Empty line
+
+    return markdown_sections
+
+
 def build_discovery_context(
     node_ids: Optional[list[str]] = None,
     workflow_names: Optional[list[str]] = None,
@@ -622,6 +405,9 @@ def build_discovery_context(
     Returns:
         Markdown formatted discovery context showing names and descriptions
     """
+    # Input validation
+    _validate_discovery_inputs(node_ids, workflow_names, registry_metadata)
+
     # Get registry metadata if not provided
     if registry_metadata is None:
         from pflow.registry import Registry
@@ -641,44 +427,16 @@ def build_discovery_context(
     # Group nodes by category
     categories = _group_nodes_by_category(filtered_nodes)
 
-    # Load workflows
+    # Load and filter workflows
     saved_workflows = _load_saved_workflows()
-
-    # Filter workflows if specific names provided
     if workflow_names is not None:
         filtered_workflows = [w for w in saved_workflows if w["name"] in workflow_names]
     else:
         filtered_workflows = saved_workflows
 
     # Build markdown sections
-    markdown_sections = ["## Available Nodes\n"]
-
-    # Add nodes by category (lightweight format)
-    for category, nodes in sorted(categories.items()):
-        markdown_sections.append(f"### {category}")
-        for node_id in sorted(nodes):
-            node_data = filtered_nodes[node_id]
-            markdown_sections.append(f"### {node_id}")
-
-            # Only show description, omit if missing
-            description = node_data.get("description", "").strip()
-            if description and description != "No description":
-                markdown_sections.append(description)
-
-            markdown_sections.append("")  # Empty line
-
-    # Add workflows section
-    if filtered_workflows:
-        markdown_sections.append("## Available Workflows\n")
-        for workflow in sorted(filtered_workflows, key=lambda w: w["name"]):
-            markdown_sections.append(f"### {workflow['name']} (workflow)")
-
-            # Only show description, omit if missing
-            description = workflow.get("description", "").strip()
-            if description:
-                markdown_sections.append(description)
-
-            markdown_sections.append("")  # Empty line
+    markdown_sections = _format_discovery_nodes(categories, filtered_nodes)
+    markdown_sections.extend(_format_discovery_workflows(filtered_workflows))
 
     return "\n".join(markdown_sections).strip()
 
@@ -731,6 +489,49 @@ def _check_missing_components(
     return None
 
 
+def _validate_planning_inputs(
+    selected_node_ids: list[str],
+    selected_workflow_names: list[str],
+    registry_metadata: dict[str, dict[str, Any]],
+    saved_workflows: Optional[list[dict[str, Any]]],
+) -> None:
+    """Validate inputs for build_planning_context."""
+    if not isinstance(selected_node_ids, list):
+        raise TypeError(f"selected_node_ids must be a list, got {type(selected_node_ids).__name__}")
+    if not isinstance(selected_workflow_names, list):
+        raise TypeError(f"selected_workflow_names must be a list, got {type(selected_workflow_names).__name__}")
+    if not isinstance(registry_metadata, dict):
+        raise TypeError(f"registry_metadata must be a dict, got {type(registry_metadata).__name__}")
+    if saved_workflows is not None and not isinstance(saved_workflows, list):
+        raise TypeError(f"saved_workflows must be a list or None, got {type(saved_workflows).__name__}")
+
+
+def _format_planning_nodes(selected_node_ids: list[str], processed_nodes: dict[str, dict]) -> list[str]:
+    """Format nodes section for planning context."""
+    markdown_sections = []
+
+    for node_id in sorted(selected_node_ids):
+        if node_id in processed_nodes:
+            node_data = processed_nodes[node_id]
+            section = _format_node_section_enhanced(node_id, node_data)
+            markdown_sections.append(section)
+
+    return markdown_sections
+
+
+def _format_planning_workflows(selected_workflows: list[dict[str, Any]]) -> list[str]:
+    """Format workflows section for planning context."""
+    markdown_sections = []
+
+    if selected_workflows:
+        markdown_sections.append("## Selected Workflows\n")
+        for workflow in sorted(selected_workflows, key=lambda w: w["name"]):
+            section = _format_workflow_section(workflow)
+            markdown_sections.append(section)
+
+    return markdown_sections
+
+
 def build_planning_context(
     selected_node_ids: list[str],
     selected_workflow_names: list[str],
@@ -753,6 +554,9 @@ def build_planning_context(
         - Markdown formatted planning context with full details
         - Error dict with keys: "error", "missing_nodes", "missing_workflows"
     """
+    # Input validation
+    _validate_planning_inputs(selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows)
+
     # Load workflows if not provided
     if saved_workflows is None:
         saved_workflows = _load_saved_workflows()
@@ -771,20 +575,12 @@ def build_planning_context(
     # Build markdown sections
     markdown_sections = ["## Selected Components\n"]
 
-    # Add detailed node information with enhanced structure display
-    for node_id in sorted(selected_node_ids):
-        if node_id in processed_nodes:
-            node_data = processed_nodes[node_id]
-            section = _format_node_section_enhanced(node_id, node_data)
-            markdown_sections.append(section)
+    # Add nodes
+    markdown_sections.extend(_format_planning_nodes(selected_node_ids, processed_nodes))
 
-    # Add detailed workflow information
+    # Add workflows
     selected_workflows = [w for w in saved_workflows if w["name"] in selected_workflow_names]
-    if selected_workflows:
-        markdown_sections.append("## Selected Workflows\n")
-        for workflow in sorted(selected_workflows, key=lambda w: w["name"]):
-            section = _format_workflow_section(workflow)
-            markdown_sections.append(section)
+    markdown_sections.extend(_format_planning_workflows(selected_workflows))
 
     return "\n".join(markdown_sections).strip()
 
@@ -906,6 +702,10 @@ def _format_node_section_enhanced(node_type: str, node_data: dict) -> str:
 
 def _add_enhanced_structure_display(lines: list[str], key: str, structure: dict[str, Any]) -> None:
     """Add combined JSON + paths format for structure display.
+
+    This method implements Decision 9 from task-15-context-builder-ambiguities.md,
+    providing the dual representation format that enables LLMs to generate accurate
+    proxy mappings. It's used by build_planning_context() for the planning phase.
 
     Args:
         lines: List to append formatted lines to
