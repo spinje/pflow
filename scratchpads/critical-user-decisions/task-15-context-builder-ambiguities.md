@@ -148,7 +148,7 @@ The handoff confirms `_parse_structure()` is implemented with 70 lines of recurs
   - **Benefits**: Easy to validate paths
   - **Drawbacks**: Loses hierarchy
 
-- [x] **Option B: Nested structure format**
+- [x] **Option B: Nested structure format** ✓ **SELECTED**
   ```json
   {
     "key": "issue_data",
@@ -197,14 +197,28 @@ What are the parsing boundaries for MVP?
 ### Context:
 Full type system support would be complex. Need clear boundaries.
 
+**Current Implementation Discovery**:
+- Default values are NOT extracted as separate fields
+- They only appear in description text like "encoding (default: utf-8)"
+- This is fine! The planner can see in the descriptions what the defaults are, if available.
+
 ### Specific Decisions:
 
 - [x] **Supported types**: `str`, `int`, `float`, `bool`, `dict`, `list` only
 - [x] **No union types**: Can't express `str | int`
 - [x] **No optional markers**: Everything assumed required
+- [x] **No default value extraction**: Defaults remain in description text only
 - [x] **Max nesting depth**: 5 levels (reasonable limit)
 - [x] **Array notation**: Support both `list` and `[{structure}]` syntax
 - [x] **Fallback behavior**: Invalid syntax returns `{"_raw": "original string"}`
+
+### Default Value Approach:
+Since defaults are in descriptions:
+- **This is sufficient for the planner** - LLMs understand "encoding (default: utf-8)" naturally
+- Nodes should document defaults consistently in descriptions
+- Recommended format: "description (default: value)"
+- No need for separate default field in MVP
+- The planner can intelligently use these defaults when generating workflows
 
 ### Example Limitations:
 ```python
@@ -240,7 +254,7 @@ Discovery should be lightweight but useful. The handoff mentions avoiding LLM ov
   - **Benefits**: Minimal tokens
   - **Drawbacks**: Not enough for selection
 
-- [x] **Option B: Name + one-line description**
+- [x] **Option B: Name + one-line description** ✓ **SELECTED (no length limits)**
   ```markdown
   ### github-get-issue
   Fetches issue details from GitHub
@@ -261,17 +275,23 @@ Discovery should be lightweight but useful. The handoff mentions avoiding LLM ov
 
 **Recommendation**: Option B - One-line descriptions provide sufficient context without overwhelming.
 
-### Size Constraints:
-- Discovery context should stay under **10KB** for 100+ components
-- Average: ~50 chars per component (name + description)
-- Supports ~200 components comfortably
+### Size Constraints (Updated):
+- **No enforced character limits in MVP** - Let descriptions be as long as needed
+- The challenge is **node disambiguation**, not context size
+- Good descriptions help LLM distinguish between similar nodes (e.g., "github-get-issue" vs "github-create-issue")
+- Quality over brevity - clear, distinctive descriptions are more important than size limits
 
-## 6. Backward Compatibility Strategy - Decision importance (3)
+## 6. Backward Compatibility Strategy - Decision importance (2)
 
 How should existing `build_context()` continue working?
 
 ### Context:
-Existing code depends on `build_context()`. Can't break it.
+**Reality Check**: Only tests use `build_context()`, no production code depends on it yet.
+
+**Terminology Issues**: Current code incorrectly uses `node_type` when these are actually node IDs/names. We should:
+1. Document this terminology issue
+2. Suggest refactoring to `node_id` or `node_name` while implementing Task 15
+3. Use correct terminology in new functions
 
 ### Options:
 
@@ -280,25 +300,42 @@ Existing code depends on `build_context()`. Can't break it.
   - **Benefits**: No regression risk
   - **Drawbacks**: Code duplication
 
-- [x] **Option B: Delegate internally**
+- [x] **Option B: Delegate internally with explicit lists**
   ```python
-  def build_context(self, registry_metadata):
+  def build_discovery_context(node_ids=None, workflow_names=None):
+      """Build lightweight discovery context.
+
+      Args:
+          node_ids: List of node IDs to include (None = all nodes)
+          workflow_names: List of workflow names to include (None = all workflows)
+      """
+      # Flexibility: Can filter or use all
+
+  def build_planning_context(selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows=None):
+      """Build detailed context for selected items."""
+      # Explicit about what's included
+
+  def build_context(registry_metadata):
       """Existing function - maintains compatibility."""
-      # Call both new functions and combine
-      discovery = self.build_discovery_context(registry_metadata)
-      components = list(registry_metadata.keys())
-      planning = self.build_planning_context(components, registry_metadata)
+      # Delegate to new functions
+      all_node_ids = list(registry_metadata.keys())
+      discovery = build_discovery_context(all_node_ids, [])  # No workflows in old version
+      planning = build_planning_context(all_node_ids, [], registry_metadata)
       return f"{discovery}\n\n{planning}"
   ```
-  - **Benefits**: Reuse code, consistent behavior
-  - **Drawbacks**: Small risk if new functions change
+  - **Benefits**:
+    - Reuse code, consistent behavior
+    - Explicit lists provide future flexibility
+    - Can add filtering/exclusions later
+    - Clear parameter names
+  - **Refactor Note**: Consider renaming `node_type` → `node_id` throughout codebase
 
-- [ ] **Option C: Deprecation warning**
-  - Keep old function but warn
-  - **Benefits**: Encourages migration
-  - **Drawbacks**: Annoying for MVP
+- [ ] **Option C: Break compatibility**
+  - Since only tests use it, just replace
+  - **Benefits**: Clean slate
+  - **Drawbacks**: Need to update all tests
 
-**Recommendation**: Option B - Internal delegation maintains compatibility while reusing code.
+**Recommendation**: Option B - Internal delegation with explicit list parameters provides flexibility and maintains compatibility. Document terminology issues for future cleanup.
 
 ## 7. Workflow Loading Error Handling - Decision importance (3)
 
