@@ -428,6 +428,21 @@ Between discovery and planning, components might be removed or renamed (or the l
 
 **Recommendation**: Option C - Return error information to enable discovery retry. This maintains workflow integrity while providing a clear recovery path. The planner can use this error to refine its selection.
 
+### Important Nuance: Discovery as "Browsing" vs "Selecting"
+
+**Key Insight**: The discovery phase might be better framed as "browsing relevant components" rather than "selecting required components". This gives the planner flexibility:
+
+- Discovery phase: "Here are nodes/workflows that might be relevant to your task"
+- Planning phase: "From these relevant options, choose what you actually need"
+
+This approach:
+- Reduces pressure on perfect selection in discovery
+- Allows planner to skip unnecessary components
+- More natural workflow - like gathering ingredients before deciding final recipe
+- The planner knows the full task context and can make better final decisions
+
+**Implementation Note**: The prompt engineering for Task 17 will be crucial here. The discovery prompt should emphasize "find potentially relevant" rather than "select all required".
+
 ## 9. Structure Display in Planning Context - Decision importance (3)
 
 How should structures be displayed in the planning context markdown?
