@@ -535,6 +535,39 @@ The planning context will be read ONLY by an LLM (not humans). The LLM needs to 
 
 **Implementation Note**: With typical workflows using 5-20 nodes, the token overhead of dual representation is negligible compared to the accuracy improvements. This also enables A/B testing of which format performs better in practice.
 
+### Implementation Requirements for Combined Format
+
+The parser already produces a nested structure that needs to be transformed into two display formats:
+
+**Parser Output** (from `_parse_structure()`):
+```python
+{
+    "user": {
+        "type": "dict",
+        "description": "Author information",
+        "structure": {
+            "login": {"type": "str", "description": "Username"},
+            "id": {"type": "int", "description": "User ID"}
+        }
+    }
+}
+```
+
+**Required Transformations**:
+
+1. **For JSON Display**:
+   - Strip descriptions, keep only types
+   - Convert nested "structure" dicts to clean JSON representation
+   - Handle arrays by showing example item structure
+
+2. **For Path List**:
+   - Flatten the nested structure into dot-notation paths
+   - Preserve descriptions for each path
+   - Add array notation (e.g., `labels[]`) where appropriate
+   - Generate one line per available path
+
+The implementing agent will need to create these transformation functions in the context builder to convert the single parser output into both display formats.
+
 **Recommendation**: Option E - Combined format provides optimal LLM comprehension through redundant representations. Each format complements the other, reducing errors and improving proxy mapping accuracy.
 
 ## 10. Performance Constraints - Decision importance (2)
