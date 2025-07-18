@@ -12,9 +12,234 @@ Task 15 extends the context builder to support two-phase discovery (lightweight 
 5. Error handling and edge case behaviors
 6. Performance and size constraints
 
+## Background Context
+
+### What is the Context Builder?
+
+The context builder is a critical component in pflow that transforms registry metadata into LLM-friendly markdown documentation. It serves as the bridge between pflow's node registry and the Natural Language Planner (Task 17), providing the planner with information about available nodes and workflows.
+
+**Current Flow (Task 16)**:
+1. Registry provides metadata dict: `{"node-id": {metadata}}`
+2. Context builder formats this into readable markdown
+3. Planner uses this context to understand available components
+
+### The Two-Phase Discovery Problem
+
+The original context builder (Task 16) creates a single large context with all node details. This causes "LLM overwhelm" - too much information for effective decision-making. Task 15 solves this by splitting into two phases:
+
+1. **Discovery Phase**: Lightweight context with just names/descriptions
+   - LLM browses available components
+   - Selects potentially relevant ones
+
+2. **Planning Phase**: Detailed context for selected components only
+   - Full interface specifications
+   - Structure information for data mapping
+   - Enables precise workflow generation
+
+### What are Proxy Mappings?
+
+Proxy mappings are pflow's solution to incompatible node interfaces. When nodes don't naturally connect:
+
+```
+youtube-transcript writes: shared["transcript"]
+llm reads: shared["prompt"]
+```
+
+Proxy mappings bridge this gap:
+```json
+{"prompt": "transcript"}  // Simple mapping
+{"author": "issue_data.user.login"}  // Path-based mapping
+```
+
+Task 15's structure display decisions directly enable the planner to generate these mappings.
+
+### Task Relationships
+
+- **Task 16**: Created original `build_context()` function (single-phase)
+- **Task 15**: Extends with two-phase approach and workflow discovery
+- **Task 17**: The Natural Language Planner that will consume these contexts
+
+The flow: User request → Planner calls discovery → Planner calls planning → Planner generates workflow
+
+## Current Implementation Status
+
+### What Already Exists
+
+**1. The Context Builder (Task 16)**
+```python
+def build_context(registry_metadata: dict[str, dict[str, Any]]) -> str:
+    """Current implementation creates a single markdown document with all nodes."""
+    # Groups nodes by category (File Operations, AI/LLM Operations, etc.)
+    # Formats each node with inputs, outputs, params, actions
+    # Returns markdown like:
+    # ### read-file
+    # Reads content from a file
+    # **Inputs**: file_path, encoding
+    # **Outputs**: content, error
+```
+
+**2. Enhanced Interface Format**
+Nodes now use structured docstrings:
+```python
+"""
+Interface:
+- Reads: shared["file_path"]: str  # Path to the file
+- Writes: shared["content"]: str  # File contents
+- Writes: shared["metadata"]: dict  # File metadata
+    - size: int  # File size in bytes
+    - modified: str  # Last modified timestamp
+- Params: encoding: str  # File encoding (default: utf-8)
+"""
+```
+
+**3. Structure Parser Implementation**
+A 70-line recursive parser (`_parse_structure()` in metadata_extractor.py) that:
+- Detects indented structure definitions
+- Parses nested dictionaries and lists
+- Handles descriptions for each field
+- Returns nested dict representation
+
+**4. Registry Metadata Format**
+```python
+{
+    "read-file": {
+        "module_path": "src.pflow.nodes.file.read_file",
+        "class_name": "ReadFileNode",
+        "metadata": {
+            "description": "Reads content from a file",
+            "inputs": [
+                {"key": "file_path", "type": "str", "description": "Path to file"}
+            ],
+            "outputs": [
+                {"key": "content", "type": "str", "description": "File contents",
+                 "_has_structure": True, "structure": {...}}
+            ]
+        }
+    }
+}
+```
+
+## Key Concepts
+
+### Nodes vs Workflows
+
+**Nodes**: Individual, atomic operations (read-file, llm, github-get-issue)
+- Defined in Python classes
+- Have fixed interfaces (inputs/outputs)
+- Execute single operations
+
+**Workflows**: Compositions of nodes
+- Saved as JSON IR (Intermediate Representation)
+- Can be parameterized with template variables
+- Reusable - "Plan Once, Run Forever"
+
+### Discovery vs Planning Phases
+
+**Discovery**: "What components might be useful?"
+- Lightweight browsing
+- Over-inclusive is fine
+- Reduces cognitive load
+
+**Planning**: "How do I connect these specific components?"
+- Detailed interface information
+- Enables proxy mapping generation
+- Focused on selected components only
+
+### Template Variables and Reusability
+
+Workflows use template variables for reusability:
+```json
+{
+    "nodes": [{
+        "id": "fetch",
+        "type": "github-get-issue",
+        "params": {"issue_number": "$issue"}  // Template variable
+    }]
+}
+```
+
+Execution: `pflow fix-issue --issue=1234` → `$issue` becomes `1234`
+
+### Shared Store and Data Flow
+
+Pflow uses a shared store for inter-node communication:
+- Nodes read inputs: `shared["key"]`
+- Nodes write outputs: `shared["key"] = value`
+- Proxy mappings route data when keys don't match
+
+## Why These Decisions Matter
+
+Each decision in this document directly impacts the success of Task 17's Natural Language Planner:
+
+### Two-Phase Approach Impact
+- **Reduces LLM errors**: Focused context prevents wrong selections
+- **Improves performance**: Less tokens to process in each phase
+- **Enables iteration**: Discovery errors can be corrected before planning
+
+### LLM Comprehension Focus
+- **Structure display format** → Accurate proxy mapping generation
+- **No length limits** → Better component disambiguation
+- **Combined JSON + paths** → Multiple mental models for accuracy
+
+### Workflow Reusability
+- **Storage decisions** → Enable "Plan Once, Run Forever"
+- **Full metadata** → Better workflow discovery and versioning
+- **Template variables** → Parameterized execution
+
+### Error Recovery
+- **Missing components** → Return to discovery, not partial workflows
+- **Invalid workflows** → Skip with warnings, don't crash
+- **Clear terminology** → Reduce implementation confusion
+
+## Integration Points
+
+### How the Planner Will Use These Functions
+
+**1. Discovery Flow**:
+```python
+# Planner's discovery phase
+all_node_ids = list(registry.get_metadata().keys())
+all_workflows = load_saved_workflows()  # Task 15 implements this
+discovery_context = build_discovery_context(all_node_ids, [w['name'] for w in all_workflows])
+# LLM selects from discovery_context
+selected = ["github-get-issue", "llm", "fix-issue-workflow"]
+```
+
+**2. Planning Flow**:
+```python
+# Planner's planning phase
+planning_context = build_planning_context(
+    selected_node_ids=["github-get-issue", "llm"],
+    selected_workflow_names=["fix-issue-workflow"],
+    registry_metadata=registry.get_metadata(),
+    saved_workflows=all_workflows
+)
+# If missing components detected:
+if isinstance(planning_context, dict) and "error" in planning_context:
+    # Return to discovery with error info
+    return to_discovery_with_feedback(planning_context["missing_nodes"])
+```
+
+**3. Structure Usage for Proxy Mappings**:
+```markdown
+From planning context:
+Available paths:
+- issue_data.user.login (str) - GitHub username
+
+Planner generates:
+{"author": "issue_data.user.login"}
+```
+
+### Backward Compatibility
+
+The existing `build_context()` continues working by internally calling both new functions, ensuring tests don't break while enabling the new two-phase approach.
+
 ## 1. Workflow Storage Location and Management - Decision importance (4)
 
 How should workflows be stored, organized, and discovered?
+
+### Why This Decision Matters:
+Workflow storage enables the core value proposition of pflow - "Plan Once, Run Forever". Without persistent storage, users would need to regenerate workflows every time. Task 15 must implement loading to enable workflow discovery, even though saving comes later in Task 17.
 
 ### Context:
 The handoff mentions `~/.pflow/workflows/` but doesn't specify:
@@ -30,6 +255,9 @@ The handoff mentions `~/.pflow/workflows/` but doesn't specify:
 - Task 22 (named workflow execution) is pending
 - Task 15 needs to load workflows but saving doesn't exist
 - Only file operation nodes are available (Task 13 not implemented)
+
+**The Chicken-and-Egg Problem**:
+Task 15 needs to discover workflows that don't exist yet. Solution: Implement minimal loading infrastructure that Task 17 can use for saving.
 
 ### Options:
 
@@ -114,6 +342,9 @@ The handoff shows a basic structure but leaves questions:
 ## 3. Structure Parsing Format Specification - Decision importance (5)
 
 The structure parser exists but what format should it produce?
+
+### Why This Decision Matters:
+The structure format directly determines how the planner generates proxy mappings. Without proper structure representation, the planner cannot create mappings like `"author": "issue_data.user.login"`. This is essential for connecting nodes with incompatible interfaces.
 
 ### Context:
 The handoff confirms `_parse_structure()` is implemented with 70 lines of recursive parsing, but the output format affects the planner's ability to generate proxy mappings.
@@ -367,6 +598,9 @@ Files can be corrupted, malformed, or have missing fields.
 ## 8. Planning Context Component Selection - Decision importance (4)
 
 How to handle selected components that don't exist?
+
+### Why This Decision Matters:
+This is the most common error scenario - LLMs often hallucinate component names or make typos. The wrong approach (skipping missing components) would create broken workflows. The right approach enables graceful recovery through the discovery phase.
 
 ### Context:
 Between discovery and planning, components might be removed or renamed (or the llm may have selected a component that doesn't exist).
@@ -627,6 +861,153 @@ Based on these decisions:
 
 4. **Risk**: Backward compatibility breaks something
    - **Mitigation**: Comprehensive tests before delegation
+
+## Example Usage
+
+### Discovery Context Output
+
+```markdown
+## Available Nodes
+
+### File Operations
+### read-file
+Read content from a file and add line numbers for display
+
+### write-file
+Write content to a file with automatic directory creation
+
+### AI/LLM Operations
+### llm
+General-purpose language model for text processing
+
+### test-node-structured
+Test node that produces structured output data
+
+## Available Workflows
+
+### backup-files
+Creates backups of specified files with timestamps
+
+### test-data-pipeline
+Processes user data through multiple transformations
+```
+
+### Planning Context Output
+
+```markdown
+## Selected Components
+
+### read-file
+Read content from a file and add line numbers for display
+
+**Inputs**:
+- `file_path: str` - Path to the file to read
+- `encoding: str` - File encoding (default: utf-8)
+
+**Outputs**:
+- `content: str` - File contents with line numbers
+- `error: str` - Error message if operation failed
+
+**Parameters**:
+- `validate: bool` - Validate file exists before reading
+
+### test-node-structured
+Test node that produces structured output data
+
+**Inputs**:
+- `user_id: str` - User ID to fetch data for
+
+**Outputs**:
+- `user_data: dict` - User information
+
+Structure (JSON format):
+```json
+{
+  "user_data": {
+    "id": "str",
+    "profile": {
+      "name": "str",
+      "email": "str",
+      "age": "int"
+    },
+    "preferences": {
+      "theme": "str",
+      "notifications": "bool"
+    }
+  }
+}
+```
+
+Available paths:
+- user_data.id (str) - User ID
+- user_data.profile.name (str) - Full name
+- user_data.profile.email (str) - Email address
+- user_data.profile.age (int) - Age in years
+- user_data.preferences.theme (str) - UI theme preference
+- user_data.preferences.notifications (bool) - Email notifications enabled
+```
+
+### How the Planner Uses This
+
+1. **From user request**: "Get user data and save their name to a file"
+2. **Discovery phase**: Planner sees all available nodes/workflows
+3. **Selection**: Chooses `test-node-structured` and `write-file`
+4. **Planning phase**: Gets detailed interfaces for just these two
+5. **Proxy mapping generation**:
+   ```json
+   {
+     "content": "user_data.profile.name"
+   }
+   ```
+6. **Workflow generation**: Creates IR with proper data flow
+
+## Testing Strategy Context
+
+### Why Test Nodes?
+
+**Production nodes** (file operations):
+- Slow I/O operations
+- Create/modify real files
+- Hard to clean up
+- Side effects complicate testing
+
+**Test nodes**:
+- Pure in-memory operations
+- Instant execution
+- No side effects
+- Structured output for testing path-based mappings
+
+### Test Scenarios
+
+1. **Discovery Context Generation**
+   - Test with 0, 1, 10, 100 nodes
+   - Mix of nodes and workflows
+   - Verify markdown formatting
+
+2. **Planning Context Generation**
+   - Test structure display (JSON + paths)
+   - Missing component error handling
+   - Large structure formatting
+
+3. **Workflow Loading**
+   - Invalid JSON handling
+   - Missing required fields
+   - Directory doesn't exist
+
+4. **Integration Tests**
+   - Full discovery → planning flow
+   - Error recovery flow
+   - Backward compatibility
+
+### Test Workflows
+
+Using test nodes, we'll create workflows that validate:
+- Basic data flow
+- Structure extraction
+- Proxy mapping scenarios
+- Workflow composition
+
+> Note: These test workflows does not exists yet, you will need to create them as part of implementing this task (task 15).
 
 ## Test Workflow Examples - Implementation Note
 
