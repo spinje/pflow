@@ -1,0 +1,17 @@
+{
+  "description": "This workflow is missing the required name field",
+  "inputs": [
+    "input"
+  ],
+  "outputs": [
+    "output"
+  ],
+  "ir": {
+    "nodes": [
+      {
+        "id": "node1",
+        "type": "test-node"
+      }
+    ]
+  }
+}

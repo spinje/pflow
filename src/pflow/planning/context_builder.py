@@ -5,9 +5,12 @@ documentation that enables natural language workflow composition.
 """
 
 import importlib
+import json
 import logging
+import os
 import types
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
@@ -250,6 +253,136 @@ def _group_nodes_by_category(nodes: dict[str, dict]) -> dict[str, list[str]]:
         categories[category].append(node_type)
 
     return categories
+
+
+def _validate_workflow_fields(workflow_data: dict[str, Any], filename: str) -> bool:
+    """Validate required fields and types in workflow data.
+
+    Args:
+        workflow_data: The parsed workflow JSON data
+        filename: Name of the file for error messages
+
+    Returns:
+        True if all validations pass, False otherwise
+    """
+    # Validate required fields presence
+    required_fields = ["name", "description", "inputs", "outputs", "ir"]
+    missing_fields = [field for field in required_fields if field not in workflow_data]
+
+    if missing_fields:
+        logger.warning(f"Workflow file {filename} missing required fields: {missing_fields}")
+        return False
+
+    # Validate field types
+    validations = [
+        ("name", str, "string"),
+        ("description", str, "string"),
+        ("inputs", list, "list"),
+        ("outputs", list, "list"),
+        ("ir", dict, "dict"),
+    ]
+
+    for field_name, expected_type, type_name in validations:
+        if not isinstance(workflow_data[field_name], expected_type):
+            logger.warning(f"Invalid '{field_name}' type in {filename}: expected {type_name}")
+            return False
+
+    return True
+
+
+def _load_single_workflow(json_file: Path) -> Optional[dict[str, Any]]:
+    """Load and validate a single workflow file.
+
+    Args:
+        json_file: Path to the JSON file
+
+    Returns:
+        Workflow data dict if valid, None otherwise
+    """
+    try:
+        # Read and parse JSON
+        content = json_file.read_text()
+
+        # Handle empty files
+        if not content.strip():
+            logger.warning(f"Workflow file is empty: {json_file.name}")
+            return None
+
+        workflow_data = json.loads(content)
+
+        # Validate the workflow
+        if not _validate_workflow_fields(workflow_data, json_file.name):
+            return None
+
+        logger.debug(f"Loaded workflow '{workflow_data['name']}' from {json_file.name}")
+        return workflow_data  # type: ignore[no-any-return]
+
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON from {json_file.name}: {e}")
+        return None
+    except PermissionError:
+        logger.warning(f"Permission denied reading {json_file.name}")
+        return None
+    except Exception as e:
+        logger.warning(f"Unexpected error reading {json_file.name}: {type(e).__name__}: {e}")
+        return None
+
+
+def _load_saved_workflows() -> list[dict[str, Any]]:
+    """Load all workflow JSON files from ~/.pflow/workflows/ directory.
+
+    Creates the directory if it doesn't exist. Skips invalid files with warnings.
+
+    Returns:
+        List of workflow metadata dicts with at least:
+        - name: str
+        - description: str
+        - inputs: list[str]
+        - outputs: list[str]
+        - ir: dict (full workflow IR)
+
+        Additional fields preserved if present:
+        - ir_version, version, tags, created_at, updated_at
+    """
+    workflows_dir = Path.home() / ".pflow" / "workflows"
+
+    # Create directory if it doesn't exist
+    try:
+        os.makedirs(workflows_dir, exist_ok=True)
+        logger.debug(f"Ensured workflow directory exists at {workflows_dir}")
+    except Exception as e:
+        logger.warning(f"Failed to create workflow directory: {e}")
+        return []
+
+    # Check if directory is accessible
+    if not workflows_dir.exists() or not workflows_dir.is_dir():
+        logger.debug("Workflow directory does not exist or is not a directory")
+        return []
+
+    workflows = []
+
+    try:
+        # List all JSON files in the directory
+        json_files = list(workflows_dir.glob("*.json"))
+
+        if not json_files:
+            logger.debug("No workflow JSON files found")
+            return []
+
+        logger.debug(f"Found {len(json_files)} JSON files to process")
+
+        # Process each JSON file
+        for json_file in json_files:
+            workflow_data = _load_single_workflow(json_file)
+            if workflow_data:
+                workflows.append(workflow_data)
+
+    except Exception as e:
+        logger.warning(f"Error listing workflow files: {type(e).__name__}: {e}")
+        return []
+
+    logger.info(f"Loaded {len(workflows)} workflows from {workflows_dir}")
+    return workflows
 
 
 def _format_node_section(node_type: str, node_data: dict) -> str:  # noqa: C901

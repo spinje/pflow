@@ -1,0 +1,9 @@
+{
+  "name": "bad-json",
+  "description": "This file has invalid JSON syntax",
+  "inputs": ["input"],
+  "outputs": ["output",  // Missing closing bracket
+  "ir": {
+    "nodes": []
+  }
+}

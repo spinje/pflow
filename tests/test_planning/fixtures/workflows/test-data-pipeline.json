@@ -1,0 +1,42 @@
+{
+  "name": "test-data-pipeline",
+  "description": "Processes user data through multiple transformations",
+  "inputs": [
+    "user_id"
+  ],
+  "outputs": [
+    "processed_data"
+  ],
+  "ir_version": "0.1.0",
+  "version": "1.0.0",
+  "tags": [
+    "data",
+    "pipeline",
+    "test"
+  ],
+  "created_at": "2025-07-18T10:00:00Z",
+  "updated_at": "2025-07-18T10:00:00Z",
+  "ir": {
+    "nodes": [
+      {
+        "id": "fetch",
+        "type": "test-node-structured",
+        "params": {
+          "user_id": "$user_id"
+        }
+      },
+      {
+        "id": "process",
+        "type": "test-node",
+        "params": {}
+      }
+    ],
+    "edges": [
+      {
+        "from": "fetch",
+        "to": "process",
+        "condition": "default"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "test-simple-workflow",
+  "description": "Basic single-node test workflow",
+  "inputs": [
+    "input_text"
+  ],
+  "outputs": [
+    "output_text"
+  ],
+  "ir_version": "0.1.0",
+  "ir": {
+    "nodes": [
+      {
+        "id": "node1",
+        "type": "test-node",
+        "params": {
+          "text": "$input_text"
+        }
+      }
+    ]
+  }
+}

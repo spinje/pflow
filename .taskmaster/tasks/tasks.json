@@ -577,7 +577,7 @@
             "id": 1,
             "title": "Workflow Loading Infrastructure",
             "description": "Create workflow directory utilities and implement _load_saved_workflows() function to load saved workflows from ~/.pflow/workflows/*.json. This establishes the foundation for workflow discovery in the context builder.",
-            "status": "pending",
+            "status": "done",
             "dependencies": [],
             "details": "Modify src/pflow/planning/context_builder.py to add build_discovery_context(node_ids=None, workflow_names=None) and build_planning_context(selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows=None). Discovery context returns lightweight markdown with names and descriptions only. Planning context returns full interface details for selected components. Maintain backward compatibility with existing build_context() function. Handle missing components by returning error dict with 'error', 'missing_nodes', 'missing_workflows' keys.\n<info added on 2025-07-18T15:02:53.230Z>\nCreate workflow directory utilities and implement _load_saved_workflows() function to load saved workflows from ~/.pflow/workflows/*.json. This establishes the foundation for workflow discovery in the context builder.\n\nImplementation details:\n- Create directory utilities to ensure ~/.pflow/workflows/ exists\n- Implement _load_saved_workflows() in context_builder.py\n- Parse JSON files and validate essential fields (name, description, inputs, outputs, ir)\n- Skip invalid files with warnings (don't crash)\n- Return list of workflow metadata dictionaries\n- Create 2-3 test workflows using test nodes (test_node, test_node_structured)\n\nTest strategy:\n- Test directory creation, loading valid files, handling invalid JSON, skipping gracefully\n- Create test workflows for integration testing\n\nDependencies: None\nEstimated hours: 3-4\n</info added on 2025-07-18T15:02:53.230Z>\n<info added on 2025-07-18T15:05:02.985Z>\nTitle update: Workflow Loading Infrastructure\n</info added on 2025-07-18T15:05:02.985Z>",
             "testStrategy": "Unit tests for both functions verifying correct filtering, format output, error handling for missing components, and backward compatibility with existing build_context() function."
@@ -801,7 +801,7 @@
     ],
     "metadata": {
       "created": "2025-06-18T20:41:12.050Z",
-      "updated": "2025-07-17T07:30:11.546Z",
+      "updated": "2025-07-18T18:13:29.706Z",
       "description": "Reorganized to prioritize Natural Language Planner as core feature. Merged tasks 17-20 into comprehensive planner system. Expanded task 13 to include all platform nodes. Consolidated all v2.0 deferred features into task 32. Clear path from infrastructure to MVP delivery."
     }
   }

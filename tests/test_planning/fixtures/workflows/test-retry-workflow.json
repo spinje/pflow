@@ -1,0 +1,40 @@
+{
+  "name": "test-retry-workflow",
+  "description": "Tests retry capabilities with fallback handling",
+  "inputs": [
+    "retry_input"
+  ],
+  "outputs": [
+    "final_output"
+  ],
+  "ir_version": "0.1.0",
+  "tags": [
+    "retry",
+    "test"
+  ],
+  "ir": {
+    "nodes": [
+      {
+        "id": "retry_node",
+        "type": "test-node-retry",
+        "params": {
+          "should_fail": false,
+          "max_retries": 3
+        }
+      },
+      {
+        "id": "fallback_node",
+        "type": "test-node",
+        "params": {}
+      }
+    ],
+    "edges": [
+      {
+        "from": "retry_node",
+        "to": "fallback_node",
+        "condition": "fail"
+      }
+    ],
+    "start_node": "retry_node"
+  }
+}
