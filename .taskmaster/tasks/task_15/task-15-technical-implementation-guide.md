@@ -22,10 +22,10 @@ Task 14.3 migrated all 7 nodes to multi-line enhanced format:
 - 2 test nodes (test_node_retry has exclusive param)
 - All follow exclusive params pattern
 
-### 4. Context Builder Two-File Approach (from Task 14 discussions)
-The context builder will create exactly **two markdown files**:
-1. **Node Selection File** - Names and descriptions only
-2. **Detailed Mapping File** - Full technical details for selected components
+### 4. Context Builder Two-Phase Approach (from Task 14 discussions)
+The context builder will create exactly **two markdown strings** (not files):
+1. **Discovery Context** - Names and descriptions only (returned from `build_discovery_context()`)
+2. **Planning Context** - Full technical details for selected components (returned from `build_planning_context()`)
 
 ## Implementation Roadmap
 
@@ -301,10 +301,11 @@ From tests, this successfully parses:
 ## Additional Critical Details
 
 ### From Task 14 Discussions
-- **Two markdown files approach**: Context builder creates selection file + mapping file
-- **Purpose split**: First file for component selection, second for implementation details
+- **Two-phase approach**: Context builder creates discovery context + planning context
+- **Purpose split**: Discovery for component selection, planning for implementation details
 - **Task 14 provides metadata**: Task 15 creates smart views of it
-- **Gradual migration**: New two-file approach supplements existing initially
+- **Gradual migration**: New two-phase approach supplements existing initially
+- **Important**: No placeholder text for missing descriptions - just omit them
 
 ### Node Examples Reference
 - **GitHub nodes don't exist yet** (Task 13) but used in all examples
@@ -317,10 +318,30 @@ From tests, this successfully parses:
 - Distinguish workflows from nodes in discovery (mark as "workflow")
 - Workflows are building blocks that can be used in other workflows
 
-### Your Critical Path (Time Estimates)
-1. **Hour 1-2**: Read all files, run tests, understand current state
-2. **Hour 3-4**: Implement two-phase split (easy win)
-3. **Hour 5-6**: Add workflow discovery (medium difficulty)
-4. **Hour 7-8**: Test structure parsing with proxy mappings
+### A possible Path
+-  1. Read all files, run tests, understand current state
+-  2. Implement two-phase split (easy win)
+-  3. Add workflow discovery (medium difficulty)
+-  4. Test structure parsing with proxy mappings
 
 Remember: The parser works, structure handling exists, exclusive params pattern is implemented. The foundation is solid but fragile - build on it carefully. One wrong regex change can break 20 tests.
+
+## Key Differences from Ambiguities Document
+
+This technical guide focuses on:
+- **Exact line numbers** for critical code locations
+- **Specific code patterns** to preserve or avoid
+- **Test expectations** and brittle points
+- **Implementation checklist** with concrete steps
+
+The ambiguities document focuses on:
+- **Decision rationale** and why choices were made
+- **Conceptual understanding** of the system
+- **Integration with planner** (Task 17)
+- **Example outputs** and usage scenarios
+
+Use both documents together for complete understanding.
+
+*Don't treat this document as a checklist, it's a guide to help you understand the code and the context. When implementing, you should be able to think through the code, adapt to changing circumstances and make the best decisions based on common sense, architectural best practices and the user's goals and guidance.*
+
+When referring to this document to sub-agents or other agents implementing sub-tasks, they can find this document in `.taskmaster/tasks/task_15/task-15-technical-implementation-guide.md` file.

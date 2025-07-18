@@ -64,7 +64,7 @@ Specifically, the context builder will create exactly **two markdown files**:
    - Contains full inputs/outputs/params with types
    - Includes structure information for complex outputs
    - Descriptions (if available) for each field
-   - Nested structures (if available, mimics the structure of the node's interface)
+   - Nested structures (if available,)
    - Provides everything needed for the planner to map connections
 
 This split serves a specific purpose:

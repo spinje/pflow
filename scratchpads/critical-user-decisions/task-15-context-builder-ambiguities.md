@@ -94,8 +94,8 @@ Interface:
 
 **3. Structure Parser Implementation**
 A 70-line recursive parser (`_parse_structure()` in metadata_extractor.py) that:
-- Detects indented structure definitions
-- Parses nested dictionaries and lists
+- Detects indented structure definitions (line 397 sets `_has_structure` flag)
+- Parses nested dictionaries and lists (lines 543-612)
 - Handles descriptions for each field
 - Returns nested dict representation
 
@@ -118,6 +118,29 @@ A 70-line recursive parser (`_parse_structure()` in metadata_extractor.py) that:
     }
 }
 ```
+
+**5. Critical Parser Fixes (Must Preserve)**
+- **Multi-line support** (lines 166, 170): Uses `.extend()` not assignment to preserve all lines
+- **Comma-aware splitting** (line 374): `r',\s*(?=shared\[)'` for shared keys
+- **Comma-aware params** (line 444): `r',\s*(?=\w+\s*:)'` for params
+- **Exclusive params pattern** (line 416): Filters out params that are also in Reads
+- **Known limitation**: Single quotes not supported - `shared['key']` won't be extracted
+- **Empty components break parser**: Always include content after `- Reads:` or `- Writes:`
+
+**6. Test Expectations**
+- All migrated nodes expect **empty params arrays** when all params are fallbacks
+- The exclusive params pattern is non-negotiable - tests depend on it
+- Full descriptions must be preserved including commas
+- All 7 nodes already migrated to enhanced format in Task 14.3
+
+**⚠️ Parser Warning**: The regex patterns are extremely fragile. One wrong change can break 20+ tests. Test thoroughly after any parser modifications.
+
+**7. Methods to Reuse or modify**
+Key methods already implemented that should be leveraged:
+- `_process_nodes()` - Metadata extraction and categorization
+- `_format_structure()` - Structure display (handles hierarchical data)
+- `_parse_structure()` - Already works with nested structures
+- `_group_nodes_by_category()` - Category logic
 
 ## Key Concepts
 
@@ -194,6 +217,8 @@ Each decision in this document directly impacts the success of Task 17's Natural
 ## Integration Points
 
 ### How the Planner Will Use These Functions
+
+**Important Clarification**: The context builder creates two conceptual "views" of the data, not actual files. These are returned as markdown strings from the respective functions.
 
 **1. Discovery Flow**:
 ```python
@@ -866,6 +891,8 @@ Based on these decisions:
 
 ### Discovery Context Output
 
+**Important**: If a node/workflow lacks a description, omit it entirely rather than showing "No description" or similar placeholders. This saves tokens and avoids noise.
+
 ```markdown
 ## Available Nodes
 
@@ -875,6 +902,8 @@ Read content from a file and add line numbers for display
 
 ### write-file
 Write content to a file with automatic directory creation
+
+### missing-description-node
 
 ### AI/LLM Operations
 ### llm
@@ -891,6 +920,8 @@ Creates backups of specified files with timestamps
 ### test-data-pipeline
 Processes user data through multiple transformations
 ```
+
+Note how `missing-description-node` appears with just the name - no placeholder text.
 
 ### Planning Context Output
 
