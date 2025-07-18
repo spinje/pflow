@@ -219,6 +219,7 @@ Since defaults are in descriptions:
 - Recommended format: "description (default: value)"
 - No need for separate default field in MVP
 - The planner can intelligently use these defaults when generating workflows
+- No need to limit the length of the description in any way
 
 ### Example Limitations:
 ```python
@@ -579,19 +580,26 @@ The handoff mentions 200KB MAX_OUTPUT_SIZE but also 50KB in specs.
 
 ### Clarifications:
 
-- [x] **Discovery context limit**: 10KB (sufficient for 200+ components)
-- [x] **Planning context limit**: 50KB per component group
-- [x] **Total context limit**: 200KB (code shows this)
-- [x] **Loading timeout**: 5 seconds for all workflows
-- [x] **Parse timeout**: 100ms per structure parse
+- [x] **No enforced limits in MVP** - Modern LLMs have huge context windows
+- [x] **Context math**: 200KB ≈ 50,000 tokens, well within Sonnet's 200,000 token limit
+- [x] **Discovery context**: No artificial limits - as many components as needed
+- [x] **Planning context**: No limits - show all selected components fully
+- [x] **Workflow file size**: Non-issue - workflow JSONs are tiny (few KB)
 
-### Optimization Strategy:
-1. Lazy load workflow files
-2. Cache parsed structures
-3. Limit description lengths (100 chars)
-4. Skip very large workflow files (>1MB)
+### MVP Approach:
+1. **Load all workflows at once** - Simpler than lazy loading, negligible performance impact
+2. **No description truncation** - Quality descriptions prevent errors
+3. **No size-based filtering** - Workflow files are inherently small
+4. **Consider structure caching only if profiling shows it's slow** - Measure first
 
-**Recommendation**: Use the 200KB limit from code, optimize if needed.
+### What NOT to implement:
+- ❌ Arbitrary size limits
+- ❌ Description length limits
+- ❌ Lazy loading (unnecessary complexity)
+- ❌ Workflow size filtering
+- ❌ Timeout constraints
+
+**Recommendation**: Keep it simple. No artificial limits in MVP. The only optimization worth considering is caching parsed structures IF profiling shows the recursive parser is slow. Everything else is premature optimization for non-existent problems.
 
 ## Implementation Order
 
@@ -662,11 +670,12 @@ The key decisions for Task 15:
 1. ✓ Use flat `~/.pflow/workflows/` directory with minimal loading implementation
 2. ✓ Full metadata schema (name, description, inputs, outputs, created_at, updated_at, version, ir_version, tags, ir)
 3. ✓ Nested structure format from parser
-4. ✓ Name + one-line description for discovery
-5. ✓ Indented structure display for planning
-6. ✓ Internal delegation for backward compatibility
-7. ✓ Skip missing components with warnings
-8. ✓ 200KB total context limit
+4. ✓ Name + description for discovery (no length limits)
+5. ✓ Combined JSON + paths display for optimal LLM comprehension
+6. ✓ Internal delegation for backward compatibility with better terminology
+7. ✓ Skip invalid workflow files with warnings
+8. ✓ Return error info when components missing (for discovery retry)
 9. ✓ Use test nodes for creating test workflows (faster, safer, better for structure testing)
+10. ✓ No artificial limits in MVP - avoid premature optimization
 
-These decisions prioritize simplicity and clear boundaries while enabling the two-phase discovery pattern that Task 17's planner requires.
+These decisions prioritize simplicity, LLM comprehension, and pragmatic implementation while enabling the two-phase discovery pattern that Task 17's planner requires.
