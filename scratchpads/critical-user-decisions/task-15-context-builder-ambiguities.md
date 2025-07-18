@@ -368,38 +368,65 @@ Files can be corrupted, malformed, or have missing fields.
 How to handle selected components that don't exist?
 
 ### Context:
-Between discovery and planning, components might be removed or renamed.
+Between discovery and planning, components might be removed or renamed (or the llm may have selected a component that doesn't exist).
+
+**Reality**: 95% of "missing components" will be LLM hallucinations or typos (e.g., "github-create-pr" instead of "github-create-pull-request"). Removed/renamed nodes are extremely rare in practice.
 
 ### Options:
 
 - [ ] **Option A: Fail with error**
   - Raise exception if any component missing
   - **Benefits**: Fail fast
-  - **Drawbacks**: Poor UX
+  - **Drawbacks**: Poor UX, no recovery path
 
-- [x] **Option B: Skip missing with warning**
+- [ ] **Option B: Skip missing with warning**
+  - Just skip and continue with available components
+  - **Benefits**: Won't crash
+  - **Drawbacks**: **Terrible idea!** Creates incomplete workflows that can't function
+  - Like asking "build this puzzle, but some pieces are missing"
+
+- [x] **Option C: Return error info for discovery retry**
   ```python
-  def build_planning_context(self, selected_components, registry_metadata, saved_workflows=None):
-      available = []
-      for component_id in selected_components:
-          if component_id in registry_metadata:
-              available.append(component_id)
-          elif saved_workflows and any(w['name'] == component_id for w in saved_workflows):
-              available.append(component_id)
-          else:
-              logger.warning(f"Component '{component_id}' not found, skipping")
-      # Continue with available components
+  # Example: final implementation may look different but this is the idea
+  def build_planning_context(selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows=None):
+      missing_nodes = []
+      missing_workflows = []
+
+      # Check what's missing
+      for node_id in selected_node_ids:
+          if node_id not in registry_metadata:
+              missing_nodes.append(node_id)
+
+      for workflow_name in selected_workflow_names:
+          if not any(w['name'] == workflow_name for w in (saved_workflows or [])):
+              missing_workflows.append(workflow_name)
+
+      if missing_nodes or missing_workflows:
+          # Return error info instead of partial context
+          error_msg = "Missing components detected:\n"
+          if missing_nodes:
+              error_msg += f"- Unknown nodes: {', '.join(missing_nodes)}\n"
+              error_msg += "  (Check spelling, use hyphens not underscores)\n"
+          if missing_workflows:
+              error_msg += f"- Unknown workflows: {', '.join(missing_workflows)}\n"
+
+          return {"error": error_msg, "missing_nodes": missing_nodes, "missing_workflows": missing_workflows}
+
+      # All components found - build full context
+      # ... rest of implementation
   ```
-  - **Benefits**: Graceful degradation
-  - **Drawbacks**: Might hide issues
+  - **Benefits**:
+    - Enables retry with corrected selection
+    - Clear feedback about what went wrong
+    - Maintains workflow integrity
+  - **Usage**: Planner detects error, returns to discovery with feedback
 
-- [ ] **Option C: Return error information**
-  - Include missing components in output
-  - Let caller decide
-  - **Benefits**: Flexible
-  - **Drawbacks**: Complex API
+- [ ] **Option D: Fuzzy matching suggestions**
+  - Find similar names and suggest corrections
+  - **Benefits**: Even better UX
+  - **Drawbacks**: More complex for MVP
 
-**Recommendation**: Option B - Skip with warning for better user experience.
+**Recommendation**: Option C - Return error information to enable discovery retry. This maintains workflow integrity while providing a clear recovery path. The planner can use this error to refine its selection.
 
 ## 9. Structure Display in Planning Context - Decision importance (3)
 
