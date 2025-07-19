@@ -432,14 +432,13 @@ class ProgressiveGeneratorNode(Node):
         return "validate"
 
     def _summarize_errors(self, errors):
-        """Create concise error summary for prompt enhancement."""
-        # Keep it brief to avoid prompt bloat
-        if "Missing variable mapping" in str(errors):
-            return "Add variable_flow mappings"
-        elif "Unknown node" in str(errors):
-            return "Use only available nodes"
-        else:
-            return "Check workflow structure"
+        """Format errors for prompt - they're already prompt-ready!"""
+        # Validation produces prompt-ready errors, just join them
+        # Example errors from validation:
+        # - "Missing variable mapping for $issue_title - add to variable_flow"
+        # - "Unknown node 'github-fix-issue' - did you mean 'github-get-issue'?"
+        # - "Node 'llm' requires 'prompt' in template_inputs"
+        return "; ".join(errors[:3])  # Limit to 3 to avoid prompt bloat
 ```
 
 ### Validation with Fixable Error Approach
@@ -490,14 +489,24 @@ class ValidationNode(Node):
         return "general_validation_error"
 
     def _validate_workflow(self, workflow):
-        """Perform comprehensive validation."""
+        """Perform comprehensive validation with prompt-ready error messages."""
         errors = []
 
         # Check structure
         if "ir_version" not in workflow:
-            errors.append("Missing ir_version field")
+            errors.append("Add 'ir_version': '0.1.0' to the workflow")
         if "nodes" not in workflow or not workflow.get("nodes"):
-            errors.append("Missing or empty nodes array")
+            errors.append("Add a 'nodes' array with at least one node")
+
+        # Check for unknown nodes
+        for node in workflow.get("nodes", []):
+            if node.get("type") not in self.registry:
+                node_type = node.get("type", "unknown")
+                similar = self._get_similar_nodes(node_type)
+                if similar:
+                    errors.append(f"Unknown node '{node_type}' - did you mean '{similar[0]}'?")
+                else:
+                    errors.append(f"Unknown node '{node_type}' - use 'claude-code' for complex operations")
 
         # Check template variables have mappings
         if "template_inputs" in workflow:
@@ -506,12 +515,40 @@ class ValidationNode(Node):
 
             for var in template_vars:
                 if var not in variable_flow:
-                    errors.append(f"Missing variable mapping for ${var}")
+                    # Provide specific guidance on how to fix
+                    example_source = self._suggest_variable_source(var, workflow)
+                    errors.append(
+                        f"Missing variable mapping for ${var} - "
+                        f"add '{var}': '{example_source}' to variable_flow"
+                    )
+
+        # Check if nodes that typically need inputs have them
+        for node in workflow.get("nodes", []):
+            if self._node_typically_needs_input(node.get("type")):
+                if node["id"] not in workflow.get("template_inputs", {}):
+                    errors.append(
+                        f"Node '{node['id']}' ({node['type']}) needs template_inputs - "
+                        f"add a 'prompt' or relevant input"
+                    )
 
         return {
             "is_valid": len(errors) == 0,
             "errors": errors
         }
+
+    def _suggest_variable_source(self, var_name, workflow):
+        """Suggest a likely source for a variable based on workflow structure."""
+        # Common patterns
+        if "issue" in var_name:
+            for node in workflow.get("nodes", []):
+                if "github-get-issue" in node.get("type", ""):
+                    return f"{node['id']}.outputs.issue_data"
+        elif "content" in var_name or "file" in var_name:
+            for node in workflow.get("nodes", []):
+                if "read-file" in node.get("type", ""):
+                    return f"{node['id']}.outputs.content"
+        # Default suggestion
+        return "previous_node.outputs.data"
 ```
 
 ### Attempt History Tracking Pattern
