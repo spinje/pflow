@@ -15,9 +15,11 @@ Task 17 is the core feature that makes pflow unique - the Natural Language Plann
 4. Hybrid validation approach: Use Pydantic models for type-safe IR generation with Simon Willison's LLM library, then validate with JSONSchema for comprehensive checking.
 5. Progressive validation with mock execution ensures generated workflows actually work before showing them to users, combining Pydantic type safety with semantic validation.
 
-## 1. Template Variable Resolution Mechanism - Decision importance (5)
+## 1. Template Variable Resolution Mechanism - Decision importance (5) ⚠️ MOST CRITICAL
 
 There's a fundamental ambiguity about how template variables (`$variable`) work throughout the system.
+
+**⚠️ CRITICAL WARNING**: The planner must NEVER hardcode values extracted from natural language. When user says "fix github issue 1234", the planner must generate `"issue_number": "$issue"` (NOT `"issue_number": "1234"`). The value "1234" is only for the first execution - saved workflows must work with ANY value.
 
 ### Context:
 Template variables are the KEY to pflow's "Plan Once, Run Forever" value proposition. They enable workflow reusability by allowing parameters to change between executions while keeping the workflow structure constant.
@@ -66,7 +68,7 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
   - JSON IR contains `$variables` that get resolved during execution
   - Enables parameterized workflows (the core value prop!)
   - More complex but enables `pflow fix-issue --issue=1234` pattern
-  - **Problem**: Contradicts documentation saying it's planner-only
+  - **Confirmed**: This is the correct approach for MVP
 
 - [ ] **Option C: Hybrid approach**
   - Some variables resolved by planner (like prompt templates)
@@ -311,6 +313,7 @@ The "find or build" pattern is core to pflow but implementation details are now 
 - Discovery can work exactly like node discovery - using descriptions
 - The context builder already provides the pattern we need
 - Workflows just need a good description field for LLM matching
+- **CRITICAL**: Workflows are building blocks that can be used inside other workflows, not just standalone executions
 
 ### The Simplified Approach:
 
@@ -334,6 +337,31 @@ The "find or build" pattern is core to pflow but implementation details are now 
    - LLM selects from both nodes and existing workflows
 
 **Key Insight**: The description field is all we need for semantic matching. The LLM can understand "fix github issue 1234" matches a workflow described as "Fetches a GitHub issue, analyzes it with AI, generates a fix".
+
+### Workflow Storage Format:
+```json
+{
+  "name": "fix-issue",
+  "description": "Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR",
+  "inputs": ["issue_number"],
+  "outputs": ["pr_number", "pr_url"],
+  "ir": {
+    "ir_version": "0.1.0",
+    "nodes": [...],
+    "edges": [...],
+    "mappings": {...}
+  },
+  "created": "2025-01-01T00:00:00Z",
+  "version": "1.0.0"
+}
+```
+
+**Key Fields**:
+- `name`: Workflow identifier for execution (`pflow fix-issue`)
+- `description`: Natural language description for discovery matching
+- `inputs`: Expected parameters (enables validation and prompting)
+- `outputs`: What the workflow produces (for composition)
+- `ir`: Complete JSON IR with template variables preserved
 
 ## 4. LLM Model Selection and Configuration - Decision importance (3)
 
@@ -1129,7 +1157,7 @@ This hybrid approach:
 - Maintains compatibility with the existing validation system
 - Provides type safety during development
 
-## 15. Testing Strategy for LLM Components - Decision importance (3)
+## 15. Testing Strategy for LLM Components - Decision importance (4)
 
 Testing LLM-based components requires special consideration due to their non-deterministic nature.
 
@@ -1153,20 +1181,21 @@ Testing LLM-based components requires special consideration due to their non-det
   - Cons: Expensive, slow, non-deterministic
   - Implementation: Separate test API keys with spending limits
 
-- [x] **Option C: Hybrid approach with basic MVP validation**
-  - Unit tests: Mock LLM calls for component (node) testing
-  - Integration tests: Real LLM for critical paths
-  - MVP validation suite: Basic success rate testing for common patterns
-  - Pros: Balanced coverage and cost
+- [x] **Option C: Hybrid approach with separate LLM test commands**
+  - Unit tests: Mock all LLM calls for component testing
+  - Integration tests with mocked LLM: Run with `make test` (no cost)
+  - Integration tests with real LLM: Separate command (costs money)
+  - Pros: Balanced coverage, cost control, CI/CD friendly
   - Cons: More complex test setup
   - Implementation:
-    - Mock for fast feedback during development
-    - Real LLM for integration tests
-    - Small validation suite for MVP (10-20 common patterns)
-    - Extensive evaluation deferred to v2.0
-    - Always test the planners internal LLM node, all llms calls are called through a pocketflow node.
+    - Mock LLM responses for all standard tests
+    - Create mocked integration test that simulates full planner flow
+    - Separate `make test-llm` command for real LLM integration test
+    - Real LLM test validates basic workflow generation only
+    - Extensive prompt evaluation deferred to v2.0
+    - Always test the planner's internal LLM node (all LLM calls through pocketflow)
 
-**Recommendation**: Option C - This provides confidence in MVP functionality without excessive cost. The basic validation suite ensures we meet the ≥95% success rate target for common use cases.
+**Recommendation**: Option C - Separates costly LLM tests from regular test suite. Only the planner integration test uses real LLM, and it runs via separate command to control costs.
 
 ## 16. Batch Mode vs Interactive Mode - Decision importance (2)
 
@@ -1210,6 +1239,63 @@ if param_missing:
 
 **Implications for task 17**: No modifications to the CLI should be made, the task 17 implementation will ONLY provide the interfaces the the CLI-layer needs to interact with the planner. Keep it simple.
 
+## 17. CLI Input Routing to Planner - Decision importance (3)
+
+How the planner receives input from the CLI needs clarification, especially given the MVP's approach.
+
+### Context:
+- MVP routes all input through natural language planner (both quoted and unquoted)
+- CLI collects raw string after 'pflow' command
+- Planner must handle both natural language and CLI-like syntax
+
+### Options:
+
+- [x] **Option A: CLI passes raw string directly to planner**
+  - Raw input string passed unchanged to planner
+  - No parsing or preprocessing in CLI
+  - Maximum flexibility for planner
+  - Aligns with MVP philosophy
+  - Implementation: `main.py` passes entire input string to planner
+
+- [ ] **Option B: CLI does minimal pre-processing**
+  - CLI detects quotes, operators, then passes structured data
+  - Cleaner separation but duplicates logic
+  - Against MVP principle of unified processing
+
+- [ ] **Option C: CLI provides hints with raw string**
+  - Pass both raw string and metadata
+  - More complex for marginal benefit
+
+**Recommendation**: Option A - Keep CLI simple, pass raw string directly. This aligns with documentation stating MVP routes everything through the LLM planner.
+
+## 18. Parameter vs Static Value Detection - Decision importance (4)
+
+The planner must decide which values in natural language should become parameters (reusable) vs static values (fixed).
+
+### Context:
+- Example: "fix issue 1234" - should "1234" be parameterized as `$issue`?
+- Affects reusability of saved workflows
+- Critical for "Plan Once, Run Forever" philosophy
+
+### Options:
+
+- [ ] **Option A: Explicit user annotation**
+  - User marks what should be variable
+  - Most accurate but poor UX
+  - Requires user understanding of templates
+
+- [x] **Option B: LLM-based heuristic detection**
+  - LLM intelligently detects what should be parameters
+  - Smart defaults based on context and patterns
+  - Numbers, IDs, URLs, dates typically become parameters
+  - Implementation: Prompt engineering guides LLM decisions
+
+- [ ] **Option C: Make everything parameters**
+  - Maximum flexibility but overwhelming
+  - Creates overly complex workflows
+
+**Recommendation**: Option B - Leverage LLM's intelligence to make smart parameter decisions. This follows the planner's philosophy as an LLM-powered system.
+
 ## Critical Next Steps
 
 1. **Clarify template variable resolution** - This is the most critical ambiguity
@@ -1249,6 +1335,18 @@ Based on this analysis, here's the recommended approach:
 - Generate workflows using Pydantic models for type safety, then validate with JSONSchema for comprehensive checking.
 - The implementing agent will need to read all the relevant docs in the `pocketflow/` folder to understand exactly how to implement it.
 
+**Implementation Checklist** - Ensure understanding of these critical points before starting:
+- [ ] Template variables enable reusability (NEVER hardcode values like "1234")
+- [ ] Workflows are building blocks that can be used inside other workflows
+- [ ] Planner is Python pocketflow code (infrastructure), not JSON IR (user workflows)
+- [ ] Proxy mappings are internal only and hidden from users in CLI display
+- [ ] Path-based mappings require structure documentation from node metadata
+- [ ] Two-phase context (discovery vs planning) prevents LLM overwhelm
+- [ ] Validation is static data flow analysis, not actual code execution
+- [ ] Template variables (`$issue`) are different from CLI parameters (`--issue=1234`)
+- [ ] LLM needs explicit instructions to extract parameters and create templates
+- [ ] Planner can use full pocketflow features, but generated workflows are sequential only (MVP)
+
 ### Key Implementation Simplifications:
 - No separate discovery system needed - reuse context builder pattern
 - Workflows are reusable building blocks alongside nodes
@@ -1278,6 +1376,60 @@ This separation prevents information overload and improves LLM performance. Task
    - **Mitigation**: Strict MVP checklist, defer everything else
 
 This analysis should provide the clarity needed to begin implementation of Task 17.
+
+## Context Gathering Update (2025-07-19)
+
+After thorough investigation of the codebase and documentation, I've discovered the following:
+
+### 1. Context Builder Implementation (Task 15/16)
+- Task 16 created the initial context builder
+- Task 15 enhanced it with two-phase discovery support
+- **build_discovery_context()**: Lightweight browsing with names/descriptions only
+- **build_planning_context()**: Detailed interface info for selected components
+- Workflow loading from `~/.pflow/workflows/` is already implemented
+- Structure documentation (JSON + paths) for proxy mappings is working
+
+### 2. Template Variable Resolution Confirmed
+Documentation has been updated to confirm template variables are preserved in JSON IR and resolved at runtime. This enables the "Plan Once, Run Forever" philosophy where workflows can be reused with different parameters.
+
+### 3. CLI Integration Status
+- CLI accepts natural language (quoted) and CLI syntax (unquoted)
+- Both currently echo back the input (planner not integrated yet)
+- JSON workflows can be executed if valid IR provided
+- Stdin data handling is implemented
+
+### 4. Runtime Integration
+- Compiler takes JSON IR and creates pocketflow Flow objects
+- Supports node instantiation, parameter setting, and edge wiring
+- Ready to execute flows generated by the planner
+
+### 5. Key Architectural Clarifications
+From planner.md:
+- Planner is implemented as a pocketflow flow (not regular Python)
+- MVP routes BOTH natural language and CLI syntax through LLM planner
+- Template string composition is a core planner responsibility
+- Workflows can use other workflows as building blocks
+
+### 6. Implementation Architecture Confirmed
+The planner will be implemented as Python pocketflow code:
+```
+src/pflow/planning/
+├── nodes.py          # Planner nodes (discovery, generation, validation)
+├── flow.py           # create_planner_flow()
+├── ir_models.py      # Pydantic models for IR generation
+├── utils/
+└── prompts/
+    └── templates.py  # Prompt templates
+```
+
+### 7. Testing Strategy
+- Unit tests: Mock LLM calls for component testing
+- Integration tests: Real LLM for critical paths
+- MVP validation suite: 10-20 common patterns
+- Test planners internal LLM node (all LLM calls through pocketflow)
+
+### Summary
+The investigation confirms the architectural decisions in this document are correct. Template variables will be preserved in JSON IR for runtime resolution, enabling workflow reusability. The two-phase context builder is ready, and the planner should be implemented as a pocketflow flow using the pattern established in Option B (Section 14).
 
 ## How It All Fits Together: The Complete Planner Pipeline
 

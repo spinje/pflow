@@ -36,7 +36,7 @@ Before diving into the autonomy principle, it's crucial to understand when to us
 
 ## Template Variable Resolution
 
-> **MVP Note**: Template variable resolution is handled internally by the planner when generating workflows. The planner ensures all template variables in the generated IR will map to shared store values that exist at execution time. Runtime template resolution is a v2.0 feature.
+> **MVP Note**: Template variables are preserved in the JSON IR by the planner and resolved at runtime. This enables the "Plan Once, Run Forever" philosophy where workflows can be reused with different parameters.
 
 Template variables (`$variable`) provide dynamic content substitution in node inputs, enabling sophisticated data flow between nodes. The CLI supports **$ variable substitution** for dynamic content access:
 

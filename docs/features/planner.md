@@ -410,32 +410,32 @@ When generation is required, the planner uses **Claude Sonnet 4** (claude-sonnet
 
 ### 6.6 Template Variable Resolution
 
-#### Important: Planner-Internal Only
+#### Enabling "Plan Once, Run Forever"
 
-Template variables (like `$issue_number`, `$file_content`) are resolved ONLY by the planner during workflow generation. They are NOT a runtime feature.
+Template variables (like `$issue_number`, `$file_content`) are preserved in the JSON IR to enable workflow reusability. They are resolved at runtime when the workflow executes, allowing the same workflow to run with different parameters.
 
 **How it works**:
-1. Planner generates workflows with template variables: `$issue_data`
-2. During planning, these are mapped to shared store keys: `shared["issue_data"]`
-3. The compiler passes template variables unchanged
-4. Only the planner performs substitution
+1. Planner generates workflows with template variables preserved: `$issue_data`
+2. Template variables remain in the saved JSON IR
+3. Runtime resolves variables from CLI parameters or shared store values
+4. Same workflow can execute with different values each time
 
 **Example**:
 ```yaml
-# Planner generates:
+# Planner generates and preserves:
 nodes:
   - id: analyze
     params:
       prompt: "Analyze this issue: $issue_data"
 
-# Planner resolves to:
-nodes:
-  - id: analyze
-    params:
-      prompt: "Analyze this issue: {shared['issue_data']}"
+# Runtime execution 1:
+pflow fix-issue --issue=1234  # $issue_data → "1234"
+
+# Runtime execution 2:
+pflow fix-issue --issue=5678  # $issue_data → "5678"
 ```
 
-This is NOT a runtime templating engine - it's purely for planner use during workflow generation.
+This enables the core value proposition where workflows are planned once and reused with different parameters indefinitely.
 
 ---
 
