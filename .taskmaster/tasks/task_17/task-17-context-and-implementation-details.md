@@ -44,6 +44,7 @@ pflow fix-issue --issue=1234  # Bypasses planner entirely
 3. **Clean separation of concerns** - Planner plans, CLI executes
 4. **Every MVP execution is meta** - Even reusing existing workflows goes through the full planner
 5. **Branching is essential** - Found vs create paths within the same workflow
+6. **Intent over parsing** - The goal is to understand user intent, not just parse words
 
 ## Architectural Decision: PocketFlow for Planner Orchestration
 
