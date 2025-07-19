@@ -2,7 +2,7 @@
 
 ## Overview
 
-Task 17 is the core feature of pflow - the Natural Language Planner that enables the "Plan Once, Run Forever" philosophy. After extensive research of the documentation, several critical decisions need to be made before implementation can begin. These decisions will significantly impact the architecture and user experience of pflow.
+Several critical decisions need to be made before implementation can begin. These decisions will significantly impact the architecture and user experience of pflow.
 
 ---
 
@@ -18,7 +18,7 @@ The planner requires an LLM for natural language understanding and workflow gene
 
 ### Options:
 
-- [x] **Option A: Use the general LLM node from Task 12**
+- [ ] **Option A: Use the general LLM node from Task 12**
   - Reasoning: Dogfooding - use pflow's own LLM node for planning
   - Pros: Consistent with architecture, already implemented
   - Cons: Circular dependency if LLM node not yet implemented
@@ -30,13 +30,13 @@ The planner requires an LLM for natural language understanding and workflow gene
   - Cons: Duplicates LLM logic, harder to maintain
   - Implementation: Use requests or SDK directly
 
-- [ ] **Option C: Simon Willison's llm CLI**
-  - Reasoning: Leverage existing tool with model management
-  - Pros: Model flexibility, proven tool
+- [x] **Option C: Create an internal LLM node that uses Simon Willison's llm CLI (just like the LLM node in Task 12)**
+  - Reasoning: Leverage existing tool with model management while utilizing pocketflow for internal use. Clear separation of concerns by not using "external" nodes. This node can be much simpler than the LLM node in Task 12 and be tailored to the needs of the planner.
+  - Pros: Model flexibility, proven tool, simplicity, still dogfooding (but pocketflow instead of pflow directly)
   - Cons: External dependency, subprocess overhead
   - Implementation: Shell out to `llm` command
 
-**Recommendation**: Option B for initial implementation, then migrate to Option A once LLM node is complete. This avoids circular dependencies while planning for the ideal architecture.
+**Recommendation**: Option C - Create an internal simple LLM node for planner that uses Simon Willison's llm CLI (just like the LLM node in Task 12)
 
 ---
 
@@ -57,7 +57,7 @@ Template variables ($variable syntax) need to be resolved to actual shared store
   - Cons: Less flexible, can't handle dynamic values
   - Implementation: Planner replaces $vars with shared["key"] references
 
-- [x] **Option B: Planner validates, Runtime resolves**
+- [ ] **Option B: Planner validates, Runtime resolves**
   - Reasoning: Separation of concerns, more flexible
   - Pros: Dynamic values supported, cleaner separation
   - Cons: More complex runtime, distributed validation
@@ -69,7 +69,7 @@ Template variables ($variable syntax) need to be resolved to actual shared store
   - Cons: Complex to understand and implement
   - Implementation: Mark variables as static vs dynamic
 
-**Recommendation**: Option B - Planner validates that variables CAN be resolved (proper dependencies), but actual substitution happens at runtime. This matches the pocketflow pattern of runtime data flow.
+**Recommendation**: ???
 
 ---
 
@@ -90,7 +90,7 @@ The "find or build" pattern requires semantic matching of user input to existing
   - Cons: Slow, expensive for large workflow libraries
   - Implementation: Pass all workflow descriptions to LLM for ranking
 
-- [x] **Option B: Simple keyword/pattern matching for MVP**
+- [ ] **Option B: Simple keyword/pattern matching for MVP**
   - Reasoning: Good enough for MVP, fast
   - Pros: Fast, predictable, no external dependencies
   - Cons: Less accurate, might miss semantic similarities
@@ -102,7 +102,7 @@ The "find or build" pattern requires semantic matching of user input to existing
   - Cons: Requires embedding model, vector storage
   - Implementation: Generate embeddings, use cosine similarity
 
-**Recommendation**: Option B for MVP with clear path to Option C in v2. Start simple, upgrade when needed.
+**Recommendation**: ???
 
 ---
 
@@ -135,7 +135,7 @@ How the planner receives input from the CLI needs clarification, especially give
   - Cons: More complex CLI logic
   - Implementation: Pass both raw string and metadata
 
-**Recommendation**: Option A - Keep CLI simple, pass raw string. This aligns with documentation and MVP principles.
+**Recommendation**: Option A - Keep CLI simple, pass raw string. This aligns with documentation and MVP principles and will be extended in 2.0+.
 
 ---
 
@@ -154,7 +154,7 @@ The exact JSON structure for saved workflows needs to be defined, particularly h
   - Reasoning: Complete workflow definition in one place
   - Pros: Self-contained, matches IR schema
   - Cons: Larger files, some duplication
-  - Structure:
+  - Example Structure:
     ```json
     {
       "name": "fix-issue",
@@ -198,7 +198,7 @@ How the planner handles failures and retries needs clear definition.
   - Cons: May not adapt to different failure types
   - Implementation: 3 retries with 1s, 2s, 4s delays
 
-- [x] **Option B: Intelligent retry with error analysis**
+- [ ] **Option B: Intelligent retry with error analysis**
   - Reasoning: Different strategies for different failures
   - Pros: Better success rate, learns from failures
   - Cons: More complex logic
@@ -210,7 +210,7 @@ How the planner handles failures and retries needs clear definition.
   - Cons: Poor user experience for transient failures
   - Implementation: Show error, prompt for retry
 
-**Recommendation**: Option B - Smart retries improve success rate while managing costs.
+**Recommendation**: ???
 
 ---
 
@@ -232,10 +232,11 @@ The planner must decide which values in a workflow should become parameters (var
   - Implementation: Ask user to mark parameters
 
 - [x] **Option B: Heuristic-based detection**
-  - Reasoning: Smart defaults based on patterns
+  - Reasoning: Smart defaults based on patterns, llm decides based on what it thinks is best based on good prompt engineering
   - Pros: Good UX, usually correct
   - Cons: May guess wrong sometimes
   - Implementation: Numbers, IDs, URLs become parameters
+  - Future improvements to consider: The two-phase approach can be extended to use more "phases" if the llm struggles with accuracy. For version 2.0+ (NOT MVP)the user can prompt the planner to change the parameters if not correct or to the user's preference.
 
 - [ ] **Option C: Make everything parameters**
   - Reasoning: Maximum flexibility
@@ -243,7 +244,7 @@ The planner must decide which values in a workflow should become parameters (var
   - Cons: Overwhelming, complex workflows
   - Implementation: Every string/number becomes parameter
 
-**Recommendation**: Option B with user override capability during approval phase.
+**Recommendation**: Option B is the best option and utilizes LLM powerful capabilities for decision making and follows the planners philosophy as an LLM-powered pocketflow workflow.
 
 ---
 
@@ -258,25 +259,10 @@ How the planner uses the context builder's output needs clarification.
 
 ### Options:
 
-- [x] **Option A: Context builder output as system prompt**
-  - Reasoning: Provide node catalog to LLM
-  - Pros: Simple integration, clear boundaries
-  - Cons: Large prompts, token usage
-  - Implementation: `context = build_context(registry); prompt = f"{context}\n\n{user_request}"`
+- [ ] **Option A: ???**
 
-- [ ] **Option B: Parse context and use programmatically**
-  - Reasoning: More efficient than including in prompt
-  - Pros: Precise control, less tokens
-  - Cons: Breaks abstraction, complex parsing
-  - Implementation: Extract node list, use for validation
 
-- [ ] **Option C: Dynamic context based on request**
-  - Reasoning: Only include relevant nodes
-  - Pros: Smaller prompts, focused context
-  - Cons: Need to pre-filter nodes
-  - Implementation: Analyze request, include subset of nodes
 
-**Recommendation**: Option A for MVP - simple and effective, optimize later if needed.
 
 ---
 
@@ -286,22 +272,23 @@ The approval flow for generated workflows needs specific behavior definition.
 
 ### Context:
 - Users must approve generated workflows before execution
-- Need to support both interactive and batch modes
+- Need to support both interactive and batch modes?? What does this mean?
 - Target ≥90% approval rate
 
 ### Options:
 
-- [x] **Option A: CLI prompts with inline editing**
+- [ ] **Option A: CLI prompts with inline editing**
   - Reasoning: Rich interaction in terminal
   - Pros: Powerful, immediate feedback
   - Cons: Complex to implement well
   - Implementation: Show workflow, allow parameter edits, confirm
 
-- [ ] **Option B: Simple Y/N confirmation**
+- [x] **Option B: Simple Y/N confirmation**
   - Reasoning: Minimal implementation
   - Pros: Very simple
   - Cons: No modification capability
   - Implementation: Display and confirm only
+  - UX: the user can rerun the planner with clarifications and instructions of what NOT to do.
 
 - [ ] **Option C: Save to file for external editing**
   - Reasoning: Use user's preferred editor
@@ -309,7 +296,7 @@ The approval flow for generated workflows needs specific behavior definition.
   - Cons: Breaks flow, multiple steps
   - Implementation: Save draft, open editor, reload
 
-**Recommendation**: Option A with Option B fallback for batch mode.
+**Recommendation**: Option B is the simplest to implement and fits the MVP philosophy of "everything is natural language". This can be extended in 2.0+ to support more complex user interactions.
 
 ---
 
@@ -344,19 +331,6 @@ Testing LLM-based components requires special consideration.
 
 **Recommendation**: Option C - Mock for fast feedback, real LLM for critical paths.
 
+**Out of scope**: We will make extensive LLM evaluations for every planner LLM node in 2.0+ to ensure the planner is working as expected for a multitude of use cases.
+
 ---
-
-## Summary of Recommendations
-
-1. **LLM Integration**: Direct API initially, migrate to LLM node
-2. **Template Resolution**: Planner validates, runtime resolves
-3. **Workflow Discovery**: Simple matching for MVP
-4. **CLI Input**: Raw string pass-through
-5. **Storage Format**: Complete IR with parameters
-6. **Error Handling**: Intelligent retry strategy
-7. **Parameter Detection**: Heuristic-based with overrides
-8. **Context Integration**: As system prompt
-9. **User Approval**: Interactive editing with fallback
-10. **Testing**: Hybrid mock/real approach
-
-These decisions provide a clear path for implementing Task 17 while maintaining flexibility for future enhancements.
