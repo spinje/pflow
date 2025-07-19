@@ -517,6 +517,222 @@ def create_retry_loop_flow():
     return flow
 ```
 
+## Structured Generation with Smart Retry
+
+### Core Principle: Generate Right, Retry Smart
+The planner aims for **single-shot generation** success through comprehensive context, but uses **structured retry** when validation fails. This is NOT endless regeneration - it's targeted error correction through PocketFlow's routing:
+
+```python
+# The planner flow structure enables smart retry:
+generator >> validator >> approval
+validator - "invalid_structure" >> error_feedback >> generator
+validator - "missing_mappings" >> enhance_context >> generator
+generator - "max_retries_exceeded" >> fallback_strategy
+```
+
+### How Structured Retry Works
+1. **First Attempt**: Generate with comprehensive context
+2. **Validation Failure**: Specific error identified (e.g., "missing variable mapping for $issue")
+3. **Targeted Retry**: Enhanced prompt with error-specific guidance
+4. **Bounded Attempts**: Max retries enforced by PocketFlow node configuration
+
+```python
+class WorkflowGeneratorNode(Node):
+    def __init__(self):
+        super().__init__(max_retries=3)  # Bounded retries
+
+    def exec(self, shared):
+        # Use attempt count for progressive enhancement
+        attempt = shared.get("generation_attempts", 0)
+
+        if attempt > 0:
+            # Add specific error feedback to prompt
+            error_feedback = shared.get("validation_errors", [])
+            prompt = enhance_prompt_with_errors(base_prompt, error_feedback)
+        else:
+            prompt = base_prompt
+
+        # Generate workflow
+        response = self.model.prompt(prompt, schema=WorkflowIR)
+        shared["generated_workflow"] = response.json()
+        shared["generation_attempts"] = attempt + 1
+
+        return "validate"  # Always go to validation
+```
+
+### Rich Context Minimizes Retries
+The key to minimizing retries is providing **comprehensive initial context**:
+- All available nodes with descriptions
+- Template syntax and examples
+- Clear constraints and patterns
+- Interface conventions
+- Common error patterns to avoid
+
+With sufficient context, most workflows succeed on first attempt. Retries handle edge cases with specific guidance.
+
+## LLM Integration with Simon Willison's Library
+
+### Preferred Implementation Pattern
+Use Simon Willison's `llm` package for flexibility and structured outputs:
+
+```python
+import llm
+from pydantic import BaseModel
+
+class WorkflowGeneratorNode(Node):
+    """Generates workflows using LLM with structured output."""
+
+    def __init__(self):
+        super().__init__(max_retries=3)  # For API failures only
+        # Get model with proper configuration
+        self.model = llm.get_model("claude-sonnet-4-20250514")
+
+    def exec(self, shared):
+        user_input = shared["user_input"]
+        context = shared["planning_context"]
+
+        # Build comprehensive prompt
+        prompt = self._build_prompt(user_input, context)
+
+        # Generate with structured output (Pydantic schema)
+        response = self.model.prompt(
+            prompt,
+            temperature=0,  # Deterministic
+            schema=WorkflowIR,  # Pydantic model for type safety
+            system="You are a workflow planner that generates complete JSON IR with template variables."
+        )
+
+        # Extract and validate
+        workflow_dict = json.loads(response.text())
+        validate_ir(workflow_dict)  # Existing validation
+
+        shared["generated_workflow"] = workflow_dict
+        return "validate"
+```
+
+### Advantages of LLM Package
+1. **Flexibility** - Easy to switch models
+2. **Structured Output** - Built-in Pydantic support
+3. **Consistent Interface** - Same API for different providers
+4. **Better Error Handling** - Unified exception handling
+
+## Structured Context Provision Pattern
+
+### Building Rich Context for Planning
+The context builder must provide comprehensive, well-structured information:
+
+```python
+def build_planning_context(selected_components: list[str], registry: Registry) -> str:
+    """Build structured context optimized for LLM comprehension."""
+    context_parts = []
+
+    # 1. Available Components Section
+    context_parts.append("## Available Components\n")
+    for component_id in selected_components:
+        if component_id in registry:
+            metadata = registry[component_id]
+            context_parts.extend([
+                f"### {component_id}",
+                f"**Description**: {metadata.get('description', 'No description')}",
+                f"**Inputs**: {_format_interface(metadata.get('inputs', []))}",
+                f"**Outputs**: {_format_interface(metadata.get('outputs', []))}",
+                f"**Parameters**: {_format_params(metadata.get('params', {}))}",
+                ""  # Empty line for readability
+            ])
+
+    # 2. Template Variable Guidelines
+    context_parts.extend([
+        "## Template Variables",
+        "- Use $variable_name to reference dynamic values",
+        "- All variables must have sources in variable_flow",
+        "- Common patterns: $issue, $content, $transcript",
+        ""
+    ])
+
+    # 3. Workflow Examples
+    context_parts.extend([
+        "## Example Workflow Structure",
+        "```json",
+        _get_example_workflow(),
+        "```",
+        ""
+    ])
+
+    # 4. Interface Conventions
+    context_parts.extend([
+        "## Interface Conventions",
+        "- GitHub nodes use 'issue_' prefixed keys",
+        "- File operations use 'content' and 'file_path'",
+        "- LLM nodes expect 'prompt' and output 'response'",
+        "- Prefer descriptive keys over generic ones"
+    ])
+
+    return "\n".join(context_parts)
+```
+
+## Prompt Template Examples
+
+### Workflow Generation Prompt
+```python
+WORKFLOW_GENERATION_PROMPT = """You are a workflow planner for pflow, a system that creates deterministic, reusable workflows.
+
+Your task is to generate a complete JSON workflow including:
+1. All required nodes in correct sequence
+2. Template variables ($var) for dynamic values
+3. Complete variable_flow mappings
+4. Natural, descriptive shared store keys
+
+{context}
+
+User Request: {user_input}
+
+Important Rules:
+- Generate COMPLETE variable_flow mappings - every $variable must have a source
+- Use simple, linear sequences (no complex branching for MVP)
+- Each node should have a single, clear purpose
+- Template variables enable reuse with different parameters
+- Do NOT infer or guess - specify everything explicitly
+
+Output only valid JSON matching this structure:
+{{
+  "ir_version": "0.1.0",
+  "nodes": [...],
+  "edges": [...],
+  "start_node": "...",
+  "template_inputs": {{...}},
+  "variable_flow": {{...}}
+}}
+"""
+
+ERROR_RECOVERY_PROMPT = """The previous workflow generation failed validation:
+{error_message}
+
+Original request: {user_input}
+
+Please generate a corrected workflow that addresses the specific error.
+Focus on: {error_hint}
+
+Remember to include complete variable_flow mappings for all template variables.
+
+Output only valid JSON.
+"""
+
+TEMPLATE_VARIABLE_PROMPT = """Given this workflow, identify all template variables and their sources:
+
+Workflow: {workflow}
+
+For each $variable in template_inputs, specify where its value comes from in variable_flow.
+
+Output as JSON:
+{{
+  "variable_flow": {{
+    "var_name": "source.node.path",
+    ...
+  }}
+}}
+"""
+```
+
 ## Integration Points and Dependencies
 
 ### Critical Dependencies
@@ -671,6 +887,51 @@ def test_specific_flow_path():
        if var not in variable_flow:
            raise ValidationError(f"Template variable ${var} has no mapping")
    ```
+
+10. **Unstructured Iterative Loops**: Don't use endless refinement loops
+    ```python
+    # ❌ WRONG - Endless loop without clear termination
+    while not is_perfect(workflow):
+        workflow = regenerate_with_vague_feedback(workflow)
+
+    # ✅ CORRECT - Structured retry with specific feedback via PocketFlow
+    # PocketFlow handles retry routing based on validation results
+    generator - "validation_failed" >> enhance_prompt >> generator
+    validator - "missing_nodes" >> error_feedback >> generator
+    # Max retries enforced, specific error feedback provided
+    ```
+
+11. **Code Generation Instead of Workflows**: We're not generating Python
+    ```python
+    # ❌ WRONG - Generating executable code
+    generated_code = """
+    def workflow():
+        result = github.get_issue(123)
+        fix = ai.generate_fix(result)
+    """
+
+    # ✅ CORRECT - Generate workflow IR
+    workflow = {
+        "nodes": [
+            {"id": "get-issue", "type": "github-get-issue"},
+            {"id": "fix", "type": "claude-code"}
+        ]
+    }
+    ```
+
+12. **Complex State in Planner**: Planner should be stateless
+    ```python
+    # ❌ WRONG - Maintaining state across requests
+    class Planner:
+        def __init__(self):
+            self.previous_workflows = []
+            self.user_preferences = {}
+
+    # ✅ CORRECT - Each request is independent
+    def plan_workflow(user_input: str, context: str) -> dict:
+        # Stateless - each call is independent
+        return generate_workflow(user_input, context)
+    ```
 
 ## Template-Driven Workflow Architecture
 
