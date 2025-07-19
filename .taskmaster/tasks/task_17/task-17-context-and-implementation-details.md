@@ -1130,6 +1130,15 @@ Output as JSON:
 2. **JSON IR Schema** - Defines valid workflow structure
 3. **Node Registry** - Accessed ONLY through context builder, never directly
 4. **LLM Library** - Simon Willison's `llm` with structured outputs
+5. **General LLM Node** (Task 12) - Required in registry so planner can generate workflows with LLM nodes
+   - Note: Planner doesn't USE Task 12's code, it just needs it to exist in the registry
+   - Planner uses `llm` library directly for its own LLM calls inside its own nodes
+
+### Clarification on Dependencies
+- **Task 14**: Structure documentation (enables path-based mappings) ✅ Done
+- **Task 15/16**: Context builder with two-phase discovery ✅ Done
+- **Task 12**: General LLM node (needed in registry for workflow generation)
+- **Tasks 18, 19**: These don't exist - ignore any references to them in research files
 
 ### Integration Requirements
 1. **CLI Integration**: Planner receives raw input string from CLI
@@ -1353,14 +1362,6 @@ def test_specific_flow_path():
    # If output is insufficient, retry with specific guidance
    ```
 
-8. **Complex Workflow Dependencies**: Don't hardcode task dependencies
-   ```python
-   # ❌ WRONG - False dependencies
-   # "Dependencies": Tasks 15, 16, 18, 19  # Tasks 18, 19 don't exist!
-
-   # ✅ CORRECT - Verify actual dependencies
-   # Dependencies: Tasks 14 (structure docs), 15/16 (context builder)
-   ```
 
 9. **Mixing Validation with Generation**: Keep concerns separated
    ```python
@@ -1439,10 +1440,12 @@ def test_specific_flow_path():
         return generate_workflow(user_input, context)
     ```
 
-13. **Wrong Model Selection**: Don't use GPT models
+13. **Wrong Model Selection**: Don't use incorrect model names
     ```python
-    # ❌ WRONG - Using wrong models
-    model = "gpt-4" if complex else "gpt-3.5-turbo"
+    # ❌ WRONG - Using wrong model names
+    model = "gpt-4" if complex else "gpt-3.5-turbo" # Wrong!
+    model = llm.get_model("claude-3-5-sonnet-latest")  # Wrong!
+    model = llm.get_model("gpt-4o-mini")  # Wrong!
 
     # ✅ CORRECT - Use specified model consistently
     model = llm.get_model("claude-sonnet-4-20250514")
