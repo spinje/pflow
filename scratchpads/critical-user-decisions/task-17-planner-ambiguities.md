@@ -1129,6 +1129,87 @@ This hybrid approach:
 - Maintains compatibility with the existing validation system
 - Provides type safety during development
 
+## 15. Testing Strategy for LLM Components - Decision importance (3)
+
+Testing LLM-based components requires special consideration due to their non-deterministic nature.
+
+### Context:
+- LLM outputs vary between runs
+- Need to test success rate metrics (≥95% target)
+- API calls are expensive during testing
+- Must validate both syntactic correctness and semantic appropriateness
+
+### Options:
+
+- [ ] **Option A: Mock all LLM calls**
+  - All tests use pre-recorded responses
+  - Pros: Fast, deterministic, free
+  - Cons: Doesn't test actual LLM behavior or prompt effectiveness
+  - Implementation: Fixtures with expected responses
+
+- [ ] **Option B: Real LLM calls with test budget**
+  - All tests use actual LLM API
+  - Pros: Real validation of prompts and outputs
+  - Cons: Expensive, slow, non-deterministic
+  - Implementation: Separate test API keys with spending limits
+
+- [x] **Option C: Hybrid approach with basic MVP validation**
+  - Unit tests: Mock LLM calls for component (node) testing
+  - Integration tests: Real LLM for critical paths
+  - MVP validation suite: Basic success rate testing for common patterns
+  - Pros: Balanced coverage and cost
+  - Cons: More complex test setup
+  - Implementation:
+    - Mock for fast feedback during development
+    - Real LLM for integration tests
+    - Small validation suite for MVP (10-20 common patterns)
+    - Extensive evaluation deferred to v2.0
+    - Always test the planners internal LLM node, all llms calls are called through a pocketflow node.
+
+**Recommendation**: Option C - This provides confidence in MVP functionality without excessive cost. The basic validation suite ensures we meet the ≥95% success rate target for common use cases.
+
+## 16. Batch Mode vs Interactive Mode - Decision importance (2)
+
+The planner needs to handle both interactive terminal sessions and automated/CI environments differently.
+
+### Context:
+- Interactive mode: User at terminal, can respond to prompts
+- Batch mode: Scripts, CI/CD, automated execution
+- Missing parameters need different handling strategies
+
+### The Clarification:
+
+**Interactive Mode** (default):
+- TTY detection shows user at terminal
+- Can prompt for missing parameters
+- Shows progress indicators
+- Allows Y/n approval prompts
+- Example: `pflow "fix github issue"` → "What issue number?"
+
+**Batch Mode** (--batch flag or no TTY):
+- No user interaction possible
+- Missing parameters cause immediate failure
+- No progress indicators (clean output)
+- Auto-approve with --yes flag or fail
+- Example: `pflow --batch "fix issue"` → ERROR: Missing issue parameter
+
+### Implementation:
+```python
+# Detect mode
+interactive = sys.stdin.isatty() and not args.batch
+
+# Handle missing parameters
+if param_missing:
+    if interactive:
+        param = prompt_user(f"Enter {param_name}: ")
+    else:
+        raise MissingParameterError(f"Batch mode: {param_name} required")
+```
+
+**MVP Scope**: Basic batch mode support with --batch flag and TTY detection. Full CI/CD optimizations deferred to v2.0.
+
+**Implications for task 17**: No modifications to the CLI should be made, the task 17 implementation will ONLY provide the interfaces the the CLI-layer needs to interact with the planner. Keep it simple.
+
 ## Critical Next Steps
 
 1. **Clarify template variable resolution** - This is the most critical ambiguity
