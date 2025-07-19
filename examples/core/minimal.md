@@ -8,19 +8,19 @@ This example demonstrates the absolute minimum valid IR structure. It shows:
 
 ## Use Case
 Perfect for simple one-step operations like:
-- Running a single command
-- Performing a basic transformation
-- Testing node implementations
+- Writing content to a file
+- Creating configuration files
+- Testing file node implementations
 
 ## Visual Flow
 ```
-[hello: echo]
+[hello: write-file]
 ```
 
 ## Node Explanation
-- **hello**: A simple echo node that outputs a message
-  - `type`: "echo" - References the echo node type in the registry
-  - `params`: Contains the message to output
+- **hello**: A write-file node that creates a text file
+  - `type`: "write-file" - References the write-file node type in the registry
+  - `params`: Contains the content to write and the file path
 
 ## How to Validate
 ```python
@@ -33,7 +33,7 @@ with open('minimal.json') as f:
 ```
 
 ## Common Variations
-1. **Different node type**: Change "echo" to any registered node type
+1. **Different node type**: Change "write-file" to other MVP nodes like "read-file" or "copy-file"
 2. **Additional parameters**: Add more fields to `params` as needed
 3. **Multiple nodes**: Add more nodes to the array (but then you'd want edges)
 

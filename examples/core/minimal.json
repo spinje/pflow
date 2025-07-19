@@ -3,9 +3,10 @@
   "nodes": [
     {
       "id": "hello",
-      "type": "echo",
+      "type": "write-file",
       "params": {
-        "message": "Hello, pflow!"
+        "content": "Hello, pflow!",
+        "file_path": "hello.txt"
       }
     }
   ]

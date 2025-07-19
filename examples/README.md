@@ -32,8 +32,8 @@ Essential examples showing fundamental patterns:
 ### 📁 advanced/
 Complex real-world examples:
 
-- **github-workflow.json** - Automated GitHub issue resolution with LLM
-- **content-pipeline.json** - Multi-stage content generation with revision loops
+- **file-migration.json** - Complex file migration workflow with error handling
+- **content-pipeline.json** - File processing pipeline with validation and retry loops
 
 ### 📁 invalid/
 Examples of common mistakes and their error messages:
@@ -109,11 +109,15 @@ By default, execution begins with the first node in the array. Override with:
 ```
 
 ### Node Types
-Node types map to registered implementations. Common types:
-- I/O: `read-file`, `write-file`, `http-get`
-- Transform: `json-extract`, `template-render`
-- LLM: `llm-analyzer`, `llm-writer`
-- Control: `conditional`, `loop`, `parallel`
+Node types map to registered implementations. Currently available in MVP:
+- File operations: `read-file`, `write-file`, `copy-file`, `move-file`, `delete-file`
+- Test nodes: `test_node` (for testing purposes)
+
+Future node types (not in MVP):
+- LLM operations: `llm`, `llm-analyzer`, `llm-writer`
+- Data transforms: `json-extract`, `template-render`
+- Network: `http-get`, `http-post`
+- Control flow: `conditional`, `loop`, `parallel`
 
 ## Testing Your IR
 

@@ -5,29 +5,31 @@
       "id": "reader",
       "type": "read-file",
       "params": {
-        "path": "input.txt"
+        "file_path": "input.txt"
       }
     },
     {
-      "id": "transformer",
-      "type": "uppercase",
-      "params": {}
+      "id": "copier",
+      "type": "copy-file",
+      "params": {
+        "destination": "backup.txt"
+      }
     },
     {
       "id": "writer",
       "type": "write-file",
       "params": {
-        "path": "output.txt"
+        "file_path": "output.txt"
       }
     }
   ],
   "edges": [
     {
       "from": "reader",
-      "to": "transformer"
+      "to": "copier"
     },
     {
-      "from": "transformer",
+      "from": "copier",
       "to": "writer"
     }
   ]

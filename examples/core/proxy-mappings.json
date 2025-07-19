@@ -3,50 +3,46 @@
   "nodes": [
     {
       "id": "reader",
-      "type": "csv-reader",
+      "type": "read-file",
       "params": {
-        "path": "data.csv",
-        "delimiter": ","
+        "file_path": "input.txt"
       }
     },
     {
-      "id": "analyzer",
-      "type": "sentiment-analyzer",
-      "params": {
-        "model": "vader"
-      }
+      "id": "test_processor",
+      "type": "test",
+      "params": {}
     },
     {
-      "id": "formatter",
-      "type": "report-generator",
+      "id": "writer",
+      "type": "write-file",
       "params": {
-        "template": "sentiment_report"
+        "file_path": "output.txt"
       }
     }
   ],
   "edges": [
     {
       "from": "reader",
-      "to": "analyzer"
+      "to": "test_processor"
     },
     {
-      "from": "analyzer",
-      "to": "formatter"
+      "from": "test_processor",
+      "to": "writer"
     }
   ],
   "mappings": {
-    "analyzer": {
+    "test_processor": {
       "input_mappings": {
-        "text": "csv_content"
+        "test_input": "content"
       },
       "output_mappings": {
-        "sentiment_scores": "analysis_results"
+        "test_output": "processed_content"
       }
     },
-    "formatter": {
+    "writer": {
       "input_mappings": {
-        "data": "analysis_results",
-        "metadata": "csv_metadata"
+        "content": "processed_content"
       }
     }
   }

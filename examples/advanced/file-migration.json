@@ -1,0 +1,111 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "read_manifest",
+      "type": "read-file",
+      "params": {
+        "file_path": "$migration_dir/manifest.json"
+      }
+    },
+    {
+      "id": "backup_destination",
+      "type": "copy-file",
+      "params": {
+        "source": "$destination_dir",
+        "destination": "$backup_dir/$timestamp_destination"
+      }
+    },
+    {
+      "id": "process_files",
+      "type": "test",
+      "params": {}
+    },
+    {
+      "id": "copy_new_files",
+      "type": "copy-file",
+      "params": {
+        "source": "$source_dir/$current_file",
+        "destination": "$destination_dir/$current_file"
+      }
+    },
+    {
+      "id": "move_old_files",
+      "type": "move-file",
+      "params": {
+        "source": "$destination_dir/$old_file",
+        "destination": "$archive_dir/$old_file"
+      }
+    },
+    {
+      "id": "write_report",
+      "type": "write-file",
+      "params": {
+        "file_path": "$reports_dir/migration_$timestamp.log",
+        "content": "Migration completed at $timestamp\nFiles copied: $copied_count\nFiles moved: $moved_count\nErrors: $error_count"
+      }
+    },
+    {
+      "id": "cleanup_temp",
+      "type": "delete-file",
+      "params": {
+        "file_path": "$temp_dir/$temp_file"
+      }
+    },
+    {
+      "id": "handle_error",
+      "type": "write-file",
+      "params": {
+        "file_path": "$logs_dir/error_$timestamp.log",
+        "content": "Error during migration: $error_message\nTimestamp: $timestamp\nCurrent operation: $current_operation",
+        "append": true
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "read_manifest",
+      "to": "backup_destination"
+    },
+    {
+      "from": "backup_destination",
+      "to": "process_files"
+    },
+    {
+      "from": "process_files",
+      "to": "copy_new_files"
+    },
+    {
+      "from": "copy_new_files",
+      "to": "move_old_files"
+    },
+    {
+      "from": "move_old_files",
+      "to": "cleanup_temp"
+    },
+    {
+      "from": "cleanup_temp",
+      "to": "write_report"
+    },
+    {
+      "from": "read_manifest",
+      "to": "handle_error",
+      "action": "error"
+    },
+    {
+      "from": "backup_destination",
+      "to": "handle_error",
+      "action": "error"
+    },
+    {
+      "from": "copy_new_files",
+      "to": "handle_error",
+      "action": "error"
+    },
+    {
+      "from": "move_old_files",
+      "to": "handle_error",
+      "action": "error"
+    }
+  ]
+}

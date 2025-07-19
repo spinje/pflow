@@ -12,38 +12,44 @@ Proxy mappings are crucial when:
 - Reusing nodes designed for different contexts
 - Building adapters between incompatible components
 - Creating clean interfaces between workflow stages
+- Connecting file operations with test nodes
 
 ## Visual Flow
 ```
-[csv-reader] → [sentiment-analyzer] → [report-generator]
-     ↓                ↓                      ↓
-csv_content ──┐    text              analysis_results
-              └─►  sentiment_scores ──┐      data
-                                     └─►  metadata ← csv_metadata
+[read-file] → [test_processor] → [write-file]
+     ↓              ↓                 ↓
+content ──┐    test_input      processed_content
+          └─►  test_output ──┐       content
+                            └─►
 ```
 
 ## Node Interfaces
-1. **csv-reader** outputs:
-   - `csv_content`: The text data from CSV
-   - `csv_metadata`: File metadata
+1. **read-file** outputs:
+   - `content`: The file content
+   - `error`: Error message if read failed
 
-2. **sentiment-analyzer** expects:
-   - Input: `text` (but reader provides `csv_content`)
-   - Output: `sentiment_scores` (but formatter needs `analysis_results`)
+2. **test_processor** expects:
+   - Input: `test_input` (but reader provides `content`)
+   - Output: `test_output` (but writer needs `processed_content`)
 
-3. **report-generator** expects:
-   - `data`: The analysis results
-   - `metadata`: Additional context
+3. **write-file** expects:
+   - `content`: The content to write
+   - `file_path`: Destination path
 
 ## Mapping Configuration
 ```json
 "mappings": {
-  "analyzer": {
+  "test_processor": {
     "input_mappings": {
-      "text": "csv_content"  // analyzer.text = shared["csv_content"]
+      "test_input": "content"  // test_processor.test_input = shared["content"]
     },
     "output_mappings": {
-      "sentiment_scores": "analysis_results"  // shared["analysis_results"] = analyzer.sentiment_scores
+      "test_output": "processed_content"  // shared["processed_content"] = test_processor.test_output
+    }
+  },
+  "writer": {
+    "input_mappings": {
+      "content": "processed_content"  // writer.content = shared["processed_content"]
     }
   }
 }

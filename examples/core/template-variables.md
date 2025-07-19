@@ -10,35 +10,37 @@ This example demonstrates the use of template variables (`$variable` syntax) thr
 Template variables are essential for:
 - Configurable workflows that adapt to different environments
 - Reusable workflows with different inputs
-- Dynamic content generation
-- API integrations with varying endpoints
+- Dynamic file paths and directories
+- Configurable file operations
 
 ## Visual Flow
 ```
-[fetch: http-get] → [extract: json-extract] → [notify: send-email]
-     ↓                      ↓                         ↓
- $api_endpoint          $data_path              $recipient_email
- $api_token            $default_value           $result, $timestamp
+[reader: read-file] → [copier: copy-file] → [writer: write-file]
+        ↓                     ↓                      ↓
+   $input_file          $backup_dir           $output_dir
+  $file_encoding       $backup_name          $output_file
+                                            $timestamp
 ```
 
 ## Template Variables Used
-- **$api_endpoint**: The API URL to fetch from
-- **$api_token**: Authentication token for API access
-- **$data_path**: JSON path to extract from response
-- **$default_value**: Fallback if extraction fails
-- **$recipient_email**: Who to notify
-- **$result**: Runtime value from extraction
+- **$input_file**: Source file path to read
+- **$file_encoding**: Character encoding for reading
+- **$backup_dir**: Directory for backup copies
+- **$backup_name**: Name for the backup file
+- **$output_dir**: Directory for output files
+- **$output_file**: Name for the output file
 - **$timestamp**: Runtime value for when processed
+- **$file_content**: Content read from the file
 
 ## Node Explanation
-1. **fetch**: Makes HTTP GET request
-   - Uses variables for both URL and auth header
+1. **reader**: Reads file content
+   - Uses variables for file path and encoding
 
-2. **extract**: Extracts data from JSON response
-   - Configurable extraction path and default
+2. **copier**: Creates a backup copy
+   - Configurable source and destination paths
 
-3. **notify**: Sends email notification
-   - Combines static text with multiple variables
+3. **writer**: Writes processed content
+   - Combines static text with file content and metadata
 
 ## How Variables Are Resolved
 Variables are resolved at runtime from:
@@ -57,11 +59,12 @@ with open('template-variables.json') as f:
 
 # At runtime, you'd provide values:
 # params = {
-#     "api_endpoint": "https://api.example.com/data",
-#     "api_token": "secret-token",
-#     "data_path": "$.results[0].value",
-#     "default_value": "N/A",
-#     "recipient_email": "user@example.com"
+#     "input_file": "/data/input.txt",
+#     "file_encoding": "utf-8",
+#     "backup_dir": "/backups",
+#     "backup_name": "input_backup.txt",
+#     "output_dir": "/processed",
+#     "output_file": "output.txt"
 # }
 ```
 

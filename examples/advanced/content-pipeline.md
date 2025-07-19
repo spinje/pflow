@@ -1,91 +1,95 @@
-# Content Pipeline Example
+# File Processing Pipeline Example
 
 ## Purpose
-This advanced example demonstrates a complete content generation pipeline inspired by the pocketflow-workflow pattern. It shows:
-- Multi-stage content creation with research, writing, and review
-- Revision loops for quality control
-- Complex data flow through shared store
-- Integration of multiple AI models and tools
+This advanced example demonstrates a complete file processing pipeline with validation and archival. It shows:
+- Multi-stage file processing with backup and validation
+- Revision loops for retry logic
+- Complex file operations workflow
+- Integration of multiple test nodes for processing steps
 
 ## Use Case
-Automated content creation for:
-- Technical tutorials and guides
-- Documentation generation
-- Blog post creation
-- Educational material development
+Automated file processing for:
+- Data file validation and transformation
+- Backup and archival workflows
+- Processing with validation loops
+- File organization systems
 
 ## Visual Flow
 ```
-┌─────────┐    ┌─────────┐    ┌──────────────┐    ┌─────────────┐
-│research │───►│ outline │───►│expand_sections│───►│add_examples │
-└─────────┘    └─────────┘    └──────┬───────┘    └──────┬──────┘
-                                     ▲                     │
-                                     │                     ▼
-                              (needs_revision)      ┌──────────────┐
-                                     │              │review_technical│
-                                     └──────────────┤              │
-                                                   └──────┬───────┘
-                                                         │
-                                                    (approved)
-                                                         ▼
-                                                  ┌──────────────┐
-                                                  │format_output │
-                                                  └──────┬───────┘
-                                                         │
-                                                         ▼
-                                                  ┌─────────────┐
-                                                  │ save_draft  │
-                                                  └─────────────┘
+┌────────────┐    ┌───────────────┐    ┌────────────────┐
+│read_source │───►│backup_original│───►│process_content │
+└────────────┘    └───────────────┘    └───────┬────────┘
+                                                    │
+                                                    ▼
+                                            ┌────────────────┐
+                                            │validate_result │
+                                            └───┬─────┬─────┘
+                                              │       │
+                                         (default) (needs_revision)
+                                              │       │
+                                              ▼       ▼
+                                    ┌──────────────┐ ┌────────────────┐
+                                    │save_processed│ │retry_processing│
+                                    └─────┬───────┘ └────────┬───────┘
+                                          │                     │
+                                          ▼                     │
+                              ┌──────────────────────┐       │
+                              │save_validation_report│◄───────┘
+                              └──────────┬──────────┘
+                                          │
+                                          ▼
+                                    ┌───────────────┐
+                                    │archive_results│
+                                    └───────────────┘
 ```
 
 ## Template Variables
 **Configuration Variables**:
-- `$topic`: Main subject of the content
-- `$audience`: Target reader level
-- `$difficulty`: Content complexity
-- `$writing_style`: Tone and style
-- `$programming_language`: For code examples
-- `$author`: Content creator
-- `$tags`: Categorization
+- `$source_dir`: Directory containing source files
+- `$source_file`: File to process
+- `$output_file`: Name for processed output
+- `$timestamp`: Current timestamp for backups
+- `$date`: Current date for archival
 
 **Data Flow Variables** (set by nodes):
-- `$research_summary`: Compiled research findings
-- `$outline`: Structured content outline
-- `$key_concepts`: Extracted main ideas
-- `$full_content`: Expanded article text
-- `$date`: Generation timestamp
+- File content flows through shared store
+- Processing results from test nodes
+- Validation status determines flow path
 
-## Node Pipeline (Inspired by pocketflow-workflow)
+## Node Pipeline
 
-### 1. research
-Gathers authoritative information from specified domains about the topic.
+### 1. read_source
+Reads the source file content into the shared store.
 
-### 2. outline
-Creates structured outline based on research, similar to pocketflow-workflow's OutlineGenerator.
+### 2. backup_original
+Creates a timestamped backup copy before processing.
 
-### 3. expand_sections
-Transforms outline into full content, maintaining coherent flow between sections.
+### 3. process_content
+Processes the file content using test node logic.
 
-### 4. add_examples
-Generates relevant code examples and practical demonstrations.
+### 4. validate_result
+Validates the processed content using structured test logic.
 
-### 5. review_technical
-Quality control step that can trigger revisions if issues found.
+### 5. retry_processing
+Retry logic for failed validations.
 
-### 6. format_output
-Final formatting with TOC, syntax highlighting, and metadata.
+### 6. save_processed
+Saves the successfully processed content.
 
-### 7. save_draft
-Persists the generated content with backup.
+### 7. save_validation_report
+Creates a validation report for audit trail.
+
+### 8. archive_results
+Moves completed files to dated archive folders.
 
 ## Revision Loop
-The `review_technical → expand_sections` edge with action "needs_revision" creates a quality loop, ensuring content meets standards before proceeding.
+The `validate_result → retry_processing` edge with action "needs_revision" creates a retry loop, ensuring content passes validation before proceeding.
 
-## Pattern Application from pocketflow-workflow
-This example adapts the three-phase approach from pocketflow-workflow:
-1. **Planning Phase**: Research and outline generation
-2. **Content Phase**: Expansion and example addition
-3. **Polish Phase**: Review and formatting
+## Pattern Application
+This example demonstrates advanced patterns:
+1. **Backup Phase**: Ensure data safety before processing
+2. **Processing Phase**: Transform content with validation
+3. **Archive Phase**: Organize results systematically
 
 Each phase builds on the previous, with data flowing through the shared store.
 
@@ -100,24 +104,22 @@ with open('content-pipeline.json') as f:
 
 # Runtime parameters:
 params = {
-    "topic": "Python Async Programming",
-    "audience": "intermediate developers",
-    "difficulty": "medium",
-    "writing_style": "conversational but technical",
-    "programming_language": "python",
-    "author": "AI Assistant",
-    "tags": ["python", "async", "tutorial"]
+    "source_dir": "/data/incoming",
+    "source_file": "data.csv",
+    "output_file": "processed_data.csv",
+    "timestamp": "2024-01-15_143022",
+    "date": "2024-01-15"
 }
 ```
 
 ## Extending This Workflow
-1. **Multiple formats**: Add nodes for video scripts, slides
-2. **Localization**: Translate to multiple languages
-3. **SEO optimization**: Add keyword analysis and optimization
-4. **Publishing**: Direct integration with CMS or blog platforms
+1. **Multiple file types**: Add nodes for different file formats
+2. **Parallel processing**: Process multiple files simultaneously
+3. **Compression**: Add compression before archival
+4. **Cloud backup**: Direct integration with cloud storage
 
 ## Key Insights
-- Sequential processing ensures each stage has required context
-- Revision loops maintain quality without manual intervention
-- Template variables enable reuse for any topic
-- Shared store manages complex data flow between stages
+- Sequential processing ensures data integrity
+- Revision loops maintain quality through validation
+- Template variables enable reuse for any file type
+- File operations provide reliable data handling

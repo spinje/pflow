@@ -2,77 +2,68 @@
   "ir_version": "0.1.0",
   "nodes": [
     {
-      "id": "fetch_data",
-      "type": "http-get",
+      "id": "read_source",
+      "type": "read-file",
       "params": {
-        "url": "https://api.example.com/data",
-        "timeout": 30
+        "file_path": "data/input.txt"
       }
     },
     {
-      "id": "process_data",
-      "type": "json-transform",
-      "params": {
-        "schema": "data_schema_v1"
-      }
+      "id": "process_file",
+      "type": "test",
+      "params": {}
     },
     {
       "id": "save_result",
-      "type": "database-insert",
+      "type": "write-file",
       "params": {
-        "table": "processed_data"
+        "file_path": "output/result.txt"
       }
     },
     {
-      "id": "handle_error",
-      "type": "error-logger",
+      "id": "log_error",
+      "type": "write-file",
       "params": {
-        "severity": "error",
-        "notify": true
+        "file_path": "logs/error.log",
+        "append": true
       }
     },
     {
-      "id": "retry_fetch",
-      "type": "http-get",
+      "id": "create_fallback",
+      "type": "write-file",
       "params": {
-        "url": "https://api.example.com/data",
-        "timeout": 60,
-        "retry_count": "$retry_count"
+        "file_path": "output/fallback.txt",
+        "content": "Processing failed - using default content"
       }
     }
   ],
   "edges": [
     {
-      "from": "fetch_data",
-      "to": "process_data"
+      "from": "read_source",
+      "to": "process_file"
     },
     {
-      "from": "fetch_data",
-      "to": "handle_error",
+      "from": "read_source",
+      "to": "log_error",
       "action": "error"
     },
     {
-      "from": "process_data",
+      "from": "process_file",
       "to": "save_result"
     },
     {
-      "from": "process_data",
-      "to": "handle_error",
+      "from": "process_file",
+      "to": "log_error",
       "action": "error"
-    },
-    {
-      "from": "handle_error",
-      "to": "retry_fetch",
-      "action": "retry"
-    },
-    {
-      "from": "retry_fetch",
-      "to": "process_data"
     },
     {
       "from": "save_result",
-      "to": "handle_error",
+      "to": "log_error",
       "action": "error"
+    },
+    {
+      "from": "log_error",
+      "to": "create_fallback"
     }
   ]
 }

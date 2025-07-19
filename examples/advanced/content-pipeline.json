@@ -2,107 +2,91 @@
   "ir_version": "0.1.0",
   "nodes": [
     {
-      "id": "research",
-      "type": "web-search",
+      "id": "read_source",
+      "type": "read-file",
       "params": {
-        "query": "$topic advanced guide tutorial",
-        "limit": 10,
-        "domains": [
-          "docs.python.org",
-          "realpython.com",
-          "stackoverflow.com"
-        ]
+        "file_path": "$source_dir/$source_file"
       }
     },
     {
-      "id": "outline",
-      "type": "llm-outliner",
+      "id": "backup_original",
+      "type": "copy-file",
       "params": {
-        "prompt": "Create a comprehensive tutorial outline for: $topic\n\nTarget audience: $audience\nDifficulty: $difficulty\n\nResearch findings:\n$research_summary",
-        "model": "gpt-4",
-        "format": "markdown"
+        "source": "$source_dir/$source_file",
+        "destination": "backups/$timestamp_$source_file"
       }
     },
     {
-      "id": "expand_sections",
-      "type": "llm-writer",
+      "id": "process_content",
+      "type": "test",
+      "params": {}
+    },
+    {
+      "id": "validate_result",
+      "type": "test-structured",
+      "params": {}
+    },
+    {
+      "id": "save_processed",
+      "type": "write-file",
       "params": {
-        "prompt": "Expand each section of this outline into detailed content:\n\n$outline\n\nStyle: $writing_style\nInclude: code examples, best practices, common pitfalls",
-        "model": "gpt-4",
-        "max_tokens": 4000
+        "file_path": "processed/$output_file"
       }
     },
     {
-      "id": "add_examples",
-      "type": "code-generator",
+      "id": "save_validation_report",
+      "type": "write-file",
       "params": {
-        "language": "$programming_language",
-        "concepts": "$key_concepts",
-        "style": "educational"
+        "file_path": "reports/validation_$timestamp.txt"
       }
     },
     {
-      "id": "review_technical",
-      "type": "llm-reviewer",
-      "params": {
-        "prompt": "Review this technical content for accuracy:\n\n$full_content\n\nCheck for:\n- Technical accuracy\n- Code correctness\n- Best practices\n- Security issues",
-        "model": "gpt-4",
-        "temperature": 0.3
-      }
+      "id": "retry_processing",
+      "type": "test-retry",
+      "params": {}
     },
     {
-      "id": "format_output",
-      "type": "markdown-formatter",
+      "id": "archive_results",
+      "type": "move-file",
       "params": {
-        "template": "tutorial",
-        "add_toc": true,
-        "syntax_highlight": true,
-        "metadata": {
-          "title": "$topic Tutorial",
-          "author": "$author",
-          "date": "$date",
-          "tags": "$tags"
-        }
-      }
-    },
-    {
-      "id": "save_draft",
-      "type": "file-writer",
-      "params": {
-        "path": "drafts/$topic-tutorial-draft.md",
-        "backup": true
+        "source": "processed/$output_file",
+        "destination": "archive/$date/$output_file"
       }
     }
   ],
   "edges": [
     {
-      "from": "research",
-      "to": "outline"
+      "from": "read_source",
+      "to": "backup_original"
     },
     {
-      "from": "outline",
-      "to": "expand_sections"
+      "from": "backup_original",
+      "to": "process_content"
     },
     {
-      "from": "expand_sections",
-      "to": "add_examples"
+      "from": "process_content",
+      "to": "validate_result"
     },
     {
-      "from": "add_examples",
-      "to": "review_technical"
+      "from": "validate_result",
+      "to": "save_processed"
     },
     {
-      "from": "review_technical",
-      "to": "format_output"
-    },
-    {
-      "from": "review_technical",
-      "to": "expand_sections",
+      "from": "validate_result",
+      "to": "retry_processing",
       "action": "needs_revision"
     },
     {
-      "from": "format_output",
-      "to": "save_draft"
+      "from": "retry_processing",
+      "to": "validate_result"
+    },
+    {
+      "from": "save_processed",
+      "to": "save_validation_report"
+    },
+    {
+      "from": "save_validation_report",
+      "to": "archive_results"
     }
   ]
 }

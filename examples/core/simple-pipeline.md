@@ -4,35 +4,35 @@
 This example demonstrates a basic 3-node sequential pipeline. It shows:
 - Multiple nodes working together
 - Edge connections defining flow order
-- A complete read → transform → write pattern
+- A complete read → copy → write pattern using MVP file operations
 
 ## Use Case
 This pattern is fundamental for:
 - File processing workflows
-- Data transformation pipelines
-- ETL (Extract, Transform, Load) operations
+- Backup operations
+- File management pipelines
 
 ## Visual Flow
 ```
-[reader: read-file] → [transformer: uppercase] → [writer: write-file]
+[reader: read-file] → [copier: copy-file] → [writer: write-file]
 ```
 
 ## Node Explanation
 1. **reader**: Reads content from a file
    - `type`: "read-file" - Reads file content into shared store
-   - `params.path`: Source file location
+   - `params.file_path`: Source file location
 
-2. **transformer**: Transforms the content
-   - `type`: "uppercase" - Converts text to uppercase
-   - `params`: Empty - uses default behavior
+2. **copier**: Creates a backup copy
+   - `type`: "copy-file" - Copies the file content
+   - `params.destination`: Backup file location
 
-3. **writer**: Writes transformed content
+3. **writer**: Writes content to final destination
    - `type`: "write-file" - Writes content to file
-   - `params.path`: Destination file location
+   - `params.file_path`: Destination file location
 
 ## Edge Flow
-- `reader → transformer`: Passes file content
-- `transformer → writer`: Passes transformed content
+- `reader → copier`: Passes file content
+- `copier → writer`: Passes content for final write
 
 ## How to Validate
 ```python
@@ -45,10 +45,10 @@ with open('simple-pipeline.json') as f:
 ```
 
 ## Common Variations
-1. **Different transformations**: Replace "uppercase" with other processors
-2. **Multiple transformers**: Chain several transformations together
+1. **Different file operations**: Use "move-file" or "delete-file" nodes
+2. **Multiple operations**: Chain several file operations together
 3. **Conditional paths**: Add error handling edges with actions
-4. **Parallel processing**: Multiple edges from one node
+4. **Direct copy**: Skip the writer and just use reader → copier
 
 ## Notes
 - Edges define execution order

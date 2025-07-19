@@ -9,54 +9,54 @@ This example demonstrates error handling patterns using action-based routing. It
 
 ## Use Case
 Essential for robust workflows that need:
-- API calls with retry logic
-- Data processing with validation
-- Database operations with rollback
-- Any operation that might fail and needs recovery
+- File operations with error recovery
+- Processing with validation
+- Fallback content generation
+- Any operation that might fail and needs logging
 
 ## Visual Flow
 ```
                   ┌─────────────────┐
-                  │   fetch_data    │
+                  │  read_source    │
                   └────────┬────────┘
                     │            │
                  (default)    (error)
                     ↓            ↓
            ┌────────────┐  ┌─────────────┐
-           │process_data│  │handle_error │
+           │process_file│  │  log_error  │
            └─────┬──────┘  └──────┬──────┘
-             │      │           (retry)
-         (default)(error)         ↓
-             ↓      └──→  ┌─────────────┐
-      ┌────────────┐      │ retry_fetch │
-      │save_result │      └──────────────┘
-      └────────────┘
+             │      │              │
+         (default)(error)      (default)
+             ↓      └──→          ↓
+      ┌────────────┐      ┌────────────────┐
+      │save_result │      │create_fallback│
+      └────────────┘      └────────────────┘
 ```
 
 ## Node Explanation
-1. **fetch_data**: Initial API call
-   - On success: proceeds to process_data
-   - On error: routes to handle_error
+1. **read_source**: Read input file
+   - On success: proceeds to process_file
+   - On error: routes to log_error
 
-2. **process_data**: Transform the fetched data
+2. **process_file**: Process the file content
    - On success: proceeds to save_result
-   - On error: routes to handle_error
+   - On error: routes to log_error
 
-3. **save_result**: Persist processed data
-   - On error: routes to handle_error
+3. **save_result**: Write processed result
+   - On error: routes to log_error
 
-4. **handle_error**: Central error handling
-   - Logs the error with severity
-   - Can trigger retry via "retry" action
+4. **log_error**: Central error logging
+   - Logs the error to a file
+   - Always proceeds to create_fallback
 
-5. **retry_fetch**: Retry logic with increased timeout
-   - Uses $retry_count to track attempts
-   - Feeds back to process_data
+5. **create_fallback**: Generate fallback content
+   - Creates a default output file
+   - Ensures workflow produces some output
 
 ## Action-Based Routing
 - **default**: Implicit action for success cases (can be omitted)
 - **error**: Triggered when a node fails
-- **retry**: Custom action from error handler to trigger retry
+- All error paths lead to logging and fallback generation
 
 ## How to Validate
 ```python

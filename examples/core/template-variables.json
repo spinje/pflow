@@ -2,41 +2,38 @@
   "ir_version": "0.1.0",
   "nodes": [
     {
-      "id": "fetch",
-      "type": "http-get",
+      "id": "reader",
+      "type": "read-file",
       "params": {
-        "url": "$api_endpoint",
-        "headers": {
-          "Authorization": "Bearer $api_token"
-        }
+        "file_path": "$input_file",
+        "encoding": "$file_encoding"
       }
     },
     {
-      "id": "extract",
-      "type": "json-extract",
+      "id": "copier",
+      "type": "copy-file",
       "params": {
-        "path": "$data_path",
-        "default": "$default_value"
+        "source": "$input_file",
+        "destination": "$backup_dir/$backup_name"
       }
     },
     {
-      "id": "notify",
-      "type": "send-email",
+      "id": "writer",
+      "type": "write-file",
       "params": {
-        "to": "$recipient_email",
-        "subject": "Data extracted from $api_endpoint",
-        "body": "Extracted value: $result\n\nProcessed at: $timestamp"
+        "file_path": "$output_dir/$output_file",
+        "content": "Processed on: $timestamp\nOriginal file: $input_file\n\n$file_content"
       }
     }
   ],
   "edges": [
     {
-      "from": "fetch",
-      "to": "extract"
+      "from": "reader",
+      "to": "copier"
     },
     {
-      "from": "extract",
-      "to": "notify"
+      "from": "copier",
+      "to": "writer"
     }
   ]
 }
