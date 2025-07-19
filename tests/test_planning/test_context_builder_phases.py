@@ -43,8 +43,11 @@ class TestDiscoveryContext:
 
     def test_discovery_context_empty_registry(self):
         """Test discovery context with no nodes."""
-        with patch("pflow.planning.context_builder._load_saved_workflows", return_value=[]):
-            context = build_discovery_context(registry_metadata={})
+        # Need to also mock _process_nodes to ensure empty registry behavior
+        with patch("pflow.planning.context_builder._process_nodes") as mock_process:
+            mock_process.return_value = ({}, 0)  # Empty processed nodes
+            with patch("pflow.planning.context_builder._load_saved_workflows", return_value=[]):
+                context = build_discovery_context(registry_metadata={})
 
         assert "## Available Nodes" in context
         assert len(context.split("\n")) < 5  # Should be minimal

@@ -115,7 +115,7 @@ In this example:
 - Only `append` is listed in Params because it's not an input
 - The node can be called with `params={"file_path": "...", "content": "...", "append": True}`
 
-## Structure Documentation (Future Enhancement)
+## Structure Documentation
 
 For complex types like `dict` and `list`, structure can be documented using indentation:
 
@@ -127,12 +127,95 @@ Interface:
     - user: dict  # Author information
       - login: str  # GitHub username
       - id: int  # User ID
-    - labels: list[dict]  # Array of labels
+    - labels: list  # Array of labels
       - name: str  # Label text
       - color: str  # Hex color code
 ```
 
-**Note**: Structure parsing is not yet implemented. The parser currently recognizes `dict` and `list` types and sets a `_has_structure` flag, but does not parse the indented structure details.
+### How Structure Documentation Works
+
+The parser automatically detects indented structure definitions and extracts nested field information. When these structured outputs are displayed in planning contexts, they appear in a dual format optimized for LLM comprehension:
+
+**Structure (JSON format):**
+```json
+{
+  "issue_data": {
+    "number": "int",
+    "title": "str",
+    "user": {
+      "login": "str",
+      "id": "int"
+    },
+    "labels": [
+      {
+        "name": "str",
+        "color": "str"
+      }
+    ]
+  }
+}
+```
+
+**Available paths:**
+- issue_data.number (int) - Issue number
+- issue_data.title (str) - Issue title
+- issue_data.user.login (str) - GitHub username
+- issue_data.user.id (int) - User ID
+- issue_data.labels[].name (str) - Label text
+- issue_data.labels[].color (str) - Hex color code
+
+This dual representation enables the workflow planner to:
+1. **Understand data relationships** using the JSON structure
+2. **Generate proxy mappings** by copying paths directly (e.g., `"author": "issue_data.user.login"`)
+
+### Structure Documentation Rules
+
+1. **Indentation is significant**: Use 2 or 4 spaces consistently
+2. **Follow the same format**: `- field_name: type  # Description`
+3. **Nest properly**: Child fields must be indented under their parent
+4. **Support for lists**: Use `list` type and document item structure underneath
+5. **Maximum depth**: Structures can be nested up to 5 levels deep
+
+### Supported Structure Types
+
+- **dict**: Object/dictionary structures with named fields
+- **list**: Arrays where all items have the same structure
+- **Primitive types**: str, int, float, bool (no further nesting)
+
+### Example: Complete Node with Structures
+
+```python
+class GitHubIssueNode(Node):
+    """
+    Fetch GitHub issue data with full metadata.
+
+    Interface:
+    - Reads: shared["issue_number"]: int  # Issue number to fetch
+    - Reads: shared["repo"]: str  # Repository name (owner/repo format)
+    - Writes: shared["issue_data"]: dict  # Complete issue information
+        - number: int  # Issue number
+        - title: str  # Issue title
+        - body: str  # Issue description
+        - state: str  # Issue state (open, closed)
+        - user: dict  # Issue author
+          - login: str  # GitHub username
+          - id: int  # User ID
+          - avatar_url: str  # Profile picture URL
+        - labels: list  # Issue labels
+          - name: str  # Label name
+          - color: str  # Label color (hex)
+          - description: str  # Label description
+        - milestone: dict  # Milestone info (may be null)
+          - id: int  # Milestone ID
+          - title: str  # Milestone title
+          - due_on: str  # Due date (ISO format)
+    - Writes: shared["error"]: str  # Error message if request failed
+    - Params: include_comments: bool  # Include issue comments (default: false)
+    - Actions: default (success), error (API error)
+    """
+```
+
+This documentation will be parsed and displayed in the planning context as both JSON structure and available paths, enabling accurate workflow generation.
 
 ## Migration from Simple Format
 
@@ -253,24 +336,82 @@ Interface:
 
 ## Parser Limitations
 
-The current parser has some known limitations:
+The current parser has some known limitations that you should be aware of:
 
-1. **Empty components**: Empty lines like `- Reads:` with no content may cause parsing issues
-2. **Very long lines**: Extremely long lines may not parse correctly
-3. **Malformed syntax**: Invalid enhanced format may produce unexpected results
-4. **Structure parsing**: Indented structure documentation is recognized but not yet parsed
+### Critical Limitations
 
-These limitations are acceptable for the MVP as the parser works well for normal use cases.
+1. **Single quotes not supported**: Use `shared["key"]` ✅, not `shared['key']` ❌
+   ```python
+   # Works
+   - Reads: shared["file_path"]: str  # File path
+
+   # Breaks parser
+   - Reads: shared['file_path']: str  # File path
+   ```
+
+2. **Empty components break parser**: Always include content after declarations
+   ```python
+   # Breaks parser
+   - Reads:
+   - Writes: shared["data"]: str
+
+   # Works
+   - Reads: shared["input"]: str  # Input data
+   - Writes: shared["data"]: str  # Output data
+   ```
+
+3. **Commas in descriptions can break parsing**: Use alternative phrasing
+   ```python
+   # May break
+   - Reads: shared["config"]: dict  # Config object, with settings, and defaults
+
+   # Better
+   - Reads: shared["config"]: dict  # Config object with settings and defaults
+   ```
+
+### Minor Limitations
+
+4. **Very long lines**: Lines over 1000 characters may hit regex limits
+5. **Indentation must be consistent**: Use 2 or 4 spaces consistently within a structure
+6. **Maximum nesting depth**: Structures support up to 5 levels of nesting
+
+### Workarounds and Best Practices
+
+- **For commas**: Use "and" or rephrase to avoid comma-separated lists in descriptions
+- **For quotes**: Always use double quotes in `shared["key"]` syntax
+- **For empty sections**: Include at least one item or omit the section entirely
+- **For long descriptions**: Break into multiple sentences or use simpler language
+
+### What Works Reliably
+
+The parser handles these cases well:
+- Multi-line interface sections
+- Nested structures up to 5 levels deep
+- All supported types (str, int, float, bool, dict, list)
+- Unicode characters in descriptions
+- Mixed simple and enhanced format in the same interface
+
+These limitations are well-documented and the parser works reliably for normal use cases. The enhanced format provides significant value despite these constraints.
+
+## Current Features Summary
+
+✅ **Implemented in Current Version:**
+- Enhanced interface format with type annotations
+- Multi-line interface documentation
+- **Full structure parsing** for nested dict and list types
+- **Structure display** in dual JSON + paths format for planning contexts
+- Exclusive params pattern (params not in Reads)
+- Parser support for all basic types (str, int, float, bool, dict, list)
 
 ## Future Enhancements
 
 The following features are planned for future versions:
 
-1. **Full structure parsing**: Parse and validate nested structure documentation
-2. **Type validation**: Validate that types are valid Python types
-3. **Enum types**: Support for enumerated values like `Literal['fast', 'slow']`
-4. **Optional syntax**: Explicit `Optional[str]` syntax for optional parameters
-5. **Custom types**: Support for domain-specific types
+1. **Type validation**: Validate that types are valid Python types at parse time
+2. **Enum types**: Support for enumerated values like `Literal['fast', 'slow']`
+3. **Optional syntax**: Explicit `Optional[str]` syntax for optional parameters
+4. **Custom types**: Support for domain-specific types
+5. **Parser improvements**: Better error messages and more flexible quote handling
 
 ## Examples
 
