@@ -1341,6 +1341,131 @@ This approach ensures:
 - Clear data flow that can be validated
 - True generalization across different domains
 
+## Structured Output Generation with Pydantic
+
+### Hybrid Validation Approach
+The planner uses Pydantic models for type-safe IR generation with the LLM, followed by JSONSchema validation:
+
+```python
+# src/pflow/planning/ir_models.py
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Optional
+
+class NodeIR(BaseModel):
+    """Node representation for IR generation."""
+    id: str = Field(..., pattern="^[a-zA-Z0-9_-]+$")
+    type: str = Field(..., description="Node type from registry")
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+class EdgeIR(BaseModel):
+    """Edge representation for IR generation."""
+    from_node: str = Field(..., alias="from")
+    to_node: str = Field(..., alias="to")
+    action: str = Field(default="default")
+
+class FlowIR(BaseModel):
+    """Flow IR for planner output generation."""
+    ir_version: str = Field(default="0.1.0", pattern=r'^\d+\.\d+\.\d+$')
+    nodes: List[NodeIR] = Field(..., min_items=1)
+    edges: List[EdgeIR] = Field(default_factory=list)
+    start_node: Optional[str] = None
+    mappings: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Convert to dict for validation with existing schema."""
+        return self.model_dump(by_alias=True, exclude_none=True)
+```
+
+**Important**: These models live in the planning module, separate from the core JSONSchema. They serve different purposes:
+- **Pydantic models**: For type-safe generation with the LLM
+- **JSONSchema**: For comprehensive validation of the final IR
+
+### Integration with PocketFlow Retry Mechanism
+
+The GeneratorNode leverages PocketFlow's built-in retry capabilities with progressive prompt enhancement:
+
+```python
+class WorkflowGeneratorNode(Node):
+    """Generates workflows using LLM with structured output."""
+
+    def __init__(self):
+        super().__init__(max_retries=3, wait=1.0)
+        self.model = llm.get_model("claude-sonnet-4-20250514")
+
+    def exec(self, shared):
+        # Track attempts for progressive enhancement
+        attempt = shared.get("generation_attempts", 0)
+        shared["generation_attempts"] = attempt + 1
+
+        # Build prompt with progressive enhancements
+        prompt = self._build_prompt(shared, attempt)
+
+        # Generate with structured output
+        response = self.model.prompt(
+            prompt,
+            schema=FlowIR,
+            temperature=0  # Deterministic
+        )
+
+        workflow_dict = json.loads(response.text())
+
+        # Validate with JSONSchema
+        validate_ir(workflow_dict)
+
+        shared["generated_workflow"] = workflow_dict
+        return "validate"
+
+    def _build_prompt(self, shared, attempt):
+        """Build prompt with progressive enhancements based on retry attempt."""
+        base_prompt = self._create_base_prompt(shared)
+
+        # Add error context on retries
+        if attempt > 0 and "validation_errors" in shared:
+            base_prompt += "\n\nPrevious attempt had these issues:\n"
+            for error in shared["validation_errors"][:3]:  # Limit to avoid prompt bloat
+                base_prompt += f"- {error}\n"
+            base_prompt += "\nPlease address these issues in your response."
+
+        # Progressive guidance based on attempt
+        if attempt >= 2:
+            base_prompt += "\n\nIMPORTANT: Use only basic, well-known nodes. Include complete variable_flow mappings."
+
+        return base_prompt
+
+    def exec_fallback(self, shared, exc):
+        """Handle final failure after all retries."""
+        shared["generation_failed"] = True
+        shared["final_error"] = str(exc)
+        return "generation_failed"
+```
+
+### Prompt Design for Template Variables
+
+The prompt must explicitly guide the LLM to use template variables:
+
+```python
+def _create_base_prompt(self, shared):
+    """Create prompt that emphasizes template variables."""
+    return f"""Generate a workflow for: {shared['user_input']}
+
+Available nodes:
+{shared['node_context']}
+
+CRITICAL Requirements:
+1. Use template variables ($variable) for ALL user-provided values
+2. Generate complete variable_flow mappings for every $variable
+3. NEVER hardcode values like "1234" - use $issue_number instead
+4. Include template_inputs when nodes need dynamic prompts
+
+Example of CORRECT usage:
+- User says "fix issue 1234"
+- Generate: {{"params": {{"issue": "$issue_number"}}}}
+- NOT: {{"params": {{"issue": "1234"}}}}
+
+Template variables enable workflow reuse with different parameters.
+Generate complete JSON matching the FlowIR schema."""
+```
+
 ### Template Variable Resolution Order
 While the LLM generates the mappings, the system must validate and determine the correct resolution order:
 
