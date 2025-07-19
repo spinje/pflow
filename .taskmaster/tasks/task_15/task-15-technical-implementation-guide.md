@@ -22,63 +22,74 @@ Task 14.3 migrated all 7 nodes to multi-line enhanced format:
 - 2 test nodes (test_node_retry has exclusive param)
 - All follow exclusive params pattern
 
-### 4. Context Builder Two-Phase Approach (from Task 14 discussions)
+### 4. Task 15 is Now Complete ✅
+All subtasks have been implemented:
+- 15.1: Workflow loading infrastructure
+- 15.2: Two-phase context builder functions
+- 15.3: Structure display enhancement (via _format_structure_combined)
+- 15.4: Integration of all components with testing
+
+### 5. Context Builder Two-Phase Approach (from Task 14 discussions)
 The context builder will create exactly **two markdown strings** (not files):
 1. **Discovery Context** - Names and descriptions only (returned from `build_discovery_context()`)
 2. **Planning Context** - Full technical details for selected components (returned from `build_planning_context()`)
 
-## Implementation Roadmap
+## Implementation Status ✅ COMPLETE
 
-### Phase 1: Two-Phase Context Split (Hours 1-4)
+### What Was Actually Implemented
 
-#### Discovery Context Implementation
+#### Discovery Context Implementation ✅
 ```python
-def build_discovery_context(registry_metadata, saved_workflows=None):
+def build_discovery_context(
+    node_ids: Optional[list[str]] = None,
+    workflow_names: Optional[list[str]] = None,
+    registry_metadata: Optional[dict[str, dict[str, Any]]] = None,
+) -> str:
     """
-    Implementation approach:
-    1. Reuse existing _process_nodes() for metadata extraction
-    2. Format as lightweight markdown (name + description only)
-    3. Include workflows alongside nodes
-    4. Group by category using existing logic
+    IMPLEMENTED with:
+    - Input validation for all parameters
+    - Reuses _process_nodes() for metadata extraction
+    - Groups by category using _group_nodes_by_category()
+    - Includes workflow discovery from _load_saved_workflows()
+    - Helper functions to reduce complexity
     """
 ```
 
-#### Planning Context Implementation
+#### Planning Context Implementation ✅
 ```python
-def build_planning_context(selected_components, registry_metadata, saved_workflows=None):
+def build_planning_context(
+    selected_node_ids: list[str],
+    selected_workflow_names: list[str],
+    registry_metadata: dict[str, dict[str, Any]],
+    saved_workflows: Optional[list[dict[str, Any]]] = None,
+) -> str | dict[str, Any]:
     """
-    Implementation approach:
-    1. Filter to only selected components
-    2. Use existing _format_node_section() for full details
-    3. Display structures using _format_structure()
-    4. Maintain exclusive params pattern (line 416)
+    IMPLEMENTED with:
+    - Input validation for all parameters
+    - Returns error dict if components missing
+    - Uses _format_node_section_enhanced() (NOT the old _format_node_section)
+    - Displays structures using _format_structure_combined() (NOT _format_structure)
+    - Helper functions to reduce complexity
     """
 ```
 
-### Phase 2: Workflow Discovery (Hours 5-6)
-
-#### Workflow Loading
+#### Workflow Loading ✅
 ```python
 def _load_saved_workflows():
     """
-    Steps:
-    1. Create ~/.pflow/workflows/ if missing
-    2. Glob all *.json files
-    3. Parse and validate (name, description required)
-    4. Skip invalid files with warnings
-    5. Return list of metadata dicts
+    IMPLEMENTED exactly as specified:
+    - Creates ~/.pflow/workflows/ if missing
+    - Validates required fields (name, description, inputs, outputs, ir)
+    - Skips invalid files with warnings
+    - Returns list of workflow metadata
     """
 ```
 
-### Phase 3: Integration (Hours 7-8)
-
-#### Refactor build_context()
+#### CRITICAL CHANGE: build_context() Was REMOVED ❌
 ```python
-def build_context(registry_metadata):
-    """Refactor to essentially be build_planning_context for all components."""
-    # No backward compatibility needed - can be rewritten
-    # This simplifies implementation significantly
-```
+# build_context() was NOT refactored - it was completely REMOVED
+# Along with its helper _format_node_section()
+# The old _format_structure() is deprecated but kept for reference
 
 ## Critical Parser Fixes to Preserve
 
@@ -159,7 +170,7 @@ exclusive_params = [p for p in params if p.get("key", p) not in input_names]
 - **Parsing**: Lines 543-612 implement recursive descent parser
 - **Indentation tracking**: Uses `_get_indentation()` helper
 - **Access**: via metadata's structure field
-- **Display**: Use existing `_format_structure()` method
+- **Display**: Use `_format_structure_combined()` method (NOT the deprecated `_format_structure()`)
 - **Purpose**: Enables proxy mappings like `issue_data.user.login`
 
 ### Parser Test Case That Works
@@ -179,20 +190,26 @@ From tests, this successfully parses:
 2. **Full descriptions preserved**: Including commas (line 166)
 3. **Updated functionality**: Tests may need updates for refactored build_context()
 
-### New Test Coverage
-1. **Discovery Context**
-   - Empty registry, nodes only, with workflows
-   - Large registry performance
+### Test Coverage (Complete ✅)
 
-2. **Planning Context**
-   - Component filtering
-   - Missing components handling
-   - Structure display
+**Primary Test File**: `tests/test_planning/test_context_builder_phases.py` (33 tests)
+- Discovery context tests (7 tests including input validation)
+- Planning context tests (7 tests including input validation)
+- Structure combined format tests (4 tests)
+- Shared functionality tests (4 tests for _process_nodes error handling)
+- Helper function tests (4 tests for category grouping)
+- Enhanced formatter tests (7 tests for edge cases)
 
-3. **Workflow Loading**
-   - Valid/invalid JSON
-   - Missing fields
-   - Directory creation
+**Integration Tests**: `tests/test_integration/test_context_builder_integration.py`
+- Full discovery → planning flow
+- Real node loading and formatting
+- Workflow integration
+
+**Performance Tests**: `tests/test_integration/test_context_builder_performance.py`
+- 100+ nodes performance benchmarks
+- Context size validation
+
+**REMOVED**: `tests/test_planning/test_context_builder.py` (old tests file)
 
 ## Performance Characteristics
 
@@ -244,47 +261,54 @@ From tests, this successfully parses:
   - Format detection: lines 261-293
 
 - **Context Builder**: `/src/pflow/planning/context_builder.py`
-  - MAX_OUTPUT_SIZE: line 38 (200KB)
-  - Exclusive params: line 416
-  - _process_nodes(): lines 58-199 (reuse for discovery)
-  - _format_structure(): lines 200-228 (ready for structures)
-  - _format_node_section(): lines 255-404 (full details)
-  - Dynamic imports: line 192 (`__import__`)
-  - Category detection: line 119 (module path parsing)
+  - Note: Line numbers have changed after refactoring for complexity
+  - build_discovery_context() and build_planning_context() are the main entry points
+  - Helper functions added: _validate_discovery_inputs(), _format_discovery_nodes(), etc.
+  - _format_structure_combined() is the preferred structure formatter
+  - _format_node_section_enhanced() replaced the old formatter
 
-### Methods to Reuse
-- `_process_nodes()` - Metadata extraction and categorization
-- `_format_structure()` - Structure display (needs enhancement for combined JSON + paths format)
-- `_parse_structure()` - Already works with tests!
+### Methods Still in Use
+- `_process_nodes()` - Metadata extraction and categorization (used by both discovery and planning)
+- `_format_structure_combined()` - Combined JSON + paths format (PREFERRED for structure display)
+- `_parse_structure()` - Structure parser in metadata_extractor.py
 - `_group_nodes_by_category()` - Category logic
-- `_get_indentation()` - Helper for structure parsing
+- `_format_node_section_enhanced()` - Enhanced node formatting (replaced _format_node_section)
+
+### Deprecated/Removed Methods
+- `build_context()` - REMOVED completely
+- `_format_structure()` - DEPRECATED, use `_format_structure_combined()` instead
+- `_format_node_section()` - REMOVED, use `_format_node_section_enhanced()` instead
 
 ### Critical Line Numbers Summary
-- Line 38: MAX_OUTPUT_SIZE = 200KB
-- Lines 166, 170: Multi-line fix (.extend())
-- Line 374: Comma-aware regex for shared keys
-- Line 397: _has_structure flag setting
-- Line 416: Exclusive params filtering
-- Line 444: Comma-aware regex for params
-- Lines 543-612: Structure parser implementation
+Note: These line numbers are from the original implementation and may have shifted:
+- metadata_extractor.py remains unchanged:
+  - Lines 166, 170: Multi-line fix (.extend())
+  - Line 374: Comma-aware regex for shared keys
+  - Line 397: _has_structure flag setting
+  - Line 444: Comma-aware regex for params
+  - Lines 543-612: Structure parser implementation
+- context_builder.py line numbers have changed due to refactoring
 
-## Implementation Checklist
+## Implementation Summary (Task 15 Complete ✅)
 
-### Must Complete
-- [ ] Create workflow directory structure
-- [ ] Implement three functions (discovery, planning, load)
-- [ ] Refactor build_context() to use planning context approach
-- [ ] Enhance _format_structure() for combined JSON + paths format (HARD REQUIREMENT)
-- [ ] Maintain all parser fixes
-- [ ] Add comprehensive tests
-- [ ] Verify structure display works with combined format
+### What Was Completed
+- [x] Created workflow directory structure (`~/.pflow/workflows/`)
+- [x] Implemented three main functions (discovery, planning, load)
+- [x] REMOVED build_context() entirely (not refactored)
+- [x] Created NEW _format_structure_combined() for JSON + paths format
+- [x] Added input validation to both new functions
+- [x] Added helper functions to reduce complexity (C901 compliance)
+- [x] Maintained all parser fixes
+- [x] Added comprehensive tests (33 tests in test_context_builder_phases.py)
+- [x] Added integration tests (test_context_builder_integration.py)
+- [x] Added performance tests (test_context_builder_performance.py)
 
-### Common Pitfalls
-1. **Don't reimplement structure parsing** - Use existing
-2. **Don't break exclusive params** - Tests depend on it
-3. **Don't modify regex carelessly** - Very fragile
-4. **Don't forget empty params arrays** - Expected by tests
-5. **Don't forget to enhance _format_structure()** - Combined format is required
+### Key Implementation Decisions
+1. **build_context() was REMOVED, not refactored** - Cleaner approach
+2. **_format_structure() remains but is DEPRECATED** - Use _format_structure_combined()
+3. **Input validation added** - Prevents unclear errors deep in code
+4. **Complexity reduced** - Helper functions extracted for ruff C901 compliance
+5. **Comprehensive test migration** - All critical tests moved to new file
 
 ## Success Verification
 
@@ -431,6 +455,10 @@ Remember: Reuse existing methods, don't modify the fragile parser, keep it simpl
 
 ## Notes
 
-*Don't treat this document as a checklist, it's a guide to help you understand the code and the context. When implementing, you should be able to think through the code, adapt to changing circumstances and make the best decisions based on common sense, architectural best practices and the user's goals and guidance.*
+*This document has been updated to reflect the completed implementation of Task 15. Key clarifications:*
+- *build_context() was REMOVED entirely, not refactored*
+- *_format_structure() is DEPRECATED - use _format_structure_combined() instead*
+- *All functionality is now complete with comprehensive test coverage*
+- *Line numbers in context_builder.py have changed due to refactoring*
 
-*When referring to this document to sub-agents or other agents implementing sub-tasks, they can find this document in `.taskmaster/tasks/task_15/task-15-technical-implementation-guide.md` file.*
+*This document now serves as a reference for understanding what was implemented in Task 15.*

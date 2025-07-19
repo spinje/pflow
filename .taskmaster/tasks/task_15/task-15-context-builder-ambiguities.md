@@ -547,7 +547,7 @@ How should existing `build_context()` continue working?
 ### Context:
 **Reality Check**: Only tests use `build_context()`, no production code depends on it yet.
 
-**IMPORTANT CLARIFICATION**: `build_context()` does NOT need backward compatibility. It can be refactored to essentially become `build_planning_context()` for all components.
+**IMPORTANT CLARIFICATION**: `build_context()` does NOT need backward compatibility. It can be removed entirely once the new two-phase functions are implemented.
 
 **Terminology Issues**: Current code incorrectly uses `node_type` when these are actually node IDs/names. We should:
 1. Document this terminology issue
@@ -571,13 +571,11 @@ def build_planning_context(selected_node_ids, selected_workflow_names, registry_
     # Build detailed view with structures
 
 def build_context(registry_metadata):
-    """Refactored to use planning context for all components."""
-    # Can simply call build_planning_context with all components
-    # OR be refactored to match its functionality
-    # No backward compatibility needed!
+    """Can be removed entirely."""
+    # The new two-phase functions replace this
 ```
 
-**Recommendation**: Refactor `build_context()` to essentially be `build_planning_context()` for all components. This is much cleaner than complex delegation strategies.
+**Recommendation**: Remove `build_context()` entirely once the new two-phase functions are working and tests are updated. The old formatting methods (`_format_structure()`, `_format_node_section()`) can also be removed.
 
 ## 7. Workflow Loading Error Handling - Decision importance (3)
 
@@ -847,18 +845,20 @@ The handoff mentions 200KB MAX_OUTPUT_SIZE but also 50KB in specs.
 
 **Recommendation**: Keep it simple. No artificial limits in MVP. The only optimization worth considering is caching parsed structures IF profiling shows the recursive parser is slow. Everything else is premature optimization for non-existent problems.
 
+**Implementation Note**: Performance tests were added in subtask 15.4 that expect context generation to complete in <2s for 100 nodes, providing a soft performance target.
+
 ## Implementation Order
 
 Based on these decisions:
 
-1. **Create workflow directory utilities** (Option A - flat directory)
-2. **Implement minimal workflow schema** (Option A - required fields only)
-3. **Define structure output format** (Option B - nested structure)
-4. **Implement discovery context** (Option B - name + description)
-5. **Implement planning context** (Option B - indented structure)
-6. **Add backward compatibility** (Option B - internal delegation)
-7. **Handle errors gracefully** (Skip with warnings)
-8. **Test with performance constraints**
+1. **Create workflow directory utilities** (Option A - flat directory) ✓
+2. **Implement full workflow schema** (Option B - full metadata) ✓
+3. **Define structure output format** (Option B - nested structure) ✓
+4. **Implement discovery context** (Option B - name + description) ✓
+5. **Implement planning context** (Combined JSON + paths format) ✓
+6. **Remove old build_context()** (No backward compatibility needed) ✓
+7. **Handle errors gracefully** (Skip with warnings) ✓
+8. **Add integration and performance tests** ✓
 
 ## Risk Mitigation
 
@@ -866,13 +866,13 @@ Based on these decisions:
    - **Mitigation**: Extensive tests, fallback to raw string
 
 2. **Risk**: Workflow loading is slow with many files
-   - **Mitigation**: Lazy loading, file size limits
+   - **Mitigation**: Performance tests ensure <2s for 100 nodes
 
 3. **Risk**: Context size explodes with many components
-   - **Mitigation**: Strict description length limits
+   - **Mitigation**: No limits needed in practice, modern LLMs handle large contexts
 
-4. **Risk**: Backward compatibility breaks something
-   - **Mitigation**: Comprehensive tests before delegation
+4. **Risk**: Missing input validation causes confusing errors
+   - **Mitigation**: Added type validation to all public functions
 
 ## Example Usage
 
@@ -1025,7 +1025,7 @@ Using test nodes, we'll create workflows that validate:
 - Proxy mapping scenarios
 - Workflow composition
 
-> Note: These test workflows does not exists yet, you will need to create them as part of implementing this task (task 15).
+> Note: Test workflows were created as part of implementing Task 15 for testing workflow discovery functionality.
 
 ## Test Workflow Examples - Implementation Note
 
@@ -1071,7 +1071,7 @@ The key decisions for Task 15:
 3. ✓ Nested structure format from parser
 4. ✓ Name + description for discovery (no length limits)
 5. ✓ Combined JSON + paths display for optimal LLM comprehension
-6. ✓ Refactor build_context() - no backward compatibility needed
+6. ✓ Removed build_context() and old formatting methods - no backward compatibility needed
 7. ✓ Skip invalid workflow files with warnings
 8. ✓ Return error info when components missing (for discovery retry)
 9. ✓ Use test nodes for creating test workflows (faster, safer, better for structure testing)
@@ -1079,6 +1079,4 @@ The key decisions for Task 15:
 
 These decisions prioritize simplicity, LLM comprehension, and pragmatic implementation while enabling the two-phase discovery pattern that Task 17's planner requires.
 
-## Notes
-
-*When referring to this document to sub-agents or other agents implementing sub-tasks, they can find this document in `.taskmaster/tasks/task_15/task-15-context-builder-ambiguities.md` file.*
+**Implementation Lesson**: Input validation is critical for new functions. The initial implementation of `build_discovery_context()` and `build_planning_context()` lacked type validation, which was discovered and fixed during implementation. Always validate inputs at function boundaries to provide clear error messages.
