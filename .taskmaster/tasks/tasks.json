@@ -564,7 +564,7 @@
         "id": 15,
         "title": "Extend context builder for two-phase discovery and structure documentation support",
         "description": "Split context builder into discovery and planning phases, add workflow discovery support, and implement structure documentation parsing for path-based proxy mappings.",
-        "status": "pending",
+        "status": "done",
         "dependencies": [
           16,
           7
@@ -586,7 +586,7 @@
             "id": 2,
             "title": "Two-Phase Context Functions",
             "description": "Implement build_discovery_context() and build_planning_context() functions to split context building into discovery (lightweight) and planning (detailed) phases. This is the core deliverable that enables the planner to avoid LLM overwhelm.",
-            "status": "pending",
+            "status": "done",
             "dependencies": [
               1
             ],
@@ -597,7 +597,7 @@
             "id": 3,
             "title": "Structure Display Enhancement",
             "description": "Enhance the _format_structure() method to display structures using combined JSON + paths format for optimal LLM comprehension. This enables the planner to generate valid path-based proxy mappings like issue_data.user.login.",
-            "status": "pending",
+            "status": "done",
             "dependencies": [
               2
             ],
@@ -608,7 +608,7 @@
             "id": 4,
             "title": "Integration and Comprehensive Testing",
             "description": "Create comprehensive unit tests for all new functionality and document the enhanced docstring format for structure documentation.",
-            "status": "pending",
+            "status": "done",
             "dependencies": [
               1,
               2,
