@@ -611,6 +611,171 @@ def test_specific_flow_path():
 3. **Deep Nesting**: Avoid flows within flows - flatten when possible
 4. **Blocking Operations**: PocketFlow is synchronous - long operations block the flow
 
+### Planner-Specific Anti-Patterns (From Research Analysis)
+
+5. **Hardcoded Pattern Libraries**: Don't create fixed workflow patterns
+   ```python
+   # ❌ WRONG - Rigid and inflexible
+   WORKFLOW_PATTERNS = {
+       "github_fix": ["github-get-issue", "claude-code", "git-commit"],
+       "document_analysis": ["read-file", "llm", "write-file"]
+   }
+
+   # ✅ CORRECT - Let LLM compose based on context
+   # Provide examples in prompts, not hardcoded patterns
+   ```
+
+6. **Variable Inference Logic**: Don't try to "guess" variable sources
+   ```python
+   # ❌ WRONG - Brittle hardcoded inference
+   def _infer_variable_source(self, variable: str, workflow: dict):
+       if variable == "issue" or variable == "issue_data":
+           for node in workflow["nodes"]:
+               if node["type"] == "github-get-issue":
+                   return f"{node['id']}.outputs.issue_data"
+
+   # ✅ CORRECT - LLM provides complete mappings
+   # The LLM generates the full variable_flow mapping
+   # System only validates, never infers
+   ```
+
+7. **Template Enhancement After Generation**: Don't modify LLM output
+   ```python
+   # ❌ WRONG - Second-guessing the LLM
+   if len(prompt) < 50:  # "Too simple"
+       workflow["template_inputs"][node_id]["prompt"] = enhance_prompt(prompt)
+
+   # ✅ CORRECT - Trust LLM or retry with feedback
+   # If output is insufficient, retry with specific guidance
+   ```
+
+8. **Complex Workflow Dependencies**: Don't hardcode task dependencies
+   ```python
+   # ❌ WRONG - False dependencies
+   # "Dependencies": Tasks 15, 16, 18, 19  # Tasks 18, 19 don't exist!
+
+   # ✅ CORRECT - Verify actual dependencies
+   # Dependencies: Tasks 14 (structure docs), 15/16 (context builder)
+   ```
+
+9. **Mixing Validation with Generation**: Keep concerns separated
+   ```python
+   # ❌ WRONG - Inference during validation
+   def validate_templates(self, workflow):
+       if var not in variable_flow:
+           # Try to infer source...
+           inferred = self._infer_variable_source(var, workflow)
+
+   # ✅ CORRECT - Pure validation
+   def validate_templates(self, workflow):
+       if var not in variable_flow:
+           raise ValidationError(f"Template variable ${var} has no mapping")
+   ```
+
+## Template-Driven Workflow Architecture
+
+### Core Insight: Templates Enable Reusability
+The fundamental innovation that enables "Plan Once, Run Forever" is that workflows are **templates with variable substitution**, not static execution plans. This is why the same workflow can be reused with different parameters.
+
+```python
+# Workflows are templates that get instantiated with different values
+workflow_template = {
+    "nodes": [...],  # Static structure
+    "template_inputs": {  # Dynamic content with $variables
+        "claude-code": {
+            "prompt": "Fix this issue:\n$issue\n\nGuidelines:\n$coding_standards",
+            "dependencies": ["issue", "coding_standards"]
+        }
+    },
+    "variable_flow": {  # LLM generates complete mappings
+        "issue": "github-get-issue.outputs.issue_data",
+        "coding_standards": "read-file.outputs.content"
+    }
+}
+```
+
+### Critical Design Decision: LLM Generates Complete Mappings
+The LLM is responsible for generating **complete variable mappings**. There is NO inference or hardcoded patterns - the LLM explicitly specifies:
+1. Template variables in prompts/parameters
+2. Complete `variable_flow` mappings showing where each variable comes from
+3. All data dependencies between nodes
+
+This approach ensures:
+- No brittle hardcoded logic
+- Full flexibility for any workflow pattern
+- Clear data flow that can be validated
+- True generalization across different domains
+
+### Template Variable Resolution Order
+While the LLM generates the mappings, the system must validate and determine the correct resolution order:
+
+```python
+def calculate_resolution_order(workflow: dict) -> list[str]:
+    """Calculate the order in which template variables can be resolved.
+
+    This is pure validation - the LLM has already specified all mappings.
+    We just need to ensure they can be resolved in a valid order.
+    """
+    # Extract dependencies from LLM-generated template_inputs
+    dependencies = {}
+    for node_id, templates in workflow.get("template_inputs", {}).items():
+        deps = set()
+        for template in templates.values():
+            # Extract $variables from template strings
+            variables = re.findall(r'\$\{?(\w+)\}?', str(template))
+            deps.update(variables)
+        dependencies[node_id] = deps
+
+    # Topological sort to find valid execution order
+    # This validates that the LLM's mappings are resolvable
+    resolved = []
+    available_vars = {"stdin"} if workflow.get("expects_stdin") else set()
+
+    # ... topological sort algorithm ...
+
+    # If we can't resolve all dependencies, the LLM's mappings are invalid
+    if unresolved_nodes:
+        raise ValidationError(f"Cannot resolve template variables for: {unresolved_nodes}")
+
+    return resolved
+```
+
+### Example: LLM-Generated Complete Workflow
+When user says "fix github issue 123", the LLM generates:
+
+```json
+{
+  "nodes": [
+    {"id": "get-issue", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
+    {"id": "analyze", "type": "claude-code", "params": {}},
+    {"id": "commit", "type": "git-commit", "params": {}},
+    {"id": "push", "type": "git-push", "params": {}},
+    {"id": "create-pr", "type": "github-create-pr", "params": {}}
+  ],
+  "template_inputs": {
+    "analyze": {
+      "prompt": "<instructions>Fix the issue described below</instructions>\n\n$issue_data"
+    },
+    "commit": {
+      "message": "$commit_message"
+    },
+    "create-pr": {
+      "title": "Fix: $issue_title",
+      "body": "$code_report"
+    }
+  },
+  "variable_flow": {
+    "issue_number": "123",  // Initial parameter
+    "issue_data": "get-issue.outputs.issue_data",
+    "issue_title": "get-issue.outputs.title",
+    "commit_message": "analyze.outputs.suggested_commit_message",
+    "code_report": "analyze.outputs.report"
+  }
+}
+```
+
+The LLM has specified EVERYTHING - no inference needed.
+
 ## Risk Mitigation Strategies
 
 ### Hybrid Architecture Risk
@@ -636,6 +801,14 @@ def test_specific_flow_path():
 - Clear success criteria (≥95% accuracy target)
 - Progressive enhancement to guide LLM
 
+### Template Variable Validation
+**Risk**: LLM generates invalid variable mappings
+**Mitigation**:
+- Validate all template variables have sources
+- Check resolution order is achievable
+- Provide clear error messages for missing mappings
+- Include examples in prompts showing complete mappings
+
 ## Key Implementation Principles
 
 ### From Research Analysis
@@ -655,6 +828,113 @@ Use PocketFlow when a component has:
 
 Use traditional code for everything else.
 
+## Testing Workflow Generation
+
+### Core Testing Strategy
+Testing the workflow generation focuses on validating that the LLM produces complete, valid workflows with proper template variables and mappings.
+
+```python
+def test_workflow_generation_completeness():
+    """Test that LLM generates complete workflows with all mappings."""
+    # Mock LLM to return a known good workflow
+    mock_llm = MockLLM(returns={
+        "nodes": [...],
+        "template_inputs": {...},
+        "variable_flow": {...}  # Must be complete!
+    })
+
+    planner = create_planner_flow()
+    result = planner.run({"user_input": "fix github issue 123"})
+
+    # Verify completeness
+    assert "template_inputs" in result["final_workflow"]
+    assert "variable_flow" in result["final_workflow"]
+
+    # Verify ALL template variables have mappings
+    template_vars = extract_template_variables(result["final_workflow"]["template_inputs"])
+    variable_mappings = result["final_workflow"]["variable_flow"].keys()
+
+    unmapped = template_vars - set(variable_mappings)
+    assert not unmapped, f"Template variables without mappings: {unmapped}"
+```
+
+### Template Variable Validation Testing
+```python
+def test_template_validation_catches_missing_mappings():
+    """Test that validation catches incomplete variable mappings."""
+    workflow = {
+        "template_inputs": {
+            "llm": {"prompt": "Analyze $content and $metadata"}
+        },
+        "variable_flow": {
+            "content": "read-file.outputs.content"
+            # Missing metadata mapping!
+        }
+    }
+
+    validator = TemplateValidator()
+    with pytest.raises(ValidationError, match="metadata"):
+        validator.validate_templates(workflow)
+```
+
+### Natural Language to Workflow Testing
+```python
+def test_natural_language_interpretation():
+    """Test various natural language inputs produce correct workflows."""
+    test_cases = [
+        {
+            "input": "fix github issue 123",
+            "expected_nodes": ["github-get-issue", "claude-code", "git-commit"],
+            "expected_template_vars": ["issue_number", "issue_data", "commit_message"]
+        },
+        {
+            "input": "analyze this youtube video",
+            "expected_nodes": ["yt-transcript", "llm"],
+            "expected_template_vars": ["url", "transcript"]
+        }
+    ]
+
+    for case in test_cases:
+        result = planner.run({"user_input": case["input"]})
+        workflow = result["final_workflow"]
+
+        # Verify expected nodes
+        node_types = [n["type"] for n in workflow["nodes"]]
+        for expected in case["expected_nodes"]:
+            assert expected in node_types
+
+        # Verify template variables exist and have mappings
+        for var in case["expected_template_vars"]:
+            assert var in workflow["variable_flow"], f"Missing mapping for {var}"
+```
+
+### Resolution Order Testing
+```python
+def test_resolution_order_calculation():
+    """Test that resolution order correctly handles dependencies."""
+    workflow = {
+        "nodes": [
+            {"id": "n1", "type": "github-get-issue"},
+            {"id": "n2", "type": "claude-code"},
+            {"id": "n3", "type": "llm"}
+        ],
+        "template_inputs": {
+            "n2": {"prompt": "$issue"},  # Depends on n1
+            "n3": {"prompt": "Summarize: $code_report"}  # Depends on n2
+        },
+        "variable_flow": {
+            "issue": "n1.outputs.issue_data",
+            "code_report": "n2.outputs.report"
+        }
+    }
+
+    order = calculate_resolution_order(workflow)
+
+    # n1 must come before n2, n2 must come before n3
+    assert order.index("n1") < order.index("n2")
+    assert order.index("n2") < order.index("n3")
+```
+
 ## Open Questions and Decisions Needed
 
 1. ~~**Directory Structure**: Which path to use?~~ **RESOLVED**: Use `src/pflow/planning/`
@@ -662,6 +942,7 @@ Use traditional code for everything else.
 3. **Error Feedback Node**: Should this be a separate node or part of validator?
 4. **Retry Count Access**: Should we use `cur_retry` attribute or track in shared?
 5. **Checkpoint Frequency**: After each successful node or only at key points?
+6. **Template Variable Format**: Should we support both `$var` and `${var}` syntax?
 
 ## Next Steps
 
