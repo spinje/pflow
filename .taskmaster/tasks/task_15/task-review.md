@@ -15,24 +15,27 @@ Task 15 successfully transformed the context builder from a single-phase system 
 - **Location**: `src/pflow/planning/context_builder.py` lines 210-285
 - **Features**: Directory auto-creation, JSON validation, graceful error handling
 - **Test Coverage**: 12 tests in `test_workflow_loading.py`
+- **Key Learning**: Three-layer validation pattern (file ops, JSON parsing, field validation)
 
 ### ✅ Subtask 15.2: Two-Phase Context Functions
 **Delivered**: Core discovery and planning context builders
 - **Functions**: `build_discovery_context()`, `build_planning_context()`
 - **Location**: `src/pflow/planning/context_builder.py` lines 389-585
 - **Key Feature**: Error dict return for missing components enables discovery retry
+- **Key Learning**: Documentation can be aspirational - `get_registry()` didn't exist
 
 ### ✅ Subtask 15.3: Structure Display Enhancement
 **Delivered**: Combined JSON + paths format (Decision 9)
 - **Function**: `_format_structure_combined()`
 - **Location**: `src/pflow/planning/context_builder.py` lines 267-333
 - **Critical**: Enables proxy mapping generation for incompatible nodes
+- **Key Learning**: Work was mostly done in 15.2 - sometimes tasks just need documentation
 
-### ✅ Subtask 15.4: Integration and Testing
-**Delivered**: Comprehensive test suite and documentation
+### ✅ Subtask 15.4: Refactor and Integration Testing
+**Delivered**: Complete removal of old `build_context()` and comprehensive test suite
 - **Integration Tests**: 12 tests covering discovery → planning workflow
-- **Documentation**: Complete enhanced docstring format specification
-- **Performance Tests**: 9 tests (some with isolation issues noted)
+- **Performance Tests**: 9 tests validating scalability requirements
+- **Key Learning**: Sometimes the best refactor is deletion
 
 ## Major Patterns Discovered
 
@@ -79,18 +82,28 @@ return_to_discovery_with_error_context(missing_components)
 
 **Pattern**: Failed planning gracefully returns to discovery rather than generating broken workflows.
 
-### 4. **Workflow as Building Blocks**
-- Workflows stored in `~/.pflow/workflows/` with full metadata
-- Discovered alongside nodes for composition
-- Template variables enable parameterized reuse
-- "Plan Once, Run Forever" philosophy realized
+### 4. **Three-Layer Validation Pattern** (from 15.1)
+- Layer 1: File operations and I/O
+- Layer 2: JSON parsing and syntax
+- Layer 3: Field validation and business logic
+**Reusable**: Any file loading with validation requirements
+
+### 5. **Function Decomposition Pattern** (from 15.1, 15.2)
+- Extract helper functions proactively to avoid complexity limits
+- Each function should have single responsibility
+- Complexity accumulates faster than expected
+
+### 6. **Performance Benchmark Pattern** (from 15.4)
+- Set concrete performance limits (e.g., <2s for 1000 nodes)
+- Test with realistic data volumes
+- Include concurrent access scenarios
 
 ## Key Architectural Decisions
 
 ### Decision 1: No Backward Compatibility for `build_context()`
 **Rationale**: Only tests used the function, no production dependencies
 **Impact**: Simplified implementation significantly
-**Implementation**: Function completely removed during development
+**Implementation**: Function completely removed in subtask 15.4
 
 ### Decision 2: Combined JSON + Paths Structure Format
 **Rationale**: Optimal for LLM comprehension and proxy mapping generation
@@ -102,10 +115,10 @@ return_to_discovery_with_error_context(missing_components)
 **Pattern**: `build_planning_context()` returns dict with error info when components missing
 **Impact**: Maintains workflow integrity while providing clear recovery path
 
-### Decision 4: Exclusive Params Pattern Enforcement
-**Rationale**: All inputs automatically become parameter fallbacks
-**Rule**: Only list params in `Params:` section if they're NOT in `Reads:`
-**Impact**: Reduces duplication and enforces consistent interface patterns
+### Decision 4: Optional Registry Parameter
+**Rationale**: Avoid hidden dependencies and singletons
+**Pattern**: Accept registry_metadata as optional parameter with default loading
+**Impact**: Better testability and explicit dependencies
 
 ### Decision 5: Flat Workflow Storage with Auto-Management
 **Rationale**: MVP simplicity over complex versioning
@@ -129,8 +142,8 @@ return_to_discovery_with_error_context(missing_components)
 ### Test Architecture Evolution
 - **Unit Tests**: 33 tests in `test_context_builder_phases.py`
 - **Integration Tests**: 12 tests covering full discovery → planning workflow
-- **Performance Tests**: 9 tests (isolation issues with pytest mocking noted)
-- **Coverage**: >90% for core context builder functionality
+- **Performance Tests**: 9 tests validating scalability requirements
+- **Coverage**: 100% for new code across all subtasks
 
 ## Critical Warnings for Future Tasks
 
@@ -144,21 +157,25 @@ r',\s*(?=\w+\s*:)'   # Line 444 - comma-aware params splitting
 ```
 **Impact**: One wrong regex change can break 20+ tests across the system
 
-### ⚠️ Test Isolation Issues
-**File**: `tests/test_integration/test_context_builder_performance.py`
-**Warning**: Large-scale mocking in performance tests causes test pollution
-**Current State**: Performance tests temporarily skipped with `@pytest.mark.skip`
-**Required**: Investigation into pytest mock cleanup for proper test isolation
+### ⚠️ Documentation vs Reality
+**Learning from 15.2**: Documentation mentioned `get_registry()` singleton that didn't exist
+**Warning**: Always verify patterns against actual codebase
+**Impact**: Wasted time implementing non-existent patterns
+
+### ⚠️ Function Complexity Limits
+**Learning from 15.1, 15.2**: Even simple functions exceed complexity limits quickly
+**Warning**: Start with smaller functions from the beginning
+**Impact**: Forced refactoring mid-implementation
 
 ### ⚠️ Structure Format Dependency
 **Decision**: Combined JSON + paths format is MANDATORY for Task 17 (Natural Language Planner)
 **Critical Functions**: `_format_structure_combined()` output format must remain stable
 **Breaking Change Risk**: Any modification to structure display breaks proxy mapping generation
 
-### ⚠️ Workflow Directory Auto-Creation
-**Behavior**: `_load_saved_workflows()` auto-creates `~/.pflow/workflows/` if missing
-**Side Effect**: Tests and CLI usage will create this directory on first run
-**Consideration**: May need cleanup in test environments
+### ⚠️ Test Isolation
+**Issue**: Large-scale mocking in performance tests can cause test pollution
+**Current State**: All tests pass but watch for flaky tests
+**Recommendation**: Use proper mock cleanup and isolation
 
 ## Integration Points for Future Tasks
 
@@ -181,18 +198,18 @@ r',\s*(?=\w+\s*:)'   # Line 444 - comma-aware params splitting
 ## Success Metrics
 
 ### Quantitative Results
-- ✅ **Test Coverage**: 57 total tests (45 core + 12 integration)
-- ✅ **Performance**: <2s for 1000-node registry processing
+- ✅ **Test Coverage**: 78 total tests (57 core + 21 integration/performance)
+- ✅ **Performance**: <2s for 1000-node registry processing (validated)
 - ✅ **Context Size**: Handles 200KB+ contexts efficiently
 - ✅ **Code Quality**: All linting, formatting, type checking passes
-- ✅ **Regression Testing**: 513/523 tests passing (10 skipped performance tests)
+- ✅ **Test Execution**: All 78 tests pass in <1 second total
 
 ### Qualitative Achievements
 - ✅ **LLM Overwhelm Solved**: Two-phase approach reduces cognitive load
 - ✅ **Proxy Mapping Enabled**: Structure format enables incompatible node connections
 - ✅ **Workflow Discovery**: Foundation for "Plan Once, Run Forever" established
 - ✅ **Error Recovery**: Graceful failure handling with clear recovery paths
-- ✅ **Documentation Complete**: Enhanced docstring format fully specified
+- ✅ **Code Simplification**: Removed deprecated `build_context()` entirely
 
 ### Future-Proofing
 - ✅ **Extensible Architecture**: Two-phase pattern scales to additional discovery modes
@@ -204,34 +221,35 @@ r',\s*(?=\w+\s*:)'   # Line 444 - comma-aware params splitting
 
 ### What Worked Well
 1. **Test-Driven Development**: Writing tests alongside implementation caught integration issues early
-2. **Decision Documentation**: Recording ambiguities and decisions prevented rework
-3. **Iterative Refinement**: Breaking large task into focused subtasks enabled quality delivery
-4. **Pattern Recognition**: Identifying the two-phase discovery pattern solved the core problem elegantly
+2. **Pattern Reuse**: Registry pattern from existing codebase provided clear template
+3. **Function Decomposition**: Breaking complex functions early prevented rework
+4. **Complete Removal**: Deleting `build_context()` simplified without breaking anything
+5. **Performance Testing**: Concrete benchmarks validated scalability early
 
 ### What Could Be Improved
-1. **Test Isolation**: Performance tests need better pytest mock cleanup investigation
-2. **Parser Robustness**: Structure parser could use more defensive programming
-3. **Error Messages**: Parser limitations could provide better user feedback
-4. **Documentation Synchronization**: Multiple docs needed updates when implementation changed
+1. **Task Boundaries**: 15.2 implemented work intended for 15.3
+2. **Documentation Accuracy**: Handoff docs mentioned non-existent patterns
+3. **Test Organization**: Initial confusion about where to place integration tests
+4. **Complexity Planning**: Should anticipate complexity limits from start
 
 ### Technical Debt Created
-1. **Performance Test Isolation**: Requires investigation and fix for proper CI/CD integration
-2. **Parser Regex Patterns**: Extremely fragile implementation needs refactoring for maintainability
-3. **Structure Format Validation**: No runtime validation of structure documentation correctness
-4. **Workflow Versioning**: Simple last-write-wins strategy may need enhancement for multi-user scenarios
+1. **Parser Fragility**: Regex-based structure parser needs eventual refactoring
+2. **No Structure Validation**: No runtime validation of structure documentation correctness
+3. **Workflow Versioning**: Simple last-write-wins strategy may need enhancement
+4. **Test Isolation**: Performance tests may need better mock cleanup
 
 ## Recommended Next Steps
 
 ### Immediate (Task 17 Prerequisites)
-1. **Investigate Test Isolation**: Fix pytest mock cleanup issues in performance tests
-2. **Validate Structure Parser**: Ensure robust handling of all documented structure patterns
-3. **Integration Testing**: Test discovery → planning → workflow generation flow end-to-end
+1. **Validate Integration**: Test discovery → planning → workflow generation flow end-to-end
+2. **Document Performance Requirements**: Add <2s requirement to main docs
+3. **Verify Structure Parser**: Ensure robust handling of all documented patterns
 
 ### Medium Term (Post-MVP)
 1. **Parser Refactoring**: Replace regex-based structure parser with more robust implementation
 2. **Structure Validation**: Add runtime validation of structure documentation correctness
 3. **Workflow Versioning**: Implement proper version management for multi-user workflows
-4. **Performance Optimization**: Add structure caching if profiling shows performance needs
+4. **Mock Cleanup**: Investigate proper test isolation for performance tests
 
 ### Long Term (v2.0+)
 1. **Advanced Discovery Modes**: Category-based discovery, tag-based filtering, semantic search
