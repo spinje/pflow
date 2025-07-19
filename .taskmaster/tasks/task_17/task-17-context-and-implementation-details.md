@@ -46,6 +46,22 @@ pflow fix-issue --issue=1234  # Bypasses planner entirely
 ### Core Decision
 The Natural Language Planner is the **ONLY** component in the entire pflow system that uses PocketFlow for internal orchestration. This decision is based on the planner's unique complexity requirements.
 
+### The Meta-Layer Concept: Using PocketFlow to Create PocketFlow Workflows
+
+The planner embodies a powerful **meta architecture** - it is a PocketFlow workflow that creates and executes other PocketFlow workflows. This creates an elegant philosophical alignment:
+
+1. **The Tool and The Product**: The planner uses PocketFlow internally to help users create their own PocketFlow workflows
+2. **Dogfooding at Its Best**: By using PocketFlow for the planner, we validate the framework's capabilities for complex orchestration
+3. **Shared Benefits**: The planner gets the same reliability benefits (retry logic, error handling) that it provides to users
+
+**Critical Boundary**: This meta approach applies ONLY to the planner. All other pflow components (CLI, registry, compiler, runtime) use traditional Python code. The planner is special because it needs:
+- Complex branching (found vs create paths)
+- Sophisticated retry strategies (LLM generation)
+- State accumulation across attempts
+- Multi-path execution flows
+
+This intentional boundary ensures we use PocketFlow where it adds genuine value, not everywhere.
+
 ### Complex Control Flow Visualization
 ```
 User Input
@@ -1242,6 +1258,23 @@ def test_specific_flow_path():
     }
     ```
 
+17. **Using PocketFlow Everywhere Internally**: Don't over-apply the meta concept
+    ```python
+    # ❌ WRONG - Using PocketFlow for simple components
+    # "IR compiler uses PocketFlow"
+    # "Shell integration uses PocketFlow"
+    # "Registry uses PocketFlow"
+
+    # ✅ CORRECT - Only the planner uses PocketFlow
+    # Everything else uses traditional Python:
+    # - CLI: Click framework
+    # - Registry: Standard Python classes
+    # - Compiler: Direct Python functions
+    # - Runtime: Traditional execution logic
+
+    # The planner is the ONLY exception due to its unique complexity
+    ```
+
 ## Intelligent Parameter Extraction and Interpretation
 
 ### Beyond Raw Value Extraction
@@ -1429,6 +1462,27 @@ Use PocketFlow when a component has:
 - Benefits from visual flow representation
 
 Use traditional code for everything else.
+
+### Why Only the Planner?
+
+The planner is unique in pflow's architecture because it:
+
+1. **Orchestrates Multiple Complex Operations**: Discovery → Generation → Validation → Parameter Mapping → Execution
+2. **Requires Sophisticated Error Recovery**: Different strategies for different LLM failures
+3. **Has True Branching Logic**: Found workflow vs create new, with completely different paths
+4. **Benefits from State Accumulation**: Learning from failed attempts to improve prompts
+5. **Creates Its Own Product**: A PocketFlow workflow creating other PocketFlow workflows
+
+No other component in pflow has this level of orchestration complexity. The CLI parses arguments, the registry scans files, the compiler transforms data structures - all straightforward operations best implemented with traditional code.
+
+### The Meta-Layer Philosophy
+
+The planner's use of PocketFlow creates a beautiful symmetry:
+- **Users** describe workflows in natural language
+- **Planner** (a PocketFlow workflow) interprets and creates workflows
+- **Result** is a PocketFlow workflow for users
+
+This is intentional dogfooding at the most appropriate level - using the framework where it genuinely adds value, not forcing it everywhere.
 
 ## Testing Workflow Generation
 
