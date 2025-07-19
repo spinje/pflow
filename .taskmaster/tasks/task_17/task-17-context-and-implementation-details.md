@@ -7,14 +7,91 @@ This document synthesizes key insights from research files to provide actionable
 ### Core Decision
 The Natural Language Planner is the **ONLY** component in the entire pflow system that uses PocketFlow for internal orchestration. This decision is based on the planner's unique complexity requirements.
 
+### Complex Control Flow Visualization
+```
+User Input
+    ├─> Natural Language ─> Generate Context ─> LLM Planning ─┐
+    │                                                          │
+    ├─> CLI Syntax ─────> Parse CLI ─────────────────────────┤
+    │                                                          │
+    └─> Ambiguous ──────> Classify ─> (Branch to above) ─────┘
+                                                               │
+                                                               v
+                                                        Validate Output
+                                                               │
+                                ┌──────────────────────────────┤
+                                │                              │
+                                v                              v
+                           Valid Output                   Invalid Output
+                                │                              │
+                                v                              v
+                        Check Templates                  Retry with Feedback
+                                │                              │
+                                v                              └──> Back to LLM
+                         Resolve Templates
+                                │
+                                v
+                            Final Output
+```
+
 ### Justification for PocketFlow Usage
 The planner genuinely benefits from PocketFlow's orchestration capabilities due to:
+- **Multiple Entry Points**: Natural language, CLI syntax, and ambiguous input requiring classification
 - **Complex retry strategies** with multiple approaches
 - **Self-correcting loops** for LLM validation and error recovery
 - **Branching logic** based on LLM responses and validation outcomes
 - **Progressive enhancement** of generated workflows
 - **Multiple fallback paths** for different error types
 - **State accumulation** across retry attempts
+
+### Why Traditional Code Fails Here
+Traditional nested if/else approach quickly becomes unmaintainable:
+```python
+# Traditional approach becomes a nightmare
+def generate_workflow(user_input, llm_client, validator):
+    # Classify input
+    if ">>" in user_input:
+        input_type = "cli"
+    elif user_input.startswith('"'):
+        input_type = "natural"
+    else:
+        # Now we need another classification step...
+
+    # Generate with retries
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if input_type == "natural":
+                # Build context
+                context = build_context()
+
+                # Call LLM
+                for llm_attempt in range(3):
+                    try:
+                        response = llm_client.generate(...)
+                        break
+                    except:
+                        if llm_attempt == 2:
+                            # Now what?
+
+                # Parse response
+                try:
+                    workflow = json.loads(extract_json(response))
+                except:
+                    # Need to retry with structure...
+                    # Getting deeply nested already!
+
+                # Validate
+                if not validator.validate(workflow):
+                    # Need to retry with errors...
+                    # Even more nesting!
+```
+
+The traditional approach quickly becomes:
+- Deeply nested
+- Hard to test
+- Difficult to modify
+- Impossible to visualize
 
 ### Implementation Pattern
 ```python
@@ -37,10 +114,42 @@ generator - "malformed_json" >> generator  # Self-retry
 validator - "unknown_nodes" >> error_feedback >> generator
 ```
 
+### Concrete Shared State Example
+The planner's shared state accumulates throughout execution:
+```python
+shared = {
+    # Initial input
+    "user_input": "fix github issue 123",
+    "input_type": "natural_language",
+
+    # Discovery phase
+    "llm_context": "Available nodes: github-get-issue, llm, ...",
+    "available_workflows": ["analyze-logs", "fix-issue", ...],
+
+    # Generation attempts
+    "attempt_count": 2,
+    "previous_errors": ["Missing repo parameter", "Invalid JSON"],
+    "learned_constraints": {"Don't use 'analyze-code' - it doesn't exist"},
+
+    # Current state
+    "llm_response": "{'nodes': [...], 'edges': [...]}",
+    "generated_workflow": {...},
+
+    # Validation results
+    "validation_result": "missing_params",
+    "validation_errors": ["Node 'llm' requires 'prompt' parameter"],
+
+    # Final output
+    "final_workflow": {...},
+    "approval_status": "pending"
+}
+```
+
 ### What This Means for Implementation
 1. **All other components use traditional Python** - No PocketFlow elsewhere
 2. **Planner gets retry/fallback benefits** - Built-in fault tolerance
 3. **Clear architectural boundary** - Only planner uses flow patterns internally
+4. **Performance is not a concern** - Nodes are just method calls; LLM dominates execution time
 
 ## Directory Structure Decision
 
@@ -292,6 +401,60 @@ class ParallelStrategyNode(Node):
             score += 30
 
         return score
+```
+
+### Dynamic Input Classification Pattern
+Smart routing based on input analysis:
+
+```python
+class ClassifyInputNode(Node):
+    """Dynamically classify and route input."""
+
+    def exec(self, shared):
+        user_input = shared["user_input"]
+
+        # Smart classification
+        if self._looks_like_cli(user_input):
+            shared["input_type"] = "cli_syntax"
+            return "parse_cli"
+        elif self._looks_like_natural(user_input):
+            shared["input_type"] = "natural_language"
+            return "natural_language"
+        else:
+            # Ambiguous - need more analysis
+            shared["input_type"] = "ambiguous"
+            return "ask_user"  # Another path!
+
+    def _looks_like_cli(self, input_str):
+        """Check if input looks like CLI syntax."""
+        return ">>" in input_str or "--" in input_str
+
+    def _looks_like_natural(self, input_str):
+        """Check if input looks like natural language."""
+        return input_str.startswith('"') and input_str.endswith('"')
+```
+
+### Conditional Validation Pattern
+Different validation outcomes trigger different paths:
+
+```python
+class ConditionalValidatorNode(Node):
+    """Validates with conditional retry logic."""
+
+    def exec(self, shared):
+        workflow = shared["generated_workflow"]
+        result = self.validator.validate(workflow)
+
+        if result.is_valid:
+            return "success"
+        elif result.is_fixable:
+            # Some errors can be automatically fixed
+            shared["validation_errors"] = result.errors
+            return "retry_with_fixes"
+        else:
+            # Fatal errors require different approach
+            shared["fatal_errors"] = result.errors
+            return "fallback_strategy"
 ```
 
 ## Flow Design Patterns
