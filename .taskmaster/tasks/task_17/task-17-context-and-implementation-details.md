@@ -4,20 +4,19 @@ This document synthesizes key insights from research files to provide actionable
 
 ## Critical Insight: The Meta-Workflow Architecture
 
-### The Planner IS a Workflow That Creates AND Executes Workflows
+### The Planner IS a Workflow That Creates and Prepares Workflows for Execution
 
 The Natural Language Planner is fundamentally a **meta-workflow** - a PocketFlow workflow that:
 1. **Discovers or creates** workflows based on user intent
 2. **Extracts parameters** from natural language
 3. **Maps parameters** to template variables
-4. **Confirms** with the user
-5. **Executes** the workflow with proper mappings
+4. **Returns results** to the CLI for execution
 
-This is NOT two separate systems - it's ONE unified workflow that handles the entire lifecycle.
+The planner orchestrates the planning phase, then hands off to the CLI for execution.
 
 ### MVP vs Future Architecture
 
-**MVP (All execution through planner):**
+**MVP (All planning through planner, execution in CLI):**
 ```
 User Input: "fix github issue 1234"
     ↓
@@ -25,8 +24,12 @@ User Input: "fix github issue 1234"
     ├─> Discovery: Does "fix-issue" workflow exist?
     ├─> Parameter Extraction: {"issue": "1234"}
     ├─> Mapping: {"issue": "1234"} → $issue_number
-    ├─> Confirmation: Show user what will run
-    └─> Execution: Run workflow with mappings
+    └─> Returns: (workflow_ir, metadata, parameter_values)
+    ↓
+[CLI Execution]
+    ├─> Shows approval: "Will run fix-issue with issue=1234"
+    ├─> Saves workflow: ~/.pflow/workflows/fix-issue.json
+    └─> Executes: Runs workflow with parameter substitution
 ```
 
 **v2.0+ (Direct execution for known workflows):**
@@ -36,10 +39,11 @@ pflow fix-issue --issue=1234  # Bypasses planner entirely
 
 ### Key Architectural Implications
 
-1. **The planner workflow includes execution** - It doesn't just generate IR and hand off
+1. **The planner returns structured results** - IR + metadata + parameter values
 2. **Parameter mapping is integral** - Not a separate system or afterthought
-3. **Every MVP execution is meta** - Even reusing existing workflows goes through the full planner
-4. **Branching is essential** - Found vs create paths within the same workflow
+3. **Clean separation of concerns** - Planner plans, CLI executes
+4. **Every MVP execution is meta** - Even reusing existing workflows goes through the full planner
+5. **Branching is essential** - Found vs create paths within the same workflow
 
 ## Architectural Decision: PocketFlow for Planner Orchestration
 
@@ -236,28 +240,24 @@ class GeneratorNode(Node):
         shared["generated_workflow"] = workflow
         return "extract_params"
 
-class ConfirmationNode(Node):
-    """Shows user what will be executed"""
+class ResultPreparationNode(Node):
+    """Prepares the final results to return to the CLI"""
     def exec(self, shared):
-        workflow = shared.get("found_workflow") or shared.get("generated_workflow")
-        mappings = shared["parameter_mappings"]
+        workflow_ir = shared.get("found_workflow") or shared.get("generated_workflow")
 
-        # Show: "Will run 'fix-issue' with issue=1234"
-        if self._get_user_confirmation(workflow, mappings):
-            return "execute"
-        else:
-            return "cancelled"
+        # Prepare what the planner returns to CLI
+        shared["planner_output"] = {
+            "workflow_ir": workflow_ir,
+            "workflow_metadata": {
+                "suggested_name": shared.get("workflow_name", "custom-workflow"),
+                "description": shared.get("workflow_description", "Generated workflow"),
+                "inputs": shared.get("workflow_inputs", []),
+                "outputs": shared.get("workflow_outputs", [])
+            },
+            "parameter_values": shared["parameter_mappings"]
+        }
 
-class WorkflowExecutionNode(Node):
-    """Actually executes the workflow with mappings"""
-    def exec(self, shared):
-        workflow = shared.get("found_workflow") or shared.get("generated_workflow")
-        mappings = shared["parameter_mappings"]
-
-        # Execute the workflow with parameter substitution
-        result = self._execute_workflow(workflow, mappings)
-        shared["execution_result"] = result
-        return "completed"
+        return "complete"
 
 # The complete meta-workflow
 def create_planner_flow():
@@ -269,8 +269,7 @@ def create_planner_flow():
     param_map = ParameterMappingNode()
     generator = GeneratorNode()
     validator = ValidatorNode()
-    confirm = ConfirmationNode()
-    execute = WorkflowExecutionNode()
+    result_prep = ResultPreparationNode()
 
     # Main flow with branching
     flow.add_edge(discovery, "found", param_extract)
@@ -278,8 +277,7 @@ def create_planner_flow():
     flow.add_edge(generator, "success", validator)
     flow.add_edge(validator, "valid", param_extract)
     flow.add_edge(param_extract, "map_params", param_map)
-    flow.add_edge(param_map, "confirm", confirm)
-    flow.add_edge(confirm, "execute", execute)
+    flow.add_edge(param_map, "prepare_result", result_prep)
 
     # Error handling
     flow.add_edge(validator, "invalid", generator)  # Retry
@@ -312,9 +310,19 @@ shared = {
     "validation_result": "missing_params",
     "validation_errors": ["Node 'llm' requires 'prompt' parameter"],
 
-    # Final output
-    "final_workflow": {...},
-    "approval_status": "pending"
+    # Final output prepared for CLI
+    "planner_output": {
+        "workflow_ir": {...},
+        "workflow_metadata": {
+            "suggested_name": "fix-issue",
+            "description": "Fix a GitHub issue",
+            "inputs": ["issue_number"],
+            "outputs": ["pr_url"]
+        },
+        "parameter_values": {
+            "issue_number": "123"
+        }
+    }
 }
 ```
 
@@ -346,6 +354,73 @@ src/pflow/planning/
 └── prompts/
     └── templates.py  # Prompt templates
 ```
+
+## What the Planner Returns to CLI
+
+### Structure of Planner Output
+
+The planner returns a structured result that contains everything the CLI needs for execution:
+
+```python
+{
+    "workflow_ir": {
+        # Complete IR with template variables and proxy mappings
+        "ir_version": "0.1.0",
+        "nodes": [...],
+        "edges": [...],
+        "mappings": {...}  # Proxy mappings for shared store
+    },
+    "workflow_metadata": {
+        "suggested_name": "fix-issue",
+        "description": "Fixes a GitHub issue and creates a PR",
+        "inputs": ["issue_number", "repo_name"],
+        "outputs": ["pr_url", "pr_number"]
+    },
+    "parameter_values": {
+        # Extracted and interpreted values from natural language
+        "issue_number": "1234",
+        "repo_name": "pflow"  # Could be inferred from context
+    }
+}
+```
+
+### CLI Execution Flow
+
+Upon receiving the planner output, the CLI:
+
+1. **Shows Approval**
+   ```
+   Generated workflow: fix-issue
+   Description: Fixes a GitHub issue and creates a PR
+   Will execute with:
+     - issue_number: 1234
+     - repo_name: pflow
+
+   Approve and save? [Y/n]:
+   ```
+
+2. **Saves Workflow** (if approved)
+   - Saves IR to `~/.pflow/workflows/{suggested_name}.json`
+   - Preserves template variables for future reuse
+   - Records metadata for discovery
+
+3. **Executes Workflow**
+   - Uses `compile_ir_to_flow()` to create executable
+   - Substitutes parameter values for template variables
+   - Runs with proper shared store isolation
+
+### Parameter Substitution at Runtime
+
+The CLI performs template variable substitution:
+```python
+# Workflow contains: "prompt": "Fix issue: $issue_number"
+# Parameter values: {"issue_number": "1234"}
+# Runtime result: "prompt": "Fix issue: 1234"
+```
+
+This enables the "Plan Once, Run Forever" philosophy:
+- First time: Generate workflow with templates
+- Future runs: `pflow fix-issue --issue=5678`
 
 ## PocketFlow Execution Model Deep Dive
 
@@ -1049,8 +1124,11 @@ Output as JSON:
 
 ### Critical Dependencies
 1. **Context Builder** (Task 15/16) - Provides discovery and planning contexts
+   - `build_discovery_context()` - For finding nodes/workflows (lightweight)
+   - `build_planning_context()` - For detailed interface info (selected components only)
+   - DO NOT access registry directly - always use context builder
 2. **JSON IR Schema** - Defines valid workflow structure
-3. **Node Registry** - Source of available components
+3. **Node Registry** - Accessed ONLY through context builder, never directly
 4. **LLM Library** - Simon Willison's `llm` with structured outputs
 
 ### Integration Requirements
@@ -1058,6 +1136,104 @@ Output as JSON:
 2. **Workflow Storage**: Saves to `~/.pflow/workflows/` with template variables
 3. **Runtime Handoff**: Generates validated JSON IR for execution
 4. **Error Reporting**: Clear, actionable error messages
+
+### Concrete Integration Implementation
+
+#### CLI to Planner Integration
+```python
+# In src/pflow/cli/main.py
+from pflow.planning import create_planner_flow
+
+def process_natural_language(raw_input: str, stdin_data: Any = None) -> None:
+    """Process natural language input through the planner."""
+    # Create and run planner
+    planner = create_planner_flow()
+    shared = {
+        "user_input": raw_input,
+        "stdin_data": stdin_data,
+        "current_date": datetime.now().isoformat()
+    }
+
+    # Run planner meta-workflow
+    planner.run(shared)
+
+    # Extract results
+    planner_output = shared.get("planner_output")
+    if planner_output:
+        handle_planner_output(planner_output)
+```
+
+#### Planner Node Integration Examples
+
+```python
+# In src/pflow/planning/nodes.py
+
+class DiscoveryNode(Node):
+    """Uses context builder to find nodes and workflows."""
+    def exec(self, shared, prep_res):
+        from pflow.planning.context_builder import build_discovery_context
+
+        # Get lightweight discovery context
+        discovery_context = build_discovery_context()
+        shared["discovery_context"] = discovery_context
+
+        # Use LLM to find relevant components
+        # ... LLM logic ...
+        return "found" or "not_found"
+
+class GeneratorNode(Node):
+    """Generates workflow with registry validation."""
+    def exec(self, shared, prep_res):
+        from pflow.planning.context_builder import build_planning_context
+        from pflow.registry import Registry
+
+        # Get detailed planning context for selected nodes
+        selected_nodes = shared.get("selected_nodes", [])
+        planning_context = build_planning_context(selected_nodes, [])
+
+        # Generate workflow using LLM
+        # ... LLM generation ...
+
+        # Validate node types exist
+        registry = Registry()
+        for node in generated_ir["nodes"]:
+            if node["type"] not in registry.get_all_node_types():
+                raise ValueError(f"Unknown node type: {node['type']}")
+
+        return "validate"
+
+class ValidationNode(Node):
+    """Uses existing IR validation."""
+    def exec(self, shared, prep_res):
+        from pflow.core import validate_ir
+
+        try:
+            validate_ir(shared["generated_ir"])
+            return "valid"
+        except ValidationError as e:
+            shared["validation_errors"] = str(e)
+            return "invalid"
+```
+
+#### Parameter Substitution in CLI
+```python
+# In CLI after receiving planner output
+def execute_with_parameters(workflow_ir: dict, parameter_values: dict) -> None:
+    """Execute workflow with parameter substitution."""
+    from pflow.runtime import compile_ir_to_flow
+    from pflow.registry import Registry
+
+    # Substitute template variables
+    executable_ir = substitute_parameters(workflow_ir, parameter_values)
+
+    # Compile and execute
+    registry = Registry()
+    flow = compile_ir_to_flow(executable_ir, registry)
+
+    # Run with isolated shared store
+    workflow_shared = {"stdin": stdin_data} if stdin_data else {}
+    flow.run(workflow_shared)
+```
 
 ## Testing PocketFlow Flows
 
@@ -1213,7 +1389,25 @@ def test_specific_flow_path():
     # Max retries enforced, specific error feedback provided
     ```
 
-11. **Code Generation Instead of Workflows**: We're not generating Python
+11. **Executing User Workflows Within Planner**: Don't have the planner execute user workflows
+    ```python
+    # ❌ WRONG - Planner executing user workflows
+    class WorkflowExecutionNode(Node):
+        def exec(self, shared):
+            flow = compile_ir_to_flow(workflow_ir)
+            result = flow.run(...)  # Planner running user workflow
+
+    # ✅ CORRECT - Planner returns results for CLI execution
+    class ResultPreparationNode(Node):
+        def exec(self, shared):
+            shared["planner_output"] = {
+                "workflow_ir": ...,
+                "parameter_values": ...
+            }
+            # CLI handles execution
+    ```
+
+12. **Code Generation Instead of Workflows**: We're not generating Python
     ```python
     # ❌ WRONG - Generating executable code
     generated_code = """
@@ -1312,37 +1506,35 @@ def test_specific_flow_path():
     # The planner is the ONLY exception due to its unique complexity
     ```
 
-## Intelligent Parameter Extraction and Interpretation
+## Parameter Extraction and Interpretation
 
-### Beyond Raw Value Extraction
-The planner doesn't just extract raw values - it interprets them based on context:
+### Parameters Need Interpretation, Not Just Extraction
+The planner must handle various types of natural language references that require interpretation:
 
-```python
-# Examples of intelligent interpretation:
-"analyze churn for last month"
-→ Current date: 2024-12-15
-→ Interprets to: {"period": "2024-11", "period_type": "month"}
+- **Temporal references**: "yesterday", "last month", "Q3"
+- **Contextual references**: "main branch", "current directory", "this repo"
+- **Relative references**: "the latest", "previous version", "next sprint"
 
-"analyze churn since January"
-→ Current date: 2024-12-15
-→ Interprets to: {"start_date": "2024-01-01", "end_date": "2024-12-15"}
+### Key Principles
+1. **LLM handles interpretation**: The LLM understands context and converts references to concrete values
+2. **Context provided**: Planner receives necessary context (current date, working directory, etc.)
+3. **Values for execution only**: Interpreted values go in `parameter_values`, not in the saved workflow
+4. **Templates remain generic**: Workflows always use `$variables` to maintain reusability
 
-"fix the bug from yesterday"
-→ Current date: 2024-12-15
-→ Interprets to: {"date": "2024-12-14"}
-
-"generate Q3 report"
-→ Current year: 2024
-→ Interprets to: {"start_date": "2024-07-01", "end_date": "2024-09-30"}
+### Example Flow
+```
+User: "fix the bug from yesterday"
+  ↓
+Planner extracts: "yesterday" needs interpretation
+  ↓
+LLM interprets: Based on current date, "yesterday" → specific date
+  ↓
+Returns: parameter_values: {"date": "<interpreted-date>"}
+  ↓
+Workflow saved with: "$date" (template variable)
 ```
 
-### Implementation Approach
-1. **Context Awareness**: Planner receives current date/time in shared state
-2. **LLM Interpretation**: Uses LLM to understand temporal and contextual references
-3. **Structured Output**: Returns properly formatted dates and periods
-4. **Template Preservation**: Interpreted values are used for execution, not baked into saved workflows
-
-This enables natural language like "last month" while maintaining workflow reusability.
+This separation ensures workflows remain reusable while handling natural language elegantly.
 
 ## Template-Driven Workflow Architecture
 
@@ -1855,18 +2047,165 @@ shared["metrics"] = {
 6. **Template Variable Format**: Should we support both `$var` and `${var}` syntax?
 7. **Workflow Storage Trigger**: Does the planner save new workflows automatically or prompt user?
 
+## Concrete Integration Examples
+
+### Accessing the Registry
+```python
+from pflow.registry import Registry
+
+# In any planner node
+class WorkflowDiscoveryNode(Node):
+    def exec(self, shared):
+        from pflow.planning.context_builder import build_discovery_context
+
+        # Use context builder for formatted discovery
+        discovery_context = build_discovery_context()
+        shared["discovery_context"] = discovery_context
+
+        # Context builder provides:
+        # - Formatted node descriptions
+        # - Available workflows from ~/.pflow/workflows/
+        # - Both as LLM-ready markdown
+```
+
+### Using IR Validation
+```python
+from pflow.core import validate_ir, ValidationError
+
+class ValidatorNode(Node):
+    def exec(self, shared):
+        workflow = shared["generated_workflow"]
+
+        try:
+            validate_ir(workflow)
+            return "valid"
+        except ValidationError as e:
+            # e.path: "nodes[0].type"
+            # e.message: "Unknown node type 'read-files'"
+            # e.suggestion: "Did you mean 'read-file'?"
+            shared["validation_error"] = {
+                "path": e.path,
+                "message": e.message,
+                "suggestion": e.suggestion
+            }
+            return "invalid"
+```
+
+### CLI Integration Point
+```python
+# The CLI will invoke the planner like this:
+from pflow.planning import create_planner_flow
+
+# In cli/main.py
+planner_flow = create_planner_flow()
+result = planner_flow.run({
+    "user_input": ctx.obj["raw_input"],
+    "input_source": ctx.obj["input_source"],
+    "stdin_data": ctx.obj.get("stdin_data")
+})
+
+# Result contains the executed workflow output
+```
+
+## End-to-End Execution Example
+
+### Complete Flow: "fix github issue 123"
+
+```python
+# Initial shared state
+shared = {
+    "user_input": "fix github issue 123",
+    "input_source": "args"
+}
+
+# 1. Discovery Phase
+# → WorkflowDiscoveryNode executes
+shared["available_workflows"] = ["fix-issue", "analyze-logs", ...]
+# → LLM matches "fix github issue" to "fix-issue" workflow
+shared["found_workflow"] = {
+    "name": "fix-issue",
+    "template_inputs": {
+        "github-get-issue": {"issue_number": "$issue"},
+        "claude-code": {"prompt": "Fix this issue: $issue_data"}
+    }
+}
+# → Returns "found"
+
+# 2. Parameter Extraction
+# → ParameterExtractionNode executes
+shared["extracted_params"] = {"issue": "123"}
+# → Returns "map_params"
+
+# 3. Parameter Mapping
+# → ParameterMappingNode executes
+shared["parameter_mappings"] = {
+    "$issue": "123",
+    "$issue_data": "github-get-issue.outputs.issue_data"
+}
+# → Returns "confirm"
+
+# 4. Result Preparation
+# → ResultPreparationNode prepares output for CLI
+shared["planner_output"] = {
+    "workflow_ir": shared["found_workflow"],
+    "workflow_metadata": {
+        "suggested_name": "fix-issue",
+        "description": "Fix a GitHub issue and create PR",
+        "inputs": ["issue_number"],
+        "outputs": ["pr_url"]
+    },
+    "parameter_values": {"issue": "123"}
+}
+# → Returns "complete"
+
+# 5. CLI Takes Over
+# → Planner returns shared["planner_output"] to CLI
+# → CLI shows approval: "Will run 'fix-issue' with issue=123"
+# → User approves
+# → CLI saves workflow to ~/.pflow/workflows/fix-issue.json
+# → CLI executes with parameter substitution
+
+# CLI execution results (not in planner's shared state)
+execution_result = {
+    "status": "success",
+    "outputs": {"pr_url": "https://github.com/..."}
+}
+```
+
+## Critical Success Factors
+
+### What Makes Implementation Succeed
+
+1. **Understand the Meta-Workflow Nature**
+   - The planner orchestrates discovery, generation, and parameter mapping
+   - Returns structured results for CLI to execute
+
+2. **Template Variables are Sacred**
+   - NEVER hardcode extracted values
+   - Always preserve reusability
+
+3. **Use Existing Infrastructure**
+   - Don't reinvent validation, compilation, or registry access
+   - Build on the solid foundation
+
+4. **Test the Flow, Not Just Nodes**
+   - Individual node testing isn't enough
+   - Test complete paths through the meta-workflow
+
 ## Next Steps
 
 With the directory structure resolved and patterns understood, the implementation should:
 1. Create the planner module at `src/pflow/planning/` with PocketFlow patterns
 2. Implement core nodes using the advanced patterns:
-   - DiscoveryNode with state accumulation
+   - WorkflowDiscoveryNode with LLM semantic matching and integration with the context builder
    - GeneratorNode with progressive enhancement
-   - ValidatorNode with multi-validator convergence
-   - ApprovalNode (placement TBD)
-3. Design flow with retry loops and escape hatches
-4. Add comprehensive testing for both nodes and flows
-5. Integrate with existing context builder and CLI
+   - ValidatorNode using existing validate_ir()
+   - ParameterExtractionNode for NL → params
+   - ParameterMappingNode for params → template vars
+   - ResultPreparationNode to format output for CLI
+3. Design flow with proper branching (found vs generate paths)
+4. Add comprehensive testing for complete execution paths
+5. Integrate with CLI using the exact pattern shown above
 
 ---
 
