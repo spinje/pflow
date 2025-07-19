@@ -1380,6 +1380,18 @@ class FlowIR(BaseModel):
 - **Pydantic models**: For type-safe generation with the LLM
 - **JSONSchema**: For comprehensive validation of the final IR
 
+### Direct LLM Usage - No Wrapper Needed
+
+The planner uses Simon Willison's `llm` library directly without creating any wrapper abstractions. This follows the principle that thin wrappers add no value - the `llm` library already provides a clean, simple API:
+
+```python
+# Direct usage - no custom client or wrapper
+model = llm.get_model("claude-sonnet-4-20250514")
+response = model.prompt(prompt, schema=FlowIR)
+```
+
+This approach ensures we get all `llm` features immediately and avoid maintaining unnecessary abstraction layers.
+
 ### Integration with PocketFlow Retry Mechanism
 
 The GeneratorNode leverages PocketFlow's built-in retry capabilities with progressive prompt enhancement:
