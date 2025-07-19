@@ -207,105 +207,207 @@ while current_node:
 ## Advanced Implementation Patterns
 
 ### Progressive Enhancement Pattern
-For LLM planning, each retry should enhance the prompt rather than repeat it:
+For LLM planning, each retry should enhance the prompt with specific guidance:
 
 ```python
 class ProgressiveGeneratorNode(Node):
     """Generator that enhances prompt on each retry."""
 
     def __init__(self):
-        super().__init__(max_retries=4)
+        super().__init__(max_retries=3)
+        # Concise, targeted enhancements based on common errors
         self.enhancement_levels = [
-            "",  # Level 0: Original prompt
-            "\nPlease use only nodes from the registry above.",  # Level 1
-            "\nSimplify the workflow to basic input->process->output.",  # Level 2
-            "\nUse 'claude-code' node for any complex operations.",  # Level 3
+            "",  # Level 0: Base prompt with all necessary info
+            "\nEnsure all template variables ($var) have complete mappings in variable_flow.",  # Level 1
+            "\nSimplify: use fewer nodes and provide explicit variable_flow for ALL $variables.",  # Level 2
+            "\nUse basic nodes only. Every $variable MUST have a source in variable_flow."  # Level 3
         ]
 
     def exec(self, shared):
-        # Use retry count to determine enhancement level
-        level = getattr(self, 'cur_retry', 0)
-        enhancement = self.enhancement_levels[min(level, len(self.enhancement_levels)-1)]
+        # Track attempt history
+        attempt = shared.get("generation_attempts", 0)
+        shared["generation_attempts"] = attempt + 1
+
+        # Build on previous errors if retrying
+        enhancement = self.enhancement_levels[min(attempt, len(self.enhancement_levels)-1)]
+
+        # Include specific error feedback if available
+        if attempt > 0 and "validation_errors" in shared:
+            error_summary = self._summarize_errors(shared["validation_errors"])
+            enhancement = f"{enhancement}\nPrevious issues: {error_summary}"
 
         prompt = shared["base_prompt"] + enhancement
-        response = call_llm(prompt)
 
-        shared["llm_response"] = response
-        shared["enhancement_level"] = level
+        # Generate with structured output
+        response = self.model.prompt(
+            prompt,
+            schema=WorkflowIR,
+            temperature=0  # Deterministic
+        )
 
-        # Always go to validation
-        return "validate"
+        shared["llm_response"] = response.text()
 
-    def exec_fallback(self, shared, exc):
-        # On final failure, go to fallback strategy
-        shared["generation_error"] = str(exc)
-        return "fallback"
-```
-
-### Multi-Validator Convergence Pattern
-Multiple validation paths that converge on success:
-
-```python
-class MultiValidatorNode(Node):
-    """Validates through multiple strategies."""
-
-    def exec(self, shared):
-        response = shared.get("llm_response", "")
-
-        # Try multiple validation strategies
-        validators = [
-            ("json", self._validate_json),
-            ("structure", self._validate_structure),
-            ("semantics", self._validate_semantics)
-        ]
-
-        for val_name, validator in validators:
-            is_valid, errors = validator(response, shared)
-            shared[f"{val_name}_valid"] = is_valid
-            shared[f"{val_name}_errors"] = errors
-
-            if not is_valid:
-                # Route to specific recovery
-                return f"fix_{val_name}"
-
-        # All validations passed
-        return "success"
-```
-
-### State Accumulation Pattern
-Learning from errors across attempts:
-
-```python
-class StateAccumulatorNode(Node):
-    """Accumulates learning across attempts."""
-
-    def prep(self, shared):
-        # Initialize accumulator on first run
+        # Track attempt history
         if "attempt_history" not in shared:
             shared["attempt_history"] = []
-        if "learned_constraints" not in shared:
-            shared["learned_constraints"] = set()
+        shared["attempt_history"].append({
+            "attempt": attempt + 1,
+            "enhancement": enhancement,
+            "timestamp": time.time()
+        })
+
+        return "validate"
+
+    def _summarize_errors(self, errors):
+        """Create concise error summary for prompt enhancement."""
+        # Keep it brief to avoid prompt bloat
+        if "Missing variable mapping" in str(errors):
+            return "Add variable_flow mappings"
+        elif "Unknown node" in str(errors):
+            return "Use only available nodes"
+        else:
+            return "Check workflow structure"
+```
+
+### Validation with Fixable Error Approach
+All validation errors are treated as opportunities for improvement:
+
+```python
+class ValidationNode(Node):
+    """Validates generated workflows treating all errors as fixable."""
 
     def exec(self, shared):
-        # Record this attempt
-        attempt = {
-            "timestamp": time.time(),
-            "input": shared.get("current_prompt"),
-            "output": shared.get("llm_response"),
-            "errors": shared.get("validation_errors", [])
+        workflow = shared.get("generated_workflow", {})
+
+        # Comprehensive validation
+        validation_result = self._validate_workflow(workflow)
+
+        if validation_result["is_valid"]:
+            shared["validated_workflow"] = workflow
+            return "success"
+
+        # All errors are fixable with proper guidance
+        errors = validation_result["errors"]
+        shared["validation_errors"] = errors
+
+        # Categorize error for targeted retry
+        primary_issue = self._identify_primary_issue(errors)
+        shared["primary_validation_issue"] = primary_issue
+
+        # Check retry count
+        attempts = shared.get("generation_attempts", 0)
+        if attempts >= 3:
+            # Even at max retries, we consider it fixable
+            # but route to a simpler approach
+            return "simplify_request"
+
+        # Route back with specific feedback
+        return "retry_with_feedback"
+
+    def _identify_primary_issue(self, errors):
+        """Identify the main issue to address first."""
+        # Prioritize errors for clearer feedback
+        for error in errors:
+            if "variable_flow" in error or "template variable" in error:
+                return "missing_variable_mappings"
+            elif "unknown node" in error.lower():
+                return "invalid_nodes"
+            elif "ir_version" in error or "structure" in error:
+                return "invalid_structure"
+        return "general_validation_error"
+
+    def _validate_workflow(self, workflow):
+        """Perform comprehensive validation."""
+        errors = []
+
+        # Check structure
+        if "ir_version" not in workflow:
+            errors.append("Missing ir_version field")
+        if "nodes" not in workflow or not workflow.get("nodes"):
+            errors.append("Missing or empty nodes array")
+
+        # Check template variables have mappings
+        if "template_inputs" in workflow:
+            template_vars = self._extract_template_vars(workflow["template_inputs"])
+            variable_flow = workflow.get("variable_flow", {})
+
+            for var in template_vars:
+                if var not in variable_flow:
+                    errors.append(f"Missing variable mapping for ${var}")
+
+        return {
+            "is_valid": len(errors) == 0,
+            "errors": errors
         }
-        shared["attempt_history"].append(attempt)
+```
 
-        # Learn from errors
-        for error in attempt["errors"]:
-            if "Unknown node" in error:
-                match = re.search(r"Unknown node: (\w+)", error)
-                if match:
-                    shared["learned_constraints"].add(
-                        f"Don't use '{match.group(1)}' - it doesn't exist"
-                    )
+### Attempt History Tracking Pattern
+Track attempts to avoid repeating mistakes and provide context:
 
-        return "retry_with_learning"
+```python
+class AttemptHistoryMixin:
+    """Mixin for tracking attempt history in planner nodes."""
+
+    def track_attempt(self, shared, phase, outcome, details=None):
+        """Track each attempt for debugging and learning."""
+        if "attempt_history" not in shared:
+            shared["attempt_history"] = []
+
+        attempt_record = {
+            "attempt": len(shared["attempt_history"]) + 1,
+            "phase": phase,  # "generation", "validation", etc.
+            "outcome": outcome,  # "success", "failed", "retry"
+            "timestamp": time.time()
+        }
+
+        if details:
+            attempt_record["details"] = details
+
+        # Include specific errors if validation failed
+        if phase == "validation" and "validation_errors" in shared:
+            attempt_record["errors"] = shared["validation_errors"][:3]  # Limit size
+
+        shared["attempt_history"].append(attempt_record)
+
+    def get_attempt_summary(self, shared):
+        """Get concise summary of attempts for prompt enhancement."""
+        history = shared.get("attempt_history", [])
+        if not history:
+            return ""
+
+        # Summarize key issues from previous attempts
+        issues = []
+        for attempt in history[-2:]:  # Look at last 2 attempts only
+            if "errors" in attempt:
+                for error in attempt["errors"]:
+                    if "Missing variable mapping" in error:
+                        issues.append("missing variable mappings")
+                    elif "Unknown node" in error:
+                        # Extract node name if possible
+                        match = re.search(r"Unknown node[: ]+(\w+)", error)
+                        if match:
+                            issues.append(f"invalid node '{match.group(1)}'")
+
+        return "; ".join(set(issues)) if issues else ""
+
+# Usage in generator node
+class WorkflowGeneratorNode(Node, AttemptHistoryMixin):
+    def exec(self, shared):
+        # Track generation attempt
+        self.track_attempt(shared, "generation", "started")
+
+        # Generate workflow...
+        response = self.model.prompt(...)
+
+        # Track outcome
+        if response:
+            self.track_attempt(shared, "generation", "success",
+                             {"model": "claude-sonnet-4-20250514"})
+        else:
+            self.track_attempt(shared, "generation", "failed",
+                             {"error": "No response from LLM"})
+
+        return "validate"
 ```
 
 ### Checkpoint and Recovery Pattern
@@ -931,6 +1033,56 @@ def test_specific_flow_path():
     def plan_workflow(user_input: str, context: str) -> dict:
         # Stateless - each call is independent
         return generate_workflow(user_input, context)
+    ```
+
+13. **Wrong Model Selection**: Don't use GPT models
+    ```python
+    # ❌ WRONG - Using wrong models
+    model = "gpt-4" if complex else "gpt-3.5-turbo"
+
+    # ✅ CORRECT - Use specified model consistently
+    model = llm.get_model("claude-sonnet-4-20250514")
+    ```
+
+14. **Template Fallback System**: Don't use predefined templates
+    ```python
+    # ❌ WRONG - Falling back to rigid templates
+    if generation_failed:
+        return PREDEFINED_TEMPLATES["github_workflow"]
+
+    # ✅ CORRECT - Retry with better guidance
+    if generation_failed:
+        return "retry_with_simplified_request"
+    ```
+
+15. **Direct CLI Parsing**: MVP routes everything through LLM
+    ```python
+    # ❌ WRONG - Complex CLI parsing logic
+    if ">>" in user_input:
+        nodes = parse_cli_syntax(user_input)
+        return compile_nodes(nodes)
+
+    # ✅ CORRECT - Everything through LLM for MVP
+    # Both natural language and CLI-like syntax go to LLM
+    return llm_planner.generate_workflow(user_input)
+    ```
+
+16. **Missing Critical Fields**: Workflows need more than nodes/edges
+    ```python
+    # ❌ WRONG - Incomplete workflow structure
+    workflow = {
+        "nodes": [...],
+        "edges": [...]
+    }
+
+    # ✅ CORRECT - Complete JSON IR structure
+    workflow = {
+        "ir_version": "0.1.0",
+        "nodes": [...],
+        "edges": [...],
+        "template_inputs": {...},  # Template variables
+        "variable_flow": {...}     # Variable mappings
+    }
     ```
 
 ## Template-Driven Workflow Architecture
