@@ -85,6 +85,30 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
 3. Store the workflow with template variables intact
 4. The value "1234" is only used during the first execution, not baked into the workflow
 
+### CRITICAL CLARIFICATION: The Meta-Workflow Architecture
+
+**The planner is a meta-workflow that both creates AND executes workflows.** This is a fundamental insight that affects the entire architecture:
+
+1. **The Planner Workflow Includes**:
+   - Discovery: Find existing workflow or determine need to create
+   - Generation: Create new workflow if needed (with template variables)
+   - Parameter Extraction: Extract "1234" from "fix github issue 1234"
+   - Parameter Mapping: Map extracted values to template variables
+   - Confirmation: Show user what will execute
+   - Execution: Actually run the workflow with mappings
+
+2. **MVP Architecture**: Every execution goes through the full planner
+   ```
+   "fix github issue 1234" → Planner finds/creates → Extracts params → Maps → Executes
+   ```
+
+3. **Future v2.0+**: Known workflows can be executed directly
+   ```
+   pflow fix-issue --issue=1234  # Bypasses planner
+   ```
+
+This means the planner doesn't just generate and hand off - it orchestrates the entire lifecycle including parameter mapping and execution.
+
 ## 2. Data Flow Orchestration and Proxy Mapping Strategy - Decision importance (5)
 
 How should the planner orchestrate data flow between nodes with incompatible interfaces?

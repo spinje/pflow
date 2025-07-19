@@ -2,6 +2,45 @@
 
 This document synthesizes key insights from research files to provide actionable implementation guidance for the Natural Language Planner System. It complements the ambiguities document by providing concrete architectural decisions and implementation patterns.
 
+## Critical Insight: The Meta-Workflow Architecture
+
+### The Planner IS a Workflow That Creates AND Executes Workflows
+
+The Natural Language Planner is fundamentally a **meta-workflow** - a PocketFlow workflow that:
+1. **Discovers or creates** workflows based on user intent
+2. **Extracts parameters** from natural language
+3. **Maps parameters** to template variables
+4. **Confirms** with the user
+5. **Executes** the workflow with proper mappings
+
+This is NOT two separate systems - it's ONE unified workflow that handles the entire lifecycle.
+
+### MVP vs Future Architecture
+
+**MVP (All execution through planner):**
+```
+User Input: "fix github issue 1234"
+    ↓
+[Planner Meta-Workflow]
+    ├─> Discovery: Does "fix-issue" workflow exist?
+    ├─> Parameter Extraction: {"issue": "1234"}
+    ├─> Mapping: {"issue": "1234"} → $issue_number
+    ├─> Confirmation: Show user what will run
+    └─> Execution: Run workflow with mappings
+```
+
+**v2.0+ (Direct execution for known workflows):**
+```
+pflow fix-issue --issue=1234  # Bypasses planner entirely
+```
+
+### Key Architectural Implications
+
+1. **The planner workflow includes execution** - It doesn't just generate IR and hand off
+2. **Parameter mapping is integral** - Not a separate system or afterthought
+3. **Every MVP execution is meta** - Even reusing existing workflows goes through the full planner
+4. **Branching is essential** - Found vs create paths within the same workflow
+
 ## Architectural Decision: PocketFlow for Planner Orchestration
 
 ### Core Decision
@@ -93,25 +132,143 @@ The traditional approach quickly becomes:
 - Difficult to modify
 - Impossible to visualize
 
-### Implementation Pattern
+### Implementation Pattern - The Complete Meta-Workflow
 ```python
-# The planner uses PocketFlow internally
-class DiscoveryNode(Node):
-    """Uses context builder to find available components"""
+# The planner meta-workflow that handles EVERYTHING
+class ComponentDiscoveryNode(Node):
+    """Browse available components (nodes + workflows) for potential relevance"""
+    def exec(self, shared):
+        user_input = shared["user_input"]
+
+        # Phase 1: Use context builder's discovery context (lightweight)
+        discovery_context = self.context_builder.build_discovery_context()
+
+        # Browse for potentially relevant components
+        selected_components = self._browse_components(user_input, discovery_context)
+
+        # Phase 2: Get detailed context for selected components only
+        planning_context = self.context_builder.build_planning_context(
+            selected_components["node_ids"],
+            selected_components["workflow_names"]
+        )
+
+        shared["selected_components"] = selected_components
+        shared["planning_context"] = planning_context
+
+        # Now determine if we can reuse an existing workflow
+        if self._exact_workflow_match(selected_components["workflows"], user_input):
+            shared["found_workflow"] = self._get_matching_workflow()
+            return "found_existing"
+        else:
+            return "generate_new"
+
+class ParameterExtractionNode(Node):
+    """Extracts and interprets parameters from natural language"""
+    def exec(self, shared):
+        user_input = shared["user_input"]
+        workflow = shared.get("found_workflow") or shared.get("generated_workflow")
+
+        # Current time context for temporal interpretation
+        current_date = shared.get("current_date", datetime.now().isoformat()[:10])
+
+        # Extract AND interpret parameters
+        # "fix github issue 1234" → {"issue": "1234"}
+        # "analyze churn for last month" → {"period": "2024-11", "period_type": "month"}
+        # "analyze churn since January" → {"start_date": "2024-01-01"}
+        params = self._extract_and_interpret_parameters(user_input, workflow, current_date)
+        shared["extracted_params"] = params
+        return "map_params"
+
+    def _extract_and_interpret_parameters(self, user_input: str, workflow: dict, current_date: str) -> dict:
+        """Extract parameters with intelligent interpretation of temporal and contextual references."""
+
+        # Use LLM to extract and interpret
+        prompt = f"""
+        Extract parameters from user input: "{user_input}"
+        Current date: {current_date}
+
+        Expected parameters for workflow: {workflow.get('inputs', [])}
+
+        Interpret temporal references:
+        - "last month" → specific month (e.g., "2024-11")
+        - "since January" → "2024-01-01"
+        - "yesterday" → specific date
+        - "Q1" → "2024-01-01 to 2024-03-31"
+
+        Return extracted parameters as JSON with interpreted values.
+        """
+
+        response = self.llm.prompt(prompt, schema=ParameterDict)
+        return response.json()
+
+class ParameterMappingNode(Node):
+    """Maps extracted params to workflow template variables"""
+    def exec(self, shared):
+        params = shared["extracted_params"]
+        workflow = shared.get("found_workflow") or shared.get("generated_workflow")
+
+        # Map: {"issue": "1234"} → {"$issue_number": "1234"}
+        mappings = self._create_mappings(params, workflow["template_inputs"])
+        shared["parameter_mappings"] = mappings
+        return "confirm"
 
 class GeneratorNode(Node):
-    """Generates workflow using LLM with retries"""
+    """Generates new workflow if none found"""
+    def exec(self, shared):
+        # Generate complete workflow with template variables
+        workflow = self._generate_workflow(shared["user_input"])
+        shared["generated_workflow"] = workflow
+        return "extract_params"
 
-class ValidatorNode(Node):
-    """Three-tier validation with error feedback"""
+class ConfirmationNode(Node):
+    """Shows user what will be executed"""
+    def exec(self, shared):
+        workflow = shared.get("found_workflow") or shared.get("generated_workflow")
+        mappings = shared["parameter_mappings"]
 
-class ApprovalNode(Node):
-    """Shows CLI syntax for user approval"""
+        # Show: "Will run 'fix-issue' with issue=1234"
+        if self._get_user_confirmation(workflow, mappings):
+            return "execute"
+        else:
+            return "cancelled"
 
-# Orchestrated as a flow
-discovery >> generator >> validator >> approval
-generator - "malformed_json" >> generator  # Self-retry
-validator - "unknown_nodes" >> error_feedback >> generator
+class WorkflowExecutionNode(Node):
+    """Actually executes the workflow with mappings"""
+    def exec(self, shared):
+        workflow = shared.get("found_workflow") or shared.get("generated_workflow")
+        mappings = shared["parameter_mappings"]
+
+        # Execute the workflow with parameter substitution
+        result = self._execute_workflow(workflow, mappings)
+        shared["execution_result"] = result
+        return "completed"
+
+# The complete meta-workflow
+def create_planner_flow():
+    flow = Flow("planner_meta_workflow")
+
+    # All nodes
+    discovery = WorkflowDiscoveryNode()
+    param_extract = ParameterExtractionNode()
+    param_map = ParameterMappingNode()
+    generator = GeneratorNode()
+    validator = ValidatorNode()
+    confirm = ConfirmationNode()
+    execute = WorkflowExecutionNode()
+
+    # Main flow with branching
+    flow.add_edge(discovery, "found", param_extract)
+    flow.add_edge(discovery, "not_found", generator)
+    flow.add_edge(generator, "success", validator)
+    flow.add_edge(validator, "valid", param_extract)
+    flow.add_edge(param_extract, "map_params", param_map)
+    flow.add_edge(param_map, "confirm", confirm)
+    flow.add_edge(confirm, "execute", execute)
+
+    # Error handling
+    flow.add_edge(validator, "invalid", generator)  # Retry
+
+    return flow
 ```
 
 ### Concrete Shared State Example
@@ -1085,6 +1242,38 @@ def test_specific_flow_path():
     }
     ```
 
+## Intelligent Parameter Extraction and Interpretation
+
+### Beyond Raw Value Extraction
+The planner doesn't just extract raw values - it interprets them based on context:
+
+```python
+# Examples of intelligent interpretation:
+"analyze churn for last month"
+→ Current date: 2024-12-15
+→ Interprets to: {"period": "2024-11", "period_type": "month"}
+
+"analyze churn since January"
+→ Current date: 2024-12-15
+→ Interprets to: {"start_date": "2024-01-01", "end_date": "2024-12-15"}
+
+"fix the bug from yesterday"
+→ Current date: 2024-12-15
+→ Interprets to: {"date": "2024-12-14"}
+
+"generate Q3 report"
+→ Current year: 2024
+→ Interprets to: {"start_date": "2024-07-01", "end_date": "2024-09-30"}
+```
+
+### Implementation Approach
+1. **Context Awareness**: Planner receives current date/time in shared state
+2. **LLM Interpretation**: Uses LLM to understand temporal and contextual references
+3. **Structured Output**: Returns properly formatted dates and periods
+4. **Template Preservation**: Interpreted values are used for execution, not baked into saved workflows
+
+This enables natural language like "last month" while maintaining workflow reusability.
+
 ## Template-Driven Workflow Architecture
 
 ### Core Insight: Templates Enable Reusability
@@ -1348,14 +1537,95 @@ def test_resolution_order_calculation():
     assert order.index("n2") < order.index("n3")
 ```
 
+## Two-Phase Discovery: Browsing vs Selecting
+
+### Critical Distinction: Discovery is Browsing, Not Selecting
+The discovery phase is fundamentally about **browsing** for potentially relevant components, not selecting a single match:
+
+**Browsing Characteristics**:
+- Over-inclusive is better than missing components
+- Returns MULTIPLE potentially relevant items
+- Reduces cognitive load by filtering noise
+- Like "show me everything related to GitHub operations"
+
+**Why This Matters**:
+1. **Workflow Reuse**: A workflow might be found among browsed components
+2. **Node Composition**: Multiple nodes might be needed for new workflows
+3. **Flexibility**: The planner can make final decisions with full context
+
+### Implementation of Two-Phase Approach
+
+```python
+class ComponentDiscoveryNode(Node):
+    """Browse available components using two-phase approach."""
+
+    def _browse_components(self, user_input: str, discovery_context: str) -> dict:
+        """Phase 1: Browse with lightweight context."""
+        prompt = f"""
+        User wants to: {user_input}
+
+        Available components:
+        {discovery_context}
+
+        Browse and select ALL components that might be relevant.
+        Be over-inclusive - it's better to include too many than miss important ones.
+
+        Return lists of:
+        - node_ids: Potentially useful nodes
+        - workflow_names: Potentially useful workflows
+        """
+
+        response = self.llm.prompt(prompt, schema=ComponentSelection)
+        return response.json()
+
+    def _exact_workflow_match(self, browsed_workflows: list, user_input: str) -> bool:
+        """After browsing, check if any workflow exactly matches intent."""
+        if not browsed_workflows:
+            return False
+
+        # Now with detailed context, can make precise match determination
+        for workflow in browsed_workflows:
+            if self._matches_intent(workflow, user_input):
+                return True
+        return False
+```
+
+This approach:
+- **Browsing first**: Cast a wide net to find all potentially relevant components
+- **Detailed analysis second**: With full context, determine exact matches
+- **No ranked lists for users**: All selection happens internally
+- **Semantic understanding**: "analyze costs" finds "aws-cost-analyzer" through browsing
+
+## Success Metrics and Targets
+
+### Core Performance Targets
+From the unified understanding of requirements:
+
+1. **≥95% Success Rate**: Natural language → valid workflow generation
+2. **≥90% Approval Rate**: Users approve generated workflows without modification
+3. **Fast Discovery**: Near-instant workflow matching (LLM call + parsing)
+4. **Clear Approval**: Users understand exactly what will execute
+
+### Measuring Success
+```python
+# Track in shared state for monitoring
+shared["metrics"] = {
+    "generation_success": True,  # Did we produce valid IR?
+    "user_approved": True,       # Did user approve without changes?
+    "discovery_time_ms": 150,    # How long to find/generate?
+    "total_attempts": 1,         # How many generation attempts?
+}
+```
+
 ## Open Questions and Decisions Needed
 
 1. ~~**Directory Structure**: Which path to use?~~ **RESOLVED**: Use `src/pflow/planning/`
-2. **Approval Node Placement**: Is approval part of the planner flow or separate?
+2. ~~**Approval Node Placement**: Is approval part of the planner flow or separate?~~ **RESOLVED**: Part of the meta-workflow as ConfirmationNode
 3. **Error Feedback Node**: Should this be a separate node or part of validator?
 4. **Retry Count Access**: Should we use `cur_retry` attribute or track in shared?
 5. **Checkpoint Frequency**: After each successful node or only at key points?
 6. **Template Variable Format**: Should we support both `$var` and `${var}` syntax?
+7. **Workflow Storage Trigger**: Does the planner save new workflows automatically or prompt user?
 
 ## Next Steps
 
