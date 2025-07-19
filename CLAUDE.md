@@ -367,7 +367,8 @@ The codebase is in early development with:
 - ✅ Task 11 complete: Implement read-file and write-file nodes
 - ✅ Task 16 complete: Create planning context builder
 - ✅ Task 14 complete: Implement type, structure, description and semantic documentation for all Interface components
-- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 15 - Extend context builder for two-phase discovery and structure documentation support)
+- ✅ Task 15 complete: Extend context builder for two-phase discovery and structure documentation support (modify and extend the context builder implemented in Task 16)
+- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 9 - Implement shared store collision detection and proxy mapping)
 
 *Update this list as you complete tasks.*
 
