@@ -80,7 +80,7 @@ The Natural Language Planner is the **ONLY** component in the entire pflow syste
 
 ### The Meta-Layer Concept: Using PocketFlow to Create PocketFlow Workflows
 
-The planner embodies a powerful **meta architecture** - it is a PocketFlow workflow that creates and executes other PocketFlow workflows. This creates an elegant philosophical alignment:
+The planner embodies a powerful **meta architecture** - it is a PocketFlow workflow that creates other PocketFlow workflows for CLI execution. This creates an elegant philosophical alignment:
 
 1. **The Tool and The Product**: The planner uses PocketFlow internally to help users create their own PocketFlow workflows
 2. **Dogfooding at Its Best**: By using PocketFlow for the planner, we validate the framework's capabilities for complex orchestration
@@ -250,7 +250,7 @@ class ParameterExtractionNode(Node):
 
         if missing:
             shared["missing_params"] = missing
-            shared["extraction_error"] = f"Cannot execute: missing {missing}"
+            shared["extraction_error"] = f"Workflow cannot be executed: missing {missing}"
             return "params_incomplete"
 
         shared["extracted_params"] = extracted
@@ -356,7 +356,7 @@ def create_planner_flow():
 
     # Both paths converge at parameter extraction
     flow.add_edge(param_extract, "params_complete", param_prep)
-    flow.add_edge(param_extract, "params_incomplete", result_prep)  # Can't execute
+    flow.add_edge(param_extract, "params_incomplete", result_prep)  # Missing params
     flow.add_edge(param_prep, "prepare_result", result_prep)
 
     return flow
@@ -1471,7 +1471,7 @@ def test_specific_flow_path():
 
 11. **Executing User Workflows Within Planner**: Don't have the planner execute user workflows
     ```python
-    # ❌ WRONG - Planner executing user workflows
+    # ❌ WRONG - Planner executing user workflows directly
     class WorkflowExecutionNode(Node):
         def exec(self, shared):
             flow = compile_ir_to_flow(workflow_ir)
@@ -1968,7 +1968,7 @@ Use traditional code for everything else.
 
 The planner is unique in pflow's architecture because it:
 
-1. **Orchestrates Multiple Complex Operations**: Discovery → Generation → Validation → Parameter Mapping → Execution
+1. **Orchestrates Multiple Complex Operations**: Discovery → Generation → Validation → Parameter Mapping → Result Preparation
 2. **Requires Sophisticated Error Recovery**: Different strategies for different LLM failures
 3. **Has True Branching Logic**: Found workflow vs create new, with completely different paths
 4. **Benefits from State Accumulation**: Learning from failed attempts to improve prompts
@@ -2255,7 +2255,7 @@ result = planner_flow.run({
     "stdin_data": ctx.obj.get("stdin_data")
 })
 
-# Result contains the executed workflow output
+# Result contains the planner output (workflow IR + parameter values)
 ```
 
 ## End-to-End Execution Example
@@ -2317,12 +2317,6 @@ shared["planner_output"] = {
 # → User approves
 # → CLI saves workflow to ~/.pflow/workflows/fix-issue.json
 # → CLI executes with parameter substitution
-
-# CLI execution results (not in planner's shared state)
-execution_result = {
-    "status": "success",
-    "outputs": {"pr_url": "https://github.com/..."}
-}
 ```
 
 ## Critical Success Factors
