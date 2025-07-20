@@ -4,15 +4,50 @@ This document synthesizes key insights from research files to provide actionable
 
 ## Critical Insight: The Meta-Workflow Architecture
 
-### The Planner IS a Workflow That Creates and Prepares Workflows for Execution
+### The Planner IS a Meta-Workflow with Two Paths That Converge
 
-The Natural Language Planner is fundamentally a **meta-workflow** - a PocketFlow workflow that:
-1. **Discovers or creates** workflows based on user intent
-2. **Extracts parameters** from natural language (e.g., "1234" from "fix issue 1234")
-3. **Returns workflow with template variables** in params (e.g., `{"issue": "$issue_number"}`)
-4. **Returns parameter values** to the CLI for runtime substitution
+The Natural Language Planner is fundamentally a **meta-workflow** - a PocketFlow workflow that orchestrates the entire lifecycle of finding or creating workflows based on user intent. It implements two distinct paths that converge at a critical parameter extraction and verification point.
 
-The planner orchestrates the planning phase, then hands off to the CLI for execution. The runtime handles all template resolution transparently via proxy pattern.
+```mermaid
+graph TD
+    START[User: "fix github issue 1234"] --> WD[WorkflowDiscoveryNode]
+
+    WD --> CHECK{Complete workflow exists?}
+
+    CHECK -->|YES: Found 'fix-issue'| FOUND_PATH[Path A: Reuse Existing]
+    CHECK -->|NO: Must create| CREATE_PATH[Path B: Generate New]
+
+    %% Path A: Direct reuse
+    FOUND_PATH --> PE[ParameterExtractionNode<br/>Extract: "1234" → issue_number<br/>Verify: All params available?]
+
+    %% Path B: Generation
+    CREATE_PATH --> CB[ComponentBrowsingNode<br/>Find building blocks:<br/>nodes + sub-workflows]
+    CB --> GEN[GeneratorNode<br/>LLM creates workflow<br/>Designs params: $issue_number]
+    GEN --> VAL[ValidatorNode<br/>Validate IR structure]
+    VAL -->|invalid| GEN
+    VAL -->|valid| PE
+
+    %% Convergence point
+    PE --> VERIFY{Can map user input<br/>to workflow params?}
+    VERIFY -->|YES| PP[ParameterPreparationNode<br/>Format for execution]
+    VERIFY -->|NO| ERROR[Cannot Execute:<br/>Missing required params]
+
+    PP --> RES[ResultPreparationNode<br/>Package for CLI]
+    RES --> END[Return to CLI]
+
+    style PE fill:#9ff,stroke:#333,stroke-width:4px
+    style VERIFY fill:#ff9,stroke:#333,stroke-width:3px
+    style WD fill:#f9f,stroke:#333,stroke-width:4px
+```
+
+### Key Architectural Implications
+
+1. **Two distinct paths**: Path A (reuse) and Path B (generate) handle different scenarios
+2. **Separate discovery nodes**: WorkflowDiscoveryNode finds complete solutions, ComponentBrowsingNode finds building blocks
+3. **Parameter extraction as convergence**: Both paths meet at ParameterExtractionNode
+4. **Verification gate**: Parameter extraction verifies the workflow can actually execute
+5. **Clean separation**: Planner plans, runtime resolves templates
+6. **Every MVP execution is meta**: Even reusing existing workflows goes through the full planner
 
 ### MVP vs Future Architecture
 
@@ -23,6 +58,7 @@ User Input: "fix github issue 1234"
 [Planner Meta-Workflow]
     ├─> Discovery: Does "fix-issue" workflow exist?
     ├─> Parameter Extraction: {"issue_number": "1234"}
+    ├─> Verification: Can workflow execute with these params?
     ├─> Workflow contains: {"params": {"issue": "$issue_number"}}
     └─> Returns: (workflow_ir, metadata, parameter_values)
     ↓
@@ -36,15 +72,6 @@ User Input: "fix github issue 1234"
 ```
 pflow fix-issue --issue=1234  # Bypasses planner entirely
 ```
-
-### Key Architectural Implications
-
-1. **The planner returns structured results** - IR + metadata + parameter values
-2. **Template variables in params** - Simple `$variable` syntax in node params
-3. **Clean separation of concerns** - Planner plans, runtime resolves templates
-4. **Every MVP execution is meta** - Even reusing existing workflows goes through the full planner
-5. **Branching is essential** - Found vs create paths within the same workflow
-6. **Intent over parsing** - The goal is to understand user intent, not just parse words
 
 ## Architectural Decision: PocketFlow for Planner Orchestration
 
@@ -156,35 +183,56 @@ The traditional approach quickly becomes:
 ### Implementation Pattern - The Complete Meta-Workflow
 ```python
 # The planner meta-workflow that handles EVERYTHING
-class ComponentDiscoveryNode(Node):
-    """Browse available components (nodes + workflows) for potential relevance"""
+
+class WorkflowDiscoveryNode(Node):
+    """Find complete workflows that can satisfy the ENTIRE user intent as-is"""
     def exec(self, shared):
         user_input = shared["user_input"]
+        saved_workflows = self._load_saved_workflows()  # From ~/.pflow/workflows/
 
-        # Phase 1: Use context builder's discovery context (lightweight)
-        discovery_context = self.context_builder.build_discovery_context()
+        # Use LLM to find exact matches
+        prompt = f"""
+        User wants to: {user_input}
 
-        # Browse for potentially relevant components
-        selected_components = self._browse_components(user_input, discovery_context)
+        Available workflows:
+        {self._format_workflows(saved_workflows)}
 
-        # Phase 2: Get detailed context for selected components only
-        planning_context = self.context_builder.build_planning_context(
-            selected_components["node_ids"],
-            selected_components["workflow_names"]
-        )
+        Which workflow (if any) would completely satisfy this request?
+        Return the workflow name or 'none' if no complete match.
+        """
 
-        shared["selected_components"] = selected_components
-        shared["planning_context"] = planning_context
-
-        # Now determine if we can reuse an existing workflow
-        if self._exact_workflow_match(selected_components["workflows"], user_input):
-            shared["found_workflow"] = self._get_matching_workflow()
+        match = self.llm.complete(prompt)
+        if match != 'none':
+            shared["found_workflow"] = saved_workflows[match]
             return "found_existing"
         else:
-            return "generate_new"
+            return "not_found"
+
+class ComponentBrowsingNode(Node):
+    """Browse for components to build NEW workflows (only if no complete workflow found)"""
+    def exec(self, shared):
+        from pflow.planning.context_builder import build_discovery_context, build_planning_context
+
+        # Step 1: Lightweight browse
+        discovery_context = build_discovery_context()
+
+        components = self._browse_for_building_blocks(
+            shared["user_input"],
+            discovery_context
+        )
+
+        # Step 2: Get details for selected components only
+        planning_context = build_planning_context(
+            components["node_ids"],
+            components["workflow_names"]  # Sub-workflows as building blocks!
+        )
+
+        shared["planning_context"] = planning_context
+        shared["selected_components"] = components
+        return "generate"
 
 class ParameterExtractionNode(Node):
-    """Extracts and interprets parameters from natural language"""
+    """Extracts parameters AND verifies workflow executability (convergence point)"""
     def exec(self, shared):
         user_input = shared["user_input"]
         workflow = shared.get("found_workflow") or shared.get("generated_workflow")
@@ -192,13 +240,21 @@ class ParameterExtractionNode(Node):
         # Current time context for temporal interpretation
         current_date = shared.get("current_date", datetime.now().isoformat()[:10])
 
-        # Extract AND interpret parameters
-        # "fix github issue 1234" → {"issue": "1234"}
-        # "analyze churn for last month" → {"period": "2024-11", "period_type": "month"}
-        # "analyze churn since January" → {"start_date": "2024-01-01"}
-        params = self._extract_and_interpret_parameters(user_input, workflow, current_date)
-        shared["extracted_params"] = params
-        return "map_params"
+        # Extract concrete values
+        extracted = self._extract_from_natural_language(user_input, workflow, current_date)
+        # Example: {"issue_number": "1234"} from "fix github issue 1234"
+
+        # CRITICAL: Verify all required params are available
+        required = self._get_required_params(workflow)
+        missing = required - set(extracted.keys())
+
+        if missing:
+            shared["missing_params"] = missing
+            shared["extraction_error"] = f"Cannot execute: missing {missing}"
+            return "params_incomplete"
+
+        shared["extracted_params"] = extracted
+        return "params_complete"
 
     def _extract_and_interpret_parameters(self, user_input: str, workflow: dict, current_date: str) -> dict:
         """Extract parameters with intelligent interpretation of temporal and contextual references."""
@@ -236,9 +292,24 @@ class GeneratorNode(Node):
     """Generates new workflow if none found"""
     def exec(self, shared):
         # Generate complete workflow with template variables
-        workflow = self._generate_workflow(shared["user_input"])
+        workflow = self._generate_workflow(
+            shared["user_input"],
+            shared["planning_context"]
+        )
         shared["generated_workflow"] = workflow
-        return "extract_params"
+        return "validate"
+
+class ValidatorNode(Node):
+    """Validates generated workflow structure"""
+    def exec(self, shared):
+        workflow = shared["generated_workflow"]
+        validation_result = self._validate_workflow(workflow)
+
+        if validation_result["is_valid"]:
+            return "valid"
+        else:
+            shared["validation_errors"] = validation_result["errors"]
+            return "invalid"
 
 class ResultPreparationNode(Node):
     """Prepares the final results to return to the CLI"""
@@ -259,28 +330,34 @@ class ResultPreparationNode(Node):
 
         return "complete"
 
-# The complete meta-workflow
+# The complete meta-workflow with proper paths
 def create_planner_flow():
     flow = Flow("planner_meta_workflow")
 
     # All nodes
     discovery = WorkflowDiscoveryNode()
+    browsing = ComponentBrowsingNode()
     param_extract = ParameterExtractionNode()
     param_prep = ParameterPreparationNode()
     generator = GeneratorNode()
     validator = ValidatorNode()
     result_prep = ResultPreparationNode()
 
-    # Main flow with branching
-    flow.add_edge(discovery, "found", param_extract)
-    flow.add_edge(discovery, "not_found", generator)
-    flow.add_edge(generator, "success", validator)
-    flow.add_edge(validator, "valid", param_extract)
-    flow.add_edge(param_extract, "prepare_params", param_prep)
-    flow.add_edge(param_prep, "prepare_result", result_prep)
+    # Main flow with two paths
+    # Path A: Found existing workflow
+    flow.add_edge(discovery, "found_existing", param_extract)
 
-    # Error handling
+    # Path B: Generate new workflow
+    flow.add_edge(discovery, "not_found", browsing)
+    flow.add_edge(browsing, "generate", generator)
+    flow.add_edge(generator, "validate", validator)
+    flow.add_edge(validator, "valid", param_extract)
     flow.add_edge(validator, "invalid", generator)  # Retry
+
+    # Both paths converge at parameter extraction
+    flow.add_edge(param_extract, "params_complete", param_prep)
+    flow.add_edge(param_extract, "params_incomplete", result_prep)  # Can't execute
+    flow.add_edge(param_prep, "prepare_result", result_prep)
 
     return flow
 ```
@@ -1209,13 +1286,20 @@ class GeneratorNode(Node):
 class ValidationNode(Node):
     """Uses existing IR validation."""
     def exec(self, shared, prep_res):
-        from pflow.core import validate_ir
+        from pflow.core import validate_ir, ValidationError
 
         try:
             validate_ir(shared["generated_ir"])
             return "valid"
         except ValidationError as e:
-            shared["validation_errors"] = str(e)
+            # e.path: "nodes[0].type"
+            # e.message: "Unknown node type 'read-files'"
+            # e.suggestion: "Did you mean 'read-file'?"
+            shared["validation_error"] = {
+                "path": e.path,
+                "message": e.message,
+                "suggestion": e.suggestion
+            }
             return "invalid"
 ```
 
@@ -1543,35 +1627,41 @@ def test_specific_flow_path():
     # The planner is the ONLY exception due to its unique complexity
     ```
 
-## Parameter Extraction and Interpretation
+## Parameter Extraction as Verification Gate
 
-### Parameters Need Interpretation, Not Just Extraction
-The planner must handle various types of natural language references that require interpretation:
+### Parameters Need Interpretation AND Verification
+The ParameterExtractionNode serves as the critical convergence point where both paths meet. It's not just extracting parameters - it's verifying the workflow can actually execute:
 
-- **Temporal references**: "yesterday", "last month", "Q3"
-- **Contextual references**: "main branch", "current directory", "this repo"
-- **Relative references**: "the latest", "previous version", "next sprint"
+1. **Extract**: Get concrete values from natural language
+2. **Interpret**: Convert references like "yesterday" to actual dates
+3. **Verify**: Ensure ALL required parameters are available
+4. **Gate**: Block execution if parameters are missing
 
 ### Key Principles
-1. **LLM handles interpretation**: The LLM understands context and converts references to concrete values
-2. **Context provided**: Planner receives necessary context (current date, working directory, etc.)
-3. **Values for execution only**: Interpreted values go in `parameter_values`, not in the saved workflow
-4. **Templates remain generic**: Workflows always use `$variables` to maintain reusability
+1. **Convergence point**: Both paths (found/generate) must pass through here
+2. **Execution feasibility**: Determines if workflow can run
+3. **Fail early**: Better to catch missing params before execution
+4. **Clear errors**: Tell user exactly what's missing
 
-### Example Flow
+### Example: Verification Success
 ```
-User: "fix the bug from yesterday"
-  ↓
-Planner extracts: "yesterday" needs interpretation
-  ↓
-LLM interprets: Based on current date, "yesterday" → specific date
-  ↓
-Returns: parameter_values: {"date": "<interpreted-date>"}
-  ↓
-Workflow saved with: "$date" (template variable)
+User: "fix github issue 1234"
+Workflow needs: issue_number
+Extracted: {issue_number: "1234"}
+Verification: ✓ All parameters available
+Result: Continue to execution
 ```
 
-This separation ensures workflows remain reusable while handling natural language elegantly.
+### Example: Verification Failure
+```
+User: "deploy the app"
+Workflow needs: app_name, environment, version
+Extracted: {} (nothing specific in input!)
+Verification: ✗ Missing required params
+Result: Cannot execute - prompt for missing parameters
+```
+
+This separation ensures workflows are only executed when they have all necessary inputs, preventing runtime failures and improving user experience.
 
 ## Template-Driven Workflow Architecture
 
@@ -2011,10 +2101,13 @@ def test_resolution_order_calculation():
     assert order.index("n2") < order.index("n3")
 ```
 
-## Two-Phase Discovery: Browsing vs Selecting
+## Component Browsing with Smart Context Loading
 
 ### Critical Distinction: Discovery is Browsing, Not Selecting
-The discovery phase is fundamentally about **browsing** for potentially relevant components, not selecting a single match:
+The discovery phase is fundamentally about **browsing** for potentially relevant components, not selecting a single match. The term "two-phase discovery" was confusing - it's really about smart context loading:
+
+1. **Browse with lightweight context**: Cast a wide net to find potentially relevant components
+2. **Load details conditionally**: Only get full interface details for selected components
 
 **Browsing Characteristics**:
 - Over-inclusive is better than missing components
@@ -2027,14 +2120,14 @@ The discovery phase is fundamentally about **browsing** for potentially relevant
 2. **Node Composition**: Multiple nodes might be needed for new workflows
 3. **Flexibility**: The planner can make final decisions with full context
 
-### Implementation of Two-Phase Approach
+### Implementation of Smart Context Loading
 
 ```python
-class ComponentDiscoveryNode(Node):
-    """Browse available components using two-phase approach."""
+class ComponentBrowsingNode(Node):
+    """Browse available components using smart context loading."""
 
     def _browse_components(self, user_input: str, discovery_context: str) -> dict:
-        """Phase 1: Browse with lightweight context."""
+        """Browse with lightweight context."""
         prompt = f"""
         User wants to: {user_input}
 
@@ -2053,21 +2146,24 @@ class ComponentDiscoveryNode(Node):
         response = self.llm.prompt(prompt, schema=ComponentSelection)
         return response.json()
 
-    def _exact_workflow_match(self, browsed_workflows: list, user_input: str) -> bool:
-        """After browsing, check if any workflow exactly matches intent."""
-        if not browsed_workflows:
-            return False
+    def exec(self, shared):
+        # Step 1: Browse with lightweight context
+        discovery_context = build_discovery_context()
+        browsed = self._browse_components(shared["user_input"], discovery_context)
 
-        # Now with detailed context, can make precise match determination
-        for workflow in browsed_workflows:
-            if self._matches_intent(workflow, user_input):
-                return True
-        return False
+        # Step 2: Load details only for browsed components
+        planning_context = build_planning_context(
+            browsed["node_ids"],
+            browsed["workflow_names"]
+        )
+
+        shared["planning_context"] = planning_context
+        return "generate"
 ```
 
 This approach:
 - **Browsing first**: Cast a wide net to find all potentially relevant components
-- **Detailed analysis second**: With full context, determine exact matches
+- **Detailed loading second**: Get full interface details only for what's needed
 - **No ranked lists for users**: All selection happens internally
 - **Semantic understanding**: "analyze costs" finds "aws-cost-analyzer" through browsing
 
@@ -2185,12 +2281,14 @@ shared["found_workflow"] = {
     ],
     "edges": [{"from": "get-issue", "to": "fix"}]
 }
-# → Returns "found"
+# → Returns "found_existing"
 
-# 2. Parameter Extraction
+# 2. Parameter Extraction (Convergence Point)
 # → ParameterExtractionNode executes
-shared["extracted_params"] = {"issue": "123"}
-# → Returns "map_params"
+# → Extract: "123" from user input
+# → Verify: workflow needs issue_number, we have it ✓
+shared["extracted_params"] = {"issue_number": "123"}
+# → Returns "params_complete"
 
 # 3. Parameter Preparation
 # → ParameterPreparationNode executes
@@ -2209,7 +2307,7 @@ shared["planner_output"] = {
         "inputs": ["issue_number"],
         "outputs": ["pr_url"]
     },
-    "parameter_values": {"issue": "123"}
+    "parameter_values": {"issue_number": "123"}
 }
 # → Returns "complete"
 
@@ -2233,6 +2331,8 @@ execution_result = {
 
 1. **Understand the Meta-Workflow Nature**
    - The planner orchestrates discovery, generation, and parameter mapping
+   - Two distinct paths that converge at parameter extraction
+   - Parameter extraction is verification, not just extraction
    - Returns structured results for CLI to execute
 
 2. **Template Variables are Sacred**
@@ -2252,13 +2352,14 @@ execution_result = {
 With the directory structure resolved and patterns understood, the implementation should:
 1. Create the planner module at `src/pflow/planning/` with PocketFlow patterns
 2. Implement core nodes using the advanced patterns:
-   - WorkflowDiscoveryNode with LLM semantic matching and integration with the context builder
+   - WorkflowDiscoveryNode (finds complete workflows)
+   - ComponentBrowsingNode (finds building blocks when no complete match)
    - GeneratorNode with progressive enhancement
    - ValidatorNode using existing validate_ir()
-   - ParameterExtractionNode for NL → params
-   - ParameterMappingNode for params → template vars
+   - ParameterExtractionNode as convergence/verification point (NL → params)
+   - ParameterPreparationNode for runtime format (format values for runtime substitution in CLI)
    - ResultPreparationNode to format output for CLI
-3. Design flow with proper branching (found vs generate paths)
+3. Design flow with proper branching (found vs generate paths converging at parameter extraction)
 4. Add comprehensive testing for complete execution paths
 5. Integrate with CLI using the exact pattern shown above
 
