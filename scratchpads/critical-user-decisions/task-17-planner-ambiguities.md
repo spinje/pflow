@@ -13,7 +13,7 @@ Task 17 is the core feature that makes pflow unique - the Natural Language Plann
 2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
 3. Two-phase approach separates discovery (what to use) from planning (how to connect), preventing information overload.
 4. Hybrid validation approach: Use Pydantic models for type-safe IR generation with Simon Willison's LLM library, then validate with JSONSchema for comprehensive checking.
-5. Progressive validation with mock execution ensures generated workflows actually work before showing them to users, combining Pydantic type safety with semantic validation.
+5. Progressive validation with static data, mock execution and flow analysis ensures generated workflows actually work before showing them to users, combining Pydantic type safety with semantic validation.
 
 ## 1. Template Variable Resolution Mechanism - Decision importance (5) ⚠️ MOST CRITICAL
 
@@ -95,7 +95,7 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
    - Parameter Extraction: Extract "1234" from "fix github issue 1234"
    - Parameter Mapping: Prepare extracted values for template variable substitution
    - Result Preparation: Package workflow IR + parameter values for CLI
-   
+
    **The CLI then handles**:
    - Confirmation: Show user what will execute
    - Execution: Actually run the workflow with parameter substitution
