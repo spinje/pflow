@@ -48,6 +48,7 @@ graph TD
 4. **Verification gate**: Parameter extraction verifies the workflow can actually execute
 5. **Clean separation**: Planner plans, runtime resolves templates
 6. **Every MVP execution is meta**: Even reusing existing workflows goes through the full planner
+7. **Clear separation** - Planner prepares, CLI executes
 
 ### MVP vs Future Architecture
 
@@ -60,9 +61,9 @@ User Input: "fix github issue 1234"
     ├─> Parameter Extraction: {"issue_number": "1234"}
     ├─> Verification: Can workflow execute with these params?
     ├─> Workflow contains: {"params": {"issue": "$issue_number"}}
-    └─> Returns: (workflow_ir, metadata, parameter_values)
+    └─> Returns to CLI: (workflow_ir, metadata, parameter_values)
     ↓
-[CLI Execution]
+[CLI Takes Over - Separate from Planner]
     ├─> Shows approval: "Will run fix-issue with issue=1234"
     ├─> Saves workflow: ~/.pflow/workflows/fix-issue.json
     └─> Executes: Runs workflow with parameter substitution
@@ -330,7 +331,7 @@ class ResultPreparationNode(Node):
 
         return "complete"
 
-# The complete meta-workflow with proper paths
+# The complete planner meta-workflow (returns results to CLI)
 def create_planner_flow():
     flow = Flow("planner_meta_workflow")
 
@@ -1235,13 +1236,13 @@ def process_natural_language(raw_input: str, stdin_data: Any = None) -> None:
         "current_date": datetime.now().isoformat()
     }
 
-    # Run planner meta-workflow
+    # Run planner meta-workflow (returns workflow + params)
     planner.run(shared)
 
     # Extract results
     planner_output = shared.get("planner_output")
     if planner_output:
-        handle_planner_output(planner_output)
+        handle_planner_output(planner_output)  # CLI handles execution
 ```
 
 #### Planner Node Integration Examples
@@ -1303,7 +1304,7 @@ class ValidationNode(Node):
             return "invalid"
 ```
 
-#### Parameter Substitution in CLI
+#### Parameter Substitution by CLI (After Planner Returns)
 ```python
 # In CLI after receiving planner output
 def execute_with_parameters(workflow_ir: dict, parameter_values: dict) -> None:
@@ -2325,9 +2326,9 @@ shared["planner_output"] = {
 
 1. **Understand the Meta-Workflow Nature**
    - The planner orchestrates discovery, generation, and parameter mapping
+   - Returns structured results for CLI to execute
    - Two distinct paths that converge at parameter extraction
    - Parameter extraction is verification, not just extraction
-   - Returns structured results for CLI to execute
 
 2. **Template Variables are Sacred**
    - NEVER hardcode extracted values
