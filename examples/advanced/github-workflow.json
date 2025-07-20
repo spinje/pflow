@@ -1,0 +1,148 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "fetch_commits",
+      "type": "test",
+      "params": {
+        "command": "git log --since=$last_release_tag --format='%h %s'"
+      }
+    },
+    {
+      "id": "generate_changelog",
+      "type": "test-structured",
+      "params": {
+        "template": "changelog",
+        "sections": [
+          "features",
+          "fixes",
+          "breaking"
+        ]
+      }
+    },
+    {
+      "id": "read_version",
+      "type": "read-file",
+      "params": {
+        "file_path": "version.txt"
+      }
+    },
+    {
+      "id": "create_release_notes",
+      "type": "test",
+      "params": {
+        "format": "markdown"
+      }
+    },
+    {
+      "id": "save_changelog",
+      "type": "write-file",
+      "params": {
+        "file_path": "CHANGELOG.md"
+      }
+    },
+    {
+      "id": "create_tag",
+      "type": "test",
+      "params": {
+        "tag": "v$version"
+      }
+    },
+    {
+      "id": "publish_release",
+      "type": "test",
+      "params": {
+        "platform": "github",
+        "draft": false
+      }
+    },
+    {
+      "id": "notify_team",
+      "type": "test",
+      "params": {
+        "webhook": "$slack_webhook",
+        "message": "Release $version published"
+      }
+    },
+    {
+      "id": "rollback",
+      "type": "test",
+      "params": {
+        "action": "delete_tag"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "fetch_commits",
+      "to": "generate_changelog"
+    },
+    {
+      "from": "read_version",
+      "to": "create_release_notes"
+    },
+    {
+      "from": "generate_changelog",
+      "to": "create_release_notes"
+    },
+    {
+      "from": "create_release_notes",
+      "to": "save_changelog"
+    },
+    {
+      "from": "save_changelog",
+      "to": "create_tag"
+    },
+    {
+      "from": "create_tag",
+      "to": "publish_release"
+    },
+    {
+      "from": "publish_release",
+      "to": "notify_team"
+    },
+    {
+      "from": "create_tag",
+      "to": "rollback",
+      "action": "error"
+    },
+    {
+      "from": "publish_release",
+      "to": "rollback",
+      "action": "error"
+    }
+  ],
+  "mappings": {
+    "fetch_commits": {
+      "output_mappings": {
+        "test_output": "commits"
+      }
+    },
+    "generate_changelog": {
+      "input_mappings": {
+        "test_input": "commits"
+      },
+      "output_mappings": {
+        "test_output": "changelog"
+      }
+    },
+    "read_version": {
+      "output_mappings": {
+        "content": "version"
+      }
+    },
+    "create_release_notes": {
+      "input_mappings": {
+        "test_input": "version_and_changelog"
+      },
+      "output_mappings": {
+        "test_output": "release_notes"
+      }
+    },
+    "save_changelog": {
+      "input_mappings": {
+        "content": "release_notes"
+      }
+    }
+  }
+}

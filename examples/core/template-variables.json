@@ -10,6 +10,14 @@
       }
     },
     {
+      "id": "api_caller",
+      "type": "test",
+      "params": {
+        "endpoint": "$api_endpoint",
+        "auth_token": "$api_token"
+      }
+    },
+    {
       "id": "copier",
       "type": "copy-file",
       "params": {
@@ -24,16 +32,32 @@
         "file_path": "$output_dir/$output_file",
         "content": "Processed on: $timestamp\nOriginal file: $input_file\n\n$file_content"
       }
+    },
+    {
+      "id": "notifier",
+      "type": "test",
+      "params": {
+        "recipient": "$recipient_email",
+        "subject": "Process completed for $input_file"
+      }
     }
   ],
   "edges": [
     {
       "from": "reader",
+      "to": "api_caller"
+    },
+    {
+      "from": "api_caller",
       "to": "copier"
     },
     {
       "from": "copier",
       "to": "writer"
+    },
+    {
+      "from": "writer",
+      "to": "notifier"
     }
   ]
 }

@@ -35,6 +35,13 @@
         "file_path": "output/fallback.txt",
         "content": "Processing failed - using default content"
       }
+    },
+    {
+      "id": "retry_processor",
+      "type": "test-retry",
+      "params": {
+        "max_attempts": 3
+      }
     }
   ],
   "edges": [
@@ -64,6 +71,15 @@
     {
       "from": "log_error",
       "to": "create_fallback"
+    },
+    {
+      "from": "process_file",
+      "to": "retry_processor",
+      "action": "retry"
+    },
+    {
+      "from": "retry_processor",
+      "to": "process_file"
     }
   ]
 }
