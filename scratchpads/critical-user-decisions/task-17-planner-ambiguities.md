@@ -87,19 +87,22 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
 
 ### CRITICAL CLARIFICATION: The Meta-Workflow Architecture
 
-**The planner is a meta-workflow that both creates AND executes workflows.** This is a fundamental insight that affects the entire architecture:
+**The planner is a meta-workflow that creates workflows and prepares them for execution by the CLI.** This is a fundamental insight that affects the entire architecture:
 
 1. **The Planner Workflow Includes**:
    - Discovery: Find existing workflow or determine need to create
    - Generation: Create new workflow if needed (with template variables)
    - Parameter Extraction: Extract "1234" from "fix github issue 1234"
-   - Parameter Mapping: Map extracted values to template variables
+   - Parameter Mapping: Prepare extracted values for template variable substitution
+   - Result Preparation: Package workflow IR + parameter values for CLI
+   
+   **The CLI then handles**:
    - Confirmation: Show user what will execute
-   - Execution: Actually run the workflow with mappings
+   - Execution: Actually run the workflow with parameter substitution
 
-2. **MVP Architecture**: Every execution goes through the full planner
+2. **MVP Architecture**: Every natural language request goes through the planner
    ```
-   "fix github issue 1234" → Planner finds/creates → Extracts params → Maps → Executes
+   "fix github issue 1234" → Planner finds/creates → Extracts params → Returns to CLI → CLI executes
    ```
 
 3. **Future v2.0+**: Known workflows can be executed directly
@@ -107,7 +110,7 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
    pflow fix-issue --issue=1234  # Bypasses planner
    ```
 
-This means the planner doesn't just generate and hand off - it orchestrates the entire lifecycle including parameter mapping and execution.
+This means the planner doesn't just generate and hand off - it orchestrates discovery, generation, and parameter mapping, then returns structured results to the CLI for execution.
 
 ## 2. Data Flow Orchestration and Proxy Mapping Strategy - Decision importance (5)
 
