@@ -8,11 +8,11 @@ This document synthesizes key insights from research files to provide actionable
 
 The Natural Language Planner is fundamentally a **meta-workflow** - a PocketFlow workflow that:
 1. **Discovers or creates** workflows based on user intent
-2. **Extracts parameters** from natural language
-3. **Maps parameters** to template variables
-4. **Returns results** to the CLI for execution
+2. **Extracts parameters** from natural language (e.g., "1234" from "fix issue 1234")
+3. **Returns workflow with template variables** in params (e.g., `{"issue": "$issue_number"}`)
+4. **Returns parameter values** to the CLI for runtime substitution
 
-The planner orchestrates the planning phase, then hands off to the CLI for execution.
+The planner orchestrates the planning phase, then hands off to the CLI for execution. The runtime handles all template resolution transparently via proxy pattern.
 
 ### MVP vs Future Architecture
 
@@ -22,8 +22,8 @@ User Input: "fix github issue 1234"
     ↓
 [Planner Meta-Workflow]
     ├─> Discovery: Does "fix-issue" workflow exist?
-    ├─> Parameter Extraction: {"issue": "1234"}
-    ├─> Mapping: {"issue": "1234"} → $issue_number
+    ├─> Parameter Extraction: {"issue_number": "1234"}
+    ├─> Workflow contains: {"params": {"issue": "$issue_number"}}
     └─> Returns: (workflow_ir, metadata, parameter_values)
     ↓
 [CLI Execution]
@@ -40,8 +40,8 @@ pflow fix-issue --issue=1234  # Bypasses planner entirely
 ### Key Architectural Implications
 
 1. **The planner returns structured results** - IR + metadata + parameter values
-2. **Parameter mapping is integral** - Not a separate system or afterthought
-3. **Clean separation of concerns** - Planner plans, CLI executes
+2. **Template variables in params** - Simple `$variable` syntax in node params
+3. **Clean separation of concerns** - Planner plans, runtime resolves templates
 4. **Every MVP execution is meta** - Even reusing existing workflows goes through the full planner
 5. **Branching is essential** - Found vs create paths within the same workflow
 6. **Intent over parsing** - The goal is to understand user intent, not just parse words
@@ -222,16 +222,15 @@ class ParameterExtractionNode(Node):
         response = self.llm.prompt(prompt, schema=ParameterDict)
         return response.json()
 
-class ParameterMappingNode(Node):
-    """Maps extracted params to workflow template variables"""
+class ParameterPreparationNode(Node):
+    """Prepares parameters for runtime substitution"""
     def exec(self, shared):
         params = shared["extracted_params"]
-        workflow = shared.get("found_workflow") or shared.get("generated_workflow")
 
-        # Map: {"issue": "1234"} → {"$issue_number": "1234"}
-        mappings = self._create_mappings(params, workflow["template_inputs"])
-        shared["parameter_mappings"] = mappings
-        return "confirm"
+        # Simply pass through the extracted parameters
+        # Runtime proxy will handle template substitution transparently
+        shared["parameter_values"] = params
+        return "prepare_result"
 
 class GeneratorNode(Node):
     """Generates new workflow if none found"""
@@ -255,7 +254,7 @@ class ResultPreparationNode(Node):
                 "inputs": shared.get("workflow_inputs", []),
                 "outputs": shared.get("workflow_outputs", [])
             },
-            "parameter_values": shared["parameter_mappings"]
+            "parameter_values": shared["parameter_values"]
         }
 
         return "complete"
@@ -267,7 +266,7 @@ def create_planner_flow():
     # All nodes
     discovery = WorkflowDiscoveryNode()
     param_extract = ParameterExtractionNode()
-    param_map = ParameterMappingNode()
+    param_prep = ParameterPreparationNode()
     generator = GeneratorNode()
     validator = ValidatorNode()
     result_prep = ResultPreparationNode()
@@ -277,8 +276,8 @@ def create_planner_flow():
     flow.add_edge(discovery, "not_found", generator)
     flow.add_edge(generator, "success", validator)
     flow.add_edge(validator, "valid", param_extract)
-    flow.add_edge(param_extract, "map_params", param_map)
-    flow.add_edge(param_map, "prepare_result", result_prep)
+    flow.add_edge(param_extract, "prepare_params", param_prep)
+    flow.add_edge(param_prep, "prepare_result", result_prep)
 
     # Error handling
     flow.add_edge(validator, "invalid", generator)  # Retry
@@ -305,7 +304,14 @@ shared = {
 
     # Current state
     "llm_response": "{'nodes': [...], 'edges': [...]}",
-    "generated_workflow": {...},
+    "generated_workflow": {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {"id": "get", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
+            {"id": "fix", "type": "llm", "params": {"prompt": "Fix issue: $issue_data"}}
+        ],
+        "edges": [{"from": "get", "to": "fix"}]
+    },
 
     # Validation results
     "validation_result": "missing_params",
@@ -313,7 +319,7 @@ shared = {
 
     # Final output prepared for CLI
     "planner_output": {
-        "workflow_ir": {...},
+        "workflow_ir": {...},  # Contains nodes with $variables in params
         "workflow_metadata": {
             "suggested_name": "fix-issue",
             "description": "Fix a GitHub issue",
@@ -321,7 +327,7 @@ shared = {
             "outputs": ["pr_url"]
         },
         "parameter_values": {
-            "issue_number": "123"
+            "issue_number": "123"  # Extracted from natural language
         }
     }
 }
@@ -412,16 +418,19 @@ Upon receiving the planner output, the CLI:
 
 ### Parameter Substitution at Runtime
 
-The CLI performs template variable substitution:
+The runtime proxy transparently handles template variable substitution:
 ```python
-# Workflow contains: "prompt": "Fix issue: $issue_number"
-# Parameter values: {"issue_number": "1234"}
-# Runtime result: "prompt": "Fix issue: 1234"
+# Workflow contains: {"prompt": "Fix issue: $issue_data"}
+# At runtime:
+# 1. CLI parameters: {"issue_number": "1234"} → substituted first
+# 2. Shared store: {"issue_data": "...actual issue..."} → substituted during execution
+# Node sees: {"prompt": "Fix issue: ...actual issue..."}
 ```
 
 This enables the "Plan Once, Run Forever" philosophy:
-- First time: Generate workflow with templates
+- First time: Generate workflow with template variables in params
 - Future runs: `pflow fix-issue --issue=5678`
+- Runtime proxy handles all substitution transparently
 
 ## PocketFlow Execution Model Deep Dive
 
@@ -467,9 +476,9 @@ class ProgressiveGeneratorNode(Node):
         # Concise, targeted enhancements based on common errors
         self.enhancement_levels = [
             "",  # Level 0: Base prompt with all necessary info
-            "\nEnsure all template variables ($var) have complete mappings in variable_flow.",  # Level 1
-            "\nSimplify: use fewer nodes and provide explicit variable_flow for ALL $variables.",  # Level 2
-            "\nUse basic nodes only. Every $variable MUST have a source in variable_flow."  # Level 3
+            "\nEnsure all template variables ($var) are used correctly in params.",  # Level 1
+            "\nSimplify: use fewer nodes and ensure $variables match shared store keys.",  # Level 2
+            "\nUse basic nodes only. Template variables should match data flow naturally."  # Level 3
         ]
 
     def exec(self, shared):
@@ -511,9 +520,9 @@ class ProgressiveGeneratorNode(Node):
         """Format errors for prompt - they're already prompt-ready!"""
         # Validation produces prompt-ready errors, just join them
         # Example errors from validation:
-        # - "Missing variable mapping for $issue_title - add to variable_flow"
+        # - "Unknown template variable $issue_title - ensure it matches shared store key"
         # - "Unknown node 'github-fix-issue' - did you mean 'github-get-issue'?"
-        # - "Node 'llm' requires 'prompt' in template_inputs"
+        # - "Node 'llm' missing required param 'prompt'"
         return "; ".join(errors[:3])  # Limit to 3 to avoid prompt bloat
 ```
 
@@ -556,8 +565,8 @@ class ValidationNode(Node):
         """Identify the main issue to address first."""
         # Prioritize errors for clearer feedback
         for error in errors:
-            if "variable_flow" in error or "template variable" in error:
-                return "missing_variable_mappings"
+            if "template variable" in error:
+                return "template_variable_issue"
             elif "unknown node" in error.lower():
                 return "invalid_nodes"
             elif "ir_version" in error or "structure" in error:
@@ -584,27 +593,23 @@ class ValidationNode(Node):
                 else:
                     errors.append(f"Unknown node '{node_type}' - use 'claude-code' for complex operations")
 
-        # Check template variables have mappings
-        if "template_inputs" in workflow:
-            template_vars = self._extract_template_vars(workflow["template_inputs"])
-            variable_flow = workflow.get("variable_flow", {})
-
-            for var in template_vars:
-                if var not in variable_flow:
-                    # Provide specific guidance on how to fix
-                    example_source = self._suggest_variable_source(var, workflow)
-                    errors.append(
-                        f"Missing variable mapping for ${var} - "
-                        f"add '{var}': '{example_source}' to variable_flow"
-                    )
-
-        # Check if nodes that typically need inputs have them
+        # Check template variables in params
         for node in workflow.get("nodes", []):
+            # Check if node has template variables in params
+            for param_key, param_value in node.get("params", {}).items():
+                if isinstance(param_value, str) and '$' in param_value:
+                    # Extract template variables
+                    template_vars = re.findall(r'\$\{?(\w+)\}?', param_value)
+                    for var in template_vars:
+                        # Just note that it has templates - runtime will handle resolution
+                        # No need to validate mappings since they don't exist
+                        pass
+
+            # Check if nodes that typically need inputs have appropriate params
             if self._node_typically_needs_input(node.get("type")):
-                if node["id"] not in workflow.get("template_inputs", {}):
+                if "prompt" not in node.get("params", {}):
                     errors.append(
-                        f"Node '{node['id']}' ({node['type']}) needs template_inputs - "
-                        f"add a 'prompt' or relevant input"
+                        f"Node '{node['id']}' ({node['type']}) typically needs a 'prompt' parameter"
                     )
 
         return {
@@ -612,19 +617,6 @@ class ValidationNode(Node):
             "errors": errors
         }
 
-    def _suggest_variable_source(self, var_name, workflow):
-        """Suggest a likely source for a variable based on workflow structure."""
-        # Common patterns
-        if "issue" in var_name:
-            for node in workflow.get("nodes", []):
-                if "github-get-issue" in node.get("type", ""):
-                    return f"{node['id']}.outputs.issue_data"
-        elif "content" in var_name or "file" in var_name:
-            for node in workflow.get("nodes", []):
-                if "read-file" in node.get("type", ""):
-                    return f"{node['id']}.outputs.content"
-        # Default suggestion
-        return "previous_node.outputs.data"
 ```
 
 ### Attempt History Tracking Pattern
@@ -666,8 +658,8 @@ class AttemptHistoryMixin:
         for attempt in history[-2:]:  # Look at last 2 attempts only
             if "errors" in attempt:
                 for error in attempt["errors"]:
-                    if "Missing variable mapping" in error:
-                        issues.append("missing variable mappings")
+                    if "Missing template variable" in error or "Unknown template variable" in error:
+                        issues.append("missing template variables in params")
                     elif "Unknown node" in error:
                         # Extract node name if possible
                         match = re.search(r"Unknown node[: ]+(\w+)", error)
@@ -920,7 +912,7 @@ generator - "max_retries_exceeded" >> fallback_strategy
 
 ### How Structured Retry Works
 1. **First Attempt**: Generate with comprehensive context
-2. **Validation Failure**: Specific error identified (e.g., "missing variable mapping for $issue")
+2. **Validation Failure**: Specific error identified (e.g., "template variable $issue not found in params")
 3. **Targeted Retry**: Enhanced prompt with error-specific guidance
 4. **Bounded Attempts**: Max retries enforced by PocketFlow node configuration
 
@@ -1031,9 +1023,10 @@ def build_planning_context(selected_components: list[str], registry: Registry) -
     # 2. Template Variable Guidelines
     context_parts.extend([
         "## Template Variables",
-        "- Use $variable_name to reference dynamic values",
-        "- All variables must have sources in variable_flow",
-        "- Common patterns: $issue, $content, $transcript",
+        "- Use $variable_name in params to reference dynamic values",
+        "- CLI parameters: $issue_number, $date, $file_path",
+        "- Shared store references: $issue_data, $content, $transcript",
+        "- Runtime proxy resolves all template variables transparently",
         ""
     ])
 
@@ -1066,29 +1059,30 @@ WORKFLOW_GENERATION_PROMPT = """You are a workflow planner for pflow, a system t
 
 Your task is to generate a complete JSON workflow including:
 1. All required nodes in correct sequence
-2. Template variables ($var) for dynamic values
-3. Complete variable_flow mappings
-4. Natural, descriptive shared store keys
+2. Template variables ($var) in params for dynamic values
+3. Natural, descriptive shared store keys
+4. Optional proxy mappings for complex data routing
 
 {context}
 
 User Request: {user_input}
 
 Important Rules:
-- Generate COMPLETE variable_flow mappings - every $variable must have a source
+- Use $variables in params for dynamic values (e.g., "$issue_number", "$file_path")
+- Template variables enable workflow reuse with different parameters
 - Use simple, linear sequences (no complex branching for MVP)
 - Each node should have a single, clear purpose
-- Template variables enable reuse with different parameters
-- Do NOT infer or guess - specify everything explicitly
+- Runtime will handle template substitution
 
 Output only valid JSON matching this structure:
 {{
   "ir_version": "0.1.0",
-  "nodes": [...],
+  "nodes": [
+    {{"id": "n1", "type": "node-type", "params": {{"key": "$variable_or_value"}}}}
+  ],
   "edges": [...],
   "start_node": "...",
-  "template_inputs": {{...}},
-  "variable_flow": {{...}}
+  "mappings": {{...}}  // Optional proxy mappings if needed
 }}
 """
 
@@ -1100,23 +1094,23 @@ Original request: {user_input}
 Please generate a corrected workflow that addresses the specific error.
 Focus on: {error_hint}
 
-Remember to include complete variable_flow mappings for all template variables.
+Remember to use template variables ($var) in params for all dynamic values.
 
 Output only valid JSON.
 """
 
-TEMPLATE_VARIABLE_PROMPT = """Given this workflow, identify all template variables and their sources:
+TEMPLATE_VARIABLE_PROMPT = """Given this workflow, identify all template variables used in params:
 
 Workflow: {workflow}
 
-For each $variable in template_inputs, specify where its value comes from in variable_flow.
+Identify:
+1. CLI parameters (e.g., $issue_number, $date)
+2. Shared store references (e.g., $issue_data, $content)
 
 Output as JSON:
 {{
-  "variable_flow": {{
-    "var_name": "source.node.path",
-    ...
-  }}
+  "cli_params": ["issue_number", "date"],
+  "shared_refs": ["issue_data", "content"]
 }}
 """
 ```
@@ -1348,16 +1342,16 @@ def test_specific_flow_path():
                if node["type"] == "github-get-issue":
                    return f"{node['id']}.outputs.issue_data"
 
-   # ✅ CORRECT - LLM provides complete mappings
-   # The LLM generates the full variable_flow mapping
-   # System only validates, never infers
+   # ✅ CORRECT - Use simple template variables in params
+   # LLM puts $variables directly in node params
+   # Runtime proxy handles resolution transparently
    ```
 
 7. **Template Enhancement After Generation**: Don't modify LLM output
    ```python
    # ❌ WRONG - Second-guessing the LLM
    if len(prompt) < 50:  # "Too simple"
-       workflow["template_inputs"][node_id]["prompt"] = enhance_prompt(prompt)
+       workflow["nodes"][i]["params"]["prompt"] = enhance_prompt(prompt)
 
    # ✅ CORRECT - Trust LLM or retry with feedback
    # If output is insufficient, retry with specific guidance
@@ -1368,14 +1362,14 @@ def test_specific_flow_path():
    ```python
    # ❌ WRONG - Inference during validation
    def validate_templates(self, workflow):
-       if var not in variable_flow:
-           # Try to infer source...
-           inferred = self._infer_variable_source(var, workflow)
+       # Try to guess where variables come from
+       if "$issue" in prompt:
+           # Infer it must come from github-get-issue...
 
-   # ✅ CORRECT - Pure validation
+   # ✅ CORRECT - Simple validation only
    def validate_templates(self, workflow):
-       if var not in variable_flow:
-           raise ValidationError(f"Template variable ${var} has no mapping")
+       # Just check that $variables are used consistently
+       # Runtime proxy handles actual resolution
    ```
 
 10. **Unstructured Iterative Loops**: Don't use endless refinement loops
@@ -1475,7 +1469,7 @@ def test_specific_flow_path():
     return llm_planner.generate_workflow(user_input)
     ```
 
-16. **Missing Critical Fields**: Workflows need more than nodes/edges
+16. **Missing Critical Fields**: Workflows need required fields
     ```python
     # ❌ WRONG - Incomplete workflow structure
     workflow = {
@@ -1483,17 +1477,56 @@ def test_specific_flow_path():
         "edges": [...]
     }
 
-    # ✅ CORRECT - Complete JSON IR structure
+    # ✅ CORRECT - Complete JSON IR structure per schema
     workflow = {
         "ir_version": "0.1.0",
-        "nodes": [...],
+        "nodes": [...],  # Contains $variables in params
         "edges": [...],
-        "template_inputs": {...},  # Template variables
-        "variable_flow": {...}     # Variable mappings
+        "start_node": "n1",  # Optional
+        "mappings": {...}     # Optional proxy mappings
     }
     ```
 
-17. **Using PocketFlow Everywhere Internally**: Don't over-apply the meta concept
+17. **Using Non-Existent Fields**: NEVER use template_inputs or variable_flow - They DO NOT EXIST!
+    ```python
+    # ❌ WRONG - These fields DO NOT EXIST in the IR schema!
+    # This is a critical anti-pattern - these were NEVER implemented
+    workflow = {
+        "template_inputs": {  # DOES NOT EXIST - will cause validation errors
+            "llm": {"prompt": "Fix: $issue"}
+        },
+        "variable_flow": {    # DOES NOT EXIST - will cause validation errors
+            "issue": "github-get-issue.outputs.issue_data"
+        }
+    }
+
+    # ✅ CORRECT - Use template variables directly in params
+    workflow = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {"id": "llm", "type": "llm",
+             "params": {"prompt": "Fix: $issue_data"}}  # Templates go in params!
+        ],
+        "edges": []
+    }
+    # Runtime proxy automatically resolves $issue_data from shared["issue_data"]
+    ```
+
+18. **Complex Variable Mappings**: Don't create elaborate mapping structures
+    ```python
+    # ❌ WRONG - Over-engineering variable resolution
+    # Don't create mapping structures to specify where variables come from
+    # Don't try to map template variables to sources
+    # The runtime proxy handles ALL of this transparently
+
+    # ✅ CORRECT - Simple naming convention
+    # Just use $variables in params:
+    # - $issue_number → runtime proxy finds it in CLI params
+    # - $issue_data → runtime proxy finds it in shared["issue_data"]
+    # No mappings needed - just consistent naming!
+    ```
+
+19. **Using PocketFlow Everywhere Internally**: Don't over-apply the meta concept
     ```python
     # ❌ WRONG - Using PocketFlow for simple components
     # "IR compiler uses PocketFlow"
@@ -1543,36 +1576,42 @@ This separation ensures workflows remain reusable while handling natural languag
 ## Template-Driven Workflow Architecture
 
 ### Core Insight: Templates Enable Reusability
-The fundamental innovation that enables "Plan Once, Run Forever" is that workflows are **templates with variable substitution**, not static execution plans. This is why the same workflow can be reused with different parameters.
+The fundamental innovation that enables "Plan Once, Run Forever" is that workflows use **template variables in params**, allowing the same workflow to be reused with different parameters.
 
 ```python
-# Workflows are templates that get instantiated with different values
-workflow_template = {
-    "nodes": [...],  # Static structure
-    "template_inputs": {  # Dynamic content with $variables
-        "claude-code": {
-            "prompt": "Fix this issue:\n$issue\n\nGuidelines:\n$coding_standards",
-            "dependencies": ["issue", "coding_standards"]
-        }
-    },
-    "variable_flow": {  # LLM generates complete mappings
-        "issue": "github-get-issue.outputs.issue_data",
-        "coding_standards": "read-file.outputs.content"
-    }
+# Workflows use $variables directly in node params
+workflow = {
+    "ir_version": "0.1.0",
+    "nodes": [
+        # Static structure with dynamic values
+        {"id": "get", "type": "github-get-issue",
+         "params": {"issue": "$issue_number"}},  # CLI parameter
+
+        {"id": "fix", "type": "claude-code",
+         "params": {"prompt": "Fix issue: $issue_data\nStandards: $coding_standards"}},
+         # $issue_data from shared store, $coding_standards from file read
+
+        {"id": "commit", "type": "git-commit",
+         "params": {"message": "$commit_message"}}  # From previous node
+    ],
+    "edges": [
+        {"from": "get", "to": "fix"},
+        {"from": "fix", "to": "commit"}
+    ]
 }
 ```
 
-### Critical Design Decision: LLM Generates Complete Mappings
-The LLM is responsible for generating **complete variable mappings**. There is NO inference or hardcoded patterns - the LLM explicitly specifies:
-1. Template variables in prompts/parameters
-2. Complete `variable_flow` mappings showing where each variable comes from
-3. All data dependencies between nodes
+### Simple Design: Runtime Proxy Resolution
+The system uses a **runtime proxy pattern** for template resolution:
+1. **CLI parameters**: `$issue_number` → resolved from `--issue_number=1234`
+2. **Shared store values**: `$issue_data` → resolved from `shared["issue_data"]`
+3. **Transparent to nodes**: Nodes receive already-resolved values
 
 This approach ensures:
-- No brittle hardcoded logic
-- Full flexibility for any workflow pattern
-- Clear data flow that can be validated
-- True generalization across different domains
+- No complex mapping structures needed
+- Simple naming convention ($var → shared["var"])
+- Clear separation of concerns
+- Easy to understand and debug
 
 ## Structured Output Generation with Pydantic
 
@@ -1673,7 +1712,7 @@ class WorkflowGeneratorNode(Node):
 
         # Progressive guidance based on attempt
         if attempt >= 2:
-            base_prompt += "\n\nIMPORTANT: Use only basic, well-known nodes. Include complete variable_flow mappings."
+            base_prompt += "\n\nIMPORTANT: Use only basic, well-known nodes. Include template variables ($var) directly in node params."
 
         return base_prompt
 
@@ -1697,10 +1736,10 @@ Available nodes:
 {shared['node_context']}
 
 CRITICAL Requirements:
-1. Use template variables ($variable) for ALL user-provided values
-2. Generate complete variable_flow mappings for every $variable
-3. NEVER hardcode values like "1234" - use $issue_number instead
-4. Include template_inputs when nodes need dynamic prompts
+1. Use template variables ($variable) in params for ALL dynamic values
+2. NEVER hardcode values like "1234" - use $issue_number instead
+3. Template variables from user input start with $ (e.g., $issue_number)
+4. Template variables from shared store also start with $ (e.g., $issue_data)
 
 Example of CORRECT usage:
 - User says "fix issue 1234"
@@ -1708,41 +1747,38 @@ Example of CORRECT usage:
 - NOT: {{"params": {{"issue": "1234"}}}}
 
 Template variables enable workflow reuse with different parameters.
-Generate complete JSON matching the FlowIR schema."""
+The runtime will handle substitution transparently.
+Generate complete JSON matching the IR schema with nodes, edges, and params."""
 ```
 
 ### Template Variable Resolution Order
-While the LLM generates the mappings, the system must validate and determine the correct resolution order:
+The runtime proxy will handle template resolution transparently, but the planner should validate that all template variables can be resolved:
 
 ```python
-def calculate_resolution_order(workflow: dict) -> list[str]:
-    """Calculate the order in which template variables can be resolved.
+def validate_template_variables(workflow: dict, parameter_values: dict) -> None:
+    """Validate that all template variables in the workflow can be resolved.
 
-    This is pure validation - the LLM has already specified all mappings.
-    We just need to ensure they can be resolved in a valid order.
+    This ensures that:
+    1. CLI parameters have values provided
+    2. Shared store references will be available when needed
     """
-    # Extract dependencies from LLM-generated template_inputs
-    dependencies = {}
-    for node_id, templates in workflow.get("template_inputs", {}).items():
-        deps = set()
-        for template in templates.values():
-            # Extract $variables from template strings
-            variables = re.findall(r'\$\{?(\w+)\}?', str(template))
-            deps.update(variables)
-        dependencies[node_id] = deps
+    # Extract all template variables from node params
+    template_vars = set()
+    for node in workflow.get("nodes", []):
+        for param_value in node.get("params", {}).values():
+            if isinstance(param_value, str):
+                # Extract $variables from strings
+                variables = re.findall(r'\$\{?(\w+)\}?', param_value)
+                template_vars.update(variables)
 
-    # Topological sort to find valid execution order
-    # This validates that the LLM's mappings are resolvable
-    resolved = []
-    available_vars = {"stdin"} if workflow.get("expects_stdin") else set()
+    # Check CLI parameters are provided
+    cli_params = {k for k in template_vars if k in parameter_values}
+    missing_cli = cli_params - set(parameter_values.keys())
+    if missing_cli:
+        raise ValidationError(f"Missing CLI parameters: {missing_cli}")
 
-    # ... topological sort algorithm ...
-
-    # If we can't resolve all dependencies, the LLM's mappings are invalid
-    if unresolved_nodes:
-        raise ValidationError(f"Cannot resolve template variables for: {unresolved_nodes}")
-
-    return resolved
+    # Remaining vars should be resolvable from shared store
+    # Runtime proxy will handle the actual resolution
 ```
 
 ### Example: LLM-Generated Complete Workflow
@@ -1750,36 +1786,41 @@ When user says "fix github issue 123", the LLM generates:
 
 ```json
 {
+  "ir_version": "0.1.0",
   "nodes": [
     {"id": "get-issue", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
-    {"id": "analyze", "type": "claude-code", "params": {}},
-    {"id": "commit", "type": "git-commit", "params": {}},
-    {"id": "push", "type": "git-push", "params": {}},
-    {"id": "create-pr", "type": "github-create-pr", "params": {}}
-  ],
-  "template_inputs": {
-    "analyze": {
+    {"id": "analyze", "type": "claude-code", "params": {
       "prompt": "<instructions>Fix the issue described below</instructions>\n\n$issue_data"
-    },
-    "commit": {
-      "message": "$commit_message"
-    },
-    "create-pr": {
+    }},
+    {"id": "commit", "type": "git-commit", "params": {"message": "$commit_message"}},
+    {"id": "push", "type": "git-push", "params": {}},
+    {"id": "create-pr", "type": "github-create-pr", "params": {
       "title": "Fix: $issue_title",
       "body": "$code_report"
-    }
-  },
-  "variable_flow": {
-    "issue_number": "123",  // Initial parameter
-    "issue_data": "get-issue.outputs.issue_data",
-    "issue_title": "get-issue.outputs.title",
-    "commit_message": "analyze.outputs.suggested_commit_message",
-    "code_report": "analyze.outputs.report"
+    }}
+  ],
+  "edges": [
+    {"from": "get-issue", "to": "analyze"},
+    {"from": "analyze", "to": "commit"},
+    {"from": "commit", "to": "push"},
+    {"from": "push", "to": "create-pr"}
+  ]
+}
+```
+
+The planner returns this IR along with parameter values:
+```json
+{
+  "workflow_ir": {...above...},
+  "parameter_values": {
+    "issue_number": "123"  // Extracted from user input
   }
 }
 ```
 
-The LLM has specified EVERYTHING - no inference needed.
+Template variables in params will be resolved by runtime proxy:
+- `$issue_number` → "123" (from CLI parameters)
+- `$issue_data`, `$commit_message`, etc. → from shared store during execution
 
 ## Risk Mitigation Strategies
 
@@ -1807,12 +1848,12 @@ The LLM has specified EVERYTHING - no inference needed.
 - Progressive enhancement to guide LLM
 
 ### Template Variable Validation
-**Risk**: LLM generates invalid variable mappings
+**Risk**: LLM uses incorrect template variables
 **Mitigation**:
-- Validate all template variables have sources
-- Check resolution order is achievable
-- Provide clear error messages for missing mappings
-- Include examples in prompts showing complete mappings
+- Validate template variables match expected patterns
+- Ensure CLI parameters are properly named
+- Check that shared store keys will exist when needed
+- Include examples in prompts showing correct $variable usage
 
 ## Key Implementation Principles
 
@@ -1857,48 +1898,54 @@ This is intentional dogfooding at the most appropriate level - using the framewo
 ## Testing Workflow Generation
 
 ### Core Testing Strategy
-Testing the workflow generation focuses on validating that the LLM produces complete, valid workflows with proper template variables and mappings.
+Testing the workflow generation focuses on validating that the LLM produces complete, valid workflows with proper template variables in params.
 
 ```python
 def test_workflow_generation_completeness():
-    """Test that LLM generates complete workflows with all mappings."""
+    """Test that LLM generates complete workflows with template variables in params."""
     # Mock LLM to return a known good workflow
     mock_llm = MockLLM(returns={
-        "nodes": [...],
-        "template_inputs": {...},
-        "variable_flow": {...}  # Must be complete!
+        "ir_version": "0.1.0",
+        "nodes": [
+            {"id": "get", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
+            {"id": "fix", "type": "claude-code", "params": {"prompt": "Fix: $issue_data"}}
+        ],
+        "edges": [{"from": "get", "to": "fix"}]
     })
 
     planner = create_planner_flow()
     result = planner.run({"user_input": "fix github issue 123"})
 
-    # Verify completeness
-    assert "template_inputs" in result["final_workflow"]
-    assert "variable_flow" in result["final_workflow"]
+    # Verify workflow structure
+    assert "nodes" in result["workflow_ir"]
+    assert "edges" in result["workflow_ir"]
+    assert "parameter_values" in result
 
-    # Verify ALL template variables have mappings
-    template_vars = extract_template_variables(result["final_workflow"]["template_inputs"])
-    variable_mappings = result["final_workflow"]["variable_flow"].keys()
+    # Verify extracted parameters
+    assert result["parameter_values"]["issue_number"] == "123"
 
-    unmapped = template_vars - set(variable_mappings)
-    assert not unmapped, f"Template variables without mappings: {unmapped}"
+    # Verify template variables in params
+    nodes = result["workflow_ir"]["nodes"]
+    assert any("$" in str(node.get("params", {})) for node in nodes)
 ```
 
 ### Template Variable Validation Testing
 ```python
-def test_template_validation_catches_missing_mappings():
-    """Test that validation catches incomplete variable mappings."""
+def test_template_validation_in_params():
+    """Test that validation ensures template variables are properly used."""
     workflow = {
-        "template_inputs": {
-            "llm": {"prompt": "Analyze $content and $metadata"}
-        },
-        "variable_flow": {
-            "content": "read-file.outputs.content"
-            # Missing metadata mapping!
-        }
+        "ir_version": "0.1.0",
+        "nodes": [
+            {"id": "llm", "type": "llm",
+             "params": {"prompt": "Analyze $content and $metadata"}}
+        ]
+    }
+    parameter_values = {
+        "content": "file content"
+        # Missing metadata parameter!
     }
 
-    validator = TemplateValidator()
+    validator = validate_template_variables
     with pytest.raises(ValidationError, match="metadata"):
         validator.validate_templates(workflow)
 ```
@@ -1929,9 +1976,15 @@ def test_natural_language_interpretation():
         for expected in case["expected_nodes"]:
             assert expected in node_types
 
-        # Verify template variables exist and have mappings
+        # Verify template variables exist in params
+        all_params = []
+        for node in workflow["nodes"]:
+            if "params" in node:
+                all_params.extend(str(v) for v in node["params"].values())
+
         for var in case["expected_template_vars"]:
-            assert var in workflow["variable_flow"], f"Missing mapping for {var}"
+            var_found = any(f"${var}" in param for param in all_params)
+            assert var_found, f"Missing template variable ${var} in node params"
 ```
 
 ### Resolution Order Testing
@@ -1939,19 +1992,16 @@ def test_natural_language_interpretation():
 def test_resolution_order_calculation():
     """Test that resolution order correctly handles dependencies."""
     workflow = {
+        "ir_version": "0.1.0",
         "nodes": [
-            {"id": "n1", "type": "github-get-issue"},
-            {"id": "n2", "type": "claude-code"},
-            {"id": "n3", "type": "llm"}
+            {"id": "n1", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
+            {"id": "n2", "type": "claude-code", "params": {"prompt": "Fix issue: $issue_data"}},
+            {"id": "n3", "type": "llm", "params": {"prompt": "Summarize: $code_report"}}
         ],
-        "template_inputs": {
-            "n2": {"prompt": "$issue"},  # Depends on n1
-            "n3": {"prompt": "Summarize: $code_report"}  # Depends on n2
-        },
-        "variable_flow": {
-            "issue": "n1.outputs.issue_data",
-            "code_report": "n2.outputs.report"
-        }
+        "edges": [
+            {"from": "n1", "to": "n2"},
+            {"from": "n2", "to": "n3"}
+        ]
     }
 
     order = calculate_resolution_order(workflow)
@@ -2127,11 +2177,12 @@ shared = {
 shared["available_workflows"] = ["fix-issue", "analyze-logs", ...]
 # → LLM matches "fix github issue" to "fix-issue" workflow
 shared["found_workflow"] = {
-    "name": "fix-issue",
-    "template_inputs": {
-        "github-get-issue": {"issue_number": "$issue"},
-        "claude-code": {"prompt": "Fix this issue: $issue_data"}
-    }
+    "ir_version": "0.1.0",
+    "nodes": [
+        {"id": "get-issue", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
+        {"id": "fix", "type": "claude-code", "params": {"prompt": "Fix this issue: $issue_data"}}
+    ],
+    "edges": [{"from": "get-issue", "to": "fix"}]
 }
 # → Returns "found"
 
@@ -2140,13 +2191,12 @@ shared["found_workflow"] = {
 shared["extracted_params"] = {"issue": "123"}
 # → Returns "map_params"
 
-# 3. Parameter Mapping
-# → ParameterMappingNode executes
-shared["parameter_mappings"] = {
-    "$issue": "123",
-    "$issue_data": "github-get-issue.outputs.issue_data"
+# 3. Parameter Preparation
+# → ParameterPreparationNode executes
+shared["parameter_values"] = {
+    "issue_number": "123"  # Only CLI parameters, no complex mappings
 }
-# → Returns "confirm"
+# → Returns "prepare_result"
 
 # 4. Result Preparation
 # → ResultPreparationNode prepares output for CLI
