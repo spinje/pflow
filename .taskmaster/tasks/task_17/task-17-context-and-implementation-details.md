@@ -2041,7 +2041,8 @@ class ComponentDiscoveryNode(Node):
         Available components:
         {discovery_context}
 
-        Browse and select ALL components that might be relevant.
+        Select ALL workflows and nodes that would help achieve this goal.
+        Focus on: Would executing these components satisfy what the user wants?
         Be over-inclusive - it's better to include too many than miss important ones.
 
         Return lists of:

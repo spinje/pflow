@@ -277,4 +277,47 @@ A chronological record of significant architectural and design decisions made du
 
 ---
 
+## Decision: Template Variable Resolution Using Proxy Pattern
+- **Date**: 2025-07-19
+- **Made during**: Task 17 (Natural Language Planner)
+- **Status**: Accepted
+- **Context**: The planner generates workflows with template variables ($variable syntax) for reusability, but these need resolution at runtime. The IR schema supports template variables in node params, but there's no built-in mechanism for substitution. We needed a way to resolve templates without modifying PocketFlow or breaking node atomicity.
+- **Alternatives considered**:
+  1. **Extend PocketFlow** - Add template resolution to the framework
+     - Pros: Clean integration, works for all flows automatically
+     - Cons: Violates PocketFlow's minimalist philosophy, adds complexity to generic framework
+  2. **Node-level resolution** - Each node handles its own templates
+     - Pros: Nodes control their own behavior
+     - Cons: Breaks atomicity, every node needs template logic, violates single responsibility
+  3. **Compile-time only** - Only substitute CLI parameters before creating Flow
+     - Pros: Simple implementation, no runtime complexity
+     - Cons: Can't reference shared store values, limits template usefulness
+  4. **Runtime proxy wrapper** - Wrap nodes with template-resolving proxy
+     - Pros: Preserves atomicity, uses proven pattern, composable with existing proxies
+     - Cons: Adds runtime layer, slight performance overhead
+- **Decision**: Runtime proxy wrapper pattern - similar to existing NodeAwareSharedStore
+- **Rationale**:
+  - Follows established proxy pattern already used for shared store mapping
+  - Nodes remain completely unaware of templates (preserves atomicity)
+  - No modifications to PocketFlow framework needed
+  - Composable with existing NodeAwareSharedStore proxy
+  - Clean separation between orchestration (PocketFlow) and application logic (pflow)
+  - Allows both CLI parameter and shared store variable resolution
+- **Consequences**:
+  - Must implement TemplateResolvingNodeProxy in pflow runtime
+  - Template resolution happens transparently just before node execution
+  - Two-phase resolution: CLI params at compile time, shared store vars at runtime
+  - Nodes see resolved values in params, original templates preserved for reuse
+  - Performance overhead minimal (string substitution per node execution)
+  - Can be implemented incrementally without breaking existing functionality
+- **Implementation Details**:
+  - TemplateResolvingNodeProxy wraps nodes that have template params
+  - Proxy intercepts _run() to resolve templates from shared store
+  - Original params restored after execution (keeps nodes reusable)
+  - Works alongside NodeAwareSharedStore for complete proxy solution
+  - Simple $variable → shared["variable"] mapping for MVP
+- **Review date**: After template system implementation and initial usage
+
+---
+
 <!-- New decisions are appended below this line -->
