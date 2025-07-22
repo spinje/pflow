@@ -1844,95 +1844,91 @@ The planner doesn't need to worry about this - nodes handle it internally.
 
 This pattern is documented as a core architectural decision in `.taskmaster/knowledge/patterns.md` under "Shared Store Inputs as Automatic Parameter Fallbacks" and is implemented universally across all pflow nodes.
 
-## Template Variable Limitations and Type Preservation
+## Critical Constraints for Workflow Generation
 
-### The String Substitution Problem
+### 1. Template Variables ONLY in Params
 
-Template variables work through string substitution, which means all values become strings:
-
-```python
-# In the template resolver:
-result = result.replace(f"${var_name}", str(values[var_name]))  # Note str()!
-```
-
-This has important implications:
+Template variables can **only** be used in the `params` field of nodes in the JSON IR:
 
 ```json
-// Given these shared store values:
-// shared["max_retries"] = 3 (integer)
-// shared["temperature"] = 0.7 (float)
-// shared["debug"] = true (boolean)
-// shared["tags"] = ["bug", "urgent"] (array)
+// ✅ CORRECT - Template in params
+{"id": "analyze", "type": "llm", "params": {"prompt": "Fix: $issue_data"}}
 
-// Using template variables in params:
-{
-  "params": {
-    "max_retries": "$max_retries",    // Becomes "3" (string!)
-    "temperature": "$temperature",     // Becomes "0.7" (string!)
-    "debug": "$debug",                 // Becomes "true" (string!)
-    "tags": "$tags"                    // Becomes "['bug', 'urgent']" (string repr!)
-  }
-}
+// ❌ IMPOSSIBLE - No "reads" or "writes" fields exist in IR
+{"id": "analyze", "type": "llm", "reads": ["$issue_data"]}  // This field doesn't exist!
 ```
 
-### When to Use Proxy Mappings for Type Preservation
+The JSON IR structure is:
+- `id`: Node identifier
+- `type`: Node type from registry
+- `params`: Parameters (ONLY place for templates)
+- No explicit reads/writes fields
 
-If a node requires non-string parameter types, use proxy mappings instead of template variables:
+### 2. Order of Operations is Critical
+
+The runtime applies transformations in this strict order:
+1. **Proxy mappings first** - Renames shared store keys
+2. **Template resolution second** - References the renamed keys
 
 ```json
-// Use proxy mapping to preserve types:
+// Example showing why order matters:
 {
+  "nodes": [
+    {"id": "api1", "type": "api-call"},  // Writes to shared["response"]
+    {"id": "api2", "type": "api-call"},  // Also writes to shared["response"]
+    {"id": "analyze", "type": "llm", "params": {"prompt": "Compare: $api1_response vs $api2_response"}}
+  ],
   "mappings": {
-    "my-node": {
-      "input_mappings": {
-        "max_retries": "retry_count",  // Preserves integer
-        "temperature": "model_temp",   // Preserves float
-        "debug": "debug_mode",         // Preserves boolean
-        "tags": "issue_tags"           // Preserves array
-      }
-    }
+    "api1": {"output_mappings": {"response": "api1_response"}},
+    "api2": {"output_mappings": {"response": "api2_response"}}
   }
 }
+
+// Without proper ordering, $api1_response wouldn't exist!
 ```
 
-### MVP Guidance
+### 3. Type Limitations of Template Variables
 
-For MVP, the planner should:
-1. Use template variables for string parameters
-2. Use proxy mappings when type preservation is critical
-3. Document in generated workflows when type conversion might occur
+Template variables convert ALL values to strings:
 
-## Order of Operations: Proxy Mappings Before Template Resolution
-
-### Critical Execution Order
-
-The runtime MUST apply transformations in this order:
-1. **Proxy mappings** - Rename shared store keys to avoid collisions
-2. **Template resolution** - Reference the renamed keys
-
-### Why Order Matters
-
-Consider this collision scenario:
 ```json
-// Two nodes write to the same key:
-{"id": "api1", "type": "api-call"},  // Writes to shared["response"]
-{"id": "api2", "type": "api-call"},  // Also writes to shared["response"]
+// shared["retries"] = 3 (integer)
+// shared["enabled"] = true (boolean)
 
-// Without proper ordering:
-// - Template "$response" is ambiguous - which response?
-// - Runtime can't resolve correctly
+// Using templates:
+{"params": {"retries": "$retries"}}     // Becomes "3" (string!)
+{"params": {"enabled": "$enabled"}}     // Becomes "true" (string!)
 
-// With proper ordering:
-// 1. Proxy mappings rename outputs:
-//    api1 writes to shared["api1_response"]
-//    api2 writes to shared["api2_response"]
-// 2. Templates can now reference unambiguously:
-//    "$api1_response" and "$api2_response"
+// For type preservation, use proxy mappings:
+{"mappings": {"node1": {"input_mappings": {"retries": "retry_count"}}}}  // Preserves integer
 ```
 
-### Implementation Note
+### 4. When to Use Each Approach
 
-This ordering is handled by the runtime, not the planner. The planner just needs to generate valid mappings when collisions exist.
+**Use Template Variables When:**
+- Parameter expects string type
+- Combining multiple values: `"Fix $issue_title in $repo"`
+- Simple value substitution
+- Referencing CLI parameters: `$issue_number`
+
+**Use Proxy Mappings When:**
+- **Output collision avoidance** (primary use case)
+  - The planner must track which nodes write to which keys
+  - If multiple nodes write to the same key, proxy mappings are required
+- Type preservation is critical (integers, booleans, arrays)
+- Complex nested data extraction (future: `issue_data.user.login`)
+
+**Use Fallback Pattern When:**
+- Static values: `{"params": {"file_path": "config.json"}}`
+- Overriding shared store with fixed values
+
+### Summary for the Planner
+
+1. Put ALL template variables in node `params` only
+2. Generate proxy mappings for output collisions
+3. Remember templates produce strings - use proxy mappings for other types
+4. Let the runtime handle the execution order
+
 
 ## MVP Approach to Collision Handling
 
