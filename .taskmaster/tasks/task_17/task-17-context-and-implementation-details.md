@@ -641,26 +641,34 @@ This enables the "Plan Once, Run Forever" philosophy:
 
 ## PocketFlow Execution Model Deep Dive
 
-### Important Pattern: prep() Returning Shared
-In many PocketFlow examples throughout this document, you'll see a common pattern where `prep()` returns the entire shared dictionary:
+### Understanding prep() Purpose and Patterns
+The `prep()` method in PocketFlow serves a specific purpose: to extract and prepare specific data from the shared store for `exec()`. This separation of concerns keeps `exec()` focused and testable.
 
 ```python
 def prep(self, shared):
-    # Common pattern: return shared dict to make it available in exec()
-    return shared
+    # Extract specific data needed by exec()
+    return shared["user_input"], shared["context"]
 
 def exec(self, prep_res):
-    shared = prep_res  # prep_res is the shared dict
-    # Now you can modify shared...
+    user_input, context = prep_res
+    # exec() receives clean, focused inputs
 ```
 
-This pattern is used when nodes need to:
-- Modify the shared store during execution
-- Track state across retries
-- Access multiple values from shared
-- Have comprehensive error handling in exec_fallback()
+**When to return the entire shared dict:**
+The only common exception is when using `exec_fallback()` for error handling, since `exec_fallback()` only receives `prep_res` and the exception, not the shared dict:
 
-While `prep()` can return any data structure, returning `shared` is a common idiom that provides maximum flexibility.
+```python
+def prep(self, shared):
+    # Return shared when exec_fallback needs access to it
+    return shared
+
+def exec_fallback(self, prep_res, exc):
+    shared = prep_res  # Access shared through prep_res
+    shared["error"] = str(exc)
+    return "error"
+```
+
+For most nodes, `prep()` should extract specific data to maintain clean separation of concerns.
 
 ### Core Execution Loop Understanding
 PocketFlow's elegance comes from its simple execution model:
@@ -980,23 +988,33 @@ class AttemptHistoryMixin:
 # Usage in generator node
 class WorkflowGeneratorNode(Node, AttemptHistoryMixin):
     def prep(self, shared):
-        # Return shared so we can track attempts
-        return shared
+        # Extract specific data needed for generation
+        return {
+            "user_input": shared["user_input"],
+            "planning_context": shared["planning_context"],
+            "generation_attempts": shared.get("generation_attempts", 0)
+        }
 
     def exec(self, prep_res):
-        # prep_res is the shared dict
-        shared = prep_res
+        # Generate workflow...
+        response = self.model.prompt(
+            self._build_prompt(prep_res["user_input"], prep_res["planning_context"]),
+            schema=WorkflowIR
+        )
 
+        return {
+            "response": response,
+            "attempt": prep_res["generation_attempts"]
+        }
+
+    def post(self, shared, prep_res, exec_res):
         # Track generation attempt
         self.track_attempt(shared, "generation", "started")
 
-        # Generate workflow...
-        response = self.model.prompt(...)
-
-        # Track outcome
-        if response:
+        if exec_res["response"]:
             self.track_attempt(shared, "generation", "success",
                              {"model": "claude-sonnet-4-20250514"})
+            shared["generated_workflow"] = exec_res["response"]
         else:
             self.track_attempt(shared, "generation", "failed",
                              {"error": "No response from LLM"})
