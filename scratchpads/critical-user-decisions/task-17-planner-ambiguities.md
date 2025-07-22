@@ -13,7 +13,8 @@ Task 17 is the core feature that makes pflow unique - the Natural Language Plann
 2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
 3. Two-phase approach separates discovery (what to use) from planning (how to connect), preventing information overload.
 4. Hybrid validation approach: Use Pydantic models for type-safe IR generation with Simon Willison's LLM library, then validate with JSONSchema for comprehensive checking.
-5. **Template variables with path support** (`$data.field.subfield`) eliminate the need for complex proxy mappings in 90% of use cases, dramatically simplifying the MVP implementation.
+5. **Template paths** (`$data.field.subfield`) solve 90% of data access needs - see Section 2
+6. No proxy mappings needed for MVP - dramatically simpler implementation
 
 ## 1. Template Variable Resolution Mechanism - Decision importance (5) ⚠️ MOST CRITICAL
 
@@ -86,23 +87,7 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
 3. Store the workflow with template variables intact
 4. The value "1234" is only used during the first execution, not baked into the workflow
 
-**Path Support Example**:
-Instead of complex proxy mappings:
-```json
-{
-  "mappings": {
-    "analyzer": {"input_mappings": {"author": "issue_data.user.login"}}
-  },
-  "nodes": [{"id": "analyzer", "params": {"prompt": "Issue by $author"}}]
-}
-```
-
-Simply use paths in template variables:
-```json
-{
-  "nodes": [{"id": "analyzer", "params": {"prompt": "Issue by $issue_data.user.login"}}]
-}
-```
+**MVP Enhancement**: Template variables now support paths (e.g., `$issue_data.user.login`), eliminating the need for complex data routing with proxy mappings. See Section 2 for the complete architectural decision.
 
 ### CRITICAL CLARIFICATION: The Meta-Workflow Architecture
 
@@ -257,99 +242,27 @@ With structure documentation already implemented (Task 14), the planner can:
 
 The validation framework can verify template variable paths are valid before execution.
 
-## 2.1 Value of Structure Documentation for Template Paths - Decision importance (5)
+## 2.1 Structure Documentation Enables Template Paths - Decision importance (5)
 
-Structure documentation remains critically valuable for the MVP, but for a different reason: **the planner needs to know what paths exist to generate valid template variables**.
+**UPDATE**: Task 14 successfully implemented structure documentation, which is essential for the template path approach (Option D above). The planner can now see available paths like `issue_data.user.login` in the context builder output and use them confidently in template variables.
 
-**UPDATE**: Task 14 has been completed successfully, providing the structure documentation that enables the planner to see available paths like `issue_data.user.login` and use them in template variables.
+The context builder now provides structure information in a dual format that's perfect for LLM consumption:
 
-### Why Structure Documentation Matters
-
-When the planner needs to generate:
-```json
+```
+Structure (JSON format):
 {
-  "params": {
-    "prompt": "Issue by $issue_data.user.login in repo $issue_data.repository.name"
+  "issue_data": {
+    "user": {
+      "login": "str"
+    }
   }
 }
+
+Available paths:
+- issue_data.user.login (str)
 ```
 
-It needs to know that these paths exist in the data structure. Structure documentation provides this visibility, showing the planner exactly what paths are available for use in template variables.
-
-### Our Options:
-
-- [ ] **Option A: Status Quo - Hope LLM Knows**
-  - Keep simple metadata: `outputs: ["issue_data"]`
-  - Rely on LLM knowledge of common APIs
-  - Document limitation: "Works best with well-known APIs"
-  - **Problems**:
-    - Fails for internal/custom APIs
-    - No way to validate paths
-    - Poor user experience when it fails
-
-- [x] **Option B: Implement Structure Documentation in MVP**
-  - Extend docstrings to include structure information
-  - Update metadata extraction to parse structures
-  - Provide structure in context builder
-  - **Benefits**:
-    - Planner can generate correct paths
-    - Validation becomes possible
-    - Works for any API
-  - **Implementation approach**:
-    ```python
-    """
-    Outputs:
-    - issue_data: {
-        "id": number,
-        "title": string,
-        "user": {"login": string},
-        "labels": [{"name": string}]
-      }
-    """
-    ```
-
-- [ ] **Option C: Defer Path-Based Mappings Entirely**
-  - MVP only supports simple key-to-key mappings
-  - No nested path support at all
-  - Add as v2.0 feature with proper structure support
-  - **Problems**: Significantly limits workflow power
-
-### Why Option B is Necessary
-
-1. **Generation Requires Visibility**: The planner can't generate what it can't see
-2. **Validation is Secondary**: Even with perfect validation, wrong paths still get generated
-3. **User Trust**: Saying "it works for known APIs" isn't good enough
-4. **Future Proof**: Structure docs benefit many future features
-
-### Implementation Strategy for Option B
-
-1. **Minimal Docstring Format**:
-   ```python
-   """
-   Outputs:
-   - issue_data: {"user": {"login": str}, "labels": [{"name": str}]}
-   """
-   ```
-
-2. **Progressive Enhancement**:
-   - Start with key nodes (github, file operations)
-   - Simple nodes stay simple (just key names)
-   - Add structure as needed
-
-3. **Context Builder Update**:
-   - Parse structure when available
-   - Present in LLM-friendly format
-   - Gracefully handle missing structure
-
-4. **Backwards Compatible**:
-   - Old format still works: `outputs: ["key"]`
-   - New format is additive: `outputs: {"key": {...}}`
-
-**Recommendation**: Option B - Implement basic structure documentation in MVP. Without it, path-based mappings are effectively limited to well-known APIs, which severely limits the feature's value. The implementation can be minimal - just enough structure for the planner to generate valid paths.
-
-**Critical Insight**: This isn't about perfect validation or type safety. It's about giving the planner enough information to generate correct paths instead of guessing. Even basic structure documentation dramatically improves the planner's ability to create working workflows.
-
-**Resolution**: Task 14 successfully implemented Option B. The structure documentation now enables the planner to see available paths and use them directly in template variables (e.g., `$issue_data.user.login`), making the MVP implementation significantly simpler.
+This enables the planner to generate valid template paths and the validator to verify they exist.
 
 ## 3. Workflow Storage and Discovery Implementation - Decision importance (4)
 
@@ -769,7 +682,7 @@ This is NOT mock execution - it's static analysis that tracks data flow through 
 - **Generic approach**: No per-node implementation needed - just uses the metadata from registry
 - **Catches**: Missing inputs, overwritten outputs, unresolved template variables, invalid template paths
 
-**Path Validation Support**: With structure documentation implemented, validation can verify that template variable paths like `$issue_data.user.login` actually exist in the documented structure, preventing runtime errors.
+With structure documentation (Task 14), validation verifies template paths exist before execution.
 
 **Example Data Flow Analysis Log**:
 ```
@@ -1348,7 +1261,7 @@ The planner must decide which values in natural language should become parameter
 2. **Implement path support in template variables** - Simple ~20 line addition to enable `$data.field.subfield`
 3. ~~**Decide on workflow storage format**~~ - ✅ RESOLVED: Use simple JSON with name, description, inputs, outputs, and IR
 4. ~~**Design discovery mechanism**~~ - ✅ RESOLVED: Two-phase approach with context builder
-5. **Confirm MVP boundaries** - Especially regarding action-based transitions
+5. **Confirm MVP boundaries** - Especially regarding action-based transitions (Sequential workflows only, no branching)
 6. **Design concrete prompt templates** - With examples of expected outputs
 7. **Create test scenarios** - Cover all edge cases identified above
 8. **Implement two context builder functions**:
@@ -1358,6 +1271,10 @@ The planner must decide which values in natural language should become parameter
 10. **Adapt validation for template paths** - Verify paths exist in structure documentation
 11. **No proxy mapping implementation** - Entirely deferred to v2.0
 12. **Update test scenarios** - Focus on template path patterns
+13. **Implement path support in template variables** - ~20 line addition per Section 2
+14. **Design prompt templates** that emphasize template paths usage
+15. **Create validation** that checks paths exist in structure documentation
+16. **Test scenarios** focused on template path patterns
 
 ## Implementation Recommendations
 
@@ -1376,22 +1293,17 @@ Based on this analysis, here's the recommended approach:
 11. **No proxy mappings in MVP** - Entirely deferred to v2.0
 
 **Critical Implementation Details**:
-- The planner must generate template variables with paths (`$issue_data.user.login`) for nested data access
-- Template variable resolution needs ~20 lines to support path traversal: split on '.', traverse dict
-- Structure documentation shows available paths to guide the planner
-- Proxy mappings are entirely deferred to v2.0 (no exceptions)
-- Use Simon Willison's llm library directly in the pocketflow node with Pydantic schemas
+- Template path resolution: ~20 lines of code to split on '.' and traverse dictionaries
+- Use Simon Willison's `llm` library with model "claude-sonnet-4-20250514"
+- Pydantic models for type-safe IR generation, then JSONSchema validation
 
-**Implementation Checklist** - Ensure understanding of these critical points before starting:
-- [ ] Template variables with paths (`$data.field`) are the primary data access mechanism
-- [ ] Workflows are building blocks that can be used inside other workflows
-- [ ] Planner is Python pocketflow code (infrastructure), not JSON IR (user workflows)
-- [ ] No proxy mappings in MVP - entirely deferred to v2.0
-- [ ] Structure documentation helps planner know available paths
+**Implementation Checklist**:
+- [ ] Use template variables (`$data`) and template variables withpaths (`$data.field.subfield`) per Section 2
+- [ ] Workflows can use other workflows as building blocks
+- [ ] Planner is infrastructure (Python pocketflow), not user workflow (JSON IR)
+- [ ] Generated workflows are sequential only (no branching)
 - [ ] Two-phase context (discovery vs planning) prevents LLM overwhelm
-- [ ] Validation checks template paths exist in structure docs
-- [ ] Template variables (`$issue`) are different from CLI parameters (`--issue=1234`)
-- [ ] Implementation is ~20 lines for path support vs ~200 for proxy mappings
+- [ ] Template variables ≠ CLI parameters (runtime resolution vs execution args)
 - [ ] Planner can use full pocketflow features, but generated workflows are sequential only (MVP)
 
 ### Key Implementation Simplifications:
@@ -1485,14 +1397,14 @@ The planner combines all these decisions into a cohesive workflow generation sys
 1. **Input Processing**: Natural language → intent + parameter extraction
 2. **Discovery Phase**: Context builder provides nodes + workflows → LLM selects components
 3. **Generation Phase**:
-   - Pydantic models ensure syntactically valid JSON (Section 7)
-   - Template variables with paths for data access (Section 1 & 2)
-   - Structure documentation guides valid path generation
-4. **Validation Phase** (Section 9):
+   - Pydantic models ensure syntactically valid JSON
+   - Template paths for data access (see Section 2)
+   - Structure documentation shows available paths
+4. **Validation Phase**:
    - Static analysis catches structural issues
-   - Mock execution verifies data flow
-   - Specific error feedback enables targeted recovery
-5. **Presentation**: IR compiled to natural CLI syntax (Section 8)
-6. **Storage**: Workflow saved with template variables for "Plan Once, Run Forever"
+   - Verifies template paths exist in structure docs
+   - Specific error feedback for invalid paths
+5. **Presentation**: Natural CLI syntax showing template paths
+6. **Storage**: Workflows saved with template variables for reusability
 
 This architecture ensures that every generated workflow is not only syntactically correct but also semantically valid and ready for execution.
