@@ -1200,6 +1200,7 @@ Output as JSON:
    - `build_discovery_context()` - For finding nodes/workflows (lightweight)
    - `build_planning_context()` - For detailed interface info (selected components only)
    - DO NOT access registry directly - always use context builder
+   - **Note**: The context builder already filters out test nodes. The planner should not implement additional test node filtering.
 2. **JSON IR Schema** - Defines valid workflow structure
 3. **Node Registry** - Accessed ONLY through context builder, never directly
 4. **LLM Library** - Simon Willison's `llm` with structured outputs
@@ -1703,6 +1704,117 @@ This approach ensures:
 - Simple naming convention ($var → shared["var"])
 - Clear separation of concerns
 - Easy to understand and debug
+
+## Critical Pattern: The Exclusive Parameter Fallback
+
+### Core Architectural Insight
+
+Every pflow node implements a universal fallback pattern that dramatically increases workflow generation flexibility:
+
+```python
+# In EVERY node's prep() method:
+value = shared.get("key") or self.params.get("key")
+```
+
+This means **ALL inputs can also be provided as parameters**, not just the "exclusive parameters" shown in the context builder output.
+
+### What This Means for the Planner
+
+The planner can set ANY value either:
+- **Via params** (static, determined at planning time)
+- **Via shared store** (dynamic, determined at runtime from previous nodes)
+
+This dramatically reduces the need for proxy mappings and makes workflows cleaner.
+
+### Examples of the Pattern in Action
+
+```json
+// These are ALL valid for a read-file node:
+
+// Option 1: Via shared store (dynamic - from previous node)
+{"id": "read", "type": "read-file"}  // Expects shared["file_path"]
+
+// Option 2: Via params (static - hardcoded value)
+{"id": "read", "type": "read-file", "params": {"file_path": "config.json"}}
+
+// Option 3: Mix of both
+{
+  "id": "read",
+  "type": "read-file",
+  "params": {"encoding": "utf-8"}  // file_path from shared, encoding static
+}
+```
+
+### Why This Reduces Proxy Mapping Complexity
+
+Consider connecting nodes with incompatible keys:
+```json
+// Scenario: path-generator writes to shared["path"]
+// read-file expects shared["file_path"]
+
+// Without the fallback pattern - needs proxy mapping:
+{
+  "mappings": {
+    "read": {"input_mappings": {"file_path": "path"}}
+  }
+}
+
+// With the fallback pattern - use template variable:
+{
+  "nodes": [
+    {"id": "get-path", "type": "path-generator"},  // Writes to shared["path"]
+    {"id": "read", "type": "read-file", "params": {"file_path": "$path"}}
+  ]
+}
+```
+
+The combination of fallback pattern + template variables eliminates the need for proxy mappings in many common cases.
+
+### Understanding the Context Builder Output
+
+The context builder shows only "exclusive parameters" - params that are NOT also inputs:
+```markdown
+### write-file
+**Inputs**: `content`, `file_path`, `encoding`
+**Outputs**: `written`, `error` (error)
+**Parameters**: `append`  # Only 'append' shown - it's exclusive!
+```
+
+But the planner can still use ANY input as a parameter:
+```json
+{
+  "type": "write-file",
+  "params": {
+    "file_path": "/tmp/output.txt",  // Works even though not listed in Parameters!
+    "content": "Hello World",         // Also works!
+    "append": true                    // The exclusive parameter
+  }
+}
+```
+
+### Edge Case: Truthiness-Safe Pattern
+
+When empty strings, 0, or False are valid values, nodes use a truthiness-safe pattern:
+```python
+# For values where empty/0/False are valid:
+if "content" in shared:
+    content = shared["content"]
+elif "content" in self.params:
+    content = self.params["content"]
+else:
+    raise ValueError("Missing required 'content'")
+```
+
+The planner doesn't need to worry about this - nodes handle it internally.
+
+### Implications for Workflow Generation
+
+1. **Try params first**: For static values, set them directly in params instead of creating proxy mappings
+2. **Use template variables**: For dynamic values from other nodes, use `$variable` in params
+3. **Reduce mappings**: Many workflows that seemed to need proxy mappings actually don't
+4. **Maximum flexibility**: Choose the best approach for each value individually
+
+This pattern is documented as a core architectural decision in `.taskmaster/knowledge/patterns.md` under "Shared Store Inputs as Automatic Parameter Fallbacks" and is implemented universally across all pflow nodes.
 
 ## Structured Output Generation with Pydantic
 
