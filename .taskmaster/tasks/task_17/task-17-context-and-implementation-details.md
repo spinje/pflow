@@ -2489,6 +2489,168 @@ The planner's use of PocketFlow creates a beautiful symmetry:
 
 This is intentional dogfooding at the most appropriate level - using the framework where it genuinely adds value, not forcing it everywhere.
 
+## Error Context Enrichment for Development Debugging
+
+### Enriched Error Context Pattern
+
+During development, the planner's complex orchestration benefits greatly from rich error context. This pattern captures comprehensive debugging information when failures occur:
+
+```python
+class PlannerNodeBase(Node):
+    """Base class for planner nodes with enhanced error tracking."""
+
+    def enrich_error_context(self, shared, exc, context=None):
+        """Enrich error with debugging context for development."""
+        error_info = {
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "node_name": self.__class__.__name__,
+            "timestamp": time.time(),
+
+            # Planner-specific context
+            "user_input": shared.get("user_input"),
+            "input_type": shared.get("input_type"),  # natural vs cli
+            "execution_path": shared.get("execution_path", []),  # Which nodes executed
+
+            # LLM debugging context
+            "generation_attempts": shared.get("generation_attempts", 0),
+            "last_prompt_length": len(shared.get("planning_prompt", "")),
+            "context_size": len(shared.get("planning_context", "")),
+            "selected_components": shared.get("selected_components", []),
+
+            # Validation context
+            "validation_errors": shared.get("validation_errors", []),
+            "attempt_history": shared.get("attempt_history", [])[-3:],  # Last 3 attempts
+
+            # Additional context
+            "custom_context": context or {}
+        }
+
+        # Track execution path
+        if "execution_path" not in shared:
+            shared["execution_path"] = []
+        shared["execution_path"].append(self.__class__.__name__)
+
+        # Store error
+        shared["last_error"] = error_info
+        shared["error_history"] = shared.get("error_history", [])
+        shared["error_history"].append(error_info)
+
+        return error_info
+```
+
+### Applied to Key Planner Nodes
+
+```python
+class WorkflowGeneratorNode(PlannerNodeBase):
+    def exec_fallback(self, shared, exc):
+        """Enhanced fallback with debugging context."""
+        # Enrich with generation-specific context
+        context = {
+            "llm_model": "claude-sonnet-4-20250514",
+            "temperature": 0,
+            "retry_attempt": self.cur_retry,
+            "prompt_enhancements": shared.get("prompt_enhancements", []),
+            "last_llm_response": shared.get("llm_response", "")[:500]  # First 500 chars
+        }
+
+        error_info = self.enrich_error_context(shared, exc, context)
+
+        # Log for development debugging
+        print(f"\n[Generator Error] Attempt {self.cur_retry + 1}/{self.max_retries}")
+        print(f"Error Type: {error_info['error_type']}")
+        print(f"User Input: {error_info['user_input']}")
+        print(f"Validation Errors: {error_info['validation_errors']}")
+
+        return "generation_failed"
+
+class ValidatorNode(PlannerNodeBase):
+    def exec(self, shared):
+        workflow = shared.get("generated_workflow", {})
+        validation_result = self._validate_workflow(workflow)
+
+        if not validation_result["is_valid"]:
+            # Enrich validation errors with context
+            errors_with_context = []
+            for error in validation_result["errors"]:
+                error_context = {
+                    "error": error,
+                    "workflow_nodes": [n["type"] for n in workflow.get("nodes", [])],
+                    "workflow_size": len(str(workflow)),
+                    "has_template_vars": any("$" in str(workflow))
+                }
+                errors_with_context.append(error_context)
+
+            shared["validation_errors"] = errors_with_context
+            shared["validation_failure_count"] = shared.get("validation_failure_count", 0) + 1
+
+            return "invalid"
+
+        return "valid"
+```
+
+### Development-Time Benefits
+
+This enriched error context immediately reveals:
+
+1. **LLM Generation Issues**:
+   ```python
+   "error_context": {
+       "user_input": "fix github issue 1234 and notify team on slack",
+       "generation_attempts": 3,
+       "last_prompt_length": 15234,  # Prompt might be too long
+       "validation_errors": [
+           {"error": "Unknown node 'slack-notify'", "workflow_nodes": ["github-get-issue", "slack-notify"]},
+           {"error": "Template variable $team_channel not defined"}
+       ]
+   }
+   ```
+
+2. **Path-Specific Failures**:
+   ```python
+   "execution_path": ["WorkflowDiscoveryNode", "ComponentBrowsingNode", "GeneratorNode", "ValidatorNode"],
+   # Shows it went through Path B (generation) not Path A (reuse)
+   ```
+
+3. **Progressive Enhancement Tracking**:
+   ```python
+   "attempt_history": [
+       {"attempt": 1, "error": "Missing edges in IR"},
+       {"attempt": 2, "error": "Invalid node ID format", "enhancement": "Added structure example"},
+       {"attempt": 3, "error": "Template path validation failed", "enhancement": "Simplified prompt"}
+   ]
+   ```
+
+### Usage During Development
+
+```python
+# In development/debugging mode
+def create_planner_flow(debug=False):
+    flow = Flow("planner_meta_workflow")
+
+    if debug:
+        # Add execution tracking
+        shared["debug_mode"] = True
+        shared["start_time"] = time.time()
+        shared["execution_path"] = []
+
+    # ... rest of flow setup ...
+
+    return flow
+
+# When running tests or debugging
+result = planner_flow.run({
+    "user_input": "complex natural language request",
+    "debug_mode": True
+})
+
+if result.get("last_error"):
+    # Rich debugging output
+    print(json.dumps(result["last_error"], indent=2))
+```
+
+This pattern accelerates development by making failures immediately understandable, showing not just what failed but why and in what context.
+
 ## Testing Workflow Generation
 
 ### Core Testing Strategy
