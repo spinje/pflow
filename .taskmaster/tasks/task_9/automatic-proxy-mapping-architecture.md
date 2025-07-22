@@ -36,6 +36,77 @@ System detects collisions and generates mappings automatically:
 - Context builder shows post-mapping view
 - Everything just works
 
+## Why Not Just Template Paths?
+
+### The Critical Clarification
+
+A natural question: "Can't template paths like `$api1.response` solve this?"
+
+**No, because template paths can only READ nested data, not PREVENT write collisions:**
+
+```python
+# The collision happens at write time:
+api1.exec(): shared["response"] = "data1"  # Writes directly
+api2.exec(): shared["response"] = "data2"  # Overwrites data1!
+
+# By template resolution time, data1 is gone
+$response  # Only sees "data2"
+```
+
+To use paths, nodes would need to namespace their writes:
+```python
+# Would require changing every node:
+shared[self.node_id] = {"response": data}  # Breaks node atomicity
+```
+
+This is why proxy mappings (automatic or manual) are necessary - they intercept at write time.
+
+## Addressing the "Hidden Magic" Concern
+
+### Progressive Disclosure Principle
+
+The system follows progressive disclosure - complexity is only visible when needed:
+
+1. **End Users** (CLI)
+   ```bash
+   $ pflow "compare apis"
+   ✓ Comparing APIs...
+   Result: GitHub is faster
+   ```
+   Never see any collision handling.
+
+2. **Workflow Creators** (Natural Language)
+   - Write: "compare github and gitlab responses"
+   - System handles collisions invisibly
+   - Workflows just work
+
+3. **Developers** (Debugging)
+   ```bash
+   $ pflow run --debug
+   [DEBUG] Collision detected: 'response' written by api1, api2
+   [DEBUG] Auto-mapping: api1.response → api1_response
+   [DEBUG] Auto-mapping: api2.response → api2_response
+   ```
+   Full transparency when needed.
+
+4. **Power Users** (Override)
+   ```json
+   {
+     "mappings": {
+       "api1": {"output_mappings": {"response": "github_data"}}
+     }
+   }
+   ```
+   Can still manually control if desired.
+
+### Why Hidden is Good Here
+
+Unlike general programming where "explicit > implicit", workflow systems benefit from intelligent defaults:
+- Users think in terms of intent, not implementation
+- Collision handling is an implementation detail
+- The system makes the right choice 99% of the time
+- Transparency is available when debugging
+
 ## Core Architecture
 
 ### The Collision Detection Algorithm
@@ -398,6 +469,54 @@ The system respects explicit mappings and only generates automatic ones for unma
 - Ensure mapped outputs are accessible
 - Verify self-reading nodes work
 - Check template variable resolution
+
+## Why Not Alternative Approaches?
+
+### Alternative 1: Force Unique Output Names
+"Just make every node output unique keys like `github_response` instead of `response`"
+
+**Problems:**
+- Breaks the node abstraction (nodes shouldn't know their context)
+- Makes node reuse harder (can't use same node type twice)
+- Requires rewriting all existing nodes
+- Loses semantic clarity (it IS a response, regardless of source)
+
+### Alternative 2: Error on Collision
+"Just fail and make users fix it manually"
+
+**Problems:**
+- Poor user experience for common scenarios
+- Forces users to understand internal implementation
+- Makes natural language usage much harder
+- LLM would need complex collision avoidance logic
+
+### Alternative 3: Always Namespace by Node ID
+"Make all nodes write to `shared[node_id][key]`"
+
+**Problems:**
+- Massive breaking change to node architecture
+- Complicates simple workflows that don't have collisions
+- Makes shared store access more verbose everywhere
+- Changes fundamental pflow patterns
+
+### Alternative 4: Manual Proxy Mappings Only
+"Keep the original design - users/LLM configure mappings explicitly"
+
+**Problems:**
+- High cognitive load on users and LLM
+- Error-prone configuration
+- Verbose workflows
+- Steep learning curve
+
+### Why Automatic Generation Wins
+
+Our approach is the only one that:
+- Requires NO changes to existing nodes
+- Requires NO user understanding of collisions
+- Requires NO LLM complexity
+- Works with natural language naturally
+- Maintains backward compatibility
+- Follows progressive disclosure
 
 ## Future Enhancements
 
