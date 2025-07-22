@@ -78,11 +78,15 @@ Enable dynamic parameter values through `$variable` substitution:
 // Definition:
 {"params": {"prompt": "Analyze $content from $source"}}
 
-// Runtime resolution:
+// Runtime resolution from BOTH sources:
+// CLI params: {"source": "youtube"}
 // shared["content"] = "transcript text"
-// shared["source"] = "youtube"
 // Node sees: {"prompt": "Analyze transcript text from youtube"}
 ```
+
+**Resolution Sources** (in priority order):
+1. **CLI parameters**: `--issue_number=123` → `$issue_number`
+2. **Shared store**: Previous node writes → `$issue_data`
 
 **MVP Limitations**:
 - String conversion only (integers become "3", booleans become "true")
@@ -106,16 +110,32 @@ Redirect shared store keys to avoid collisions:
 
 ## Implementation Architecture
 
+### Single-Phase Runtime Resolution
+
+**Key Design Decision**: ALL template resolution happens at runtime. There is no compile-time substitution. This ensures consistent behavior whether a template variable appears as a complete value or embedded in a string.
+
+**Why Single-Phase?** A two-phase approach (some substitution at compile time, some at runtime) would create inconsistent behavior:
+- `"$issue"` → Would be replaced at compile time
+- `"Fix issue $issue"` → Would fail at runtime (no access to CLI params)
+
+With single-phase resolution, both work identically because all templates are resolved with the complete context (shared store + CLI params) available.
+
+```json
+// Both of these work identically:
+{"issue": "$issue_number"}              // Complete value
+{"prompt": "Fix issue $issue_number"}   // Embedded in string
+```
+
 ### Order of Operations (Critical!)
 
 1. **Proxy mappings applied FIRST** (renames keys in shared store)
-2. **Template resolution applied SECOND** (uses renamed keys)
+2. **Template resolution applied SECOND** (uses renamed keys with full context)
 
 ```
 api1 writes to shared["response"]
   ↓ (proxy mapping)
 Becomes shared["api1_response"]
-  ↓ (template resolution)
+  ↓ (template resolution with CLI params + shared store)
 $api1_response resolves to actual value
 ```
 
@@ -196,9 +216,10 @@ class TemplateResolver:
 class TemplateAwareNodeWrapper:
     """Wraps nodes to provide transparent template resolution."""
 
-    def __init__(self, inner_node, node_id: str):
+    def __init__(self, inner_node, node_id: str, initial_params: Optional[Dict[str, Any]] = None):
         self.inner_node = inner_node
         self.node_id = node_id
+        self.initial_params = initial_params or {}
         self.template_params = {}
         self.static_params = {}
 
@@ -222,8 +243,10 @@ class TemplateAwareNodeWrapper:
         if not self.template_params:
             return self.inner_node._run(shared)
 
-        # Build resolution context (shared store + initial params)
-        context = dict(shared)  # Current shared store state
+        # Build resolution context: shared store + CLI params
+        # CLI params have higher priority (come second in update)
+        context = dict(shared)  # Shared store values (lower priority)
+        context.update(self.initial_params)  # CLI params override shared store
 
         # Resolve templates
         resolved_params = {}
@@ -257,15 +280,16 @@ def compile_ir_to_flow(
     registry: Registry,
     initial_params: Optional[Dict[str, Any]] = None
 ) -> Flow:
-    """Compile IR with template and proxy support."""
+    """Compile IR with template and proxy support.
 
-    # First, substitute initial params in IR copy
-    if initial_params:
-        ir_dict = substitute_initial_params(ir_dict, initial_params)
-
+    Note: ALL template resolution happens at runtime. We don't modify
+    the IR at compile time - instead we pass initial_params to the
+    node wrappers for runtime resolution.
+    """
     flow = Flow()
     nodes = {}
     mappings = ir_dict.get('mappings', {})
+    initial_params = initial_params or {}
 
     # Create nodes
     for node_spec in ir_dict['nodes']:
@@ -282,8 +306,8 @@ def compile_ir_to_flow(
         has_mappings = node_id in mappings
 
         if has_templates:
-            # Wrap for template support
-            node = TemplateAwareNodeWrapper(node, node_id)
+            # Wrap for template support, passing initial params
+            node = TemplateAwareNodeWrapper(node, node_id, initial_params)
 
         if has_mappings:
             # Create proxy shared store for this node
@@ -296,21 +320,6 @@ def compile_ir_to_flow(
 
     # Build flow structure...
     return flow
-
-def substitute_initial_params(ir_dict: Dict, params: Dict) -> Dict:
-    """Replace template variables that match initial parameters."""
-    import copy
-    ir_copy = copy.deepcopy(ir_dict)
-
-    for node_spec in ir_copy.get('nodes', []):
-        if 'params' in node_spec:
-            for key, value in node_spec['params'].items():
-                if TemplateResolver.has_templates(value):
-                    # Only substitute if entire value is a single variable
-                    if value in [f'${p}', f'${{{p}}}'] and p in params:
-                        node_spec['params'][key] = params[p]
-
-    return ir_copy
 ```
 
 ### Phase 4: Runtime Execution
@@ -355,12 +364,48 @@ def test_node_wrapper_templates():
             return f"Prompt: {self.params['prompt']}"
 
     node = TestNode()
-    wrapper = TemplateAwareNodeWrapper(node, "test")
-    wrapper.set_params({"prompt": "Analyze $data"})
+    initial_params = {"user": "Alice"}
+    wrapper = TemplateAwareNodeWrapper(node, "test", initial_params)
+    wrapper.set_params({"prompt": "Hello $user, analyze $data"})
 
     shared = {"data": "important info"}
     result = wrapper._run(shared)
-    assert "important info" in result
+    assert result == "Prompt: Hello Alice, analyze important info"
+
+def test_priority_order():
+    """Test CLI params override shared store values."""
+    class TestNode(Node):
+        def exec(self, shared, prep_res):
+            return self.params['value']
+
+    node = TestNode()
+    initial_params = {"key": "from_cli"}
+    wrapper = TemplateAwareNodeWrapper(node, "test", initial_params)
+    wrapper.set_params({"value": "$key"})
+
+    shared = {"key": "from_shared"}
+    result = wrapper._run(shared)
+    assert result == "from_cli"  # CLI param wins
+
+def test_consistent_resolution():
+    """Test that templates work the same in complete values and embedded strings."""
+    class TestNode(Node):
+        def exec(self, shared, prep_res):
+            return (self.params['complete'], self.params['embedded'])
+
+    node = TestNode()
+    initial_params = {"issue": "123"}
+    wrapper = TemplateAwareNodeWrapper(node, "test", initial_params)
+    wrapper.set_params({
+        "complete": "$issue",                # Complete value
+        "embedded": "Fix issue $issue"       # Embedded in string
+    })
+
+    shared = {}
+    complete, embedded = wrapper._run(shared)
+    assert complete == "123"
+    assert embedded == "Fix issue 123"
+    # Both forms of $issue work identically!
 ```
 
 ### Integration Tests
@@ -396,13 +441,17 @@ def test_complete_workflow():
 **Problem**: `$retry_count` becomes "3" not 3
 **Solution**: For MVP, document this limitation. Post-MVP: detect when entire value is template
 
-### 2. Template Resolution Timing
-**Problem**: Resolving too early misses dynamic updates
-**Solution**: Always resolve in _run(), never during compilation
+### 2. Missing Template Variables
+**Problem**: Template references variable not in CLI params or shared store
+**Solution**: Document clearly, provide helpful error messages. Consider defaulting to empty string or keeping literal "$var"
 
 ### 3. Collision Between Features
 **Problem**: Template variable references unmapped key
 **Solution**: Apply mappings first, then resolve templates
+
+### 4. Priority Confusion
+**Problem**: User expects shared store value but gets CLI param
+**Solution**: Document clearly that CLI params override shared store values with same name
 
 ## Success Criteria
 
