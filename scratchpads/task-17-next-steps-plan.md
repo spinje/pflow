@@ -46,9 +46,9 @@ For each file, identify:
 Based on current understanding, focus on finding information about:
 
 1. **Workflow Storage and Retrieval**
-   - When/how are new workflows saved?
-   - How does the discovery node search saved workflows?
-   - Format of saved workflows with template variables
+   - ~~When/how are new workflows saved?~~ **RESOLVED**: CLI saves after approval
+   - ~~How does the discovery node search saved workflows?~~ **RESOLVED**: Using LLM with descriptions
+   - ~~Format of saved workflows with template variables~~ **RESOLVED**: JSON with name, description, inputs, outputs, and IR
 
 2. **Error Recovery Specifics**
    - How many retry attempts for each node?
@@ -58,41 +58,56 @@ Based on current understanding, focus on finding information about:
 3. **Prompt Engineering Details**
    - Exact prompt structure for workflow generation
    - Examples included in prompts
-   - How to guide LLM to generate complete variable_flow
+   - ~~How to guide LLM to generate complete variable_flow~~ **RESOLVED**: No variable_flow field - use template vars in params
 
 4. **Integration Points**
-   - How does planner receive input from CLI?
-   - How does confirmation node interact with user?
-   - How does execution node invoke workflows?
+   - ~~How does planner receive input from CLI?~~ **RESOLVED**: Raw string passed directly
+   - ~~How does confirmation node interact with user?~~ **RESOLVED**: No confirmation node - CLI handles approval
+   - ~~How does execution node invoke workflows?~~ **RESOLVED**: No execution node - planner returns to CLI
 
 ### 5. Document Structure to Maintain
 
 Keep the following structure in `task-17-context-and-implementation-details.md`:
-1. Critical Insight: Meta-Workflow Architecture (KEEP AT TOP)
-2. Architectural Decision: PocketFlow for Planner
+1. Critical Insight: The Meta-Workflow Architecture (KEEP AT TOP)
+2. Architectural Decision: PocketFlow for Planner Orchestration
 3. Directory Structure Decision
-4. PocketFlow Execution Model
-5. Advanced Implementation Patterns
-6. Flow Design Patterns
-7. Integration Points and Dependencies
-8. Testing Patterns
-9. Performance Considerations
-10. Anti-Patterns to Avoid
-11. Template-Driven Workflow Architecture
-12. Risk Mitigation Strategies
-13. Testing Workflow Generation
-14. Semantic Discovery Approach
-15. Success Metrics and Targets
-16. Open Questions and Decisions Needed
-17. Next Steps
+4. What the Planner Returns to CLI
+5. PocketFlow Execution Model Deep Dive
+6. Advanced Implementation Patterns
+7. Flow Design Patterns
+8. Structured Generation with Smart Retry
+9. LLM Integration with Simon Willison's Library
+10. Structured Context Provision Pattern
+11. Prompt Template Examples
+12. Integration Points and Dependencies
+13. Testing PocketFlow Flows
+14. Performance Considerations
+15. Anti-Patterns to Avoid
+16. Parameter Extraction as Verification Gate
+17. Template-Driven Workflow Architecture
+18. Critical Pattern: The Exclusive Parameter Fallback
+19. Critical Constraints for Workflow Generation
+20. MVP Approach: Avoiding Collisions Through Node Naming
+21. Structured Output Generation with Pydantic
+22. Risk Mitigation Strategies
+23. Key Implementation Principles
+24. Testing Workflow Generation
+25. Component Browsing with Smart Context Loading
+26. Success Metrics and Targets
+27. Open Questions and Decisions Needed
+28. Concrete Integration Examples
+29. End-to-End Execution Example
+30. Critical Success Factors
+31. Next Steps
 
 ### 6. Critical Concepts to Preserve
 
 When analyzing new files, ensure these concepts remain clear:
 
 1. **Meta-Workflow Nature**
-   - Planner creates AND executes workflows
-   - Parameter extraction → mapping → execution all in planner
+   - Planner discovers or creates workflows and prepares them for execution
+   - Parameter extraction → verification → preparation all in planner
+   - Planner returns to CLI for actual execution
    - MVP: Everything goes through planner
 
 2. **Template Variables Sacred**
@@ -114,10 +129,10 @@ When analyzing new files, ensure these concepts remain clear:
 
 If you encounter genuine ambiguities:
 
-1. **Workflow Saving**: Is workflow saving automatic after approval or does user choose?
-2. **Discovery Ranking**: Should planner show multiple matches or pick best one?
+1. ~~**Workflow Saving**: Is workflow saving automatic after approval or does user choose?~~ **RESOLVED**: CLI saves workflows after user approval
+2. ~~**Discovery Ranking**: Should planner show multiple matches or pick best one?~~ **RESOLVED**: Planner selects best match using LLM intelligence
 3. **Parameter Defaults**: How are optional parameters handled?
-4. **Execution Feedback**: How verbose should execution output be?
+4. ~~**Execution Feedback**: How verbose should execution output be?~~ **RESOLVED**: Execution feedback is handled by CLI, not planner
 
 ### 8. Final Integration Checklist
 
@@ -156,3 +171,5 @@ Everything else is implementation detail that must serve this core architecture.
 ## Final Note
 
 The integration work is about distilling truth from research while maintaining the architectural integrity established in the ambiguities document. When in doubt, the ambiguities document is the source of truth, and the meta-workflow insight is the key to understanding everything.
+
+*IMPORTANT: DO NOT START READING THE FILES UNTIL YOU HAVE BEEN ASSIGNED ONE BY THE USER.*

@@ -596,6 +596,7 @@ llm --prompt="Fix issue #$issue_data.id: $issue_data.title (by $issue_data.user.
   - Simple Y/n prompt for approval
   - Save on approval, execute after
   - **Key benefit**: No complex notation needed for mappings or data flow
+  - **Clarification**: The approval prompt and workflow saving are handled by the CLI after the planner returns its results, not within the planner meta-workflow itself
 
 - [ ] **Option B: Interactive modification**
   - Show CLI syntax

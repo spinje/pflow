@@ -4,98 +4,90 @@
 
 This document captures EVERYTHING about the current state of Task 17 research integration. You are analyzing research files in `.taskmaster/tasks/task_17/research/` and integrating insights into the implementation details document.
 
-## THE MOST CRITICAL INSIGHT: Meta-Workflow Architecture
+## THE MOST CRITICAL INSIGHT: Meta-Workflow Architecture with Two Paths
 
-### What We Just Discovered
-The Natural Language Planner is NOT just a workflow generator. It's a **META-WORKFLOW** that:
+### What We Now Understand Correctly
+The Natural Language Planner is a **META-WORKFLOW** that orchestrates the entire lifecycle of finding or creating workflows. It has TWO DISTINCT PATHS that converge at a critical verification point:
+
+1. **Path A: Reuse Existing** - WorkflowDiscoveryNode finds complete workflow → ParameterExtractionNode
+2. **Path B: Generate New** - WorkflowDiscoveryNode fails → ComponentBrowsingNode → GeneratorNode → ValidatorNode → ParameterExtractionNode
+
+Both paths CONVERGE at ParameterExtractionNode, which serves as a verification gate ensuring the workflow can actually execute.
+
+### Critical Correction: The Planner Does NOT Execute User Workflows
+The planner:
 1. **Discovers or creates** workflows
-2. **Extracts parameters** from natural language ("1234" from "fix github issue 1234")
-3. **Maps parameters** to template variables ($issue_number → "1234")
-4. **Confirms** with the user
-5. **EXECUTES** the workflow with mappings
+2. **Extracts AND verifies** parameters can be satisfied
+3. **Prepares structured output** for the CLI
+4. **Returns to CLI** for approval and execution
 
-This means for MVP, EVERY execution goes through the full planner workflow. The planner doesn't just generate and hand off - it orchestrates the entire lifecycle.
+The CLI handles:
+1. **User approval** of the generated/found workflow
+2. **Workflow storage** to ~/.pflow/workflows/
+3. **Actual execution** with parameter substitution
 
-### Why This Matters
-- The planner includes execution nodes, not just generation
-- Parameter mapping is integral to the planner, not a separate system
-- This explains why the planner needs PocketFlow's complex branching
+### Why This Architecture Matters
+- **Two paths converge** at parameter extraction for verification
+- **Parameter extraction is a gate** - prevents execution if params missing
+- **Clean separation** - planner plans, CLI executes
+- **Every MVP execution** goes through the planner for natural language processing
 
 ## Current Task Status
 
 ### What You're Doing
 You're analyzing files in `.taskmaster/tasks/task_17/research/` one by one and integrating valid insights into:
-- **Primary**: `.taskmaster/tasks/task_17/task-17-context-and-implementation-details.md`
-- **Secondary**: `scratchpads/critical-user-decisions/task-17-planner-ambiguities.md`
+- **Primary**: `.taskmaster/tasks/task_17/task-17-context-and-implementation-details.md` (READ THE FULL FILE if you have not already)
+- **Secondary**: `scratchpads/critical-user-decisions/task-17-planner-ambiguities.md` (READ THE FULL FILE if you have not already)
 
 ### Files Already Processed
 
-**IMPORTANT**: The task-17-context-and-implementation-details.md document already contains integrations from OTHER research files that were processed before this session. The document was already comprehensive when you started.
+**IMPORTANT**: The task-17-context-and-implementation-details.md document has been UPDATED to reflect the correct architecture with two paths converging at parameter extraction.
 
-**Files YOU processed in this session:**
-1. ✅ **pocketflow-patterns.md** - REJECTED most content as it contained:
-   - Hardcoded pattern libraries (anti-pattern)
-   - Variable inference logic (anti-pattern)
-   - Wrong dependencies (Tasks 18, 19 don't exist)
-   - KEPT: Template-driven architecture concept, resolution order validation
-
-2. ✅ **planner-core-insights.md** - Carefully integrated:
-   - KEPT: "Find or Build" pattern, success metrics, semantic discovery
-   - CORRECTED: Implementation order, oversimplified template handling
-   - DISCOVERED: Meta-workflow architecture (critical insight!)
-
-### Files Already Integrated (Before This Session)
-The document already contained extensive content from other research files, including:
-- Advanced implementation patterns (Progressive Enhancement, Multi-Validator, etc.)
-- Flow design patterns (Diamond Pattern, Retry Loop)
-- Testing patterns
-- Performance considerations
-- Multiple anti-patterns
-
-You can identify which sections existed before by looking at the comprehensive structure that was already there.
-
-### Files Possibly Still to Process
-Check the research directory for any files not yet integrated:
-- `claude-artifacts-v3.md`
-- `ambiguity-log.md`
-- `workflow-generation-study.md`
-- `architectural-insights.md`
-- `planner-integration-patterns.md`
-- Any others in the directory
+**Files processed and insights integrated:**
+1. ✅ **pocketflow-patterns.md** - REJECTED most content as anti-patterns
+2. ✅ **planner-core-insights.md** - Integrated valid insights
+3. ✅ **Architecture corrections** - Fixed misconceptions about single discovery node
 
 ## Key Architectural Decisions Made
 
-### 1. Template Variables Are Sacred
-- LLM MUST generate `$issue` not "1234"
+### 1. Two Distinct Discovery Nodes
+- **WorkflowDiscoveryNode** - Finds COMPLETE workflows that satisfy entire intent
+- **ComponentBrowsingNode** - Browses for building blocks (only executes if no complete match)
+- These are SEPARATE nodes with different purposes
+
+### 2. Parameter Extraction as Convergence and Verification
+- Both paths converge at ParameterExtractionNode
+- This node extracts parameters AND verifies executability
+- If required params missing → cannot execute
+- This is a critical gate preventing execution failures
+
+### 3. Template Variables Are Sacred
+- LLM MUST generate `$issue_number` not "1234"
 - Variables enable "Plan Once, Run Forever"
-- Runtime resolution, not planning-time resolution
+- Runtime resolution by proxy, not planning-time resolution
+- Templates go directly in node params
 
-### 2. LLM Generates Complete Mappings
-- No inference, no guessing
-- LLM provides full `variable_flow` mappings
-- System only validates, never infers
+### 4. No Complex Mapping Structures
+- No `template_inputs` or `variable_flow` fields (they don't exist!)
+- Just use `$variables` directly in params
+- Runtime proxy handles resolution transparently
 
-### 3. Semantic Discovery Without Embeddings
-- Use LLM directly for semantic matching
-- "analyze costs" → "aws-cost-analyzer"
-- No separate embedding infrastructure
-
-### 4. PocketFlow Only for Planner
+### 5. PocketFlow Only for Planner
 - Planner is the ONLY component using PocketFlow
 - Everything else uses traditional Python
-- This is because of the complex retry/branching logic
+- This is because of the complex branching and retry logic
 
 ## Critical Files and Their Truth Status
 
 ### Source of Truth Files
 1. **`scratchpads/critical-user-decisions/task-17-planner-ambiguities.md`** - THE source of truth for decisions
-2. **`.taskmaster/tasks/task_17/task-17-context-and-implementation-details.md`** - Implementation guidance
+2. **`.taskmaster/tasks/task_17/task-17-context-and-implementation-details.md`** - Updated implementation guidance
 
 ### Implementation Structure
 ```
 src/pflow/planning/
-├── nodes.py          # All planner nodes (discovery, generator, validator, etc.)
-├── flow.py           # create_planner_flow() - the meta-workflow
+├── nodes.py          # All planner nodes (discovery, browsing, generator, validator, etc.)
+├── flow.py           # create_planner_flow() - the meta-workflow with two paths
 ├── ir_models.py      # Pydantic models for IR generation
 ├── utils/
 └── prompts/
@@ -104,49 +96,72 @@ src/pflow/planning/
 
 ### Key Dependencies
 - **Task 14**: Structure documentation (enables path-based mappings) ✅ Done
-- **Task 15/16**: Context builder with two-phase discovery ✅ Done
+- **Task 15/16**: Context builder with smart context loading ✅ Done
 - **LLM Library**: Simon Willison's `llm` with `claude-sonnet-4-20250514`
 - **JSON IR Schema**: Already defined in `src/pflow/core/ir_schema.py`
 
 ## Anti-Patterns Discovered
 
-### From pocketflow-patterns.md
+### Critical Anti-Patterns
+1. **WorkflowExecutionNode** - Planner NEVER executes user workflows
+2. **Complex mapping structures** - No template_inputs or variable_flow
+3. **Single discovery node** - Must have separate WorkflowDiscoveryNode and ComponentBrowsingNode
+4. **Parameter extraction without verification** - Must verify executability
+5. **Hardcoded values in workflows** - Always use template variables
+
+### From Research Files
 1. **Hardcoded Pattern Libraries** - Don't create fixed workflow patterns
 2. **Variable Inference Logic** - Don't guess variable sources
 3. **Template Enhancement** - Don't modify LLM output
 4. **Direct CLI Parsing** - MVP routes everything through LLM
 
-### General Anti-Patterns
-1. **Stateful Nodes** - All state in shared dict
-2. **Complex Actions** - Keep actions as simple strings
-3. **Missing variable_flow** - LLM must provide complete mappings
-
-## The Meta-Workflow Implementation
+## The Correct Meta-Workflow Implementation
 
 ```python
-# Simplified view of the planner meta-workflow
+# Correct view of the planner meta-workflow with two paths
 class WorkflowDiscoveryNode(Node):
-    """Find existing workflow or return not_found"""
+    """Find COMPLETE workflows that satisfy entire user intent"""
+    def exec(self, shared):
+        # Search for exact match that satisfies full intent
+        if found_complete_match:
+            return "found_existing"
+        else:
+            return "not_found"
+
+class ComponentBrowsingNode(Node):
+    """Browse for building blocks ONLY if no complete workflow found"""
+    def exec(self, shared):
+        # Use smart context loading
+        # Browse for components to build new workflow
+        return "generate"
 
 class GeneratorNode(Node):
-    """Generate new workflow with template variables"""
+    """Generate new workflow with template variables in params"""
+
+class ValidatorNode(Node):
+    """Validate generated workflow structure"""
 
 class ParameterExtractionNode(Node):
-    """Extract params from natural language"""
+    """CONVERGENCE POINT - Extract params AND verify executability"""
+    def exec(self, shared):
+        # Extract parameters from natural language
+        # VERIFY all required params available
+        if missing_params:
+            return "params_incomplete"  # Cannot execute!
+        return "params_complete"
 
-class ParameterMappingNode(Node):
-    """Map extracted params to template variables"""
+class ParameterPreparationNode(Node):
+    """Prepare parameters for CLI execution"""
 
-class ConfirmationNode(Node):
-    """Show user what will execute"""
+class ResultPreparationNode(Node):
+    """Package everything for CLI handoff"""
 
-class WorkflowExecutionNode(Node):
-    """Execute the workflow with mappings"""
-
-# Flow connections
-discovery → found → param_extract
-discovery → not_found → generator → validator → param_extract
-param_extract → param_map → confirm → execute
+# Flow connections showing TWO PATHS
+discovery → "found_existing" → param_extract  # Path A
+discovery → "not_found" → browsing → generator → validator → param_extract  # Path B
+# BOTH PATHS CONVERGE at param_extract
+param_extract → "params_complete" → param_prep → result_prep
+param_extract → "params_incomplete" → result_prep  # With error
 ```
 
 ## Success Metrics
@@ -154,65 +169,106 @@ param_extract → param_map → confirm → execute
 - ≥90% approval rate (users accept without modification)
 - Fast discovery (LLM call + parsing)
 - Clear approval (users understand what executes)
+- Successful parameter verification (workflows only execute when params available)
 
 ## Template Variable System
 
-### Example Flow
+### Correct Example Flow
 ```
 User: "fix github issue 1234"
 ↓
-Planner generates workflow with: params: {"issue": "$issue_number"}
-↓
-Planner extracts: {"issue": "1234"}
-↓
-Planner maps: {"$issue_number": "1234"}
-↓
-Execution: Workflow runs with mapping applied
+[PLANNER META-WORKFLOW]
+Path A (if workflow exists):
+  WorkflowDiscoveryNode: Found 'fix-issue' workflow
+  ↓
+  ParameterExtractionNode:
+    - Extract: {"issue_number": "1234"}
+    - Verify: Workflow needs issue_number ✓
+  ↓
+  ResultPreparationNode: Package for CLI
+
+Path B (if no workflow exists):
+  WorkflowDiscoveryNode: No complete match
+  ↓
+  ComponentBrowsingNode: Find github-get-issue, claude-code nodes
+  ↓
+  GeneratorNode: Create workflow with params: {"issue": "$issue_number"}
+  ↓
+  ValidatorNode: Validate structure
+  ↓
+  ParameterExtractionNode: Same verification as Path A
+  ↓
+  ResultPreparationNode: Package for CLI
+
+[CLI EXECUTION]
+- Shows approval prompt
+- Saves workflow (preserving $variables)
+- Executes with parameter substitution
 ```
 
-### Critical: Workflows ALWAYS use templates
-- Never hardcode extracted values
-- Always use $variables in saved workflows
-- Mappings happen at execution time
+### Critical: Templates in Params
+```json
+{
+  "nodes": [
+    {
+      "id": "get-issue",
+      "type": "github-get-issue",
+      "params": {"issue": "$issue_number"}  // Template directly in params!
+    }
+  ]
+}
+```
 
 ## What Makes This Integration Challenging
 
-1. **Research files contain misinformation** - Must critically evaluate everything
-2. **Meta nature is confusing** - Workflows creating workflows
-3. **Template variables are subtle** - Easy to confuse with parameters
-4. **MVP vs v2.0 differences** - MVP routes everything through planner
+1. **Early misconceptions persist** - Must correct wrong understanding
+2. **Two-path architecture is subtle** - Easy to miss the convergence
+3. **Parameter extraction dual role** - Both extraction AND verification
+4. **Separation of concerns** - Planner vs CLI responsibilities
+5. **Template variables in params** - Not in separate structures
 
 ## Current State of Documents
 
 ### task-17-context-and-implementation-details.md
-- ✅ Added meta-workflow architecture section
-- ✅ Added complete implementation pattern with all nodes
-- ✅ Added template-driven architecture section
-- ✅ Added semantic discovery approach
-- ✅ Added success metrics
-- ✅ Added comprehensive anti-patterns
+- ✅ UPDATED with correct two-path architecture
+- ✅ Added mermaid diagram showing convergence
+- ✅ Separated WorkflowDiscoveryNode and ComponentBrowsingNode
+- ✅ Emphasized parameter extraction as verification
+- ✅ Removed confusing "two-phase discovery" terminology
+- ✅ Preserved all valuable patterns and anti-patterns
 
 ### task-17-planner-ambiguities.md
-- ✅ Added critical clarification about meta-workflow
 - Original sections remain authoritative
+- Contains critical decisions about template variables
+
+### New Architecture Documents
+- ✅ Created task-17-planner-meta-workflow-architecture.md
+- ✅ Created task-17-update-plan.md
 
 ## Integration Approach
 
 When analyzing each research file:
-1. **Read critically** - Assume it may contain errors
-2. **Cross-reference** with ambiguities doc (source of truth)
-3. **Extract valid insights** - What aligns with established architecture
-4. **Identify contradictions** - What conflicts with truth
-5. **Document anti-patterns** - What NOT to do
-6. **Ask clarifying questions** - When genuinely ambiguous
+1. **Check against correct architecture** - Two paths converging at parameter extraction
+2. **Verify node names** - WorkflowDiscoveryNode vs ComponentBrowsingNode
+3. **Look for anti-patterns** - WorkflowExecutionNode, complex mappings
+4. **Extract valid insights** - What aligns with two-path architecture
+5. **Document corrections** - What was wrong and why
 
 ## Key Concepts to Remember
 
-1. **Planner is special** - Only component using PocketFlow
-2. **Templates enable reuse** - Core to "Plan Once, Run Forever"
-3. **LLM does heavy lifting** - Generates complete mappings
-4. **Discovery is semantic** - Not string matching
-5. **Execution included** - Planner doesn't just generate
+1. **Two distinct paths** - Found vs Generate, converging at verification
+2. **Parameter extraction verifies** - Not just extraction, but feasibility check
+3. **Planner returns to CLI** - Never executes user workflows
+4. **Templates in params** - Direct usage, no complex structures
+5. **Smart context loading** - Not "two-phase discovery"
+
+## Critical Corrections Made
+
+1. **Removed WorkflowExecutionNode** - Planner doesn't execute
+2. **Split discovery into two nodes** - WorkflowDiscoveryNode and ComponentBrowsingNode
+3. **Emphasized convergence** - Both paths meet at parameter extraction
+4. **Added verification role** - Parameter extraction ensures executability
+5. **Clarified handoff** - Planner returns results to CLI
 
 ## File Paths for Quick Reference
 
@@ -220,8 +276,12 @@ When analyzing each research file:
 - Context doc: `/Users/andfal/projects/pflow/.taskmaster/tasks/task_17/task-17-context-and-implementation-details.md`
 - Ambiguities: `/Users/andfal/projects/pflow/scratchpads/critical-user-decisions/task-17-planner-ambiguities.md`
 
-## CRITICAL: What You Just Learned
+## CRITICAL: Current Understanding
 
-The user clarified that the planner is a meta-workflow that includes execution. This changes everything about how we think about the planner. It's not just generating workflows - it's orchestrating the entire lifecycle from discovery through execution.
+The planner is a meta-workflow with two distinct paths that converge at a verification point:
+- **Path A**: Found existing workflow → verify parameters → return to CLI
+- **Path B**: Generate new workflow → validate → verify parameters → return to CLI
 
-This insight came from asking about "parameter extraction vs template variables" which revealed the fundamental meta nature of the system.
+The convergence at ParameterExtractionNode ensures that only executable workflows (with all required parameters available) proceed to execution. This prevents runtime failures and provides clear feedback when parameters are missing.
+
+The planner NEVER executes user workflows - it only prepares them for CLI execution.
