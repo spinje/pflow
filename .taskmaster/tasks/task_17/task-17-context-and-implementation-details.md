@@ -611,6 +611,10 @@ class ProgressiveGeneratorNode(Node):
             error_summary = self._summarize_errors(shared["validation_errors"])
             enhancement = f"{enhancement}\nPrevious issues: {error_summary}"
 
+            # Add specific hint if available
+            if "error_hint" in shared:
+                enhancement = f"{enhancement}\n{shared['error_hint']}"
+
         prompt = shared["base_prompt"] + enhancement
 
         # Generate with structured output
@@ -663,6 +667,9 @@ class ValidationNode(Node):
         # All errors are fixable with proper guidance
         errors = validation_result["errors"]
         shared["validation_errors"] = errors
+
+        # Generate specific hint for the LLM
+        shared["error_hint"] = self._generate_error_hint(errors)
 
         # Categorize error for targeted retry
         primary_issue = self._identify_primary_issue(errors)
@@ -719,9 +726,8 @@ class ValidationNode(Node):
             # Check if node has template variables in params
             for param_key, param_value in node.get("params", {}).items():
                 if isinstance(param_value, str) and '$' in param_value:
-                    # Extract template variables (including paths for future use)
-                    # MVP only validates base variables, but capture full paths
-                    template_vars = re.findall(r'\$(\w+(?:\.\w+)*)', param_value)
+                    # Extract template variables including paths like $issue_data.user.login
+                    template_vars = re.findall(r'\$(\w+(?:\.[\w\[\]]+)*)', param_value)
                     for var in template_vars:
                         # Just note that it has templates - runtime will handle resolution
                         # No need to validate mappings since they don't exist
@@ -739,6 +745,60 @@ class ValidationNode(Node):
             "errors": errors
         }
 
+    def _generate_error_hint(self, errors):
+        """Generate LLM-friendly hints for validation errors."""
+        if any("Unknown node" in e for e in errors):
+            return "Use only nodes from the available node list provided in the context"
+        elif any("circular dependency" in e.lower() for e in errors):
+            return "Ensure your workflow doesn't have cycles - each node should flow forward"
+        elif any("template variable" in e.lower() or "$" in e for e in errors):
+            return "Check that all $variables reference data from earlier nodes or CLI parameters"
+        elif any("prompt" in e.lower() for e in errors):
+            return "LLM nodes typically need a 'prompt' parameter with the text to process"
+        else:
+            return "Check the workflow structure and ensure all nodes are properly connected"
+
+```
+
+### Topological Sort for Data Flow Analysis
+
+The data flow analysis requires traversing nodes in execution order. This helper function determines that order:
+
+```python
+def get_execution_order(nodes, edges):
+    """
+    Determine node execution order from edges using topological sort.
+    Returns nodes in the order they would execute.
+    Raises ValueError if circular dependencies are detected.
+    """
+    # Build adjacency list and in-degree count
+    graph = {node['id']: [] for node in nodes}
+    in_degree = {node['id']: 0 for node in nodes}
+
+    for edge in edges:
+        graph[edge['from']].append(edge['to'])
+        in_degree[edge['to']] += 1
+
+    # Find nodes with no dependencies
+    queue = [node_id for node_id, degree in in_degree.items() if degree == 0]
+    ordered = []
+
+    while queue:
+        node_id = queue.pop(0)
+        ordered.append(node_id)
+
+        # Process dependent nodes
+        for next_id in graph[node_id]:
+            in_degree[next_id] -= 1
+            if in_degree[next_id] == 0:
+                queue.append(next_id)
+
+    if len(ordered) != len(nodes):
+        raise ValueError("Circular dependency detected in workflow")
+
+    # Return nodes in execution order
+    node_map = {n['id']: n for n in nodes}
+    return [node_map[node_id] for node_id in ordered]
 ```
 
 ### Attempt History Tracking Pattern
@@ -2294,9 +2354,8 @@ def validate_template_variables(workflow: dict, parameter_values: dict, registry
     for node in workflow.get("nodes", []):
         for param_value in node.get("params", {}).values():
             if isinstance(param_value, str):
-                # Extract base variable names only for MVP validation
-                # (though regex captures full paths for future use)
-                variables = re.findall(r'\$(\w+)', param_value)
+                # Extract template variables including paths like $issue_data.user.login
+                variables = re.findall(r'\$(\w+(?:\.[\w\[\]]+)*)', param_value)
                 template_vars.update(variables)
 
     # Collect all available data sources
