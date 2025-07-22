@@ -641,6 +641,27 @@ This enables the "Plan Once, Run Forever" philosophy:
 
 ## PocketFlow Execution Model Deep Dive
 
+### Important Pattern: prep() Returning Shared
+In many PocketFlow examples throughout this document, you'll see a common pattern where `prep()` returns the entire shared dictionary:
+
+```python
+def prep(self, shared):
+    # Common pattern: return shared dict to make it available in exec()
+    return shared
+
+def exec(self, prep_res):
+    shared = prep_res  # prep_res is the shared dict
+    # Now you can modify shared...
+```
+
+This pattern is used when nodes need to:
+- Modify the shared store during execution
+- Track state across retries
+- Access multiple values from shared
+- Have comprehensive error handling in exec_fallback()
+
+While `prep()` can return any data structure, returning `shared` is a common idiom that provides maximum flexibility.
+
 ### Core Execution Loop Understanding
 PocketFlow's elegance comes from its simple execution model:
 ```python
@@ -1219,7 +1240,12 @@ def create_retry_loop_flow():
     flow = Flow("retry_planner")
 
     class AttemptCounterNode(Node):
-        def exec(self, shared):
+        def prep(self, shared):
+            # Pass shared dict to exec for attempt counting
+            return shared
+
+        def exec(self, prep_res):
+            shared = prep_res  # prep_res is the shared dict
             shared["attempts"] = shared.get("attempts", 0) + 1
             if shared["attempts"] > 3:
                 return "max_attempts"
@@ -2494,7 +2520,14 @@ class WorkflowGeneratorNode(Node):
         super().__init__(max_retries=3, wait=1.0)
         self.model = llm.get_model("claude-sonnet-4-20250514")
 
-    def exec(self, shared):
+    def prep(self, shared):
+        """Prepare data including attempt tracking for progressive enhancement."""
+        return shared  # Pass entire shared dict for comprehensive context
+
+    def exec(self, prep_res):
+        """Generate workflow with progressive enhancement."""
+        shared = prep_res  # prep_res is the shared dict
+
         # Track attempts for progressive enhancement
         attempt = shared.get("generation_attempts", 0)
         shared["generation_attempts"] = attempt + 1
@@ -2534,8 +2567,9 @@ class WorkflowGeneratorNode(Node):
 
         return base_prompt
 
-    def exec_fallback(self, shared, exc):
+    def exec_fallback(self, prep_res, exc):
         """Handle final failure after all retries."""
+        shared = prep_res  # prep_res is the shared dict
         shared["generation_failed"] = True
         shared["final_error"] = str(exc)
         return "generation_failed"
@@ -3070,10 +3104,17 @@ class ComponentBrowsingNode(Node):
         response = self.llm.prompt(prompt, schema=ComponentSelection)
         return response.json()
 
-    def exec(self, shared):
+    def prep(self, shared):
+        """Prepare data for component browsing."""
+        return {
+            "user_input": shared["user_input"]
+        }
+
+    def exec(self, prep_res):
+        """Execute component browsing with two-phase context loading."""
         # Step 1: Browse with lightweight context
         discovery_context = build_discovery_context()
-        browsed = self._browse_components(shared["user_input"], discovery_context)
+        browsed = self._browse_components(prep_res["user_input"], discovery_context)
 
         # Step 2: Load details only for browsed components
         planning_context = build_planning_context(
@@ -3081,7 +3122,15 @@ class ComponentBrowsingNode(Node):
             browsed["workflow_names"]
         )
 
-        shared["planning_context"] = planning_context
+        return {
+            "planning_context": planning_context,
+            "browsed_components": browsed
+        }
+
+    def post(self, shared, prep_res, exec_res):
+        """Store results and proceed to generation."""
+        shared["planning_context"] = exec_res["planning_context"]
+        shared["browsed_components"] = exec_res["browsed_components"]
         return "generate"
 ```
 
@@ -3130,17 +3179,35 @@ from pflow.registry import Registry
 
 # In any planner node
 class WorkflowDiscoveryNode(Node):
-    def exec(self, shared):
+    def prep(self, shared):
+        """Prepare for workflow discovery."""
         from pflow.planning.context_builder import build_discovery_context
 
         # Use context builder for formatted discovery
         discovery_context = build_discovery_context()
-        shared["discovery_context"] = discovery_context
 
+        return {
+            "discovery_context": discovery_context,
+            "user_input": shared.get("user_input", "")
+        }
+
+    def exec(self, prep_res):
+        """Execute workflow discovery."""
+        # Use the discovery context from prep
         # Context builder provides:
         # - Formatted node descriptions
         # - Available workflows from ~/.pflow/workflows/
         # - Both as LLM-ready markdown
+
+        # Would typically use LLM here with prep_res["discovery_context"]
+        # to find matching workflows
+        return {"found": False}  # Simplified example
+
+    def post(self, shared, prep_res, exec_res):
+        """Store discovery results."""
+        shared["discovery_context"] = prep_res["discovery_context"]
+        shared["discovery_result"] = exec_res
+        return "found" if exec_res.get("found") else "not_found"
 ```
 
 ### Using IR Validation
@@ -3148,30 +3215,51 @@ class WorkflowDiscoveryNode(Node):
 from pflow.core import validate_ir, ValidationError
 
 class ValidatorNode(Node):
-    def exec(self, shared):
-        workflow = shared["generated_workflow"]
-        registry = shared["registry"]  # Registry instance
-        parameter_values = shared.get("extracted_params", {})
+    def prep(self, shared):
+        """Prepare data for validation."""
+        from pflow.registry import Registry
+        registry = Registry()
 
+        workflow = shared.get("generated_workflow", {})
         # Get metadata only for nodes used in this workflow
         node_types = [node["type"] for node in workflow.get("nodes", [])]
-        registry_metadata = registry.get_nodes_metadata(node_types)
 
+        return {
+            "workflow": workflow,
+            "registry_metadata": registry.get_nodes_metadata(node_types),
+            "parameter_values": shared.get("extracted_params", {})
+        }
+
+    def exec(self, prep_res):
+        """Execute validation."""
         try:
             # First validate structure
-            validate_ir(workflow)
+            validate_ir(prep_res["workflow"])
 
             # Then validate template variables can be resolved
-            validate_template_variables(workflow, parameter_values, registry_metadata)
+            validate_template_variables(
+                prep_res["workflow"],
+                prep_res["parameter_values"],
+                prep_res["registry_metadata"]
+            )
 
-            return "valid"
+            return {"is_valid": True}
         except ValidationError as e:
-            shared["validation_error"] = {
-                "path": getattr(e, 'path', ''),
-                "message": str(e),
-                "suggestion": getattr(e, 'suggestion', '')
+            return {
+                "is_valid": False,
+                "error": {
+                    "path": getattr(e, 'path', ''),
+                    "message": str(e),
+                    "suggestion": getattr(e, 'suggestion', '')
+                }
             }
+
+    def post(self, shared, prep_res, exec_res):
+        """Store validation results."""
+        if not exec_res["is_valid"]:
+            shared["validation_error"] = exec_res["error"]
             return "invalid"
+        return "valid"
 ```
 
 ### CLI Integration Point
