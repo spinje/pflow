@@ -6,6 +6,94 @@ This document provides the implementation guide for template variable support in
 
 **Key MVP Feature**: Template variables support path-based access (e.g., `$issue_data.user.login`), eliminating the need for complex data mappings in most workflows.
 
+## Requirements and Specifications
+
+### Functional Requirements
+
+1. **Template Variable Detection**
+   - MUST detect template variables in any string parameter value
+   - MUST support both `$variable` and `${variable}` syntax
+   - MUST support nested path access: `$variable.field.subfield`
+   - MUST handle multiple variables in a single string
+
+2. **Resolution Sources**
+   - MUST resolve from shared store (workflow runtime data)
+   - MUST resolve from CLI parameters (user-provided values)
+   - MUST prioritize CLI parameters over shared store when same key exists
+   - MUST maintain resolution context throughout workflow execution
+
+3. **Path Traversal**
+   - MUST traverse nested dictionaries using dot notation
+   - MUST handle missing paths gracefully (no exceptions)
+   - MUST convert all resolved values to strings
+   - MUST preserve original template if path cannot be resolved
+
+4. **Node Transparency**
+   - MUST NOT require changes to existing node implementations
+   - MUST intercept at the `_run()` method only
+   - MUST preserve node atomicity and isolation
+   - MUST work with all existing pflow nodes
+
+### Technical Specifications
+
+1. **Template Syntax**
+   ```
+   variable_pattern = $identifier | ${identifier}
+   identifier = word_char+ ( '.' word_char+ )*
+   word_char = [a-zA-Z0-9_]
+   ```
+
+2. **Resolution Algorithm**
+   ```
+   1. Parse template string to find all variables
+   2. For each variable:
+      a. Split by '.' to get path components
+      b. Traverse context dict following path
+      c. Convert final value to string
+      d. Replace template with resolved value
+   3. Return modified string
+   ```
+
+3. **Priority Order**
+   ```
+   Resolution Context = {
+     ...shared_store,     # Lower priority
+     ...cli_parameters    # Higher priority (overwrites)
+   }
+   ```
+
+4. **Error Handling**
+   - Invalid paths: Leave template unchanged
+   - Non-dict traversal: Stop and leave template unchanged
+   - Null/None values: Convert to empty string
+   - Complex objects: Convert using str() function
+
+### Non-Functional Requirements
+
+1. **Performance**
+   - Resolution MUST complete in O(n*m) time where n=template length, m=path depth
+   - No caching required for MVP (stateless resolution)
+
+2. **Compatibility**
+   - MUST work with Python 3.8+
+   - MUST integrate with existing PocketFlow execution model
+   - MUST maintain backward compatibility with non-template parameters
+
+3. **Maintainability**
+   - Code MUST be isolated in dedicated modules
+   - MUST include comprehensive test coverage
+   - MUST follow existing pflow code patterns
+
+### Out of Scope for MVP
+
+1. Array indexing: `$items.0.name`
+2. Expression evaluation: `$count + 1`
+3. Method calls: `$name.upper()`
+4. Default values: `$var|default`
+5. Type preservation (everything converts to string)
+6. Proxy mappings or key renaming
+7. Compile-time resolution
+
 ## What You're Building
 
 A template variable resolution system that:
