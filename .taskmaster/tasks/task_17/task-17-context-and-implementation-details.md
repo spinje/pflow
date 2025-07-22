@@ -691,7 +691,11 @@ class ValidationNode(Node):
         return "general_validation_error"
 
     def _validate_workflow(self, workflow):
-        """Perform comprehensive validation with prompt-ready error messages."""
+        """Perform comprehensive validation with prompt-ready error messages.
+
+        Note: Node outputs are NOT in the workflow IR - they come from registry metadata.
+        Template validation happens separately using registry data.
+        """
         errors = []
 
         # Check structure
@@ -715,8 +719,9 @@ class ValidationNode(Node):
             # Check if node has template variables in params
             for param_key, param_value in node.get("params", {}).items():
                 if isinstance(param_value, str) and '$' in param_value:
-                    # Extract template variables
-                    template_vars = re.findall(r'\$\{?(\w+)\}?', param_value)
+                    # Extract template variables (including paths for future use)
+                    # MVP only validates base variables, but capture full paths
+                    template_vars = re.findall(r'\$(\w+(?:\.\w+)*)', param_value)
                     for var in template_vars:
                         # Just note that it has templates - runtime will handle resolution
                         # No need to validate mappings since they don't exist
@@ -1322,7 +1327,6 @@ class GeneratorNode(Node):
     """Generates workflow with registry validation."""
     def exec(self, shared, prep_res):
         from pflow.planning.context_builder import build_planning_context
-        from pflow.registry import Registry
 
         # Get detailed planning context for selected nodes
         selected_nodes = shared.get("selected_nodes", [])
@@ -1331,11 +1335,7 @@ class GeneratorNode(Node):
         # Generate workflow using LLM
         # ... LLM generation ...
 
-        # Validate node types exist
-        registry = Registry()
-        for node in generated_ir["nodes"]:
-            if node["type"] not in registry.get_all_node_types():
-                raise ValueError(f"Unknown node type: {node['type']}")
+        # Note: Node validation happens in ValidatorNode using registry metadata
 
         return "validate"
 
@@ -2279,30 +2279,39 @@ Generate complete JSON matching the IR schema with nodes, edges, and params."""
 The runtime proxy will handle template resolution transparently, but the planner should validate that all template variables can be resolved:
 
 ```python
-def validate_template_variables(workflow: dict, parameter_values: dict) -> None:
+def validate_template_variables(workflow: dict, parameter_values: dict, registry_metadata: dict) -> None:
     """Validate that all template variables in the workflow can be resolved.
 
-    This ensures that:
-    1. CLI parameters have values provided
-    2. Shared store references will be available when needed
+    Critical: Node outputs come from registry metadata, NOT from the workflow IR.
+
+    MVP approach:
+    - Only validate base variables (ignore paths like .user.login)
+    - Ignore array indices
+    - Everything is treated as strings
     """
     # Extract all template variables from node params
     template_vars = set()
     for node in workflow.get("nodes", []):
         for param_value in node.get("params", {}).values():
             if isinstance(param_value, str):
-                # Extract $variables from strings
-                variables = re.findall(r'\$\{?(\w+)\}?', param_value)
+                # Extract base variable names only for MVP validation
+                # (though regex captures full paths for future use)
+                variables = re.findall(r'\$(\w+)', param_value)
                 template_vars.update(variables)
 
-    # Check CLI parameters are provided
-    cli_params = {k for k in template_vars if k in parameter_values}
-    missing_cli = cli_params - set(parameter_values.keys())
-    if missing_cli:
-        raise ValidationError(f"Missing CLI parameters: {missing_cli}")
+    # Collect all available data sources
+    available = set(parameter_values.keys())  # CLI parameters
 
-    # Remaining vars should be resolvable from shared store
-    # Runtime proxy will handle the actual resolution
+    # Add outputs from all nodes (from registry, NOT from IR!)
+    for node in workflow.get("nodes", []):
+        node_type = node["type"]
+        outputs = registry_metadata.get(node_type, {}).get("outputs", [])
+        available.update(outputs)
+
+    # Simple validation: check base variables exist
+    missing = template_vars - available
+    if missing:
+        raise ValidationError(f"Template variables have no source: {missing}")
 ```
 
 ### Example: LLM-Generated Complete Workflow
@@ -2662,18 +2671,26 @@ from pflow.core import validate_ir, ValidationError
 class ValidatorNode(Node):
     def exec(self, shared):
         workflow = shared["generated_workflow"]
+        registry = shared["registry"]  # Registry instance
+        parameter_values = shared.get("extracted_params", {})
+
+        # Get metadata only for nodes used in this workflow
+        node_types = [node["type"] for node in workflow.get("nodes", [])]
+        registry_metadata = registry.get_nodes_metadata(node_types)
 
         try:
+            # First validate structure
             validate_ir(workflow)
+
+            # Then validate template variables can be resolved
+            validate_template_variables(workflow, parameter_values, registry_metadata)
+
             return "valid"
         except ValidationError as e:
-            # e.path: "nodes[0].type"
-            # e.message: "Unknown node type 'read-files'"
-            # e.suggestion: "Did you mean 'read-file'?"
             shared["validation_error"] = {
-                "path": e.path,
-                "message": e.message,
-                "suggestion": e.suggestion
+                "path": getattr(e, 'path', ''),
+                "message": str(e),
+                "suggestion": getattr(e, 'suggestion', '')
             }
             return "invalid"
 ```
@@ -2682,13 +2699,19 @@ class ValidatorNode(Node):
 ```python
 # The CLI will invoke the planner like this:
 from pflow.planning import create_planner_flow
+from pflow.registry import Registry
 
 # In cli/main.py
+registry = Registry()
 planner_flow = create_planner_flow()
+
+# Pass registry instance, not metadata
+# The planner will call get_nodes_metadata() internally
 result = planner_flow.run({
     "user_input": ctx.obj["raw_input"],
     "input_source": ctx.obj["input_source"],
-    "stdin_data": ctx.obj.get("stdin_data")
+    "stdin_data": ctx.obj.get("stdin_data"),
+    "registry": registry  # Pass registry instance
 })
 
 # Result contains the planner output (workflow IR + parameter values)
