@@ -307,12 +307,11 @@ class GeneratorNode(Node):
         # 1. Design the workflow structure (node selection and sequencing)
         # 2. Identify dynamic values (like "1234" in "fix issue 1234")
         # 3. Create template variables (like $issue_number) instead of hardcoding
-        # 4. Generate proxy mappings for:
-        #    - Output collision avoidance (when multiple nodes write same key)
-        #    - Data routing between incompatible interfaces
-        # 5. Produce complete JSON IR with all required fields:
-        #    - ir_version, nodes (with params), edges, mappings
-        # 6. Ensure data flow integrity (outputs properly connect to inputs)
+        # 4. Use template paths for data access ($data.field.subfield)
+        # 5. Avoid collisions through descriptive node IDs
+        # 6. Produce complete JSON IR with all required fields:
+        #    - ir_version, nodes (with params), edges
+        # 7. Ensure data flow integrity (outputs properly connect to inputs)
         workflow = self._generate_workflow(
             shared["user_input"],
             shared["planning_context"]
@@ -469,11 +468,11 @@ The planner returns a structured result that contains everything the CLI needs f
 ```python
 {
     "workflow_ir": {
-        # Complete IR with template variables and proxy mappings
+        # Complete IR with template variables (now with path support)
         "ir_version": "0.1.0",
         "nodes": [...],
         "edges": [...],
-        "mappings": {...}  # Proxy mappings for shared store
+        # mappings field omitted in MVP (v2.0 feature)
     },
     "workflow_metadata": {
         "suggested_name": "fix-issue",
@@ -1004,7 +1003,7 @@ The planner aims for **single-shot generation** success through comprehensive co
 # The planner flow structure enables smart retry:
 generator >> validator >> approval
 validator - "invalid_structure" >> error_feedback >> generator
-validator - "missing_mappings" >> enhance_context >> generator
+validator - "invalid_paths" >> enhance_context >> generator
 generator - "max_retries_exceeded" >> fallback_strategy
 ```
 
@@ -1157,9 +1156,9 @@ WORKFLOW_GENERATION_PROMPT = """You are a workflow planner for pflow, a system t
 
 Your task is to generate a complete JSON workflow including:
 1. All required nodes in correct sequence
-2. Template variables ($var) in params for dynamic values
-3. Natural, descriptive shared store keys
-4. Optional proxy mappings for complex data routing
+2. Template variables ($var) with path support ($var.field) for dynamic values
+3. Natural, descriptive node IDs to avoid collisions
+4. Simple, linear workflows (no branching)
 
 {context}
 
@@ -1176,11 +1175,12 @@ Output only valid JSON matching this structure:
 {{
   "ir_version": "0.1.0",
   "nodes": [
-    {{"id": "n1", "type": "node-type", "params": {{"key": "$variable_or_value"}}}}
+    {{"id": "n1", "type": "node-type", "params": {{"key": "$variable", "nested": "$data.field.subfield"}}}}
   ],
-  "edges": [...],
-  "start_node": "...",
-  "mappings": {{...}}  // Optional proxy mappings if needed
+  "edges": [
+    {{"from": "n1", "to": "n2"}}
+  ],
+  "start_node": "n1"  // Optional
 }}
 """
 
@@ -1713,17 +1713,53 @@ workflow = {
 }
 ```
 
-### Simple Design: Runtime Proxy Resolution
-The system uses a **runtime proxy pattern** for template resolution:
+### Simple Design: Runtime Resolution with Path Support
+
+The system uses a **runtime resolution pattern** for template variables that now includes path traversal:
+
 1. **CLI parameters**: `$issue_number` → resolved from `--issue_number=1234`
 2. **Shared store values**: `$issue_data` → resolved from `shared["issue_data"]`
-3. **Transparent to nodes**: Nodes receive already-resolved values
+3. **Path traversal**: `$issue_data.user.login` → resolved from `shared["issue_data"]["user"]["login"]`
+4. **Transparent to nodes**: Nodes receive already-resolved values
+
+### MVP Enhancement: Template Paths
+
+Template variables now support dot notation for accessing nested data:
+
+```python
+# Simple template variable
+"$issue_number"  # Resolves to shared["issue_number"]
+
+# Template with path
+"$issue_data.user.login"  # Resolves to shared["issue_data"]["user"]["login"]
+
+# In workflow params
+{"id": "analyze", "type": "llm", "params": {
+    "prompt": "Fix issue #$issue_data.number by $issue_data.user.login: $issue_data.title"
+}}
+```
+
+This enhancement eliminates the need for proxy mappings in 90% of use cases with just ~20 lines of implementation:
+
+```python
+def resolve_template(var_name, shared):
+    if '.' in var_name:
+        parts = var_name.split('.')
+        value = shared
+        for part in parts:
+            value = value.get(part, '')
+            if not isinstance(value, dict):
+                break
+        return str(value)
+    return str(shared.get(var_name, ''))
+```
 
 This approach ensures:
-- No complex mapping structures needed
-- Simple naming convention ($var → shared["var"])
+- No complex mapping structures needed for common cases
+- Natural, intuitive syntax users already understand
 - Clear separation of concerns
 - Easy to understand and debug
+- Backwards compatible with simple variables
 
 ## Critical Pattern: The Exclusive Parameter Fallback
 
@@ -1791,17 +1827,20 @@ The combination of fallback pattern + template variables handles many common dat
 }
 ```
 
-### When Proxy Mappings Are Still Essential
+### When Proxy Mappings Would Be Needed (v2.0 Feature)
 
-Despite the flexibility of the fallback pattern, proxy mappings remain necessary for:
+With template path support handling most data access needs, proxy mappings are deferred to v2.0 for specific advanced cases:
 
-1. **Output collision avoidance** (primary use case):
+1. **Output collision avoidance** (v2.0):
    ```json
    // Two nodes writing to the same key
    {"id": "api1", "type": "api-call"},  // Writes to shared["response"]
    {"id": "api2", "type": "api-call"},  // Also writes to shared["response"] - collision!
 
-   // Must use output_mappings to namespace:
+   // MVP workaround: Use template paths to access both
+   {"params": {"comparison": "API1: $api1.response\nAPI2: $api2.response"}}
+
+   // v2.0 solution with output_mappings:
    {
      "mappings": {
        "api1": {"output_mappings": {"response": "api1_response"}},
@@ -1810,13 +1849,14 @@ Despite the flexibility of the fallback pattern, proxy mappings remain necessary
    }
    ```
 
-2. **Type preservation for non-string parameters**:
-   - Template variables use string substitution (everything becomes a string)
-   - Proxy mappings preserve original types (int, float, bool, array, object)
+2. **Type preservation for non-string parameters** (v2.0):
+   - Template variables convert everything to strings
+   - For MVP, this covers most use cases (prompts, messages, etc.)
+   - v2.0 proxy mappings would preserve original types (int, float, bool, array, object)
 
-3. **Path-based data extraction** (if template variables don't support paths):
-   - Proxy mapping: `{"author": "issue_data.user.login"}`
-   - Template variable: `$issue_data` (gets entire object as string)
+3. **Complex transformations** (v2.0):
+   - Array filtering, data aggregation
+   - For MVP, use dedicated nodes for transformations
 
 ### Understanding the Context Builder Output
 
@@ -1857,22 +1897,26 @@ The planner doesn't need to worry about this - nodes handle it internally.
 
 ### Implications for Workflow Generation
 
-1. **Try params first**: For static values, set them directly in params instead of creating proxy mappings
-2. **Use template variables**: For dynamic values from other nodes, use `$variable` in params
-3. **Reduce mappings**: Many workflows that seemed to need proxy mappings actually don't
-4. **Maximum flexibility**: Choose the best approach for each value individually
+1. **Use template paths**: For accessing nested data, use `$data.field.subfield` syntax
+2. **Try params first**: For static values, set them directly in params
+3. **Template variables for everything dynamic**: Both simple (`$var`) and paths (`$var.field`)
+4. **No proxy mappings in MVP**: Deferred to v2.0 for advanced cases
+5. **Maximum simplicity**: Focus on natural, readable workflows
 
 This pattern is documented as a core architectural decision in `.taskmaster/knowledge/patterns.md` under "Shared Store Inputs as Automatic Parameter Fallbacks" and is implemented universally across all pflow nodes.
 
 ## Critical Constraints for Workflow Generation
 
-### 1. Template Variables ONLY in Params
+### 1. Template Variables with Path Support
 
-Template variables can **only** be used in the `params` field of nodes in the JSON IR:
+Template variables can **only** be used in the `params` field of nodes, now with path traversal:
 
 ```json
-// ✅ CORRECT - Template in params
+// ✅ CORRECT - Simple template in params
 {"id": "analyze", "type": "llm", "params": {"prompt": "Fix: $issue_data"}}
+
+// ✅ CORRECT - Template with path in params
+{"id": "analyze", "type": "llm", "params": {"prompt": "Fix issue #$issue_data.number by $issue_data.user.login"}}
 
 // ❌ IMPOSSIBLE - No "reads" or "writes" fields exist in IR
 {"id": "analyze", "type": "llm", "reads": ["$issue_data"]}  // This field doesn't exist!
@@ -1884,28 +1928,26 @@ The JSON IR structure is:
 - `params`: Parameters (ONLY place for templates)
 - No explicit reads/writes fields
 
-### 2. Order of Operations is Critical
+### 2. MVP Simplification: Template Resolution Only
 
-The runtime applies transformations in this strict order:
-1. **Proxy mappings first** - Renames shared store keys
-2. **Template resolution second** - References the renamed keys
+For MVP, the runtime only needs to handle template resolution with paths:
 
 ```json
-// Example showing why order matters:
+// MVP approach using template paths:
 {
   "nodes": [
-    {"id": "api1", "type": "api-call"},  // Writes to shared["response"]
-    {"id": "api2", "type": "api-call"},  // Also writes to shared["response"]
-    {"id": "analyze", "type": "llm", "params": {"prompt": "Compare: $api1_response vs $api2_response"}}
-  ],
-  "mappings": {
-    "api1": {"output_mappings": {"response": "api1_response"}},
-    "api2": {"output_mappings": {"response": "api2_response"}}
-  }
+    {"id": "api1", "type": "api-call"},  // Writes to shared["api1"]
+    {"id": "api2", "type": "api-call"},  // Writes to shared["api2"]
+    {"id": "analyze", "type": "llm", "params": {
+      "prompt": "Compare API responses:\n1: $api1.response\n2: $api2.response"
+    }}
+  ]
 }
-
-// Without proper ordering, $api1_response wouldn't exist!
 ```
+
+**v2.0 Note**: When proxy mappings are added, order of operations will matter:
+1. Proxy mappings first (rename keys)
+2. Template resolution second (access renamed keys)
 
 ### 3. Type Limitations of Template Variables
 
@@ -1914,83 +1956,82 @@ Template variables convert ALL values to strings:
 ```json
 // shared["retries"] = 3 (integer)
 // shared["enabled"] = true (boolean)
+// shared["data"] = {"count": 5, "active": true}
 
 // Using templates:
-{"params": {"retries": "$retries"}}     // Becomes "3" (string!)
-{"params": {"enabled": "$enabled"}}     // Becomes "true" (string!)
+{"params": {"retries": "$retries"}}           // Becomes "3" (string!)
+{"params": {"enabled": "$enabled"}}           // Becomes "true" (string!)
+{"params": {"count": "$data.count"}}          // Becomes "5" (string!)
 
-// For type preservation, use proxy mappings:
-{"mappings": {"node1": {"input_mappings": {"retries": "retry_count"}}}}  // Preserves integer
+// For MVP, this covers most use cases (prompts, messages, file paths, etc.)
+// v2.0 will add proxy mappings for type preservation when critical
 ```
 
-### 4. When to Use Each Approach
+### 4. MVP Approach: Template Paths for Everything
 
-**Use Template Variables When:**
-- Parameter expects string type
-- Combining multiple values: `"Fix $issue_title in $repo"`
-- Simple value substitution
-- Referencing CLI parameters: `$issue_number`
+**For MVP, use template variables with paths for all dynamic data access:**
+- Simple values: `$issue_number`, `$file_path`
+- Nested data: `$issue_data.user.login`, `$api_response.data.items[0]`
+- String composition: `"Fix issue #$issue.number in $repo.name"`
+- CLI parameters: `$issue_number` (from --issue_number=1234)
 
-**Use Proxy Mappings When:**
-- **Output collision avoidance** (primary use case)
-  - The planner must track which nodes write to which keys
-  - If multiple nodes write to the same key, proxy mappings are required
-- Type preservation is critical (integers, booleans, arrays)
-- Complex nested data extraction (future: `issue_data.user.login`)
+**For static values:**
+- Direct params: `{"params": {"file_path": "config.json"}}`
+- Boolean/number strings are fine: `{"params": {"retries": "3"}}`
 
-**Use Fallback Pattern When:**
-- Static values: `{"params": {"file_path": "config.json"}}`
-- Overriding shared store with fixed values
+**v2.0 Features (not in MVP):**
+- Proxy mappings for output collisions
+- Type preservation for non-string parameters
+- Complex data transformations
 
-### Summary for the Planner
+### Summary for the MVP Planner
 
-1. Put ALL template variables in node `params` only
-2. Generate proxy mappings for output collisions
-3. Remember templates produce strings - use proxy mappings for other types
-4. Let the runtime handle the execution order
+1. Use template paths (`$data.field`) for all data access
+2. Put ALL template variables in node `params` only
+3. Accept that everything becomes strings (covers 90% of use cases)
+4. Keep workflows simple and readable
+5. No proxy mappings in MVP - deferred to v2.0
 
 
-## MVP Approach to Collision Handling
+## MVP Approach: Avoiding Collisions Through Node Naming
 
 ### Simplified Strategy
 
-For MVP, the planner should follow a pragmatic approach:
+For MVP, avoid collisions by using descriptive node IDs that naturally namespace the data:
 
-1. **No pre-detection** - Don't parse markdown to detect potential collisions
-2. **Include examples** - Show proxy mapping examples in the prompt
-3. **Trust the LLM** - Modern LLMs understand collision problems well
-4. **Validate after** - Check generated workflows for actual collisions
+1. **Use descriptive node IDs** - `github1`, `github2` instead of generic names
+2. **Leverage node ID as namespace** - Data naturally goes to `shared["github1"]`, `shared["github2"]`
+3. **Access with template paths** - `$github1.issue_data`, `$github2.issue_data`
+4. **Trust the LLM** - Modern LLMs understand this pattern well
 
 ### Prompt Guidance
 
 Include this guidance in the planner prompt:
 ```
-If multiple nodes of the same type write to the same shared store key,
-use output_mappings to avoid collisions. Example:
+When using multiple nodes of the same type, give them descriptive IDs:
+- "github_main" and "github_fork" instead of "node1" and "node2"
+- "api_users" and "api_posts" instead of "api1" and "api2"
 
+This naturally avoids collisions as each node writes to its own namespace.
+Access the data using template paths: $github_main.issue_data
+```
+
+### Example Pattern
+```json
 {
-  "mappings": {
-    "api1": {"output_mappings": {"response": "api1_response"}},
-    "api2": {"output_mappings": {"response": "api2_response"}}
-  }
+  "nodes": [
+    {"id": "github_main", "type": "github-get-issue", "params": {"issue": "123"}},
+    {"id": "github_fork", "type": "github-get-issue", "params": {"issue": "456"}},
+    {"id": "compare", "type": "llm", "params": {
+      "prompt": "Compare:\nMain: $github_main.issue_data.title\nFork: $github_fork.issue_data.title"
+    }}
+  ]
 }
 ```
 
-### Post-Generation Validation
+### v2.0 Enhancement
 
-After workflow generation, validate for collisions:
-- Check if multiple nodes write to the same keys
-- Consider proxy mappings in the validation
-- Provide clear error messages if collisions remain
-
-### Future Enhancement
-
-Post-MVP, the context builder could provide structured data (JSON) alongside markdown to enable:
-- Automatic collision detection
-- Suggested proxy mappings
-- More intelligent workflow generation
-
-For now, keep it simple and rely on good examples and LLM intelligence.
+Post-MVP, proxy mappings will provide more sophisticated collision handling and data reorganization. For now, descriptive naming provides a simple, effective solution.
 
 ## Structured Output Generation with Pydantic
 
@@ -2020,7 +2061,7 @@ class FlowIR(BaseModel):
     nodes: List[NodeIR] = Field(..., min_items=1)
     edges: List[EdgeIR] = Field(default_factory=list)
     start_node: Optional[str] = None
-    mappings: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    # mappings field omitted in MVP - v2.0 feature
 
     def to_dict(self) -> dict:
         """Convert to dict for validation with existing schema."""
@@ -2167,22 +2208,22 @@ When user says "fix github issue 123", the LLM generates:
 {
   "ir_version": "0.1.0",
   "nodes": [
-    {"id": "get-issue", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
+    {"id": "get_issue", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
     {"id": "analyze", "type": "claude-code", "params": {
-      "prompt": "<instructions>Fix the issue described below</instructions>\n\n$issue_data"
+      "prompt": "<instructions>Fix the issue described below</instructions>\n\nIssue #$get_issue.issue_data.number: $get_issue.issue_data.title\nReported by: $get_issue.issue_data.user.login\n\nDescription:\n$get_issue.issue_data.body"
     }},
-    {"id": "commit", "type": "git-commit", "params": {"message": "$commit_message"}},
+    {"id": "commit", "type": "git-commit", "params": {"message": "Fix #$issue_number: $get_issue.issue_data.title"}},
     {"id": "push", "type": "git-push", "params": {}},
-    {"id": "create-pr", "type": "github-create-pr", "params": {
-      "title": "Fix: $issue_title",
-      "body": "$code_report"
+    {"id": "create_pr", "type": "github-create-pr", "params": {
+      "title": "Fix: $get_issue.issue_data.title",
+      "body": "Fixes #$issue_number\n\n$analyze.code_report"
     }}
   ],
   "edges": [
-    {"from": "get-issue", "to": "analyze"},
+    {"from": "get_issue", "to": "analyze"},
     {"from": "analyze", "to": "commit"},
     {"from": "commit", "to": "push"},
-    {"from": "push", "to": "create-pr"}
+    {"from": "push", "to": "create_pr"}
   ]
 }
 ```
@@ -2197,9 +2238,10 @@ The planner returns this IR along with parameter values:
 }
 ```
 
-Template variables in params will be resolved by runtime proxy:
+Template variables in params will be resolved by runtime:
 - `$issue_number` → "123" (from CLI parameters)
-- `$issue_data`, `$commit_message`, etc. → from shared store during execution
+- `$get_issue.issue_data.title` → "Bug in login" (path traversal from shared store)
+- `$analyze.code_report` → "Fixed by..." (from shared store during execution)
 
 ## Risk Mitigation Strategies
 
@@ -2227,12 +2269,13 @@ Template variables in params will be resolved by runtime proxy:
 - Progressive enhancement to guide LLM
 
 ### Template Variable Validation
-**Risk**: LLM uses incorrect template variables
+**Risk**: LLM uses incorrect template variables or paths
 **Mitigation**:
-- Validate template variables match expected patterns
+- Validate template variables match expected patterns (including paths)
+- Use structure documentation to verify paths like `$data.user.login` exist
 - Ensure CLI parameters are properly named
-- Check that shared store keys will exist when needed
-- Include examples in prompts showing correct $variable usage
+- Check that referenced nodes exist in the workflow
+- Include examples in prompts showing correct `$variable` and `$data.field` usage
 
 ## Key Implementation Principles
 
