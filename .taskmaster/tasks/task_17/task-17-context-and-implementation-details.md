@@ -1967,12 +1967,12 @@ Template variables convert ALL values to strings:
 // v2.0 will add proxy mappings for type preservation when critical
 ```
 
-### 4. MVP Approach: Template Paths for Everything
+### 4. MVP Approach: Template Variables for All Dynamic Data
 
-**For MVP, use template variables with paths for all dynamic data access:**
-- Simple values: `$issue_number`, `$file_path`
-- Nested data: `$issue_data.user.login`, `$api_response.data.items[0]`
-- String composition: `"Fix issue #$issue.number in $repo.name"`
+**For MVP, use template variables (with optional path support) for all dynamic data access:**
+- Simple values (most common): `$issue_number`, `$file_path`, `$prompt`
+- Nested data (when needed): `$issue_data.user.login`, `$api_response.data.items[0]`
+- String composition: `"Fix issue #$issue_number in $repo_name"`
 - CLI parameters: `$issue_number` (from --issue_number=1234)
 
 **For static values:**
