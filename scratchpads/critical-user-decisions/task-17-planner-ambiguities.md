@@ -1409,3 +1409,56 @@ The planner combines all these decisions into a cohesive workflow generation sys
 6. **Storage**: Workflows saved with template variables for reusability
 
 This architecture ensures that every generated workflow is not only syntactically correct but also semantically valid and ready for execution.
+
+## Resolutions (2025-07-22)
+
+Based on implementation clarifications, the following ambiguities have been resolved:
+
+### 1. Complete Workflow Matching Threshold - RESOLVED ✓
+**Resolution**: WorkflowDiscoveryNode only returns "found_existing" if the workflow **completely** satisfies the user's entire request. No partial matches are considered complete.
+
+### 2. Component Browsing Scope - RESOLVED ✓
+**Resolution**: ComponentBrowsingNode can select BOTH individual nodes AND existing workflows to use as sub-workflows. This enables workflow composition and reuse.
+
+Example: If user wants "fix github issue and notify team", and "fix-github-issue" workflow exists, ComponentBrowsingNode can select that workflow plus a "send-notification" node to create a new composite workflow.
+
+### 3. Parameter Extraction Two-Stage Process - RESOLVED ✓
+**Resolution**: Parameter handling happens in two distinct stages:
+- **Stage 1**: GeneratorNode creates workflows with template variables (e.g., `$issue_number`)
+- **Stage 2**: ParameterExtractionNode maps concrete values from user input (e.g., "1234") to those template variables
+
+This applies to both paths - found workflows already have templates, generated workflows get templates from GeneratorNode.
+
+### 4. Validation Depth - RESOLVED ✓
+**Resolution**: Validation must verify template paths using structure documentation at minimum. This means:
+- Verify syntax of template variables
+- Verify node outputs will exist in shared store
+- Verify full path structure (e.g., `$issue_data.user.login`) against structure docs
+- Consider mock execution for v2.0 if complexity is manageable
+
+### 5. Error Recovery Limits - RESOLVED ✓
+**Resolution**: All nodes have a maximum of 3 retries for any error type. This applies uniformly across:
+- LLM generation failures
+- Validation errors
+- Structure errors
+- Any other recoverable errors
+
+### 6. Metadata Generation - RESOLVED ✓
+**Resolution**: A new **MetadataGenerationNode** will be added after ValidatorNode in Path B. This node:
+- Extracts metadata from the VALIDATED workflow
+- Creates suggested_name, description, inputs, outputs
+- Only runs after successful validation (efficiency optimization)
+- Skipped entirely when validation fails and flow returns to generator
+
+Updated flow for Path B:
+```
+ComponentBrowsingNode → GeneratorNode → ValidatorNode → MetadataGenerationNode → ParameterExtractionNode
+```
+
+Retry logic: When ValidatorNode returns "invalid", flow goes back to GeneratorNode, completely bypassing MetadataGenerationNode. This ensures metadata is only extracted once from valid workflows.
+
+### Open Questions Now Resolved:
+- ✓ Approval placement: Stays in CLI (planner returns results for approval)
+- ✓ Error feedback: Part of validator with specific routing
+- ✓ Retry limits: 3 for all nodes uniformly
+- ✓ Workflow storage trigger: CLI handles after user approval

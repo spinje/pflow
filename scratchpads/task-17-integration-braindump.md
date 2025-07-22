@@ -10,7 +10,7 @@ This document captures EVERYTHING about the current state of Task 17 research in
 The Natural Language Planner is a **META-WORKFLOW** that orchestrates the entire lifecycle of finding or creating workflows. It has TWO DISTINCT PATHS that converge at a critical verification point:
 
 1. **Path A: Reuse Existing** - WorkflowDiscoveryNode finds complete workflow → ParameterExtractionNode
-2. **Path B: Generate New** - WorkflowDiscoveryNode fails → ComponentBrowsingNode → GeneratorNode → ValidatorNode → ParameterExtractionNode
+2. **Path B: Generate New** - WorkflowDiscoveryNode fails → ComponentBrowsingNode → GeneratorNode → ValidatorNode → MetadataGenerationNode → ParameterExtractionNode
 
 Both paths CONVERGE at ParameterExtractionNode, which serves as a verification gate ensuring the workflow can actually execute.
 
@@ -47,6 +47,15 @@ You're analyzing files in `.taskmaster/tasks/task_17/research/` one by one and i
 1. ✅ **pocketflow-patterns.md** - REJECTED most content as anti-patterns
 2. ✅ **planner-core-insights.md** - Integrated valid insights
 3. ✅ **Architecture corrections** - Fixed misconceptions about single discovery node
+
+### Critical Resolutions (2025-07-22)
+- ✅ **MetadataGenerationNode** added after ValidatorNode (only processes valid workflows)
+- ✅ **Complete workflow matching** means fully satisfying user intent
+- ✅ **Component browsing** includes workflows as sub-workflows
+- ✅ **Two-stage parameter handling** clarified
+- ✅ **Validation depth** includes template path verification
+- ✅ **Retry limit** standardized at 3 for all nodes
+- ✅ **Retry optimization** - validation failures skip metadata generation entirely
 
 ## Key Architectural Decisions Made
 
@@ -123,28 +132,69 @@ class WorkflowDiscoveryNode(Node):
     """Find COMPLETE workflows that satisfy entire user intent"""
     def exec(self, shared):
         # Search for exact match that satisfies full intent
+        # ONLY returns "found_existing" if workflow completely satisfies user request
         if found_complete_match:
             return "found_existing"
         else:
             return "not_found"
 
 class ComponentBrowsingNode(Node):
-    """Browse for building blocks ONLY if no complete workflow found"""
+    """Browse for building blocks ONLY if no complete workflow found
+
+    Can select both individual nodes AND existing workflows to use as sub-workflows
+    """
     def exec(self, shared):
         # Use smart context loading
         # Browse for components to build new workflow
+        # Can include existing workflows as building blocks!
         return "generate"
 
 class GeneratorNode(Node):
-    """Generate new workflow with template variables in params"""
+    """Generate new workflow with template variables in params
+
+    Creates workflow structure with template variables (e.g., $issue_number)
+    NOT hardcoded values
+    """
+    def exec(self, shared):
+        # Generate workflow
+        return "validate"
 
 class ValidatorNode(Node):
-    """Validate generated workflow structure"""
+    """Validate generated workflow structure
+
+    Max retries: 3 for all error types
+    Validates template paths exist using structure documentation
+    Returns "valid" or "invalid" (back to generator)
+    """
+    def exec(self, shared):
+        # Validate workflow
+        if is_valid:
+            return "valid"  # Proceed to metadata
+        else:
+            return "invalid"  # Back to generator
+
+class MetadataGenerationNode(Node):
+    """Extract metadata from VALIDATED workflow
+
+    Only runs after successful validation
+    Creates suggested_name, description, inputs, outputs based on the workflow
+    """
+    def exec(self, shared):
+        workflow = shared["generated_workflow"]
+        # Extract metadata from the validated workflow structure
+        shared["workflow_metadata"] = extract_metadata(workflow)
+        return "param_extract"
 
 class ParameterExtractionNode(Node):
-    """CONVERGENCE POINT - Extract params AND verify executability"""
+    """CONVERGENCE POINT - Extract params AND verify executability
+
+    Two-stage process:
+    1. For found workflows: Maps user values to existing template variables
+    2. For generated workflows: Maps user values to template variables created by GeneratorNode
+    """
     def exec(self, shared):
         # Extract parameters from natural language
+        # Map concrete values (e.g., "1234") to template variables (e.g., $issue_number)
         # VERIFY all required params available
         if missing_params:
             return "params_incomplete"  # Cannot execute!
@@ -158,7 +208,8 @@ class ResultPreparationNode(Node):
 
 # Flow connections showing TWO PATHS
 discovery → "found_existing" → param_extract  # Path A
-discovery → "not_found" → browsing → generator → validator → param_extract  # Path B
+discovery → "not_found" → browsing → generator → validator → metadata → param_extract  # Path B
+validator → "invalid" → generator  # Retry loop (skips metadata)
 # BOTH PATHS CONVERGE at param_extract
 param_extract → "params_complete" → param_prep → result_prep
 param_extract → "params_incomplete" → result_prep  # With error
@@ -191,12 +242,20 @@ Path B (if no workflow exists):
   WorkflowDiscoveryNode: No complete match
   ↓
   ComponentBrowsingNode: Find github-get-issue, claude-code nodes
+    (Can also select existing workflows as sub-workflows!)
   ↓
   GeneratorNode: Create workflow with params: {"issue": "$issue_number"}
+    (Creates template variables, not hardcoded "1234")
   ↓
-  ValidatorNode: Validate structure
+  ValidatorNode: Validate structure (max 3 retries)
+    - If invalid → back to GeneratorNode (metadata skipped)
+    - If valid → continue
   ↓
-  ParameterExtractionNode: Same verification as Path A
+  MetadataGenerationNode: Extract metadata (name, description, inputs, outputs)
+    (Only runs on validated workflows)
+  ↓
+  ParameterExtractionNode: Maps "1234" → $issue_number
+    (Two-stage: Generator creates templates, this node maps values)
   ↓
   ResultPreparationNode: Package for CLI
 

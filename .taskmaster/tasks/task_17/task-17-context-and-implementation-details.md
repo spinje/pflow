@@ -25,7 +25,8 @@ graph TD
     CB --> GEN[GeneratorNode<br/>LLM creates workflow<br/>Designs params: $issue_number]
     GEN --> VAL[ValidatorNode<br/>Validate IR structure]
     VAL -->|invalid| GEN
-    VAL -->|valid| PE
+    VAL -->|valid| META[MetadataGenerationNode<br/>Extract name, description,<br/>inputs, outputs]
+    META --> PE
 
     %% Convergence point
     PE --> VERIFY{Can map user input<br/>to workflow params?}
@@ -331,6 +332,23 @@ class ValidatorNode(Node):
             shared["validation_errors"] = validation_result["errors"]
             return "invalid"
 
+class MetadataGenerationNode(Node):
+    """Extract metadata from validated workflow
+
+    Only runs after successful validation. Extracts suggested_name,
+    description, inputs, and outputs from the workflow structure.
+    """
+    def exec(self, shared):
+        workflow = shared["generated_workflow"]
+
+        # Extract metadata from the workflow
+        shared["workflow_name"] = self._extract_name(workflow)
+        shared["workflow_description"] = self._extract_description(workflow)
+        shared["workflow_inputs"] = self._extract_inputs(workflow)
+        shared["workflow_outputs"] = self._extract_outputs(workflow)
+
+        return "param_extract"
+
 class ResultPreparationNode(Node):
     """Prepares the final results to return to the CLI"""
     def exec(self, shared):
@@ -361,6 +379,7 @@ def create_planner_flow():
     param_prep = ParameterPreparationNode()
     generator = GeneratorNode()
     validator = ValidatorNode()
+    metadata = MetadataGenerationNode()
     result_prep = ResultPreparationNode()
 
     # Main flow with two paths
@@ -371,8 +390,9 @@ def create_planner_flow():
     flow.add_edge(discovery, "not_found", browsing)
     flow.add_edge(browsing, "generate", generator)
     flow.add_edge(generator, "validate", validator)
-    flow.add_edge(validator, "valid", param_extract)
+    flow.add_edge(validator, "valid", metadata)
     flow.add_edge(validator, "invalid", generator)  # Retry
+    flow.add_edge(metadata, "param_extract", param_extract)
 
     # Both paths converge at parameter extraction
     flow.add_edge(param_extract, "params_complete", param_prep)
@@ -451,7 +471,7 @@ Use `src/pflow/planning/` for the planner implementation.
 ```
 src/pflow/planning/
 ├── __init__.py       # Module exports
-├── nodes.py          # Planner nodes (discovery, generator, validator, approval)
+├── nodes.py          # Planner nodes (discovery, generator, validator, metadata, parameter extraction)
 ├── flow.py           # create_planner_flow() - orchestrates the nodes
 ├── ir_models.py      # Pydantic models for IR generation
 ├── utils/            # Helper utilities
@@ -1001,7 +1021,7 @@ The planner aims for **single-shot generation** success through comprehensive co
 
 ```python
 # The planner flow structure enables smart retry:
-generator >> validator >> approval
+generator >> validator >> metadata >> param_extract
 validator - "invalid_structure" >> error_feedback >> generator
 validator - "invalid_paths" >> enhance_context >> generator
 generator - "max_retries_exceeded" >> fallback_strategy
@@ -2523,7 +2543,7 @@ shared["metrics"] = {
 ## Open Questions and Decisions Needed
 
 1. ~~**Directory Structure**: Which path to use?~~ **RESOLVED**: Use `src/pflow/planning/`
-2. ~~**Approval Node Placement**: Is approval part of the planner flow or separate?~~ **RESOLVED**: Part of the meta-workflow as ConfirmationNode
+2. ~~**Approval Node Placement**: Is approval part of the planner flow or separate?~~ **RESOLVED**: Approval happens in CLI after planner returns results
 3. **Error Feedback Node**: Should this be a separate node or part of validator?
 4. **Retry Count Access**: Should we use `cur_retry` attribute or track in shared?
 5. **Checkpoint Frequency**: After each successful node or only at key points?
@@ -2682,6 +2702,7 @@ With the directory structure resolved and patterns understood, the implementatio
    - ComponentBrowsingNode (finds building blocks when no complete match)
    - GeneratorNode with progressive enhancement
    - ValidatorNode using existing validate_ir()
+   - MetadataGenerationNode (extracts metadata from validated workflows)
    - ParameterExtractionNode as convergence/verification point (NL → params)
    - ParameterPreparationNode for runtime format (format values for runtime substitution in CLI)
    - ResultPreparationNode to format output for CLI
