@@ -4,9 +4,9 @@
 
 Task 17 is the core feature that makes pflow unique - the Natural Language Planner that enables "Plan Once, Run Forever". After extensive research, I've identified several critical ambiguities and decisions that need to be made before implementation can begin.
 
-**Update**: Tasks 14 and 15 have been added to address critical dependencies:
-- **Task 14**: Implements structured output metadata support, enabling the planner to generate valid path-based proxy mappings (✅ Done)
-- **Task 15**: Extends the context builder for two-phase discovery, preventing LLM overwhelm while supporting workflow reuse
+**Update**: Tasks 14 and 15 have been completed successfully:
+- **Task 14**: ✅ Implemented structured output metadata support, enabling the planner to generate valid path-based proxy mappings
+- **Task 15**: ✅ Extended the context builder for two-phase discovery, preventing LLM overwhelm while supporting workflow reuse
 
 ### Key Breakthrough Insights:
 1. The workflow discovery mechanism can reuse the exact same pattern as node discovery - the context builder already provides the perfect format.
@@ -219,27 +219,41 @@ api-call >> llm
 
 **Recommendation**: Option C - Path-based proxy mappings provide maximum power with minimal workflow complexity. The planner should leverage this to create clean, maintainable workflows.
 
-**MVP Scope Clarification for Path-Based Mappings**:
-While the planner can generate sophisticated path-based mappings like `"issue_data.user.login"`, validation in MVP will be limited:
-- Current metadata only provides simple key lists (e.g., `outputs: ["issue_data"]`)
-- No structured data shape definitions exist in node docstrings yet
-- MVP validation will only check that root keys exist (e.g., verify `issue_data` exists, but not `.user.login`)
-- The planner relies on the LLM's knowledge of common API structures (GitHub, etc.) to generate valid paths
-- Full path validation with structured metadata is deferred to v2.0
+**Path-Based Mappings - Fully Implemented**:
+Structure documentation has been fully implemented (Tasks 14/15), enabling sophisticated path-based proxy mappings:
+- Metadata extraction parses nested structures from docstrings using indentation-based format
+- Context builder provides both JSON format and available paths to the LLM
+- Full path validation is possible (e.g., can verify `issue_data.user.login` exists in the structure)
+- The planner receives exact data shapes, not just simple key lists
 
-This is acceptable for MVP because:
-1. The LLM generally knows common API response structures
-2. Invalid paths will fail at runtime with clear errors
-3. It keeps the metadata extraction simple for MVP
-4. Nodes can be enhanced with structure documentation post-MVP without breaking changes
+Example of what the LLM sees in the planning context:
+```
+Structure (JSON format):
+{
+  "issue_data": {
+    "user": {
+      "login": "str"
+    }
+  }
+}
 
-**Validation Integration**: The mock execution framework (Section 9) specifically tests that proxy mappings correctly connect data between nodes, catching mapping errors before execution. For MVP, this means validating root key presence, not full path traversal.
+Available paths:
+- issue_data.user.login (str)
+```
+
+This enables the planner to:
+1. Generate complex path-based mappings with confidence
+2. Validate full paths against the documented structure
+3. Provide clear errors for invalid paths before execution
+4. Support sophisticated data extraction patterns like array filtering
+
+**Validation Integration**: The mock execution framework (Section 9) can now validate full path traversal using the structure documentation, catching invalid paths before execution.
 
 ## 2.1 Critical Discovery: Structure Documentation for Path-Based Mappings - Decision importance (5)
 
 After deeper analysis, we've discovered that path-based mappings have a fundamental dependency: **the planner cannot generate valid paths without knowing data structures**.
 
-**UPDATE**: This critical limitation is being addressed by **Task 14: Implement structured output metadata support for nodes**, which will enhance node docstrings to include structure documentation, enabling the planner to generate valid proxy mapping paths.
+**UPDATE**: Task 14 has been completed successfully. Structure documentation is now fully implemented in the metadata extractor and context builder, enabling the planner to generate valid proxy mapping paths.
 
 ### The Generation Problem (Not Just Validation)
 
@@ -326,11 +340,11 @@ It needs to know that `issue_data` has this structure. Otherwise, it's just gues
    - Old format still works: `outputs: ["key"]`
    - New format is additive: `outputs: {"key": {...}}`
 
-**Recommendation**: Option B - Implement basic structure documentation in MVP. Without it, path-based mappings are effectively limited to well-known APIs, which severely limits the feature's value. The implementation can be minimal - just enough structure for the planner to generate valid paths.
+**Recommendation**: Option B - ✅ IMPLEMENTED. Structure documentation has been successfully added to the MVP, enabling path-based mappings for any API.
 
-**Critical Insight**: This isn't about perfect validation or type safety. It's about giving the planner enough information to generate correct paths instead of guessing. Even basic structure documentation dramatically improves the planner's ability to create working workflows.
+**Critical Insight**: This implementation provides the planner with exact data shapes, eliminating guesswork and enabling confident generation of complex proxy mappings.
 
-**Resolution**: Task 14 implements Option B, providing the structure documentation support that enables the planner to generate valid path-based proxy mappings for any API, not just well-known ones.
+**Resolution**: Task 14 successfully implemented Option B. The metadata extractor now parses indentation-based structure documentation from docstrings, and the context builder presents this information in both JSON format and as available paths for the LLM to use.
 
 ## 3. Workflow Storage and Discovery Implementation - Decision importance (4)
 
@@ -750,7 +764,7 @@ This is NOT mock execution - it's static analysis that tracks data flow through 
 - **Generic approach**: No per-node implementation needed - just uses the metadata from registry
 - **Catches**: Missing inputs, overwritten outputs, unresolved template variables, incorrect proxy mappings
 
-**Path-Based Mapping Limitation**: Currently, nodes only declare simple outputs (e.g., `outputs: ["issue_data"]`) without structure information. This means validation can only check that root keys exist, not nested paths like `"issue_data.user.login"`. See `scratchpads/task-17-path-based-mappings-context.md` for full context on this limitation.
+**Path-Based Mapping Support**: With structure documentation now implemented, nodes can declare complex outputs with full nested structure. This enables validation of complete paths like `"issue_data.user.login"`, not just root keys. The context builder provides both JSON format and available paths to guide the planner.
 
 **Example Data Flow Analysis Log**:
 ```
@@ -919,7 +933,7 @@ How should the planner discover both nodes and existing workflows?
 ### The Key Insight:
 The context builder already solved this problem! We can use the same pattern for everything.
 
-**UPDATE**: This pattern is being formalized by **Task 15: Extend context builder for two-phase discovery**, which splits the context builder into discovery and planning phases, preventing LLM overwhelm while enabling workflow reuse.
+**UPDATE**: Task 15 has been completed successfully. The context builder now provides two distinct functions - `build_discovery_context()` for lightweight browsing and `build_planning_context()` for detailed interface information, preventing LLM overwhelm while enabling workflow reuse.
 
 ### Critical Refinements:
 1. **Workflows ARE building blocks** - Other workflows can be used inside new workflows
@@ -1325,14 +1339,14 @@ The planner must decide which values in natural language should become parameter
 
 ## Critical Next Steps
 
-1. **Clarify template variable resolution** - This is the most critical ambiguity
-2. **Implement path-based proxy mappings** - Enable nested JSON extraction (new from section 2)
+1. ~~**Clarify template variable resolution**~~ - ✅ RESOLVED: Runtime resolution (Option B) confirmed
+2. ~~**Implement path-based proxy mappings**~~ - ✅ IMPLEMENTED: Structure documentation enables full path validation
 3. ~~**Decide on workflow storage format**~~ - ✅ RESOLVED: Use simple JSON with name, description, inputs, outputs, and IR
 4. ~~**Design discovery mechanism**~~ - ✅ RESOLVED: Two-phase approach with context builder
 5. **Confirm MVP boundaries** - Especially regarding action-based transitions
 6. **Design concrete prompt templates** - With examples of expected outputs
 7. **Create test scenarios** - Cover all edge cases identified above
-8. **Implement two context builder functions**:
+8. ~~**Implement two context builder functions**~~ - ✅ IMPLEMENTED in Task 15:
    - `build_discovery_context()` - Lightweight descriptions only
    - `build_planning_context(selected)` - Full details for selected components
 9. **Design data flow tracking** - Planner must understand node outputs for mapping generation
