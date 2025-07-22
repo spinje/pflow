@@ -340,6 +340,157 @@ class TestRegistryIntegration:
                     assert "name" not in metadata  # Name is the key, not in value
 
 
+class TestGetNodesMetadata:
+    """Test Registry.get_nodes_metadata functionality."""
+
+    def test_valid_node_types(self):
+        """Test with valid node types."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "test.json"
+            registry = Registry(registry_path)
+
+            # Set up test data
+            test_data = {
+                "llm": {
+                    "module": "pflow.nodes.llm",
+                    "class_name": "LLMNode",
+                    "docstring": "LLM node",
+                    "file_path": "/path/llm.py",
+                },
+                "read-file": {
+                    "module": "pflow.nodes.file.read",
+                    "class_name": "ReadFileNode",
+                    "docstring": "Read file node",
+                    "file_path": "/path/read.py",
+                },
+                "write-file": {
+                    "module": "pflow.nodes.file.write",
+                    "class_name": "WriteFileNode",
+                    "docstring": "Write file node",
+                    "file_path": "/path/write.py",
+                },
+            }
+            registry.save(test_data)
+
+            # Test getting specific nodes
+            result = registry.get_nodes_metadata(["llm", "read-file"])
+
+            assert len(result) == 2
+            assert "llm" in result
+            assert "read-file" in result
+            assert result["llm"] == test_data["llm"]
+            assert result["read-file"] == test_data["read-file"]
+            assert "write-file" not in result
+
+    def test_mix_valid_invalid(self):
+        """Test with mix of valid and invalid node types."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "test.json"
+            registry = Registry(registry_path)
+
+            # Set up test data
+            test_data = {
+                "llm": {
+                    "module": "pflow.nodes.llm",
+                    "class_name": "LLMNode",
+                    "docstring": "LLM node",
+                    "file_path": "/path/llm.py",
+                },
+                "read-file": {
+                    "module": "pflow.nodes.file.read",
+                    "class_name": "ReadFileNode",
+                    "docstring": "Read file node",
+                    "file_path": "/path/read.py",
+                },
+            }
+            registry.save(test_data)
+
+            # Request mix of valid and non-existent nodes
+            result = registry.get_nodes_metadata(["llm", "non-existent", "read-file"])
+
+            assert len(result) == 2
+            assert "llm" in result
+            assert "read-file" in result
+            assert "non-existent" not in result
+            assert result["llm"] == test_data["llm"]
+            assert result["read-file"] == test_data["read-file"]
+
+    def test_empty_collection(self):
+        """Test with empty collection."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "test.json"
+            registry = Registry(registry_path)
+
+            # Set up test data
+            test_data = {"llm": {"module": "pflow.nodes.llm", "class_name": "LLMNode"}}
+            registry.save(test_data)
+
+            # Test with empty list
+            result = registry.get_nodes_metadata([])
+            assert result == {}
+
+            # Test with empty set
+            result = registry.get_nodes_metadata(set())
+            assert result == {}
+
+            # Test with empty tuple
+            result = registry.get_nodes_metadata(())
+            assert result == {}
+
+    def test_none_input(self):
+        """Test with None input raises TypeError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "test.json"
+            registry = Registry(registry_path)
+
+            with pytest.raises(TypeError, match="node_types cannot be None"):
+                registry.get_nodes_metadata(None)
+
+    def test_non_string_items(self):
+        """Test with non-string items in collection."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "test.json"
+            registry = Registry(registry_path)
+
+            # Set up test data
+            test_data = {
+                "llm": {
+                    "module": "pflow.nodes.llm",
+                    "class_name": "LLMNode",
+                    "docstring": "LLM node",
+                    "file_path": "/path/llm.py",
+                },
+                "read-file": {
+                    "module": "pflow.nodes.file.read",
+                    "class_name": "ReadFileNode",
+                    "docstring": "Read file node",
+                    "file_path": "/path/read.py",
+                },
+            }
+            registry.save(test_data)
+
+            # Test with mixed types including non-strings
+            result = registry.get_nodes_metadata(["llm", 123, "read-file", None, {"dict": "value"}, 45.6])
+
+            # Should only include string matches
+            assert len(result) == 2
+            assert "llm" in result
+            assert "read-file" in result
+            assert result["llm"] == test_data["llm"]
+            assert result["read-file"] == test_data["read-file"]
+
+    def test_empty_registry(self):
+        """Test with empty/missing registry file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "missing.json"
+            registry = Registry(registry_path)
+
+            # Registry file doesn't exist
+            result = registry.get_nodes_metadata(["llm", "read-file"])
+
+            assert result == {}
+
+
 class TestRegistryEdgeCases:
     """Test registry behavior with edge cases and error scenarios."""
 

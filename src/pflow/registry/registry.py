@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any, Optional
 
@@ -113,3 +114,35 @@ class Registry:
 
         # Save the updated registry
         self.save(nodes)
+
+    def get_nodes_metadata(self, node_types: Collection[str]) -> dict[str, dict[str, Any]]:
+        """Get metadata for specific node types.
+
+        Args:
+            node_types: Collection of node type names to retrieve
+
+        Returns:
+            Dict mapping node type names to their metadata.
+            Only includes node types that exist in registry.
+
+        Raises:
+            TypeError: If node_types is None
+        """
+        if node_types is None:
+            raise TypeError("node_types cannot be None")
+
+        # Load the full registry
+        registry_data = self.load()
+
+        # Filter to only requested node types
+        result = {}
+        for node_type in node_types:
+            # Skip non-string items
+            if not isinstance(node_type, str):
+                continue
+
+            # Include only if exists in registry
+            if node_type in registry_data:
+                result[node_type] = registry_data[node_type]
+
+        return result
