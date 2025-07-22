@@ -188,9 +188,17 @@ The traditional approach quickly becomes:
 
 class WorkflowDiscoveryNode(Node):
     """Find complete workflows that can satisfy the ENTIRE user intent as-is"""
-    def exec(self, shared):
-        user_input = shared["user_input"]
-        saved_workflows = self._load_saved_workflows()  # From ~/.pflow/workflows/
+    def prep(self, shared):
+        """Prepare data for workflow discovery."""
+        return {
+            "user_input": shared["user_input"],
+            "saved_workflows": self._load_saved_workflows()  # From ~/.pflow/workflows/
+        }
+
+    def exec(self, prep_res):
+        """Execute workflow discovery using LLM."""
+        user_input = prep_res["user_input"]
+        saved_workflows = prep_res["saved_workflows"]
 
         # Use LLM to find exact matches
         prompt = f"""
@@ -204,23 +212,37 @@ class WorkflowDiscoveryNode(Node):
         """
 
         match = self.llm.complete(prompt)
-        if match != 'none':
-            shared["found_workflow"] = saved_workflows[match]
+        return {
+            "match": match,
+            "saved_workflows": saved_workflows
+        }
+
+    def post(self, shared, prep_res, exec_res):
+        """Store results and determine next action."""
+        if exec_res["match"] != 'none':
+            shared["found_workflow"] = exec_res["saved_workflows"][exec_res["match"]]
             return "found_existing"
         else:
             return "not_found"
 
 class ComponentBrowsingNode(Node):
     """Browse for components to build NEW workflows (only if no complete workflow found)"""
-    def exec(self, shared):
-        from pflow.planning.context_builder import build_discovery_context, build_planning_context
+    def prep(self, shared):
+        """Prepare for component browsing."""
+        from pflow.planning.context_builder import build_discovery_context
+        return {
+            "user_input": shared["user_input"],
+            "discovery_context": build_discovery_context()
+        }
+
+    def exec(self, prep_res):
+        """Browse for building blocks."""
+        from pflow.planning.context_builder import build_planning_context
 
         # Step 1: Lightweight browse
-        discovery_context = build_discovery_context()
-
         components = self._browse_for_building_blocks(
-            shared["user_input"],
-            discovery_context
+            prep_res["user_input"],
+            prep_res["discovery_context"]
         )
 
         # Step 2: Get details for selected components only
@@ -229,8 +251,15 @@ class ComponentBrowsingNode(Node):
             components["workflow_names"]  # Sub-workflows as building blocks!
         )
 
-        shared["planning_context"] = planning_context
-        shared["selected_components"] = components
+        return {
+            "planning_context": planning_context,
+            "selected_components": components
+        }
+
+    def post(self, shared, prep_res, exec_res):
+        """Store results and proceed to generation."""
+        shared["planning_context"] = exec_res["planning_context"]
+        shared["selected_components"] = exec_res["selected_components"]
         return "generate"
 
 class ParameterExtractionNode(Node):
@@ -242,15 +271,20 @@ class ParameterExtractionNode(Node):
     - Maps them to the workflow's template variables
     - Verifies all required parameters are available
     """
-    def exec(self, shared):
-        user_input = shared["user_input"]
-        # Workflow already has template variables defined:
-        # - Path A: From the saved workflow
-        # - Path B: Just created by GeneratorNode
+    def prep(self, shared):
+        """Prepare data for parameter extraction."""
         workflow = shared.get("found_workflow") or shared.get("generated_workflow")
+        return {
+            "user_input": shared["user_input"],
+            "workflow": workflow,
+            "current_date": shared.get("current_date", datetime.now().isoformat()[:10])
+        }
 
-        # Current time context for temporal interpretation
-        current_date = shared.get("current_date", datetime.now().isoformat()[:10])
+    def exec(self, prep_res):
+        """Extract parameters from natural language."""
+        user_input = prep_res["user_input"]
+        workflow = prep_res["workflow"]
+        current_date = prep_res["current_date"]
 
         # Extract concrete values
         extracted = self._extract_from_natural_language(user_input, workflow, current_date)
@@ -260,15 +294,22 @@ class ParameterExtractionNode(Node):
         required = self._get_required_params(workflow)
         missing = required - set(extracted.keys())
 
-        if missing:
-            shared["missing_params"] = missing
-            shared["extraction_error"] = f"Workflow cannot be executed: missing {missing}"
+        return {
+            "extracted": extracted,
+            "missing": missing
+        }
+
+    def post(self, shared, prep_res, exec_res):
+        """Store results and determine if execution can proceed."""
+        if exec_res["missing"]:
+            shared["missing_params"] = exec_res["missing"]
+            shared["extraction_error"] = f"Workflow cannot be executed: missing {exec_res['missing']}"
             return "params_incomplete"
 
-        shared["extracted_params"] = extracted
+        shared["extracted_params"] = exec_res["extracted"]
         return "params_complete"
 
-    def _extract_and_interpret_parameters(self, user_input: str, workflow: dict, current_date: str) -> dict:
+    def _extract_from_natural_language(self, user_input: str, workflow: dict, current_date: str) -> dict:
         """Extract parameters with intelligent interpretation of temporal and contextual references."""
 
         # Use LLM to extract and interpret
@@ -292,17 +333,32 @@ class ParameterExtractionNode(Node):
 
 class ParameterPreparationNode(Node):
     """Prepares parameters for runtime substitution"""
-    def exec(self, shared):
-        params = shared["extracted_params"]
+    def prep(self, shared):
+        """Get extracted parameters."""
+        return shared.get("extracted_params", {})
 
+    def exec(self, prep_res):
+        """Pass through parameters unchanged."""
         # Simply pass through the extracted parameters
         # Runtime proxy will handle template substitution transparently
-        shared["parameter_values"] = params
+        return prep_res
+
+    def post(self, shared, prep_res, exec_res):
+        """Store parameter values for CLI."""
+        shared["parameter_values"] = exec_res
         return "prepare_result"
 
 class GeneratorNode(Node):
     """Generates new workflow if none found"""
-    def exec(self, shared):
+    def prep(self, shared):
+        """Prepare context for workflow generation."""
+        return {
+            "user_input": shared["user_input"],
+            "planning_context": shared["planning_context"]
+        }
+
+    def exec(self, prep_res):
+        """Generate workflow using LLM."""
         # Generate complete workflow with template variables
         # CRITICAL: The LLM must handle ALL workflow generation in one call:
         # 1. Design the workflow structure (node selection and sequencing)
@@ -314,22 +370,33 @@ class GeneratorNode(Node):
         #    - ir_version, nodes (with params), edges
         # 7. Ensure data flow integrity (outputs properly connect to inputs)
         workflow = self._generate_workflow(
-            shared["user_input"],
-            shared["planning_context"]
+            prep_res["user_input"],
+            prep_res["planning_context"]
         )
-        shared["generated_workflow"] = workflow
+        return workflow
+
+    def post(self, shared, prep_res, exec_res):
+        """Store generated workflow and proceed to validation."""
+        shared["generated_workflow"] = exec_res
         return "validate"
 
 class ValidatorNode(Node):
     """Validates generated workflow structure"""
-    def exec(self, shared):
-        workflow = shared["generated_workflow"]
-        validation_result = self._validate_workflow(workflow)
+    def prep(self, shared):
+        """Get workflow to validate."""
+        return shared.get("generated_workflow", {})
 
-        if validation_result["is_valid"]:
+    def exec(self, prep_res):
+        """Validate workflow structure."""
+        validation_result = self._validate_workflow(prep_res)
+        return validation_result
+
+    def post(self, shared, prep_res, exec_res):
+        """Determine next action based on validation result."""
+        if exec_res["is_valid"]:
             return "valid"
         else:
-            shared["validation_errors"] = validation_result["errors"]
+            shared["validation_errors"] = exec_res["errors"]
             return "invalid"
 
 class MetadataGenerationNode(Node):
@@ -338,34 +405,57 @@ class MetadataGenerationNode(Node):
     Only runs after successful validation. Extracts suggested_name,
     description, inputs, and outputs from the workflow structure.
     """
-    def exec(self, shared):
-        workflow = shared["generated_workflow"]
+    def prep(self, shared):
+        """Get validated workflow."""
+        return shared.get("generated_workflow", {})
 
-        # Extract metadata from the workflow
-        shared["workflow_name"] = self._extract_name(workflow)
-        shared["workflow_description"] = self._extract_description(workflow)
-        shared["workflow_inputs"] = self._extract_inputs(workflow)
-        shared["workflow_outputs"] = self._extract_outputs(workflow)
+    def exec(self, prep_res):
+        """Extract metadata from workflow."""
+        workflow = prep_res
+        return {
+            "name": self._extract_name(workflow),
+            "description": self._extract_description(workflow),
+            "inputs": self._extract_inputs(workflow),
+            "outputs": self._extract_outputs(workflow)
+        }
 
+    def post(self, shared, prep_res, exec_res):
+        """Store metadata and continue to parameter extraction."""
+        shared["workflow_name"] = exec_res["name"]
+        shared["workflow_description"] = exec_res["description"]
+        shared["workflow_inputs"] = exec_res["inputs"]
+        shared["workflow_outputs"] = exec_res["outputs"]
         return "param_extract"
 
 class ResultPreparationNode(Node):
     """Prepares the final results to return to the CLI"""
-    def exec(self, shared):
-        workflow_ir = shared.get("found_workflow") or shared.get("generated_workflow")
-
-        # Prepare what the planner returns to CLI
-        shared["planner_output"] = {
-            "workflow_ir": workflow_ir,
-            "workflow_metadata": {
-                "suggested_name": shared.get("workflow_name", "custom-workflow"),
-                "description": shared.get("workflow_description", "Generated workflow"),
-                "inputs": shared.get("workflow_inputs", []),
-                "outputs": shared.get("workflow_outputs", [])
-            },
-            "parameter_values": shared["parameter_values"]
+    def prep(self, shared):
+        """Gather all results for CLI."""
+        return {
+            "workflow_ir": shared.get("found_workflow") or shared.get("generated_workflow"),
+            "workflow_name": shared.get("workflow_name", "custom-workflow"),
+            "workflow_description": shared.get("workflow_description", "Generated workflow"),
+            "workflow_inputs": shared.get("workflow_inputs", []),
+            "workflow_outputs": shared.get("workflow_outputs", []),
+            "parameter_values": shared.get("parameter_values", {})
         }
 
+    def exec(self, prep_res):
+        """Package results for CLI."""
+        return {
+            "workflow_ir": prep_res["workflow_ir"],
+            "workflow_metadata": {
+                "suggested_name": prep_res["workflow_name"],
+                "description": prep_res["workflow_description"],
+                "inputs": prep_res["workflow_inputs"],
+                "outputs": prep_res["workflow_outputs"]
+            },
+            "parameter_values": prep_res["parameter_values"]
+        }
+
+    def post(self, shared, prep_res, exec_res):
+        """Store final output and complete."""
+        shared["planner_output"] = exec_res
         return "complete"
 
 # The complete planner meta-workflow (returns results to CLI)
@@ -598,10 +688,9 @@ class ProgressiveGeneratorNode(Node):
             "\nUse basic nodes only. Template variables should match data flow naturally."  # Level 3
         ]
 
-    def exec(self, shared):
-        # Track attempt history
+    def prep(self, shared):
+        """Prepare data for workflow generation."""
         attempt = shared.get("generation_attempts", 0)
-        shared["generation_attempts"] = attempt + 1
 
         # Build on previous errors if retrying
         enhancement = self.enhancement_levels[min(attempt, len(self.enhancement_levels)-1)]
@@ -611,27 +700,38 @@ class ProgressiveGeneratorNode(Node):
             error_summary = self._summarize_errors(shared["validation_errors"])
             enhancement = f"{enhancement}\nPrevious issues: {error_summary}"
 
-            # Add specific hint if available
-            if "error_hint" in shared:
-                enhancement = f"{enhancement}\n{shared['error_hint']}"
-
         prompt = shared["base_prompt"] + enhancement
 
+        return {
+            "prompt": prompt,
+            "attempt": attempt
+        }
+
+    def exec(self, prep_res):
+        """Generate workflow using enhanced prompt."""
         # Generate with structured output
         response = self.model.prompt(
-            prompt,
+            prep_res["prompt"],
             schema=WorkflowIR,
             temperature=0  # Deterministic
         )
 
-        shared["llm_response"] = response.text()
+        return {
+            "response": response.text(),
+            "attempt": prep_res["attempt"]
+        }
+
+    def post(self, shared, prep_res, exec_res):
+        """Store results and track attempt history."""
+        shared["llm_response"] = exec_res["response"]
+        shared["generation_attempts"] = exec_res["attempt"] + 1
 
         # Track attempt history
         if "attempt_history" not in shared:
             shared["attempt_history"] = []
         shared["attempt_history"].append({
-            "attempt": attempt + 1,
-            "enhancement": enhancement,
+            "attempt": exec_res["attempt"] + 1,
+            "enhancement": prep_res["prompt"],
             "timestamp": time.time()
         })
 
@@ -654,22 +754,28 @@ All validation errors are treated as opportunities for improvement:
 class ValidationNode(Node):
     """Validates generated workflows treating all errors as fixable."""
 
-    def exec(self, shared):
-        workflow = shared.get("generated_workflow", {})
+    def prep(self, shared):
+        """Get workflow to validate."""
+        return shared.get("generated_workflow", {})
+
+    def exec(self, prep_res):
+        """Validate the workflow."""
+        workflow = prep_res
 
         # Comprehensive validation
         validation_result = self._validate_workflow(workflow)
 
-        if validation_result["is_valid"]:
-            shared["validated_workflow"] = workflow
+        return validation_result
+
+    def post(self, shared, prep_res, exec_res):
+        """Store results and determine next action."""
+        if exec_res["is_valid"]:
+            shared["validated_workflow"] = prep_res  # Store the validated workflow
             return "success"
 
         # All errors are fixable with proper guidance
-        errors = validation_result["errors"]
+        errors = exec_res["errors"]
         shared["validation_errors"] = errors
-
-        # Generate specific hint for the LLM
-        shared["error_hint"] = self._generate_error_hint(errors)
 
         # Categorize error for targeted retry
         primary_issue = self._identify_primary_issue(errors)
@@ -852,7 +958,14 @@ class AttemptHistoryMixin:
 
 # Usage in generator node
 class WorkflowGeneratorNode(Node, AttemptHistoryMixin):
-    def exec(self, shared):
+    def prep(self, shared):
+        # Return shared so we can track attempts
+        return shared
+
+    def exec(self, prep_res):
+        # prep_res is the shared dict
+        shared = prep_res
+
         # Track generation attempt
         self.track_attempt(shared, "generation", "started")
 
@@ -881,7 +994,11 @@ class CheckpointNode(Node):
         super().__init__()
         self.checkpoint_name = checkpoint_name
 
-    def post(self, shared):
+    def prep(self, shared):
+        # Return shared so we can access it in exec_fallback if needed
+        return shared
+
+    def post(self, shared, prep_res, exec_res):
         # Save checkpoint after successful execution
         checkpoint = {
             "name": self.checkpoint_name,
@@ -893,7 +1010,10 @@ class CheckpointNode(Node):
             shared["checkpoints"] = []
         shared["checkpoints"].append(checkpoint)
 
-    def exec_fallback(self, shared, exc):
+    def exec_fallback(self, prep_res, exc):
+        # prep_res is the shared dict (from prep method)
+        shared = prep_res
+
         # On failure, restore from checkpoint
         if "checkpoints" in shared and shared["checkpoints"]:
             last_checkpoint = shared["checkpoints"][-1]
@@ -910,7 +1030,13 @@ Simulate parallel execution within synchronous PocketFlow:
 class ParallelStrategyNode(Node):
     """Simulates parallel execution of multiple strategies."""
 
-    def exec(self, shared):
+    def prep(self, shared):
+        # Return base prompt from shared
+        return shared.get("base_prompt", "")
+
+    def exec(self, prep_res):
+        base_prompt = prep_res
+
         strategies = [
             ("concise", "Generate a minimal workflow"),
             ("detailed", "Generate a comprehensive workflow"),
@@ -923,10 +1049,10 @@ class ParallelStrategyNode(Node):
 
         for strategy_name, strategy_prompt in strategies:
             # Try each strategy
-            response = call_llm(f"{shared['base_prompt']}\n{strategy_prompt}")
+            response = call_llm(f"{base_prompt}\n{strategy_prompt}")
 
             # Score the response
-            score = self._score_response(response, shared)
+            score = self._score_response(response)
             results[strategy_name] = {
                 "response": response,
                 "score": score
@@ -936,14 +1062,22 @@ class ParallelStrategyNode(Node):
                 best_score = score
                 best_strategy = strategy_name
 
+        # Return results to be stored in post
+        return {
+            "strategy_results": results,
+            "selected_strategy": best_strategy,
+            "best_response": results[best_strategy]["response"]
+        }
+
+    def post(self, shared, prep_res, exec_res):
         # Store all results for debugging
-        shared["strategy_results"] = results
-        shared["selected_strategy"] = best_strategy
-        shared["llm_response"] = results[best_strategy]["response"]
+        shared["strategy_results"] = exec_res["strategy_results"]
+        shared["selected_strategy"] = exec_res["selected_strategy"]
+        shared["llm_response"] = exec_res["best_response"]
 
         return "validate"
 
-    def _score_response(self, response, shared):
+    def _score_response(self, response):
         """Score response based on validity, complexity, completeness."""
         score = 0
         try:
@@ -972,20 +1106,35 @@ Smart routing based on input analysis:
 class ClassifyInputNode(Node):
     """Dynamically classify and route input."""
 
-    def exec(self, shared):
-        user_input = shared["user_input"]
+    def prep(self, shared):
+        # Return user input for classification
+        return shared.get("user_input", "")
+
+    def exec(self, prep_res):
+        user_input = prep_res
 
         # Smart classification
         if self._looks_like_cli(user_input):
-            shared["input_type"] = "cli_syntax"
-            return "parse_cli"
+            return {
+                "input_type": "cli_syntax",
+                "action": "parse_cli"
+            }
         elif self._looks_like_natural(user_input):
-            shared["input_type"] = "natural_language"
-            return "natural_language"
+            return {
+                "input_type": "natural_language",
+                "action": "natural_language"
+            }
         else:
             # Ambiguous - need more analysis
-            shared["input_type"] = "ambiguous"
-            return "ask_user"  # Another path!
+            return {
+                "input_type": "ambiguous",
+                "action": "ask_user"
+            }
+
+    def post(self, shared, prep_res, exec_res):
+        # Store classification result
+        shared["input_type"] = exec_res["input_type"]
+        return exec_res["action"]  # Return the routing action
 
     def _looks_like_cli(self, input_str):
         """Check if input looks like CLI syntax."""
@@ -1003,19 +1152,30 @@ Different validation outcomes trigger different paths:
 class ConditionalValidatorNode(Node):
     """Validates with conditional retry logic."""
 
-    def exec(self, shared):
-        workflow = shared["generated_workflow"]
+    def prep(self, shared):
+        # Return workflow to validate
+        return shared.get("generated_workflow", {})
+
+    def exec(self, prep_res):
+        workflow = prep_res
         result = self.validator.validate(workflow)
 
-        if result.is_valid:
+        return {
+            "is_valid": result.is_valid,
+            "is_fixable": result.is_fixable,
+            "errors": result.errors
+        }
+
+    def post(self, shared, prep_res, exec_res):
+        if exec_res["is_valid"]:
             return "success"
-        elif result.is_fixable:
+        elif exec_res["is_fixable"]:
             # Some errors can be automatically fixed
-            shared["validation_errors"] = result.errors
+            shared["validation_errors"] = exec_res["errors"]
             return "retry_with_fixes"
         else:
             # Fatal errors require different approach
-            shared["fatal_errors"] = result.errors
+            shared["fatal_errors"] = exec_res["errors"]
             return "fallback_strategy"
 ```
 
@@ -1103,22 +1263,37 @@ class WorkflowGeneratorNode(Node):
     def __init__(self):
         super().__init__(max_retries=3)  # Bounded retries
 
-    def exec(self, shared):
+    def prep(self, shared):
+        """Prepare context for generation."""
+        return {
+            "base_prompt": shared.get("base_prompt", ""),
+            "generation_attempts": shared.get("generation_attempts", 0),
+            "validation_errors": shared.get("validation_errors", [])
+        }
+
+    def exec(self, prep_res):
+        """Generate workflow with progressive enhancement."""
         # Use attempt count for progressive enhancement
-        attempt = shared.get("generation_attempts", 0)
+        attempt = prep_res["generation_attempts"]
 
         if attempt > 0:
             # Add specific error feedback to prompt
-            error_feedback = shared.get("validation_errors", [])
-            prompt = enhance_prompt_with_errors(base_prompt, error_feedback)
+            prompt = enhance_prompt_with_errors(prep_res["base_prompt"], prep_res["validation_errors"])
         else:
-            prompt = base_prompt
+            prompt = prep_res["base_prompt"]
 
         # Generate workflow
         response = self.model.prompt(prompt, schema=WorkflowIR)
-        shared["generated_workflow"] = response.json()
-        shared["generation_attempts"] = attempt + 1
 
+        return {
+            "workflow": response.json(),
+            "attempt": attempt + 1
+        }
+
+    def post(self, shared, prep_res, exec_res):
+        """Store generated workflow and update attempt count."""
+        shared["generated_workflow"] = exec_res["workflow"]
+        shared["generation_attempts"] = exec_res["attempt"]
         return "validate"  # Always go to validation
 ```
 
@@ -1149,12 +1324,17 @@ class WorkflowGeneratorNode(Node):
         # Get model with proper configuration
         self.model = llm.get_model("claude-sonnet-4-20250514")
 
-    def exec(self, shared):
-        user_input = shared["user_input"]
-        context = shared["planning_context"]
+    def prep(self, shared):
+        """Prepare context for workflow generation."""
+        return {
+            "user_input": shared["user_input"],
+            "planning_context": shared["planning_context"]
+        }
 
+    def exec(self, prep_res):
+        """Generate workflow using LLM."""
         # Build comprehensive prompt
-        prompt = self._build_prompt(user_input, context)
+        prompt = self._build_prompt(prep_res["user_input"], prep_res["planning_context"])
 
         # Generate with structured output (Pydantic schema)
         response = self.model.prompt(
@@ -1168,7 +1348,11 @@ class WorkflowGeneratorNode(Node):
         workflow_dict = json.loads(response.text())
         validate_ir(workflow_dict)  # Existing validation
 
-        shared["generated_workflow"] = workflow_dict
+        return workflow_dict
+
+    def post(self, shared, prep_res, exec_res):
+        """Store generated workflow."""
+        shared["generated_workflow"] = exec_res
         return "validate"
 ```
 
@@ -1372,50 +1556,88 @@ def process_natural_language(raw_input: str, stdin_data: Any = None) -> None:
 
 class DiscoveryNode(Node):
     """Uses context builder to find nodes and workflows."""
-    def exec(self, shared, prep_res):
+    def prep(self, shared):
+        """Prepare discovery context."""
         from pflow.planning.context_builder import build_discovery_context
+        return {
+            "discovery_context": build_discovery_context(),
+            "user_input": shared["user_input"]
+        }
 
-        # Get lightweight discovery context
-        discovery_context = build_discovery_context()
-        shared["discovery_context"] = discovery_context
-
-        # Use LLM to find relevant components
+    def exec(self, prep_res):
+        """Use LLM to find relevant components."""
+        # Use LLM to find relevant components based on discovery context
         # ... LLM logic ...
-        return "found" or "not_found"
+        result = self._find_components(prep_res["user_input"], prep_res["discovery_context"])
+        return result
+
+    def post(self, shared, prep_res, exec_res):
+        """Store discovery results."""
+        shared["discovery_context"] = prep_res["discovery_context"]
+        shared["discovery_result"] = exec_res
+        return "found" if exec_res["found_components"] else "not_found"
 
 class GeneratorNode(Node):
     """Generates workflow with registry validation."""
-    def exec(self, shared, prep_res):
+    def prep(self, shared):
+        """Prepare planning context."""
         from pflow.planning.context_builder import build_planning_context
 
         # Get detailed planning context for selected nodes
         selected_nodes = shared.get("selected_nodes", [])
         planning_context = build_planning_context(selected_nodes, [])
 
-        # Generate workflow using LLM
+        return {
+            "planning_context": planning_context,
+            "user_input": shared["user_input"]
+        }
+
+    def exec(self, prep_res):
+        """Generate workflow using LLM."""
+        # Generate workflow using LLM with planning context
         # ... LLM generation ...
+        generated_ir = self._generate_workflow(prep_res["user_input"], prep_res["planning_context"])
 
         # Note: Node validation happens in ValidatorNode using registry metadata
+        return generated_ir
 
+    def post(self, shared, prep_res, exec_res):
+        """Store generated IR."""
+        shared["generated_ir"] = exec_res
         return "validate"
 
 class ValidationNode(Node):
     """Uses existing IR validation."""
-    def exec(self, shared, prep_res):
+    def prep(self, shared):
+        """Get IR to validate."""
+        return shared.get("generated_ir", {})
+
+    def exec(self, prep_res):
+        """Validate the IR."""
         from pflow.core import validate_ir, ValidationError
 
         try:
-            validate_ir(shared["generated_ir"])
-            return "valid"
+            validate_ir(prep_res)
+            return {"valid": True}
         except ValidationError as e:
             # e.path: "nodes[0].type"
             # e.message: "Unknown node type 'read-files'"
             # e.suggestion: "Did you mean 'read-file'?"
-            shared["validation_error"] = {
-                "path": e.path,
-                "message": e.message,
-                "suggestion": e.suggestion
+            return {
+                "valid": False,
+                "error": {
+                    "path": e.path,
+                    "message": e.message,
+                    "suggestion": e.suggestion
+                }
             }
+
+    def post(self, shared, prep_res, exec_res):
+        """Store validation result."""
+        if exec_res["valid"]:
+            return "valid"
+        else:
+            shared["validation_error"] = exec_res["error"]
             return "invalid"
 ```
 
@@ -1448,14 +1670,20 @@ Test individual nodes without running full flow:
 def test_node_in_isolation():
     """Test nodes without running full flow."""
     node = ProgressiveGeneratorNode()
-    shared = {"base_prompt": "test prompt"}
+    shared = {"base_prompt": "test prompt", "generation_attempts": 2}
+
+    # First call prep to get data for exec
+    prep_res = node.prep(shared)
 
     # Simulate retry behavior
     node.cur_retry = 2  # Simulate third attempt
-    action = node.exec(shared)
+    exec_res = node.exec(prep_res)
 
-    assert "Simplify the workflow" in shared["llm_response"]
-    assert shared["enhancement_level"] == 2
+    # Call post to update shared state
+    action = node.post(shared, prep_res, exec_res)
+
+    assert "workflow" in exec_res
+    assert shared["generation_attempts"] == 3
 ```
 
 ### Flow Path Testing
@@ -1503,8 +1731,14 @@ def test_specific_flow_path():
 
    # ✅ CORRECT
    class GoodNode(Node):
-       def exec(self, shared):
-           shared["counter"] = shared.get("counter", 0) + 1
+       def prep(self, shared):
+           return shared.get("counter", 0)
+
+       def exec(self, prep_res):
+           return prep_res + 1
+
+       def post(self, shared, prep_res, exec_res):
+           shared["counter"] = exec_res
    ```
 
 2. **Complex Actions**: Actions should be simple strings, not encoded data
@@ -2543,8 +2777,17 @@ class PlannerNodeBase(Node):
 
 ```python
 class WorkflowGeneratorNode(PlannerNodeBase):
-    def exec_fallback(self, shared, exc):
+    def prep(self, shared):
+        # Note: Returning shared dict here because exec_fallback needs access to it
+        # exec_fallback only receives prep_res and exc, not shared directly
+        # This is a valid pattern when error handling needs full context
+        return shared
+
+    def exec_fallback(self, prep_res, exc):
         """Enhanced fallback with debugging context."""
+        # prep_res is the shared dict
+        shared = prep_res
+
         # Enrich with generation-specific context
         context = {
             "llm_model": "claude-sonnet-4-20250514",
@@ -2565,8 +2808,15 @@ class WorkflowGeneratorNode(PlannerNodeBase):
         return "generation_failed"
 
 class ValidatorNode(PlannerNodeBase):
-    def exec(self, shared):
-        workflow = shared.get("generated_workflow", {})
+    def prep(self, shared):
+        # Return both workflow and shared for access in exec
+        return {
+            "workflow": shared.get("generated_workflow", {}),
+            "shared": shared
+        }
+
+    def exec(self, prep_res):
+        workflow = prep_res["workflow"]
         validation_result = self._validate_workflow(workflow)
 
         if not validation_result["is_valid"]:
@@ -2581,9 +2831,17 @@ class ValidatorNode(PlannerNodeBase):
                 }
                 errors_with_context.append(error_context)
 
-            shared["validation_errors"] = errors_with_context
-            shared["validation_failure_count"] = shared.get("validation_failure_count", 0) + 1
+            return {
+                "is_valid": False,
+                "errors_with_context": errors_with_context
+            }
 
+        return {"is_valid": True}
+
+    def post(self, shared, prep_res, exec_res):
+        if not exec_res["is_valid"]:
+            shared["validation_errors"] = exec_res["errors_with_context"]
+            shared["validation_failure_count"] = shared.get("validation_failure_count", 0) + 1
             return "invalid"
 
         return "valid"
