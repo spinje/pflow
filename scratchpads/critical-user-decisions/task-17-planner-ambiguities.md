@@ -1462,3 +1462,13 @@ Retry logic: When ValidatorNode returns "invalid", flow goes back to GeneratorNo
 - ✓ Error feedback: Part of validator with specific routing
 - ✓ Retry limits: 3 for all nodes uniformly
 - ✓ Workflow storage trigger: CLI handles after user approval
+
+## Implementation Challenges to Consider
+
+Understanding these challenges helps avoid common pitfalls during implementation:
+
+1. **Early misconceptions persist** - Previous understanding may influence implementation incorrectly
+2. **Two-path architecture is subtle** - Easy to miss that both paths converge at parameter extraction
+3. **Parameter extraction dual role** - It's not just extraction, but also verification of executability
+4. **Separation of concerns** - Planner prepares workflows, CLI handles approval and execution
+5. **Template variables in params** - Templates go directly in params, not in separate structures

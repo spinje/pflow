@@ -1447,7 +1447,20 @@ def test_specific_flow_path():
 
 ### Planner-Specific Anti-Patterns (From Research Analysis)
 
-5. **Hardcoded Pattern Libraries**: Don't create fixed workflow patterns
+5. **Single Discovery Node**: Don't merge workflow and component discovery
+   ```python
+   # ❌ WRONG - Trying to handle both cases in one node
+   class DiscoveryNode(Node):
+       def exec(self, shared):
+           # Confused logic trying to both find complete workflows
+           # AND browse for components in the same node
+
+   # ✅ CORRECT - Two distinct nodes with clear purposes
+   # WorkflowDiscoveryNode: finds COMPLETE workflows only
+   # ComponentBrowsingNode: browses for building blocks when no complete match
+   ```
+
+6. **Hardcoded Pattern Libraries**: Don't create fixed workflow patterns
    ```python
    # ❌ WRONG - Rigid and inflexible
    WORKFLOW_PATTERNS = {
@@ -1731,6 +1744,50 @@ workflow = {
         {"from": "fix", "to": "commit"}
     ]
 }
+```
+
+### Concrete Example: Both Paths in Action
+
+This example shows how the planner handles both Path A (reuse) and Path B (generate):
+
+```
+User: "fix github issue 1234"
+↓
+[PLANNER META-WORKFLOW]
+Path A (if workflow exists):
+  WorkflowDiscoveryNode: Found 'fix-issue' workflow
+  ↓
+  ParameterExtractionNode:
+    - Extract: {"issue_number": "1234"}
+    - Verify: Workflow needs issue_number ✓
+  ↓
+  ResultPreparationNode: Package for CLI
+
+Path B (if no workflow exists):
+  WorkflowDiscoveryNode: No complete match
+  ↓
+  ComponentBrowsingNode: Find github-get-issue, claude-code nodes
+    (Can also select existing workflows as sub-workflows!)
+  ↓
+  GeneratorNode: Create workflow with params: {"issue": "$issue_number"}
+    (Creates template variables, not hardcoded "1234")
+  ↓
+  ValidatorNode: Validate structure (max 3 retries)
+    - If invalid → back to GeneratorNode (metadata skipped)
+    - If valid → continue
+  ↓
+  MetadataGenerationNode: Extract metadata (name, description, inputs, outputs)
+    (Only runs on validated workflows)
+  ↓
+  ParameterExtractionNode: Maps "1234" → $issue_number
+    (Two-stage: Generator creates templates, this node maps values)
+  ↓
+  ResultPreparationNode: Package for CLI
+
+[CLI EXECUTION]
+- Shows approval prompt
+- Saves workflow (preserving $variables)
+- Executes with parameter substitution
 ```
 
 ### Simple Design: Runtime Resolution with Path Support
