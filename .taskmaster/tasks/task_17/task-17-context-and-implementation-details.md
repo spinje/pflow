@@ -1260,6 +1260,20 @@ Output as JSON:
 3. **Runtime Handoff**: Generates validated JSON IR for execution
 4. **Error Reporting**: Clear, actionable error messages
 
+### Context Builder Exclusive Parameter Pattern
+
+The context builder shows only "exclusive parameters" - params that are NOT also inputs. However, due to the universal fallback pattern implemented in all pflow nodes, the planner can set ANY input as a parameter. This provides maximum flexibility when generating workflows.
+
+For example, even though `file_path` is listed as an input (not a parameter) for read-file:
+```json
+{
+  "type": "read-file",
+  "params": {"file_path": "config.json"}  // Works! The node's fallback pattern handles this
+}
+```
+
+This means the planner has complete freedom to provide values either through the shared store (dynamic) or through params (static), regardless of how they're categorized in the context builder output.
+
 ### Concrete Integration Implementation
 
 #### CLI to Planner Integration
@@ -1680,6 +1694,19 @@ def test_specific_flow_path():
     # - Runtime: Traditional execution logic
 
     # The planner is the ONLY exception due to its unique complexity
+    ```
+
+20. **Proxy Mappings in MVP**: Don't implement proxy mappings based on research files
+    ```python
+    # ❌ WRONG - Research files mention proxy mappings extensively
+    # Don't look for "proxy_mappings" field in nodes (it doesn't exist)
+    # Don't implement proxy mapping generation logic
+    # The schema has top-level "mappings" but it's a v2.0 feature
+
+    # ✅ CORRECT - Use template variables with path support for MVP
+    # Template paths like $issue_data.user.login handle 90% of use cases
+    # Proxy mappings are explicitly deferred to v2.0
+    # Focus on the simpler, more elegant template variable solution
     ```
 
 ## Parameter Extraction as Verification Gate
