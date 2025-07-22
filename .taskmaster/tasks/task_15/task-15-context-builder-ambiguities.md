@@ -1080,3 +1080,74 @@ The key decisions for Task 15:
 These decisions prioritize simplicity, LLM comprehension, and pragmatic implementation while enabling the two-phase discovery pattern that Task 17's planner requires.
 
 **Implementation Lesson**: Input validation is critical for new functions. The initial implementation of `build_discovery_context()` and `build_planning_context()` lacked type validation, which was discovered and fixed during implementation. Always validate inputs at function boundaries to provide clear error messages.
+
+
+## Additional Insights from Task 15 that could enhance Task 17:
+
+  1. Terminology Clarification - Should be added to Task 17
+
+  Task 15 mentions a terminology issue that Task 17 should be aware of:
+  # Current code incorrectly uses `node_type` when these are actually node IDs/names
+  # Should use `node_id` or `node_name` for clarity
+  This affects how the planner interprets registry data.
+
+  2. Discovery as "Browsing" vs "Selecting" - Important nuance
+
+  Task 15 provides a crucial insight about framing:
+  - Discovery phase: "Here are nodes/workflows that might be relevant to your task"
+  - Planning phase: "From these relevant options, choose what you actually need"
+
+  This reduces pressure on perfect selection and allows the planner to be more flexible.
+   Task 17's prompt engineering should incorporate this framing.
+
+  3. Missing Description Handling - Small but useful detail
+
+  Task 15 specifies that nodes without descriptions should appear with just the name (no
+   placeholder text like "No description"). This saves tokens and reduces noise in the
+  discovery context.
+
+  4. Test Node Strategy - Practical implementation detail
+
+  Task 15 reveals that only file operation nodes are available (Task 13 not
+  implemented), so test nodes should be used for testing workflows. This is relevant for
+   Task 17's testing strategy.
+
+  5. Input Validation Lesson - Implementation warning
+
+  Task 15 mentions that initial implementations lacked input validation, which caused
+  issues. Task 17 should ensure all planner node functions validate inputs at
+  boundaries.
+
+  6. Structure Display Implementation Requirements - More specific than Task 17
+
+  Task 15 provides concrete details about transforming parser output into the combined
+  JSON + paths format:
+  # Parser output needs two transformations:
+  # 1. For JSON Display: Strip descriptions, keep only types
+  # 2. For Path List: Flatten to dot-notation with descriptions
+
+  7. Error Messaging for Missing Components - More detailed
+
+  Task 15 provides specific error message formatting that Task 17 could use:
+  error_msg = "Missing components detected:\n"
+  error_msg += f"- Unknown nodes: {', '.join(missing_nodes)}\n"
+  error_msg += "  (Check spelling, use hyphens not underscores)\n"
+
+  Recommendations for Task 17:
+
+  1. Add a terminology note about node_type vs node_id confusion
+  2. Incorporate the "browsing" framing in discovery prompt design
+  3. Document the test node strategy for MVP testing
+  4. Reference Task 15's structure transformation details for implementation
+  5. Use Task 15's error message patterns for consistency
+
+  One Important Clarification:
+
+  Task 15 mentions that build_context() can be removed entirely once the two-phase
+  functions are implemented. Task 17 should be aware that there's no need to maintain
+  backward compatibility with the old context builder - it can be completely replaced.
+
+  Overall, the documents are remarkably well-aligned, with Task 15 providing valuable
+  implementation details that support Task 17's requirements. The insights from Task 15
+  are mostly implementation-level details that will help whoever implements Task 17,
+  rather than contradictions or major architectural changes.
