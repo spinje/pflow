@@ -4,16 +4,16 @@
 
 Task 17 is the core feature that makes pflow unique - the Natural Language Planner that enables "Plan Once, Run Forever". After extensive research, I've identified several critical ambiguities and decisions that need to be made before implementation can begin.
 
-**Update**: Tasks 14 and 15 have been added to address critical dependencies:
-- **Task 14**: Implements structured output metadata support, enabling the planner to generate valid path-based proxy mappings (✅ Done)
-- **Task 15**: Extends the context builder for two-phase discovery, preventing LLM overwhelm while supporting workflow reuse
+**Update**: Tasks 14 and 15 have been completed successfully:
+- **Task 14**: ✅ Implemented structured output metadata support, enabling the planner to see available paths for template variables
+- **Task 15**: ✅ Extended the context builder for two-phase discovery, preventing LLM overwhelm while supporting workflow reuse
 
 ### Key Breakthrough Insights:
 1. The workflow discovery mechanism can reuse the exact same pattern as node discovery - the context builder already provides the perfect format.
 2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
 3. Two-phase approach separates discovery (what to use) from planning (how to connect), preventing information overload.
 4. Hybrid validation approach: Use Pydantic models for type-safe IR generation with Simon Willison's LLM library, then validate with JSONSchema for comprehensive checking.
-5. Progressive validation with static data, mock execution and flow analysis ensures generated workflows actually work before showing them to users, combining Pydantic type safety with semantic validation.
+5. **Template variables with path support** (`$data.field.subfield`) eliminate the need for complex proxy mappings in 90% of use cases, dramatically simplifying the MVP implementation.
 
 ## 1. Template Variable Resolution Mechanism - Decision importance (5) ⚠️ MOST CRITICAL
 
@@ -64,10 +64,11 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
   - Simpler implementation, clearer execution model
   - **Problem**: How do saved workflows handle different parameters?
 
-- [x] **Option B: Runtime resolves template variables**
+- [x] **Option B: Runtime resolves template variables WITH PATH SUPPORT**
   - JSON IR contains `$variables` that get resolved during execution
   - Enables parameterized workflows (the core value prop!)
-  - More complex but enables `pflow fix-issue --issue=1234` pattern
+  - **MVP Enhancement**: Template variables support paths: `$issue_data.user.login`
+  - Handles 90% of data access needs without proxy mappings
   - **Confirmed**: This is the correct approach for MVP
 
 - [ ] **Option C: Hybrid approach**
@@ -75,7 +76,7 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
   - Others remain as parameters for runtime (like `$issue_number`)
   - Most flexible but most complex
 
-**Recommendation**: Option B - Runtime resolution is ESSENTIAL. Without it, pflow would just be a one-time script generator. The ability to run `pflow fix-issue --issue=ANY_NUMBER` is the entire point of workflow compilation.
+**Recommendation**: Option B with path support - Runtime resolution is ESSENTIAL. The addition of path support (e.g., `$issue_data.user.login`) eliminates the need for proxy mappings in most cases, dramatically simplifying the MVP while maintaining full power.
 
 **Validation Note**: The validation pipeline (Section 9) ensures all template variables can be resolved by tracking data flow through mock execution.
 
@@ -84,6 +85,24 @@ Without runtime resolution (Option B), each workflow would be single-use, defeat
 2. Generate IR with `"issue_number": "$issue"` (NOT `"issue_number": "1234"`)
 3. Store the workflow with template variables intact
 4. The value "1234" is only used during the first execution, not baked into the workflow
+
+**Path Support Example**:
+Instead of complex proxy mappings:
+```json
+{
+  "mappings": {
+    "analyzer": {"input_mappings": {"author": "issue_data.user.login"}}
+  },
+  "nodes": [{"id": "analyzer", "params": {"prompt": "Issue by $author"}}]
+}
+```
+
+Simply use paths in template variables:
+```json
+{
+  "nodes": [{"id": "analyzer", "params": {"prompt": "Issue by $issue_data.user.login"}}]
+}
+```
 
 ### CRITICAL CLARIFICATION: The Meta-Workflow Architecture
 
@@ -150,15 +169,24 @@ Without a sophisticated solution, workflows would need many intermediate "glue" 
   - Clean but limited flexibility
   - Can't compose multiple values or extract nested data
 
-- [x] **Option C: Path-Based Proxy Mappings with Nested Extraction**
+- [ ] **Option C: Path-Based Proxy Mappings with Nested Extraction**
   - Support JSONPath/dot notation: `{"prompt": "api_response.data.content"}`
   - Extract from arrays: `{"labels": "issue.labels[*].name"}`
   - Combine with templates: `"prompt": "Analyze: ${issue.title}"`
   - Most powerful and flexible approach
+  - **Deferred to v2.0** due to implementation complexity
 
-### Examples of Path-Based Power:
+- [x] **Option D: Template Variables with Path Support (MVP CHOICE)**
+  - Extend template variables to support paths: `$issue_data.user.login`
+  - Covers 90% of data access needs with minimal implementation (~20 lines)
+  - Example: `"prompt": "Fix issue #$issue_data.number by $issue_data.user.login"`
+  - Proxy mappings entirely deferred to v2.0
+  - Collision handling in MVP: Design workflows to avoid collisions
+  - If two nodes write same key: That's a validation error, not something to fix with mappings
 
-**1. Nested JSON Extraction:**
+### Examples of Template Path Simplicity:
+
+**1. Direct Path Access (MVP Approach):**
 ```json
 // github-get-issue writes to shared["issue_data"]:
 {
@@ -168,94 +196,85 @@ Without a sophisticated solution, workflows would need many intermediate "glue" 
   "labels": [{"name": "bug"}, {"name": "urgent"}]
 }
 
-// Proxy mapping extracts what's needed:
+// Simply use paths in template variables:
 {
-  "mappings": {
-    "analyzer": {
-      "input_mappings": {
-        "title": "issue_data.title",
-        "author": "issue_data.user.login",
-        "is_urgent": "issue_data.labels[?name=='urgent']"
-      }
+  "nodes": [{
+    "id": "analyzer",
+    "type": "llm",
+    "params": {
+      "prompt": "Issue #$issue_data.id: $issue_data.title (by $issue_data.user.login)"
     }
-  }
+  }]
 }
 ```
 
-**2. Eliminating Extract Nodes:**
-```
-// Without path-based mappings:
-api-call >> json-extract-content >> json-extract-author >> llm
-
-// With path-based mappings:
-api-call >> llm
-```
-
-**3. Handling Multiple Node Outputs:**
+**2. Complex Prompts Without Mappings:**
 ```json
 {
-  "mappings": {
-    "summarizer": {
-      "input_mappings": {
-        "content": "analyzer.response",  // Namespaced to avoid collision
-        "metadata": "fetcher.headers"
-      }
+  "nodes": [{
+    "id": "summarize",
+    "type": "llm",
+    "params": {
+      "prompt": "Summarize PR #$pr_data.number:\nTitle: $pr_data.title\nAuthor: $pr_data.user.login\nFiles changed: $pr_data.changed_files"
     }
+  }]
+}
+```
+
+**3. Collision Handling in MVP:**
+```json
+// If two nodes write to same key, that's a validation error:
+// "Error: Both 'api1' and 'api2' write to 'response'.
+//  Please use different node types or design workflow to avoid collisions."
+
+// In v2.0, proxy mappings will solve this:
+{
+  "mappings": {
+    "api1": {"output_mappings": {"response": "api1_response"}},
+    "api2": {"output_mappings": {"response": "api2_response"}}
   }
 }
 ```
 
 ### Critical Insights:
-1. **Proxy mappings enable data flow, not prevent it** - They connect incompatible interfaces
-2. **Path extraction eliminates intermediate nodes** - Cleaner, simpler workflows
-3. **The planner must understand data shapes** - To generate appropriate paths
-4. **Namespacing prevents collisions** - `node_id.output_key` pattern
+1. **Template paths solve most data access needs** - Direct access via `$data.field.subfield`
+2. **Simpler is better for MVP** - ~20 lines of code vs ~200 for full proxy mappings
+3. **Structure documentation still helps** - Shows planner what paths are available
+4. **Proxy mappings become v2.0 feature** - Not needed for MVP at all
 
-### Planner Responsibilities:
-1. Track what each node outputs (data shape)
-2. Understand what each node needs (input requirements)
-3. Generate appropriate mappings (paths, templates, or both)
-4. Detect and resolve collisions via namespacing
+### Planner Responsibilities (Simplified for MVP):
+1. Track what each node outputs (data shape from structure docs)
+2. Generate template variables with appropriate paths
+3. Ensure workflows don't have collisions (validation error if they do)
 
-**Recommendation**: Option C - Path-based proxy mappings provide maximum power with minimal workflow complexity. The planner should leverage this to create clean, maintainable workflows.
+**Recommendation**: Option D - Template variables with path support provide the optimal balance of power and simplicity for MVP. This covers 90% of use cases with minimal implementation complexity.
 
-**MVP Scope Clarification for Path-Based Mappings**:
-While the planner can generate sophisticated path-based mappings like `"issue_data.user.login"`, validation in MVP will be limited:
-- Current metadata only provides simple key lists (e.g., `outputs: ["issue_data"]`)
-- No structured data shape definitions exist in node docstrings yet
-- MVP validation will only check that root keys exist (e.g., verify `issue_data` exists, but not `.user.login`)
-- The planner relies on the LLM's knowledge of common API structures (GitHub, etc.) to generate valid paths
-- Full path validation with structured metadata is deferred to v2.0
+**Implementation Approach**:
+With structure documentation already implemented (Task 14), the planner can:
+1. See available paths in the context (e.g., `issue_data.user.login`)
+2. Generate template variables using these paths directly
+3. Validate paths exist using the structure metadata
 
-This is acceptable for MVP because:
-1. The LLM generally knows common API response structures
-2. Invalid paths will fail at runtime with clear errors
-3. It keeps the metadata extraction simple for MVP
-4. Nodes can be enhanced with structure documentation post-MVP without breaking changes
+The validation framework can verify template variable paths are valid before execution.
 
-**Validation Integration**: The mock execution framework (Section 9) specifically tests that proxy mappings correctly connect data between nodes, catching mapping errors before execution. For MVP, this means validating root key presence, not full path traversal.
+## 2.1 Value of Structure Documentation for Template Paths - Decision importance (5)
 
-## 2.1 Critical Discovery: Structure Documentation for Path-Based Mappings - Decision importance (5)
+Structure documentation remains critically valuable for the MVP, but for a different reason: **the planner needs to know what paths exist to generate valid template variables**.
 
-After deeper analysis, we've discovered that path-based mappings have a fundamental dependency: **the planner cannot generate valid paths without knowing data structures**.
+**UPDATE**: Task 14 has been completed successfully, providing the structure documentation that enables the planner to see available paths like `issue_data.user.login` and use them in template variables.
 
-**UPDATE**: This critical limitation is being addressed by **Task 14: Implement structured output metadata support for nodes**, which will enhance node docstrings to include structure documentation, enabling the planner to generate valid proxy mapping paths.
-
-### The Generation Problem (Not Just Validation)
+### Why Structure Documentation Matters
 
 When the planner needs to generate:
 ```json
 {
-  "input_mappings": {
-    "author_name": "issue_data.user.login"
+  "params": {
+    "prompt": "Issue by $issue_data.user.login in repo $issue_data.repository.name"
   }
 }
 ```
 
-It needs to know that `issue_data` has this structure. Otherwise, it's just guessing based on:
-- LLM training data (works for GitHub, fails for custom APIs)
-- Variable naming conventions (unreliable)
-- Hope and prayer (not a strategy)
+It needs to know that these paths exist in the data structure. Structure documentation provides this visibility, showing the planner exactly what paths are available for use in template variables.
 
 ### Our Options:
 
@@ -330,7 +349,7 @@ It needs to know that `issue_data` has this structure. Otherwise, it's just gues
 
 **Critical Insight**: This isn't about perfect validation or type safety. It's about giving the planner enough information to generate correct paths instead of guessing. Even basic structure documentation dramatically improves the planner's ability to create working workflows.
 
-**Resolution**: Task 14 implements Option B, providing the structure documentation support that enables the planner to generate valid path-based proxy mappings for any API, not just well-known ones.
+**Resolution**: Task 14 successfully implemented Option B. The structure documentation now enables the planner to see available paths and use them directly in template variables (e.g., `$issue_data.user.login`), making the MVP implementation significantly simpler.
 
 ## 3. Workflow Storage and Discovery Implementation - Decision importance (4)
 
@@ -613,7 +632,7 @@ How to ensure LLM generates valid JSON IR every time?
 
 **Recommendation**: Option C - Pydantic models provide type safety during generation while JSONSchema ensures comprehensive validation. This leverages the LLM library's structured output capabilities optimally.
 
-**Note**: While Pydantic ensures syntactically valid JSON, semantic validation (data flow, template resolution, proxy mapping verification) is handled by the comprehensive validation pipeline described in Section 9.
+**Note**: While Pydantic ensures syntactically valid JSON, semantic validation (data flow and template path verification) is handled by the validation pipeline described in Section 9.
 
 ### Implementation Pattern:
 ```python
@@ -630,24 +649,24 @@ validate_ir(flow_dict)
 How should the approval process work in practice?
 
 ### Context:
-A critical insight: Proxy mappings are internal-only. Users always interact with nodes using their natural parameter names, regardless of how data flows internally. This dramatically simplifies the CLI display.
+With template paths, users see exactly what data is being accessed in a natural, readable format. The CLI display shows the template variables with their paths directly.
 
 ### How CLI Parameters Work:
 1. **Each node has its own parameter namespace** - `--prompt` on one node doesn't conflict with `--prompt` on another
-2. **Natural keys everywhere** - Users see `--url`, `--prompt`, `--message` etc., not internal shared store keys
-3. **Data routing is invisible** - Proxy mappings connect the data behind the scenes
-4. **No disambiguation needed** - The node context makes each parameter clear
+2. **Natural paths everywhere** - Users see `$issue_data.user.login` directly in prompts
+3. **Data flow is transparent** - Template paths show exactly where data comes from
+4. **Intuitive understanding** - `$data.field` syntax is familiar to developers
 
 ### Example:
 ```bash
-# What user sees (simple, natural):
-youtube-transcript --url=https://youtube.com/watch?v=123 >>
-llm --prompt="Summarize this transcript"
+# What user sees with template paths:
+github-get-issue --issue=1234 >>
+llm --prompt="Fix issue #$issue_data.id: $issue_data.title (by $issue_data.user.login)"
 
-# What happens internally (hidden complexity):
-# 1. youtube-transcript writes to shared["transcript"]
-# 2. Proxy mapping {"prompt": "transcript"} connects the data
-# 3. llm reads its --prompt from shared["transcript"]
+# Clear data flow:
+# 1. github-get-issue writes to shared["issue_data"]
+# 2. llm's prompt directly references the paths it needs
+# 3. No hidden mappings or transformations
 ```
 
 ### The Ambiguity:
@@ -691,7 +710,7 @@ Save as 'fix-issue' and execute? [Y/n]: y
 
 **Note**: The `$variables` shown are template placeholders that will be resolved from the workflow's data flow, not CLI parameters the user needs to provide.
 
-**Recommendation**: Option A - Natural CLI syntax is clearest because it shows exactly what each node expects, hiding all internal complexity of data routing and proxy mappings.
+**Recommendation**: Option A - Natural CLI syntax with visible template paths provides the clearest understanding of data flow while remaining intuitive.
 
 ## 9. Error Recovery, Error Handling and Validation Strategy - Decision importance (5)
 
@@ -748,31 +767,31 @@ This is NOT mock execution - it's static analysis that tracks data flow through 
 - **What it does**: Traverses nodes in execution order, tracking which keys are available in the shared store at each step
 - **How it works**: Uses node metadata (inputs/outputs) to verify data dependencies are satisfied
 - **Generic approach**: No per-node implementation needed - just uses the metadata from registry
-- **Catches**: Missing inputs, overwritten outputs, unresolved template variables, incorrect proxy mappings
+- **Catches**: Missing inputs, overwritten outputs, unresolved template variables, invalid template paths
 
-**Path-Based Mapping Limitation**: Currently, nodes only declare simple outputs (e.g., `outputs: ["issue_data"]`) without structure information. This means validation can only check that root keys exist, not nested paths like `"issue_data.user.login"`. See `scratchpads/task-17-path-based-mappings-context.md` for full context on this limitation.
+**Path Validation Support**: With structure documentation implemented, validation can verify that template variable paths like `$issue_data.user.login` actually exist in the documented structure, preventing runtime errors.
 
 **Example Data Flow Analysis Log**:
 ```
 [Data Flow Analysis]
 Node: github-get-issue
   Requires: issue_number ✓ (from CLI parameter)
-  Produces: issue_data, issue_title
+  Produces: issue_data (with structure: {id, title, user: {login}, ...})
 
 Node: claude-code
-  Proxy mapping: {"prompt": "issue_data"}
-  Requires: issue_data ✓ (from github-get-issue)
+  Template: "Fix issue #$issue_data.id by $issue_data.user.login"
+  Path validation: issue_data.id ✓, issue_data.user.login ✓
   Produces: code_report
 
 Node: llm
-  Requires: code_report ✓ (from claude-code)
-  Template: $code_report resolves to shared['code_report']
+  Template: "Write commit message for: $code_report"
+  Path validation: code_report ✓
   Produces: commit_message
 
 [Analysis Complete] ✓
 All data dependencies satisfied
+All template paths valid
 No overwritten keys
-Template variables resolved
 ```
 
 ### Integration with Error Recovery:
@@ -1325,8 +1344,8 @@ The planner must decide which values in natural language should become parameter
 
 ## Critical Next Steps
 
-1. **Clarify template variable resolution** - This is the most critical ambiguity
-2. **Implement path-based proxy mappings** - Enable nested JSON extraction (new from section 2)
+1. ~~**Clarify template variable resolution**~~ - ✅ RESOLVED: Runtime resolution with path support (Option B + paths)
+2. **Implement path support in template variables** - Simple ~20 line addition to enable `$data.field.subfield`
 3. ~~**Decide on workflow storage format**~~ - ✅ RESOLVED: Use simple JSON with name, description, inputs, outputs, and IR
 4. ~~**Design discovery mechanism**~~ - ✅ RESOLVED: Two-phase approach with context builder
 5. **Confirm MVP boundaries** - Especially regarding action-based transitions
@@ -1335,43 +1354,44 @@ The planner must decide which values in natural language should become parameter
 8. **Implement two context builder functions**:
    - `build_discovery_context()` - Lightweight descriptions only
    - `build_planning_context(selected)` - Full details for selected components
-9. **Design data flow tracking** - Planner must understand node outputs for mapping generation
-10. **Implement three-tier validation pipeline** - Static analysis, data flow verification, mock execution
-11. **Create mock execution framework** - Simulate nodes for validation without side effects
-12. **Design validation error feedback system** - Specific hints for each error type
+9. **Simplify prompt templates** - Focus on template paths instead of complex mappings
+10. **Adapt validation for template paths** - Verify paths exist in structure documentation
+11. **No proxy mapping implementation** - Entirely deferred to v2.0
+12. **Update test scenarios** - Focus on template path patterns
 
 ## Implementation Recommendations
 
 Based on this analysis, here's the recommended approach:
 
-1. **Use Option B for template variables** - Runtime resolution is essential for workflow reusability
+1. **Use Option B with path support** - Runtime resolution with `$data.field` syntax
 2. **Use unified discovery pattern** - Context builder lists both nodes and workflows
 3. **Store workflows with descriptions** - Simple JSON with name, description, and IR
 4. **Use claude-sonnet-4-20250514** for planning with structured prompts
-5. **Show CLI syntax only** for approval
+5. **Show CLI syntax only** for approval (with template paths visible)
 6. **Implement smart error recovery** with specific strategies
 7. **Strictly limit to sequential workflows** for MVP
 8. **Implement planner as Python pocketflow code** - nodes.py + flow.py pattern, not JSON IR
 9. **Use Pydantic models for IR generation** - Hybrid approach with JSONSchema validation
-10. **Implement three-tier validation pipeline** - Syntactic (Pydantic) + Static analysis + Mock execution
-11. **Use progressive validation** - Fail fast on cheap checks, thorough validation only when needed
+10. **Simplify validation** - Focus on verifying template paths exist in structure docs
+11. **No proxy mappings in MVP** - Entirely deferred to v2.0
 
 **Critical Implementation Details**:
-- The planner must be explicitly instructed to generate template variables (`$issue`, `$file_path`, etc.) rather than hardcoding values extracted from natural language input.
-- Use Simon Willison's llm library directly in the pocketflow node with Pydantic schemas for structured output.
-- Generate workflows using Pydantic models for type safety, then validate with JSONSchema for comprehensive checking.
-- The implementing agent will need to read all the relevant docs in the `pocketflow/` folder to understand exactly how to implement it.
+- The planner must generate template variables with paths (`$issue_data.user.login`) for nested data access
+- Template variable resolution needs ~20 lines to support path traversal: split on '.', traverse dict
+- Structure documentation shows available paths to guide the planner
+- Proxy mappings are entirely deferred to v2.0 (no exceptions)
+- Use Simon Willison's llm library directly in the pocketflow node with Pydantic schemas
 
 **Implementation Checklist** - Ensure understanding of these critical points before starting:
-- [ ] Template variables enable reusability (NEVER hardcode values like "1234")
+- [ ] Template variables with paths (`$data.field`) are the primary data access mechanism
 - [ ] Workflows are building blocks that can be used inside other workflows
 - [ ] Planner is Python pocketflow code (infrastructure), not JSON IR (user workflows)
-- [ ] Proxy mappings are internal only and hidden from users in CLI display
-- [ ] Path-based mappings require structure documentation from node metadata
+- [ ] No proxy mappings in MVP - entirely deferred to v2.0
+- [ ] Structure documentation helps planner know available paths
 - [ ] Two-phase context (discovery vs planning) prevents LLM overwhelm
-- [ ] Validation is static data flow analysis, not actual code execution
+- [ ] Validation checks template paths exist in structure docs
 - [ ] Template variables (`$issue`) are different from CLI parameters (`--issue=1234`)
-- [ ] LLM needs explicit instructions to extract parameters and create templates
+- [ ] Implementation is ~20 lines for path support vs ~200 for proxy mappings
 - [ ] Planner can use full pocketflow features, but generated workflows are sequential only (MVP)
 
 ### Key Implementation Simplifications:
@@ -1386,7 +1406,7 @@ Based on this analysis, here's the recommended approach:
 1. **build_discovery_context()** - Names and descriptions only (implemented in Task 15)
 2. **build_planning_context(selected_components)** - Full interface details for selected items only (implemented in Task 15)
 
-This separation prevents information overload and improves LLM performance. Task 15 provides exactly this two-phase approach, including workflow discovery support and structure documentation parsing for path-based proxy mappings.
+This separation prevents information overload and improves LLM performance. Task 15 provides exactly this two-phase approach, including workflow discovery support and structure documentation that shows available paths for template variables.
 
 ## Risks and Mitigations
 
@@ -1414,7 +1434,7 @@ After thorough investigation of the codebase and documentation, I've discovered 
 - **build_discovery_context()**: Lightweight browsing with names/descriptions only
 - **build_planning_context()**: Detailed interface info for selected components
 - Workflow loading from `~/.pflow/workflows/` is already implemented
-- Structure documentation (JSON + paths) for proxy mappings is working
+- Structure documentation (JSON + paths) shows available paths for template variables
 
 ### 2. Template Variable Resolution Confirmed
 Documentation has been updated to confirm template variables are preserved in JSON IR and resolved at runtime. This enables the "Plan Once, Run Forever" philosophy where workflows can be reused with different parameters.
@@ -1466,8 +1486,8 @@ The planner combines all these decisions into a cohesive workflow generation sys
 2. **Discovery Phase**: Context builder provides nodes + workflows → LLM selects components
 3. **Generation Phase**:
    - Pydantic models ensure syntactically valid JSON (Section 7)
-   - Template variables preserved for reusability (Section 1)
-   - Path-based proxy mappings connect data flow (Section 2)
+   - Template variables with paths for data access (Section 1 & 2)
+   - Structure documentation guides valid path generation
 4. **Validation Phase** (Section 9):
    - Static analysis catches structural issues
    - Mock execution verifies data flow
