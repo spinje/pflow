@@ -112,10 +112,11 @@ Template variables map directly to shared store keys:
 
 ### Resolution Process
 
-From `.taskmaster/tasks/task_18/task-17-template-variable-implementation-guide.md`:
+According to the MVP implementation guide, **ALL template resolution happens at runtime** using a single-phase approach. This ensures consistent behavior whether a template appears as a complete value or embedded in a string.
 
-1. **Compile-time resolution**: Initial parameters from CLI are substituted
-2. **Runtime resolution**: Shared store references are resolved during execution
+The resolution context includes both:
+1. **Shared store values**: From previous nodes in the workflow
+2. **CLI parameters**: Passed when invoking the workflow (these have higher priority)
 
 Example flow:
 ```json
@@ -194,10 +195,20 @@ shared["issue_data"] = {
 // Future possibility: $issue_data.user.login
 ```
 
-### 3. Complex Data Transformations
+### 3. Type Preservation
+
+According to the MVP implementation guide, template variables convert all values to strings:
+- `$retry_count` with value 3 becomes "3" (string, not integer)
+- `$temperature` with value 0.7 becomes "0.7" (string, not float)
+- `$debug` with value true becomes "true" (string, not boolean)
+- `$tags` with value ["bug", "urgent"] becomes "['bug', 'urgent']" (string representation)
+
+Proxy mappings preserve the original types, making them necessary when type preservation is critical.
+
+### 4. Complex Data Transformations
 
 When simple substitution isn't enough:
-- Array to string conversion
+- Array to string conversion (beyond string representation)
 - Data filtering or aggregation
 - Computed values
 
