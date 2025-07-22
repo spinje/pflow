@@ -233,9 +233,19 @@ class ComponentBrowsingNode(Node):
         return "generate"
 
 class ParameterExtractionNode(Node):
-    """Extracts parameters AND verifies workflow executability (convergence point)"""
+    """Extracts parameters AND verifies workflow executability (convergence point)
+
+    This node works IDENTICALLY for both paths:
+    - Takes user input + workflow (which already has template variables defined)
+    - Extracts concrete values from natural language
+    - Maps them to the workflow's template variables
+    - Verifies all required parameters are available
+    """
     def exec(self, shared):
         user_input = shared["user_input"]
+        # Workflow already has template variables defined:
+        # - Path A: From the saved workflow
+        # - Path B: Just created by GeneratorNode
         workflow = shared.get("found_workflow") or shared.get("generated_workflow")
 
         # Current time context for temporal interpretation
@@ -293,6 +303,16 @@ class GeneratorNode(Node):
     """Generates new workflow if none found"""
     def exec(self, shared):
         # Generate complete workflow with template variables
+        # CRITICAL: The LLM must handle ALL workflow generation in one call:
+        # 1. Design the workflow structure (node selection and sequencing)
+        # 2. Identify dynamic values (like "1234" in "fix issue 1234")
+        # 3. Create template variables (like $issue_number) instead of hardcoding
+        # 4. Generate proxy mappings for:
+        #    - Output collision avoidance (when multiple nodes write same key)
+        #    - Data routing between incompatible interfaces
+        # 5. Produce complete JSON IR with all required fields:
+        #    - ir_version, nodes (with params), edges, mappings
+        # 6. Ensure data flow integrity (outputs properly connect to inputs)
         workflow = self._generate_workflow(
             shared["user_input"],
             shared["planning_context"]
