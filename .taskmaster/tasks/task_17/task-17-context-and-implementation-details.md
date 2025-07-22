@@ -1724,7 +1724,7 @@ The planner can set ANY value either:
 - **Via params** (static, determined at planning time)
 - **Via shared store** (dynamic, determined at runtime from previous nodes)
 
-This dramatically reduces the need for proxy mappings and makes workflows cleaner.
+This provides significant flexibility in how the planner connects nodes.
 
 ### Examples of the Pattern in Action
 
@@ -1737,7 +1737,10 @@ This dramatically reduces the need for proxy mappings and makes workflows cleane
 // Option 2: Via params (static - hardcoded value)
 {"id": "read", "type": "read-file", "params": {"file_path": "config.json"}}
 
-// Option 3: Mix of both
+// Option 3: Via params with template variable (dynamic from shared store)
+{"id": "read", "type": "read-file", "params": {"file_path": "$path"}}  // Resolves from shared["path"]
+
+// Option 4: Mix of sources
 {
   "id": "read",
   "type": "read-file",
@@ -1745,30 +1748,55 @@ This dramatically reduces the need for proxy mappings and makes workflows cleane
 }
 ```
 
-### Why This Reduces Proxy Mapping Complexity
+### How This Reduces Some (But Not All) Proxy Mapping Needs
 
-Consider connecting nodes with incompatible keys:
+The combination of fallback pattern + template variables handles many common data routing scenarios:
+
 ```json
-// Scenario: path-generator writes to shared["path"]
-// read-file expects shared["file_path"]
+// Scenario: path-generator writes to shared["path"], read-file expects shared["file_path"]
 
-// Without the fallback pattern - needs proxy mapping:
+// Option 1: Using proxy mapping (traditional approach)
 {
   "mappings": {
     "read": {"input_mappings": {"file_path": "path"}}
   }
 }
 
-// With the fallback pattern - use template variable:
+// Option 2: Using template variable in params (cleaner approach)
 {
   "nodes": [
-    {"id": "get-path", "type": "path-generator"},  // Writes to shared["path"]
+    {"id": "get-path", "type": "path-generator"},
     {"id": "read", "type": "read-file", "params": {"file_path": "$path"}}
   ]
 }
 ```
 
-The combination of fallback pattern + template variables eliminates the need for proxy mappings in many common cases.
+### When Proxy Mappings Are Still Essential
+
+Despite the flexibility of the fallback pattern, proxy mappings remain necessary for:
+
+1. **Output collision avoidance** (primary use case):
+   ```json
+   // Two nodes writing to the same key
+   {"id": "api1", "type": "api-call"},  // Writes to shared["response"]
+   {"id": "api2", "type": "api-call"},  // Also writes to shared["response"] - collision!
+
+   // Must use output_mappings to namespace:
+   {
+     "mappings": {
+       "api1": {"output_mappings": {"response": "api1_response"}},
+       "api2": {"output_mappings": {"response": "api2_response"}}
+     }
+   }
+   ```
+
+2. **Type preservation for non-string parameters**:
+   - Template variables use string substitution (everything becomes a string)
+   - Proxy mappings preserve original types (int, float, bool, array, object)
+
+3. **Path-based data extraction** (if template variables don't support paths):
+   - Proxy mapping: `{"author": "issue_data.user.login"}`
+   - Template variable: `$issue_data` (gets entire object as string)
 
 ### Understanding the Context Builder Output
 
@@ -1815,6 +1843,138 @@ The planner doesn't need to worry about this - nodes handle it internally.
 4. **Maximum flexibility**: Choose the best approach for each value individually
 
 This pattern is documented as a core architectural decision in `.taskmaster/knowledge/patterns.md` under "Shared Store Inputs as Automatic Parameter Fallbacks" and is implemented universally across all pflow nodes.
+
+## Template Variable Limitations and Type Preservation
+
+### The String Substitution Problem
+
+Template variables work through string substitution, which means all values become strings:
+
+```python
+# In the template resolver:
+result = result.replace(f"${var_name}", str(values[var_name]))  # Note str()!
+```
+
+This has important implications:
+
+```json
+// Given these shared store values:
+// shared["max_retries"] = 3 (integer)
+// shared["temperature"] = 0.7 (float)
+// shared["debug"] = true (boolean)
+// shared["tags"] = ["bug", "urgent"] (array)
+
+// Using template variables in params:
+{
+  "params": {
+    "max_retries": "$max_retries",    // Becomes "3" (string!)
+    "temperature": "$temperature",     // Becomes "0.7" (string!)
+    "debug": "$debug",                 // Becomes "true" (string!)
+    "tags": "$tags"                    // Becomes "['bug', 'urgent']" (string repr!)
+  }
+}
+```
+
+### When to Use Proxy Mappings for Type Preservation
+
+If a node requires non-string parameter types, use proxy mappings instead of template variables:
+
+```json
+// Use proxy mapping to preserve types:
+{
+  "mappings": {
+    "my-node": {
+      "input_mappings": {
+        "max_retries": "retry_count",  // Preserves integer
+        "temperature": "model_temp",   // Preserves float
+        "debug": "debug_mode",         // Preserves boolean
+        "tags": "issue_tags"           // Preserves array
+      }
+    }
+  }
+}
+```
+
+### MVP Guidance
+
+For MVP, the planner should:
+1. Use template variables for string parameters
+2. Use proxy mappings when type preservation is critical
+3. Document in generated workflows when type conversion might occur
+
+## Order of Operations: Proxy Mappings Before Template Resolution
+
+### Critical Execution Order
+
+The runtime MUST apply transformations in this order:
+1. **Proxy mappings** - Rename shared store keys to avoid collisions
+2. **Template resolution** - Reference the renamed keys
+
+### Why Order Matters
+
+Consider this collision scenario:
+```json
+// Two nodes write to the same key:
+{"id": "api1", "type": "api-call"},  // Writes to shared["response"]
+{"id": "api2", "type": "api-call"},  // Also writes to shared["response"]
+
+// Without proper ordering:
+// - Template "$response" is ambiguous - which response?
+// - Runtime can't resolve correctly
+
+// With proper ordering:
+// 1. Proxy mappings rename outputs:
+//    api1 writes to shared["api1_response"]
+//    api2 writes to shared["api2_response"]
+// 2. Templates can now reference unambiguously:
+//    "$api1_response" and "$api2_response"
+```
+
+### Implementation Note
+
+This ordering is handled by the runtime, not the planner. The planner just needs to generate valid mappings when collisions exist.
+
+## MVP Approach to Collision Handling
+
+### Simplified Strategy
+
+For MVP, the planner should follow a pragmatic approach:
+
+1. **No pre-detection** - Don't parse markdown to detect potential collisions
+2. **Include examples** - Show proxy mapping examples in the prompt
+3. **Trust the LLM** - Modern LLMs understand collision problems well
+4. **Validate after** - Check generated workflows for actual collisions
+
+### Prompt Guidance
+
+Include this guidance in the planner prompt:
+```
+If multiple nodes of the same type write to the same shared store key,
+use output_mappings to avoid collisions. Example:
+
+{
+  "mappings": {
+    "api1": {"output_mappings": {"response": "api1_response"}},
+    "api2": {"output_mappings": {"response": "api2_response"}}
+  }
+}
+```
+
+### Post-Generation Validation
+
+After workflow generation, validate for collisions:
+- Check if multiple nodes write to the same keys
+- Consider proxy mappings in the validation
+- Provide clear error messages if collisions remain
+
+### Future Enhancement
+
+Post-MVP, the context builder could provide structured data (JSON) alongside markdown to enable:
+- Automatic collision detection
+- Suggested proxy mappings
+- More intelligent workflow generation
+
+For now, keep it simple and rely on good examples and LLM intelligence.
 
 ## Structured Output Generation with Pydantic
 
