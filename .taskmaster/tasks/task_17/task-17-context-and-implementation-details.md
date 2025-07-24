@@ -189,16 +189,12 @@ The traditional approach quickly becomes:
 class WorkflowDiscoveryNode(Node):
     """Find complete workflows that can satisfy the ENTIRE user intent as-is"""
     def prep(self, shared):
-        """Prepare data for workflow discovery."""
-        return {
-            "user_input": shared["user_input"],
-            "saved_workflows": self._load_saved_workflows()  # From ~/.pflow/workflows/
-        }
+        # Extract user input for discovery
+        return shared["user_input"]
 
-    def exec(self, prep_res):
-        """Execute workflow discovery using LLM."""
-        user_input = prep_res["user_input"]
-        saved_workflows = prep_res["saved_workflows"]
+    def exec(self, user_input):
+        # Load workflows during execution
+        saved_workflows = self._load_saved_workflows()  # From ~/.pflow/workflows/
 
         # Use LLM to find exact matches
         prompt = f"""
@@ -228,21 +224,18 @@ class WorkflowDiscoveryNode(Node):
 class ComponentBrowsingNode(Node):
     """Browse for components to build NEW workflows (only if no complete workflow found)"""
     def prep(self, shared):
-        """Prepare for component browsing."""
-        from pflow.planning.context_builder import build_discovery_context
-        return {
-            "user_input": shared["user_input"],
-            "discovery_context": build_discovery_context()
-        }
+        # Extract user input for browsing
+        return shared["user_input"]
 
-    def exec(self, prep_res):
-        """Browse for building blocks."""
-        from pflow.planning.context_builder import build_planning_context
+    def exec(self, user_input):
+        from pflow.planning.context_builder import build_discovery_context, build_planning_context
 
         # Step 1: Lightweight browse
+        discovery_context = build_discovery_context()
+
         components = self._browse_for_building_blocks(
-            prep_res["user_input"],
-            prep_res["discovery_context"]
+            user_input,
+            discovery_context
         )
 
         # Step 2: Get details for selected components only
@@ -272,19 +265,15 @@ class ParameterExtractionNode(Node):
     - Verifies all required parameters are available
     """
     def prep(self, shared):
-        """Prepare data for parameter extraction."""
+        # Extract specific data needed for parameter extraction
+        user_input = shared["user_input"]
         workflow = shared.get("found_workflow") or shared.get("generated_workflow")
-        return {
-            "user_input": shared["user_input"],
-            "workflow": workflow,
-            "current_date": shared.get("current_date", datetime.now().isoformat()[:10])
-        }
+        current_date = shared.get("current_date", datetime.now().isoformat()[:10])
+        return user_input, workflow, current_date
 
     def exec(self, prep_res):
-        """Extract parameters from natural language."""
-        user_input = prep_res["user_input"]
-        workflow = prep_res["workflow"]
-        current_date = prep_res["current_date"]
+        # Unpack the tuple from prep
+        user_input, workflow, current_date = prep_res
 
         # Extract concrete values
         extracted = self._extract_from_natural_language(user_input, workflow, current_date)
@@ -351,14 +340,13 @@ class ParameterPreparationNode(Node):
 class GeneratorNode(Node):
     """Generates new workflow if none found"""
     def prep(self, shared):
-        """Prepare context for workflow generation."""
-        return {
-            "user_input": shared["user_input"],
-            "planning_context": shared["planning_context"]
-        }
+        # Extract specific data for generation
+        return shared["user_input"], shared["planning_context"]
 
     def exec(self, prep_res):
-        """Generate workflow using LLM."""
+        # Unpack the tuple
+        user_input, planning_context = prep_res
+
         # Generate complete workflow with template variables
         # CRITICAL: The LLM must handle ALL workflow generation in one call:
         # 1. Design the workflow structure (node selection and sequencing)
@@ -370,8 +358,8 @@ class GeneratorNode(Node):
         #    - ir_version, nodes (with params), edges
         # 7. Ensure data flow integrity (outputs properly connect to inputs)
         workflow = self._generate_workflow(
-            prep_res["user_input"],
-            prep_res["planning_context"]
+            user_input,
+            planning_context
         )
         return workflow
 
@@ -1803,7 +1791,7 @@ def test_specific_flow_path():
    ```python
    # ❌ WRONG - Trying to handle both cases in one node
    class DiscoveryNode(Node):
-       def exec(self, shared):
+       def exec(self, shared):  # WRONG: exec() should never receive shared directly!
            # Confused logic trying to both find complete workflows
            # AND browse for components in the same node
 
@@ -1880,18 +1868,27 @@ def test_specific_flow_path():
     ```python
     # ❌ WRONG - Planner executing user workflows directly
     class WorkflowExecutionNode(Node):
-        def exec(self, shared):
+        def exec(self, shared):  # WRONG: exec() should never receive shared directly!
             flow = compile_ir_to_flow(workflow_ir)
             result = flow.run(...)  # Planner running user workflow
 
     # ✅ CORRECT - Planner returns results for CLI execution
     class ResultPreparationNode(Node):
-        def exec(self, shared):
-            shared["planner_output"] = {
-                "workflow_ir": ...,
-                "parameter_values": ...
+        def prep(self, shared):
+            # Extract specific data
+            return shared.get("workflow_ir"), shared.get("parameter_values")
+
+        def exec(self, prep_res):
+            workflow_ir, parameter_values = prep_res
+            # Package the results
+            return {
+                "workflow_ir": workflow_ir,
+                "parameter_values": parameter_values
             }
-            # CLI handles execution
+
+        def post(self, shared, prep_res, exec_res):
+            shared["planner_output"] = exec_res
+            # CLI handles execution from here
     ```
 
 12. **Code Generation Instead of Workflows**: We're not generating Python
