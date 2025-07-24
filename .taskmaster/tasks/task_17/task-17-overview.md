@@ -13,6 +13,7 @@ Key innovations include:
 - **Smart context loading** that prevents LLM overwhelm while enabling discovery
 - **Three-tier validation** ensuring generated workflows are both syntactically and semantically correct
 - **Structured output generation** using Pydantic models with Simon Willison's LLM library
+- **MVP focus on sequential workflows** with branching deferred to v2.0
 
 This document set provides comprehensive guidance for implementing the planner, from high-level architecture to concrete code examples.
 
@@ -39,11 +40,15 @@ Three focused files for better organization:
 2. **task-17-implementation-guide.md** - Implementation details, code examples, and integration
    - LLM integration with structured output
    - Prompt templates and context building
-   - Testing strategies
+   - Testing strategies and hybrid test approach
    - Concrete integration examples
+   - CLI integration patterns and batch mode handling
+   - Parameter detection and routing
 
 3. **task-17-core-concepts.md** - Critical concepts, constraints, and decision rationale
    - Template variable system and constraints
    - Parameter extraction as verification
    - Risk mitigation strategies
    - Success metrics
+   - Implementation recommendations and resolutions
+   - MVP feature boundaries and scope
