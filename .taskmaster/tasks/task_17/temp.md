@@ -7,14 +7,12 @@ validation-implementation-guide.md
 
 ----
 
-What is EXTREMELY important here is that we do NOT LOOSE ANY information. We should not loose a single line of text. This is a HARD requirement and needs to be verified when done. ultrathink and make a plan how we can do this.
+how do you suggest we can most effectively split the `scratchpads/critical-user-decisions/task-17-planner-ambiguities.md`file into these files?
+> * `.taskmaster/tasks/task_17/task-17-architecture-and-patterns.md`
+> * `.taskmaster/tasks/task_17/task-17-implementation-guide.md`
+> * `.taskmaster/tasks/task_17/task-17-core-concepts.md`
 
-
-
-
-
-
-
+We need to ultrathink and move each section into the correct file, where it belongs and follow the structure of the files. What is EXTREMELY important here is that we do NOT LOOSE ANY information. We should not loose a single line of text. This is a HARD requirement and needs to be verified when done. ultrathink and make a plan how we can do this.
 
 
 perfect, write a full comprehensive plan into a new markdown file in the scratchpads folder and then we can begin. ultrathink to get this right.
@@ -182,64 +180,3 @@ ultrathink and create a detailed plan how we should update the documents in the 
 ---
 
 Are there any critical contradictions or ambiguities between these two documents? ultrathink and carefully analyze every nuance
-
----
-
-## Critical Next Steps
-
-1. ~~**Clarify template variable resolution**~~ - ✅ RESOLVED: Runtime resolution with path support (Option B + paths)
-2. **Implement path support in template variables** - Simple ~20 line addition to enable `$data.field.subfield`
-3. ~~**Decide on workflow storage format**~~ - ✅ RESOLVED: Use simple JSON with name, description, inputs, outputs, and IR
-4. ~~**Design discovery mechanism**~~ - ✅ RESOLVED: Two-phase approach with context builder
-5. **Confirm MVP boundaries** - Especially regarding action-based transitions (Sequential workflows only, no branching)
-6. **Design concrete prompt templates** - With examples of expected outputs
-7. **Create test scenarios** - Cover all edge cases identified above
-8. **Implement two context builder functions**:
-   - `build_discovery_context()` - Lightweight descriptions only
-   - `build_planning_context(selected)` - Full details for selected components
-9. **Simplify prompt templates** - Focus on template paths instead of complex mappings
-10. **Adapt validation for template paths** - Verify paths exist in structure documentation
-11. **No proxy mapping implementation** - Entirely deferred to v2.0
-12. **Update test scenarios** - Focus on template path patterns
-13. **Implement path support in template variables** - ~20 line addition per Section 2
-14. **Design prompt templates** that emphasize template paths usage
-15. **Create validation** that checks paths exist in structure documentation
-16. **Test scenarios** focused on template path patterns
-
-## Implementation Recommendations
-
-Based on this analysis, here's the recommended approach:
-
-1. **Use Option B with path support** - Runtime resolution with `$data.field` syntax
-2. **Use unified discovery pattern** - Context builder lists both nodes and workflows
-3. **Store workflows with descriptions** - Simple JSON with name, description, and IR
-4. **Use claude-sonnet-4-20250514** for planning with structured prompts
-5. **Show CLI syntax only** for approval (with template paths visible)
-6. **Implement smart error recovery** with specific strategies
-7. **Strictly limit to sequential workflows** for MVP
-8. **Implement planner as Python pocketflow code** - nodes.py + flow.py pattern, not JSON IR
-9. **Use Pydantic models for IR generation** - Hybrid approach with JSONSchema validation
-10. **Simplify validation** - Focus on verifying template paths exist in structure docs
-11. **No proxy mappings in MVP** - Entirely deferred to v2.0
-
-**Critical Implementation Details**:
-- Template path resolution: ~20 lines of code to split on '.' and traverse dictionaries
-- Use Simon Willison's `llm` library with model "claude-sonnet-4-20250514"
-- Pydantic models for type-safe IR generation, then JSONSchema validation
-
-**Implementation Checklist**:
-- [ ] Use template variables (`$data`) and template variables withpaths (`$data.field.subfield`) per Section 2
-- [ ] Workflows can use other workflows as building blocks
-- [ ] Planner is infrastructure (Python pocketflow), not user workflow (JSON IR)
-- [ ] Generated workflows are sequential only (no branching)
-- [ ] Two-phase context (discovery vs planning) prevents LLM overwhelm
-- [ ] Template variables ≠ CLI parameters (runtime resolution vs execution args)
-- [ ] Planner can use full pocketflow features, but generated workflows are sequential only (MVP)
-
-### Key Implementation Simplifications:
-- No separate discovery system needed - reuse context builder pattern
-- Workflows are reusable building blocks alongside nodes
-- Two-phase approach: discovery (descriptions only) → planning (full details)
-- The LLM prompt structure:
-  - Discovery: "Here are available nodes and workflows. Which should we use?"
-  - Planning: "Here are the selected components' interfaces. Plan the connections."
