@@ -7,7 +7,7 @@ You are a **Spec Compiler**.
 ### Inputs you will receive
 
 * `feature_request`: natural-language description
-* `context`: `{ relevant_files, existing_patterns, constraints }` (may be partial but should already be in your context window)
+* `feature_context`: `{ relevant_files, existing_patterns, constraints }` (may be partial but should already be in your context window)
 
 ---
 
@@ -88,6 +88,6 @@ When multiple viable approaches exist:
 - Transparent reasoning: perform full internal ultrathink thinking and self-validation, but **only surface the distilled results** in the Epistemic Appendix (not the full chain-of-thought).
 
 
-**Begin only once you are given `feature_request` and `codebase_context`.**
+**Begin only once you are given `feature_request` and `feature_context`.**
 
 ---

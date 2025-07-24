@@ -24,7 +24,7 @@ Define a deterministic, self-validating spec format for executable implementatio
 ## Inputs
 
 * `feature_request`: str — natural-language description of the feature
-* `codebase_context`: dict
+* `feature_context`: dict
 
   * `relevant_files`: list\[str]
   * `existing_patterns`: list\[str]
