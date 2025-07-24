@@ -2,6 +2,51 @@
 
 This file contains critical concepts, constraints, and decision rationale for the Natural Language Planner.
 
+## Executive Summary
+
+Task 17 is the core feature that makes pflow unique - the Natural Language Planner that enables "Plan Once, Run Forever". After extensive research, I've identified several critical ambiguities and decisions that need to be made before implementation can begin.
+
+**Update**: Tasks 14 and 15 have been completed successfully:
+- **Task 14**: ✅ Implemented structured output metadata support, enabling the planner to see available paths for template variables
+- **Task 15**: ✅ Extended the context builder for two-phase discovery, preventing LLM overwhelm while supporting workflow reuse
+
+### Key Breakthrough Insights:
+1. The workflow discovery mechanism can reuse the exact same pattern as node discovery - the context builder already provides the perfect format.
+2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
+3. Two-phase approach separates discovery (what to use) from planning (how to connect), preventing information overload.
+4. Hybrid validation approach: Use Pydantic models for type-safe IR generation with Simon Willison's LLM library, then validate with JSONSchema for comprehensive checking.
+5. **Template paths** (`$data.field.subfield`) solve 90% of data access needs
+6. No proxy mappings needed for MVP - dramatically simpler implementation
+
+### How It All Fits Together
+
+The planner combines all these decisions into a cohesive workflow generation system:
+
+1. **Input Processing**: Natural language → intent + parameter extraction
+2. **Discovery Phase**: Context builder provides nodes + workflows → LLM selects components
+3. **Generation Phase**:
+   - Pydantic models ensure syntactically valid JSON
+   - Template paths for data access
+   - Structure documentation shows available paths
+4. **Validation Phase**:
+   - Static analysis catches structural issues
+   - Verifies template paths exist in structure docs
+   - Specific error feedback for invalid paths
+5. **Presentation**: Natural CLI syntax showing template paths
+6. **Storage**: Workflows saved with template variables for reusability
+
+This architecture ensures that every generated workflow is not only syntactically correct but also semantically valid and ready for execution.
+
+### Implementation Challenges to Consider
+
+Understanding these challenges helps avoid common pitfalls during implementation:
+
+1. **Early misconceptions persist** - Previous understanding may influence implementation incorrectly
+2. **Two-path architecture is subtle** - Easy to miss that both paths converge at parameter extraction
+3. **Parameter extraction dual role** - It's not just extraction, but also verification of executability
+4. **Separation of concerns** - Planner prepares workflows, CLI handles approval and execution
+5. **Template variables in params** - Templates go directly in params, not in separate structures
+
 ## Parameter Extraction as Verification Gate
 
 ### Parameters Need Interpretation AND Verification
@@ -37,6 +82,253 @@ Result: Cannot execute - prompt for missing parameters
 ```
 
 This separation ensures workflows are only executed when they have all necessary inputs, preventing runtime failures and improving user experience.
+
+## Input Parameter Handling in Natural Language
+
+### The Core Challenge
+How does the planner extract and handle parameters from natural language?
+- User says "fix github issue 1234" - how does planner know 1234 is the issue parameter?
+- How are template variables created from natural language?
+- What happens when parameters are missing?
+
+### The Decision: Smart Parameter Inference with Prompting
+
+**Resolution**: Smart parameter inference with prompting
+- LLM infers parameters from context
+- Creates template variables for dynamic content
+- Prompts user for missing required inputs
+- More user-friendly
+
+### Creating New Workflows: Parameter Extraction Process
+
+When creating a new workflow, the planner must perform several sophisticated steps:
+
+#### 1. Intent + Parameter Extraction
+
+When user says "fix github issue 1234", the planner must:
+- Recognize the intent: "fix github issue"
+- Extract the concrete value: "1234"
+- Critical: Generate a template variable $issue_number instead of hardcoding "1234"
+
+#### 2. Template Variable Generation
+
+The planner must be intelligent about creating reusable template variables:
+```
+User input: "fix github issue 1234 in the pflow repo"
+↓
+Planner extracts:
+- issue_number: 1234 → creates $issue_number
+- repo: pflow → creates $repo_name
+↓
+Generates workflow with templates:
+github-get-issue --issue=$issue_number --repo=$repo_name
+```
+
+#### 3. Multi-Step Parameter Threading
+
+Complex workflows require parameter flow between nodes:
+```
+User: "analyze the bug in issue 1234 and create a fix"
+
+Planner must:
+1. Create $issue_number from "1234"
+2. Plan that github-get-issue outputs to shared["issue_data"]
+3. Reference $issue_data in subsequent nodes
+4. Create template strings like "Fix for issue #$issue_number: $issue_title"
+```
+
+#### 4. Implicit Parameter Inference
+
+Sometimes parameters aren't explicitly stated:
+```
+User: "summarize today's pull requests"
+
+Planner must infer:
+- date parameter → $date with default "today"
+- state parameter → $state with default "open"
+- repo parameter → $repo with prompt for user
+```
+
+### Reusing Existing Workflows: Parameter Mapping Process
+
+This is a fundamentally different process:
+
+#### 1. Workflow Discovery Phase
+
+```
+User: "fix github issue 5678"
+↓
+Planner searches existing workflows:
+- Finds "fix-issue" workflow with description "Fetches GitHub issue and creates fix"
+- Recognizes semantic match
+```
+
+#### 2. Parameter Mapping
+
+The existing workflow already has template variables defined:
+```
+Existing workflow expects:
+- $issue_number (required)
+- $repo_name (optional, default: current)
+- $priority (optional, default: normal)
+
+User provided: "fix github issue 5678"
+↓
+Planner maps:
+- 5678 → $issue_number
+- Missing: $repo_name (use default)
+- Missing: $priority (use default)
+```
+
+#### 3. Parameter Validation
+
+Before reuse, validate all required parameters are available:
+```
+If workflow requires $issue_number and $repo_name:
+- User says "fix github issue" (missing number)
+- Planner must prompt: "What issue number?"
+- Or suggest: "Recent issues: #1234, #5678, #9012"
+```
+
+### Key Differences Between Creation and Reuse
+
+**Creation Challenges:**
+1. Template Variable Naming: Must create meaningful, reusable variable names
+2. Parameter Flow Design: Must plan how data flows between nodes via templates
+3. Default Value Strategy: Must decide which params need defaults vs runtime values
+4. Comprehensiveness: Must capture ALL dynamic aspects as templates, not just obvious ones
+
+**Reuse Challenges:**
+1. Semantic Matching: "fix bug 123" should match "fix-github-issue" workflow
+2. Parameter Extraction Context: Same NL might map differently based on workflow expectations
+3. Missing Parameter Handling: Interactive prompting vs smart defaults
+4. Parameter Type Coercion: "issue twenty-three" → 23
+
+### Critical Edge Cases
+
+#### Ambiguous Parameter Extraction:
+- "fix the latest issue" → need to resolve "latest"
+- "analyze yesterday's data" → need date calculation
+
+Here the planner should identify that it should reuse an existing workflow but wrap it in a new workflow that has a node that resolves the "latest" parameter or a node that resolves the date.
+
+#### Multi-Value Parameters:
+- "fix issues 123, 456, and 789" → array handling
+
+The planner should identify that it should reuse an existing workflow but wrap it in BatchFlow that invokes the existing workflow for each issue number.
+
+> This essentially creates alternative workflows that extend an existing workflow. We don't have to implement this in the planner, but we should be able to identify that this is a valid use case and handle it appropriately or create comments in the code to indicate this is a valid use case and should be implemented in the future.
+
+### What the Planner Should NOT Do
+
+**Contextual Parameters:**
+- "fix this issue" (referring to previous context)
+- "use the same settings as last time"
+
+Pocketflow does not have any state, so it cannot refer to previous context. These types of queries can however be handled perfectly when the user is interacting with an AI agent like Claude Code and the agent uses pflow as a tool. If the agent has an understanding of pflow, it can translate the user's query into a pflow query using its own state.
+
+### The Two-Phase Approach
+
+**Phase 1 - Discovery/Selection:**
+- For new: "What nodes should I use?"
+- For reuse: "Which existing workflow matches?"
+
+**Phase 2 - Parameter Resolution:**
+- For new: "What template variables do I need?"
+- For reuse: "How do parameters map to templates?"
+
+This separation is crucial because parameter handling strategy completely changes based on whether you're creating or reusing.
+
+## Template Variable Resolution Mechanism - Most Critical Decision
+
+### The Core Ambiguity
+There's a fundamental ambiguity about how template variables (`$variable`) work throughout the system.
+
+**⚠️ CRITICAL WARNING**: The planner must NEVER hardcode values extracted from natural language. When user says "fix github issue 1234", the planner must generate `"issue_number": "$issue"` (NOT `"issue_number": "1234"`). The value "1234" is only for the first execution - saved workflows must work with ANY value.
+
+### The Ambiguity
+- Documentation says template resolution is "planner-internal only"
+- But examples show `$variables` in the JSON IR that gets saved and executed
+- The planner.md states variables are resolved "during planning" but also mentions "runtime substitution"
+
+Without runtime resolution (Option B), each workflow would be single-use, defeating the entire purpose of workflow compilation.
+
+### Context
+Template variables are the KEY to pflow's "Plan Once, Run Forever" value proposition. They enable workflow reusability by allowing parameters to change between executions while keeping the workflow structure constant.
+
+**Workflow Lifecycle Example:**
+```bash
+# 1. PLANNING TIME: User provides natural language with specific value
+pflow "fix github issue 1234"
+
+# 2. PLANNER GENERATES: IR with template variables (NOT hardcoded values)
+{
+  "nodes": [{
+    "type": "github-get-issue",
+    "params": {"issue_number": "$issue"}  # Template variable preserved
+  }]
+}
+
+# 3. WORKFLOW SAVED: Template variables remain in saved workflow
+~/.pflow/workflows/fix-issue.json  # Contains $issue variable
+
+# 4. RUNTIME: Different values substituted each execution
+pflow fix-issue --issue=1234  # $issue → "1234"
+pflow fix-issue --issue=5678  # $issue → "5678"
+```
+
+**Critical Distinction:**
+- **Planning Time**: Extract parameters from natural language and create template variables
+- **Runtime**: Substitute actual values into template variables from CLI flags
+
+### Options Considered
+
+- [ ] **Option A: Planner resolves all templates during generation**
+  - Planner replaces `$issue` with actual shared store references in the IR
+  - JSON IR contains no `$variables`, only concrete references
+  - Simpler implementation, clearer execution model
+  - **Problem**: How do saved workflows handle different parameters?
+
+- [x] **Option B: Runtime resolves template variables WITH PATH SUPPORT**
+  - JSON IR contains `$variables` that get resolved during execution
+  - Enables parameterized workflows (the core value prop!)
+  - **MVP Enhancement**: Template variables support paths: `$issue_data.user.login`
+  - Handles 90% of data access needs without proxy mappings
+  - **Confirmed**: This is the correct approach for MVP
+
+- [ ] **Option C: Hybrid approach**
+  - Some variables resolved by planner (like prompt templates)
+  - Others remain as parameters for runtime (like `$issue_number`)
+  - Most flexible but most complex
+
+**Resolution**: Option B with path support - Runtime resolution is ESSENTIAL. The addition of path support (e.g., `$issue_data.user.login`) eliminates the need for proxy mappings in most cases, dramatically simplifying the MVP while maintaining full power.
+
+**Validation Note**: The validation pipeline ensures all template variables can be resolved by tracking data flow through mock execution.
+
+**Implementation Note for Planner**: When the user says "fix github issue 1234", the planner must:
+1. Recognize "1234" as a parameter value (not part of the intent)
+2. Generate IR with `"issue_number": "$issue"` (NOT `"issue_number": "1234"`)
+3. Store the workflow with template variables intact
+4. The value "1234" is only used during the first execution, not baked into the workflow
+
+**MVP Enhancement**: Template variables now support paths (e.g., `$issue_data.user.login`), eliminating the need for complex data routing with proxy mappings.
+
+**Resolution**: Runtime resolves template variables WITH PATH SUPPORT
+- JSON IR contains `$variables` that get resolved during execution
+- Enables parameterized workflows (the core value prop!)
+- **MVP Enhancement**: Template variables support paths: `$issue_data.user.login`
+- Handles 90% of data access needs without proxy mappings
+- **Confirmed**: This is the correct approach for MVP
+
+**Validation Note**: The validation pipeline ensures all template variables can be resolved by tracking data flow through mock execution.
+
+**Implementation Note for Planner**: When the user says "fix github issue 1234", the planner must:
+1. Recognize "1234" as a parameter value (not part of the intent)
+2. Generate IR with `"issue_number": "$issue"` (NOT `"issue_number": "1234"`)
+3. Store the workflow with template variables intact
+4. The value "1234" is only used during the first execution, not baked into the workflow
+
+**MVP Enhancement**: Template variables now support paths (e.g., `$issue_data.user.login`), eliminating the need for complex data routing with proxy mappings.
 
 ## Template-Driven Workflow Architecture
 
@@ -110,6 +402,161 @@ Path B (if no workflow exists):
 - Executes with parameter substitution
 ```
 
+## Data Flow Orchestration and Proxy Mapping Strategy
+
+How should the planner orchestrate data flow between nodes with incompatible interfaces?
+
+### The Core Problem
+Nodes are black boxes with fixed interfaces. When chaining nodes together, their inputs and outputs rarely align perfectly. This creates a fundamental data flow challenge that the planner must solve.
+
+**Example:**
+```
+youtube-transcript writes: shared["transcript"]
+llm reads: shared["prompt"]
+↓
+How does transcript → prompt?
+```
+
+**Why This Matters:**
+Without a sophisticated solution, workflows would need many intermediate "glue" nodes just to move data around, making them complex and hard to maintain.
+
+### The Ambiguity:
+- Should the planner use template strings to compose data?
+- Should proxy mappings just do simple key renaming?
+- Can proxy mappings handle complex data extraction?
+- Who is responsible for avoiding/managing shared store collisions?
+
+### Options Considered:
+
+- [ ] **Option A: Template String Composition Only**
+  - All data transformation via template strings
+  - Example: `"prompt": "Summarize: $transcript"`
+  - Simple but limited to string concatenation
+  - Can't handle nested data or complex transformations
+
+- [ ] **Option B: Simple Key-to-Key Proxy Mappings**
+  - Basic renaming: `{"prompt": "transcript"}`
+  - Handles 1:1 mappings only
+  - Clean but limited flexibility
+  - Can't compose multiple values or extract nested data
+
+- [ ] **Option C: Path-Based Proxy Mappings with Nested Extraction**
+  - Support JSONPath/dot notation: `{"prompt": "api_response.data.content"}`
+  - Extract from arrays: `{"labels": "issue.labels[*].name"}`
+  - Combine with templates: `"prompt": "Analyze: ${issue.title}"`
+  - Most powerful and flexible approach
+  - **Deferred to v2.0** due to implementation complexity
+
+- [x] **Option D: Template Variables with Path Support (MVP CHOICE)**
+  - Extend template variables to support paths: `$issue_data.user.login`
+  - Covers 90% of data access needs with minimal implementation (~20 lines)
+  - Example: `"prompt": "Fix issue #$issue_data.number by $issue_data.user.login"`
+  - Proxy mappings entirely deferred to v2.0
+  - Collision handling in MVP: Design workflows to avoid collisions
+  - If two nodes write same key: That's a validation error, not something to fix with mappings
+
+### The Decision: Template Variables with Path Support (MVP)
+
+**Resolution**: Extend template variables to support paths: `$issue_data.user.login`
+- Covers 90% of data access needs with minimal implementation (~20 lines)
+- Example: `"prompt": "Fix issue #$issue_data.number by $issue_data.user.login"`
+- Proxy mappings entirely deferred to v2.0
+- Collision handling in MVP: Design workflows to avoid collisions
+- If two nodes write same key: That's a validation error, not something to fix with mappings
+
+### Examples of Template Path Simplicity:
+
+**1. Direct Path Access (MVP Approach):**
+```json
+// github-get-issue writes to shared["issue_data"]:
+{
+  "id": 1234,
+  "title": "Fix login",
+  "user": {"login": "john"},
+  "labels": [{"name": "bug"}, {"name": "urgent"}]
+}
+
+// Simply use paths in template variables:
+{
+  "nodes": [{
+    "id": "analyzer",
+    "type": "llm",
+    "params": {
+      "prompt": "Issue #$issue_data.id: $issue_data.title (by $issue_data.user.login)"
+    }
+  }]
+}
+```
+
+**2. Complex Prompts Without Mappings:**
+```json
+{
+  "nodes": [{
+    "id": "summarize",
+    "type": "llm",
+    "params": {
+      "prompt": "Summarize PR #$pr_data.number:\nTitle: $pr_data.title\nAuthor: $pr_data.user.login\nFiles changed: $pr_data.changed_files"
+    }
+  }]
+}
+```
+
+**3. Collision Handling in MVP:**
+```json
+// If two nodes write to same key, that's a validation error:
+// "Error: Both 'api1' and 'api2' write to 'response'.
+//  Please use different node types or design workflow to avoid collisions."
+
+// In v2.0, proxy mappings will solve this:
+{
+  "mappings": {
+    "api1": {"output_mappings": {"response": "api1_response"}},
+    "api2": {"output_mappings": {"response": "api2_response"}}
+  }
+}
+```
+
+### Critical Insights:
+1. **Template paths solve most data access needs** - Direct access via `$data.field.subfield`
+2. **Simpler is better for MVP** - ~20 lines of code vs ~200 for full proxy mappings
+3. **Structure documentation still helps** - Shows planner what paths are available
+4. **Proxy mappings become v2.0 feature** - Not needed for MVP at all
+
+### Planner Responsibilities (Simplified for MVP):
+1. Track what each node outputs (data shape from structure docs)
+2. Generate template variables with appropriate paths
+3. Ensure workflows don't have collisions (validation error if they do)
+
+**Implementation Approach**:
+With structure documentation already implemented (Task 14), the planner can:
+1. See available paths in the context (e.g., `issue_data.user.login`)
+2. Generate template variables using these paths directly
+3. Validate paths exist using the structure metadata
+
+The validation framework can verify template variable paths are valid before execution.
+
+### Structure Documentation Enables Template Paths
+
+**UPDATE**: Task 14 successfully implemented structure documentation, which is essential for the template path approach. The planner can now see available paths like `issue_data.user.login` in the context builder output and use them confidently in template variables.
+
+The context builder now provides structure information in a dual format that's perfect for LLM consumption:
+
+```
+Structure (JSON format):
+{
+  "issue_data": {
+    "user": {
+      "login": "str"
+    }
+  }
+}
+
+Available paths:
+- issue_data.user.login (str)
+```
+
+This enables the planner to generate valid template paths and the validator to verify they exist.
+
 ### Simple Design: Runtime Resolution with Path Support
 
 The system uses a **runtime resolution pattern** for template variables that now includes path traversal:
@@ -157,6 +604,84 @@ This approach ensures:
 - Clear separation of concerns
 - Easy to understand and debug
 - Backwards compatible with simple variables
+
+## Workflow Storage and Discovery Concepts
+
+### Core Insight: Workflows as Building Blocks
+
+The "find or build" pattern is core to pflow's value proposition. A critical insight is that **workflows are building blocks that can be used inside other workflows**, not just standalone executions.
+
+### Updated Understanding
+
+The "find or build" pattern is core to pflow but implementation details are now clearer:
+- Discovery can work exactly like node discovery - using descriptions
+- The context builder already provides the pattern we need
+- Workflows just need a good description field for LLM matching
+- **CRITICAL**: Workflows are building blocks that can be used inside other workflows, not just standalone executions
+
+### Discovery Through Context Builder Pattern
+
+Discovery works exactly like node discovery - using descriptions:
+- For nodes: Context builder generates markdown with descriptions
+- For workflows: Store with description field in same format
+- LLM sees both nodes and workflows in unified format
+- Reuses existing infrastructure perfectly
+
+### The Simplified Approach
+
+- [x] **Use Context Builder Pattern for Everything**
+  - For nodes: Context builder generates markdown with descriptions
+  - For workflows: Store with description field in same format
+  - LLM sees both nodes and workflows in unified format
+  - Example workflow entry:
+    ```markdown
+    ### fix-github-issue
+    Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR
+    ```
+  - Reuses existing infrastructure perfectly
+
+### Implementation
+1. **Node Discovery**: Already works via context builder markdown
+2. **Workflow Discovery**:
+   - Load saved workflows from `~/.pflow/workflows/`
+   - Format them like nodes: name + description
+   - Append to context builder output
+   - LLM selects from both nodes and existing workflows
+
+Example workflow entry in context:
+```markdown
+### fix-github-issue
+Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR
+```
+
+### Key Discovery Principle
+
+The description field is all we need for semantic matching. The LLM can understand "fix github issue 1234" matches a workflow described as "Fetches a GitHub issue, analyzes it with AI, generates a fix".
+
+### Workflow Storage Format
+
+```json
+{
+  "name": "fix-issue",
+  "description": "Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR",
+  "inputs": ["issue_number"],
+  "outputs": ["pr_number", "pr_url"],
+  "ir": {
+    "ir_version": "0.1.0",
+    "nodes": [...],
+    "edges": [...]
+  },
+  "created": "2025-01-01T00:00:00Z",
+  "version": "1.0.0"
+}
+```
+
+**Key Fields**:
+- `name`: Workflow identifier for execution (`pflow fix-issue`)
+- `description`: Natural language description for discovery matching
+- `inputs`: Expected parameters (enables validation and prompting)
+- `outputs`: What the workflow produces (for composition)
+- `ir`: Complete JSON IR with template variables preserved
 
 ## Critical Pattern: The Exclusive Parameter Fallback
 
@@ -430,6 +955,45 @@ Access the data using template paths: $github_main.issue_data
 
 Post-MVP, proxy mappings will provide more sophisticated collision handling and data reorganization. For now, descriptive naming provides a simple, effective solution.
 
+## MVP Feature Boundaries
+
+### CRITICAL CLARIFICATION: System Layer vs User Layer
+
+**This section defines boundaries for USER-FACING WORKFLOWS generated by the planner, NOT the planner's own implementation.** (since both are pocketflow workflows, making this clear is important to avoid confusion)
+
+**System Layer (Planner Implementation)**:
+- ✅ Uses full pocketflow features including action-based transitions
+- ✅ Implements sophisticated error handling and retry logic
+- ✅ Has validation feedback loops and conditional routing
+- ✅ This is infrastructure code in Python using pocketflow patterns
+
+**User Layer (Generated Workflows)**:
+- What features can the generated JSON IR include?
+- How complex can user workflows be?
+- What's allowed vs deferred to v2.0?
+
+### MVP Scope for Generated Workflows
+
+**Allowed in generated workflows**:
+- Sequential node execution (A → B → C)
+- Template variables for reusability ($var syntax)
+- Basic parameter types (string, number, boolean, arrays)
+- Node-internal error handling (retries, fallbacks)
+- Complex sequential workflows (many nodes)
+- Path-based template variables for data flow
+- Workflow composition (workflows using other workflows)
+
+**Excluded from generated workflows**:
+- Action-based transitions between nodes (no branching)
+- Conditional workflow paths
+- Explicit error recovery branches in IR
+- Dynamic node selection based on runtime conditions
+- Parallel execution
+- User editing of generated workflows (just Y/n approval)
+- Custom node creation through planner
+
+This provides a powerful MVP that can generate sophisticated sequential workflows while keeping implementation complexity manageable. The planner itself uses full pocketflow features internally, but limits generated workflows to sequential patterns.
+
 ## Risk Mitigation Strategies
 
 ### Hybrid Architecture Risk
@@ -462,6 +1026,34 @@ Post-MVP, proxy mappings will provide more sophisticated collision handling and 
 - Use structure documentation to verify paths like `$data.user.login` exist
 - Ensure CLI parameters are properly named
 - Check that referenced nodes exist in the workflow
+
+### Template Variable Complexity
+**Risk**: Template variable system becomes too complex
+**Mitigation**:
+- Start with simple $variable substitution, enhance later
+- Focus on path support (`$data.field`) for MVP
+- Defer advanced features to v2.0
+
+### Invalid Workflow Generation
+**Risk**: LLM generates invalid workflows despite prompting
+**Mitigation**:
+- Strong validation with retry loop and error feedback
+- Progressive enhancement on each retry attempt
+- Bounded retries (max 3) to prevent infinite loops
+
+### Discovery Failures
+**Risk**: Discovery doesn't find relevant workflows
+**Mitigation**:
+- Good workflow naming and description conventions
+- Semantic matching based on descriptions
+- Over-inclusive browsing to avoid missing components
+
+### Scope Creep
+**Risk**: Adding "just one more feature" beyond MVP
+**Mitigation**:
+- Strict MVP checklist in documentation
+- Clear v2.0 deferral for advanced features
+- Focus on sequential workflows only
 ## Success Metrics and Targets
 
 ### Core Performance Targets
@@ -483,15 +1075,95 @@ shared["metrics"] = {
 }
 ```
 
+### Implementation Recommendations
+
+Based on comprehensive analysis, here's the recommended approach:
+
+1. **Use runtime resolution with path support** - Runtime resolution with `$data.field` syntax
+2. **Use unified discovery pattern** - Context builder lists both nodes and workflows
+3. **Store workflows with descriptions** - Simple JSON with name, description, and IR
+4. **Use claude-sonnet-4-20250514** for planning with structured prompts
+5. **Show CLI syntax only** for approval (with template paths visible)
+6. **Implement smart error recovery** with specific strategies
+7. **Strictly limit to sequential workflows** for MVP
+8. **Implement planner as Python pocketflow code** - nodes.py + flow.py pattern, not JSON IR
+9. **Use Pydantic models for IR generation** - Hybrid approach with JSONSchema validation
+10. **Simplify validation** - Focus on verifying template paths exist in structure docs
+11. **No proxy mappings in MVP** - Entirely deferred to v2.0
+
+**Critical Implementation Details**:
+- Template path resolution: ~20 lines of code to split on '.' and traverse dictionaries
+- Use Simon Willison's `llm` library with model "claude-sonnet-4-20250514"
+- Pydantic models for type-safe IR generation, then JSONSchema validation
+
+**Implementation Checklist**:
+- Use template variables (`$data`) and template variables with paths (`$data.field.subfield`)
+- Workflows can use other workflows as building blocks
+- Planner is infrastructure (Python pocketflow), not user workflow (JSON IR)
+- Generated workflows are sequential only (no branching)
+- Two-phase context (discovery vs planning) prevents LLM overwhelm
+- Template variables ≠ CLI parameters (runtime resolution vs execution args)
+- Planner can use full pocketflow features, but generated workflows are sequential only (MVP)
+
+### Key Implementation Simplifications:
+- No separate discovery system needed - reuse context builder pattern
+- Workflows are reusable building blocks alongside nodes
+- Two-phase approach: discovery (descriptions only) → planning (full details)
+
+## Implementation Resolutions
+
+Based on implementation clarifications, the following key decisions have been resolved:
+
+### 1. Complete Workflow Matching Threshold - RESOLVED ✓
+**Resolution**: WorkflowDiscoveryNode only returns "found_existing" if the workflow **completely** satisfies the user's entire request. No partial matches are considered complete.
+
+### 2. Component Browsing Scope - RESOLVED ✓
+**Resolution**: ComponentBrowsingNode can select BOTH individual nodes AND existing workflows to use as sub-workflows. This enables workflow composition and reuse.
+
+Example: If user wants "fix github issue and notify team", and "fix-github-issue" workflow exists, ComponentBrowsingNode can select that workflow plus a "send-notification" node to create a new composite workflow.
+
+### 3. Parameter Extraction Two-Stage Process - RESOLVED ✓
+**Resolution**: Parameter handling happens in two distinct stages:
+- **Stage 1**: GeneratorNode creates workflows with template variables (e.g., `$issue_number`)
+- **Stage 2**: ParameterExtractionNode maps concrete values from user input (e.g., "1234") to those template variables
+
+This applies to both paths - found workflows already have templates, generated workflows get templates from GeneratorNode.
+
+### 4. Validation Depth - RESOLVED ✓
+**Resolution**: Validation must verify template paths using structure documentation at minimum. This means:
+- Verify syntax of template variables
+- Verify node outputs will exist in shared store
+- Verify full path structure (e.g., `$issue_data.user.login`) against structure docs
+- Consider mock execution for v2.0 if complexity is manageable
+
+### 5. Error Recovery Limits - RESOLVED ✓
+**Resolution**: All nodes have a maximum of 3 retries for any error type. This applies uniformly across:
+- LLM generation failures
+- Validation errors
+- Structure errors
+- Any other recoverable errors
+
+### 6. Metadata Generation - RESOLVED ✓
+**Resolution**: A new **MetadataGenerationNode** will be added after ValidatorNode in Path B. This node:
+- Extracts metadata from the VALIDATED workflow
+- Creates suggested_name, description, inputs, outputs
+- Only runs after successful validation (efficiency optimization)
+- Skipped entirely when validation fails and flow returns to generator
+
+Updated flow for Path B:
+```
+ComponentBrowsingNode → GeneratorNode → ValidatorNode → MetadataGenerationNode → ParameterExtractionNode
+```
+
 ## Open Questions and Decisions Needed
 
 1. ~~**Directory Structure**: Which path to use?~~ **RESOLVED**: Use `src/pflow/planning/`
 2. ~~**Approval Node Placement**: Is approval part of the planner flow or separate?~~ **RESOLVED**: Approval happens in CLI after planner returns results
-3. **Error Feedback Node**: Should this be a separate node or part of validator?
-4. **Retry Count Access**: Should we use `cur_retry` attribute or track in shared?
-5. **Checkpoint Frequency**: After each successful node or only at key points?
-6. **Template Variable Format**: Should we support both `$var` and `${var}` syntax?
-7. **Workflow Storage Trigger**: Does the planner save new workflows automatically or prompt user?
+3. ~~**Error Feedback Node**: Should this be a separate node or part of validator?~~ **RESOLVED**: Part of validator with specific routing
+4. ~~**Retry Count Access**: Should we use `cur_retry` attribute or track in shared?~~ **RESOLVED**: Use node's max_retries (3 for all nodes)
+5. ~~**Checkpoint Frequency**: After each successful node or only at key points?~~ **RESOLVED**: Not needed for MVP
+6. ~~**Template Variable Format**: Should we support both `$var` and `${var}` syntax?~~ **RESOLVED**: Just `$var` for MVP
+7. ~~**Workflow Storage Trigger**: Does the planner save new workflows automatically or prompt user?~~ **RESOLVED**: CLI handles after user approval
 
 
 ### What Makes Implementation Succeed

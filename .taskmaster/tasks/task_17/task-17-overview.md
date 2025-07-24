@@ -22,7 +22,6 @@ Task 17: Natural Language Planner - Context and Implementation Details
 
 > **First step:** Read these core docs *in full* and make sure you deeply understand them:
 >
-> * `scratchpads/critical-user-decisions/task-17-planner-ambiguities.md`
 > * `.taskmaster/tasks/task_17/task-17-architecture-and-patterns.md`
 > * `.taskmaster/tasks/task_17/task-17-implementation-guide.md`
 > * `.taskmaster/tasks/task_17/task-17-core-concepts.md`

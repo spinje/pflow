@@ -247,6 +247,14 @@ def build_planning_context(selected_components: list[str], registry: Registry) -
 
 ## Prompt Template Examples
 
+### Design Decision: Simple Python F-Strings
+
+**Resolution**: Use simple Python f-strings in code for prompt templates
+- Define prompts as constants in prompts.py or inline
+- Use f-strings for variable substitution
+- Easy to implement and modify
+- Sufficient for MVP prompts
+
 ### Workflow Generation Prompt
 ```python
 WORKFLOW_GENERATION_PROMPT = """You are a workflow planner for pflow, a system that creates deterministic, reusable workflows.
@@ -336,6 +344,20 @@ Output as JSON:
 2. **Workflow Storage**: Saves to `~/.pflow/workflows/` with template variables
 3. **Runtime Handoff**: Generates validated JSON IR for execution
 4. **Error Reporting**: Clear, actionable error messages
+
+### Integration with Existing Context Builder
+
+**Design Decision**: Use context builder as-is
+- Take markdown output directly from context builder
+- Include in LLM prompts unchanged
+- Simplest integration approach
+- Avoid duplication of logic
+
+The context builder (from Tasks 15/16) already provides exactly what the planner needs:
+- Two-phase approach: discovery context (lightweight) and planning context (detailed)
+- Unified format for both nodes and workflows
+- Structure documentation showing available paths for template variables
+- Filtered output excluding test nodes
 
 ### Context Builder Exclusive Parameter Pattern
 
@@ -488,7 +510,56 @@ def execute_with_parameters(workflow_ir: dict, parameter_values: dict) -> None:
     workflow_shared = {"stdin": stdin_data} if stdin_data else {}
     flow.run(workflow_shared)
 ```
+
+### JSON IR to CLI Syntax Compilation
+
+**Design Decision**: Compile JSON IR to CLI syntax
+- Separate compiler step converts IR to CLI
+- Single source of truth (JSON IR)
+- Need to handle all IR features in CLI syntax
+
+The planner generates JSON IR, but users need to see CLI syntax. A separate IR-to-CLI compiler maintains separation of concerns:
+
+```python
+def ir_to_cli_syntax(workflow_ir: dict, parameter_values: dict) -> str:
+    """Convert JSON IR to human-readable CLI syntax."""
+    lines = []
+
+    for i, node in enumerate(workflow_ir["nodes"]):
+        # Build command line for node
+        cmd = node["type"]
+
+        # Add parameters
+        for key, value in node.get("params", {}).items():
+            if isinstance(value, str) and value.startswith("$"):
+                # Show template variable
+                cmd += f' --{key}="{value}"'
+            else:
+                # Show actual value
+                cmd += f' --{key}="{value}"'
+
+        # Add pipe operator except for last node
+        if i < len(workflow_ir["nodes"]) - 1:
+            cmd += " >>"
+
+        lines.append(cmd)
+
+    return "\n".join(lines)
+```
+
+This allows the planner to focus on generating valid IR while the CLI handles user-friendly display.
+
 ## Structured Output Generation with Pydantic
+
+### Design Decision: Pydantic with Structured Output
+
+**Resolution**: Use Pydantic models with LLM's structured output feature
+- Type-safe construction with `model.prompt(prompt, schema=FlowIR)`
+- Validate final output with existing JSONSchema
+- Best of both worlds: type safety + comprehensive validation
+- Leverages Simon Willison's LLM library capabilities
+
+**Note**: While Pydantic ensures syntactically valid JSON, semantic validation (data flow and template path verification) is handled by the validation pipeline.
 
 ### Hybrid Validation Approach
 The planner uses Pydantic models for type-safe IR generation with the LLM, followed by JSONSchema validation:
@@ -716,6 +787,21 @@ Template variables in params will be resolved by runtime:
 
 ## Testing Workflow Generation
 
+### Design Decision: Hybrid Testing Approach
+
+**Resolution**: Use hybrid approach with separate LLM test commands
+- Unit tests: Mock all LLM calls for component testing
+- Integration tests with mocked LLM: Run with `make test` (no cost)
+- Integration tests with real LLM: Separate command (costs money)
+- Balanced coverage, cost control, CI/CD friendly
+
+**Implementation**:
+- Mock LLM responses for all standard tests
+- Create mocked integration test that simulates full planner flow
+- Separate `make test-llm` command for real LLM integration test
+- Real LLM test validates basic workflow generation only
+- Always test the planner's internal LLM node (all LLM calls through pocketflow)
+
 ### Core Testing Strategy
 Testing the workflow generation focuses on validating that the LLM produces complete, valid workflows with proper template variables in params.
 
@@ -830,6 +916,36 @@ def test_resolution_order_calculation():
     assert order.index("n2") < order.index("n3")
 ```
 
+## Workflow Storage Format
+
+Workflows are stored with metadata that enables discovery and reuse:
+
+```json
+{
+  "name": "fix-issue",
+  "description": "Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR",
+  "inputs": ["issue_number"],
+  "outputs": ["pr_number", "pr_url"],
+  "ir": {
+    "ir_version": "0.1.0",
+    "nodes": [...],
+    "edges": [...],
+    "mappings": {...}
+  },
+  "created": "2025-01-01T00:00:00Z",
+  "version": "1.0.0"
+}
+```
+
+**Key Fields**:
+- `name`: Workflow identifier for execution (`pflow fix-issue`)
+- `description`: Natural language description for discovery matching
+- `inputs`: Expected parameters (enables validation and prompting)
+- `outputs`: What the workflow produces (for composition)
+- `ir`: Complete JSON IR with template variables preserved
+
+**Key Insight**: The description field is all we need for semantic matching. The LLM can understand "fix github issue 1234" matches a workflow described as "Fetches a GitHub issue, analyzes it with AI, generates a fix".
+
 ## Component Browsing with Smart Context Loading
 
 ### Critical Distinction: Discovery is Browsing, Not Selecting
@@ -910,6 +1026,41 @@ This approach:
 - **Detailed loading second**: Get full interface details only for what's needed
 - **No ranked lists for users**: All selection happens internally
 - **Semantic understanding**: "analyze costs" finds "aws-cost-analyzer" through browsing
+
+## Parameter vs Static Value Detection
+
+The planner must decide which values in natural language should become parameters (reusable) vs static values (fixed).
+
+### Context
+- Example: "fix issue 1234" - should "1234" be parameterized as `$issue`?
+- Affects reusability of saved workflows
+- Critical for "Plan Once, Run Forever" philosophy
+
+### Design Decision: LLM-based Heuristic Detection
+- LLM intelligently detects what should be parameters
+- Smart defaults based on context and patterns
+- Numbers, IDs, URLs, dates typically become parameters
+- Implementation: Prompt engineering guides LLM decisions
+
+This leverages the LLM's intelligence to make smart parameter decisions, following the planner's philosophy as an LLM-powered system.
+
+### Implementation Pattern
+```python
+def guide_parameter_detection(prompt: str) -> str:
+    """Add guidance for parameter detection to prompt."""
+    return prompt + """
+
+    When generating workflows, identify dynamic values that should become template variables:
+    - Numbers (e.g., "1234" → $issue_number)
+    - IDs and identifiers → template variables
+    - Dates (e.g., "yesterday" → $date)
+    - URLs → template variables
+    - File paths → template variables
+    - Static text like prompts → keep as literal strings
+
+    This enables workflow reuse with different parameters.
+    """
+```
 
 ## Concrete Integration Examples
 
@@ -1002,6 +1153,24 @@ class ValidatorNode(Node):
         return "valid"
 ```
 
+### CLI Input Routing to Planner
+
+How the planner receives input from the CLI follows the MVP's unified approach.
+
+**Context**:
+- MVP routes all input through natural language planner (both quoted and unquoted)
+- CLI collects raw string after 'pflow' command
+- Planner must handle both natural language and CLI-like syntax
+
+**Design Decision**: CLI passes raw string directly to planner
+- Raw input string passed unchanged to planner
+- No parsing or preprocessing in CLI
+- Maximum flexibility for planner
+- Aligns with MVP philosophy
+- Implementation: `main.py` passes entire input string to planner
+
+This approach keeps CLI simple and lets the planner handle all interpretation logic.
+
 ### CLI Integration Point
 ```python
 # The CLI will invoke the planner like this:
@@ -1015,7 +1184,7 @@ planner_flow = create_planner_flow()
 # Pass registry instance, not metadata
 # The planner will call get_nodes_metadata() internally
 result = planner_flow.run({
-    "user_input": ctx.obj["raw_input"],
+    "user_input": ctx.obj["raw_input"],  # Raw string, no preprocessing
     "input_source": ctx.obj["input_source"],
     "stdin_data": ctx.obj.get("stdin_data"),
     "registry": registry  # Pass registry instance
@@ -1023,6 +1192,153 @@ result = planner_flow.run({
 
 # Result contains the planner output (workflow IR + parameter values)
 ```
+
+## User Approval Flow Implementation
+
+### Design Decision: Natural CLI Syntax Display
+
+**Resolution**: Show natural CLI syntax for approval
+- Display each node with its natural parameters
+- Show resolved values (not template variables) for this execution
+- Simple Y/n prompt for approval
+- Save on approval, execute after
+- **Key benefit**: No complex notation needed for mappings or data flow
+- **Clarification**: The approval prompt and workflow saving are handled by the CLI after the planner returns its results, not within the planner meta-workflow itself
+
+### How It Works
+
+With template paths, users see exactly what data is being accessed in a natural, readable format:
+
+1. **Each node has its own parameter namespace** - `--prompt` on one node doesn't conflict with `--prompt` on another
+2. **Natural paths everywhere** - Users see `$issue_data.user.login` directly in prompts
+3. **Data flow is transparent** - Template paths show exactly where data comes from
+4. **Intuitive understanding** - `$data.field` syntax is familiar to developers
+
+### Example Display
+
+```bash
+# What user sees with template paths:
+github-get-issue --issue=1234 >>
+llm --prompt="Fix issue #$issue_data.id: $issue_data.title (by $issue_data.user.login)"
+
+# Clear data flow:
+# 1. github-get-issue writes to shared["issue_data"]
+# 2. llm's prompt directly references the paths it needs
+# 3. No hidden mappings or transformations
+```
+
+### What Users See
+
+```bash
+$ pflow "fix github issue 1234"
+
+Generated workflow:
+
+github-get-issue --issue=1234 >>
+claude-code --prompt="Fix this issue: $issue" >>
+llm --prompt="Write commit message for: $code_report" >>
+git-commit --message="$commit_message"
+
+Save as 'fix-issue' and execute? [Y/n]: y
+```
+
+**Note**: The `$variables` shown are template placeholders that will be resolved from the workflow's data flow, not CLI parameters the user needs to provide.
+
+## Batch Mode vs Interactive Mode
+
+The planner needs to handle both interactive terminal sessions and automated/CI environments differently.
+
+### Context
+- Interactive mode: User at terminal, can respond to prompts
+- Batch mode: Scripts, CI/CD, automated execution
+- Missing parameters need different handling strategies
+
+### The Clarification
+
+**Interactive Mode** (default):
+- TTY detection shows user at terminal
+- Can prompt for missing parameters
+- Shows progress indicators
+- Allows Y/n approval prompts
+- Example: `pflow "fix github issue"` → "What issue number?"
+
+**Batch Mode** (--batch flag or no TTY):
+- No user interaction possible
+- Missing parameters cause immediate failure
+- No progress indicators (clean output)
+- Auto-approve with --yes flag or fail
+- Example: `pflow --batch "fix issue"` → ERROR: Missing issue parameter
+
+### Implementation
+```python
+# Detect mode
+interactive = sys.stdin.isatty() and not args.batch
+
+# Handle missing parameters
+if param_missing:
+    if interactive:
+        param = prompt_user(f"Enter {param_name}: ")
+    else:
+        raise MissingParameterError(f"Batch mode: {param_name} required")
+```
+
+**MVP Scope**: Basic batch mode support with --batch flag and TTY detection. Full CI/CD optimizations deferred to v2.0.
+
+**Implications for task 17**: No modifications to the CLI should be made, the task 17 implementation will ONLY provide the interfaces the CLI-layer needs to interact with the planner. Keep it simple.
+
+## Context Gathering Update (2025-07-19)
+
+After thorough investigation of the codebase and documentation, I've discovered the following:
+
+### 1. Context Builder Implementation (Task 15/16)
+- Task 16 created the initial context builder
+- Task 15 enhanced it with two-phase discovery support
+- **build_discovery_context()**: Lightweight browsing with names/descriptions only
+- **build_planning_context()**: Detailed interface info for selected components
+- Workflow loading from `~/.pflow/workflows/` is already implemented
+- Structure documentation (JSON + paths) shows available paths for template variables
+
+### 2. Template Variable Resolution Confirmed
+Documentation has been updated to confirm template variables are preserved in JSON IR and resolved at runtime. This enables the "Plan Once, Run Forever" philosophy where workflows can be reused with different parameters.
+
+### 3. CLI Integration Status
+- CLI accepts natural language (quoted) and CLI syntax (unquoted)
+- Both currently echo back the input (planner not integrated yet)
+- JSON workflows can be executed if valid IR provided
+- Stdin data handling is implemented
+
+### 4. Runtime Integration
+- Compiler takes JSON IR and creates pocketflow Flow objects
+- Supports node instantiation, parameter setting, and edge wiring
+- Ready to execute flows generated by the planner
+
+### 5. Key Architectural Clarifications
+From planner.md:
+- Planner is implemented as a pocketflow flow (not regular Python)
+- MVP routes BOTH natural language and CLI syntax through LLM planner
+- Template string composition is a core planner responsibility
+- Workflows can use other workflows as building blocks
+
+### 6. Implementation Architecture Confirmed
+The planner will be implemented as Python pocketflow code:
+```
+src/pflow/planning/
+├── nodes.py          # Planner nodes (discovery, generation, validation)
+├── flow.py           # create_planner_flow()
+├── ir_models.py      # Pydantic models for IR generation
+├── utils/
+└── prompts/
+    └── templates.py  # Prompt templates
+```
+
+### 7. Testing Strategy
+- Unit tests: Mock LLM calls for component testing
+- Integration tests: Real LLM for critical paths
+- MVP validation suite: 10-20 common patterns
+- Test planners internal LLM node (all LLM calls through pocketflow)
+
+### Summary
+The investigation confirms the architectural decisions in this document are correct. Template variables will be preserved in JSON IR for runtime resolution, enabling workflow reusability. The two-phase context builder is ready, and the planner should be implemented as a pocketflow flow using the pattern established in Option B (Section 14).
 
 ## End-to-End Execution Example
 

@@ -75,6 +75,33 @@ User Input: "fix github issue 1234"
 pflow fix-issue --issue=1234  # Bypasses planner entirely
 ```
 
+### CRITICAL CLARIFICATION: What the Planner Includes
+
+**The planner is a meta-workflow that creates workflows and prepares them for execution by the CLI.** This division of responsibilities is fundamental:
+
+**The Planner Workflow Includes**:
+- Discovery: Find existing workflow or determine need to create
+- Generation: Create new workflow if needed (with template variables)
+- Parameter Extraction: Extract "1234" from "fix github issue 1234"
+- Parameter Mapping: Prepare extracted values for template variable substitution
+- Result Preparation: Package workflow IR + parameter values for CLI
+
+**The CLI then handles**:
+- Confirmation: Show user what will execute
+- Execution: Actually run the workflow with parameter substitution
+
+This means the planner doesn't just generate and hand off - it orchestrates discovery, generation, and parameter mapping, then returns structured results to the CLI for execution.
+
+**MVP Architecture**: Every natural language request goes through the planner
+```
+"fix github issue 1234" → Planner finds/creates → Extracts params → Returns to CLI → CLI executes
+```
+
+**Future v2.0+**: Known workflows can be executed directly
+```
+pflow fix-issue --issue=1234  # Bypasses planner entirely
+```
+
 ## Architectural Decision: PocketFlow for Planner Orchestration
 
 ### Core Decision
@@ -534,6 +561,41 @@ shared = {
 3. **Clear architectural boundary** - Only planner uses flow patterns internally
 4. **Performance is not a concern** - Nodes are just method calls; LLM dominates execution time
 
+## Planner Implementation Architecture Decision
+
+### The Two Layers of pflow
+
+This decision goes to the heart of pflow's architectural philosophy:
+
+1. **User Layer**: Natural language → JSON IR → Saved workflows ("Plan Once, Run Forever")
+2. **System Layer**: Infrastructure that enables the user layer
+
+The planner sits firmly in the system layer. It's not a workflow that users discover with "find me a workflow that generates workflows" - it's the infrastructure that makes workflow generation possible.
+
+**Why This Matters:**
+- JSON IR is for **what users want to do** (their workflows)
+- Python code is for **how the system works** (our infrastructure)
+- The planner is "how", not "what"
+
+### Pocketflow's Design Philosophy
+
+According to pocketflow's "Agentic Coding" guide:
+- Pocketflow is specifically designed to be **easy for AI agents to understand and modify**
+- The framework provides clear patterns for system implementation
+- Infrastructure components should follow the nodes.py + flow.py pattern
+
+### The Decision: Python PocketFlow Code
+
+**Resolution**: The planner is infrastructure and belongs in the system layer as Python pocketflow code. This follows the framework's design philosophy perfectly and maintains proper architectural boundaries.
+
+**Benefits**:
+- Direct debugging with Python tools
+- Version control shows meaningful diffs
+- Natural test writing
+- Follows established patterns
+- Comprehensive documentation available in the `pocketflow/` repo
+- Source just 100 lines of code and extremely easy to grasp for AI agents
+
 ## Directory Structure Decision
 
 ### ✅ RESOLVED
@@ -687,6 +749,62 @@ while current_node:
 5. **Synchronous execution** - No async/parallel (simulated only)
 
 ## Advanced Implementation Patterns
+
+### Three-Tier Validation Architecture
+
+**Architecture Context**: The planner itself is implemented as a pocketflow flow with multiple nodes. Validation happens within the planner flow using pocketflow's patterns.
+
+The planner uses a progressive static validation approach that catches issues at the earliest possible stage:
+
+#### 1. **Syntactic Validation** (via Pydantic)
+- Ensures well-formed JSON structure through Pydantic models
+- Type-safe generation with `model.prompt(prompt, schema=FlowIR)`
+- Immediate feedback on structural issues
+- **Catches**: Malformed JSON, missing required fields, type mismatches
+
+#### 2. **Static Analysis** (node and parameter validation)
+- Verifies all referenced nodes exist in registry
+- Checks parameter names and types match node metadata
+- Validates template variable syntax
+- Detects circular dependencies and unreachable nodes
+- **Catches**: Unknown nodes, invalid parameters, structural issues
+
+#### 3. **Data Flow Analysis** (execution order validation)
+This is NOT mock execution - it's static analysis that tracks data flow:
+- **What it does**: Traverses nodes in execution order, tracking which keys are available in the shared store at each step
+- **How it works**: Uses node metadata (inputs/outputs) to verify data dependencies are satisfied
+- **Generic approach**: No per-node implementation needed - just uses metadata from registry
+- **Catches**: Missing inputs, overwritten outputs, unresolved template variables, invalid template paths
+
+### Error Recovery Architecture
+
+**Implementation Note**: This validation is performed by a `ValidatorNode` within the planner flow. When validation fails, it returns actions like "validation_failed" that route back to the generator node with specific error feedback.
+
+Each validation tier provides specific error information that guides recovery:
+
+1. **Pydantic/Syntactic Errors** → Retry with format hints
+   - "Expected 'nodes' array, got object"
+   - "Missing required field 'type' in node"
+
+2. **Static Analysis Errors** → Retry with specific fixes
+   - "Node 'analyze-code' not found. Did you mean 'claude-code'?"
+   - "Parameter 'temp' invalid. Did you mean 'temperature'?"
+   - "Circular dependency: A → B → C → A"
+
+3. **Data Flow Errors** → Retry with flow corrections
+   - "Node 'llm' requires 'prompt' but no node produces it"
+   - "Key 'summary' is written by multiple nodes"
+   - "Template variable $code_report has no source"
+
+### Error-Specific Recovery Strategies
+
+| Error Type | Recovery Strategy | Max Retries |
+|------------|------------------|-------------|
+| Malformed JSON | Add format example to prompt | 2 |
+| Unknown node | Suggest similar nodes from registry | 3 |
+| Missing data flow | Add hint about node outputs | 3 |
+| Template unresolved | Show available variables | 2 |
+| Circular dependency | Simplify to sequential flow | 1 |
 
 ### Progressive Enhancement Pattern
 For LLM planning, each retry should enhance the prompt with specific guidance:
@@ -1209,6 +1327,59 @@ class ConditionalValidatorNode(Node):
 ## Flow Design Patterns
 
 ### Diamond Pattern with Convergence
+
+### Unified Discovery Pattern
+
+**Key Insight**: The context builder already solved the discovery problem! We can use the same pattern for everything.
+
+This pattern is formalized by Task 15 which splits the context builder into discovery and planning phases, preventing LLM overwhelm while enabling workflow reuse.
+
+#### Critical Architectural Refinements:
+
+1. **Workflows ARE building blocks** - Other workflows can be used inside new workflows
+2. **Two different contexts needed**:
+   - **Discovery context**: Just names and descriptions (for finding what to use)
+   - **Planning context**: Full interface details (only for selected nodes/workflows)
+3. **Separation of concerns**: Discovery vs. implementation planning
+
+#### The Two-Phase Architecture:
+
+**Phase 1: Discovery Context (lightweight browsing)**
+- Load all nodes (names + descriptions only)
+- Load all workflows (names + descriptions only)
+- LLM selects which components to use
+- Minimal information prevents cognitive overload
+
+**Phase 2: Planning Context (detailed interfaces)**
+- Load full details ONLY for selected nodes/workflows
+- LLM plans the shared store layout and connections
+- Generate IR with proper mappings
+- Focused context enables accurate planning
+
+#### Architectural Benefits:
+
+1. **Workflows as first-class citizens** - Can compose workflows from other workflows
+2. **Focused contexts** - Discovery gets minimal info, planning gets full details
+3. **Performance** - Don't load full interface details for 100+ nodes during discovery
+4. **Clarity** - LLM isn't overwhelmed with irrelevant interface details
+5. **Scalability** - Pattern works regardless of node/workflow count
+
+#### Implementation Architecture:
+
+```python
+# Discovery phase via Task 15's build_discovery_context()
+discovery_context = build_discovery_context()
+# Returns lightweight markdown with names + descriptions
+
+# Planning phase via Task 15's build_planning_context()
+planning_context = build_planning_context(
+    selected_nodes,
+    selected_workflows
+)
+# Returns detailed interface specifications
+```
+
+**Key Architectural Principle**: Workflows are just reusable node compositions - they should appear alongside nodes as building blocks!
 
 ## Testing PocketFlow Flows
 
