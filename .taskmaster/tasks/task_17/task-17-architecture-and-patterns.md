@@ -720,6 +720,21 @@ def exec_fallback(self, prep_res, exc):
 
 For most nodes, `prep()` should extract specific data to maintain clean separation of concerns.
 
+### prep() Method Best Practices
+
+**Preferred Pattern - Simple Extraction**:
+```python
+def prep(self, shared):
+    return shared["user_input"]  # Single value
+    # OR
+    return shared["user_input"], shared["context"]  # Multiple values as tuple
+```
+
+**When to Return Entire Shared Dict**:
+- When exec_fallback needs access to shared state
+- When tracking complex attempt history
+- Always add a comment explaining why
+
 ### Core Execution Loop Understanding
 PocketFlow's elegance comes from its simple execution model:
 ```python
@@ -1095,22 +1110,21 @@ class AttemptHistoryMixin:
 class WorkflowGeneratorNode(Node, AttemptHistoryMixin):
     def prep(self, shared):
         # Extract specific data needed for generation
-        return {
-            "user_input": shared["user_input"],
-            "planning_context": shared["planning_context"],
-            "generation_attempts": shared.get("generation_attempts", 0)
-        }
+        return shared["user_input"], shared["planning_context"], shared.get("generation_attempts", 0)
 
     def exec(self, prep_res):
+        # Unpack the tuple
+        user_input, planning_context, generation_attempts = prep_res
+
         # Generate workflow...
         response = self.model.prompt(
-            self._build_prompt(prep_res["user_input"], prep_res["planning_context"]),
+            self._build_prompt(user_input, planning_context),
             schema=WorkflowIR
         )
 
         return {
             "response": response,
-            "attempt": prep_res["generation_attempts"]
+            "attempt": generation_attempts
         }
 
     def post(self, shared, prep_res, exec_res):

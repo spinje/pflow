@@ -1130,11 +1130,12 @@ Example: If user wants "fix github issue and notify team", and "fix-github-issue
 This applies to both paths - found workflows already have templates, generated workflows get templates from GeneratorNode.
 
 ### 4. Validation Depth - RESOLVED ✓
-**Resolution**: Validation must verify template paths using structure documentation at minimum. This means:
-- Verify syntax of template variables
-- Verify node outputs will exist in shared store
-- Verify full path structure (e.g., `$issue_data.user.login`) against structure docs
-- Consider mock execution for v2.0 if complexity is manageable
+**Resolution**: MVP includes all three validation tiers:
+1. **Syntactic Validation** (via Pydantic) ✓
+2. **Static Analysis** (node and parameter validation) ✓
+3. **Data Flow Analysis** (static path verification) ✓
+
+Mock execution is deferred to v2.0. The MVP performs static analysis to verify template paths exist in structure documentation without simulating execution.
 
 ### 5. Error Recovery Limits - RESOLVED ✓
 **Resolution**: All nodes have a maximum of 3 retries for any error type. This applies uniformly across:
@@ -1162,7 +1163,7 @@ ComponentBrowsingNode → GeneratorNode → ValidatorNode → MetadataGeneration
 3. ~~**Error Feedback Node**: Should this be a separate node or part of validator?~~ **RESOLVED**: Part of validator with specific routing
 4. ~~**Retry Count Access**: Should we use `cur_retry` attribute or track in shared?~~ **RESOLVED**: Use node's max_retries (3 for all nodes)
 5. ~~**Checkpoint Frequency**: After each successful node or only at key points?~~ **RESOLVED**: Not needed for MVP
-6. ~~**Template Variable Format**: Should we support both `$var` and `${var}` syntax?~~ **RESOLVED**: Just `$var` for MVP
+6. ~~**Template Variable Format**: Should we support both `$var` and `${var}` syntax?~~ **RESOLVED**: `$var` and `$var.field.subfield` path syntax for MVP (no ${var} braces). Path support was implemented in Task 18.
 7. ~~**Workflow Storage Trigger**: Does the planner save new workflows automatically or prompt user?~~ **RESOLVED**: CLI handles after user approval
 
 

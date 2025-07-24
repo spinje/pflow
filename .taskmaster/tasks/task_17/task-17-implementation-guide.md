@@ -2,6 +2,17 @@
 
 This file contains concrete implementation details, code examples, and integration guidance for the Natural Language Planner.
 
+## Important: Understanding Node Parameter Patterns
+
+All pflow nodes implement a universal fallback pattern where ANY input can also be provided as a parameter. The context builder shows only "exclusive parameters" (params that are NOT also inputs) to avoid redundancy, but the planner can set any value via params.
+
+Example: Even though `file_path` is listed as an input (not parameter), this works:
+```json
+{"type": "read-file", "params": {"file_path": "config.json"}}
+```
+
+This flexibility is crucial for workflow generation and is available on ALL nodes.
+
 ## Flow Design Patterns (continued)
 
 ### Diamond Pattern with Convergence
@@ -328,6 +339,10 @@ Output as JSON:
    - **Note**: The context builder already filters out test nodes. The planner should not implement additional test node filtering.
 2. **JSON IR Schema** - Defines valid workflow structure
 3. **Node Registry** - Accessed ONLY through context builder, never directly
+   - **Clarification on Registry Access**:
+     - For discovery/browsing: ALWAYS use context builder (never direct registry access)
+     - For validation: Registry instance can be accessed to verify node types and get metadata
+     - This separation ensures clean architecture while enabling proper validation
 4. **LLM Library** - Simon Willison's `llm` with structured outputs
 5. **General LLM Node** (Task 12) - Required in registry so planner can generate workflows with LLM nodes
    - Note: Planner doesn't USE Task 12's code, it just needs it to exist in the registry
@@ -404,8 +419,8 @@ def process_natural_language(raw_input: str, stdin_data: Any = None) -> None:
 ```python
 # In src/pflow/planning/nodes.py
 
-class DiscoveryNode(Node):
-    """Uses context builder to find nodes and workflows."""
+class ComponentBrowsingNode(Node):
+    """Browse for building blocks when no complete workflow found."""
     def prep(self, shared):
         """Prepare discovery context."""
         from pflow.planning.context_builder import build_discovery_context
@@ -604,7 +619,7 @@ The planner uses Simon Willison's `llm` library directly without creating any wr
 
 ```python
 # Direct usage - no custom client or wrapper
-model = llm.get_model("claude-sonnet-4-20250514")
+model = llm.get_model(MODEL_NAME)  # Using configured model
 response = model.prompt(prompt, schema=FlowIR)
 ```
 
@@ -1074,7 +1089,7 @@ class WorkflowDiscoveryNode(Node):
         """Prepare for workflow discovery."""
         from pflow.planning.context_builder import build_discovery_context
 
-        # Use context builder for formatted discovery
+        # For discovery: Use context builder (not direct registry access)
         discovery_context = build_discovery_context()
 
         return {
@@ -1109,7 +1124,8 @@ class ValidatorNode(Node):
     def prep(self, shared):
         """Prepare data for validation."""
         from pflow.registry import Registry
-        registry = Registry()
+        # For validation: Can access registry instance for metadata
+        registry = Registry()  # Passed from CLI
 
         workflow = shared.get("generated_workflow", {})
         # Get metadata only for nodes used in this workflow
