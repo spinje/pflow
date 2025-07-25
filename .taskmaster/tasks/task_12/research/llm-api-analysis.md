@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document analyzes Simon Willison's `llm` library API to inform the implementation of Task 12 (general LLM node). Based on exploration of the source code, we need to decide how deeply to integrate the library's features.
+This document analyzes Simon Willison's `llm` library API to inform the implementation of Task 12 (general LLM node). Based on exploration of the source code and clarifications from the project lead, we will implement minimal integration for the MVP.
 
 ## Core LLM API
 
@@ -42,9 +42,9 @@ text = response.text()
    - `max_tokens` - Maximum response tokens
    - Additional model-specific parameters via kwargs
 
-## Advanced Features to Consider
+## Advanced Features (Not in MVP)
 
-### 1. Attachments (Multi-modal Input)
+### 1. Attachments (Multi-modal Input) - FUTURE
 ```python
 response = model.prompt(
     "Describe these images",
@@ -60,7 +60,7 @@ if "image/jpeg" in model.attachment_types:
     # Model supports JPEG images
 ```
 
-### 2. Tools (Function Calling)
+### 2. Tools (Function Calling) - FUTURE
 ```python
 def search(query: str) -> str:
     """Search the web for information."""
@@ -76,7 +76,7 @@ for tool_call in response.tool_calls():
     result = tool_call.execute()
 ```
 
-### 3. Structured Output
+### 3. Structured Output - FUTURE
 ```python
 from pydantic import BaseModel
 
@@ -91,7 +91,7 @@ response = model.prompt(
 # response.text() returns JSON matching the schema
 ```
 
-### 4. Conversations
+### 4. Conversations - NOT SUPPORTED
 ```python
 conversation = model.conversation()
 response1 = conversation.prompt("Hello")
@@ -99,7 +99,7 @@ response2 = conversation.prompt("What did I just say?")
 # Maintains context across prompts
 ```
 
-### 5. Templates and Fragments
+### 5. Templates and Fragments - FUTURE
 ```python
 # Templates for reusable prompts
 template = llm.Template("Summarize this: {text}")
@@ -111,7 +111,7 @@ fragment = llm.Fragment("You are a helpful assistant")
 
 ## Integration Depth Decision Matrix
 
-### Minimal Integration (MVP Recommended)
+### Minimal Integration (MVP - CONFIRMED)
 Only expose core functionality:
 - ✅ Basic prompt execution
 - ✅ System prompts
@@ -121,36 +121,36 @@ Only expose core functionality:
 - ❌ Attachments
 - ❌ Tools
 - ❌ Structured output
-- ❌ Conversations
+- ❌ Conversations (Never - stateful not supported in pflow)
 - ❌ Templates
 
 **Pros**: Simple, focused, easy to test
-**Cons**: Limited functionality
+**Cons**: Limited functionality (acceptable for MVP)
 
-### Medium Integration
+### Medium Integration (Future v2.0)
 Add commonly useful features:
 - ✅ Everything from minimal
 - ✅ Attachments for multi-modal
 - ✅ Structured output (JSON mode)
 - ❌ Tools
-- ❌ Conversations
+- ❌ Conversations (Never - stateful not supported in pflow)
 - ❌ Templates
 
 **Pros**: Covers most use cases
 **Cons**: More complex interface
 
-### Deep Integration
+### Deep Integration (Future v3.0+)
 Expose most LLM features:
 - ✅ Everything from medium
 - ✅ Tools (function calling)
-- ✅ Conversations (stateful)
+- ❌ Conversations (Never - stateful not supported in pflow)
 - ✅ Templates
 - ✅ Custom model parameters
 
 **Pros**: Maximum flexibility
 **Cons**: Complex, harder to maintain
 
-## Recommendation: Start Minimal, Evolve Based on Usage
+## Decision: Minimal Integration for MVP
 
 ### Phase 1 (MVP) - Minimal Integration
 ```python
@@ -158,48 +158,46 @@ class LLMNode(Node):
     name = "llm"
 
     def prep(self, shared):
-        # Required
-        if "prompt" not in shared:
-            raise ValueError("LLM node requires 'prompt'")
+        # Check shared store first, then fall back to parameters
+        prompt = shared.get("prompt") or self.params.get("prompt")
+
+        if not prompt:
+            raise ValueError("LLM node requires 'prompt' in shared store or parameters")
 
         return {
-            "prompt": shared["prompt"],
-            "system": shared.get("system"),
-            "model": shared.get("model", "claude-sonnet-4-20250514"),
-            "temperature": shared.get("temperature", 0.7),
-            "max_tokens": shared.get("max_tokens"),
-            "format": shared.get("format", "text")  # "text" or "json"
+            "prompt": prompt,
+            "model": self.params.get("model", "claude-sonnet-4-20250514"),
+            "temperature": self.params.get("temperature", 0.7),
+            "system": self.params.get("system"),
+            "max_tokens": self.params.get("max_tokens")
         }
 
     def exec(self, prep_res):
         model = llm.get_model(prep_res["model"])
 
         kwargs = {"temperature": prep_res["temperature"]}
-        if prep_res["system"]:
+        if prep_res["system"] is not None:
             kwargs["system"] = prep_res["system"]
-        if prep_res["max_tokens"]:
+        if prep_res["max_tokens"] is not None:
             kwargs["max_tokens"] = prep_res["max_tokens"]
 
         response = model.prompt(prep_res["prompt"], **kwargs)
         result = response.text()
 
-        # Handle JSON format
-        if prep_res["format"] == "json":
-            result = parse_json_response(result)
-
-        return {"response": result, "usage": getattr(response, "usage", None)}
+        return {"response": result}
 ```
 
-### Phase 2 (Post-MVP) - Add Multi-modal
+### Phase 2 (v2.0) - Add Multi-modal and Structured Output
 - Add attachment support for images/documents
 - Detect attachment types from shared store
 - Validate against model capabilities
+- Add JSON mode for structured output (parse JSON from response text)
 
-### Phase 3 (Future) - Advanced Features
+### Phase 3 (v3.0+) - Advanced Features
 - Structured output with Pydantic schemas
 - Tool/function calling support
-- Conversation management
 - Template integration
+- Note: Conversations never supported (pflow is stateless)
 
 ## Key Implementation Insights
 
@@ -207,21 +205,25 @@ class LLMNode(Node):
    - Use `llm.get_model()` for all model access
    - Support both model IDs and aliases
    - Let llm handle model resolution
+   - Default model: claude-sonnet-4-20250514
 
 2. **Error Handling**
-   - `UnknownModelError` for invalid models
-   - `NeedsKeyException` for missing API keys
+   - `UnknownModelError` for invalid models → wrap with helpful message
+   - `NeedsKeyException` for missing API keys → guide to llm keys command
    - Let llm handle retries internally
+   - Pocketflow Node handles retry orchestration
 
 3. **Response Handling**
    - Responses are lazy - only execute on `text()` call
-   - Usage information may not always be available
-   - JSON parsing should handle markdown code blocks
+   - Force evaluation with response.text() in exec()
+   - MVP returns text only (no usage tracking)
+   - Future: JSON parsing for structured output
 
 4. **Configuration**
    - API keys via environment variables or `llm keys` command
    - Model aliases via `llm aliases` command
-   - Default model configuration
+   - Parameters via set_params() method
+   - Fallback pattern: shared store → params
 
 ## Testing Considerations
 

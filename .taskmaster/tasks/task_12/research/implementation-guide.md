@@ -16,12 +16,24 @@ Task 12 implements the general-purpose LLM node that serves as the primary text 
 ### File Location
 `src/pflow/nodes/llm/llm.py`
 
+### Directory Structure
+```
+src/pflow/nodes/
+├── __init__.py
+├── file/
+│   ├── __init__.py
+│   ├── read_file.py
+│   └── write_file.py
+└── llm/
+    ├── __init__.py
+    └── llm.py  # The LLM node implementation
+```
+
 ### Core Implementation (MVP)
 
 ```python
 from pocketflow import Node
 import llm
-import json
 from typing import Optional, Dict, Any
 
 class LLMNode(Node):
@@ -53,7 +65,7 @@ class LLMNode(Node):
 
     name = "llm"  # Registry name - critical for discovery
 
-    def __init__(self, max_retries=3, wait=1):
+    def __init__(self, max_retries: int = 3, wait: float = 1.0):
         """Initialize with retry configuration.
 
         Args:
@@ -105,7 +117,7 @@ class LLMNode(Node):
         if prep_res["max_tokens"] is not None:
             kwargs["max_tokens"] = prep_res["max_tokens"]
 
-        # Execute prompt (lazy evaluation)
+        # Execute prompt
         response = model.prompt(prep_res["prompt"], **kwargs)
 
         # Force evaluation and get text
@@ -177,7 +189,7 @@ pflow read-file data.txt >> llm --prompt="Summarize: $content"
 1. **Missing Prompt**: Clear error with guidance
 2. **Unknown Model**: Suggests running `llm models`
 3. **Missing API Key**: Points to `llm keys` command
-4. **JSON Parse Errors**: Shows what failed to parse
+4. **JSON Parse Errors**: Shows what failed to parse (future feature)
 5. **General Failures**: Includes retry count and model info
 
 ## Testing Strategy
@@ -237,7 +249,8 @@ class TestLLMNode:
         mock_get_model.side_effect = UnknownModelError("gpt-5")
 
         node = LLMNode()
-        shared = {"prompt": "Test", "model": "gpt-5"}
+        node.set_params({"model": "gpt-5"})
+        shared = {"prompt": "Test"}
 
         with pytest.raises(ValueError, match="Unknown model.*llm models"):
             node.run(shared)
@@ -256,11 +269,11 @@ class TestLLMNodeIntegration:
     def test_real_api_call(self):
         """Test with real API (recorded with VCR)."""
         node = LLMNode()
-        shared = {
-            "prompt": "Say hello in 3 words",
+        node.set_params({
             "model": "claude-sonnet-4-20250514",
             "temperature": 0.1
-        }
+        })
+        shared = {"prompt": "Say hello in 3 words"}
 
         node.run(shared)
 

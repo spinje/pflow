@@ -55,22 +55,27 @@ class LLMNode(Node):
     name = "llm"  # Important for registry
 
     def prep(self, shared):
-        # Get inputs from shared store
+        # Get inputs from shared store with parameter fallback
+        prompt = shared.get("prompt") or self.params.get("prompt")
+
+        if not prompt:
+            raise ValueError("LLM node requires 'prompt' in shared store or parameters")
+
         return {
-            "prompt": shared.get("prompt"),
-            "model": shared.get("model", "claude-sonnet-4-20250514"),
-            # ... other parameters
+            "prompt": prompt,
+            "model": self.params.get("model", "claude-sonnet-4-20250514"),
+            # ... other parameters from self.params
         }
 
     def exec(self, prep_res):
         # Use llm library
         model = llm.get_model(prep_res["model"])
-        response = model.prompt(prep_res["prompt"])
-        return response.text()
+        response = model.prompt(prep_res["prompt"], **kwargs)
+        return {"response": response.text()}
 
     def post(self, shared, prep_res, exec_res):
         # Write to shared store
-        shared["response"] = exec_res
+        shared["response"] = exec_res["response"]
         return "default"
 ```
 

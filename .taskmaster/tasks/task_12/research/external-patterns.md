@@ -33,7 +33,7 @@ Key patterns to leverage:
 ### Pattern: Complete LLM Node Using `llm` Library
 
 ```python
-# src/pflow/nodes/llm.py
+# src/pflow/nodes/llm/llm.py
 from pocketflow import Node
 import llm  # From llm-main library
 from typing import Optional, Dict, Any
@@ -48,67 +48,59 @@ class LLMNode(Node):
     Writes to shared store:
     - response: The model-generated output text
 
-    Parameters (not from shared store):
+    Parameters (via set_params()):
     - model: Model name to use (default: "claude-sonnet-4-20250514")
     - temperature: Sampling temperature (default: 0.7)
     - system: Optional system prompt
     - max_tokens: Optional output limit
     """
 
-    def __init__(self,
-                 model: str = "claude-sonnet-4-20250514",
-                 system: Optional[str] = None,
-                 temperature: Optional[float] = None,
-                 max_tokens: Optional[int] = None,
-                 max_retries: int = 3,
-                 **kwargs):
+    name = "llm"  # Registry name - critical for discovery
+
+    def __init__(self, max_retries: int = 3, wait: float = 1.0):
         # Initialize with pocketflow's retry mechanism
-        super().__init__(max_retries=max_retries)
-
-        self.model_name = model
-        self.default_system = system
-        self.options = {}
-
-        if temperature is not None:
-            self.options['temperature'] = temperature
-        if max_tokens is not None:
-            self.options['max_tokens'] = max_tokens
-
-        # Store any additional model-specific options
-        self.options.update(kwargs)
+        super().__init__(max_retries=max_retries, wait=wait)
 
     def prep(self, shared: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract prompt from shared store."""
-        if "prompt" not in shared:
+        """Extract prompt from shared store with parameter fallback."""
+        # Check shared store first, then fall back to parameters
+        prompt = shared.get("prompt") or self.params.get("prompt")
+
+        if not prompt:
             raise ValueError(
-                "LLM node requires 'prompt' in shared store. "
+                "LLM node requires 'prompt' in shared store or parameters. "
                 "Please ensure previous nodes set shared['prompt'] "
                 "or provide --prompt parameter."
             )
 
         return {
-            "prompt": shared["prompt"]
+            "prompt": prompt,
+            "model": self.params.get("model", "claude-sonnet-4-20250514"),
+            "temperature": self.params.get("temperature", 0.7),
+            "system": self.params.get("system"),
+            "max_tokens": self.params.get("max_tokens")
         }
 
     def exec(self, prep_res: Dict[str, Any]) -> Dict[str, Any]:
         """Execute LLM call using llm library."""
         # Get model from llm library
-        model = llm.get_model(self.model_name)
+        model = llm.get_model(prep_res["model"])
 
-        # Build prompt arguments
-        prompt_args = {
-            "prompt": prep_res["prompt"],
-            **self.options
+        # Build kwargs for prompt call
+        kwargs = {
+            "temperature": prep_res["temperature"]
         }
 
-        # Add system prompt if configured
-        if self.default_system:
-            prompt_args["system"] = self.default_system
+        # Only add optional parameters if provided
+        if prep_res["system"] is not None:
+            kwargs["system"] = prep_res["system"]
+        if prep_res["max_tokens"] is not None:
+            kwargs["max_tokens"] = prep_res["max_tokens"]
 
         # Execute prompt
-        response = model.prompt(**prompt_args)
+        response = model.prompt(prep_res["prompt"], **kwargs)
 
-        # Return response text
+        # Return response text (force evaluation)
         return {
             "response": response.text()
         }
@@ -118,6 +110,28 @@ class LLMNode(Node):
         """Store response in shared store."""
         shared["response"] = exec_res["response"]
         return "default"
+
+    def exec_fallback(self, prep_res: Dict[str, Any], exc: Exception) -> None:
+        """Provide helpful error messages on failure."""
+        error_msg = str(exc)
+
+        if "UnknownModelError" in error_msg:
+            raise ValueError(
+                f"Unknown model: {prep_res['model']}. "
+                f"Run 'llm models' to see available models. "
+                f"Original error: {exc}"
+            )
+        elif "NeedsKeyException" in error_msg:
+            raise ValueError(
+                f"API key required for model: {prep_res['model']}. "
+                f"Set up with 'llm keys set <provider>' or environment variable. "
+                f"Original error: {exc}"
+            )
+        else:
+            raise ValueError(
+                f"LLM call failed after {self.max_retries} attempts. "
+                f"Model: {prep_res['model']}, Error: {exc}"
+            )
 ```
 
 ### Pattern: Configuration and Setup
@@ -155,13 +169,14 @@ llm keys set claude
 ```python
 # tests/test_llm_node.py
 import pytest
-from pflow.nodes.llm_node import LLMNode
+from pflow.nodes.llm.llm import LLMNode
 import vcr
 
 class TestLLMNode:
     def test_prep_phase(self):
         """Test extraction from shared store."""
-        node = LLMNode(model="claude-sonnet-4-20250514")
+        node = LLMNode()
+        node.set_params({"model": "claude-sonnet-4-20250514"})
 
         # Test prompt extraction
         shared = {"prompt": "Test prompt"}
@@ -176,7 +191,8 @@ class TestLLMNode:
     @vcr.use_cassette('fixtures/llm_node_exec.yaml')
     def test_exec_phase(self):
         """Test LLM execution with recorded response."""
-        node = LLMNode(model="claude-sonnet-4-20250514", temperature=0)
+        node = LLMNode()
+        node.set_params({"model": "claude-sonnet-4-20250514", "temperature": 0})
 
         prep_res = {
             "prompt": "Say 'Hello, World!' and nothing else.",
@@ -233,6 +249,7 @@ The MVP focuses on simple text-in, text-out functionality.
 3. **Don't skip error messages**: Provide helpful model suggestions
 4. **Remember retries**: Node base class handles retry logic
 5. **Parameter handling**: Parameters are set via set_params() method, not constructor
+6. **Don't forget name attribute**: Required for registry discovery
 
 ## Benefits of Using `llm` Library
 
@@ -254,19 +271,28 @@ If currently building custom LLM integration:
 
 ```python
 # In a flow
+from pflow.nodes.file import ReadFileNode, WriteFileNode
+from pflow.nodes.llm.llm import LLMNode
+from pocketflow import Flow
+
 read_file = ReadFileNode()
 llm = LLMNode()
-llm.set_params({"model": "claude-sonnet-4-20250514", "temperature": 0.7})
+llm.set_params({
+    "model": "claude-sonnet-4-20250514",
+    "temperature": 0.7,
+    "prompt": "Summarize this content: $content"  # Uses content from shared store
+})
 write_file = WriteFileNode()
 
 flow = Flow(start=read_file)
-read_file >> llm >> write_file
+flow.add_edge(read_file, "default", llm)
+flow.add_edge(llm, "default", write_file)
 
 # Shared store flow:
 # read_file: puts content in shared["content"]
-# llm: reads shared["prompt"] (needs to be set from content)
+# llm: reads prompt from params (with $content substitution)
 # llm: writes shared["response"]
-# write_file: reads shared["content"] and writes to file
+# write_file: reads shared["content"] (would need to be set to response)
 ```
 
 ## References
