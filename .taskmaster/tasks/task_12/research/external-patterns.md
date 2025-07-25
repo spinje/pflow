@@ -232,7 +232,7 @@ The MVP focuses on simple text-in, text-out functionality.
 2. **Don't hardcode API keys**: Use environment variables
 3. **Don't skip error messages**: Provide helpful model suggestions
 4. **Remember retries**: Node base class handles retry logic
-5. **Use set_params()**: Don't pass parameters to constructor
+5. **Parameter handling**: Parameters are set via set_params() method, not constructor
 
 ## Benefits of Using `llm` Library
 
