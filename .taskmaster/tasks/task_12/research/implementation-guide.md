@@ -35,15 +35,15 @@ class LLMNode(Node):
     Shared Store Interface:
         Inputs:
             - prompt (required): The prompt text to send to the model
-            - system (optional): System prompt for behavior guidance
-            - model (optional): Model ID or alias (default: claude-sonnet-4-20250514)
-            - temperature (optional): Sampling temperature (default: 0.7)
-            - max_tokens (optional): Maximum response tokens
-            - format (optional): "text" or "json" (default: text)
 
         Outputs:
-            - response: The model's response (text or parsed JSON)
-            - usage: Token usage information (when available)
+            - response: The model's response text
+
+    Parameters (via set_params()):
+        - model: Model ID or alias (default: claude-sonnet-4-20250514)
+        - temperature: Sampling temperature (default: 0.7)
+        - system: System prompt for behavior guidance
+        - max_tokens: Maximum response tokens
 
     Example:
         shared["prompt"] = "Summarize this text in 3 bullet points"
@@ -63,26 +63,27 @@ class LLMNode(Node):
         super().__init__(max_retries=max_retries, wait=wait)
 
     def prep(self, shared: Dict[str, Any]) -> Dict[str, Any]:
-        """Prepare inputs from shared store.
+        """Prepare inputs from shared store and parameters.
 
         Validates required inputs and extracts parameters.
         """
-        # Fail fast on missing required input
-        if "prompt" not in shared:
+        # Check shared store first, then fall back to parameters
+        prompt = shared.get("prompt") or self.params.get("prompt")
+
+        if not prompt:
             raise ValueError(
-                "LLM node requires 'prompt' in shared store. "
+                "LLM node requires 'prompt' in shared store or parameters. "
                 "Please ensure previous nodes set shared['prompt'] "
                 "or provide --prompt parameter."
             )
 
-        # Extract all parameters with defaults
+        # Get parameters with defaults
         return {
-            "prompt": shared["prompt"],
-            "system": shared.get("system"),
-            "model": shared.get("model", "claude-sonnet-4-20250514"),
-            "temperature": shared.get("temperature", 0.7),
-            "max_tokens": shared.get("max_tokens"),
-            "format": shared.get("format", "text")
+            "prompt": prompt,
+            "model": self.params.get("model", "claude-sonnet-4-20250514"),
+            "temperature": self.params.get("temperature", 0.7),
+            "system": self.params.get("system"),
+            "max_tokens": self.params.get("max_tokens")
         }
 
     def exec(self, prep_res: Dict[str, Any]) -> Dict[str, Any]:
@@ -110,27 +111,18 @@ class LLMNode(Node):
         # Force evaluation and get text
         result = response.text()
 
-        # Handle JSON format request
-        if prep_res["format"] == "json":
-            result = self._parse_json_response(result)
-
-        # Return both response and usage info
+        # Return response
         return {
-            "response": result,
-            "usage": getattr(response, "usage", None)
+            "response": result
         }
 
     def post(self, shared: Dict[str, Any], prep_res: Dict[str, Any],
              exec_res: Dict[str, Any]) -> str:
         """Store results in shared store.
 
-        Always writes response, optionally writes usage.
+        Always writes response.
         """
         shared["response"] = exec_res["response"]
-
-        # Only write usage if available
-        if exec_res["usage"] is not None:
-            shared["usage"] = exec_res["usage"]
 
         # Always return default action
         return "default"
@@ -143,13 +135,7 @@ class LLMNode(Node):
         error_msg = str(exc)
 
         # Enhance error messages
-        if "JSONDecodeError" in error_msg:
-            raise ValueError(
-                f"Failed to parse JSON from LLM response. "
-                f"Ensure the model supports JSON output or try a different model. "
-                f"Original error: {exc}"
-            )
-        elif "UnknownModelError" in error_msg:
+        if "UnknownModelError" in error_msg:
             raise ValueError(
                 f"Unknown model: {prep_res['model']}. "
                 f"Run 'llm models' to see available models. "
@@ -168,35 +154,10 @@ class LLMNode(Node):
                 f"Model: {prep_res['model']}, Error: {exc}"
             )
 
-    def _parse_json_response(self, text: str) -> Dict[str, Any]:
-        """Extract and parse JSON from LLM response.
-
-        Handles markdown code blocks and other formatting.
-        """
-        # Remove markdown code blocks if present
-        if "```json" in text:
-            # Extract content between ```json and ```
-            start = text.find("```json") + 7
-            end = text.find("```", start)
-            if end != -1:
-                text = text[start:end].strip()
-        elif "```" in text:
-            # Generic code block
-            start = text.find("```") + 3
-            end = text.find("```", start)
-            if end != -1:
-                text = text[start:end].strip()
-
-        # Parse JSON
-        try:
-            return json.loads(text.strip())
-        except json.JSONDecodeError as e:
-            # Include the problematic text in error for debugging
-            raise json.JSONDecodeError(
-                f"Invalid JSON from LLM: {e.msg}",
-                text,
-                e.pos
-            )
+    # JSON parsing would be a future enhancement
+    # def _parse_json_response(self, text: str) -> Dict[str, Any]:
+    #     """Extract and parse JSON from LLM response - FUTURE FEATURE."""
+    #     pass
 ```
 
 ### Parameter Support
@@ -235,7 +196,6 @@ class TestLLMNode:
         # Mock the LLM response
         mock_response = Mock()
         mock_response.text.return_value = "Test response"
-        mock_response.usage = {"input": 10, "output": 5}
 
         mock_model = Mock()
         mock_model.prompt.return_value = mock_response
@@ -249,7 +209,6 @@ class TestLLMNode:
 
         # Verify results
         assert shared["response"] == "Test response"
-        assert shared["usage"]["input"] == 10
         assert action == "default"
 
         # Verify model was called correctly
@@ -265,26 +224,11 @@ class TestLLMNode:
         with pytest.raises(ValueError, match="requires 'prompt'"):
             node.run(shared)
 
-    @patch('llm.get_model')
-    def test_json_format(self, mock_get_model):
-        # Mock JSON response
-        mock_response = Mock()
-        mock_response.text.return_value = '```json\n{"key": "value"}\n```'
-
-        mock_model = Mock()
-        mock_model.prompt.return_value = mock_response
-        mock_get_model.return_value = mock_model
-
-        # Test JSON parsing
-        node = LLMNode()
-        shared = {
-            "prompt": "Return JSON",
-            "format": "json"
-        }
-
-        node.run(shared)
-
-        assert shared["response"] == {"key": "value"}
+    # JSON format testing would be a future enhancement
+    # @patch('llm.get_model')
+    # def test_json_format(self, mock_get_model):
+    #     """Test JSON format support - FUTURE FEATURE."""
+    #     pass
 
     @patch('llm.get_model')
     def test_error_handling(self, mock_get_model):
@@ -326,28 +270,14 @@ class TestLLMNodeIntegration:
 
 ## Future Enhancements (Post-MVP)
 
-### Phase 2: Attachments
-```python
-# Check for attachments in shared store
-if "attachments" in shared:
-    # Validate attachment types
-    for att in shared["attachments"]:
-        if att.mime_type not in model.attachment_types:
-            raise ValueError(f"Model doesn't support {att.mime_type}")
-```
+### Phase 2: Extended Features
+- JSON format support (parse JSON from response text)
+- Usage tracking (token counts when available)
+- Attachments for multi-modal input
 
-### Phase 3: Structured Output
-```python
-# Support Pydantic schemas
-if "schema" in shared:
-    response = model.prompt(
-        prep_res["prompt"],
-        schema=shared["schema"]
-    )
-```
-
-### Phase 4: Advanced Features
-- Tool/function calling
+### Phase 3: Advanced Features
+- Structured output with Pydantic schemas
+- Tool/function calling support
 - Conversation management
 - Streaming responses
 - Template integration
@@ -382,8 +312,7 @@ pflow llm \
   --prompt="Explain quantum computing" \
   --system="You are a physics teacher" \
   --model=claude-sonnet-4-20250514 \
-  --temperature=0.3 \
-  --format=json
+  --temperature=0.3
 ```
 
 ## Common Patterns
@@ -410,8 +339,8 @@ pflow llm --prompt="Write a blog post about $topic" \
 ### Data Extraction
 ```bash
 pflow read-file invoice.txt >> \
-  llm --prompt="Extract: company, date, total amount" \
-  --format=json
+  llm --prompt="Extract: company, date, total amount"
+# Future: Add --format=json for structured output
 ```
 
 ## Conclusion

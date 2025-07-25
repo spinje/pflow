@@ -187,10 +187,8 @@ class TestLLMNode:
 
         exec_res = node.exec(prep_res)
 
-        assert "text" in exec_res
-        assert "Hello, World!" in exec_res["text"]
-        assert "usage" in exec_res
-        assert exec_res["model"] == "claude-sonnet-4-20250514"
+        assert "response" in exec_res
+        assert "Hello, World!" in exec_res["response"]
 
     def test_post_phase(self):
         """Test storing results in shared store."""
@@ -198,52 +196,35 @@ class TestLLMNode:
         shared = {}
 
         exec_res = {
-            "text": "LLM response",
-            "usage": {"input": 20, "output": 80, "details": None},
-            "model": "gpt-4o-mini"
+            "response": "LLM response"
         }
 
         action = node.post(shared, {}, exec_res)
 
-        # Check all keys are set correctly
+        # Check response is set correctly
         assert shared["response"] == "LLM response"
-        assert shared["text"] == "LLM response"  # For chaining
-        assert shared["llm_usage"]["input"] == 20
-        assert shared["llm_usage"]["output"] == 80
-        assert shared["llm_model"] == "gpt-4o-mini"
-        assert shared["total_tokens"] == 100  # 20 + 80
         assert action == "default"
 
-    def test_multimodal_support(self):
-        """Test image attachment handling."""
-        node = LLMNode(model="gpt-4-vision-preview")
-
-        shared = {
-            "prompt": "What's in this image?",
-            "images": ["/path/to/image.jpg"]
-        }
-
-        prep_res = node.prep(shared)
-        assert len(prep_res["attachments"]) == 1
-
-    def test_structured_output(self):
-        """Test JSON schema support."""
-        node = LLMNode()
-
-        shared = {
-            "prompt": "Extract person data",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "age": {"type": "number"}
-                }
-            }
-        }
-
-        prep_res = node.prep(shared)
-        assert prep_res["schema"] is not None
+    # Future enhancement tests would go here
+    # def test_multimodal_support(self):
+    #     """Test image attachment handling - FUTURE FEATURE."""
+    #     pass
+    #
+    # def test_structured_output(self):
+    #     """Test JSON schema support - FUTURE FEATURE."""
+    #     pass
 ```
+
+## Future Enhancements (Post-MVP)
+
+These features are planned for future versions but NOT included in the initial implementation:
+
+1. **Multimodal Support**: Image attachments and other media types
+2. **Structured Output**: JSON schema validation and Pydantic model support
+3. **Advanced Features**: Tool calling, conversations, templates
+4. **Extended Outputs**: Usage tracking, model information, token counts
+
+The MVP focuses on simple text-in, text-out functionality.
 
 ## Common Pitfalls to Avoid
 
@@ -251,7 +232,7 @@ class TestLLMNode:
 2. **Don't hardcode API keys**: Use environment variables
 3. **Don't skip error messages**: Provide helpful model suggestions
 4. **Remember retries**: Node base class handles retry logic
-5. **Check for images carefully**: Handle both string and list formats
+5. **Use set_params()**: Don't pass parameters to constructor
 
 ## Benefits of Using `llm` Library
 
@@ -274,7 +255,8 @@ If currently building custom LLM integration:
 ```python
 # In a flow
 read_file = ReadFileNode()
-llm = LLMNode(model="claude-sonnet-4-20250514", temperature=0.7)
+llm = LLMNode()
+llm.set_params({"model": "claude-sonnet-4-20250514", "temperature": 0.7})
 write_file = WriteFileNode()
 
 flow = Flow(start=read_file)
@@ -282,9 +264,9 @@ read_file >> llm >> write_file
 
 # Shared store flow:
 # read_file: puts content in shared["content"]
-# llm: reads shared["content"] as fallback to shared["text"]
-# llm: writes shared["response"] and shared["text"]
-# write_file: reads shared["text"] and writes to file
+# llm: reads shared["prompt"] (needs to be set from content)
+# llm: writes shared["response"]
+# write_file: reads shared["content"] and writes to file
 ```
 
 ## References
