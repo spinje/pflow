@@ -2,9 +2,14 @@
 
 ## Executive Summary
 
-This document provides the implementation guide for template variable support in pflow's MVP. Template variables enable the "Plan Once, Run Forever" philosophy by allowing workflows to be parameterized and reused with different values.
+This document provides the implementation guide for the complete template variable system in pflow's MVP. This system enables the "Plan Once, Run Forever" philosophy by allowing workflows to be parameterized and reused with different values.
 
-**Key MVP Feature**: Template variables support path-based access (e.g., `$issue_data.user.login`), eliminating the need for complex data mappings in most workflows.
+**The Complete System Includes**:
+1. **Template Validation** - Ensures required parameters are available before execution
+2. **Template Resolution** - Replaces variables with actual values during execution
+3. **Path Support** - Access nested data (e.g., `$transcript_data.metadata.author`)
+
+**Key Design Decision**: Task 18 implements both validation and resolution as they share core parsing logic and together form the complete template variable feature. Validation is essential for v2.0+ where users can execute saved workflows directly without the planner.
 
 ## Connection to Planner Output
 
@@ -65,6 +70,45 @@ Node4 executes:
 
 The template must resolve to the CURRENT value in shared store at execution time.
 
+## Two-Phase Architecture: Validation and Resolution
+
+The template variable system operates in two distinct phases:
+
+### Phase 1: Validation (Before Execution)
+**When**: Before workflow execution begins
+**Purpose**: Ensure all required parameters are available
+**Called by**: Both planner and CLI (shared validation logic)
+
+```
+MVP Path: Planner → validate_templates() → fix if invalid → CLI → validate again → execute
+v2.0 Path: CLI loads workflow → validate_templates() → error if missing → execute
+```
+
+**What it validates**:
+- All CLI parameters referenced in templates are provided
+- Template syntax is correct (`$var` or `$var.field.subfield`)
+- No malformed paths or syntax errors
+
+**Key insight**: We can validate CLI parameters completely because they're known at start. Shared store values can't be validated until runtime.
+
+### Phase 2: Resolution (During Execution)
+**When**: As each node executes
+**Purpose**: Replace template variables with actual values
+**Called by**: Node wrapper during execution
+
+**Resolution sources** (in priority order):
+1. Initial parameters from planner/CLI
+2. Shared store values from node execution
+
+**Behavior**: If a template can't be resolved, it remains as-is (e.g., `$missing_var`) for debugging visibility.
+
+### Why Both Phases in One Task?
+
+1. **Shared Logic**: Both need to parse template syntax
+2. **Complete Feature**: Validation without resolution is useless
+3. **v2.0 Requirement**: Direct execution needs validation
+4. **Code Reuse**: Same regex patterns and parsing logic
+
 ## Requirements and Specifications
 
 ### Functional Requirements
@@ -74,21 +118,28 @@ The template must resolve to the CURRENT value in shared store at execution time
    - MUST support `$variable` syntax only (planner generates this format)
    - MUST support nested path access: `$variable.field.subfield`
    - MUST handle multiple variables in a single string
-   - **Note**: No `${var}` syntax needed for MVP
+   - MUST extract variables for both validation and resolution
 
-2. **Resolution Sources**
+2. **Template Validation** (New)
+   - MUST validate all templates before workflow execution
+   - MUST check CLI parameters are provided for referenced variables
+   - MUST return clear error messages for missing parameters
+   - MUST distinguish between CLI parameters and shared store variables
+   - MUST be callable by both planner and CLI
+
+3. **Template Resolution**
    - MUST resolve from shared store (workflow runtime data)
    - MUST resolve from parameter values extracted by planner
    - MUST prioritize planner-extracted parameters over shared store when same key exists
    - MUST maintain resolution context throughout workflow execution
 
-3. **Path Traversal**
+4. **Path Traversal**
    - MUST traverse nested dictionaries using dot notation
    - MUST handle missing paths gracefully (no exceptions)
    - MUST convert all resolved values to strings
    - MUST preserve original template if path cannot be resolved
 
-4. **Node Transparency**
+5. **Node Transparency**
    - MUST NOT require changes to existing node implementations
    - MUST intercept at the `_run()` method only
    - MUST preserve node atomicity and isolation
@@ -182,14 +233,22 @@ The template must resolve to the CURRENT value in shared store at execution time
 
 ## What You're Building
 
-A template variable resolution system that:
-1. Detects template variables in node parameters: `$variable` format only
-2. Supports path-based access to nested data: `$transcript_data.metadata.author`
-3. Resolves variables at runtime from two sources:
-   - Planner-extracted parameters (higher priority)
-   - Shared store values from node execution (lower priority)
-4. Converts all values to strings
-5. Works transparently without modifying existing nodes
+A complete template variable system with two components:
+
+### 1. Template Validator
+- Validates workflows before execution
+- Ensures all required CLI parameters are provided
+- Returns clear errors: `"Missing required parameter: --url"`
+- Called by both planner and CLI
+
+### 2. Template Resolver
+- Detects template variables in node parameters: `$variable` format only
+- Supports path-based access to nested data: `$transcript_data.metadata.author`
+- Resolves variables at runtime from two sources:
+  - Planner-extracted parameters (higher priority)
+  - Shared store values from node execution (lower priority)
+- Converts all values to strings
+- Works transparently without modifying existing nodes
 
 **Real-World Example**:
 ```json
@@ -316,6 +375,90 @@ This elegant pattern means nodes don't need modification to support templates!
 5. Update node params before execution
 
 ## Code Implementation
+
+### Phase 0: Template Validator
+
+```python
+# src/pflow/runtime/template_validator.py
+
+from typing import Dict, List, Set, Any
+from .template_resolver import TemplateResolver
+
+class TemplateValidator:
+    """Validates template variables before workflow execution."""
+
+    @staticmethod
+    def validate_workflow_templates(
+        workflow_ir: Dict[str, Any],
+        available_params: Dict[str, Any]
+    ) -> List[str]:
+        """
+        Validates all template variables in a workflow.
+
+        Args:
+            workflow_ir: The workflow IR containing nodes with template parameters
+            available_params: Parameters available from planner or CLI
+
+        Returns:
+            List of error messages (empty if valid)
+        """
+        errors = []
+
+        # Extract all templates from workflow
+        all_templates = TemplateValidator._extract_all_templates(workflow_ir)
+
+        # Separate CLI params from potential shared store vars
+        cli_params = set()
+        shared_vars = set()
+
+        for template in all_templates:
+            # Get base variable name (before any dots)
+            base_var = template.split('.')[0]
+
+            # Heuristic: if it matches a known param, it's a CLI param
+            # Otherwise, assume it's from shared store
+            if base_var in available_params:
+                cli_params.add(base_var)
+            else:
+                shared_vars.add(template)
+
+        # Validate CLI parameters - these MUST be provided
+        missing_params = cli_params - set(available_params.keys())
+        for param in missing_params:
+            errors.append(f"Missing required parameter: --{param}")
+
+        # For shared store variables, we can't validate until runtime
+        # But we can check syntax
+        for var in shared_vars:
+            if not TemplateValidator._is_valid_syntax(var):
+                errors.append(f"Invalid template syntax: ${var}")
+
+        return errors
+
+    @staticmethod
+    def _extract_all_templates(workflow_ir: Dict[str, Any]) -> Set[str]:
+        """Extract all template variables from workflow."""
+        templates = set()
+
+        for node in workflow_ir.get('nodes', []):
+            for param_value in node.get('params', {}).values():
+                if TemplateResolver.has_templates(param_value):
+                    # Extract variable names
+                    templates.update(TemplateResolver.extract_variables(param_value))
+
+        return templates
+
+    @staticmethod
+    def _is_valid_syntax(template: str) -> bool:
+        """Check if template syntax is valid."""
+        # Basic checks: no double dots, valid characters
+        if '..' in template:
+            return False
+        if template.startswith('.') or template.endswith('.'):
+            return False
+        # More validation as needed
+        return True
+```
 
 ### Phase 1: Template Resolver
 
@@ -468,10 +611,15 @@ class TemplateAwareNodeWrapper:
 ```python
 # Modifications to src/pflow/runtime/compiler.py
 
+from .template_validator import TemplateValidator
+from .template_resolver import TemplateResolver
+from .node_wrapper import TemplateAwareNodeWrapper
+
 def compile_ir_to_flow(
     ir_dict: Dict[str, Any],
     registry: Registry,
-    initial_params: Optional[Dict[str, Any]] = None
+    initial_params: Optional[Dict[str, Any]] = None,
+    validate: bool = True
 ) -> Flow:
     """Compile IR with template variable support.
 
@@ -481,10 +629,23 @@ def compile_ir_to_flow(
         initial_params: Parameters extracted by planner from natural language
                        Example: {"issue_number": "1234", "repo": "pflow"}
                        from user saying "fix github issue 1234 in pflow repo"
+        validate: Whether to validate templates (default: True)
+
+    Raises:
+        ValueError: If template validation fails
     """
+    initial_params = initial_params or {}
+
+    # Phase 1: Validate templates before compilation
+    if validate:
+        errors = TemplateValidator.validate_workflow_templates(ir_dict, initial_params)
+        if errors:
+            error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+            raise ValueError(error_msg)
+
+    # Phase 2: Compile workflow with template support
     flow = Flow()
     nodes = {}
-    initial_params = initial_params or {}
 
     # Create nodes
     for node_spec in ir_dict['nodes']:
@@ -768,6 +929,76 @@ def test_complete_workflow_with_planner_params():
     # LLM node should have received resolved prompt
 ```
 
+### Validation Tests
+
+```python
+def test_template_validation_success():
+    """Test successful validation when all params provided."""
+    workflow_ir = {
+        "nodes": [
+            {"id": "fetch", "type": "youtube-transcript", "params": {"url": "$url"}},
+            {"id": "save", "type": "write-file", "params": {
+                "file_path": "summary.txt",
+                "content": "$summary"
+            }}
+        ]
+    }
+
+    # All CLI params provided
+    params = {"url": "https://youtube.com/watch?v=xyz"}
+
+    errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+    assert len(errors) == 0  # No errors
+
+def test_template_validation_missing_param():
+    """Test validation catches missing CLI parameters."""
+    workflow_ir = {
+        "nodes": [
+            {"id": "fetch", "type": "youtube-transcript", "params": {"url": "$url"}},
+            {"id": "analyze", "type": "llm", "params": {"prompt": "Analyze $url"}}
+        ]
+    }
+
+    # Missing 'url' parameter
+    params = {}
+
+    errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+    assert len(errors) == 1
+    assert "Missing required parameter: --url" in errors[0]
+
+def test_validation_distinguishes_cli_from_shared():
+    """Test validation correctly identifies CLI params vs shared store."""
+    workflow_ir = {
+        "nodes": [
+            {"id": "fetch", "type": "youtube-transcript", "params": {"url": "$url"}},
+            {"id": "analyze", "type": "llm", "params": {
+                "prompt": "Summarize: $transcript_data.title"  # From shared store
+            }}
+        ]
+    }
+
+    # Only CLI param provided
+    params = {"url": "https://youtube.com/watch?v=xyz"}
+
+    errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+    assert len(errors) == 0  # No errors - transcript_data is from shared store
+
+def test_compile_with_validation():
+    """Test that compile_ir_to_flow validates templates."""
+    workflow_ir = {
+        "nodes": [
+            {"id": "process", "type": "processor", "params": {"input": "$missing_param"}}
+        ]
+    }
+
+    # Try to compile without required parameter
+    with pytest.raises(ValueError) as exc_info:
+        compile_ir_to_flow(workflow_ir, registry, initial_params={})
+
+    assert "Template validation failed" in str(exc_info.value)
+    assert "Missing required parameter: --missing_param" in str(exc_info.value)
+```
+
 ## Common Pitfalls and Solutions
 
 ### 1. Type Loss Through String Conversion
@@ -794,24 +1025,30 @@ def test_complete_workflow_with_planner_params():
 
 The implementation is complete when:
 
-1. **Path-based access works**:
+1. **Template validation works**:
+   - Missing CLI parameters are caught before execution
+   - Clear error messages: "Missing required parameter: --url"
+   - Shared store variables are not flagged as errors
+   - Both planner and CLI use the same validation
+
+2. **Path-based access works**:
    ```json
    {"prompt": "Video '$transcript_data.title' by $transcript_data.metadata.author"}
    ```
 
-2. **Planner parameters work**:
+3. **Planner parameters work**:
    ```python
    # From "summarize this youtube video...":
    planner_params = {"url": "https://youtube.com/watch?v=xyz"}
    # Template $url resolves correctly
    ```
 
-3. **Dynamic values work**:
+4. **Dynamic values work**:
    - Templates can reference shared store values from previous nodes
    - Direct shared store keys are accessed properly
    - Nested paths traverse objects correctly
 
-4. **Nodes remain unmodified**:
+5. **Nodes remain unmodified**:
    - Existing nodes work without changes
    - Template resolution is transparent via runtime proxy
 
@@ -827,12 +1064,14 @@ Document these clearly for users:
 ## Implementation Checklist
 
 - [ ] Implement TemplateResolver with path support
-- [ ] Create comprehensive test suite for path traversal
+- [ ] Implement TemplateValidator for pre-execution validation
+- [ ] Create comprehensive test suite for resolution and validation
 - [ ] Implement TemplateAwareNodeWrapper
-- [ ] Integrate with compiler
+- [ ] Integrate validation with compiler (fail fast on missing params)
+- [ ] Integrate resolution with runtime execution
 - [ ] Test with real pflow nodes
 - [ ] Document template syntax for users
 - [ ] Add examples with nested paths
-- [ ] Test edge cases (missing paths, null values)
+- [ ] Test edge cases (missing paths, null values, validation errors)
 
 This implementation provides powerful template variable support with path traversal, enabling most workflow parameterization needs without the complexity of proxy mappings. It serves as the runtime proxy that makes pflow's "Plan Once, Run Forever" philosophy possible.
