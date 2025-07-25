@@ -41,6 +41,30 @@ This template variable implementation **IS** the "runtime proxy" referenced thro
 
 Without this runtime proxy, workflows would be single-use with hardcoded values, defeating pflow's core value proposition.
 
+### Why Dynamic Resolution is Critical
+
+Template variables MUST be resolved at execution time, not compile time:
+
+```python
+# Example workflow execution demonstrating why runtime resolution is essential:
+
+Node1 executes:
+  - Writes shared["video_data"] = {"title": "Python Tutorial"}
+
+Node2 executes:
+  - Has param: {"prompt": "Summarize: $video_data.title"}
+  - Must see: "Summarize: Python Tutorial"
+
+Node3 executes:
+  - Updates shared["video_data"] = {"title": "Advanced Python Tutorial"}
+
+Node4 executes:
+  - Has param: {"report": "Final video: $video_data.title"}
+  - Must see: "Final video: Advanced Python Tutorial"  # NOT the old value!
+```
+
+The template must resolve to the CURRENT value in shared store at execution time.
+
 ## Requirements and Specifications
 
 ### Functional Requirements
@@ -93,6 +117,14 @@ Without this runtime proxy, workflows would be single-use with hardcoded values,
    3. Return modified string
    ```
 
+   **Critical: Single-Phase Runtime Resolution**
+   ALL template resolution happens at runtime, never at compile time. This ensures consistent behavior whether a template appears as a complete value or embedded in a string:
+   ```json
+   // Both work identically because resolution happens at runtime with full context:
+   {"url": "$endpoint"}                    // Complete value
+   {"prompt": "Analyze video at $url"}     // Embedded in string
+   ```
+
 3. **Priority Order**
    ```
    Resolution Context = {
@@ -142,8 +174,11 @@ Without this runtime proxy, workflows would be single-use with hardcoded values,
 3. Method calls: `$name.upper()`
 4. Default values: `$var|default`
 5. Type preservation (everything converts to string)
-6. Proxy mappings or key renaming
+6. Proxy mappings or key renaming (deferred to task 9, v2.0)
 7. Compile-time resolution
+8. `${var}` brace syntax (only `$var` supported)
+
+**Note on Proxy Mappings**: While some research documents discuss proxy mappings extensively, these are NOT part of the MVP implementation. Task 9 will implement proxy mappings in v2.0 to handle shared store key collisions. For MVP, we assume nodes don't overwrite each other's keys.
 
 ## What You're Building
 
@@ -650,6 +685,25 @@ def test_type_conversions():
     assert TemplateResolver.resolve_string("[$false]", context) == "[False]"
     assert TemplateResolver.resolve_string("[$empty_list]", context) == "[[]]"
     assert TemplateResolver.resolve_string("[$empty_dict]", context) == "[{}]"
+
+def test_complete_vs_embedded_templates():
+    """Test that templates work identically as complete values or embedded in strings."""
+    wrapper = TemplateAwareNodeWrapper(
+        TestNode(),
+        "test",
+        initial_params={"video_id": "xyz123"}
+    )
+    wrapper.set_params({
+        "id": "$video_id",                          # Complete value
+        "message": "Processing video $video_id"     # Embedded in string
+    })
+
+    shared = {}
+    wrapper._run(shared)
+
+    # Both forms should resolve identically
+    assert wrapper.inner_node.params["id"] == "xyz123"
+    assert wrapper.inner_node.params["message"] == "Processing video xyz123"
 ```
 
 ### Integration Tests
