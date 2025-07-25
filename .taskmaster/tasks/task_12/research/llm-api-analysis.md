@@ -11,7 +11,7 @@ This document analyzes Simon Willison's `llm` library API to inform the implemen
 import llm
 
 # Get a model
-model = llm.get_model("gpt-4o-mini")  # or model alias
+model = llm.get_model("claude-sonnet-4-20250514")  # or model alias
 
 # Execute a prompt
 response = model.prompt(
@@ -29,7 +29,7 @@ text = response.text()
 1. **Model Selection**
    - `llm.get_model(name)` - Get model by ID or alias
    - `llm.get_models()` - List all available models
-   - Default model: `gpt-4o-mini` if not configured
+   - Default model: `claude-sonnet-4-20250514` if not configured
 
 2. **Response Object**
    - Lazy evaluation - prompt only executes when `text()` is called
@@ -165,7 +165,7 @@ class LLMNode(Node):
         return {
             "prompt": shared["prompt"],
             "system": shared.get("system"),
-            "model": shared.get("model", "gpt-4o-mini"),
+            "model": shared.get("model", "claude-sonnet-4-20250514"),
             "temperature": shared.get("temperature", 0.7),
             "max_tokens": shared.get("max_tokens"),
             "format": shared.get("format", "text")  # "text" or "json"

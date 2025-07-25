@@ -36,7 +36,7 @@ class LLMNode(Node):
         Inputs:
             - prompt (required): The prompt text to send to the model
             - system (optional): System prompt for behavior guidance
-            - model (optional): Model ID or alias (default: gpt-4o-mini)
+            - model (optional): Model ID or alias (default: claude-sonnet-4-20250514)
             - temperature (optional): Sampling temperature (default: 0.7)
             - max_tokens (optional): Maximum response tokens
             - format (optional): "text" or "json" (default: text)
@@ -79,7 +79,7 @@ class LLMNode(Node):
         return {
             "prompt": shared["prompt"],
             "system": shared.get("system"),
-            "model": shared.get("model", "gpt-4o-mini"),
+            "model": shared.get("model", "claude-sonnet-4-20250514"),
             "temperature": shared.get("temperature", 0.7),
             "max_tokens": shared.get("max_tokens"),
             "format": shared.get("format", "text")
@@ -314,7 +314,7 @@ class TestLLMNodeIntegration:
         node = LLMNode()
         shared = {
             "prompt": "Say hello in 3 words",
-            "model": "gpt-4o-mini",
+            "model": "claude-sonnet-4-20250514",
             "temperature": 0.1
         }
 

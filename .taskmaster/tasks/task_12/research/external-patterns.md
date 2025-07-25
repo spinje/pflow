@@ -33,7 +33,7 @@ Key patterns to leverage:
 ### Pattern: Complete LLM Node Using `llm` Library
 
 ```python
-# src/pflow/nodes/llm_node.py
+# src/pflow/nodes/llm.py
 from pocketflow import Node
 import llm  # From llm-main library
 from typing import Optional, Dict, Any
@@ -57,7 +57,7 @@ class LLMNode(Node):
     """
 
     def __init__(self,
-                 model: str = "gpt-4o-mini",
+                 model: str = "claude-sonnet-4-20250514",
                  system: Optional[str] = None,
                  temperature: Optional[float] = None,
                  max_tokens: Optional[int] = None,
@@ -190,7 +190,7 @@ class LLMNode(Node):
         # Only fallback on rate limits or quota errors
         if any(term in error_msg for term in ['rate limit', 'quota', 'capacity']):
             if self.model_name != "gpt-4o-mini":
-                # Try fallback model
+                # Try fallback model (claude -> gpt-4o-mini as lighter alternative)
                 original = self.model_name
                 self.model_name = "gpt-4o-mini"
 
@@ -281,7 +281,7 @@ import vcr
 class TestLLMNode:
     def test_prep_phase(self):
         """Test extraction from shared store."""
-        node = LLMNode(model="gpt-4o-mini")
+        node = LLMNode(model="claude-sonnet-4-20250514")
 
         # Test prompt extraction priority
         shared = {"prompt": "Test prompt"}
@@ -306,7 +306,7 @@ class TestLLMNode:
     @vcr.use_cassette('fixtures/llm_node_exec.yaml')
     def test_exec_phase(self):
         """Test LLM execution with recorded response."""
-        node = LLMNode(model="gpt-4o-mini", temperature=0)
+        node = LLMNode(model="claude-sonnet-4-20250514", temperature=0)
 
         prep_res = {
             "prompt": "Say 'Hello, World!' and nothing else.",
@@ -320,7 +320,7 @@ class TestLLMNode:
         assert "text" in exec_res
         assert "Hello, World!" in exec_res["text"]
         assert "usage" in exec_res
-        assert exec_res["model"] == "gpt-4o-mini"
+        assert exec_res["model"] == "claude-sonnet-4-20250514"
 
     def test_post_phase(self):
         """Test storing results in shared store."""

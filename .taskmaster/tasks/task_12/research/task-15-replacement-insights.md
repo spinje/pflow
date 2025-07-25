@@ -45,7 +45,7 @@ From the external patterns research:
 ## Implementation Pattern for Task 12
 
 The LLM node should:
-1. Inherit from `pocketflow.Node` (or `BaseNode`)
+1. Inherit from `pocketflow.Node`
 2. Use the shared store pattern
 3. Wrap the `llm` library for workflow usage
 4. Provide a natural interface
@@ -58,7 +58,7 @@ class LLMNode(Node):
         # Get inputs from shared store
         return {
             "prompt": shared.get("prompt"),
-            "model": shared.get("model", "gpt-4o-mini"),
+            "model": shared.get("model", "claude-sonnet-4-20250514"),
             # ... other parameters
         }
 
