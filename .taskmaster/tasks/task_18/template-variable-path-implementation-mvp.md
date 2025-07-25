@@ -452,6 +452,15 @@ class TemplateAwareNodeWrapper:
     def __getattr__(self, name):
         """Delegate all other attributes to inner node."""
         return getattr(self.inner_node, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Handle attribute setting to maintain proxy transparency."""
+        # Define proxy's own attributes
+        if name in ['inner_node', 'node_id', 'initial_params', 'template_params', 'static_params']:
+            super().__setattr__(name, value)
+        else:
+            # Everything else goes to inner node
+            setattr(self.inner_node, name, value)
 ```
 
 ### Phase 3: Compiler Integration
@@ -704,6 +713,19 @@ def test_complete_vs_embedded_templates():
     # Both forms should resolve identically
     assert wrapper.inner_node.params["id"] == "xyz123"
     assert wrapper.inner_node.params["message"] == "Processing video xyz123"
+
+def test_missing_template_variable():
+    """Test that unresolved templates remain as-is for debugging."""
+    context = {
+        "url": "https://youtube.com/watch?v=xyz",
+        # Note: missing 'video_title' that template references
+    }
+
+    template = "Processing video: $video_title from $url"
+    result = TemplateResolver.resolve_string(template, context)
+
+    # Missing variable remains as template, resolved variable is substituted
+    assert result == "Processing video: $video_title from https://youtube.com/watch?v=xyz"
 ```
 
 ### Integration Tests
@@ -754,7 +776,7 @@ def test_complete_workflow_with_planner_params():
 
 ### 2. Non-existent Paths
 **Problem**: `$data.field.missing` when path doesn't exist
-**Solution**: Leave template unchanged for debugging visibility
+**Solution**: Leave template unchanged for debugging visibility (see test_missing_template_variable)
 
 ### 3. Array Access
 **Problem**: User wants `$items.0.name` for array access
