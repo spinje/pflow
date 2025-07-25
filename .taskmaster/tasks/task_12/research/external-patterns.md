@@ -43,17 +43,16 @@ class LLMNode(Node):
     General-purpose LLM node using Simon Willison's llm library.
 
     Reads from shared store:
-    - prompt or text or stdin: The input text
-    - system (optional): System prompt
-    - images (optional): List of image paths for multimodal models
-    - schema (optional): JSON schema for structured output
+    - prompt: The prompt text to send to the model (required)
 
     Writes to shared store:
-    - response: The LLM's response text
-    - text: Same as response (for chaining)
-    - llm_usage: Token usage statistics
-    - llm_model: Model actually used
-    - total_tokens: Cumulative token count
+    - response: The model-generated output text
+
+    Parameters (not from shared store):
+    - model: Model name to use (default: "claude-sonnet-4-20250514")
+    - temperature: Sampling temperature (default: 0.7)
+    - system: Optional system prompt
+    - max_tokens: Optional output limit
     """
 
     def __init__(self,
@@ -79,164 +78,45 @@ class LLMNode(Node):
         self.options.update(kwargs)
 
     def prep(self, shared: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract prompt and context from shared store."""
-        # Natural interface - check multiple possible keys
-        prompt = (
-            shared.get("prompt") or
-            shared.get("text") or
-            shared.get("stdin", "")
-        )
-
-        if not prompt:
+        """Extract prompt from shared store."""
+        if "prompt" not in shared:
             raise ValueError(
-                "No prompt found in shared store. "
-                "Checked keys: 'prompt', 'text', 'stdin'. "
-                "Please provide input text in one of these keys."
+                "LLM node requires 'prompt' in shared store. "
+                "Please ensure previous nodes set shared['prompt'] "
+                "or provide --prompt parameter."
             )
 
-        # System prompt can come from shared or node config
-        system = shared.get("system", self.default_system)
-
-        # Handle attachments for multimodal models
-        attachments = []
-        if "images" in shared:
-            images = shared["images"]
-            # Handle both single image and list
-            if isinstance(images, str):
-                images = [images]
-
-            for img_path in images:
-                try:
-                    # llm.Attachment from llm-main/llm/models.py:52
-                    attachments.append(llm.Attachment(path=img_path))
-                except Exception as e:
-                    # Log warning but don't fail
-                    if shared.get('verbose', False):
-                        print(f"Warning: Could not load image {img_path}: {e}")
-
-        # Extract JSON schema if provided
-        schema = shared.get("schema")
-
         return {
-            "prompt": prompt,
-            "system": system,
-            "attachments": attachments,
-            "schema": schema
+            "prompt": shared["prompt"]
         }
 
     def exec(self, prep_res: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute LLM call using llm library - isolated from shared store."""
-        try:
-            # Get model from llm library (llm-main/llm/__init__.py:325)
-            model = llm.get_model(self.model_name)
+        """Execute LLM call using llm library."""
+        # Get model from llm library
+        model = llm.get_model(self.model_name)
 
-            # Build prompt arguments
-            prompt_args = {
-                "prompt": prep_res["prompt"],
-                **self.options
-            }
+        # Build prompt arguments
+        prompt_args = {
+            "prompt": prep_res["prompt"],
+            **self.options
+        }
 
-            if prep_res["system"]:
-                prompt_args["system"] = prep_res["system"]
+        # Add system prompt if configured
+        if self.default_system:
+            prompt_args["system"] = self.default_system
 
-            if prep_res["attachments"]:
-                prompt_args["attachments"] = prep_res["attachments"]
+        # Execute prompt
+        response = model.prompt(**prompt_args)
 
-            if prep_res["schema"]:
-                prompt_args["schema"] = prep_res["schema"]
-
-            # Execute prompt (llm-main/llm/models.py:1747)
-            response = model.prompt(**prompt_args)
-
-            # Extract all useful information
-            # response.text() from llm-main/llm/models.py:996
-            # response.usage() from llm-main/llm/models.py:1108 returns Usage dataclass
-            usage = response.usage()
-            result = {
-                "text": response.text(),
-                "usage": {
-                    "input": usage.input,
-                    "output": usage.output,
-                    "details": usage.details
-                } if usage else {},
-                "model": str(model.model_id)
-            }
-
-            # Add structured output if schema was used
-            if prep_res["schema"]:
-                try:
-                    # response.json() from llm-main/llm/models.py:1096
-                    result["json"] = response.json()
-                except:
-                    result["json"] = None
-
-            return result
-
-        except llm.UnknownModelError as e:
-            # UnknownModelError from llm-main/llm/__init__.py:290
-            # Provide helpful error message
-            available = [m.model_id for m in llm.get_models()]
-            raise ValueError(
-                f"Unknown model: {self.model_name}\n"
-                f"Available models: {', '.join(available[:5])}...\n"
-                f"Run 'llm models' to see all available models.\n"
-                f"Install plugins for additional providers: pip install llm-claude-3"
-            ) from e
-
-    def exec_fallback(self, prep_res: Dict[str, Any], exc: Exception) -> Dict[str, Any]:
-        """Fallback strategy - try a simpler model on rate limits."""
-        error_msg = str(exc).lower()
-
-        # Only fallback on rate limits or quota errors
-        if any(term in error_msg for term in ['rate limit', 'quota', 'capacity']):
-            if self.model_name != "gpt-4o-mini":
-                # Try fallback model (claude -> gpt-4o-mini as lighter alternative)
-                original = self.model_name
-                self.model_name = "gpt-4o-mini"
-
-                try:
-                    result = self.exec(prep_res)
-                    result["model"] = f"{result['model']} (fallback from {original})"
-                    result["fallback_reason"] = str(exc)
-                    return result
-                except Exception:
-                    # Restore original model name and re-raise
-                    self.model_name = original
-                    raise exc
-
-        # No fallback available or not a rate limit error
-        raise exc
+        # Return response text
+        return {
+            "response": response.text()
+        }
 
     def post(self, shared: Dict[str, Any], prep_res: Dict[str, Any],
              exec_res: Dict[str, Any]) -> str:
-        """Store results in shared store following natural patterns."""
-        # Primary output
-        shared["response"] = exec_res["text"]
-
-        # Also store as 'text' for easy chaining
-        shared["text"] = exec_res["text"]
-
-        # Metadata
-        # Usage object from llm-main/llm/models.py:45 has input/output/details fields
-        shared["llm_usage"] = exec_res["usage"]
-        shared["llm_model"] = exec_res["model"]
-
-        # Store structured output if available
-        if "json" in exec_res and exec_res["json"]:
-            shared["llm_json"] = exec_res["json"]
-
-        # Track cumulative token usage for cost tracking (pflow-specific feature)
-        # Note: llm's Usage object has separate input/output fields
-        usage = exec_res["usage"]
-        if usage.get("input") and usage.get("output"):
-            total = usage["input"] + usage["output"]
-            shared["total_tokens"] = shared.get("total_tokens", 0) + total
-
-        # Store fallback info if it happened
-        if "fallback_reason" in exec_res:
-            shared["llm_fallback"] = exec_res["fallback_reason"]
-
-        # Return default action for flow control
+        """Store response in shared store."""
+        shared["response"] = exec_res["response"]
         return "default"
 ```
 
@@ -283,24 +163,14 @@ class TestLLMNode:
         """Test extraction from shared store."""
         node = LLMNode(model="claude-sonnet-4-20250514")
 
-        # Test prompt extraction priority
+        # Test prompt extraction
         shared = {"prompt": "Test prompt"}
         prep_res = node.prep(shared)
         assert prep_res["prompt"] == "Test prompt"
 
-        # Test fallback to text
-        shared = {"text": "Test text"}
-        prep_res = node.prep(shared)
-        assert prep_res["prompt"] == "Test text"
-
-        # Test fallback to stdin
-        shared = {"stdin": "Piped input"}
-        prep_res = node.prep(shared)
-        assert prep_res["prompt"] == "Piped input"
-
         # Test missing prompt
         shared = {}
-        with pytest.raises(ValueError, match="No prompt found"):
+        with pytest.raises(ValueError, match="requires 'prompt'"):
             node.prep(shared)
 
     @vcr.use_cassette('fixtures/llm_node_exec.yaml')
@@ -404,7 +274,7 @@ If currently building custom LLM integration:
 ```python
 # In a flow
 read_file = ReadFileNode()
-llm = LLMNode(model="claude-3-5-sonnet-latest", temperature=0.7)
+llm = LLMNode(model="claude-sonnet-4-20250514", temperature=0.7)
 write_file = WriteFileNode()
 
 flow = Flow(start=read_file)

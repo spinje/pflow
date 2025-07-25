@@ -14,7 +14,7 @@ Task 12 implements the general-purpose LLM node that serves as the primary text 
 ## Implementation Specification
 
 ### File Location
-`src/pflow/nodes/llm.py`
+`src/pflow/nodes/llm/llm.py`
 
 ### Core Implementation (MVP)
 
@@ -381,7 +381,7 @@ pflow read-file readme.md >> llm --prompt="Summarize this"
 pflow llm \
   --prompt="Explain quantum computing" \
   --system="You are a physics teacher" \
-  --model=claude-3-opus \
+  --model=claude-sonnet-4-20250514 \
   --temperature=0.3 \
   --format=json
 ```
@@ -403,7 +403,7 @@ pflow read-file main.py >> \
 ### Content Generation
 ```bash
 pflow llm --prompt="Write a blog post about $topic" \
-  --model=claude-3-opus \
+  --model=claude-sonnet-4-20250514 \
   --temperature=0.8
 ```
 
