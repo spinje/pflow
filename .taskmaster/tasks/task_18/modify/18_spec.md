@@ -78,7 +78,7 @@ Side effects:
 
 ## Rules
 
-1. Scanner must import MetadataExtractor inside extract_metadata function
+1. Scanner must use dependency injection for MetadataExtractor
 2. Scanner must call extractor.extract_metadata on each node class
 3. Scanner must store result in interface field of registry entry
 4. Scanner must fail with clear error if parsing fails
@@ -103,11 +103,11 @@ Side effects:
 - Template path traverses non-dict → validation fails
 - Template base not in any source → validation fails with specific error
 - Registry file corrupted → scanner regenerates from scratch
-- Import side effects occur → scanner continues after logging
+- Import side effects occur → scanner fails with clear error
 
 ## Error Handling
 
-- Import failure → log with module path and continue to next node
+- Import failure → raise with module path and actionable error
 - Parse failure → raise with file path and line reference
 - Missing interface field → treat as bug and fail fast
 - Unknown node type in workflow → raise ValueError
@@ -158,6 +158,9 @@ metadata = {
 13. Compiler passes registry to validator
 14. No heuristic code remains in validator
 15. End-to-end workflow validation works correctly
+16. Scanner regenerates registry when file corrupted
+17. Scanner fails with actionable error on import failure
+18. Validation fails with specific error for missing template source
 
 ## Notes (Why)
 
@@ -189,8 +192,9 @@ metadata = {
 
 ## Versioning & Evolution
 
-- **Version:** 1.0.0
+- **Version:** 1.0.1
 - **Changelog:**
+  - **1.0.1** — Updated Rule 1 for clarity, added missing test criteria for edge cases, clarified error handling
   - **1.0.0** — Initial specification for Node IR implementation
 
 ## Epistemic Appendix
@@ -206,6 +210,7 @@ metadata = {
 
 - Template validation fix document suggested runtime parsing → Resolution: Use scan-time parsing per architectural principles
 - Context builder currently catches import errors → Resolution: Let scanner handle all import errors for consistency
+- Original spec said "import inside function" but implementation guide shows dependency injection → Resolution: Use dependency injection pattern to avoid circular imports
 
 ### Decision Log / Tradeoffs
 
