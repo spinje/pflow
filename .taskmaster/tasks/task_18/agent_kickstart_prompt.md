@@ -6,6 +6,25 @@ You are about to implement the **runtime proxy** that enables pflow's core value
 
 **Your role is not to complete a task - it is to ensure the implementation is correct, robust, and survives real-world usage.**
 
+## Critical Scope Boundary
+
+**YOU ARE IMPLEMENTING TASK 18 ONLY - THE TEMPLATE VARIABLE SYSTEM**
+
+Do NOT:
+- Modify the CLI beyond integrating template validation
+- Implement any planner functionality (that's Task 17)
+- Create new node types
+- Add features beyond template variables
+- Refactor existing code unless required for integration
+- Add proxy mappings or key renaming (that's Task 9, deferred to v2.0)
+
+Your implementation scope is EXACTLY:
+1. `TemplateResolver` - Detects and resolves `$variable` syntax with path support
+2. `TemplateValidator` - Validates required parameters exist before execution
+3. `TemplateAwareNodeWrapper` - Wraps nodes to intercept and resolve templates
+4. Integration with `compiler.py` - Wire validation and wrapping into compilation
+5. Comprehensive tests for all the above
+
 ## Required Reading (In Order)
 
 **You MUST read these files completely before writing any code:**
@@ -15,9 +34,15 @@ You are about to implement the **runtime proxy** that enables pflow's core value
    - "Documentation is a hypothesis, not a truth source"
    - "Design for future understanding"
 
-2. **`.taskmaster/tasks/task_18/task_18_spec.md`** - The formal specification. This is your contract. Every rule (R1-R12) and edge case (E1-E8) must be implemented and tested exactly as specified.
+2. **`pocketflow/__init__.py`** - The PocketFlow framework source code. Understanding how nodes execute is CRITICAL. Pay special attention to:
+   - How `_run()` method works
+   - The `copy.copy(node)` behavior in Flow execution
+   - Why `set_params()` is called on a fresh copy
+   - The execution flow: `prep()` → `exec()` → `post()`
 
-3. **`.taskmaster/tasks/task_18/template-variable-path-implementation-mvp.md`** - The implementation guide with context, examples, and code structure. This explains WHY decisions were made and HOW the system fits together.
+3. **`.taskmaster/tasks/task_18/task_18_spec.md`** - The formal specification. This is your contract. Every rule (R1-R12) and edge case (E1-E8) must be implemented and tested exactly as specified.
+
+4. **`.taskmaster/tasks/task_18/template-variable-path-implementation-mvp.md`** - The implementation guide with context, examples, and code structure. This explains WHY decisions were made and HOW the system fits together.
 
 ## Critical Context
 
@@ -97,6 +122,8 @@ This task requires deep understanding of how nodes execute, careful implementati
 
 Remember: **You are epistemically responsible for this implementation.** It's not enough that it works in simple cases - it must be robust enough to power every workflow in the pflow ecosystem.
 
-When you're ready, begin by reading the three required documents in order. Then start with understanding, not coding. The implementation will follow naturally from deep comprehension.
+When you're ready, begin by reading the four required documents in order. Then start with understanding, not coding. The implementation will follow naturally from deep comprehension.
 
-**Your first output should demonstrate that you've read and understood all three documents. Show your understanding, surface any ambiguities, and outline your implementation plan before writing any code.**
+**Your first output should demonstrate that you've read and understood all four documents. Show your understanding, surface any ambiguities, and outline your implementation plan before writing any code.**
+
+Remember: You are implementing ONLY the template variable system (Task 18). Stay within scope.
