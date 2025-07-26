@@ -326,3 +326,8 @@ If we were to implement one enhancement to the template system, automatic namesp
 Automatic namespacing represents the "path not taken" - a simpler alternative that would have made workflows more powerful while keeping the system approachable. It's not too late to implement this as an enhancement to the current system, potentially as a stepping stone toward full proxy mappings or as a permanent solution for the majority of use cases.
 
 The elegance of this approach lies in its invisibility - nodes don't need to know about it, workflow authors get it for free, and the template syntax naturally aligns with the data structure. Sometimes the best solutions are the ones that feel obvious in hindsight.
+
+
+## User notes
+
+The drawback of this approach is that it adds complexity to the planner llm to keep track of what nodes are assigned what number. It needs to keep track where it is used in the workflow, this could be a problem for the planner llm to keep track of.
