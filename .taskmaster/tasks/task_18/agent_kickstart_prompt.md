@@ -57,13 +57,23 @@ Your implementation scope is EXACTLY:
 ## Your Implementation Approach
 
 ### 1. Verify Understanding First
-Before coding, ensure you understand:
+
+**ACTIVELY EXPLORE THE CODEBASE TO VERIFY YOUR ASSUMPTIONS**
+
+Before coding, you MUST:
+- **Examine actual pflow nodes** in `src/pflow/nodes/` to see the fallback pattern in practice
+- **Study the existing compiler** in `src/pflow/runtime/compiler.py` to understand current IR compilation
+- **Trace through execution flow** - follow how a workflow goes from IR → compiled Flow → execution
+- **Look at existing tests** to understand expected behavior and patterns
+
+Specifically verify:
 - How PocketFlow's node execution works (study the `_run()` and `copy.copy()` behavior)
 - Why interception must happen at `_run()` and nowhere else
-- How the fallback pattern in pflow nodes enables this to work
+- How the fallback pattern in pflow nodes enables this to work (CHECK ACTUAL NODE CODE)
 - Why resolution must be dynamic (values change during execution)
+- How `compile_ir_to_flow()` currently works and where to integrate
 
-**If anything is unclear, STOP and investigate. Do not guess.**
+**Documentation is a hypothesis - the code is truth. If anything is unclear, STOP and investigate. Do not guess.**
 
 ### 2. Key Implementation Considerations
 
@@ -111,10 +121,11 @@ Your implementation succeeds when:
 
 As you work, regularly ask yourself:
 
-1. **Am I making assumptions about node behavior?** → Verify against actual pflow nodes
+1. **Am I making assumptions about node behavior?** → Verify against actual pflow nodes in `src/pflow/nodes/`
 2. **Does my implementation handle ALL specified edge cases?** → Check against E1-E8
 3. **Would someone debugging a workflow understand what happened?** → Test with missing variables
 4. **Have I proven this works, or do I just think it works?** → Write tests that could fail
+5. **Did I verify this in the actual code?** → Don't trust docs alone, check the implementation
 
 ## Final Guidance
 
