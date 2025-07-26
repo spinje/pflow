@@ -272,11 +272,31 @@ def _extract_written_variables(workflow_ir, registry):
 ### Phase 1: Update Scanner (scanner.py)
 
 ```python
-# scanner.py - Update extract_metadata function
-def extract_metadata(cls: type, module_path: str, file_path: Path) -> dict[str, Any]:
-    """Extract metadata from a node class including parsed interface."""
-    # Import at function level to avoid circular imports
-    from pflow.registry.metadata_extractor import MetadataExtractor
+# scanner.py - Add at module level
+_metadata_extractor = None
+
+def get_metadata_extractor():
+    """Get or create singleton MetadataExtractor instance."""
+    global _metadata_extractor
+    if _metadata_extractor is None:
+        from pflow.registry.metadata_extractor import MetadataExtractor
+        _metadata_extractor = MetadataExtractor()
+    return _metadata_extractor
+
+# Update extract_metadata function
+def extract_metadata(cls: type, module_path: str, file_path: Path,
+                    extractor: Optional[MetadataExtractor] = None) -> dict[str, Any]:
+    """Extract metadata from a node class including parsed interface.
+
+    Args:
+        cls: The node class to extract metadata from
+        module_path: The module path for the node
+        file_path: The file path where the node is defined
+        extractor: Optional MetadataExtractor instance (for testing/DI)
+    """
+    # Use provided extractor or get singleton
+    if extractor is None:
+        extractor = get_metadata_extractor()
 
     # Get basic metadata (current implementation)
     metadata = {
@@ -289,7 +309,6 @@ def extract_metadata(cls: type, module_path: str, file_path: Path) -> dict[str, 
 
     # NEW: Parse interface from docstring
     try:
-        extractor = MetadataExtractor()
         parsed = extractor.extract_metadata(cls)
 
         # Store full parsed interface
@@ -302,14 +321,21 @@ def extract_metadata(cls: type, module_path: str, file_path: Path) -> dict[str, 
         }
     except Exception as e:
         # For MVP: Fail fast on parsing errors - fix the node!
-        logger.error(f"Failed to parse interface for {cls.__name__}: {e}")
+        # Provide actionable error messages with file location
+        logger.error(
+            f"Failed to parse interface for {cls.__name__} at {file_path}:\n"
+            f"  Error: {e}\n"
+            f"  Fix: Check Interface section formatting in docstring"
+        )
         raise
 
     return metadata
 ```
 
 **Critical Details**:
-- Import MetadataExtractor inside function (avoid circular imports)
+- Use dependency injection pattern with singleton fallback
+- Avoids circular imports by lazy loading and caching
+- Allows testing by injecting mock extractor
 - Fail fast on errors - no fallbacks for MVP
 - Preserve ALL metadata (types, descriptions, structures)
 - If scanning fails, fix the node rather than hide the problem
@@ -357,29 +383,29 @@ def validate_workflow_templates(
     # Extract all templates from workflow
     all_templates = TemplateValidator._extract_all_templates(workflow_ir)
 
-    # Get variables that will be written by nodes
-    written_vars = TemplateValidator._extract_written_variables(workflow_ir, registry)
+    # Get full output structure from nodes
+    node_outputs = TemplateValidator._extract_node_outputs(workflow_ir, registry)
 
-    # Build set of all available variables
-    available_vars = set(available_params.keys()) | written_vars
-
-    # Check each template has a source
+    # Validate each template path
     for template in all_templates:
-        # Handle nested paths like $config.api.key
-        base_var = template.split(".")[0]
-
-        if base_var not in available_vars:
+        if not TemplateValidator._validate_template_path(
+            template, available_params, node_outputs
+        ):
             errors.append(
-                f"Template variable ${template} has no source - "
-                f"not in initial_params and not written by any node"
+                f"Template variable ${template} has no valid source - "
+                f"either not provided in initial_params or path doesn't exist in node outputs"
             )
 
     return errors
 
 @staticmethod
-def _extract_written_variables(workflow_ir: dict[str, Any], registry: Registry) -> set[str]:
-    """Extract all variables written by nodes using interface metadata."""
-    written_vars = set()
+def _extract_node_outputs(workflow_ir: dict[str, Any], registry: Registry) -> dict[str, Any]:
+    """Extract full output structures from nodes using interface metadata.
+
+    Returns:
+        Dict mapping variable names to their full structure/type info
+    """
+    node_outputs = {}
 
     for node in workflow_ir.get("nodes", []):
         node_type = node.get("type")
@@ -391,17 +417,115 @@ def _extract_written_variables(workflow_ir: dict[str, Any], registry: Registry) 
         if node_type not in nodes_metadata:
             raise ValueError(f"Unknown node type: {node_type}")
 
-        metadata = nodes_metadata[node_type]
+        interface = nodes_metadata[node_type]["interface"]
 
-        # Get pre-parsed interface (must exist after scanner update)
-        interface = metadata["interface"]
-
-        # Extract output keys
+        # Extract outputs with full structure
         for output in interface["outputs"]:
-            written_vars.add(output["key"])  # Always dict format
+            if isinstance(output, str):
+                # Simple format: just the key, no structure
+                node_outputs[output] = {"type": "any"}
+            else:
+                # Rich format: includes type and structure
+                key = output["key"]
+                node_outputs[key] = {
+                    "type": output.get("type", "any"),
+                    "structure": output.get("structure", {})
+                }
 
-    return written_vars
+    return node_outputs
+
+@staticmethod
+def _validate_template_path(
+    template: str,
+    initial_params: dict[str, Any],
+    node_outputs: dict[str, Any]
+) -> bool:
+    """Validate a template path exists in available sources.
+
+    For example, if template is "$api_config.endpoint.url":
+    1. Check if "api_config" exists in initial_params or node_outputs
+    2. If from node_outputs, traverse the structure to verify path exists
+    3. If from initial_params, check runtime value (if dict) or return True
+
+    Args:
+        template: Template string like "$var" or "$var.field.subfield"
+        initial_params: Parameters provided by planner
+        node_outputs: Full structure info from node interfaces
+
+    Returns:
+        True if the path is valid, False otherwise
+    """
+    parts = template.split(".")
+    base_var = parts[0]
+
+    # Check initial_params first (higher priority)
+    if base_var in initial_params:
+        if len(parts) == 1:
+            return True
+
+        # For nested paths in initial_params, we can't validate at compile time
+        # since values are runtime-dependent. This is a limitation.
+        # TODO: Consider requiring type hints for initial_params in the future
+        return True
+
+    # Check node outputs with full structure validation
+    if base_var in node_outputs:
+        if len(parts) == 1:
+            return True
+
+        # Validate the full path exists in the structure
+        output_info = node_outputs[base_var]
+        current_structure = output_info.get("structure", {})
+
+        # If no structure info, we can't validate nested paths
+        if not current_structure:
+            # If type is dict/object, assume path might exist
+            # If type is primitive (str, int), path definitely doesn't exist
+            output_type = output_info.get("type", "any")
+            return output_type in ["dict", "object", "any"]
+
+        # Traverse the structure
+        for part in parts[1:]:
+            if part not in current_structure:
+                return False
+            # Move deeper into structure
+            current_structure = current_structure[part]
+            if isinstance(current_structure, str):
+                # Reached a leaf type, no more traversal possible
+                break
+
+        return True
+
+    return False
 ```
+
+### Critical Insight: Full Path Validation
+
+This implementation validates **complete paths**, not just base variables. For example:
+
+```python
+# Node declares in Interface:
+# - Writes: shared["api_config"]: dict
+#     - endpoint: dict
+#         - url: str
+#         - method: str
+#     - auth: dict
+#         - token: str
+
+# Template: $api_config.endpoint.url
+# Validation: ✓ Passes (full path exists in structure)
+
+# Template: $api_config.endpoint.timeout
+# Validation: ✗ Fails (timeout not in structure)
+
+# Template: $api_config.endpoint.url.host
+# Validation: ✗ Fails (url is string, can't traverse further)
+```
+
+This catches type mismatches at validation time:
+- Node writes string, template expects `$value.field` → Validation fails
+- Node writes dict without expected field → Validation fails
+- Node writes correct structure → Validation passes
 
 **Delete**: All heuristic code (`_categorize_templates`, `common_outputs`, etc.)
 
@@ -418,6 +542,30 @@ if validate:
 ```
 
 The compiler already has the registry - just pass it to the validator.
+
+## Breaking API Changes
+
+**IMPORTANT**: This change modifies the public API of `validate_workflow_templates`:
+
+```python
+# BEFORE (current signature)
+def validate_workflow_templates(
+    workflow_ir: dict[str, Any],
+    available_params: dict[str, Any]
+) -> list[str]:
+
+# AFTER (new signature - adds required registry parameter)
+def validate_workflow_templates(
+    workflow_ir: dict[str, Any],
+    available_params: dict[str, Any],
+    registry: Registry  # NEW REQUIRED PARAMETER
+) -> list[str]:
+```
+
+All callers must be updated, including:
+- `compiler.py` (already shown in Phase 4)
+- Any tests that call this function directly
+- Any future tools that use validation
 
 ## Technical Nuances and Edge Cases
 
@@ -556,6 +704,51 @@ def test_validation_with_node_outputs():
     # Should pass - config-loader writes api_config
     errors = validate_workflow_templates(workflow, {"config_file": "config.json"}, registry)
     assert len(errors) == 0
+
+def test_validation_with_nested_paths():
+    """Test full path validation with nested structures."""
+    workflow = {
+        "nodes": [
+            {"id": "loader", "type": "config-loader", "params": {"path": "$config_file"}},
+            {"id": "api", "type": "api-call", "params": {
+                "url": "$api_config.endpoint.url",
+                "token": "$api_config.auth.token"
+            }}
+        ]
+    }
+
+    # Registry has config-loader with structured output:
+    # outputs: [{
+    #     "key": "api_config",
+    #     "type": "dict",
+    #     "structure": {
+    #         "endpoint": {"url": "str", "method": "str"},
+    #         "auth": {"token": "str"}
+    #     }
+    # }]
+
+    registry = Registry()
+    errors = validate_workflow_templates(workflow, {"config_file": "config.json"}, registry)
+    assert len(errors) == 0  # All paths exist
+
+def test_validation_catches_invalid_paths():
+    """Test validation fails for non-existent paths."""
+    workflow = {
+        "nodes": [
+            {"id": "writer", "type": "string-writer", "params": {}},
+            {"id": "reader", "type": "reader", "params": {
+                "value": "$output.field"  # string-writer outputs string, not dict!
+            }}
+        ]
+    }
+
+    # Registry has string-writer with:
+    # outputs: [{"key": "output", "type": "str"}]
+
+    registry = Registry()
+    errors = validate_workflow_templates(workflow, {}, registry)
+    assert len(errors) == 1
+    assert "output.field" in errors[0]  # Can't traverse string
 ```
 
 ### 4. Performance Benchmarks
@@ -564,7 +757,7 @@ Measure scanning time increase:
 ```python
 # Before: ~0.1s per node (just docstring)
 # After: ~0.2s per node (with parsing)
-# Total for 50 nodes: 5s → 10s (acceptable one-time cost)
+# Total for 50 nodes: 5s → 10s (per registry update - consider caching)
 ```
 
 ## Implementation Checklist
