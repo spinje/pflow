@@ -14,6 +14,10 @@ from typing import Any, Optional, Union, cast
 from pflow.registry import Registry
 from pocketflow import BaseNode, Flow
 
+from .node_wrapper import TemplateAwareNodeWrapper
+from .template_resolver import TemplateResolver
+from .template_validator import TemplateValidator
+
 # Set up module logger
 logger = logging.getLogger(__name__)
 
@@ -246,15 +250,19 @@ def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
     return cast(type[BaseNode], node_class)
 
 
-def _instantiate_nodes(ir_dict: dict[str, Any], registry: Registry) -> dict[str, BaseNode]:
-    """Instantiate node objects from IR node definitions.
+def _instantiate_nodes(
+    ir_dict: dict[str, Any], registry: Registry, initial_params: Optional[dict[str, Any]] = None
+) -> dict[str, Union[BaseNode, TemplateAwareNodeWrapper]]:
+    """Instantiate node objects from IR node definitions with template support.
 
     This function creates pocketflow node instances for each node in the IR,
     using the registry to look up node classes and setting any provided parameters.
+    Nodes with template parameters are wrapped for runtime resolution.
 
     Args:
         ir_dict: The IR dictionary containing nodes array
         registry: Registry instance for node class lookup
+        initial_params: Parameters extracted by planner (for template resolution)
 
     Returns:
         Dictionary mapping node_id to instantiated node objects
@@ -263,11 +271,13 @@ def _instantiate_nodes(ir_dict: dict[str, Any], registry: Registry) -> dict[str,
         CompilationError: If node instantiation fails
     """
     logger.debug("Starting node instantiation", extra={"phase": "node_instantiation"})
-    nodes: dict[str, BaseNode] = {}
+    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper]] = {}
+    initial_params = initial_params or {}
 
     for node_data in ir_dict["nodes"]:
         node_id = node_data["id"]
         node_type = node_data["type"]
+        params = node_data.get("params", {})
 
         logger.debug(
             "Creating node instance",
@@ -279,15 +289,28 @@ def _instantiate_nodes(ir_dict: dict[str, Any], registry: Registry) -> dict[str,
             node_class = import_node_class(node_type, registry)
 
             # Instantiate the node (no parameters to constructor)
-            node_instance = node_class()
+            node_instance: Union[BaseNode, TemplateAwareNodeWrapper] = node_class()
 
-            # Set parameters if provided
-            if node_data.get("params"):
+            # Check if any parameters contain templates
+            has_templates = any(
+                TemplateResolver.has_templates(value) for value in params.values() if isinstance(value, str)
+            )
+
+            if has_templates:
+                # Wrap node for template support (runtime proxy)
+                logger.debug(
+                    f"Wrapping node '{node_id}' for template resolution",
+                    extra={"phase": "node_instantiation", "node_id": node_id},
+                )
+                node_instance = TemplateAwareNodeWrapper(node_instance, node_id, initial_params)
+
+            # Set parameters (wrapper will separate template vs static)
+            if params:
                 logger.debug(
                     "Setting node parameters",
-                    extra={"phase": "node_instantiation", "node_id": node_id, "param_count": len(node_data["params"])},
+                    extra={"phase": "node_instantiation", "node_id": node_id, "param_count": len(params)},
                 )
-                node_instance.set_params(node_data["params"])
+                node_instance.set_params(params)
 
             nodes[node_id] = node_instance
 
@@ -305,7 +328,7 @@ def _instantiate_nodes(ir_dict: dict[str, Any], registry: Registry) -> dict[str,
     return nodes
 
 
-def _wire_nodes(nodes: dict[str, BaseNode], edges: list[dict[str, Any]]) -> None:
+def _wire_nodes(nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper]], edges: list[dict[str, Any]]) -> None:
     """Wire nodes together based on edge definitions.
 
     This function connects nodes using PocketFlow's >> operator for default
@@ -372,7 +395,9 @@ def _wire_nodes(nodes: dict[str, BaseNode], edges: list[dict[str, Any]]) -> None
     logger.debug("Node wiring complete", extra={"phase": "flow_wiring"})
 
 
-def _get_start_node(nodes: dict[str, BaseNode], ir_dict: dict[str, Any]) -> BaseNode:
+def _get_start_node(
+    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper]], ir_dict: dict[str, Any]
+) -> Union[BaseNode, TemplateAwareNodeWrapper]:
     """Identify the start node for the flow.
 
     This function determines which node should be the entry point for the flow.
@@ -426,12 +451,18 @@ def _get_start_node(nodes: dict[str, BaseNode], ir_dict: dict[str, Any]) -> Base
     return nodes[start_node_id]
 
 
-def compile_ir_to_flow(ir_json: Union[str, dict[str, Any]], registry: Registry) -> Flow:
-    """Compile JSON IR to executable pocketflow.Flow object.
+def compile_ir_to_flow(
+    ir_json: Union[str, dict[str, Any]],
+    registry: Registry,
+    initial_params: Optional[dict[str, Any]] = None,
+    validate: bool = True,
+) -> Flow:
+    """Compile JSON IR to executable pocketflow.Flow object with template support.
 
     This is the main entry point for the compiler. It takes a workflow
     IR (as JSON string or dict) and produces an executable Flow object
-    that can be run by the pflow runtime.
+    that can be run by the pflow runtime. Supports template variables
+    that are resolved at runtime.
 
     Note: This is a traditional function implementation, not a PocketFlow-based
     compiler. We transform IR → Flow objects directly.
@@ -439,15 +470,22 @@ def compile_ir_to_flow(ir_json: Union[str, dict[str, Any]], registry: Registry) 
     Args:
         ir_json: JSON string or dict representing the workflow IR
         registry: Registry instance for node metadata lookup
+        initial_params: Parameters extracted by planner from natural language
+                       Example: {"issue_number": "1234", "repo": "pflow"}
+                       from user saying "fix github issue 1234 in pflow repo"
+        validate: Whether to validate templates (default: True)
+                 Set to False only for testing template resolution in isolation
 
     Returns:
         Executable pocketflow.Flow object
 
     Raises:
         CompilationError: With rich context about what failed
+        ValueError: If template validation fails
         json.JSONDecodeError: If JSON string is malformed
     """
     logger.debug("Starting IR compilation", extra={"phase": "init"})
+    initial_params = initial_params or {}
 
     # Step 1: Parse input (string → dict)
     try:
@@ -465,38 +503,53 @@ def compile_ir_to_flow(ir_json: Union[str, dict[str, Any]], registry: Registry) 
         logger.exception("IR validation failed", extra={"phase": "validation"})
         raise
 
-    # Step 3: Log compilation steps
+    # Step 3: Validate templates if requested
+    if validate:
+        logger.debug("Validating template variables", extra={"phase": "template_validation"})
+        # Note: This is separate from validate_ir() which checks workflow structure.
+        # This validates we have the runtime parameters needed to execute.
+        errors = TemplateValidator.validate_workflow_templates(ir_dict, initial_params)
+        if errors:
+            error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+            logger.error(
+                "Template validation failed",
+                extra={"phase": "template_validation", "error_count": len(errors), "errors": errors},
+            )
+            raise ValueError(error_msg)
+
+    # Step 4: Log compilation steps
     logger.info(
         "IR validated, ready for compilation",
         extra={
             "phase": "pre-compilation",
             "nodes": len(ir_dict.get("nodes", [])),
             "edges": len(ir_dict.get("edges", [])),
+            "has_initial_params": bool(initial_params),
         },
     )
 
-    # Step 4: Instantiate nodes
+    # Step 5: Instantiate nodes with template support
     try:
-        nodes = _instantiate_nodes(ir_dict, registry)
+        nodes = _instantiate_nodes(ir_dict, registry, initial_params)
     except CompilationError:
         logger.exception("Node instantiation failed", extra={"phase": "node_instantiation"})
         raise
 
-    # Step 5: Wire nodes together
+    # Step 6: Wire nodes together
     try:
         _wire_nodes(nodes, ir_dict.get("edges", []))
     except CompilationError:
         logger.exception("Node wiring failed", extra={"phase": "flow_wiring"})
         raise
 
-    # Step 6: Get start node
+    # Step 7: Get start node
     try:
         start_node = _get_start_node(nodes, ir_dict)
     except CompilationError:
         logger.exception("Start node detection failed", extra={"phase": "start_detection"})
         raise
 
-    # Step 7: Create and return Flow
+    # Step 8: Create and return Flow
     logger.debug("Creating Flow object", extra={"phase": "flow_creation"})
     flow = Flow(start=start_node)
 

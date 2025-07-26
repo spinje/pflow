@@ -297,14 +297,17 @@ class TestEndToEndCompilation:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir_with_templates, test_registry)
+        flow = compile_ir_to_flow(ir_with_templates, test_registry, validate=False)
 
-        # Get the node and check params
+        # Get the node and check it's wrapped
         node = flow.start_node
-        # The node should have the params set
-        assert hasattr(node, "params")
-        assert node.params["template"] == "$user_input"
-        assert node.params["number"] == "$count"
+        # With templates, the node should be wrapped
+        from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+
+        assert isinstance(node, TemplateAwareNodeWrapper)
+        # The wrapper should have the template params stored
+        assert node.template_params["template"] == "$user_input"
+        assert node.template_params["number"] == "$count"
 
     def test_compilation_with_json_string_input(self, simple_ir, test_registry):
         """Test compilation accepts JSON string input."""

@@ -116,7 +116,8 @@ class TestInstantiateNodes:
 
             # Verify
             assert len(nodes) == 1
-            mock_node.set_params.assert_called_once_with({"threshold": 0.5, "model": "gpt-4", "template": "$input_var"})
+            # When templates are present, node gets wrapped and only static params are set on inner node
+            mock_node.set_params.assert_called_once_with({"threshold": 0.5, "model": "gpt-4"})
 
     def test_instantiate_import_error(self):
         """Test error handling when import fails."""
@@ -418,14 +419,15 @@ class TestCompileIrToFlow:
             mock_node.set_params = Mock()
             mock_import.return_value = lambda: mock_node
 
-            # Compile
-            compile_ir_to_flow(ir_dict, mock_registry)
+            # Compile (disable validation since we're testing param passing, not template validation)
+            compile_ir_to_flow(ir_dict, mock_registry, validate=False)
 
-            # Verify params were set
+            # Verify params were set (template params excluded from inner node)
             mock_node.set_params.assert_called_once()
             params = mock_node.set_params.call_args[0][0]
             assert params["model"] == "gpt-4"
-            assert params["prompt"] == "Hello $name"  # Template variable unchanged
+            assert params["temperature"] == 0.7
+            # Template param "prompt" is not passed to inner node
 
     def test_compile_string_input(self):
         """Test compiling from JSON string input."""
