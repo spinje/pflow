@@ -10,7 +10,18 @@ Transform pflow's metadata system by moving interface parsing from runtime to sc
 
 ## Required Reading (IN THIS ORDER)
 
-### 1. FIRST: Read the Critical Context
+### 1. FIRST: Understand the Epistemic Approach
+**File**: `.taskmaster/workflow/epistemic-manifesto.md`
+
+**Purpose**: Core principles for deep understanding and robust development. This document establishes:
+- Your role as a reasoning system, not just an instruction follower
+- The importance of questioning assumptions and validating truth
+- How to handle ambiguity and uncertainty
+- Why elegance must be earned through robustness
+
+**Why read first**: This mindset is critical for implementing a foundational system change correctly. You'll need to question existing patterns, validate assumptions, and ensure the solution survives scrutiny.
+
+### 2. SECOND: Read the Critical Context
 **File**: `.taskmaster/tasks/task_19/node-ir-implementation-critical-context.md`
 
 **Purpose**: Hard-earned implementation wisdom from Task 18 (template system). This document contains:
@@ -22,7 +33,7 @@ Transform pflow's metadata system by moving interface parsing from runtime to sc
 
 **Why read first**: This will save you hours of debugging by learning from actual implementation experience.
 
-### 2. SECOND: Read the Comprehensive Implementation Guide
+### 3. THIRD: Read the Comprehensive Implementation Guide
 **File**: `.taskmaster/tasks/task_19/node-ir-comprehensive-implementation-guide.md`
 
 **Purpose**: Complete architectural design and implementation plan. This document contains:
@@ -32,9 +43,9 @@ Transform pflow's metadata system by moving interface parsing from runtime to sc
 - The full path validation approach
 - Testing strategies
 
-**Why read second**: This gives you the complete picture of WHAT to build and HOW to build it.
+**Why read third**: This gives you the complete picture of WHAT to build and HOW to build it.
 
-### 3. THIRD: Read the Formal Specification
+### 4. FOURTH: Read the Formal Specification
 **File**: `.taskmaster/tasks/task_19/18_spec.md`
 
 **Purpose**: Exact requirements, test criteria, and acceptance conditions. This document contains:
@@ -44,7 +55,7 @@ Transform pflow's metadata system by moving interface parsing from runtime to sc
 - Performance requirements
 - Error handling specifications
 
-**Why read third**: This ensures you meet all formal requirements after understanding the context and design.
+**Why read fourth**: This ensures you meet all formal requirements after understanding the context and design.
 
 ## Key Outcomes You Must Achieve
 
@@ -100,12 +111,105 @@ The context builder output format must be EXACTLY preserved. The planner will br
 
 ## Your Implementation Order
 
-1. **Start with understanding**: Read the MetadataExtractor tests to see all format variations
-2. **Implement scanner changes**: Add dependency injection and interface parsing
-3. **Update validator**: Full path traversal replacing heuristics
-4. **Simplify context builder**: Remove parsing, use stored data
-5. **Run full test suite**: Ensure nothing breaks
-6. **Clean up**: Remove all old heuristic code
+### 0. Create Progress Log (FIRST!)
+
+Create and continuously update: `.taskmaster/tasks/task_19/implementation/progress-log.md`
+
+```markdown
+# Task 19 Implementation Progress Log
+
+## [Timestamp] - Starting Implementation
+Reading epistemic manifesto and understanding the approach...
+```
+
+**Update this file AS YOU WORK** - every discovery, every bug, every insight!
+
+### 1. Start with understanding
+Read the MetadataExtractor tests to see all format variations
+
+### 2. Implement scanner changes
+Add dependency injection and interface parsing
+
+### 3. Update validator
+Full path traversal replacing heuristics
+
+### 4. Simplify context builder
+Remove parsing, use stored data
+
+### 5. Run full test suite
+Ensure nothing breaks
+
+### 6. Clean up
+Remove all old heuristic code
+
+## Real-Time Learning Capture
+
+**AS YOU IMPLEMENT**, continuously append to your progress log:
+
+```markdown
+## [Timestamp] - [What I'm trying]
+Attempting to [specific action]...
+
+Result: [What happened]
+- ✅ What worked: [Specific detail]
+- ❌ What failed: [Specific detail]
+- 💡 Insight: [What I learned]
+
+Code that worked:
+```python
+# Actual code snippet
+```
+```
+
+## Handle Discoveries and Deviations
+
+**When you discover the plan needs adjustment:**
+
+1. Document why the original plan didn't work
+2. Capture what you learned
+3. Update the plan with new approach
+4. Continue with new understanding
+
+Append deviation to progress log:
+```markdown
+## [Time] - DEVIATION FROM PLAN
+- Original plan: [what was planned]
+- Why it failed: [specific reason]
+- New approach: [what you're trying instead]
+- Lesson: [what this teaches us]
+```
+
+## Test Creation Guidelines
+
+**Core Principle**: "Test what matters"
+
+**Focus on quality over quantity**:
+- Test public interfaces and critical paths
+- Test edge cases where bugs typically hide
+- Create integration tests when components interact
+- Document only interesting test discoveries in your progress log
+
+**What to test**:
+- **Critical paths**: Business logic that must work correctly
+- **Public APIs**: Functions/classes exposed to other modules
+- **Error handling**: How code behaves with invalid input
+- **Integration points**: Where components connect
+
+**What NOT to test**:
+- Simple getters/setters
+- Configuration loading
+- Framework code
+- Internal helper functions (unless complex)
+
+**Progress Log - Only document testing insights**:
+```markdown
+## 14:50 - Testing revealed edge case
+While testing extract_metadata(), discovered that nodes with
+circular imports crash the scanner. Added import guard pattern.
+This affects how we handle all dynamic imports.
+```
+
+**Remember**: Quality tests that catch real bugs > many trivial tests
 
 ## What NOT to Do
 
@@ -135,5 +239,7 @@ You'll know you're done when:
 You're not adding new functionality - you're moving existing parsing from runtime to scan-time. The system behavior should be identical, just faster and more accurate. The template system (Task 18) works because it's transparent to nodes. Your Node IR must be equally transparent.
 
 The design in the implementation guide is solid and battle-tested. Trust it. The details will try to kill you (especially the output format handling), but the architecture is right.
+
+Following the epistemic manifesto: Question assumptions, validate against the code, and ensure your implementation survives scrutiny. When faced with ambiguity, surface it rather than guessing. This is a foundational change - robustness matters more than elegance.
 
 Good luck! You're fixing a fundamental flaw that will make pflow significantly more reliable.
