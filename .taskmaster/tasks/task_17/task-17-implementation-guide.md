@@ -351,8 +351,9 @@ Output as JSON:
 ### Clarification on Dependencies
 - **Task 14**: Structure documentation (enables path-based mappings) ✅ Done
 - **Task 15/16**: Context builder with two-phase discovery ✅ Done
+- **Task 18**: Template variable system with path support ✅ Done
 - **Task 12**: General LLM node (needed in registry for workflow generation)
-- **Tasks 18, 19**: These don't exist - ignore any references to them in research files
+- **Task 19**: Doesn't exist - ignore any references to it in research files
 
 ### Integration Requirements
 1. **CLI Integration**: Planner receives raw input string from CLI
@@ -411,7 +412,7 @@ def process_natural_language(raw_input: str, stdin_data: Any = None) -> None:
     # Extract results
     planner_output = shared.get("planner_output")
     if planner_output:
-        handle_planner_output(planner_output)  # CLI handles execution
+        handle_planner_output(planner_output)  # CLI handles execution with initial_params
 ```
 
 #### Planner Node Integration Examples
@@ -506,20 +507,22 @@ class ValidationNode(Node):
             return "invalid"
 ```
 
-#### Parameter Substitution by CLI (After Planner Returns)
+#### Parameter Passing by CLI (After Planner Returns)
 ```python
 # In CLI after receiving planner output
 def execute_with_parameters(workflow_ir: dict, parameter_values: dict) -> None:
-    """Execute workflow with parameter substitution."""
-    from pflow.runtime import compile_ir_to_flow
+    """Execute workflow with parameters from planner."""
+    from pflow.runtime.compiler import compile_ir_to_flow
     from pflow.registry import Registry
 
-    # Substitute template variables
-    executable_ir = substitute_parameters(workflow_ir, parameter_values)
-
-    # Compile and execute
+    # Task 18 handles template resolution - just pass initial_params!
     registry = Registry()
-    flow = compile_ir_to_flow(executable_ir, registry)
+    flow = compile_ir_to_flow(
+        workflow_ir,
+        registry,
+        initial_params=parameter_values,  # Template resolution happens at runtime
+        validate=True  # Validates all required params are provided
+    )
 
     # Run with isolated shared store
     workflow_shared = {"stdin": stdin_data} if stdin_data else {}
@@ -720,43 +723,45 @@ The runtime will handle substitution transparently.
 Generate complete JSON matching the IR schema with nodes, edges, and params."""
 ```
 
-### Template Variable Resolution Order
-The runtime proxy will handle template resolution transparently, but the planner should validate that all template variables can be resolved:
+### Template Variable Validation (Provided by Task 18)
+The compiler now handles template validation automatically when validate=True (default):
 
 ```python
-def validate_template_variables(workflow: dict, parameter_values: dict, registry_metadata: dict) -> None:
-    """Validate that all template variables in the workflow can be resolved.
+# In the planner's validation node
+from pflow.runtime.template_validator import TemplateValidator
 
-    Critical: Node outputs come from registry metadata, NOT from the workflow IR.
+def validate_templates_before_execution(workflow: dict, parameter_values: dict) -> None:
+    """Validate that all template variables can be resolved.
 
-    MVP approach:
-    - Only validate base variables (ignore paths like .user.login)
-    - Ignore array indices
-    - Everything is treated as strings
+    Task 18 provides this validation - the planner just needs to handle errors.
     """
-    # Extract all template variables from node params
-    template_vars = set()
-    for node in workflow.get("nodes", []):
-        for param_value in node.get("params", {}).values():
-            if isinstance(param_value, str):
-                # Extract template variables including paths like $issue_data.user.login
-                variables = re.findall(r'\$(\w+(?:\.[\w\[\]]+)*)', param_value)
-                template_vars.update(variables)
+    # The actual Task 18 API:
+    errors = TemplateValidator.validate_workflow_templates(workflow, parameter_values)
 
-    # Collect all available data sources
-    available = set(parameter_values.keys())  # CLI parameters
+    if errors:
+        # Errors are human-readable strings like:
+        # - "Missing required parameter: --issue_number"
+        # - "Missing required parameter: --repo_name"
+        error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+        raise ValueError(error_msg)
 
-    # Add outputs from all nodes (from registry, NOT from IR!)
-    for node in workflow.get("nodes", []):
-        node_type = node["type"]
-        outputs = registry_metadata.get(node_type, {}).get("outputs", [])
-        available.update(outputs)
-
-    # Simple validation: check base variables exist
-    missing = template_vars - available
-    if missing:
-        raise ValidationError(f"Template variables have no source: {missing}")
+# Even simpler - the compiler does this automatically:
+try:
+    flow = compile_ir_to_flow(
+        workflow_ir,
+        registry,
+        initial_params=parameter_values,
+        validate=True  # Default - validates templates automatically
+    )
+except ValueError as e:
+    # Handle validation errors
+    print(f"Validation failed: {e}")
 ```
+
+**Note**: Task 18's validator uses heuristics to categorize parameters:
+- Simple variables like `$issue_number` → Expected from CLI/initial_params
+- Dotted paths like `$data.field` → Expected from shared store at runtime
+- Set `validate=False` only when some params come from runtime
 
 ### Example: LLM-Generated Complete Workflow
 When user says "fix github issue 123", the LLM generates:
@@ -1314,8 +1319,8 @@ After thorough investigation of the codebase and documentation, I've discovered 
 - Workflow loading from `~/.pflow/workflows/` is already implemented
 - Structure documentation (JSON + paths) shows available paths for template variables
 
-### 2. Template Variable Resolution Confirmed
-Documentation has been updated to confirm template variables are preserved in JSON IR and resolved at runtime. This enables the "Plan Once, Run Forever" philosophy where workflows can be reused with different parameters.
+### 2. Template Variable Resolution Implemented
+Task 18 has fully implemented the template variable system. Templates are preserved in JSON IR and resolved at runtime through the `TemplateAwareNodeWrapper`. This enables the "Plan Once, Run Forever" philosophy where workflows can be reused with different parameters.
 
 ### 3. CLI Integration Status
 - CLI accepts natural language (quoted) and CLI syntax (unquoted)

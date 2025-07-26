@@ -6,16 +6,17 @@ This file contains critical concepts, constraints, and decision rationale for th
 
 Task 17 is the core feature that makes pflow unique - the Natural Language Planner that enables "Plan Once, Run Forever". After extensive research, I've identified several critical ambiguities and decisions that need to be made before implementation can begin.
 
-**Update**: Tasks 14 and 15 have been completed successfully:
+**Update**: Tasks 14, 15, and 18 have been completed successfully:
 - **Task 14**: ✅ Implemented structured output metadata support, enabling the planner to see available paths for template variables
 - **Task 15**: ✅ Extended the context builder for two-phase discovery, preventing LLM overwhelm while supporting workflow reuse
+- **Task 18**: ✅ Implemented template variable system with path support, enabling workflow reusability through runtime parameter substitution
 
 ### Key Breakthrough Insights:
 1. The workflow discovery mechanism can reuse the exact same pattern as node discovery - the context builder already provides the perfect format.
 2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
 3. Two-phase approach separates discovery (what to use) from planning (how to connect), preventing information overload.
 4. Hybrid validation approach: Use Pydantic models for type-safe IR generation with Simon Willison's LLM library, then validate with JSONSchema for comprehensive checking.
-5. **Template paths** (`$data.field.subfield`) solve 90% of data access needs
+5. **Template paths** (`$data.field.subfield`) solve 90% of data access needs - now implemented by Task 18
 6. No proxy mappings needed for MVP - dramatically simpler implementation
 
 ### How It All Fits Together
@@ -301,34 +302,19 @@ pflow fix-issue --issue=5678  # $issue → "5678"
   - Others remain as parameters for runtime (like `$issue_number`)
   - Most flexible but most complex
 
-**Resolution**: Option B with path support - Runtime resolution is ESSENTIAL. The addition of path support (e.g., `$issue_data.user.login`) eliminates the need for proxy mappings in most cases, dramatically simplifying the MVP while maintaining full power.
+**Resolution**: Option B with path support - Runtime resolution is ESSENTIAL. Task 18 has implemented this with path support (e.g., `$issue_data.user.login`), eliminating the need for proxy mappings in most cases, dramatically simplifying the MVP while maintaining full power.
 
-**Validation Note**: The validation pipeline ensures all template variables can be resolved by tracking data flow through mock execution.
-
-**Implementation Note for Planner**: When the user says "fix github issue 1234", the planner must:
-1. Recognize "1234" as a parameter value (not part of the intent)
-2. Generate IR with `"issue_number": "$issue"` (NOT `"issue_number": "1234"`)
-3. Store the workflow with template variables intact
-4. The value "1234" is only used during the first execution, not baked into the workflow
-
-**MVP Enhancement**: Template variables now support paths (e.g., `$issue_data.user.login`), eliminating the need for complex data routing with proxy mappings.
-
-**Resolution**: Runtime resolves template variables WITH PATH SUPPORT
-- JSON IR contains `$variables` that get resolved during execution
-- Enables parameterized workflows (the core value prop!)
-- **MVP Enhancement**: Template variables support paths: `$issue_data.user.login`
-- Handles 90% of data access needs without proxy mappings
-- **Confirmed**: This is the correct approach for MVP
-
-**Validation Note**: The validation pipeline ensures all template variables can be resolved by tracking data flow through mock execution.
+**Validation Note**: Task 18's `TemplateValidator` ensures all template variables can be resolved before execution, with clear error messages for missing parameters.
 
 **Implementation Note for Planner**: When the user says "fix github issue 1234", the planner must:
 1. Recognize "1234" as a parameter value (not part of the intent)
 2. Generate IR with `"issue_number": "$issue"` (NOT `"issue_number": "1234"`)
 3. Store the workflow with template variables intact
-4. The value "1234" is only used during the first execution, not baked into the workflow
+4. Pass `{"issue_number": "1234"}` as `initial_params` to the compiler
 
-**MVP Enhancement**: Template variables now support paths (e.g., `$issue_data.user.login`), eliminating the need for complex data routing with proxy mappings.
+**Task 18 Implementation**: Template variables now support paths (e.g., `$issue_data.user.login`), with runtime resolution handled transparently by the `TemplateAwareNodeWrapper`.
+
+**Implementation Note from Task 18**: Templates are resolved at runtime by a transparent wrapper around nodes, NOT during compilation. The compiler validates that required parameters exist in initial_params (unless validate=False), but actual substitution happens during workflow execution. This enables access to both initial_params and runtime shared store data.
 
 ## Template-Driven Workflow Architecture
 
@@ -597,6 +583,8 @@ def resolve_template(var_name, shared):
         return str(value)
     return str(shared.get(var_name, ''))
 ```
+
+**Note**: This is a conceptual example. Task 18's actual implementation handles edge cases like None values, missing paths, and proper string conversion. The planner doesn't need to implement resolution - just generate workflows with `$variables` and pass extracted values as `initial_params` to the compiler.
 
 This approach ensures:
 - No complex mapping structures needed for common cases
@@ -893,7 +881,7 @@ Template variables convert ALL values to strings:
 
 **For MVP, use template variables (with optional path support) for all dynamic data access:**
 - Simple values (most common): `$issue_number`, `$file_path`, `$prompt`
-- Nested data (when needed): `$issue_data.user.login`, `$api_response.data.items[0]`
+- Nested data (when needed): `$issue_data.user.login`, `$api_response.data.items` (**Note: Array indexing like [0] is NOT supported**)
 - String composition: `"Fix issue #$issue_number in $repo_name"`
 - CLI parameters: `$issue_number` (from --issue_number=1234)
 
@@ -919,37 +907,43 @@ Template variables convert ALL values to strings:
 
 ### Simplified Strategy
 
-For MVP, avoid collisions by using descriptive node IDs that naturally namespace the data:
+For MVP, avoid collisions by using descriptive node IDs and understanding how data flows:
 
-1. **Use descriptive node IDs** - `github1`, `github2` instead of generic names
-2. **Leverage node ID as namespace** - Data naturally goes to `shared["github1"]`, `shared["github2"]`
-3. **Access with template paths** - `$github1.issue_data`, `$github2.issue_data`
-4. **Trust the LLM** - Modern LLMs understand this pattern well
+1. **Use descriptive node IDs** - `github_main`, `github_fork` instead of generic names
+2. **Understand output keys** - Nodes write to specific keys defined by their implementation (e.g., github-get-issue writes to `shared["issue_data"]`)
+3. **Collision avoidance** - When using multiple nodes of the same type, they'll overwrite each other's outputs
+4. **MVP workaround** - Design workflows to avoid needing the same node type multiple times, or ensure they run sequentially
 
 ### Prompt Guidance
 
 Include this guidance in the planner prompt:
 ```
-When using multiple nodes of the same type, give them descriptive IDs:
-- "github_main" and "github_fork" instead of "node1" and "node2"
-- "api_users" and "api_posts" instead of "api1" and "api2"
+Important: Nodes write to fixed output keys, NOT based on their ID.
+For MVP, avoid using multiple instances of the same node type that write to the same key.
+If you must use the same node type multiple times, ensure they run sequentially
+so later nodes can use data from earlier ones.
 
-This naturally avoids collisions as each node writes to its own namespace.
-Access the data using template paths: $github_main.issue_data
+Use descriptive node IDs for clarity:
+- "fetch_main_issue" and "fetch_related_issue" instead of "node1" and "node2"
 ```
 
-### Example Pattern
+### Example Pattern (Sequential to Avoid Collisions)
 ```json
 {
   "nodes": [
-    {"id": "github_main", "type": "github-get-issue", "params": {"issue": "123"}},
-    {"id": "github_fork", "type": "github-get-issue", "params": {"issue": "456"}},
+    {"id": "fetch_issue", "type": "github-get-issue", "params": {"issue": "123"}},
+    {"id": "analyze_issue", "type": "llm", "params": {
+      "prompt": "Analyze this issue: $issue_data.title - $issue_data.body"
+    }},
+    {"id": "fetch_related", "type": "github-get-issue", "params": {"issue": "456"}},
     {"id": "compare", "type": "llm", "params": {
-      "prompt": "Compare:\nMain: $github_main.issue_data.title\nFork: $github_fork.issue_data.title"
+      "prompt": "Compare to related issue: $issue_data.title"
     }}
   ]
 }
 ```
+
+**Note**: In this example, the second github-get-issue overwrites the first one's data. This is a limitation of MVP without proxy mappings.
 
 ### v2.0 Enhancement
 
@@ -1163,7 +1157,7 @@ ComponentBrowsingNode → GeneratorNode → ValidatorNode → MetadataGeneration
 3. ~~**Error Feedback Node**: Should this be a separate node or part of validator?~~ **RESOLVED**: Part of validator with specific routing
 4. ~~**Retry Count Access**: Should we use `cur_retry` attribute or track in shared?~~ **RESOLVED**: Use node's max_retries (3 for all nodes)
 5. ~~**Checkpoint Frequency**: After each successful node or only at key points?~~ **RESOLVED**: Not needed for MVP
-6. ~~**Template Variable Format**: Should we support both `$var` and `${var}` syntax?~~ **RESOLVED**: `$var` and `$var.field.subfield` path syntax for MVP (no ${var} braces). Path support was implemented in Task 18.
+6. ~~**Template Variable Format**: Should we support both `$var` and `${var}` syntax?~~ **RESOLVED**: `$var` and `$var.field.subfield` path syntax for MVP (no ${var} braces). Path support implemented by Task 18.
 7. ~~**Workflow Storage Trigger**: Does the planner save new workflows automatically or prompt user?~~ **RESOLVED**: CLI handles after user approval
 
 
