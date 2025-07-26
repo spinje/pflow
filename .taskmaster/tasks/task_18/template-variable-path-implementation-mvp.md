@@ -344,6 +344,24 @@ value = shared.get("key") or self.params.get("key")
 
 This enables template variables in params to work as dynamic values.
 
+### Concrete Example from write-file Node
+```python
+def prep(self, shared):
+    """Example of the fallback pattern in actual pflow node."""
+    # All values check shared store first, then fall back to params
+    content = shared.get("content") or self.params.get("content")
+    file_path = shared.get("file_path") or self.params.get("file_path")
+    encoding = shared.get("encoding") or self.params.get("encoding", "utf-8")
+    append = shared.get("append") or self.params.get("append", False)
+
+    return {
+        "content": content,
+        "file_path": file_path,
+        "encoding": encoding,
+        "append": append
+    }
+```
+
 ### Why This Pattern Enables Template Variables
 
 This fallback pattern is implemented in EVERY pflow node and is the foundation that makes template variables work:
@@ -389,6 +407,20 @@ src/pflow/runtime/
 3. Resolve paths by traversing nested objects
 4. Replace templates with string values
 5. Update node params before execution
+
+## External Dependencies
+
+### ValidationError from Core Module
+```python
+# From pflow.core - used when validation fails
+class ValidationError(Exception):
+    def __init__(self, message: str, path: str = "", suggestion: str = ""):
+        self.message = message
+        self.path = path  # e.g., "nodes[0].params"
+        self.suggestion = suggestion  # e.g., "Did you mean 'read-file'?"
+```
+
+Note: The template validator raises ValueError (not ValidationError) to distinguish parameter validation from IR structure validation.
 
 ## Code Implementation
 
@@ -631,6 +663,13 @@ class TemplateAwareNodeWrapper:
 
 ### Phase 3: Compiler Integration
 
+**Current compiler signature** (before modification):
+```python
+def compile_ir_to_flow(ir_dict: Dict[str, Any], registry: Registry) -> Flow:
+    """Current signature that will be extended with initial_params parameter."""
+```
+
+**Modified implementation**:
 ```python
 # Modifications to src/pflow/runtime/compiler.py
 
@@ -1116,6 +1155,25 @@ def test_compile_with_validation():
 
     assert "Template validation failed" in str(exc_info.value)
     assert "Missing required parameter: --missing_param" in str(exc_info.value)
+```
+
+### Running the Tests
+
+Execute tests with these commands:
+```bash
+# Run all tests
+make test
+
+# Run specific test file
+pytest tests/test_runtime/test_template_resolver.py -v
+pytest tests/test_runtime/test_template_validator.py -v
+pytest tests/test_runtime/test_node_wrapper.py -v
+
+# Run with coverage
+pytest tests/test_runtime/ --cov=src/pflow/runtime
+
+# Run linting and type checking
+make check
 ```
 
 ## Common Pitfalls and Solutions
