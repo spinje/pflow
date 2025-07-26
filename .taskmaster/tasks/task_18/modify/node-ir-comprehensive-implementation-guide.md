@@ -6,7 +6,7 @@ This document provides complete implementation guidance for fixing template vali
 
 **Key Insight**: We're not adding new parsing - we're moving existing parsing from runtime (context builder) to scan-time (scanner), making it available to all consumers.
 
-**MVP Focus**: Since pflow is in early development, we make a clean break - no backward compatibility, no fallbacks, just the right implementation.
+**MVP Focus**: Since pflow is in early development with no existing users, we make a clean break - no backward compatibility, no fallbacks, just the right implementation.
 
 ## Table of Contents
 
@@ -20,52 +20,47 @@ This document provides complete implementation guidance for fixing template vali
 
 ## Problem Analysis
 
-### The Validation Problem
+### The Core Validation Problem
 
-Current template validation uses name-based heuristics that fail for valid workflows:
+The template validator uses hardcoded heuristics to guess which variables come from the shared store:
 
 ```python
-# In template_validator.py lines 106-118
+# Current broken approach in template_validator.py (lines 106-118)
 common_outputs = {
     "result", "output", "summary", "content", "response",
     "data", "text", "error", "status", "report", "analysis"
 }
+
+# If variable name not in this list, assumes it's a CLI parameter
 ```
 
-**The Core Issue**: The validator doesn't know what variables nodes actually write to the shared store. It just guesses based on variable names. If your variable isn't in the hardcoded list above, validation fails.
+**This causes false validation failures**: If a node writes `$api_config` (not in the magic list), validation fails even though the workflow is valid.
 
-**Real Example - This Valid Workflow Fails**:
+### Real-World Failure Example
 
 ```json
+// Valid workflow that FAILS validation
 {
   "nodes": [
     {
       "id": "loader",
       "type": "config-loader",
-      "params": {"path": "$config_path"}
-      // This node writes api_settings to shared store
+      "params": {"path": "$config_path"}  // Reads from CLI param
     },
     {
       "id": "api",
       "type": "api-call",
-      "params": {"config": "$api_settings"}
-      // Uses the api_settings from loader
+      "params": {"config": "$api_config"}  // Reads from shared store
     }
   ]
 }
 ```
 
-**What the User Sees**:
-```
-ValueError: Template validation failed:
-  - Missing required parameter: --api_settings
-```
+User sees: `"Missing required parameter: --api_config"` even though `config-loader` writes it!
 
-**Why This is Wrong**: The `config-loader` node writes `api_settings` to the shared store, so `$api_settings` is perfectly valid. But the validator doesn't know this - it only knows that "api_settings" isn't in its magic `common_outputs` list, so it assumes it must be a CLI parameter.
+**The fix**: Look at what nodes ACTUALLY write according to their Interface documentation.
 
-**The Solution**: Instead of guessing with heuristics, look at what each node's Interface section says it writes. If `config-loader` writes `api_settings`, then `$api_settings` is valid.
-
-### The Parsing Problem
+### The Parsing Redundancy Problem
 
 Currently, the same docstrings are parsed repeatedly:
 
@@ -87,7 +82,7 @@ def extract_metadata(cls: type, module_path: str, file_path: Path) -> dict[str, 
         "module": module_path,
         "class_name": cls.__name__,
         "name": get_node_name(cls),
-        "docstring": inspect.getdoc(cls) or "",  # RAW STRING
+        "docstring": inspect.getdoc(cls) or "",  # RAW STRING - NO PARSING
         "file_path": str(file_path.absolute()),
     }
 ```
@@ -223,11 +218,11 @@ Even storing ALL metadata for 100 nodes = ~1MB (negligible).
 
 ## Consumer Impact Analysis
 
-### 1. Context Builder (Simplification)
+### 1. Context Builder (Major Simplification)
 
 **Before** (context_builder.py:75-110):
 ```python
-# Complex dynamic import and parsing
+# Complex dynamic import and parsing (~100 lines)
 module = importlib.import_module(module_path)
 node_class = getattr(module, class_name)
 metadata = extractor.extract_metadata(node_class)
@@ -235,16 +230,22 @@ metadata = extractor.extract_metadata(node_class)
 
 **After**:
 ```python
-# Direct usage of pre-parsed data
-metadata = node_info.get("interface", {})
-# No imports, no parsing, just formatting
+# Direct usage of pre-parsed data (~10 lines)
+for node_type, node_info in registry_metadata.items():
+    interface = node_info["interface"]  # Just use it!
+    processed_nodes[node_type] = {
+        "description": interface["description"],
+        "inputs": interface["inputs"],
+        "outputs": interface["outputs"],
+        "params": interface["params"],
+        "actions": interface["actions"],
+        "registry_info": node_info,
+    }
 ```
-
-Removes ~100 lines of parsing code!
 
 ### 2. Template Validator (New Capability)
 
-**Before**: Flawed heuristics
+**Before**: Flawed heuristics that cause false failures
 **After**: Accurate validation using interface.outputs
 
 ```python
@@ -252,14 +253,11 @@ def _extract_written_variables(workflow_ir, registry):
     written_vars = set()
     for node in workflow_ir.get("nodes", []):
         metadata = registry.get_nodes_metadata([node["type"]])
-        interface = metadata.get(node["type"], {}).get("interface", {})
+        interface = metadata[node["type"]]["interface"]
 
-        # Extract just the keys from outputs
-        for output in interface.get("outputs", []):
-            if isinstance(output, dict):
-                written_vars.add(output["key"])
-            else:
-                written_vars.add(output)  # Backward compat
+        # Extract output keys
+        for output in interface["outputs"]:
+            written_vars.add(output["key"])
     return written_vars
 ```
 
@@ -323,37 +321,30 @@ def extract_metadata(cls: type, module_path: str, file_path: Path) -> dict[str, 
 def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[str, dict], int]:
     """Process nodes from registry metadata."""
     processed_nodes = {}
-    skipped_count = 0
 
     for node_type, node_info in registry_metadata.items():
-        # NEW: Check for pre-parsed interface
-        if "interface" in node_info:
-            # Use pre-parsed data directly
-            interface = node_info["interface"]
-            processed_nodes[node_type] = {
-                "description": interface.get("description", "No description"),
-                "inputs": interface.get("inputs", []),
-                "outputs": interface.get("outputs", []),
-                "params": interface.get("params", []),
-                "actions": interface.get("actions", []),
-                "registry_info": node_info,
-            }
-        else:
-            # FALLBACK: Old parsing logic for backward compatibility
-            # (Current implementation remains for old registry format)
-            try:
-                # ... existing dynamic import and parsing code ...
-            except Exception as e:
-                logger.warning(f"Failed to process node '{node_type}': {e}")
-                skipped_count += 1
+        # Use pre-parsed interface data directly
+        interface = node_info["interface"]  # Must exist after scanner update
 
-    return processed_nodes, skipped_count
+        processed_nodes[node_type] = {
+            "description": interface["description"],
+            "inputs": interface["inputs"],
+            "outputs": interface["outputs"],
+            "params": interface["params"],
+            "actions": interface["actions"],
+            "registry_info": node_info,
+        }
+
+    # No more skipped nodes - if interface missing, that's a bug
+    return processed_nodes, 0
 ```
+
+**Delete**: All the dynamic import code, MetadataExtractor usage, error handling. Just use the data!
 
 ### Phase 3: Template Validator Implementation
 
 ```python
-# template_validator.py - Add new validation method
+# template_validator.py - Replace validate_workflow_templates
 @staticmethod
 def validate_workflow_templates(
     workflow_ir: dict[str, Any],
@@ -367,26 +358,21 @@ def validate_workflow_templates(
     all_templates = TemplateValidator._extract_all_templates(workflow_ir)
 
     # Get variables that will be written by nodes
-    written_vars = set()
-    if registry:
-        written_vars = TemplateValidator._extract_written_variables(workflow_ir, registry)
+    written_vars = TemplateValidator._extract_written_variables(workflow_ir, registry)
 
-        # Build set of all available variables
-        available_vars = set(available_params.keys()) | written_vars
+    # Build set of all available variables
+    available_vars = set(available_params.keys()) | written_vars
 
-        # Check each template has a source
-        for template in all_templates:
-            # Handle nested paths like $config.api.key
-            base_var = template.split(".")[0]
+    # Check each template has a source
+    for template in all_templates:
+        # Handle nested paths like $config.api.key
+        base_var = template.split(".")[0]
 
-            if base_var not in available_vars:
-                errors.append(
-                    f"Template variable ${template} has no source - "
-                    f"not in initial_params and not written by any node"
-                )
-    else:
-        # MVP: Registry is required for proper validation
-        raise ValueError("Registry required for template validation")
+        if base_var not in available_vars:
+            errors.append(
+                f"Template variable ${template} has no source - "
+                f"not in initial_params and not written by any node"
+            )
 
     return errors
 
@@ -403,8 +389,7 @@ def _extract_written_variables(workflow_ir: dict[str, Any], registry: Registry) 
         # Get node metadata from registry
         nodes_metadata = registry.get_nodes_metadata([node_type])
         if node_type not in nodes_metadata:
-            logger.warning(f"Node type '{node_type}' not found in registry")
-            continue
+            raise ValueError(f"Unknown node type: {node_type}")
 
         metadata = nodes_metadata[node_type]
 
@@ -418,6 +403,8 @@ def _extract_written_variables(workflow_ir: dict[str, Any], registry: Registry) 
     return written_vars
 ```
 
+**Delete**: All heuristic code (`_categorize_templates`, `common_outputs`, etc.)
+
 ### Phase 4: Compiler Integration
 
 ```python
@@ -429,6 +416,8 @@ if validate:
         registry  # Pass the registry we already have!
     )
 ```
+
+The compiler already has the registry - just pass it to the validator.
 
 ## Technical Nuances and Edge Cases
 
@@ -478,18 +467,15 @@ Scanner imports nodes dynamically, which can cause issues:
 - Handle import failures gracefully
 - Don't let one bad node break scanning
 
-### 4. Backward Compatibility Strategy
+### 4. Migration Process
 
-Support both old and new registry formats:
+Since we're making a clean break:
 
-```python
-if "interface" in node_metadata:
-    # New format - use directly
-    interface = node_metadata["interface"]
-else:
-    # Old format - parse docstring
-    # OR prompt user to re-run scanner
-```
+1. Update scanner code
+2. Run `pflow registry update` to regenerate with interfaces
+3. Update context builder and validator
+4. Delete old heuristic code
+5. Run tests
 
 ### 5. Memory Considerations
 
@@ -502,9 +488,9 @@ This is still tiny compared to modern RAM.
 
 ### 6. Error Handling Philosophy
 
-**Scanner**: Log warnings, use empty interface fallback
-**Consumers**: Handle missing interface gracefully
-**Never**: Let parsing errors break core functionality
+**Scanner**: Fail fast - if parsing fails, fix the node
+**Consumers**: Expect interface to exist - no fallbacks
+**Clear errors**: Better than silent failures
 
 ## Testing and Verification
 
@@ -531,39 +517,45 @@ def test_scanner_extracts_interface():
     assert metadata["interface"]["outputs"][0]["key"] == "output"
 ```
 
-### 2. Backward Compatibility Tests
+### 2. Context Builder Tests
 
 ```python
-def test_context_builder_handles_old_format():
-    """Test context builder works with old registry format."""
-    old_registry = {
+def test_context_builder_uses_interface():
+    """Test context builder uses pre-parsed interface data."""
+    registry_metadata = {
         "test-node": {
-            "docstring": "...",
-            "module": "...",
-            # No interface field
+            "interface": {
+                "description": "Test node",
+                "inputs": [{"key": "input", "type": "str", "description": ""}],
+                "outputs": [{"key": "output", "type": "str", "description": ""}],
+                "params": [],
+                "actions": ["default"]
+            }
         }
     }
-    # Should still work via fallback parsing
+
+    processed, skipped = _process_nodes(registry_metadata)
+    assert skipped == 0
+    assert processed["test-node"]["inputs"][0]["key"] == "input"
 ```
 
 ### 3. Validator Accuracy Tests
 
 ```python
-def test_validator_uses_interface_data():
-    """Test validator correctly uses interface outputs."""
+def test_validation_with_node_outputs():
+    """Test that validator uses actual node outputs."""
     workflow = {
         "nodes": [
-            {"type": "config-loader", "params": {"path": "$config_path"}},
-            {"type": "api-call", "params": {"settings": "$api_config"}}
+            {"id": "loader", "type": "config-loader", "params": {"path": "$config_file"}},
+            {"id": "api", "type": "api-call", "params": {"config": "$api_config"}}
         ]
     }
 
-    # With new registry including interface
-    registry = Registry()
-    # ... setup registry with interface data showing config-loader writes api_config
+    registry = Registry()  # Has config-loader with outputs: ["api_config"]
 
-    errors = validate_workflow_templates(workflow, {"config_path": "/path"}, registry)
-    assert len(errors) == 0  # No false positives!
+    # Should pass - config-loader writes api_config
+    errors = validate_workflow_templates(workflow, {"config_file": "config.json"}, registry)
+    assert len(errors) == 0
 ```
 
 ### 4. Performance Benchmarks
@@ -579,29 +571,29 @@ Measure scanning time increase:
 
 ### Scanner Phase
 - [ ] Import MetadataExtractor correctly (inside function)
-- [ ] Add try/except with comprehensive error handling
+- [ ] Add try/except that raises on error (no fallbacks)
 - [ ] Store full interface metadata (not just keys)
 - [ ] Test with nodes that have no Interface section
 - [ ] Test with malformed Interface sections
 - [ ] Verify performance impact is acceptable
 
 ### Context Builder Phase
-- [ ] Add interface detection logic
-- [ ] Implement fallback for old format
-- [ ] Remove unnecessary imports after migration
-- [ ] Test with both old and new registry formats
+- [ ] Remove all dynamic import code
+- [ ] Remove MetadataExtractor usage
+- [ ] Use interface data directly
+- [ ] Return 0 skipped nodes
 - [ ] Verify output remains identical
 
 ### Validator Phase
-- [ ] Add registry parameter to signature
+- [ ] Make registry parameter required
 - [ ] Implement _extract_written_variables
-- [ ] Keep heuristic fallback
+- [ ] Delete heuristic code
 - [ ] Add comprehensive logging
 - [ ] Test with complex workflows
 
 ### Integration Phase
 - [ ] Update compiler to pass registry
-- [ ] Add migration command/script
+- [ ] Run `pflow registry update`
 - [ ] Update documentation
 - [ ] Performance testing
 - [ ] End-to-end testing
@@ -616,4 +608,10 @@ Measure scanning time increase:
 
 ## Summary
 
-This implementation creates a proper "Node IR" by moving parsing from runtime to scan-time. It's not adding complexity - it's moving existing complexity to the right place. The result is faster runtime, accurate validation, and a solid foundation for future features.
+This MVP implementation:
+- Solves the actual problem (validation using real node outputs)
+- Removes all unnecessary complexity
+- Makes a clean break (no compatibility burden)
+- Is easy to understand and maintain
+
+Total changes: ~100 lines of code across 4 files. We're moving parsing from runtime to scan-time, creating a proper "Node IR" that eliminates heuristics and provides a solid foundation for the entire system.
