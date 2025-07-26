@@ -106,6 +106,7 @@ The context builder output format must be EXACTLY preserved. The planner will br
 - **DON'T** add backward compatibility for old registry format
 - **DON'T** hide or skip errors - fail fast with clear messages
 - **DON'T** optimize prematurely - get it working first
+- **DON'T** cheat when tests fail - fix the root cause
 
 ## Definition of Success
 
