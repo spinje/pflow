@@ -6,6 +6,8 @@ This document provides complete implementation guidance for fixing template vali
 
 **Key Insight**: We're not adding new parsing - we're moving existing parsing from runtime (context builder) to scan-time (scanner), making it available to all consumers.
 
+**MVP Focus**: Since pflow is in early development, we make a clean break - no backward compatibility, no fallbacks, just the right implementation.
+
 ## Table of Contents
 
 1. [Problem Analysis](#problem-analysis)
@@ -301,27 +303,18 @@ def extract_metadata(cls: type, module_path: str, file_path: Path) -> dict[str, 
             "actions": parsed.get("actions", [])
         }
     except Exception as e:
-        logger.warning(
-            f"Failed to parse interface for {cls.__name__}: {e}",
-            extra={"phase": "interface_parsing", "error": str(e)}
-        )
-        # Fallback: empty interface (backward compatible)
-        metadata["interface"] = {
-            "description": "No description",
-            "inputs": [],
-            "outputs": [],
-            "params": [],
-            "actions": []
-        }
+        # For MVP: Fail fast on parsing errors - fix the node!
+        logger.error(f"Failed to parse interface for {cls.__name__}: {e}")
+        raise
 
     return metadata
 ```
 
 **Critical Details**:
 - Import MetadataExtractor inside function (avoid circular imports)
-- Comprehensive error handling with fallback
+- Fail fast on errors - no fallbacks for MVP
 - Preserve ALL metadata (types, descriptions, structures)
-- Log warnings but don't fail scanning
+- If scanning fails, fix the node rather than hide the problem
 
 ### Phase 2: Context Builder Simplification
 
@@ -365,7 +358,7 @@ def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[s
 def validate_workflow_templates(
     workflow_ir: dict[str, Any],
     available_params: dict[str, Any],
-    registry: Optional[Registry] = None
+    registry: Registry  # Required for MVP - no optional parameters
 ) -> list[str]:
     """Validate all template variables have sources."""
     errors = []
@@ -392,13 +385,8 @@ def validate_workflow_templates(
                     f"not in initial_params and not written by any node"
                 )
     else:
-        # FALLBACK: Current heuristic implementation
-        cli_params, shared_vars = TemplateValidator._categorize_templates(
-            all_templates, available_params
-        )
-        missing_params = cli_params - set(available_params.keys())
-        for param in sorted(missing_params):
-            errors.append(f"Missing required parameter: --{param}")
+        # MVP: Registry is required for proper validation
+        raise ValueError("Registry required for template validation")
 
     return errors
 
@@ -420,20 +408,12 @@ def _extract_written_variables(workflow_ir: dict[str, Any], registry: Registry) 
 
         metadata = nodes_metadata[node_type]
 
-        # Check for new interface field
-        interface = metadata.get("interface")
-        if interface:
-            # Use pre-parsed outputs
-            for output in interface.get("outputs", []):
-                if isinstance(output, dict):
-                    written_vars.add(output["key"])
-                else:
-                    # Simple string format (backward compat)
-                    written_vars.add(output)
-        else:
-            # FALLBACK: Try parsing docstring (old registry format)
-            logger.debug(f"No interface field for '{node_type}', falling back to docstring parsing")
-            # Could implement minimal parsing here if needed
+        # Get pre-parsed interface (must exist after scanner update)
+        interface = metadata["interface"]
+
+        # Extract output keys
+        for output in interface["outputs"]:
+            written_vars.add(output["key"])  # Always dict format
 
     return written_vars
 ```
@@ -628,11 +608,11 @@ Measure scanning time increase:
 
 ## Common Pitfalls to Avoid
 
-1. **Don't assume all nodes have Interface sections** - Many don't
-2. **Don't break on parsing errors** - Use empty interface fallback
+1. **Don't assume all nodes have Interface sections** - Fail clearly if missing
+2. **Don't hide parsing errors** - Let them fail so nodes get fixed
 3. **Don't forget nested structures** - They're critical for complex nodes
 4. **Don't lose type information** - Store full rich format
-5. **Don't make registry parameter required** - Keep backward compatibility
+5. **Don't add unnecessary complexity** - MVP should be simple and correct
 
 ## Summary
 
