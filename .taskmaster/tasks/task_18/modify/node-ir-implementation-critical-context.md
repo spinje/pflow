@@ -4,7 +4,7 @@
 
 You're about to refactor the core metadata system. Here's what I learned implementing templates that will save you hours of debugging.
 
-## Core Outcomes from Task 18 You Must Preserve
+## Core Outcomes from Template System (Task 18) You Must Preserve
 
 ### 1. The Wrapper Pattern is Sacred
 The `TemplateAwareNodeWrapper` (src/pflow/runtime/node_wrapper.py) establishes a critical pattern:
@@ -349,6 +349,23 @@ The planner sends ALL node metadata to the LLM. 1MB registry = expensive API cal
 
 You might need to add metadata filtering for the planner.
 
+## Tests That Saved My Life
+
+During template implementation, these tests caught subtle bugs:
+
+```bash
+# This one test caught 3 integration bugs:
+uv run python -m pytest tests/test_runtime/test_flow_construction.py::TestInstantiateNodes::test_instantiate_with_params -xvs
+
+# This revealed the output format issue:
+uv run python -m pytest tests/test_registry/test_metadata_extractor.py::TestPflowMetadataExtractor::test_extract_interface_components -xvs
+
+# This found the circular import:
+uv run python -m pytest tests/test_runtime/test_compiler_basic.py -xvs
+```
+
+**Pro tip**: When tests fail mysteriously, add print statements in the actual source files, not just tests. The test output will show them.
+
 ## If You Only Remember Three Things
 
 1. **Handle both output formats or die** - Simple strings AND rich dicts
@@ -357,44 +374,20 @@ You might need to add metadata filtering for the planner.
 
 The rest you can figure out, but these three will end you if you forget.
 
-## Quick Reference: All Critical Files
+## Quick Reference: File Locations
 
-### Core Implementation Files You'll Modify
-- `/Users/andfal/projects/pflow/src/pflow/registry/scanner.py` - Add interface parsing here
-- `/Users/andfal/projects/pflow/src/pflow/registry/metadata_extractor.py` - Understand ALL format variations
-- `/Users/andfal/projects/pflow/src/pflow/planning/context_builder.py` - Simplify to use pre-parsed data
-- `/Users/andfal/projects/pflow/src/pflow/runtime/template_validator.py` - Add full path validation
-- `/Users/andfal/projects/pflow/src/pflow/runtime/compiler.py` - Pass registry to validator (line 511)
+**Core files to modify**:
+- `src/pflow/registry/scanner.py` - Add interface parsing
+- `src/pflow/planning/context_builder.py` - Remove dynamic imports
+- `src/pflow/runtime/template_validator.py` - Add full path validation
+- `src/pflow/runtime/compiler.py` - Pass registry to validator
 
-### Test Files You Must Update
-- `/Users/andfal/projects/pflow/tests/test_registry/test_metadata_extractor.py` - Shows all docstring formats
-- `/Users/andfal/projects/pflow/tests/test_registry/test_scanner.py` - Add interface extraction tests
-- `/Users/andfal/projects/pflow/tests/test_planning/test_context_builder_phases.py` - Verify output compatibility
-- `/Users/andfal/projects/pflow/tests/test_runtime/test_template_validator.py` - Add path validation tests
+**Test files that will break**:
+- `tests/test_registry/*` - Registry format changes
+- `tests/test_planning/test_context_builder_*.py` - Expects runtime parsing
+- `tests/test_runtime/test_template_validator.py` - Signature change
 
-### Registry and Data Files
-- `/Users/andfal/projects/pflow/.pflow/registry.json` - The registry that gets bloated
-- `/Users/andfal/projects/pflow/src/pflow/registry/registry.py` - How registry loads (no caching!)
-- `/Users/andfal/projects/pflow/src/pflow/cli/commands/registry.py` - The update command
-
-### Reference Implementation Files
-- `/Users/andfal/projects/pflow/src/pflow/runtime/node_wrapper.py` - Template wrapper pattern to preserve
-- `/Users/andfal/projects/pflow/src/pflow/runtime/template_resolver.py` - Path traversal implementation
-- `/Users/andfal/projects/pflow/pocketflow/__init__.py` - Core PocketFlow copy behavior (line 99)
-
-### Example Node Files (For Testing)
-- `/Users/andfal/projects/pflow/src/pflow/nodes/file/read_file.py` - Simple interface example
-- `/Users/andfal/projects/pflow/src/pflow/nodes/test_node.py` - Basic test node
-- `/Users/andfal/projects/pflow/src/pflow/nodes/test_node_retry.py` - Has import side effects
-
-### OLD Documentation to Cross-Reference (ONLY ACCESSS THESE FILES USING SUBAGENTS TO AVOID CONTEXT WINDOW CONTAMINATION)
-- `/Users/andfal/projects/pflow/.taskmaster/tasks/task_18/task_18_spec.md` - Original template spec (this was the spec for the current implementation of the template system, ONLY USE THIS AS A REFERENCE, DO NOT USE IT AS A GUIDE FOR THE IMPLEMENTATION)
-- `/Users/andfal/projects/pflow/.taskmaster/tasks/task_18/modify/node-ir-comprehensive-implementation-guide.md` - Original Main implementation guide (this was the guide for the current implementation of the template system, ONLY USE THIS AS A REFERENCE, DO NOT USE IT AS A GUIDE FOR THE IMPLEMENTATION)
-
-### Documentation that is relevant to the implementation (might be outdated, describes the current implementation before your changes)
-- `/Users/andfal/projects/pflow/docs/core-concepts/registry.md` - Registry architecture
-- `/Users/andfal/projects/pflow/docs/core-concepts/schemas.md` - IR schemas
-
-### Configuration Files
-- `/Users/andfal/projects/pflow/pyproject.toml` - Dependencies and project config
-- `/Users/andfal/projects/pflow/Makefile` - Development commands (make check, make test)
+**Reference files (don't modify)**:
+- `src/pflow/registry/metadata_extractor.py` - Understand output formats
+- `src/pflow/runtime/node_wrapper.py` - See wrapper pattern
+- `tests/test_registry/test_metadata_extractor.py` - All format examples

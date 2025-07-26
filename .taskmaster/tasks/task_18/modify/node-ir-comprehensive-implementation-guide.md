@@ -760,6 +760,56 @@ Measure scanning time increase:
 # Total for 50 nodes: 5s → 10s (per registry update - consider caching)
 ```
 
+## Testing Strategy During Implementation
+
+**Critical**: This refactor will break MANY tests. Run tests strategically to catch issues early.
+
+### Expected Test Failures by Phase
+
+#### Phase 1: Scanner Changes
+**Run after implementation**: `make test`
+**Expected failures**:
+- `tests/test_registry/` - Registry format changes
+- `tests/test_planning/test_context_builder_*.py` - Expects old format
+
+**Fix approach**: Update registry tests first, leave context builder tests failing
+
+#### Phase 2: Context Builder Changes
+**Run**: `uv run python -m pytest tests/test_planning/ -xvs`
+**Expected failures**: Should now pass if scanner correct
+
+#### Phase 3: Validator Changes
+**Run**: `uv run python -m pytest tests/test_runtime/test_template_validator.py -xvs`
+**Expected failures**: All validator tests (different signature)
+
+#### Phase 4: Full Integration
+**Run**: `make test`
+**Must pass**: ALL tests - any failures indicate missed integration points
+
+### Strategic Test Running
+
+```bash
+# Quick smoke test during development (stop on first failure)
+uv run python -m pytest -x
+
+# After each major change - see what's broken
+make test 2>&1 | grep -E "FAILED|ERROR" | head -20
+
+# Focus on specific area you're working on
+uv run python -m pytest tests/test_registry/ -xvs
+
+# Before committing - MUST be green
+make check && make test
+```
+
+### Tests That Will Catch Integration Issues
+
+1. **tests/test_integration/test_template_system_e2e.py** - End-to-end validation
+2. **tests/test_runtime/test_compiler_integration.py** - Compiler/validator integration
+3. **tests/test_integration/test_context_builder_integration.py** - Context builder integration
+
+Run these three specifically after major changes - they'll reveal integration problems.
+
 ## Implementation Checklist
 
 ### Scanner Phase
