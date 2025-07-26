@@ -561,11 +561,11 @@ class TemplateAwareNodeWrapper:
         """
         Args:
             inner_node: The actual node being wrapped
-            node_id: Node identifier from IR (creates namespace in shared store)
+            node_id: Node identifier from IR (for debugging/tracking)
             initial_params: Parameters extracted by planner from natural language
         """
         self.inner_node = inner_node
-        self.node_id = node_id  # Node ID creates namespace: shared[node_id]
+        self.node_id = node_id  # Node ID for debugging purposes only
         self.initial_params = initial_params or {}  # From planner extraction
         self.template_params = {}
         self.static_params = {}
@@ -592,7 +592,7 @@ class TemplateAwareNodeWrapper:
 
         # Build resolution context: shared store + planner parameters
         # Planner parameters have higher priority (come second in update)
-        context = dict(shared)  # Start with shared store (includes node namespaces)
+        context = dict(shared)  # Start with shared store data
         context.update(self.initial_params)  # Planner parameters override
 
         # Resolve all template parameters
