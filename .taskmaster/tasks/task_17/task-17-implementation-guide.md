@@ -515,7 +515,7 @@ def execute_with_parameters(workflow_ir: dict, parameter_values: dict) -> None:
     from pflow.runtime.compiler import compile_ir_to_flow
     from pflow.registry import Registry
 
-    # Task 18 handles template resolution - just pass initial_params!
+    # Compile with initial parameters - runtime handles template resolution
     registry = Registry()
     flow = compile_ir_to_flow(
         workflow_ir,
@@ -723,8 +723,8 @@ The runtime will handle substitution transparently.
 Generate complete JSON matching the IR schema with nodes, edges, and params."""
 ```
 
-### Template Variable Validation (Provided by Task 18)
-The compiler now handles template validation automatically when validate=True (default):
+### Template Variable Validation
+The compiler handles template validation automatically when validate=True (default):
 
 ```python
 # In the planner's validation node
@@ -733,9 +733,9 @@ from pflow.runtime.template_validator import TemplateValidator
 def validate_templates_before_execution(workflow: dict, parameter_values: dict) -> None:
     """Validate that all template variables can be resolved.
 
-    Task 18 provides this validation - the planner just needs to handle errors.
+    The planner just needs to handle validation errors gracefully.
     """
-    # The actual Task 18 API:
+    # The validation API:
     errors = TemplateValidator.validate_workflow_templates(workflow, parameter_values)
 
     if errors:
@@ -758,9 +758,9 @@ except ValueError as e:
     print(f"Validation failed: {e}")
 ```
 
-**Note**: Task 18's validator uses heuristics to categorize parameters:
-- Simple variables like `$issue_number` → Expected from CLI/initial_params
-- Dotted paths like `$data.field` → Expected from shared store at runtime
+**Note**: The validator uses heuristics to categorize parameters:
+- Simple variables like `$issue_number` → Expected from initial_params
+- Dotted paths like `$data.field` → Often from shared store at runtime
 - Set `validate=False` only when some params come from runtime
 
 ### Example: LLM-Generated Complete Workflow
@@ -807,6 +807,10 @@ Template variables in params will be resolved by runtime:
 
 ## Testing Workflow Generation
 
+### Template Variable Testing Priority
+
+Test simple variables (`$issue_number`) first as they're most common. Path variables (`$data.field`) are a bonus feature but should also be tested.
+
 ### Design Decision: Hybrid Testing Approach
 
 **Resolution**: Use hybrid approach with separate LLM test commands
@@ -828,14 +832,18 @@ Testing the workflow generation focuses on validating that the LLM produces comp
 ```python
 def test_workflow_generation_completeness():
     """Test that LLM generates complete workflows with template variables in params."""
-    # Mock LLM to return a known good workflow
+    # Mock LLM to return a known good workflow with both simple and path variables
     mock_llm = MockLLM(returns={
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "get", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
-            {"id": "fix", "type": "claude-code", "params": {"prompt": "Fix: $issue_data"}}
+            {"id": "get", "type": "github-get-issue",
+             "params": {"issue": "$issue_number", "repo": "$repo_name"}},  # Simple vars
+            {"id": "fix", "type": "claude-code",
+             "params": {"prompt": "Fix: $issue_data"}},  # Simple var from shared
+            {"id": "notify", "type": "send-message",
+             "params": {"to": "$issue_data.user.login", "title": "$issue_data.title"}}  # Path vars
         ],
-        "edges": [{"from": "get", "to": "fix"}]
+        "edges": [{"from": "get", "to": "fix"}, {"from": "fix", "to": "notify"}]
     })
 
     planner = create_planner_flow()
@@ -856,23 +864,35 @@ def test_workflow_generation_completeness():
 
 ### Template Variable Validation Testing
 ```python
-def test_template_validation_in_params():
-    """Test that validation ensures template variables are properly used."""
+def test_template_validation_simple_and_path():
+    """Test validation of both simple and path template variables."""
     workflow = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "llm", "type": "llm",
-             "params": {"prompt": "Analyze $content and $metadata"}}
+            {"id": "process", "type": "processor",
+             "params": {
+                 "file": "$input_file",  # Simple variable
+                 "user": "$data.user.name",  # Path variable
+                 "count": "$max_items"  # Another simple variable
+             }}
         ]
     }
-    parameter_values = {
-        "content": "file content"
-        # Missing metadata parameter!
-    }
 
-    validator = validate_template_variables
-    with pytest.raises(ValidationError, match="metadata"):
-        validator.validate_templates(workflow)
+    # Test with missing simple variable
+    params1 = {"data": {"user": {"name": "John"}}, "max_items": "10"}
+    # Should fail - missing input_file
+
+    # Test with missing path
+    params2 = {"input_file": "test.txt", "max_items": "10", "data": {}}
+    # Should fail - missing data.user.name
+
+    # Test with all params
+    params3 = {
+        "input_file": "test.txt",
+        "max_items": "10",
+        "data": {"user": {"name": "John"}}
+    }
+    # Should pass
 ```
 
 ### Natural Language to Workflow Testing

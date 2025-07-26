@@ -6,17 +6,17 @@ This file contains critical concepts, constraints, and decision rationale for th
 
 Task 17 is the core feature that makes pflow unique - the Natural Language Planner that enables "Plan Once, Run Forever". After extensive research, I've identified several critical ambiguities and decisions that need to be made before implementation can begin.
 
-**Update**: Tasks 14, 15, and 18 have been completed successfully:
-- **Task 14**: ✅ Implemented structured output metadata support, enabling the planner to see available paths for template variables
-- **Task 15**: ✅ Extended the context builder for two-phase discovery, preventing LLM overwhelm while supporting workflow reuse
-- **Task 18**: ✅ Implemented template variable system with path support, enabling workflow reusability through runtime parameter substitution
+**Update**: Prerequisites completed:
+- **Task 14**: ✅ Structure documentation for seeing available data paths
+- **Task 15**: ✅ Two-phase context builder for smart discovery
+- **Task 18**: ✅ Template variable system for workflow reusability
 
 ### Key Breakthrough Insights:
 1. The workflow discovery mechanism can reuse the exact same pattern as node discovery - the context builder already provides the perfect format.
 2. Workflows are reusable building blocks that can be composed into other workflows, not just standalone executions.
 3. Two-phase approach separates discovery (what to use) from planning (how to connect), preventing information overload.
 4. Hybrid validation approach: Use Pydantic models for type-safe IR generation with Simon Willison's LLM library, then validate with JSONSchema for comprehensive checking.
-5. **Template paths** (`$data.field.subfield`) solve 90% of data access needs - now implemented by Task 18
+5. **Template variables** (`$variable`) enable workflow reusability, with path support (`$data.field.subfield`) as a bonus for complex cases
 6. No proxy mappings needed for MVP - dramatically simpler implementation
 
 ### How It All Fits Together
@@ -302,19 +302,19 @@ pflow fix-issue --issue=5678  # $issue → "5678"
   - Others remain as parameters for runtime (like `$issue_number`)
   - Most flexible but most complex
 
-**Resolution**: Option B with path support - Runtime resolution is ESSENTIAL. Task 18 has implemented this with path support (e.g., `$issue_data.user.login`), eliminating the need for proxy mappings in most cases, dramatically simplifying the MVP while maintaining full power.
+**Resolution**: Option B - Runtime resolution is ESSENTIAL. Template variables are resolved during execution, enabling parameterized workflows (the core value prop!). Most use cases need simple variables (`$issue_number`, `$file_path`), with path support (`$data.user.login`) available for complex data access.
 
-**Validation Note**: Task 18's `TemplateValidator` ensures all template variables can be resolved before execution, with clear error messages for missing parameters.
+**Validation Note**: The template validator ensures all required variables can be resolved before execution, with clear error messages for missing parameters.
 
 **Implementation Note for Planner**: When the user says "fix github issue 1234", the planner must:
 1. Recognize "1234" as a parameter value (not part of the intent)
-2. Generate IR with `"issue_number": "$issue"` (NOT `"issue_number": "1234"`)
+2. Generate IR with `"issue_number": "$issue_number"` (NOT `"issue_number": "1234"`)
 3. Store the workflow with template variables intact
 4. Pass `{"issue_number": "1234"}` as `initial_params` to the compiler
 
-**Task 18 Implementation**: Template variables now support paths (e.g., `$issue_data.user.login`), with runtime resolution handled transparently by the `TemplateAwareNodeWrapper`.
+**Simple variables are most common**: `$issue_number`, `$file_path`, `$repo_name`. Path traversal (`$data.field`) is supported but less frequently needed.
 
-**Implementation Note from Task 18**: Templates are resolved at runtime by a transparent wrapper around nodes, NOT during compilation. The compiler validates that required parameters exist in initial_params (unless validate=False), but actual substitution happens during workflow execution. This enables access to both initial_params and runtime shared store data.
+**Runtime Resolution**: Templates are resolved during workflow execution, NOT during compilation. The compiler validates that required parameters exist in initial_params (unless validate=False), enabling access to both initial_params and runtime shared store data.
 
 ## Template-Driven Workflow Architecture
 
@@ -326,20 +326,20 @@ The fundamental innovation that enables "Plan Once, Run Forever" is that workflo
 workflow = {
     "ir_version": "0.1.0",
     "nodes": [
-        # Static structure with dynamic values
+        # Simple variables (most common)
         {"id": "get", "type": "github-get-issue",
-         "params": {"issue": "$issue_number"}},  # CLI parameter
+         "params": {"issue": "$issue_number", "repo": "$repo_name"}},  # From initial_params
 
         {"id": "fix", "type": "claude-code",
-         "params": {"prompt": "Fix issue: $issue_data\nStandards: $coding_standards"}},
-         # $issue_data from shared store, $coding_standards from file read
+         "params": {"prompt": "Fix issue: $issue_data"}},  # From shared store
 
-        {"id": "commit", "type": "git-commit",
-         "params": {"message": "$commit_message"}}  # From previous node
+        # Path variables for nested data (when needed)
+        {"id": "notify", "type": "send-message",
+         "params": {"user": "$issue_data.user.login", "title": "$issue_data.title"}}
     ],
     "edges": [
         {"from": "get", "to": "fix"},
-        {"from": "fix", "to": "commit"}
+        {"from": "fix", "to": "notify"}
     ]
 }
 ```
@@ -584,7 +584,7 @@ def resolve_template(var_name, shared):
     return str(shared.get(var_name, ''))
 ```
 
-**Note**: This is a conceptual example. Task 18's actual implementation handles edge cases like None values, missing paths, and proper string conversion. The planner doesn't need to implement resolution - just generate workflows with `$variables` and pass extracted values as `initial_params` to the compiler.
+**Note**: This is a conceptual example. The actual implementation handles edge cases like None values, missing paths, and proper string conversion. The planner just needs to generate workflows with `$variables` and pass extracted values as `initial_params` to the compiler.
 
 This approach ensures:
 - No complex mapping structures needed for common cases
