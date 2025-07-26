@@ -2,7 +2,11 @@
 
 ## Objective
 
-Fix template validation failures by creating a proper "Node IR" that stores fully parsed interface metadata in the registry. Currently, the template validator uses hardcoded heuristics to guess which variables come from the shared store (e.g., assuming "content", "result" are outputs), causing false validation failures when nodes write variables not in the magic list. This implementation moves interface parsing from runtime to scan-time, storing structured metadata that enables accurate validation of template variables against actual node outputs. The solution eliminates redundant parsing, creates a single source of truth for node capabilities, and provides rich metadata for future features like type checking.
+Fix template validation failures by creating a proper "Node IR" that stores fully parsed interface metadata in the registry. Currently, the template validator uses hardcoded heuristics to guess which variables come from the shared store (e.g., assuming "content", "result" are outputs), causing false validation failures when nodes write variables not in the magic list.
+
+This implementation moves interface parsing from runtime to scan-time, storing structured metadata that enables accurate validation of template variables against actual node outputs. The solution eliminates redundant parsing, creates a single source of truth for node capabilities, and provides rich metadata for future features like type checking.
+
+**MVP Focus**: This is primarily a bug fix that enables correct validation. Performance improvements are a beneficial side effect, not the primary goal. The implementation should prioritize correctness and maintainability over optimization.
 
 ## Requirements
 
@@ -155,7 +159,7 @@ Validator states:
 2. Scanner must store both module path and file path in metadata
 3. Scanner must convert Path objects to strings before JSON serialization
 4. Scanner must handle None docstrings by passing empty string to extractor
-5. Scanner must fail immediately on parse errors with actionable message
+5. Scanner must fail immediately on import or parse errors with actionable message
 6. Scanner must preserve complete nested structures in outputs
 7. Context builder must use interface field without any parsing
 8. Context builder must maintain exact output format structure
@@ -181,8 +185,10 @@ Validator states:
 - Path component missing from structure → validation fails with path detail
 - Base variable not in any source → error specifies sources checked
 - Registry file is corrupted JSON → scanner logs error and regenerates
-- Node cannot be imported → scanner fails with import error and continues
-- Structure has circular reference → parser handles up to depth 10
+- Node cannot be imported → scanner fails with import error and clear message
+- Structure has circular reference → parser handles up to reasonable depth
+- Multiple nodes in single file → scanner extracts all inheriting from BaseNode
+- Node modifies global state on import → side effects happen but parsing continues
 
 ## Error Handling
 
@@ -204,16 +210,17 @@ Registry errors:
 
 ## Non-Functional Criteria
 
-Performance:
-- Node metadata extraction: P50 < 100ms, P95 < 200ms, P99 < 500ms
-- Full registry scan (100 nodes): P50 < 5s, P95 < 10s, P99 < 15s
-- Registry JSON load (1MB): P50 < 30ms, P95 < 50ms, P99 < 100ms
-- Template validation (10 nodes): P50 < 10ms, P95 < 20ms, P99 < 50ms
+For MVP, focus on correctness over performance optimization:
 
-Resource usage:
-- Memory during scan: Peak < 100MB for 200 nodes
-- Registry file size: < 10KB per node average
-- CPU during validation: < 5% for typical workflow
+Acceptable performance:
+- Registry scanning should complete within 30 seconds for typical installations
+- Validation should not noticeably slow down workflow execution
+- Registry file size should remain under 10MB for ~200 nodes
+
+Resource guidelines:
+- Memory usage should not cause issues on development machines
+- Scanning is a one-time cost, so prefer correctness over speed
+- Validation happens every run, so avoid obvious inefficiencies
 
 ## Examples
 
@@ -276,8 +283,8 @@ node_outputs = {
 3. Scanner handles node with no docstring by storing empty interface
 4. Scanner handles node with no Interface section by storing description only
 5. Scanner fails with ParseError for malformed Interface syntax
-6. Scanner includes file path and line number in parse error messages
-7. Scanner continues after import error with clear error log
+6. Scanner includes file path and line number in all error messages
+7. Scanner fails fast on import errors with actionable message
 8. Scanner converts Path to string in file_path field
 9. Context builder uses interface data without importing nodes
 10. Context builder output format exactly matches current format
@@ -294,11 +301,21 @@ node_outputs = {
 21. No heuristic code remains in validator module
 22. End-to-end workflow with nested paths validates correctly
 23. Registry regenerates when JSON is corrupted
-24. Performance meets all P95 targets under load
+24. Scanner completes in reasonable time for typical node count
 
 ## Notes (Why)
 
-Moving parsing to scan-time follows the principle of "parse once, use many times" which eliminates redundant CPU cycles and creates consistency. The fail-fast philosophy with actionable errors accelerates development by surfacing problems immediately rather than hiding them. Full metadata storage enables future type checking, better documentation, and richer error messages. Path validation at compile time catches type mismatches before runtime failures. The dependency injection pattern for MetadataExtractor avoids the circular import issues that plagued the template implementation.
+Moving parsing to scan-time follows the principle of "parse once, use many times" which eliminates redundant CPU cycles and creates consistency. The fail-fast philosophy with actionable errors accelerates development by surfacing problems immediately rather than hiding them.
+
+Key benefits:
+- **Single source of truth**: Parsing happens once, all consumers use the same data
+- **Eliminates redundancy**: No more parsing the same docstring in multiple places
+- **Future extensibility**: Full metadata enables type checking, documentation generation, and richer error messages
+- **Early validation**: Path validation at compile time catches type mismatches before runtime failures
+- **Clean architecture**: Dependency injection pattern avoids the circular import issues that plagued the template implementation
+- **Debugging clarity**: When validation fails, we know exactly which node outputs what
+
+This is fundamentally a bug fix that happens to also improve performance. The current heuristic approach is broken and causes false validation failures. The Node IR fixes this correctly.
 
 ## Compliance Matrix
 
@@ -336,11 +353,13 @@ Moving parsing to scan-time follows the principle of "parse once, use many times
 
 ### Assumptions & Unknowns
 
-- Assumes MetadataExtractor._normalize_to_rich_format handles all legacy formats
+- Assumes MetadataExtractor._normalize_to_rich_format handles all legacy formats correctly
 - Assumes all nodes inherit from pocketflow.BaseNode or compatible base
-- Unknown: Exact memory overhead of keeping MetadataExtractor singleton
+- Assumes file system supports atomic writes for registry updates
+- Known from implementation: MetadataExtractor can return both simple and rich formats
+- Known from implementation: Some nodes have no docstring (inspect.getdoc returns None)
 - Unknown: Whether all existing nodes will parse without modification
-- Unknown: Full performance impact of 1MB registry on CLI startup
+- Unknown: Exact startup time impact of larger registry (estimate ~50ms)
 
 ### Conflicts & Resolutions
 
@@ -403,37 +422,38 @@ Moving parsing to scan-time follows the principle of "parse once, use many times
 ### Residual Risks & Confidence
 
 High confidence:
-- Correctness of validation logic (well understood)
-- Scanner implementation (clear patterns)
-- Context builder simplification (removing code)
+- Correctness of validation logic (well understood from implementation)
+- Scanner implementation (clear patterns established)
+- Context builder simplification (mostly removing code)
+- Handling both output formats (tested during template implementation)
 
 Medium confidence:
-- Performance at scale (needs profiling)
-- All nodes parsing successfully (needs testing)
-- Registry size growth over time (needs monitoring)
+- All existing nodes parsing successfully (needs testing with real nodes)
+- Registry size staying reasonable (depends on node complexity)
 
-Low confidence:
-- Impact on shell completion speed
-- Memory usage with many concurrent commands
-- Behavior with corrupted partial registries
+Low confidence / Not MVP concerns:
+- Performance optimization (not critical for MVP)
+- Concurrent access patterns (can address if it becomes an issue)
 
-Mitigations:
-- Add performance benchmarks to test suite
-- Consider registry compression for v2
-- Add registry validation on load
-- Profile memory usage under load
+Mitigations for MVP:
+- Test with all existing nodes before deployment
+- Clear error messages if parsing fails
+- Document how to fix common Interface issues
+- Monitor registry size and address if it becomes a problem
 
 ### Epistemic Audit (Checklist Answers)
 
 1. Which assumptions did I make that weren't explicit?
-   - Assumed singleton pattern for MetadataExtractor is thread-safe
-   - Assumed JSON serialization preserves all metadata correctly
-   - Assumed file system has atomic writes for registry
+   - Assumed JSON serialization preserves all metadata structures correctly
+   - Assumed file system writes are reasonably reliable
+   - Assumed all nodes use the standard docstring format
+   - Assumed the fallback pattern (shared.get() or params.get()) is universal
 
 2. What would break if they're wrong?
-   - Thread safety: Concurrent scans could corrupt parser state
-   - JSON: Complex structures might serialize incorrectly
-   - Atomicity: Partial writes could corrupt registry
+   - JSON: Complex nested structures might not round-trip correctly
+   - File system: Registry corruption could require manual deletion
+   - Docstring format: Non-standard formats would fail to parse
+   - Fallback pattern: Nodes not using it wouldn't benefit from validation
 
 3. Did I optimize elegance over robustness?
    - No: Chose explicit failures over elegant fallbacks
@@ -451,7 +471,8 @@ Mitigations:
    - Planner depends on exact context builder format
 
 6. What remains uncertain, and how confident am I?
-   - Uncertain: Performance at scale (medium confidence)
-   - Uncertain: Thread safety of singleton (low confidence)
-   - Certain: Correctness of validation (high confidence)
-   - Certain: Improvement over heuristics (high confidence)
+   - Uncertain: All nodes parsing without issues (medium confidence - need testing)
+   - Uncertain: Exact performance impact (low importance for MVP)
+   - Certain: Correctness of validation approach (high confidence - proven in implementation)
+   - Certain: Improvement over heuristics (high confidence - eliminates false failures)
+   - Certain: Technical approach is sound (high confidence - based on working template system)
