@@ -90,6 +90,14 @@ The registry loads on EVERY pflow command (even `pflow --version`). Your larger 
 ### 4. The Format Preservation Requirement
 The context builder output format must be EXACTLY preserved. The planner will break if even one field changes. Test this carefully.
 
+## Critical Clarification: Breaking Changes
+
+**Breaking Change - Fresh Start**: This is an MVP with no users. Simply update the scanner to generate the new format with interface data. Delete any existing registry and regenerate it. Do not add any backward compatibility code. The context builder can assume the interface field always exists.
+
+**All Existing Functionality Must Remain**: While the registry format is changing, ALL existing system behavior must work exactly as before. All 610 tests must pass. You are changing HOW metadata is stored, not WHAT the system does.
+
+**No Migration Needed**: Since there are no users, you don't need to handle old registry formats. Every component can assume the new `interface` field exists. If it doesn't exist, that's an error - fail fast with a clear message.
+
 ## Your Implementation Order
 
 1. **Start with understanding**: Read the MetadataExtractor tests to see all format variations
@@ -103,10 +111,12 @@ The context builder output format must be EXACTLY preserved. The planner will br
 
 - **DON'T** modify any node implementations
 - **DON'T** change the workflow IR structure
-- **DON'T** add backward compatibility for old registry format
+- **DON'T** add ANY backward compatibility code - assume new format everywhere
+- **DON'T** check if interface field exists - it MUST exist
 - **DON'T** hide or skip errors - fail fast with clear messages
 - **DON'T** optimize prematurely - get it working first
-- **DON'T** cheat when tests fail - fix the root cause
+- **DON'T** break existing functionality - all 610 tests must pass
+- **DON'T** cheat when tests fail - fix the root cause and make sure no functionality is lost or broken
 
 ## Definition of Success
 
