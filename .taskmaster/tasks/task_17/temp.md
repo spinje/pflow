@@ -17,8 +17,49 @@ was just about to start writing the spec for task 12 and task 18.
 
 
 
+----
 
 
+should we add a note that path template variables is just a bonus, the most common usecase is normal template variable without
+path, both cases need to be handled and tested carefully (when writing tests for task 17) (also we seem to have overfitted to
+mentioning task 1 as well, it is litterally everywhere now. it is important to know but not in every sentence. we need to have a
+balanced approach. Also we need to make absolutely sure we did not remove any information that was useful to the task 17 agent)
+think hard here!
+
+
+**UPDATE**:
+You have already made a lot of the changes. (but your context window ran out and I had to reset you to the last checkpoint) This is what you have done so far and what is left to do:
+
+Update Todos
+  ⎿  ☒ Fix overemphasis on path template variables
+     ☒ Reduce excessive Task 18 mentions
+     ☐ Add testing guidance for both simple and path variables
+     ☐ Verify no useful information was removed
+
+---
+
+read .taskmaster/tasks/task_17/task-17-overview.md and all the mentioned core documents mentioned in full. think hard to try to
+grasp what this task is about. let me know when you are done.
+
+---
+
+task 18 was just implemented, please read .taskmaster/tasks/task_18/documentation/task-completion-summary.md and all the
+documentation that was created and is referenced in that file. then ultrathink if the documentation is complete and if there is anything missing based on this information.
+Focus only on making sure all the information that is relevant for the agent responsible for implementing task 17 is present. DO NOT add any information that is not relevant to the agent responsible for implementing task 17 like the implementation details or any other information that is not relevant. The documents should already be updated so you should not have to make any changes to them if there are not obvious contradictions or missing information or misconceptions. Remember: quality over quantity! think hard!
+
+
+
+---
+
+Updates based on this has been made to the context files for task 17
+(.taskmaster/tasks/task_17/task-17-architecture-and-patterns.md ✅
+.taskmaster/tasks/task_17/task-17-core-concepts.md ✅
+.taskmaster/tasks/task_17/task-17-implementation-guide.md ✅) Can you make sure that we did not miss anything? make sure there are no conflicting
+information. Make sure the added lines would add valaue for the agent responsible for implementing task 17. Do not add more
+documentation to these files for the sake of it, only to resovle ambiguity or correct faulty information or assumptions. Try to only make as little changes as possible. quality over quantity!
+
+**UPDATE**:
+The .taskmaster/tasks/task_17/task-17-architecture-and-patterns.md file has already been update, you can read it and see what has been done and verify that it is correct. But your main focus should be on the other two files starting with .taskmaster/tasks/task_17/task-17-core-concepts.md.
 
 
 
