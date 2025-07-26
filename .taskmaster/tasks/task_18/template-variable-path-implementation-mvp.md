@@ -362,6 +362,20 @@ This elegant pattern means nodes don't need modification to support templates!
 
 ## Implementation Design
 
+### Module Organization
+
+All template-related code belongs in the runtime module since it handles runtime parameter validation and resolution:
+
+```
+src/pflow/runtime/
+├── template_resolver.py     # Core parsing and resolution logic
+├── template_validator.py    # Runtime parameter validation
+├── node_wrapper.py         # Transparent proxy wrapper
+└── compiler.py            # (existing file - modify to integrate)
+```
+
+**Note**: While validation happens before execution, it validates runtime parameters not schema structure, so it belongs with runtime code rather than core validation.
+
 ### Core Components
 
 1. **TemplateResolver**: Detects and resolves template variables with path support
@@ -639,6 +653,7 @@ def compile_ir_to_flow(
                        Example: {"issue_number": "1234", "repo": "pflow"}
                        from user saying "fix github issue 1234 in pflow repo"
         validate: Whether to validate templates (default: True)
+                 Set to False only for testing template resolution in isolation
 
     Raises:
         ValueError: If template validation fails
@@ -647,6 +662,8 @@ def compile_ir_to_flow(
 
     # Phase 1: Validate templates before compilation
     if validate:
+        # Note: This is separate from validate_ir() which checks workflow structure.
+        # This validates we have the runtime parameters needed to execute.
         errors = TemplateValidator.validate_workflow_templates(ir_dict, initial_params)
         if errors:
             error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
@@ -687,6 +704,49 @@ def compile_ir_to_flow(
         flow.set_start(ir_dict['start_node'])
 
     return flow
+```
+
+## CLI Integration Points
+
+The template system integrates with the CLI in two key places:
+
+### 1. Natural Language Path (MVP)
+```python
+# In src/pflow/cli/main.py (after planner returns)
+def handle_natural_language(user_input: str):
+    # Planner extracts parameters from natural language
+    planner_result = run_planner(user_input)
+
+    # Pass extracted parameters to compiler
+    flow = compile_ir_to_flow(
+        planner_result["workflow_ir"],
+        registry,
+        initial_params=planner_result["parameter_values"]  # Template parameters
+    )
+
+    # Execute workflow
+    flow.run(shared)
+```
+
+### 2. Direct Workflow Execution (v2.0+)
+```python
+# When loading and executing saved workflows
+def execute_saved_workflow(workflow_name: str, cli_args: dict):
+    # Load workflow from disk
+    workflow = load_workflow(workflow_name)  # e.g., "fix-issue"
+
+    # CLI arguments become initial parameters
+    cli_params = {
+        "issue": cli_args.issue,      # From --issue=1234
+        "repo": cli_args.repo         # From --repo=pflow
+    }
+
+    # Compile with CLI parameters for template resolution
+    flow = compile_ir_to_flow(
+        workflow["ir"],
+        registry,
+        initial_params=cli_params  # CLI args for templates
+    )
 ```
 
 ## Complete End-to-End Example
@@ -896,6 +956,56 @@ def test_missing_template_variable():
 
     # Missing variable remains as template, resolved variable is substituted
     assert result == "Processing video: $video_title from https://youtube.com/watch?v=xyz"
+
+def test_malformed_template_syntax():
+    """Test that malformed templates are left unchanged."""
+    context = {"var": "value", "data": {"field": "test"}}
+
+    # These malformed templates should remain as-is
+    assert TemplateResolver.resolve_string("$.var", context) == "$.var"
+    assert TemplateResolver.resolve_string("$var.", context) == "$var."
+    assert TemplateResolver.resolve_string("$var..field", context) == "$var..field"
+    assert TemplateResolver.resolve_string("$$var", context) == "$$var"
+    assert TemplateResolver.resolve_string("$", context) == "$"
+
+    # Valid template should still work
+    assert TemplateResolver.resolve_string("$var", context) == "value"
+
+def test_path_traversal_edge_cases():
+    """Test edge cases in path traversal."""
+    context = {
+        "string_value": "hello",
+        "null_parent": {"child": None},
+        "list_value": [1, 2, 3]
+    }
+
+    # Path traversal on non-dict should leave template unchanged
+    assert TemplateResolver.resolve_string("$string_value.field", context) == "$string_value.field"
+
+    # Null in path should stop traversal
+    assert TemplateResolver.resolve_string("$null_parent.child.field", context) == "$null_parent.child.field"
+
+    # List access not supported in MVP
+    assert TemplateResolver.resolve_string("$list_value.0", context) == "$list_value.0"
+
+def test_backwards_compatibility_no_templates():
+    """Test that workflows without templates work unchanged."""
+    ir = {
+        "nodes": [
+            {"id": "n1", "type": "some-node", "params": {"static": "value", "number": 42}}
+        ]
+    }
+
+    # Compile without any initial params
+    flow = compile_ir_to_flow(ir, registry)
+
+    # Node should NOT be wrapped since it has no templates
+    node = flow._nodes["n1"]  # Access internal nodes dict
+    assert not isinstance(node, TemplateAwareNodeWrapper)
+
+    # Static params should be unchanged
+    assert node.params["static"] == "value"
+    assert node.params["number"] == 42
 ```
 
 ### Integration Tests
