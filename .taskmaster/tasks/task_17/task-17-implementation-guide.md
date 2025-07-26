@@ -718,6 +718,11 @@ Example of CORRECT usage:
 - Generate: {{"params": {{"issue": "$issue_number"}}}}
 - NOT: {{"params": {{"issue": "1234"}}}}
 
+Real workflow example:
+- User says "summarize report.pdf and save to summary.txt"
+- CORRECT: {{"params": {{"input": "$input_file", "output": "$output_file"}}}}
+- WRONG: {{"params": {{"input": "report.pdf", "output": "summary.txt"}}}}
+
 Template variables enable workflow reuse with different parameters.
 The runtime will handle substitution transparently.
 Generate complete JSON matching the IR schema with nodes, edges, and params."""

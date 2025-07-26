@@ -55,7 +55,7 @@ The Template Variable System that enables pflow's "Plan Once, Run Forever" philo
 3. Integration guide: `.taskmaster/tasks/task_18/documentation/template-system-integration-code.md`
 4. Current vs future: `.taskmaster/tasks/task_18/documentation/template-system-current-vs-future.md`
 5. Implementation review: `.taskmaster/tasks/task_18/task-review.md`
-6. New patterns: `.taskmaster/tasks/task_18/implementation/new-patterns.md`
+6. New patterns: `.taskmaster/tasks/task_18/documentation/new-patterns.md`
 
 ### Key Design Decisions
 
