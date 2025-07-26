@@ -109,6 +109,8 @@ v2.0 Path: CLI loads workflow → validate_templates() → error if missing → 
 3. **v2.0 Requirement**: Direct execution needs validation
 4. **Code Reuse**: Same regex patterns and parsing logic
 
+**Critical for v2.0**: When users run `pflow fix-issue --issue=1234` directly (without planner), the template system must validate that all required parameters are provided. Without validation as part of task 18, v2.0 workflows would fail with cryptic `$missing_param` in outputs.
+
 ## Requirements and Specifications
 
 ### Functional Requirements
@@ -422,6 +424,10 @@ class TemplateValidator:
             else:
                 shared_vars.add(template)
 
+        # Note: In v2.0+, workflows will include metadata with expected inputs:
+        # {"inputs": ["url", "issue_number"], "ir": {...}}
+        # This will make validation more precise than the current heuristic
+
         # Validate CLI parameters - these MUST be provided
         missing_params = cli_params - set(available_params.keys())
         for param in missing_params:
@@ -596,6 +602,9 @@ class TemplateAwareNodeWrapper:
         """Delegate all other attributes to inner node."""
         return getattr(self.inner_node, name)
 
+    # Note: __setattr__ is not strictly needed for PocketFlow's set_params() pattern,
+    # but is included for completeness to ensure the wrapper is fully transparent
+    # if nodes use any direct attribute access patterns
     def __setattr__(self, name: str, value: Any) -> None:
         """Handle attribute setting to maintain proxy transparency."""
         # Define proxy's own attributes
