@@ -6,7 +6,7 @@ This file contains the core architectural decisions, design patterns, and anti-p
 
 ### The Planner IS a Meta-Workflow with Two Paths That Converge
 
-The Natural Language Planner is fundamentally a **meta-workflow** - a PocketFlow workflow that orchestrates the entire lifecycle of finding or creating workflows based on user intent. It implements two distinct paths that converge at a critical parameter extraction and verification point.
+The Natural Language Planner is fundamentally a **meta-workflow** - a PocketFlow workflow that orchestrates the entire lifecycle of finding or creating workflows based on user intent. It implements two distinct paths that converge at a critical parameter mapping and verification point.
 
 ```mermaid
 graph TD
@@ -18,38 +18,41 @@ graph TD
     CHECK -->|NO: Must create| CREATE_PATH[Path B: Generate New]
 
     %% Path A: Direct reuse
-    FOUND_PATH --> PE[ParameterExtractionNode<br/>Extract: "1234" → issue_number<br/>Verify: All params available?]
+    FOUND_PATH --> PM[ParameterMappingNode<br/>Map: "1234" → issue_number<br/>Verify: All params available?]
 
     %% Path B: Generation
     CREATE_PATH --> CB[ComponentBrowsingNode<br/>Find building blocks:<br/>nodes + sub-workflows]
-    CB --> GEN[GeneratorNode<br/>LLM creates workflow<br/>Designs params: $issue_number]
-    GEN --> VAL[ValidatorNode<br/>Validate IR structure]
+    CB --> PD[ParameterDiscoveryNode<br/>Extract named params:<br/>issue_number: "1234"<br/>repo_name: "pflow"]
+    PD --> GEN[GeneratorNode<br/>LLM creates workflow<br/>Uses discovered params<br/>Designs templates: $issue_number]
+    GEN --> VAL[ValidatorNode<br/>Validate IR structure<br/>+ template variables]
     VAL -->|invalid| GEN
     VAL -->|valid| META[MetadataGenerationNode<br/>Extract name, description,<br/>inputs, outputs]
-    META --> PE
+    META --> PM
 
     %% Convergence point
-    PE --> VERIFY{Can map user input<br/>to workflow params?}
+    PM --> VERIFY{Can map user input<br/>to workflow params?}
     VERIFY -->|YES| PP[ParameterPreparationNode<br/>Format for execution]
     VERIFY -->|NO| ERROR[Cannot Execute:<br/>Missing required params]
 
     PP --> RES[ResultPreparationNode<br/>Package for CLI]
     RES --> END[Return to CLI]
 
-    style PE fill:#9ff,stroke:#333,stroke-width:4px
+    style PM fill:#9ff,stroke:#333,stroke-width:4px
     style VERIFY fill:#ff9,stroke:#333,stroke-width:3px
     style WD fill:#f9f,stroke:#333,stroke-width:4px
+    style PD fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
 ### Key Architectural Implications
 
 1. **Two distinct paths**: Path A (reuse) and Path B (generate) handle different scenarios
 2. **Separate discovery nodes**: WorkflowDiscoveryNode finds complete solutions, ComponentBrowsingNode finds building blocks
-3. **Parameter extraction as convergence**: Both paths meet at ParameterExtractionNode
-4. **Verification gate**: Parameter extraction verifies the workflow can actually execute
-5. **Clean separation**: Planner plans, runtime resolves templates
-6. **Every MVP execution is meta**: Even reusing existing workflows goes through the full planner
-7. **Clear separation** - Planner prepares, CLI executes
+3. **Two-phase parameter handling**: ParameterDiscoveryNode extracts named parameters early, ParameterMappingNode validates them at convergence
+4. **Parameter mapping as convergence**: Both paths meet at ParameterMappingNode
+5. **Verification gate**: Parameter mapping verifies the workflow can actually execute
+6. **Clean separation**: Planner plans, runtime resolves templates
+7. **Every MVP execution is meta**: Even reusing existing workflows goes through the full planner
+8. **Clear separation** - Planner prepares, CLI executes
 
 ### MVP vs Future Architecture
 
@@ -59,7 +62,11 @@ User Input: "fix github issue 1234"
     ↓
 [Planner Meta-Workflow]
     ├─> Discovery: Does "fix-issue" workflow exist?
-    ├─> Parameter Extraction: {"issue_number": "1234"}
+    ├─> If creating new:
+    │   ├─> Parameter Discovery: Extract {"issue_number": "1234"} (named params)
+    │   ├─> Generation: Create workflow using discovered parameters
+    │   └─> Validation: Check structure + templates
+    ├─> Parameter Mapping: {"issue_number": "1234"}
     ├─> Verification: Can workflow execute with these params?
     ├─> Workflow contains: {"params": {"issue": "$issue_number"}}
     └─> Returns to CLI: (workflow_ir, metadata, parameter_values)
@@ -81,9 +88,11 @@ pflow fix-issue --issue=1234  # Bypasses planner entirely
 
 **The Planner Workflow Includes**:
 - Discovery: Find existing workflow or determine need to create
+- Parameter Discovery (Path B): Extract named parameters like {"issue_number": "1234"} before generation
 - Generation: Create new workflow if needed (with template variables)
-- Parameter Extraction: Extract "1234" from "fix github issue 1234"
-- Parameter Mapping: Prepare extracted values for template variable substitution
+- Validation: Check structure and template variables
+- Parameter Mapping: Validate extracted parameters against workflow requirements
+- Verification: Ensure all required parameters are available
 - Result Preparation: Package workflow IR + parameter values for CLI
 
 **The CLI then handles**:
@@ -142,7 +151,7 @@ The planner leverages the Node IR (Node Intermediate Representation) implemented
 1. **ComponentBrowsingNode**: Accesses pre-parsed interface data through context builder
 2. **GeneratorNode**: Can generate workflows using any variable names that nodes actually write
 3. **ValidatorNode**: Uses registry with interface data to validate template variables accurately
-4. **ParameterExtractionNode**: Knows exactly what variables are available from node outputs
+4. **ParameterMappingNode**: Maps discovered parameters to workflow requirements and verifies executability
 
 ### Critical Benefits for Workflow Generation
 
@@ -342,38 +351,97 @@ class ComponentBrowsingNode(Node):
         """Store results and proceed to generation."""
         shared["planning_context"] = exec_res["planning_context"]
         shared["selected_components"] = exec_res["selected_components"]
-        return "generate"
+        return "discover_params"
 
-class ParameterExtractionNode(Node):
-    """Extracts parameters AND verifies workflow executability (convergence point)
+class ParameterDiscoveryNode(Node):
+    """Extract named parameters from natural language BEFORE workflow generation.
 
-    This node works IDENTICALLY for both paths:
-    - Takes user input + workflow (which already has template variables defined)
-    - Extracts concrete values from natural language
-    - Maps them to the workflow's template variables
-    - Verifies all required parameters are available
+    This node discovers concrete values WITH their contextual names, providing
+    a proper parameter dictionary for the generator to use. This enables better
+    validation and eliminates type conversion complexity.
+    Only runs in Path B (workflow generation).
     """
     def prep(self, shared):
-        # Extract specific data needed for parameter extraction
+        return shared["user_input"]
+
+    def exec(self, user_input):
+        # Extract parameters with names using LLM
+        prompt = f"""
+        Extract parameters with appropriate names from: {user_input}
+
+        Examples:
+        - "fix issue 1234" → {{"issue_number": "1234"}}
+        - "analyze sales report from yesterday" → {{"report_type": "sales", "date": "2024-01-14"}}
+        - "deploy version 2.1.0 to staging" → {{"version": "2.1.0", "environment": "staging"}}
+        - "fix github issue 1234 in the pflow repo" → {{"issue_number": "1234", "repo_name": "pflow"}}
+
+        Rules:
+        - Use descriptive parameter names
+        - Convert temporal references (yesterday → actual date)
+        - Extract all identifiable values
+
+        Return as JSON object with descriptive parameter names.
+        """
+
+        # Use LLM to discover parameters with names
+        discovered_params = self.llm.extract(prompt, schema=dict[str, str])
+
+        # Also interpret any temporal references
+        if any(term in user_input for term in ["yesterday", "today", "last", "tomorrow"]):
+            discovered_params.update(self._interpret_temporal_references(user_input))
+
+        return discovered_params
+
+    def post(self, shared, prep_res, exec_res):
+        """Store discovered parameters for generator context."""
+        shared["discovered_params"] = exec_res
+        return "generate"
+
+class ParameterMappingNode(Node):
+    """Maps discovered/extracted parameters to workflow requirements (convergence point)
+
+    This node serves as the convergence point for both paths:
+    - Path A: Extracts parameters from natural language for existing workflow
+    - Path B: Validates already-discovered parameters against the generated workflow
+
+    Key responsibilities:
+    - Map concrete values to the workflow's template variables
+    - Verify all required parameters are available
+    - Route to error handling if parameters are missing
+    """
+    def prep(self, shared):
+        # Extract specific data needed for parameter mapping
         user_input = shared["user_input"]
         workflow = shared.get("found_workflow") or shared.get("generated_workflow")
+        discovered_params = shared.get("discovered_params", {})  # From Path B
         current_date = shared.get("current_date", datetime.now().isoformat()[:10])
-        return user_input, workflow, current_date
+        return {
+            "user_input": user_input,
+            "workflow": workflow,
+            "discovered_params": discovered_params,
+            "current_date": current_date
+        }
 
     def exec(self, prep_res):
-        # Unpack the tuple from prep
-        user_input, workflow, current_date = prep_res
-
-        # Extract concrete values
-        extracted = self._extract_from_natural_language(user_input, workflow, current_date)
-        # Example: {"issue_number": "1234"} from "fix github issue 1234"
+        # For Path B: Use pre-discovered parameters
+        # For Path A: Extract from natural language
+        if prep_res["discovered_params"]:
+            # Path B: Already have named parameters, just validate against workflow
+            mapped = prep_res["discovered_params"]
+        else:
+            # Path A: Extract from natural language
+            mapped = self._extract_from_natural_language(
+                prep_res["user_input"],
+                prep_res["workflow"],
+                prep_res["current_date"]
+            )
 
         # CRITICAL: Verify all required params are available
-        required = self._get_required_params(workflow)
-        missing = required - set(extracted.keys())
+        required = self._get_required_params(prep_res["workflow"])
+        missing = required - set(mapped.keys())
 
         return {
-            "extracted": extracted,
+            "mapped": mapped,
             "missing": missing
         }
 
@@ -381,10 +449,10 @@ class ParameterExtractionNode(Node):
         """Store results and determine if execution can proceed."""
         if exec_res["missing"]:
             shared["missing_params"] = exec_res["missing"]
-            shared["extraction_error"] = f"Workflow cannot be executed: missing {exec_res['missing']}"
+            shared["parameter_error"] = f"Workflow cannot be executed: missing {exec_res['missing']}"
             return "params_incomplete"
 
-        shared["extracted_params"] = exec_res["extracted"]
+        shared["mapped_params"] = exec_res["mapped"]
         return "params_complete"
 
     def _extract_from_natural_language(self, user_input: str, workflow: dict, current_date: str) -> dict:
@@ -412,8 +480,8 @@ class ParameterExtractionNode(Node):
 class ParameterPreparationNode(Node):
     """Prepares parameters for runtime substitution"""
     def prep(self, shared):
-        """Get extracted parameters."""
-        return shared.get("extracted_params", {})
+        """Get mapped parameters."""
+        return shared.get("mapped_params", {})
 
     def exec(self, prep_res):
         """Pass through parameters unchanged."""
@@ -458,15 +526,34 @@ class GeneratorNode(Node):
         return "validate"
 
 class ValidatorNode(Node):
-    """Validates generated workflow structure"""
+    """Validates generated workflow structure and templates"""
     def prep(self, shared):
-        """Get workflow to validate."""
-        return shared.get("generated_workflow", {})
+        """Get workflow and discovered params to validate."""
+        return {
+            "workflow": shared.get("generated_workflow", {}),
+            "discovered_params": shared.get("discovered_params", {}),
+            "registry": shared.get("registry")
+        }
 
     def exec(self, prep_res):
-        """Validate workflow structure."""
-        validation_result = self._validate_workflow(prep_res)
-        return validation_result
+        """Validate workflow structure and templates."""
+        from pflow.runtime.template_validator import TemplateValidator
+
+        workflow = prep_res["workflow"]
+
+        # 1. Structure validation
+        validate_ir(workflow)
+
+        # 2. Full template validation with discovered params
+        errors = TemplateValidator.validate_workflow_templates(
+            workflow,
+            prep_res["discovered_params"],
+            prep_res["registry"]
+        )
+
+        if errors:
+            return {"is_valid": False, "errors": errors}
+        return {"is_valid": True}
 
     def post(self, shared, prep_res, exec_res):
         """Determine next action based on validation result."""
@@ -497,12 +584,12 @@ class MetadataGenerationNode(Node):
         }
 
     def post(self, shared, prep_res, exec_res):
-        """Store metadata and continue to parameter extraction."""
+        """Store metadata and continue to parameter mapping."""
         shared["workflow_name"] = exec_res["name"]
         shared["workflow_description"] = exec_res["description"]
         shared["workflow_inputs"] = exec_res["inputs"]
         shared["workflow_outputs"] = exec_res["outputs"]
-        return "param_extract"
+        return "param_map"
 
 class ResultPreparationNode(Node):
     """Prepares the final results to return to the CLI"""
@@ -542,7 +629,8 @@ def create_planner_flow():
     # All nodes
     discovery = WorkflowDiscoveryNode()
     browsing = ComponentBrowsingNode()
-    param_extract = ParameterExtractionNode()
+    param_discovery = ParameterDiscoveryNode()  # NEW
+    param_mapping = ParameterMappingNode()  # RENAMED from ParameterExtractionNode
     param_prep = ParameterPreparationNode()
     generator = GeneratorNode()
     validator = ValidatorNode()
@@ -551,19 +639,20 @@ def create_planner_flow():
 
     # Main flow with two paths
     # Path A: Found existing workflow
-    flow.add_edge(discovery, "found_existing", param_extract)
+    flow.add_edge(discovery, "found_existing", param_mapping)
 
     # Path B: Generate new workflow
     flow.add_edge(discovery, "not_found", browsing)
-    flow.add_edge(browsing, "generate", generator)
+    flow.add_edge(browsing, "generate", param_discovery)  # NEW
+    flow.add_edge(param_discovery, "generate", generator)  # UPDATED
     flow.add_edge(generator, "validate", validator)
     flow.add_edge(validator, "valid", metadata)
     flow.add_edge(validator, "invalid", generator)  # Retry
-    flow.add_edge(metadata, "param_extract", param_extract)
+    flow.add_edge(metadata, "param_map", param_mapping)
 
-    # Both paths converge at parameter extraction
-    flow.add_edge(param_extract, "params_complete", param_prep)
-    flow.add_edge(param_extract, "params_incomplete", result_prep)  # Missing params
+    # Both paths converge at parameter mapping
+    flow.add_edge(param_mapping, "params_complete", param_prep)
+    flow.add_edge(param_mapping, "params_incomplete", result_prep)  # Missing params
     flow.add_edge(param_prep, "prepare_result", result_prep)
 
     return flow
@@ -581,6 +670,12 @@ shared = {
     "llm_context": "Available nodes: github-get-issue, llm, ...",
     "available_workflows": ["analyze-logs", "fix-issue", ...],
 
+    # Parameter discovery phase (Path B)
+    "discovered_params": {
+        "issue_number": "123",
+        "repo_name": "pflow"
+    },  # Named parameters discovered early
+
     # Generation attempts
     "attempt_count": 2,
     "previous_errors": ["Missing repo parameter", "Invalid JSON"],
@@ -597,9 +692,14 @@ shared = {
         "edges": [{"from": "get", "to": "fix"}]
     },
 
-    # Validation results
-    "validation_result": "missing_params",
-    "validation_errors": ["Node 'llm' requires 'prompt' parameter"],
+    # Validation results (now with discovered params)
+    "validation_result": "valid",  # Can validate templates with discovered params
+    "validation_errors": [],
+
+    # Parameter mapping results
+    "mapped_params": {
+        "issue_number": "123"  # Discovered parameter validated against workflow
+    },
 
     # Final output prepared for CLI
     "planner_output": {
@@ -611,7 +711,7 @@ shared = {
             "outputs": ["pr_url"]
         },
         "parameter_values": {
-            "issue_number": "123"  # Extracted from natural language
+            "issue_number": "123"  # From discovered params or natural language
         }
     }
 }
@@ -673,7 +773,7 @@ Use `src/pflow/planning/` for the planner implementation.
 ```
 src/pflow/planning/
 ├── __init__.py       # Module exports
-├── nodes.py          # Planner nodes (discovery, generator, validator, metadata, parameter extraction)
+├── nodes.py          # Planner nodes (discovery, parameter discovery, generator, validator, metadata, parameter mapping)
 ├── flow.py           # create_planner_flow() - orchestrates the nodes
 ├── ir_models.py      # Pydantic models for IR generation
 ├── utils/            # Helper utilities
