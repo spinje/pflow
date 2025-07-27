@@ -58,6 +58,24 @@ The ParameterExtractionNode serves as the critical convergence point where both 
 3. **Verify**: Ensure ALL required parameters are available
 4. **Gate**: Block execution if parameters are missing
 
+### The Three Core Responsibilities
+
+ParameterExtractionNode performs three distinct but related functions:
+
+1. **Simple Extraction**: Direct value extraction
+   - "fix issue 1234" → {"issue_number": "1234"}
+   - "analyze report.pdf" → {"file": "report.pdf"}
+
+2. **Complex Interpretation**: Context-aware value resolution
+   - "yesterday" → {"date": "2024-11-30"}
+   - "latest release" → {"version": "v2.1.0"} (via API call)
+   - "this quarter" → {"start": "2024-10-01", "end": "2024-12-31"}
+
+3. **Verification Gate**: Completeness check
+   - Compare workflow requirements vs extracted values
+   - Route to "params_incomplete" or "params_complete"
+   - Package missing params info for CLI escalation
+
 ### Key Principles
 1. **Convergence point**: Both paths (found/generate) must pass through here
 2. **Execution feasibility**: Determines if workflow can run
@@ -80,6 +98,17 @@ Workflow needs: app_name, environment, version
 Extracted: {} (nothing specific in input!)
 Verification: ✗ Missing required params
 Result: Cannot execute - prompt for missing parameters
+```
+
+### Example: Intent Match with Missing Parameters
+```
+User: "fix github issue"  (no issue number!)
+WorkflowDiscoveryNode: Finds "fix-issue" workflow (intent matches)
+Workflow needs: issue_number
+Extracted: {} (no number in input)
+Verification: ✗ Missing required params
+Result: Return to CLI with missing params list
+CLI: Prompts user "What issue number?"
 ```
 
 This separation ensures workflows are only executed when they have all necessary inputs, preventing runtime failures and improving user experience.
@@ -429,7 +458,7 @@ Without a sophisticated solution, workflows would need many intermediate "glue" 
 - [ ] **Option C: Path-Based Proxy Mappings with Nested Extraction**
   - Support JSONPath/dot notation: `{"prompt": "api_response.data.content"}`
   - Extract from arrays: `{"labels": "issue.labels[*].name"}`
-  - Combine with templates: `"prompt": "Analyze: ${issue.title}"`
+  - Combine with templates: `"prompt": "Analyze: $issue.title"`
   - Most powerful and flexible approach
   - **Deferred to v2.0** due to implementation complexity
 
@@ -903,51 +932,16 @@ Template variables convert ALL values to strings:
 5. No proxy mappings in MVP - deferred to v2.0
 
 
-## MVP Approach: Avoiding Collisions Through Node Naming
+## MVP Approach: Node Output Behavior
 
-### Simplified Strategy
+### Fixed Output Keys
+For MVP, nodes write to fixed output keys determined by their type, not their ID:
+- `github-get-issue` always writes to `shared["issue_data"]`
+- `llm` always writes to `shared["response"]`
+- Node IDs are for workflow clarity only, they don't affect data storage
 
-For MVP, avoid collisions by using descriptive node IDs and understanding how data flows:
-
-1. **Use descriptive node IDs** - `github_main`, `github_fork` instead of generic names
-2. **Understand output keys** - Nodes write to specific keys defined by their implementation (e.g., github-get-issue writes to `shared["issue_data"]`)
-3. **Collision avoidance** - When using multiple nodes of the same type, they'll overwrite each other's outputs
-4. **MVP workaround** - Design workflows to avoid needing the same node type multiple times, or ensure they run sequentially
-
-### Prompt Guidance
-
-Include this guidance in the planner prompt:
-```
-Important: Nodes write to fixed output keys, NOT based on their ID.
-For MVP, avoid using multiple instances of the same node type that write to the same key.
-If you must use the same node type multiple times, ensure they run sequentially
-so later nodes can use data from earlier ones.
-
-Use descriptive node IDs for clarity:
-- "fetch_main_issue" and "fetch_related_issue" instead of "node1" and "node2"
-```
-
-### Example Pattern (Sequential to Avoid Collisions)
-```json
-{
-  "nodes": [
-    {"id": "fetch_issue", "type": "github-get-issue", "params": {"issue": "123"}},
-    {"id": "analyze_issue", "type": "llm", "params": {
-      "prompt": "Analyze this issue: $issue_data.title - $issue_data.body"
-    }},
-    {"id": "fetch_related", "type": "github-get-issue", "params": {"issue": "456"}},
-    {"id": "compare", "type": "llm", "params": {
-      "prompt": "Compare to related issue: $issue_data.title"
-    }}
-  ]
-}
-```
-
-**Note**: In this example, the second github-get-issue overwrites the first one's data. This is a limitation of MVP without proxy mappings.
-
-### v2.0 Enhancement
-
-Post-MVP, proxy mappings will provide more sophisticated collision handling and data reorganization. For now, descriptive naming provides a simple, effective solution.
+### No Collision Detection
+MVP assumes each node type is used once or sequentially. If the same node type is used multiple times, later executions overwrite earlier data. This limitation is acceptable for MVP and will be addressed in v2.0 with proxy mappings.
 
 ## MVP Feature Boundaries
 
@@ -1157,7 +1151,7 @@ ComponentBrowsingNode → GeneratorNode → ValidatorNode → MetadataGeneration
 3. ~~**Error Feedback Node**: Should this be a separate node or part of validator?~~ **RESOLVED**: Part of validator with specific routing
 4. ~~**Retry Count Access**: Should we use `cur_retry` attribute or track in shared?~~ **RESOLVED**: Use node's max_retries (3 for all nodes)
 5. ~~**Checkpoint Frequency**: After each successful node or only at key points?~~ **RESOLVED**: Not needed for MVP
-6. ~~**Template Variable Format**: Should we support both `$var` and `${var}` syntax?~~ **RESOLVED**: `$var` and `$var.field.subfield` path syntax for MVP (no ${var} braces). Path support implemented by Task 18.
+6. ~~**Template Variable Format**: Should we support both `$var` and `${var}` syntax?~~ **RESOLVED**: `$var` and `$var.field.subfield` path syntax for MVP (no `${var}` braces). Path support implemented by Task 18.
 7. ~~**Workflow Storage Trigger**: Does the planner save new workflows automatically or prompt user?~~ **RESOLVED**: CLI handles after user approval
 
 

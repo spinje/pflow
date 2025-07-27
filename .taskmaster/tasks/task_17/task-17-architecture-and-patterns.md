@@ -99,6 +99,10 @@ This means the planner doesn't just generate and hand off - it orchestrates disc
 
 **Future v2.0+**: Known workflows can be executed directly
 
+### Prerequisites Completed
+
+All task dependencies have been successfully implemented, enabling the planner to leverage their functionality.
+
 ## Node IR Integration (Task 19)
 
 The planner leverages the Node IR (Node Intermediate Representation) implemented in Task 19, which fundamentally improves how the planner can generate and validate workflows.
@@ -268,7 +272,7 @@ The traditional approach quickly becomes:
 # The planner meta-workflow that handles EVERYTHING
 
 class WorkflowDiscoveryNode(Node):
-    """Find complete workflows that can satisfy the ENTIRE user intent as-is"""
+    """Find complete workflows that match user INTENT, regardless of parameters."""
     def prep(self, shared):
         # Extract user input for discovery
         return shared["user_input"]
@@ -277,15 +281,18 @@ class WorkflowDiscoveryNode(Node):
         # Load workflows during execution
         saved_workflows = self._load_saved_workflows()  # From ~/.pflow/workflows/
 
-        # Use LLM to find exact matches
+        # Match based on intent, not parameter presence
         prompt = f"""
         User wants to: {user_input}
 
         Available workflows:
         {self._format_workflows(saved_workflows)}
 
-        Which workflow (if any) would completely satisfy this request?
-        Return the workflow name or 'none' if no complete match.
+        Which workflow would satisfy the user's INTENT?
+        Ignore whether specific parameters (like issue numbers) are provided.
+        Match based on what the user wants to accomplish.
+
+        Return the workflow name or 'none' if no intent match.
         """
 
         match = self.llm.complete(prompt)

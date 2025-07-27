@@ -335,14 +335,14 @@ Output as JSON:
 1. **Context Builder** (Task 15/16) - Provides discovery and planning contexts
    - `build_discovery_context()` - For finding nodes/workflows (lightweight)
    - `build_planning_context()` - For detailed interface info (selected components only)
-   - DO NOT access registry directly for discovery - always use context builder
+   - Use for browsing available components (nodes + workflows)
+   - Formats information for LLM consumption
    - **Note**: Task 19 simplified the context builder - it now uses pre-parsed interface data from the registry
 2. **JSON IR Schema** - Defines valid workflow structure
-3. **Node Registry** - Accessed ONLY through context builder, never directly
-   - **Clarification on Registry Access**:
-     - For discovery/browsing: ALWAYS use context builder (never direct registry access)
-     - For validation: Registry instance can be accessed to verify node types and get metadata
-     - This separation ensures clean architecture while enabling proper validation
+3. **Registry** - Can be accessed directly for validation
+   - Use registry instance to verify node types exist
+   - Access interface metadata for template validation
+   - Context builder uses registry internally for discovery
 4. **LLM Library** - Simon Willison's `llm` with structured outputs
 5. **General LLM Node** (Task 12) - Required in registry so planner can generate workflows with LLM nodes
    - Note: Planner doesn't USE Task 12's code, it just needs it to exist in the registry
@@ -353,7 +353,7 @@ Output as JSON:
 - **Task 15/16**: Context builder with two-phase discovery ✅ Done
 - **Task 18**: Template variable system with path support ✅ Done
 - **Task 12**: General LLM node (needed in registry for workflow generation)
-- **Task 19**: Doesn't exist - ignore any references to it in research files
+- **Task 19**: Provides Node IR functionality that enables accurate template validation against actual node outputs
 
 ### Integration Requirements
 1. **CLI Integration**: Planner receives raw input string from CLI
