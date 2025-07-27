@@ -67,8 +67,12 @@ class TemplateValidator:
                             f"Template path ${template} cannot be validated - initial_params values are runtime-dependent"
                         )
                     else:
+                        # Extract the path component after the base variable
+                        path_component = template[len(base_var) + 1 :] if "." in template else template
                         errors.append(
-                            f"Template variable ${template} has no valid source - path doesn't exist in node outputs"
+                            f"Template variable ${template} has no valid source - "
+                            f"not provided in initial_params and path '{path_component}' "
+                            f"not found in outputs from any node in the workflow"
                         )
                 else:
                     # Simple variable not found
