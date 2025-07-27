@@ -327,6 +327,55 @@ Automatic namespacing represents the "path not taken" - a simpler alternative th
 
 The elegance of this approach lies in its invisibility - nodes don't need to know about it, workflow authors get it for free, and the template syntax naturally aligns with the data structure. Sometimes the best solutions are the ones that feel obvious in hindsight.
 
+---
+
+## Avoiding Collisions Through Node Naming (planner (task17) perspective)
+
+### Simplified Strategy
+
+For MVP, avoid collisions by using descriptive node IDs and understanding how data flows:
+
+1. **Use descriptive node IDs** - `github_main`, `github_fork` instead of generic names
+2. **Understand output keys** - Nodes write to specific keys defined by their implementation (e.g., github-get-issue writes to `shared["issue_data"]`)
+3. **Collision avoidance** - When using multiple nodes of the same type, they'll overwrite each other's outputs
+4. **MVP workaround** - Design workflows to avoid needing the same node type multiple times, or ensure they run sequentially
+
+### Prompt Guidance
+
+Include this guidance in the planner prompt:
+```
+Important: Nodes write to fixed output keys, NOT based on their ID.
+For MVP, avoid using multiple instances of the same node type that write to the same key.
+If you must use the same node type multiple times, ensure they run sequentially
+so later nodes can use data from earlier ones.
+
+Use descriptive node IDs for clarity:
+- "fetch_main_issue" and "fetch_related_issue" instead of "node1" and "node2"
+```
+
+### Example Pattern (Sequential to Avoid Collisions)
+```json
+{
+  "nodes": [
+    {"id": "fetch_issue", "type": "github-get-issue", "params": {"issue": "123"}},
+    {"id": "analyze_issue", "type": "llm", "params": {
+      "prompt": "Analyze this issue: $issue_data.title - $issue_data.body"
+    }},
+    {"id": "fetch_related", "type": "github-get-issue", "params": {"issue": "456"}},
+    {"id": "compare", "type": "llm", "params": {
+      "prompt": "Compare to related issue: $issue_data.title"
+    }}
+  ]
+}
+```
+
+**Note**: In this example, the second github-get-issue overwrites the first one's data. This is a limitation of MVP without proxy mappings.
+
+### v2.0 Enhancement
+
+Post-MVP, proxy mappings will provide more sophisticated collision handling and data reorganization. For now, descriptive naming provides a simple, effective solution.
+
+---
 
 ## User notes
 
