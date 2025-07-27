@@ -242,4 +242,4 @@ The design in the implementation guide is solid and battle-tested. Trust it. The
 
 Following the epistemic manifesto: Question assumptions, validate against the code, and ensure your implementation survives scrutiny. When faced with ambiguity, surface it rather than guessing. This is a foundational change - robustness matters more than elegance.
 
-Good luck! You're fixing a fundamental flaw that will make pflow significantly more reliable.
+Good luck! Think hard!You're fixing a fundamental flaw that will make pflow significantly more reliable.
