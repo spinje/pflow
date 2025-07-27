@@ -113,6 +113,27 @@ CLI: Prompts user "What issue number?"
 
 This separation ensures workflows are only executed when they have all necessary inputs, preventing runtime failures and improving user experience.
 
+## Two-Phase Parameter Extraction Architecture
+
+The planner uses a sophisticated two-phase approach to parameter handling:
+
+### Phase 1: Parameter Discovery (Path B only)
+- **When**: Before workflow generation
+- **What**: Extract named parameters from natural language
+- **Purpose**: Provide context for intelligent workflow generation
+- **Example**: "fix issue 1234" → discovers {"issue_number": "1234"}
+
+### Phase 2: Parameter Mapping (Both paths)
+- **When**: After workflow is found/generated
+- **What**: Map discovered parameters to workflow's expected parameters
+- **Purpose**: Verify executability and prepare for runtime
+- **Example**: {"issue_number": "1234"} → verified against workflow's required params
+
+This architecture enables:
+1. Context-aware generation (generator knows available values)
+2. Full validation (validator has all needed information)
+3. Unified error handling (both paths check parameter availability)
+
 ## Input Parameter Handling in Natural Language
 
 ### The Core Challenge
@@ -283,6 +304,29 @@ There's a fundamental ambiguity about how template variables (`$variable`) work 
 
 Without runtime resolution (Option B), each workflow would be single-use, defeating the entire purpose of workflow compilation.
 
+### Three Types of Parameters
+
+Understanding the distinction between different parameter types is crucial:
+
+1. **Node Configuration Parameters** (from Registry)
+   - Static configuration options that nodes accept (e.g., `append: bool`, `encoding: str`)
+   - Stored in registry under `interface.params`
+   - Context builder shows only "exclusive params" (those NOT also in inputs)
+   - Can have default values specified in node implementation
+
+2. **Initial Parameters** (Workflow-level)
+   - Values extracted from natural language by the planner
+   - In MVP: These come ONLY from natural language, never from CLI flags
+   - Examples: "1234" from "fix issue 1234" becomes `{"issue_number": "1234"}`
+   - These are the `available_params` passed to template validation
+
+3. **Template Variables** (Runtime References)
+   - Placeholders in workflow params: `$issue_number`, `$issue_data.title`
+   - Can reference either:
+     - Initial parameters: `$issue_number` → resolved from extracted values
+     - Node outputs: `$issue_data` → resolved from shared store at runtime
+   - Enable workflow reusability - same workflow, different parameters
+
 ### Context
 Template variables are the KEY to pflow's "Plan Once, Run Forever" value proposition. They enable workflow reusability by allowing parameters to change between executions while keeping the workflow structure constant.
 
@@ -384,8 +428,8 @@ User: "fix github issue 1234"
 Path A (if workflow exists):
   WorkflowDiscoveryNode: Found 'fix-issue' workflow
   ↓
-  ParameterExtractionNode:
-    - Extract: {"issue_number": "1234"}
+  ParameterMappingNode:
+    - Map: {"issue_number": "1234"}
     - Verify: Workflow needs issue_number ✓
   ↓
   ResultPreparationNode: Package for CLI
@@ -396,18 +440,24 @@ Path B (if no workflow exists):
   ComponentBrowsingNode: Find github-get-issue, claude-code nodes
     (Can also select existing workflows as sub-workflows!)
   ↓
-  GeneratorNode: Create workflow with params: {"issue": "$issue_number"}
-    (Creates template variables, not hardcoded "1234")
+  ParameterDiscoveryNode: Extract named parameters from input
+    - Discovers: {"issue_number": "1234"}
+    - Provides context for generation
   ↓
-  ValidatorNode: Validate structure (max 3 retries)
+  GeneratorNode: Create workflow with params: {"issue": "$issue_number"}
+    (Creates template variables using discovered parameters as context)
+  ↓
+  ValidatorNode: Validate structure AND templates
+    - Has discovered params for full validation
     - If invalid → back to GeneratorNode (metadata skipped)
     - If valid → continue
   ↓
   MetadataGenerationNode: Extract metadata (name, description, inputs, outputs)
     (Only runs on validated workflows)
   ↓
-  ParameterExtractionNode: Maps "1234" → $issue_number
-    (Two-stage: Generator creates templates, this node maps values)
+  ParameterMappingNode: Maps discovered parameters to workflow parameters
+    - Connects {"issue_number": "1234"} to workflow's expected params
+    - Verifies all required params available
   ↓
   ResultPreparationNode: Package for CLI
 
@@ -1110,12 +1160,20 @@ Based on implementation clarifications, the following key decisions have been re
 
 Example: If user wants "fix github issue and notify team", and "fix-github-issue" workflow exists, ComponentBrowsingNode can select that workflow plus a "send-notification" node to create a new composite workflow.
 
-### 3. Parameter Extraction Two-Stage Process - RESOLVED ✓
-**Resolution**: Parameter handling happens in two distinct stages:
-- **Stage 1**: GeneratorNode creates workflows with template variables (e.g., `$issue_number`)
-- **Stage 2**: ParameterExtractionNode maps concrete values from user input (e.g., "1234") to those template variables
+### 3. Parameter Extraction Two-Phase Architecture - RESOLVED ✓
+**Resolution**: Parameter handling uses a sophisticated two-phase approach:
 
-This applies to both paths - found workflows already have templates, generated workflows get templates from GeneratorNode.
+**Phase 1 - Parameter Discovery (Path B only)**:
+- ParameterDiscoveryNode extracts named parameters BEFORE workflow generation
+- Provides context for intelligent workflow design
+- Example: "fix issue 1234" → discovers {"issue_number": "1234"}
+
+**Phase 2 - Parameter Mapping (Both paths)**:
+- ParameterMappingNode maps values to workflow parameters
+- Verifies all required parameters are available
+- Routes to "params_incomplete" if missing
+
+This architecture enables context-aware generation and full validation in the planner.
 
 ### 4. Validation Depth - RESOLVED ✓
 **Resolution**: MVP includes all three validation tiers:
@@ -1141,8 +1199,23 @@ Mock execution is deferred to v2.0. The MVP performs static analysis to verify t
 
 Updated flow for Path B:
 ```
-ComponentBrowsingNode → GeneratorNode → ValidatorNode → MetadataGenerationNode → ParameterExtractionNode
+ComponentBrowsingNode → ParameterDiscoveryNode → GeneratorNode → ValidatorNode → MetadataGenerationNode → ParameterMappingNode
 ```
+
+### 7. Template Validation Timing - RESOLVED ✓
+**Resolution**: Dual validation approach
+
+**Planner Validation**:
+- ValidatorNode performs FULL template validation
+- Uses discovered parameters from ParameterDiscoveryNode
+- Enables retry/fixing through planner's self-correcting flow
+
+**Runtime Validation**:
+- Re-validates as safety check with actual execution parameters
+- Uses same TemplateValidator class for consistency
+- Catches edge cases and ensures execution readiness
+
+This dual approach provides early error detection with retry opportunity while maintaining runtime safety.
 
 ## Open Questions and Decisions Needed
 
@@ -1182,13 +1255,14 @@ With the directory structure resolved and patterns understood, the implementatio
 2. Implement core nodes using the advanced patterns:
    - WorkflowDiscoveryNode (finds complete workflows)
    - ComponentBrowsingNode (finds building blocks when no complete match)
+   - ParameterDiscoveryNode (extracts named parameters from NL before generation)
    - GeneratorNode with progressive enhancement
-   - ValidatorNode using existing validate_ir()
+   - ValidatorNode using existing validate_ir() and full template validation
    - MetadataGenerationNode (extracts metadata from validated workflows)
-   - ParameterExtractionNode as convergence/verification point (NL → params)
+   - ParameterMappingNode as convergence/verification point (maps values → params)
    - ParameterPreparationNode for runtime format (format values for runtime substitution in CLI)
    - ResultPreparationNode to format output for CLI
-3. Design flow with proper branching (found vs generate paths converging at parameter extraction)
+3. Design flow with proper branching (found vs generate paths converging at parameter mapping)
 4. Add comprehensive testing for complete execution paths
 5. Integrate with CLI using the exact pattern shown above
 
