@@ -508,7 +508,7 @@ def compile_ir_to_flow(
         logger.debug("Validating template variables", extra={"phase": "template_validation"})
         # Note: This is separate from validate_ir() which checks workflow structure.
         # This validates we have the runtime parameters needed to execute.
-        errors = TemplateValidator.validate_workflow_templates(ir_dict, initial_params)
+        errors = TemplateValidator.validate_workflow_templates(ir_dict, initial_params, registry)
         if errors:
             error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
             logger.error(

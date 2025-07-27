@@ -72,7 +72,17 @@ class TestContextBuilderPerformance:
         # Create registry with 100 nodes
         registry_metadata = {}
         for i in range(100):
-            registry_metadata[f"node-{i:03d}"] = {"module": "test.module", "class_name": "TestNode"}
+            registry_metadata[f"node-{i:03d}"] = {
+                "module": "test.module",
+                "class_name": "TestNode",
+                "interface": {
+                    "description": f"Test node {i}",
+                    "inputs": [],
+                    "outputs": [],
+                    "params": [],
+                    "actions": ["default"],
+                },
+            }
 
         # Select 50 nodes for planning
         selected_nodes = [f"node-{i:03d}" for i in range(50)]
@@ -280,7 +290,17 @@ class TestContextBuilderPerformance:
 
         registry_metadata = {}
         for i in range(100):
-            registry_metadata[f"node-{i:03d}"] = {"module": "test.module", "class_name": "TestNode"}
+            registry_metadata[f"node-{i:03d}"] = {
+                "module": "test.module",
+                "class_name": "TestNode",
+                "interface": {
+                    "description": f"Test node {i}",
+                    "inputs": [],
+                    "outputs": [],
+                    "params": [],
+                    "actions": ["default"],
+                },
+            }
 
         results = []
         errors = []

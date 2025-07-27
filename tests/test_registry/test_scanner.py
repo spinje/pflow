@@ -90,7 +90,17 @@ class TestExtractMetadata:
 
             name = "test-node"
 
-        metadata = extract_metadata(TestNode, "pflow.nodes.test", Path("/project/test.py"))
+        # Mock the MetadataExtractor
+        mock_extractor = MagicMock()
+        mock_extractor.extract_metadata.return_value = {
+            "description": "Test node documentation.",
+            "inputs": [{"key": "input1", "type": "str", "description": "Test input"}],
+            "outputs": [{"key": "output1", "type": "str", "description": "Test output"}],
+            "params": [{"key": "param1", "type": "any", "description": "Test param"}],
+            "actions": ["default", "error"],
+        }
+
+        metadata = extract_metadata(TestNode, "pflow.nodes.test", Path("/project/test.py"), extractor=mock_extractor)
 
         assert metadata["module"] == "pflow.nodes.test"
         assert metadata["class_name"] == "TestNode"
@@ -98,13 +108,33 @@ class TestExtractMetadata:
         assert metadata["docstring"] == "Test node documentation."
         assert "/project/test.py" in metadata["file_path"]
 
+        # Check interface was added
+        assert "interface" in metadata
+        assert metadata["interface"]["description"] == "Test node documentation."
+        assert len(metadata["interface"]["inputs"]) == 1
+        assert metadata["interface"]["inputs"][0]["key"] == "input1"
+        assert len(metadata["interface"]["outputs"]) == 1
+        assert metadata["interface"]["outputs"][0]["key"] == "output1"
+        assert metadata["interface"]["actions"] == ["default", "error"]
+
     def test_no_docstring(self):
         class NoDocNode:
             pass
 
-        metadata = extract_metadata(NoDocNode, "pflow.nodes.test", Path("/project/test.py"))
+        # Mock the MetadataExtractor
+        mock_extractor = MagicMock()
+        mock_extractor.extract_metadata.return_value = {
+            "description": "No description",
+            "inputs": [],
+            "outputs": [],
+            "params": [],
+            "actions": [],
+        }
+
+        metadata = extract_metadata(NoDocNode, "pflow.nodes.test", Path("/project/test.py"), extractor=mock_extractor)
 
         assert metadata["docstring"] == ""
+        assert metadata["interface"]["description"] == "No description"
 
     def test_multiline_docstring(self):
         class MultiNode:
@@ -116,10 +146,39 @@ class TestExtractMetadata:
 
             pass
 
-        metadata = extract_metadata(MultiNode, "pflow.nodes.test", Path("/project/test.py"))
+        # Mock the MetadataExtractor
+        mock_extractor = MagicMock()
+        mock_extractor.extract_metadata.return_value = {
+            "description": "Multi-line docstring.",
+            "inputs": [],
+            "outputs": [],
+            "params": [],
+            "actions": [],
+        }
+
+        metadata = extract_metadata(MultiNode, "pflow.nodes.test", Path("/project/test.py"), extractor=mock_extractor)
 
         assert "Multi-line docstring." in metadata["docstring"]
         assert "With multiple paragraphs." in metadata["docstring"]
+        assert metadata["interface"]["description"] == "Multi-line docstring."
+
+    def test_parse_error_handling(self):
+        """Test that parse errors are raised with proper messages."""
+
+        class BadNode:
+            """Node with bad interface."""
+
+            pass
+
+        # Mock the MetadataExtractor to raise an error
+        mock_extractor = MagicMock()
+        mock_extractor.extract_metadata.side_effect = ValueError("Invalid interface format")
+
+        # Should raise and log error with file path
+        import pytest
+
+        with pytest.raises(ValueError, match="Invalid interface format"):
+            extract_metadata(BadNode, "pflow.nodes.test", Path("/project/test.py"), extractor=mock_extractor)
 
 
 class TestTemporarySyspath:

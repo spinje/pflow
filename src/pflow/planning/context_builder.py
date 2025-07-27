@@ -4,15 +4,11 @@ This module transforms node registry metadata into LLM-optimized markdown
 documentation that enables natural language workflow composition.
 """
 
-import importlib
 import json
 import logging
 import os
-import types
 from pathlib import Path
 from typing import Any, Optional
-
-from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +17,6 @@ MAX_OUTPUT_SIZE = 200000  # 200KB limit for LLM context (increased for detailed 
 MAX_STRUCTURE_HINTS = 100  # Increased limit for structure display
 
 
-# TODO: Function complexity warning (C901) is suppressed but valid
-# Consider refactoring into smaller functions:
-# - _validate_inputs()
-# - _process_single_node()
-# - _build_markdown_output()
 def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], int]:
     """Process registry metadata to extract and enrich node information.
 
@@ -35,78 +26,35 @@ def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[s
     Returns:
         Tuple of (processed nodes dict, skipped count)
     """
-
-    extractor = PflowMetadataExtractor()
     processed_nodes = {}
     skipped_count = 0
-    module_cache: dict[str, types.ModuleType] = {}  # Cache imported modules for performance
 
     for node_type, node_info in registry_metadata.items():
         # Skip test nodes
         file_path = node_info.get("file_path", "")
-        # TODO: Consider more sophisticated test detection:
-        # - Check for __pycache__ directories
-        # - Skip .pyc files
-        # - Maybe check class name patterns (TestNode, MockNode, etc.)
         if "test" in file_path.lower():
             logger.debug(f"context: Skipping test node: {node_type}")
             skipped_count += 1
             continue
 
-        # Phase 2: Import and metadata extraction
-        try:
-            # Import the node class using module path and class name
-            # NOTE: Not using import_node_class() from runtime.compiler because:
-            # 1. It requires a Registry instance, not a dict
-            # 2. We already have the module path and class name
-            # 3. This approach is simpler and avoids unnecessary dependencies
-            module_path = node_info.get("module")
-            class_name = node_info.get("class_name")
+        # Use pre-parsed interface data directly from registry
+        interface = node_info.get("interface")
+        if not interface:
+            # This should never happen with new Node IR - all nodes have interface
+            logger.error(f"context: Node '{node_type}' missing interface field - regenerate registry")
+            raise ValueError(f"Node '{node_type}' missing interface data. Run registry update.")
 
-            if not module_path or not class_name:
-                logger.warning(f"context: Missing module or class_name for node '{node_type}'")
-                skipped_count += 1
-                continue
+        # Store processed node with interface data
+        processed_nodes[node_type] = {
+            "description": interface.get("description", "No description"),
+            "inputs": interface.get("inputs", []),
+            "outputs": interface.get("outputs", []),
+            "params": interface.get("params", []),
+            "actions": interface.get("actions", []),
+            "registry_info": node_info,
+        }
 
-            # Use cached module if available
-            if module_path in module_cache:
-                module = module_cache[module_path]
-            else:
-                module = importlib.import_module(module_path)
-                module_cache[module_path] = module
-
-            node_class = getattr(module, class_name)
-
-            # Extract metadata
-            # TODO: Future optimization - cache extracted metadata to disk
-            # This is the main performance bottleneck for large registries
-            metadata = extractor.extract_metadata(node_class)
-
-            # Store successful extraction
-            processed_nodes[node_type] = {
-                "description": metadata.get("description", "No description"),
-                "inputs": metadata.get("inputs", []),
-                "outputs": metadata.get("outputs", []),
-                "params": metadata.get("params", []),
-                "actions": metadata.get("actions", []),
-                "registry_info": node_info,
-            }
-
-        except ImportError as e:
-            logger.warning(f"context: Failed to import module for node '{node_type}' (module: {module_path}): {e}")
-            skipped_count += 1
-            continue
-        except AttributeError as e:
-            logger.warning(
-                f"context: Failed to find class '{class_name}' in module '{module_path}' for node '{node_type}': {e}"
-            )
-            skipped_count += 1
-            continue
-        except Exception as e:
-            logger.warning(f"context: Unexpected error processing node '{node_type}': {type(e).__name__}: {e}")
-            skipped_count += 1
-            continue
-
+    # No more skipped nodes due to import errors - all data pre-parsed
     return processed_nodes, skipped_count
 
 

@@ -8,10 +8,23 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Singleton MetadataExtractor instance
+_metadata_extractor = None
+
+
+def get_metadata_extractor() -> Any:
+    """Get or create singleton MetadataExtractor instance."""
+    global _metadata_extractor
+    if _metadata_extractor is None:
+        from pflow.registry.metadata_extractor import PflowMetadataExtractor
+
+        _metadata_extractor = PflowMetadataExtractor()
+    return _metadata_extractor
 
 
 @contextmanager
@@ -69,15 +82,50 @@ def path_to_module(file_path: Path, base_path: Path) -> str:
     return ".".join(parts)
 
 
-def extract_metadata(cls: type, module_path: str, file_path: Path) -> dict[str, Any]:
-    """Extract metadata from a node class."""
-    return {
+def extract_metadata(cls: type, module_path: str, file_path: Path, extractor: Optional[Any] = None) -> dict[str, Any]:
+    """Extract metadata from a node class including parsed interface.
+
+    Args:
+        cls: The node class to extract metadata from
+        module_path: The module path for the node
+        file_path: The file path where the node is defined
+        extractor: Optional MetadataExtractor instance (for testing/DI)
+    """
+    # Use provided extractor or get singleton
+    if extractor is None:
+        extractor = get_metadata_extractor()
+
+    # Get basic metadata (current implementation)
+    metadata: dict[str, Any] = {
         "module": module_path,
         "class_name": cls.__name__,
         "name": get_node_name(cls),
         "docstring": inspect.getdoc(cls) or "",
         "file_path": str(file_path.absolute()),
     }
+
+    # NEW: Parse interface from docstring
+    try:
+        parsed = extractor.extract_metadata(cls)
+
+        # Store full parsed interface
+        metadata["interface"] = {
+            "description": parsed.get("description", "No description"),
+            "inputs": parsed.get("inputs", []),
+            "outputs": parsed.get("outputs", []),
+            "params": parsed.get("params", []),
+            "actions": parsed.get("actions", []),
+        }
+    except Exception:
+        # For MVP: Fail fast on parsing errors - fix the node!
+        # Provide actionable error messages with file location
+        logger.exception(
+            f"Failed to parse interface for {cls.__name__} at {file_path}:\n"
+            f"  Fix: Check Interface section formatting in docstring"
+        )
+        raise
+
+    return metadata
 
 
 def _calculate_module_path(py_file: Path, directory: Path) -> str:

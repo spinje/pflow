@@ -9,6 +9,8 @@ import logging
 import re
 from typing import Any
 
+from pflow.registry import Registry
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,25 +18,22 @@ class TemplateValidator:
     """Validates template variables before workflow execution."""
 
     @staticmethod
-    def validate_workflow_templates(workflow_ir: dict[str, Any], available_params: dict[str, Any]) -> list[str]:
+    def validate_workflow_templates(
+        workflow_ir: dict[str, Any], available_params: dict[str, Any], registry: Registry
+    ) -> list[str]:
         """
         Validates all template variables in a workflow.
 
-        Checks that:
-        1. All template variables have valid syntax
-        2. Required CLI parameters are available
-        3. Distinguishes between CLI params and shared store variables
+        Uses the registry to determine which variables are written by nodes
+        and validates that all template paths exist in the node outputs.
 
         Args:
             workflow_ir: The workflow IR containing nodes with template parameters
             available_params: Parameters available from planner or CLI
+            registry: Registry instance with parsed node metadata
 
         Returns:
             List of error messages (empty if valid)
-
-        Note:
-            CLI parameters (those matching available_params keys) MUST be provided.
-            Shared store variables (from node execution) are validated at runtime only.
         """
         errors: list[str] = []
 
@@ -50,28 +49,33 @@ class TemplateValidator:
             f"Found {len(all_templates)} template variables to validate", extra={"templates": sorted(all_templates)}
         )
 
-        # Separate CLI params from potential shared store vars
-        cli_params, shared_vars = TemplateValidator._categorize_templates(all_templates, available_params)
+        # Get full output structure from nodes
+        node_outputs = TemplateValidator._extract_node_outputs(workflow_ir, registry)
 
         logger.debug(
-            f"Categorized templates - CLI params: {len(cli_params)}, Shared store vars: {len(shared_vars)}",
-            extra={"cli_params": sorted(cli_params), "shared_vars": sorted(shared_vars)},
+            f"Extracted outputs from {len(node_outputs)} node variables", extra={"outputs": sorted(node_outputs.keys())}
         )
 
-        # Note: In v2.0+, workflows will include metadata with expected inputs:
-        # {"inputs": ["url", "issue_number"], "ir": {...}}
-        # This will make validation more precise than the current heuristic
-
-        # Validate CLI parameters - these MUST be provided
-        missing_params = cli_params - set(available_params.keys())
-        for param in sorted(missing_params):  # Sort for consistent error order
-            errors.append(f"Missing required parameter: --{param}")
-
-        # For shared store variables, we can't validate until runtime
-        # But we can check syntax
-        for var in shared_vars:
-            if not TemplateValidator._is_valid_syntax(var):
-                errors.append(f"Invalid template syntax: ${var}")
+        # Validate each template path
+        for template in sorted(all_templates):
+            if not TemplateValidator._validate_template_path(template, available_params, node_outputs):
+                # Check if it's a base variable or a path
+                if "." in template:
+                    base_var = template.split(".")[0]
+                    if base_var in available_params:
+                        errors.append(
+                            f"Template path ${template} cannot be validated - initial_params values are runtime-dependent"
+                        )
+                    else:
+                        errors.append(
+                            f"Template variable ${template} has no valid source - path doesn't exist in node outputs"
+                        )
+                else:
+                    # Simple variable not found
+                    errors.append(
+                        f"Template variable ${template} has no valid source - "
+                        f"not provided in initial_params and not written by any node"
+                    )
 
         if errors:
             logger.warning(
@@ -86,56 +90,119 @@ class TemplateValidator:
     _PERMISSIVE_PATTERN = re.compile(r"\$([a-zA-Z_]\w*(?:\.\w*)*)")
 
     @staticmethod
-    def _categorize_templates(all_templates: set[str], available_params: dict[str, Any]) -> tuple[set[str], set[str]]:
-        """Categorize templates into CLI params vs shared store variables.
-
-        Uses heuristics to determine which templates are CLI parameters
-        (that must be provided) vs shared store variables (validated at runtime).
-
-        Args:
-            all_templates: Set of all template variable names
-            available_params: Available parameters from planner/CLI
+    def _extract_node_outputs(workflow_ir: dict[str, Any], registry: Registry) -> dict[str, Any]:
+        """Extract full output structures from nodes using interface metadata.
 
         Returns:
-            Tuple of (cli_params, shared_vars)
+            Dict mapping variable names to their full structure/type info
         """
-        cli_params = set()
-        shared_vars = set()
+        node_outputs = {}
 
-        # Common variable names that are typically outputs from nodes
-        common_outputs = {
-            "result",
-            "output",
-            "summary",
-            "content",
-            "response",
-            "data",
-            "text",
-            "error",
-            "status",
-            "report",
-            "analysis",
-        }
+        for node in workflow_ir.get("nodes", []):
+            node_type = node.get("type")
+            if not node_type:
+                continue
 
-        for template in all_templates:
-            base_var = template.split(".")[0]
+            # Get node metadata from registry
+            nodes_metadata = registry.get_nodes_metadata([node_type])
+            if node_type not in nodes_metadata:
+                raise ValueError(f"Unknown node type: {node_type}")
 
-            if "." in template:
-                # Dotted variable - check if base is a known CLI param
-                if base_var in available_params:
-                    cli_params.add(base_var)
+            interface = nodes_metadata[node_type]["interface"]
+
+            # Extract outputs with full structure
+            for output in interface["outputs"]:
+                if isinstance(output, str):
+                    # Simple format: just the key, no structure
+                    node_outputs[output] = {"type": "any"}
                 else:
-                    shared_vars.add(template)
+                    # Rich format: includes type and structure
+                    key = output["key"]
+                    node_outputs[key] = {"type": output.get("type", "any"), "structure": output.get("structure", {})}
+
+        return node_outputs
+
+    @staticmethod
+    def _validate_template_path(template: str, initial_params: dict[str, Any], node_outputs: dict[str, Any]) -> bool:
+        """Validate a template path exists in available sources.
+
+        For example, if template is "api_config.endpoint.url":
+        1. Check if "api_config" exists in initial_params or node_outputs
+        2. If from node_outputs, traverse the structure to verify path exists
+        3. If from initial_params, check runtime value (if dict) or return True
+
+        Args:
+            template: Template string like "var" or "var.field.subfield"
+            initial_params: Parameters provided by planner
+            node_outputs: Full structure info from node interfaces
+
+        Returns:
+            True if the path is valid, False otherwise
+        """
+        parts = template.split(".")
+        base_var = parts[0]
+
+        # Check initial_params first (higher priority)
+        if base_var in initial_params:
+            # For nested paths in initial_params, we can't validate at compile time
+            # since values are runtime-dependent. This is a limitation.
+            return True
+
+        # Check node outputs with full structure validation
+        if base_var in node_outputs:
+            if len(parts) == 1:
+                return True
+
+            # Validate nested path in structure
+            return TemplateValidator._validate_nested_path(parts[1:], node_outputs[base_var])
+
+        return False
+
+    @staticmethod
+    def _validate_nested_path(path_parts: list[str], output_info: dict[str, Any]) -> bool:
+        """Validate a nested path exists in the output structure.
+
+        Args:
+            path_parts: List of path components after the base variable
+            output_info: Output info dict with type and structure
+
+        Returns:
+            True if the path is valid, False otherwise
+        """
+        current_structure = output_info.get("structure", {})
+
+        # If no structure info, check if type allows traversal
+        if not current_structure:
+            output_type = output_info.get("type", "any")
+            return output_type in ["dict", "object", "any"]
+
+        # Traverse the structure
+        for i, part in enumerate(path_parts):
+            if part not in current_structure:
+                return False
+
+            next_item = current_structure[part]
+            if isinstance(next_item, dict):
+                # Check if this is a type definition or nested structure
+                if "type" in next_item:
+                    # This is a field definition
+                    if i < len(path_parts) - 1:
+                        # More parts to traverse
+                        current_structure = next_item.get("structure", {})
+                        if not current_structure:
+                            # Can't traverse further into a non-dict type
+                            return next_item.get("type", "any") in ["dict", "object", "any"]
+                    else:
+                        # This is the final part - valid
+                        return True
+                else:
+                    # Direct nested structure
+                    current_structure = next_item
             else:
-                # Simple variable - use heuristics
-                if base_var in available_params:
-                    cli_params.add(base_var)
-                elif base_var in common_outputs:
-                    shared_vars.add(template)
-                else:
-                    cli_params.add(base_var)
+                # Reached a leaf type string, no more traversal possible
+                return i == len(path_parts) - 1
 
-        return cli_params, shared_vars
+        return True
 
     @staticmethod
     def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:

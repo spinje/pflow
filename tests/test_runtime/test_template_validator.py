@@ -1,6 +1,91 @@
 """Tests for template variable validation."""
 
+from unittest.mock import Mock
+
 from pflow.runtime.template_validator import TemplateValidator
+
+
+def create_mock_registry():
+    """Create a mock registry with test node metadata."""
+    registry = Mock()
+
+    # Define node metadata with interface information
+    nodes_metadata = {
+        "youtube-transcript": {
+            "interface": {
+                "inputs": [{"key": "url", "type": "str", "description": "YouTube URL"}],
+                "outputs": [
+                    {
+                        "key": "transcript_data",
+                        "type": "dict",
+                        "description": "Transcript data",
+                        "structure": {
+                            "title": {"type": "str", "description": "Video title"},
+                            "text": {"type": "str", "description": "Transcript text"},
+                        },
+                    }
+                ],
+                "params": [],
+                "actions": ["default", "error"],
+            }
+        },
+        "write-file": {
+            "interface": {
+                "inputs": [
+                    {"key": "file_path", "type": "str", "description": "Path to file"},
+                    {"key": "content", "type": "str", "description": "File content"},
+                ],
+                "outputs": [],
+                "params": [],
+                "actions": ["default", "error"],
+            }
+        },
+        "llm": {
+            "interface": {
+                "inputs": [{"key": "prompt", "type": "str", "description": "LLM prompt"}],
+                "outputs": [{"key": "summary", "type": "str", "description": "Generated summary"}],
+                "params": [],
+                "actions": ["default", "error"],
+            }
+        },
+        "github-issue": {
+            "interface": {
+                "inputs": [
+                    {"key": "repo", "type": "str", "description": "Repository name"},
+                    {"key": "issue_number", "type": "str", "description": "Issue number"},
+                ],
+                "outputs": [
+                    {
+                        "key": "issue_data",
+                        "type": "dict",
+                        "description": "Issue data",
+                        "structure": {
+                            "title": {"type": "str", "description": "Issue title"},
+                            "body": {"type": "str", "description": "Issue body"},
+                        },
+                    }
+                ],
+                "params": [],
+                "actions": ["default", "error"],
+            }
+        },
+    }
+
+    # Add some generic test nodes
+    for i in range(1, 4):
+        node_type = f"t{i}"
+        nodes_metadata[node_type] = {"interface": {"inputs": [], "outputs": [], "params": [], "actions": ["default"]}}
+
+    def get_nodes_metadata(node_types):
+        """Mock implementation of get_nodes_metadata."""
+        result = {}
+        for node_type in node_types:
+            if node_type in nodes_metadata:
+                result[node_type] = nodes_metadata[node_type]
+        return result
+
+    registry.get_nodes_metadata = Mock(side_effect=get_nodes_metadata)
+    return registry
 
 
 class TestTemplateExtraction:
@@ -129,12 +214,13 @@ class TestWorkflowValidation:
         workflow_ir = {
             "nodes": [
                 {"id": "fetch", "type": "youtube-transcript", "params": {"url": "$url"}},
+                {"id": "summarize", "type": "llm", "params": {"prompt": "Summarize: $transcript_data.text"}},
                 {
                     "id": "save",
                     "type": "write-file",
                     "params": {
                         "file_path": "summary.txt",
-                        "content": "$summary",  # From shared store
+                        "content": "$summary",  # From llm node
                     },
                 },
             ],
@@ -143,8 +229,9 @@ class TestWorkflowValidation:
 
         # All CLI params provided
         params = {"url": "https://youtube.com/watch?v=xyz"}
+        registry = create_mock_registry()
 
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0
 
     def test_missing_cli_parameter(self):
@@ -160,9 +247,10 @@ class TestWorkflowValidation:
         # Missing 'url' parameter
         params = {}
 
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+        registry = create_mock_registry()
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 1
-        assert "Missing required parameter: --url" in errors[0]
+        assert "Template variable $url has no valid source" in errors[0]
 
     def test_multiple_missing_parameters(self):
         """Test validation reports multiple missing params."""
@@ -177,11 +265,12 @@ class TestWorkflowValidation:
         # No parameters provided
         params = {}
 
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+        registry = create_mock_registry()
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 3
-        assert any("--param1" in e for e in errors)
-        assert any("--param2" in e for e in errors)
-        assert any("--param3" in e for e in errors)
+        assert any("$param1" in e for e in errors)
+        assert any("$param2" in e for e in errors)
+        assert any("$param3" in e for e in errors)
 
     def test_distinguishes_cli_from_shared_store(self):
         """Test validation correctly identifies CLI params vs shared store."""
@@ -202,7 +291,8 @@ class TestWorkflowValidation:
         # Only CLI param provided
         params = {"url": "https://youtube.com/watch?v=xyz"}
 
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+        registry = create_mock_registry()
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0  # No errors - transcript_data is from shared store
 
     def test_invalid_syntax_in_shared_vars(self):
@@ -215,9 +305,10 @@ class TestWorkflowValidation:
         }
 
         params = {}
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+        registry = create_mock_registry()
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 1
-        assert "Invalid template syntax: $data..field" in errors[0]
+        assert "Template variable $data..field has no valid source" in errors[0]
 
     def test_partial_parameter_match(self):
         """Test base variable matching for CLI params."""
@@ -238,7 +329,8 @@ class TestWorkflowValidation:
         # Provide base parameter
         params = {"config": {"setting": "value1", "other": "value2"}}
 
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+        registry = create_mock_registry()
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0  # config is provided
 
     def test_no_templates_in_workflow(self):
@@ -252,7 +344,8 @@ class TestWorkflowValidation:
         }
 
         params = {}
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+        registry = create_mock_registry()
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0  # No templates, no errors
 
 
@@ -279,12 +372,13 @@ class TestRealWorldScenarios:
         }
 
         # Test with missing URL
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {})
+        registry = create_mock_registry()
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
         assert len(errors) == 1
-        assert "Missing required parameter: --url" in errors[0]
+        assert "Template variable $url has no valid source" in errors[0]
 
         # Test with URL provided
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {"url": "https://youtube.com"})
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {"url": "https://youtube.com"}, registry)
         assert len(errors) == 0  # transcript_data and summary are from shared store
 
     def test_github_issue_workflow(self):
@@ -306,17 +400,18 @@ class TestRealWorldScenarios:
         }
 
         # Test with no params
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {})
+        registry = create_mock_registry()
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
         assert len(errors) == 2
-        assert any("--repo" in e for e in errors)
-        assert any("--issue_number" in e for e in errors)
+        assert any("$repo" in e for e in errors)
+        assert any("$issue_number" in e for e in errors)
 
         # Test with partial params
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {"repo": "pflow"})
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {"repo": "pflow"}, registry)
         assert len(errors) == 1
-        assert "--issue_number" in errors[0]
+        assert "$issue_number" in errors[0]
 
         # Test with all params
         params = {"repo": "pflow", "issue_number": "123"}
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params)
+        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0

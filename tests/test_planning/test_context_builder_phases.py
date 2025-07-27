@@ -1,6 +1,6 @@
 """Tests for two-phase context building functions."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -507,140 +507,96 @@ class TestSharedFunctionality:
     # They use Optional types and handle None by loading from Registry
     # This is different from the old build_context() function
 
-    def test_process_nodes_handles_import_failures(self):
-        """Test _process_nodes gracefully handles import failures."""
+    def test_process_nodes_uses_interface_data(self):
+        """Test _process_nodes uses pre-parsed interface data from registry."""
         registry = {
-            "broken-node": {
+            "node-with-interface": {
+                "module": "pflow.nodes.example",
+                "class_name": "ExampleNode",
+                "file_path": "/path/to/example.py",
+                "interface": {
+                    "description": "Example node",
+                    "inputs": [{"key": "input1", "type": "str", "description": "Test input"}],
+                    "outputs": [{"key": "output1", "type": "str", "description": "Test output"}],
+                    "params": [{"key": "param1", "type": "any", "description": "Test param"}],
+                    "actions": ["default", "error"],
+                },
+            },
+            "node-without-interface": {
                 "module": "pflow.nodes.broken",
                 "class_name": "BrokenNode",
                 "file_path": "/path/to/broken.py",
-            },
-            "good-node": {
-                "module": "pflow.nodes.good",
-                "class_name": "GoodNode",
-                "file_path": "/path/to/good.py",
+                # Missing interface field
             },
         }
 
-        with (
-            patch("pflow.planning.context_builder.importlib.import_module") as mock_import,
-            patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class,
-        ):
-            # Make first import fail, second succeed
-            def side_effect(module_path):
-                if "broken" in module_path:
-                    raise ImportError("Module not found")
-                mock_module = Mock()
-                mock_module.GoodNode = MockNode
-                return mock_module
+        # First node should work
+        nodes, _ = _process_nodes({"node-with-interface": registry["node-with-interface"]})
+        assert "node-with-interface" in nodes
+        assert nodes["node-with-interface"]["description"] == "Example node"
+        assert len(nodes["node-with-interface"]["inputs"]) == 1
+        assert nodes["node-with-interface"]["inputs"][0]["key"] == "input1"
 
-            mock_import.side_effect = side_effect
+        # Second node should fail
+        with pytest.raises(ValueError, match="missing interface data"):
+            _process_nodes({"node-without-interface": registry["node-without-interface"]})
 
-            mock_extractor = Mock()
-            mock_extractor_class.return_value = mock_extractor
-            mock_extractor.extract_metadata.return_value = {
-                "description": "A good node",
-                "inputs": [],
-                "outputs": [],
-                "params": [],
-                "actions": [],
-            }
-
-            nodes, truncated_count = _process_nodes(registry)
-
-            # Should only have good-node
-            assert "good-node" in nodes
-            assert "broken-node" not in nodes
-            # broken-node was skipped due to import failure
-            assert truncated_count == 1
-
-    def test_process_nodes_handles_attribute_error(self):
-        """Test _process_nodes handling of AttributeError when class not found."""
+    def test_process_nodes_requires_interface_field(self):
+        """Test _process_nodes requires interface field in all nodes."""
         registry = {
-            "missing-class-node": {
-                "module": "pflow.nodes.test",
-                "class_name": "NonExistentClass",
-                "file_path": "/path/to/test.py",
+            "legacy-node": {
+                "module": "pflow.nodes.file.legacy",
+                "class_name": "LegacyNode",
+                "file_path": "/path/to/pflow/nodes/file/legacy.py",
+                # No interface field - old format
             }
         }
 
-        with (
-            patch("pflow.planning.context_builder.importlib.import_module") as mock_import,
-            patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class,
-        ):
-            # Create a module that doesn't have the requested class
-            mock_module = Mock(spec=["SomeOtherClass"])  # Has SomeOtherClass but not NonExistentClass
-            mock_import.return_value = mock_module
-
-            # Mock the extractor
-            mock_extractor = Mock()
-            mock_extractor_class.return_value = mock_extractor
-
-            nodes, truncated_count = _process_nodes(registry)
-
-            # Should result in empty because the node failed to process
-            assert nodes == {}
-            # Node is skipped due to missing class, so skipped_count should be 1
-            assert truncated_count == 1
+        # Should raise error for missing interface
+        with pytest.raises(ValueError, match="missing interface data"):
+            _process_nodes(registry)
 
     def test_process_nodes_module_caching(self):
-        """Test that modules are cached and reused in _process_nodes."""
-        # Test the caching more directly by checking if the same module object is used
-        import importlib
-        import sys
-        from types import ModuleType
-
-        # Create a fake module in sys.modules
-        fake_module = ModuleType("pflow.nodes.test_shared")
-        fake_module.NodeOne = MockNode
-        fake_module.NodeTwo = MockNode
-        sys.modules["pflow.nodes.test_shared"] = fake_module
-
+        """Test that _process_nodes no longer does module imports."""
+        # This test is no longer relevant - _process_nodes uses pre-parsed data
+        # Test that it processes nodes with interface data correctly
         registry = {
             "node-1": {
                 "module": "pflow.nodes.test_shared",
                 "class_name": "NodeOne",
                 "file_path": "/path/to/shared.py",
+                "interface": {
+                    "description": "Test node one",
+                    "inputs": [],
+                    "outputs": [],
+                    "params": [],
+                    "actions": ["default"],
+                },
             },
             "node-2": {
-                "module": "pflow.nodes.test_shared",  # Same module
+                "module": "pflow.nodes.test_shared",
                 "class_name": "NodeTwo",
                 "file_path": "/path/to/shared.py",
+                "interface": {
+                    "description": "Test node two",
+                    "inputs": [],
+                    "outputs": [],
+                    "params": [],
+                    "actions": ["default"],
+                },
             },
         }
 
-        try:
-            with patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class:
-                # Track import calls
-                original_import = importlib.import_module
-                import_calls = []
+        # Process nodes with pre-parsed interface data
+        processed, skipped = _process_nodes(registry)
 
-                def track_import(name):
-                    import_calls.append(name)
-                    return original_import(name)
-
-                with patch("pflow.planning.context_builder.importlib.import_module", side_effect=track_import):
-                    mock_extractor = Mock()
-                    mock_extractor_class.return_value = mock_extractor
-                    mock_extractor.extract_metadata.return_value = {
-                        "description": "Test node",
-                        "inputs": [],
-                        "outputs": [],
-                        "params": [],
-                        "actions": [],
-                    }
-
-                    _process_nodes(registry)
-
-                    # Should only import the shared module once
-                    shared_imports = [call for call in import_calls if "test_shared" in call]
-                    assert len(shared_imports) == 1, (
-                        f"Expected 1 import of test_shared, got {len(shared_imports)}: {shared_imports}"
-                    )
-        finally:
-            # Clean up
-            if "pflow.nodes.test_shared" in sys.modules:
-                del sys.modules["pflow.nodes.test_shared"]
+        # Both nodes should be processed
+        assert len(processed) == 2
+        assert "node-1" in processed
+        assert "node-2" in processed
+        assert processed["node-1"]["description"] == "Test node one"
+        assert processed["node-2"]["description"] == "Test node two"
+        assert skipped == 0
 
     def test_process_nodes_skips_test_nodes(self):
         """Test that _process_nodes skips nodes with 'test' in file path."""
@@ -649,38 +605,34 @@ class TestSharedFunctionality:
                 "module": "tests.test_node",
                 "class_name": "TestNode",
                 "file_path": "/path/to/tests/test_node.py",
+                "interface": {
+                    "description": "Test node",
+                    "inputs": [],
+                    "outputs": [],
+                    "params": [],
+                    "actions": ["default"],
+                },
             },
             "real-node": {
                 "module": "pflow.nodes.real",
                 "class_name": "RealNode",
                 "file_path": "/path/to/pflow/nodes/real.py",
+                "interface": {
+                    "description": "A real node",
+                    "inputs": [],
+                    "outputs": [],
+                    "params": [],
+                    "actions": ["default"],
+                },
             },
         }
 
-        with (
-            patch("pflow.planning.context_builder.importlib.import_module") as mock_import,
-            patch("pflow.planning.context_builder.PflowMetadataExtractor") as mock_extractor_class,
-        ):
-            # Setup mocks
-            mock_extractor = Mock()
-            mock_extractor_class.return_value = mock_extractor
-            mock_extractor.extract_metadata.return_value = {
-                "description": "A real node",
-                "inputs": [],
-                "outputs": [],
-                "params": [],
-                "actions": [],
-            }
+        nodes, skipped_count = _process_nodes(registry)
 
-            mock_module = Mock()
-            mock_module.RealNode = MockNode
-            mock_import.return_value = mock_module
-
-            nodes, truncated_count = _process_nodes(registry)
-
-            # Should only process real-node (test-node should be skipped)
-            assert "real-node" in nodes
-            assert "test-node" not in nodes
+        # Should only process real-node (test-node should be skipped)
+        assert "real-node" in nodes
+        assert "test-node" not in nodes
+        assert skipped_count == 1
 
 
 class TestHelperFunctions:
