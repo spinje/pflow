@@ -335,8 +335,8 @@ Output as JSON:
 1. **Context Builder** (Task 15/16) - Provides discovery and planning contexts
    - `build_discovery_context()` - For finding nodes/workflows (lightweight)
    - `build_planning_context()` - For detailed interface info (selected components only)
-   - DO NOT access registry directly - always use context builder
-   - **Note**: The context builder already filters out test nodes. The planner should not implement additional test node filtering.
+   - DO NOT access registry directly for discovery - always use context builder
+   - **Note**: Task 19 simplified the context builder - it now uses pre-parsed interface data from the registry
 2. **JSON IR Schema** - Defines valid workflow structure
 3. **Node Registry** - Accessed ONLY through context builder, never directly
    - **Clarification on Registry Access**:
@@ -374,6 +374,7 @@ The context builder (from Tasks 15/16) already provides exactly what the planner
 - Unified format for both nodes and workflows
 - Structure documentation showing available paths for template variables
 - Filtered output excluding test nodes
+- **CRITICAL**: The context builder output format must be EXACTLY preserved - the planner depends on it
 
 ### Context Builder Exclusive Parameter Pattern
 
@@ -388,6 +389,164 @@ For example, even though `file_path` is listed as an input (not a parameter) for
 ```
 
 This means the planner has complete freedom to provide values either through the shared store (dynamic) or through params (static), regardless of how they're categorized in the context builder output.
+
+### Registry Interaction Helpers
+
+When implementing the planner nodes, use these helper functions to query the registry's Node IR data:
+
+```python
+def get_node_interface(node_type: str, registry_data: dict) -> dict:
+    """Get the interface data for a specific node type."""
+    if node_type in registry_data:
+        return registry_data[node_type].get("interface", {})
+    return {}
+
+def get_node_outputs(node_type: str, registry_data: dict) -> list[dict]:
+    """Get list of outputs a node writes to shared store."""
+    interface = get_node_interface(node_type, registry_data)
+    return interface.get("outputs", [])
+
+def get_node_inputs(node_type: str, registry_data: dict) -> list[dict]:
+    """Get list of inputs a node reads from shared store."""
+    interface = get_node_interface(node_type, registry_data)
+    return interface.get("inputs", [])
+
+def can_nodes_connect(producer_type: str, consumer_type: str, registry_data: dict) -> dict:
+    """Check if producer's outputs can satisfy consumer's inputs.
+
+    Returns:
+        Dict with 'compatible' bool and 'connections' list of valid mappings
+    """
+    producer_outputs = get_node_outputs(producer_type, registry_data)
+    consumer_inputs = get_node_inputs(consumer_type, registry_data)
+
+    connections = []
+
+    # For each consumer input, check if producer provides it
+    for input_spec in consumer_inputs:
+        input_key = input_spec["key"]
+        input_type = input_spec.get("type", "any")
+
+        # Find matching output from producer
+        for output_spec in producer_outputs:
+            output_key = output_spec["key"]
+            output_type = output_spec.get("type", "any")
+
+            # Check if keys match (or could be mapped)
+            if output_key == input_key:
+                # Check type compatibility (simplified)
+                if output_type == input_type or "any" in [output_type, input_type]:
+                    connections.append({
+                        "output": output_key,
+                        "input": input_key,
+                        "type": output_type
+                    })
+                    break
+
+    return {
+        "compatible": len(connections) > 0,
+        "connections": connections,
+        "missing_inputs": [inp["key"] for inp in consumer_inputs
+                          if not any(c["input"] == inp["key"] for c in connections)]
+    }
+
+def get_available_paths(node_type: str, output_key: str, registry_data: dict) -> list[str]:
+    """Get all valid paths for a node's output.
+
+    Returns:
+        List of valid template paths (e.g., ["$data", "$data.user", "$data.user.login"])
+    """
+    outputs = get_node_outputs(node_type, registry_data)
+    paths = []
+
+    for output in outputs:
+        if output["key"] == output_key:
+            # Add base path
+            paths.append(f"${output_key}")
+
+            # Add nested paths if structure exists
+            if "structure" in output:
+                def traverse_structure(structure: dict, prefix: str):
+                    for field, info in structure.items():
+                        field_path = f"{prefix}.{field}"
+                        paths.append(field_path)
+
+                        # Recurse if nested structure
+                        if isinstance(info, dict) and "structure" in info:
+                            traverse_structure(info["structure"], field_path)
+
+                traverse_structure(output["structure"], f"${output_key}")
+            break
+
+    return paths
+
+def validate_template_usage(template: str, available_outputs: dict, initial_params: list[str]) -> bool:
+    """Check if a template will be valid at runtime.
+
+    Args:
+        template: Template string without $ prefix (e.g., "api_config.endpoint.url")
+        available_outputs: Dict of {variable_name: output_spec} from previous nodes
+        initial_params: List of parameter names provided to workflow
+
+    Returns:
+        True if template will validate, False otherwise
+    """
+    parts = template.split(".")
+    base_var = parts[0]
+
+    # Check initial params first (higher priority)
+    if base_var in initial_params:
+        return True  # Initial params are trusted to exist
+
+    # Check node outputs
+    if base_var not in available_outputs:
+        return False
+
+    # For simple variable reference
+    if len(parts) == 1:
+        return True
+
+    # For nested path, check structure
+    output_spec = available_outputs[base_var]
+    current_structure = output_spec.get("structure", {})
+
+    # If no structure info but type is dict/object, optimistically allow
+    if not current_structure and output_spec.get("type") in ["dict", "object", "any"]:
+        return True
+
+    # Validate each path component exists
+    for part in parts[1:]:
+        if part not in current_structure:
+            return False
+
+        # Move deeper into structure
+        if isinstance(current_structure[part], dict):
+            current_structure = current_structure[part].get("structure", {})
+        else:
+            # Reached a leaf, no more traversal possible
+            break
+
+    return True
+```
+
+### Critical Interface Format Note
+
+When working with interface data from the registry, remember that ALL fields use rich format:
+
+```python
+# interface["outputs"] is ALWAYS a list of dicts, NEVER simple strings:
+outputs = interface["outputs"]
+# Each output is: {"key": "content", "type": "str", "description": "File contents"}
+
+# Same for inputs and params - always rich format with key/type/description
+for input_spec in interface["inputs"]:
+    key = input_spec["key"]        # Never just a string
+    type_str = input_spec["type"]  # Type information available
+    desc = input_spec["description"]  # Description for context
+
+# This is guaranteed by MetadataExtractor's _normalize_to_rich_format()
+# which ensures consistent structure across all interface data
+```
 
 ### Concrete Integration Implementation
 
@@ -461,7 +620,12 @@ class GeneratorNode(Node):
     def exec(self, prep_res):
         """Generate workflow using LLM."""
         # Generate workflow using LLM with planning context
-        # ... LLM generation ...
+        # Registry helpers can be used to validate connections during generation
+        # Example: Check if nodes can connect
+        # compatibility = can_nodes_connect("github-get-issue", "llm", registry_data)
+        # if compatibility["compatible"]:
+        #     # Nodes can connect - github-get-issue outputs match llm inputs
+
         generated_ir = self._generate_workflow(prep_res["user_input"], prep_res["planning_context"])
 
         # Note: Node validation happens in ValidatorNode using registry metadata
@@ -712,6 +876,7 @@ CRITICAL Requirements:
 2. NEVER hardcode values like "1234" - use $issue_number instead
 3. Template variables from user input start with $ (e.g., $issue_number)
 4. Template variables from shared store also start with $ (e.g., $issue_data)
+5. You can use ANY variable name that nodes write - check the registry!
 
 Example of CORRECT usage:
 - User says "fix issue 1234"
@@ -722,6 +887,10 @@ Real workflow example:
 - User says "summarize report.pdf and save to summary.txt"
 - CORRECT: {{"params": {{"input": "$input_file", "output": "$output_file"}}}}
 - WRONG: {{"params": {{"input": "report.pdf", "output": "summary.txt"}}}}
+
+Task 19 enables meaningful variable names:
+- If config-loader writes "api_config", use: {{"params": {{"config": "$api_config"}}}}
+- If github-get-issue writes "issue_data", use: {{"params": {{"data": "$issue_data.title"}}}}
 
 Template variables enable workflow reuse with different parameters.
 The runtime will handle substitution transparently.
@@ -734,19 +903,25 @@ The compiler handles template validation automatically when validate=True (defau
 ```python
 # In the planner's validation node
 from pflow.runtime.template_validator import TemplateValidator
+from pflow.registry import Registry
 
-def validate_templates_before_execution(workflow: dict, parameter_values: dict) -> None:
+def validate_templates_before_execution(workflow: dict, parameter_values: dict, registry: Registry) -> None:
     """Validate that all template variables can be resolved.
 
+    Task 19 update: Validator now requires registry to check actual node outputs.
     The planner just needs to handle validation errors gracefully.
     """
-    # The validation API:
-    errors = TemplateValidator.validate_workflow_templates(workflow, parameter_values)
+    # The validation API (updated in Task 19):
+    errors = TemplateValidator.validate_workflow_templates(
+        workflow,
+        parameter_values,
+        registry  # NEW: Required to check actual node outputs
+    )
 
     if errors:
         # Errors are human-readable strings like:
-        # - "Missing required parameter: --issue_number"
-        # - "Missing required parameter: --repo_name"
+        # - "Template variable $api_config has no valid source"
+        # - "Invalid template path: $data.missing.field"
         error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
         raise ValueError(error_msg)
 
@@ -763,9 +938,11 @@ except ValueError as e:
     print(f"Validation failed: {e}")
 ```
 
-**Note**: The validator uses heuristics to categorize parameters:
-- Simple variables like `$issue_number` → Expected from initial_params
-- Dotted paths like `$data.field` → Often from shared store at runtime
+**Note**: The validator (updated in Task 19) now uses actual node outputs from the registry:
+- Checks if variables are written by nodes in the workflow
+- Validates complete paths like `$api_config.endpoint.url`
+- No more guessing based on variable names - uses real interface metadata
+- Example: Knows that `config-loader` writes `$api_config`, so it's valid
 - Set `validate=False` only when some params come from runtime
 
 ### Example: LLM-Generated Complete Workflow
@@ -809,6 +986,48 @@ Template variables in params will be resolved by runtime:
 - `$issue_number` → "123" (from CLI parameters)
 - `$get_issue.issue_data.title` → "Bug in login" (path traversal from shared store)
 - `$analyze.code_report` → "Fixed by..." (from shared store during execution)
+
+## Common Workflow Patterns
+
+When generating workflows, the planner should recognize these common patterns:
+
+### Pattern 1: Direct Variable Mapping
+```python
+# Node A writes "result", Node B reads "input"
+# Generate: Node B with params: {"input": "$result"}
+```
+
+### Pattern 2: Nested Data Access (Enabled by Node IR)
+```python
+# Node writes complex structure (e.g., github-get-issue writes issue_data)
+# Access specific fields: "$issue_data.user.login", "$issue_data.labels"
+# The validator knows these paths exist from the registry's structure info
+```
+
+### Pattern 3: Multiple Outputs
+```python
+# Node writes multiple variables (all visible in registry interface)
+# Can reference any: "$processed_data", "$metadata", "$error"
+# Example: error handling with conditional edges based on $error presence
+```
+
+### Pattern 4: Variable Name Freedom (Task 19 Benefit)
+```python
+# Before: Limited to "magic" names
+{"params": {"data": "$result"}}  # Had to use standard names
+
+# After: Use meaningful names that nodes actually write
+{"params": {"config": "$api_configuration"}}     # From config-loader
+{"params": {"issue": "$github_issue_details"}}   # From github-get-issue
+{"params": {"analysis": "$llm_analysis_result"}} # From llm node
+```
+
+### Pattern 5: Parameter vs Shared Store Choice
+```python
+# Due to universal fallback pattern, can provide values either way:
+{"type": "processor", "params": {"input": "static-value"}}     # Static
+{"type": "processor", "params": {"input": "$dynamic_value"}}   # Dynamic
+```
 
 ## Testing Workflow Generation
 
@@ -1153,35 +1372,50 @@ from pflow.core import validate_ir, ValidationError
 class ValidatorNode(Node):
     def prep(self, shared):
         """Prepare data for validation."""
-        from pflow.registry import Registry
-        # For validation: Can access registry instance for metadata
-        registry = Registry()  # Passed from CLI
+        # Registry should be passed from CLI in shared context
+        registry = shared.get("registry")
+        if not registry:
+            from pflow.registry import Registry
+            registry = Registry()
 
         workflow = shared.get("generated_workflow", {})
-        # Get metadata only for nodes used in this workflow
-        node_types = [node["type"] for node in workflow.get("nodes", [])]
+        parameter_values = shared.get("extracted_params", {})
 
         return {
             "workflow": workflow,
-            "registry_metadata": registry.get_nodes_metadata(node_types),
-            "parameter_values": shared.get("extracted_params", {})
+            "registry": registry,  # Pass full registry for Task 19 validator
+            "parameter_values": parameter_values
         }
 
     def exec(self, prep_res):
         """Execute validation."""
-        try:
-            # First validate structure
-            validate_ir(prep_res["workflow"])
+        from pflow.runtime.template_validator import TemplateValidator
 
-            # Then validate template variables can be resolved
-            validate_template_variables(
-                prep_res["workflow"],
-                prep_res["parameter_values"],
-                prep_res["registry_metadata"]
+        workflow = prep_res["workflow"]
+        registry = prep_res["registry"]
+        params = prep_res["parameter_values"]
+
+        try:
+            # 1. Validate structure first
+            validate_ir(workflow)
+
+            # 2. Validate templates using Task 19's registry-based validator
+            errors = TemplateValidator.validate_workflow_templates(
+                workflow, params, registry  # Registry is now required
             )
 
+            if errors:
+                # Task 19 provides accurate error messages based on actual node outputs
+                return {
+                    "is_valid": False,
+                    "errors": errors,
+                    "suggestion": "Ensure all template variables are either in parameters or written by nodes"
+                }
+
             return {"is_valid": True}
+
         except ValidationError as e:
+            # Structure validation error
             return {
                 "is_valid": False,
                 "error": {
@@ -1194,7 +1428,13 @@ class ValidatorNode(Node):
     def post(self, shared, prep_res, exec_res):
         """Store validation results."""
         if not exec_res["is_valid"]:
-            shared["validation_error"] = exec_res["error"]
+            # Store appropriate error format
+            if "errors" in exec_res:
+                # Template validation errors (list of strings)
+                shared["validation_errors"] = exec_res["errors"]
+            else:
+                # Structure validation error (dict)
+                shared["validation_error"] = exec_res["error"]
             return "invalid"
         return "valid"
 ```

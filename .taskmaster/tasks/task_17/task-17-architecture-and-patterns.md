@@ -98,9 +98,63 @@ This means the planner doesn't just generate and hand off - it orchestrates disc
 ```
 
 **Future v2.0+**: Known workflows can be executed directly
-```
-pflow fix-issue --issue=1234  # Bypasses planner entirely
-```
+
+## Node IR Integration (Task 19)
+
+The planner leverages the Node IR (Node Intermediate Representation) implemented in Task 19, which fundamentally improves how the planner can generate and validate workflows.
+
+### What Node IR Provides
+
+1. **Pre-parsed Interface Metadata**: All node capabilities are parsed at scan-time and stored in the registry
+   ```json
+   {
+     "github-get-issue": {
+       "interface": {
+         "inputs": [{"key": "repo", "type": "str", "description": "Repository"}],
+         "outputs": [{"key": "issue_data", "type": "dict", "structure": {...}}],
+         "params": ["token"],
+         "actions": ["default", "error"]
+       }
+     }
+   }
+   ```
+
+2. **Accurate Validation**: Template variables are validated against actual node outputs, not heuristics
+   - Before: Only "magic" names like `$result`, `$content` would validate
+   - After: ANY variable name that a node writes will validate correctly
+
+3. **Variable Name Freedom**: The planner can generate meaningful variable names
+   ```python
+   # Before Task 19: Had to use magic names
+   {"params": {"data": "$result"}}  # Limited to predefined names
+
+   # After Task 19: Use meaningful names
+   {"params": {"config": "$api_configuration"}}  # Any name nodes write works
+   {"params": {"issue": "$github_issue_data"}}   # Descriptive and valid
+   ```
+
+### How the Planner Uses Node IR
+
+1. **ComponentBrowsingNode**: Accesses pre-parsed interface data through context builder
+2. **GeneratorNode**: Can generate workflows using any variable names that nodes actually write
+3. **ValidatorNode**: Uses registry with interface data to validate template variables accurately
+4. **ParameterExtractionNode**: Knows exactly what variables are available from node outputs
+
+### Critical Benefits for Workflow Generation
+
+1. **Path Validation**: Can verify complex paths like `$issue_data.user.login` exist
+2. **Type Information**: Knows that `issue_data` is a dict with specific structure
+3. **No False Positives**: Workflows that should work will validate correctly
+4. **Better Error Messages**: "Template variable $api_config has no valid source" instead of guessing
+
+This eliminates the previous limitation where the validator would reject valid workflows simply because they used non-standard variable names.
+
+### Node IR Design Principles
+
+1. **No Fallbacks**: If interface data is missing in the registry, operations fail immediately with clear errors. There are no fallbacks to parsing or guessing - this ensures consistency and reliability.
+2. **Single Source of Truth**: Registry is the authoritative source for node capabilities - all consumers use the same pre-parsed data.
+3. **Parse Once**: All interface parsing happens at scan-time, not runtime, improving performance and consistency.
+
 
 ## Architectural Decision: PocketFlow for Planner Orchestration
 
@@ -266,6 +320,7 @@ class ComponentBrowsingNode(Node):
         )
 
         # Step 2: Get details for selected components only
+        # Note: Task 19 made this ~75 lines simpler and faster - uses pre-parsed interface data
         planning_context = build_planning_context(
             components["node_ids"],
             components["workflow_names"]  # Sub-workflows as building blocks!
@@ -779,16 +834,17 @@ The planner uses a progressive static validation approach that catches issues at
 
 #### 2. **Static Analysis** (node and parameter validation)
 - Verifies all referenced nodes exist in registry
-- Checks parameter names and types match node metadata
-- Validates template variable syntax
+- Checks parameter names and types match node metadata from the registry's interface field
+- Validates template variable syntax using actual node outputs from registry (Task 19 enables this)
 - Detects circular dependencies and unreachable nodes
 - **Catches**: Unknown nodes, invalid parameters, structural issues
 
 #### 3. **Data Flow Analysis** (execution order validation)
 This is NOT mock execution - it's static analysis that tracks data flow:
 - **What it does**: Traverses nodes in execution order, tracking which keys are available in the shared store at each step
-- **How it works**: Uses node metadata (inputs/outputs) to verify data dependencies are satisfied
-- **Generic approach**: No per-node implementation needed - just uses metadata from registry
+- **How it works**: Uses node metadata (inputs/outputs) from the registry's pre-parsed interface field to verify data dependencies are satisfied
+- **Generic approach**: No per-node implementation needed - just uses interface metadata from registry
+- **Example**: If `github-get-issue` writes `issue_data`, then `llm` can use `$issue_data.title`
 - **Catches**: Missing inputs, overwritten outputs, unresolved template variables, invalid template paths
 
 ### Error Recovery Architecture

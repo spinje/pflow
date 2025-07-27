@@ -304,7 +304,7 @@ pflow fix-issue --issue=5678  # $issue → "5678"
 
 **Resolution**: Option B - Runtime resolution is ESSENTIAL. Template variables are resolved during execution, enabling parameterized workflows (the core value prop!). Most use cases need simple variables (`$issue_number`, `$file_path`), with path support (`$data.user.login`) available for complex data access.
 
-**Validation Note**: The template validator ensures all required variables can be resolved before execution, with clear error messages for missing parameters.
+**Validation Note**: The template validator (updated in Task 19) uses the registry to check template variables against actual node outputs, ensuring all required variables can be resolved before execution with clear error messages.
 
 **Implementation Note for Planner**: When the user says "fix github issue 1234", the planner must:
 1. Recognize "1234" as a parameter value (not part of the intent)
@@ -523,9 +523,9 @@ The validation framework can verify template variable paths are valid before exe
 
 ### Structure Documentation Enables Template Paths
 
-**UPDATE**: Task 14 successfully implemented structure documentation, which is essential for the template path approach. The planner can now see available paths like `issue_data.user.login` in the context builder output and use them confidently in template variables.
+**UPDATE**: Task 14 successfully implemented structure documentation, and Task 19 enhanced it further by storing pre-parsed interface metadata in the registry. The planner can now see available paths like `issue_data.user.login` in the context builder output and use them confidently in template variables.
 
-The context builder now provides structure information in a dual format that's perfect for LLM consumption:
+The context builder now provides structure information in a dual format that's perfect for LLM consumption (using pre-parsed data from the registry's interface field):
 
 ```
 Structure (JSON format):
@@ -541,7 +541,7 @@ Available paths:
 - issue_data.user.login (str)
 ```
 
-This enables the planner to generate valid template paths and the validator to verify they exist.
+This enables the planner to generate valid template paths and the validator to verify they exist using actual node outputs from the registry.
 
 ### Simple Design: Runtime Resolution with Path Support
 
