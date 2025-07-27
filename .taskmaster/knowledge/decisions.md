@@ -320,4 +320,46 @@ A chronological record of significant architectural and design decisions made du
 
 ---
 
+## Decision: Node IR for Accurate Template Validation
+- **Date**: 2025-07-27
+- **Made during**: Task 19 (Implement Node Interface Registry)
+- **Status**: Accepted
+- **Context**: Template validator was using hardcoded heuristics (a "magic list" of common variable names like "result", "output", "summary") to guess which variables come from the shared store vs CLI parameters. This caused false validation failures when nodes wrote variables not in the magic list (e.g., `$api_config`), even though the workflow was valid. Users saw confusing errors like "Missing required parameter: --api_config" when a node actually wrote that variable.
+- **Alternatives considered**:
+  1. **Expand the magic list** - Add more common variable names to the heuristic
+     - Pros: Quick fix, no architectural changes needed
+     - Cons: Whack-a-mole problem, always incomplete, fundamentally flawed approach
+  2. **Runtime interface checking** - Parse node interfaces during validation
+     - Pros: Accurate validation, no registry changes
+     - Cons: Performance hit on every validation, redundant parsing, complex implementation
+  3. **Node IR (Intermediate Representation)** - Parse interfaces at scan-time, store in registry
+     - Pros: Single source of truth, parse once use many times, enables future features
+     - Cons: Registry format change (breaking), larger registry size, one-time refactor needed
+- **Decision**: Implement Node IR - move interface parsing from runtime to scan-time
+- **Rationale**:
+  - Eliminates the fundamental flaw of guessing what nodes write
+  - Follows "parse once, use many times" principle (DRY)
+  - Creates foundation for future features (type checking, better errors)
+  - Performance improvement by removing runtime parsing
+  - Clean architectural separation - scanner handles parsing, consumers just use data
+  - Aligns with compiler design principles (separate parsing from execution)
+- **Consequences**:
+  - Registry format breaking change - added "interface" field with parsed metadata
+  - Registry size increased from ~50KB to ~500KB-1MB (acceptable for MVP)
+  - All nodes MUST have interface field (no fallbacks)
+  - Context builder simplified by ~75 lines (removed dynamic imports)
+  - Validator can now validate full paths (e.g., `$api_config.endpoint.url`)
+  - Every pflow command loads larger registry (+50ms startup time)
+  - Scanner must handle circular imports with lazy loading pattern
+- **Implementation Details**:
+  - Scanner uses singleton MetadataExtractor with dependency injection
+  - MetadataExtractor always returns rich format: `[{"key": "x", "type": "str", "description": "..."}]`
+  - Context builder now requires interface field (fails fast if missing)
+  - Validator traverses nested structures for path validation
+  - Compiler passes registry to validator (API change)
+  - All 611 tests updated and passing
+- **Review date**: After MVP completion (to assess performance impact)
+
+---
+
 <!-- New decisions are appended below this line -->
