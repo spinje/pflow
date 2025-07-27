@@ -11,13 +11,184 @@ what im doing now:
 
 just finished the spec writing spec and prompt.
 
-was just about to start writing the spec for task 12 and task 18.
+fininshed task 18 and updated the core documents for the planner implementation (task 17)
+
+
+was just about to start writing the spec for task 12
+
+
+---
+
+Lets focus on fixing the first 7 questions that you had (except for 4, we will come back to that later) Ultrathink about all the details I have provided and then make a comprehensive plan how we can fix these ambiguities in the documents by updating the documents.
+Remember that:
+- we should not add any information that is not relevant to the task 17 agent (responsible for implementing task 17).
+- We should not remove any existing information that is relevant to the task 17 agent.
+- we should strive to resolve ambiguity and not create new ones.
+- we should strive for quality over quantity of the information in the documents but never at the expense of completeness.
+- we should strive to reduce redundancy and repetition of information as much as possible both withing and accross documents.
+
+My answers:
+
+1. remove reference to "Task 19: Doesn't exist" this is not true anymore. There might be a little to many references to specific tasks in the documents, it is important inforation but we dont have to repeat it everywher.
+
+2. there are no namespaces, remove all references to this way of accessing the shared store. we have no collision detection in the mvp, this comes later. We can assume all nodes are unique for now when implementing the planner.
+
+3. this is not true anymore "DO NOT access registry directly for discovery - always use context builder"
+
+4. I have to investigate this more, skip this for now.
+
+5. It should match based on intent, wheter or not parameters are present in the qurey. Then, if it realizes that parameters are missing (straight away or in the ParameterExtractionNode), it should return this information to the CLI so that the system can prompt the user for the missing parameters.
+
+ParameterExtractionNode is the critical convergence point that:
+
+  1. Identifies missing parameters by comparing:
+    - What the workflow needs (from its inputs field)
+    - What was extracted from the user's natural language
+  2. Escalates appropriately by returning different actions:
+  def post(self, shared, prep_res, exec_res):
+      if exec_res["missing"]:
+          shared["missing_params"] = exec_res["missing"]
+          shared["extraction_error"] = f"Workflow cannot be executed: missing {exec_res['missing']}"
+          return "params_incomplete"  # ← ESCALATION PATH
+
+      shared["extracted_params"] = exec_res["extracted"]
+      return "params_complete"     # ← SUCCESS PATH
+  3. Routes to ResultPreparationNode either way, which packages the results differently:
+    - If params_incomplete: Includes missing params info for CLI to prompt user
+    - If params_complete: Includes extracted values for immediate execution
+
+  This creates a clean separation:
+  - Planner: "I found/created a workflow, but it needs these parameters"
+  - CLI: "Let me ask the user for those missing parameters"
+
+  The beauty is that this works identically for both paths:
+  - Path A: Found existing workflow → check if we have its required params
+  - Path B: Generated new workflow → check if we have its required params
+
+  The planner never prompts users directly - it just identifies what's missing and returns that information to the CLI layer.
+
+6. Yes ParameterExtractionNode's responsibilities includes all of the following:
+  - Simple extraction: "1234" from "fix issue 1234"
+  - Complex interpretation: "yesterday" → "2024-11-30"
+  - Verification gate: Check all params available
+
+7. $var is correct, this is incorrect and should be fixed ${issue.title}
 
 
 
 
 
 ----
+
+Lets continue with 4. Template Validation Timing
+
+I need you to come up with our alternatives and then we can discuss them. Provide clear recommendations and reasoning for each alternative. Write a document in the scratchpads folder that contains the alternatives and the reasoning for each alternative.
+
+  Where/when does template validation actually happen?
+  - ValidatorNode calls TemplateValidator?
+  - Compiler validates during compile_ir_to_flow()?
+  - Both? Different types of validation?
+
+Ultrathink and carefully think about these questions and any other questions that you can think of.
+
+Where approriate search the codebase to verify assumptions and provide evidence for your recommendations.
+
+
+
+---
+Perfect, this is my answer for your two other questions. Please think hard and make sure you have considered all the implications for this and if there are any contradictions or abiguities left before we can start integrating all these clarifications and insights into the documents.
+
+1. Should the initial extraction be simpler? yes, you are right, they will give them an appropriate name without knowing the details of what nodes that where chosen or how their interface looks
+
+2. What if initial extraction misses parameters? if the planner (generate workflow path) happens to get into a state where it decides that not all parameters are available to execute the created workflow it should be handled the same as the path where a workflow is found ending in the cli prompting the user for addional parameters
+
+
+---
+
+Carefully synthesize all clarifications, resolved ambiguities, and key insights from our discussion into a comprehensive, well-structured summary document. This document should:
+
+1. Clearly enumerate each resolved point, clarification, and insight, with enough detail for a reader to understand the decisions and their implications.
+2. Avoid removing any existing valuable knowledge from the source documents; preserve all information that may be useful.
+3. Minimize changes to the original documents—only add or update content as needed to ensure completeness, accuracy, and clarity, while avoiding unnecessary duplication or repetition.
+
+After creating the summary document, develop a detailed, step-by-step integration plan for updating the three main documents associated with task 17. For each document, specify:
+- Which insights or clarifications should be added or updated,
+- Where in the document these changes should be made,
+- The rationale for each change.
+
+Think hard and critically to ensure all relevant information is captured and integrated seamlessly. When finished, notify me and be ready to discuss or refine the plan further if needed.
+
+---
+
+Another thing I was thinking about that might be related to your question 4. Template Validation Timing.
+
+You were asking about the following:
+Workflows can use other workflows, but HOW?
+- Can node type be a workflow name?
+- Special syntax needed?
+- No concrete examples shown" the "initial params"
+
+This got me thinking, how are the initial params defined in the workflow ir? Both for subworkflows but also for the main workflow?
+
+
+
+
+
+
+
+
+
+
+
+
+---
+
+
+I think the problem here is related to another of your questions
+"8. Workflow Composition Mechanism
+
+Workflows can use other workflows, but HOW?
+- Can node type be a workflow name?
+- Special syntax needed?
+- No concrete examples shown" the "initial params"
+
+
+
+
+----
+
+8. Workflow Composition Mechanism
+
+  Workflows can use other workflows, but HOW?
+  - Can node type be a workflow name?
+  - Special syntax needed?
+  - No concrete examples shown
+
+9. Error Format Inconsistency
+
+  Validation errors appear as:
+  - Strings: ["Template variable $foo not found"]
+  - Objects: {"path": "nodes[0]", "message": "...", "suggestion": "..."}
+  - Which for which error type?
+
+10. Initial Shared State Contract
+
+  What does CLI provide in shared?
+  - registry instance?
+  - current_date?
+  - stdin_data?
+  - Contract not specified
+
+---
+
+
+
+
+
+read .taskmaster/tasks/task_17/task-17-overview.md and all the mentioned core documents mentioned in full. think hard to try to grasp what this task is about. let me know when you are done.
+
+
+---
 
 This has actually just been implemented and we have begun working on updating the core documents for the planner implementation.
 As you know these are:
@@ -245,32 +416,9 @@ Summary
   organized and without duplication.
 
 
-
-
----
-
-
-## Getting Started
-
-Task 17 — Implement Natural Language Planner System
-
-> **First step:** Read these core docs *in full* and make sure you deeply understand them:
->
-> * `scratchpads/critical-user-decisions/task-17-planner-ambiguities.md`
-> * `.taskmaster/tasks/task_17/task-17-architecture-and-patterns.md`
-> * `.taskmaster/tasks/task_17/task-17-implementation-guide.md`
-> * `.taskmaster/tasks/task_17/task-17-core-concepts.md`
-
-
-## Document Structure
-
-This document has been split into three focused files for better organization:
-
 ---
 
 If you want, I can turn this into an actionable checklist (issues, files to create, function signatures, test matrix) or a PocketFlow diagram. Let me know.
-
-
 
 
 
@@ -302,13 +450,6 @@ can you create a comprehensive document in the scratchpad folder providing ALL t
 perhaps it would be easier to just build support for paths for template variables? this should solve the problem for mvp?
 
 ---
-
-
-Please think hard and make a plan what and how we need to update the .taskmaster/tasks/task_17/task-17-context-and-implementation-details.md file then do the updates CAREFULLY. Preserve context as much as you can, keep your edits to what is really needed. Avoid ambiguity and quality over quantity in the text. this is a hard task, treat it as such!
-
-
---
-
 
 ultrathink and create a plan how we should update the documents in the scratchpads folder, after you are done with the plan, carefully execute it. Remember do NOT make any more changes than absolutely necessary. DO NOT overwrite important information and ONLY do changes that you are absolutely sure of, no guessing or assumptions. If anything is unclear, ask me before we begin.
 
