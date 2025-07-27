@@ -19,6 +19,41 @@ was just about to start writing the spec for task 12 and task 18.
 
 ----
 
+This has actually just been implemented and we have begun working on updating the core documents for the planner implementation.
+As you know these are:
+
+1. .taskmaster/tasks/task_17/task-17-architecture-and-patterns.md
+2. .taskmaster/tasks/task_17/task-17-core-concepts.md
+3. .taskmaster/tasks/task_17/task-17-implementation-guide.md
+
+First, to understand what has been done read the following documents:
+
+1. .taskmaster/tasks/task_19/implementation/task-review.md
+2. .taskmaster/tasks/task_17/research/task-19-handoff/node-ir-planner-memo.md
+3. .taskmaster/tasks/task_17/research/task-19-handoff/task-19-planner-assessment.md
+4. .taskmaster/tasks/task_17/research/task-19-handoff/task-19-impact-on-planner.md
+
+After reading these documents, you should have a good understanding of what has been done and how it affects the planner, think
+hard and make a plan how we can modify the core documents for the planner implementation. Remember, the document has alread been modified but we need to make sure we did not
+
+- make sure we did not remove any information that was useful to the task 17 agent or add any information that is not relevant.
+- make sure no information is lost and that the document is still valid and complete.
+- make sure all valuable information from the documents above was added
+- make sure we did not introduced excessive duplication of information accross documents or within documents
+- make sure we did not add any information that is not relevant to the task 17 agent
+
+Think hard if this fits the requirements of the planner. Also ultrathink how this affects the planner.
+
+You can view what has already been done be looking at the git diff for the three files to be modified. All these changes are staged right now.
+
+Remember, we dont want repeated information across documents if its not critically needed and we only want
+information that will be valuable to the agent implementing the planner. think hard and make a plan how we can modify the documents
+and potentially integrate new insights and information. (all edits and additions to the document should make sure the documents
+gets better and not add confusion by adding details that is irrelevant.
+
+
+
+---
 
 should we add a note that path template variables is just a bonus, the most common usecase is normal template variable without
 path, both cases need to be handled and tested carefully (when writing tests for task 17) (also we seem to have overfitted to
