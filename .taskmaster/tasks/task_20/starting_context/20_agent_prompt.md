@@ -7,11 +7,11 @@ Implement WorkflowNode, a new node type that allows workflows to execute other w
 ## Required Reading (Read in This Order)
 
 1. **FIRST**: `.taskmaster/workflow/epistemic-manifesto.md` - The manifesto that guides your thinking. Your mindset while working on this task.
-2. **SECOND**: `.taskmaster/tasks/task_20/workflownode-comprehensive-context.md` - Deep understanding of how WorkflowNode fits into pflow
-3. **THIRD**: `.taskmaster/tasks/task_20/20_handover.md` - Additional context about the investigation phase
+2. **SECOND**: `.taskmaster/tasks/task_20/starting_context/workflownode-comprehensive-context.md` - Deep understanding of how WorkflowNode fits into pflow
+3. **THIRD**: `.taskmaster/tasks/task_20/starting_context/20_handover.md` - Additional context about the investigation phase
 4. **FOURTH**: `pocketflow/__init__.py` - The pocketflow framework (yes this is all the code, less than 200 lines of code)
-5. **FIFTH**: `.taskmaster/tasks/task_20/20_spec.md` - The complete specification with all requirements, rules, and test criteria
-6. **SIXTH**: `.taskmaster/tasks/task_20/workflownode-implementation-plan.md` - Step-by-step implementation guide with complete code
+5. **FIFTH**: `.taskmaster/tasks/task_20/starting_context/20_spec.md` - The complete specification with all requirements, rules, and test criteria
+6. **SIXTH**: `.taskmaster/tasks/task_20/starting_context/workflownode-implementation-plan.md` - Step-by-step implementation guide with complete code
 
 ## What You're Building
 
@@ -121,10 +121,10 @@ Your implementation is complete when:
 
 ### 0. Create Progress Log (FIRST!)
 
-Create and continuously update: `.taskmaster/tasks/task_19/implementation/progress-log.md`
+Create and continuously update: `.taskmaster/tasks/task_20/implementation/progress-log.md`
 
 ```markdown
-# Task 19 Implementation Progress Log
+# Task 20 Implementation Progress Log
 
 ## [Timestamp] - Starting Implementation
 Reading epistemic manifesto and understanding the approach...
