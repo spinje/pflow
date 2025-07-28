@@ -13,6 +13,14 @@ Example: Even though `file_path` is listed as an input (not parameter), this wor
 
 This flexibility is crucial for workflow generation and is available on ALL nodes.
 
+## MVP Context: Natural Language Only
+
+**Critical**: In the MVP, users NEVER provide CLI-style parameters. Everything goes through natural language:
+- ✅ `pflow "fix github issue 1234"`
+- ❌ `pflow fix-issue --issue=1234` (this is post-MVP)
+
+This affects how we think about "initial parameters" - they're always extracted from natural language by the planner, never provided as CLI flags by users.
+
 ## Flow Design Patterns (continued)
 
 ### Diamond Pattern with Convergence
@@ -602,6 +610,38 @@ class ComponentBrowsingNode(Node):
         shared["discovery_result"] = exec_res
         return "found" if exec_res["found_components"] else "not_found"
 
+class ParameterDiscoveryNode(Node):
+    """Extract named parameters from natural language early in Path B."""
+    def prep(self, shared):
+        return {
+            "user_input": shared["user_input"],
+            "selected_components": shared.get("selected_components", [])
+        }
+
+    def exec(self, prep_res):
+        """Extract parameters WITH NAMES from natural language."""
+        # Use LLM to intelligently extract named parameters
+        prompt = f"""
+        Extract parameters with appropriate names from: "{prep_res['user_input']}"
+
+        Examples:
+        - "fix github issue 1234" → {{"issue_number": "1234"}}
+        - "analyze report.pdf from yesterday" → {{"file_path": "report.pdf", "date": "2024-01-15"}}
+        - "deploy version 2.1.0 to staging" → {{"version": "2.1.0", "environment": "staging"}}
+
+        Return a JSON object with parameter names and values.
+        Consider context to choose appropriate parameter names.
+        """
+
+        response = self.llm.prompt(prompt, schema=ParameterDict)
+        discovered_params = response.json()
+
+        return discovered_params
+
+    def post(self, shared, prep_res, exec_res):
+        shared["discovered_params"] = exec_res  # Dict, not list!
+        return "generate"
+
 class GeneratorNode(Node):
     """Generates workflow with registry validation."""
     def prep(self, shared):
@@ -901,6 +941,21 @@ Generate complete JSON matching the IR schema with nodes, edges, and params."""
 The compiler handles template validation automatically when validate=True (default):
 
 ```python
+# In the planner's ValidatorNode
+discovered_params = {"issue_number": "1234", "repo": "pflow"}  # From ParameterDiscoveryNode
+
+# ValidatorNode can now validate ALL templates:
+# - $issue_number (from discovered_params)
+# - $issue_data (from node outputs in registry)
+errors = TemplateValidator.validate_workflow_templates(
+    workflow,
+    discovered_params,  # Named parameters discovered from NL
+    registry
+)
+
+# Note: In the planner, parameter_values come from ParameterDiscoveryNode
+# At runtime, they come from CLI flags (post-MVP) or saved values
+
 # In the planner's validation node
 from pflow.runtime.template_validator import TemplateValidator
 from pflow.registry import Registry
@@ -1379,12 +1434,12 @@ class ValidatorNode(Node):
             registry = Registry()
 
         workflow = shared.get("generated_workflow", {})
-        parameter_values = shared.get("extracted_params", {})
+        discovered_params = shared.get("discovered_params", {})  # Already a dict!
 
         return {
             "workflow": workflow,
             "registry": registry,  # Pass full registry for Task 19 validator
-            "parameter_values": parameter_values
+            "discovered_params": discovered_params
         }
 
     def exec(self, prep_res):
@@ -1393,7 +1448,7 @@ class ValidatorNode(Node):
 
         workflow = prep_res["workflow"]
         registry = prep_res["registry"]
-        params = prep_res["parameter_values"]
+        params = prep_res["discovered_params"]
 
         try:
             # 1. Validate structure first
@@ -1637,6 +1692,7 @@ shared = {
     "input_source": "args"
 }
 
+# Path A: Existing Workflow Found
 # 1. Discovery Phase
 # → WorkflowDiscoveryNode executes
 shared["available_workflows"] = ["fix-issue", "analyze-logs", ...]
@@ -1651,24 +1707,52 @@ shared["found_workflow"] = {
 }
 # → Returns "found_existing"
 
-# 2. Parameter Extraction (Convergence Point)
-# → ParameterExtractionNode executes
+# 2. Parameter Mapping (Convergence Point)
+# → ParameterMappingNode executes
 # → Extract: "123" from user input
 # → Verify: workflow needs issue_number, we have it ✓
 shared["extracted_params"] = {"issue_number": "123"}
 # → Returns "params_complete"
 
+# Path B: Generate New Workflow (if no match found)
+# 1. Component Browsing
+# → ComponentBrowsingNode finds relevant nodes/workflows
+
+# 2. Parameter Discovery Phase (NEW - Path B only)
+# → ParameterDiscoveryNode executes
+# → Extracts: {"issue_number": "123"} with names!
+shared["discovered_params"] = {
+    "issue_number": "123"
+}
+# → Returns "generate"
+
+# 3. Generation Phase
+# → GeneratorNode executes with knowledge of discovered params
+# → Can intelligently design workflow using $issue_number
+
+# 4. Validation Phase
+# → ValidatorNode can now validate ALL templates:
+# → - $issue_number (from discovered_params)
+# → - $issue_data (from node outputs in registry)
+
+# 5. Metadata Generation
+# → MetadataGenerationNode extracts workflow metadata
+
+# 6. Parameter Mapping (Convergence Point - same as Path A)
+# → ParameterMappingNode verifies all params available
+
+# Both Paths Continue:
 # 3. Parameter Preparation
 # → ParameterPreparationNode executes
 shared["parameter_values"] = {
-    "issue_number": "123"  # Only CLI parameters, no complex mappings
+    "issue_number": "123"  # Formatted for execution
 }
 # → Returns "prepare_result"
 
 # 4. Result Preparation
 # → ResultPreparationNode prepares output for CLI
 shared["planner_output"] = {
-    "workflow_ir": shared["found_workflow"],
+    "workflow_ir": shared["found_workflow"] or shared["generated_workflow"],
     "workflow_metadata": {
         "suggested_name": "fix-issue",
         "description": "Fix a GitHub issue and create PR",
@@ -1686,6 +1770,15 @@ shared["planner_output"] = {
 # → CLI saves workflow to ~/.pflow/workflows/fix-issue.json
 # → CLI executes with parameter substitution
 ```
+
+### ParameterMappingNode's Simplified Role
+
+With ParameterDiscoveryNode extracting named parameters, ParameterMappingNode's job becomes:
+1. Verify all required workflow parameters have values in discovered_params
+2. Handle any additional runtime parameters (e.g., environment variables)
+3. Route to "params_incomplete" if any required params are missing
+
+No complex mapping logic needed - the names are already aligned!
 
 ---
 *See also: task-17-architecture-and-patterns.md and task-17-core-concepts.md*
