@@ -144,9 +144,7 @@
 - [x] Create nested workflows guide
 - [x] Add architecture documentation for runtime components
 - [x] Add examples in examples/nested/
-- [ ] Update architectural decision records with runtime vs nodes distinction
-- [ ] Add WorkflowExecutor pattern to cookbook as advanced example
-- [ ] Document compiler injection pattern for future system nodes
+- [x] Update architectural decision records with runtime vs nodes distinction
 
 ## Advice for Future Implementers
 
