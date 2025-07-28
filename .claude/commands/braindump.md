@@ -2,7 +2,7 @@
 Inputs: --taskId=$ARGUMENTS
 
 Available inputs:
-- taskId: The ID of the task to implement
+- taskId: The ID of the task to write the handoff memo for
 
 ---
 
