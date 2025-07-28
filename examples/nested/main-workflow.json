@@ -1,0 +1,43 @@
+{
+  "ir_version": "0.1.0",
+  "metadata": {
+    "description": "Main workflow that processes multiple texts using a sub-workflow"
+  },
+  "nodes": [
+    {
+      "id": "process_title",
+      "type": "workflow",
+      "params": {
+        "workflow_ref": "./process-text.json",
+        "param_mapping": {
+          "text": "$document_title",
+          "mode": "title"
+        },
+        "output_mapping": {
+          "normalized_text": "processed_title"
+        }
+      }
+    },
+    {
+      "id": "process_body",
+      "type": "workflow",
+      "params": {
+        "workflow_ref": "./process-text.json",
+        "param_mapping": {
+          "text": "$document_body",
+          "mode": "lower"
+        },
+        "output_mapping": {
+          "normalized_text": "processed_body"
+        },
+        "storage_mode": "mapped"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "process_title",
+      "to": "process_body"
+    }
+  ]
+}

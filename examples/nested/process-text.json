@@ -1,0 +1,23 @@
+{
+  "ir_version": "0.1.0",
+  "metadata": {
+    "description": "Simple text processing workflow that normalizes text",
+    "inputs": {
+      "text": "Text to normalize",
+      "mode": "Normalization mode (upper, lower, title)"
+    },
+    "outputs": {
+      "normalized_text": "The normalized text result"
+    }
+  },
+  "nodes": [
+    {
+      "id": "normalize",
+      "type": "pflow.nodes.test_node",
+      "params": {
+        "operation": "$mode"
+      }
+    }
+  ],
+  "edges": []
+}

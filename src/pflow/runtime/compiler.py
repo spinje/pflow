@@ -304,6 +304,15 @@ def _instantiate_nodes(
                 )
                 node_instance = TemplateAwareNodeWrapper(node_instance, node_id, initial_params)
 
+            # For WorkflowNode, inject registry as special parameter
+            if node_type == "pflow.nodes.workflow":
+                params = params.copy()  # Don't modify original
+                params["__registry__"] = registry
+                logger.debug(
+                    "Injecting registry for WorkflowNode",
+                    extra={"phase": "node_instantiation", "node_id": node_id},
+                )
+
             # Set parameters (wrapper will separate template vs static)
             if params:
                 logger.debug(

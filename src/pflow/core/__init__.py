@@ -1,5 +1,10 @@
 """Core pflow modules for workflow representation and validation."""
 
+from .exceptions import (
+    CircularWorkflowReferenceError,
+    PflowError,
+    WorkflowExecutionError,
+)
 from .ir_schema import FLOW_IR_SCHEMA, ValidationError, validate_ir
 from .shell_integration import (
     StdinData,
@@ -14,8 +19,11 @@ from .shell_integration import (
 
 __all__ = [
     "FLOW_IR_SCHEMA",
+    "CircularWorkflowReferenceError",
+    "PflowError",
     "StdinData",
     "ValidationError",
+    "WorkflowExecutionError",
     "detect_binary_content",
     "detect_stdin",
     "determine_stdin_mode",

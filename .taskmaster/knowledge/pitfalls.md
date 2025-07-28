@@ -186,4 +186,51 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
+## Pitfall: Registry Must Point to Importable Modules in Integration Tests
+- **Date**: 2025-07-27
+- **Discovered in**: Task 20 (WorkflowNode implementation)
+- **What we tried**: Creating mock registries with fake module paths like `"test.module"` that don't exist
+- **Why it seemed good**: Seemed sufficient for testing - we just needed the registry structure, not actual nodes
+- **Why it failed**: WorkflowNode's `compile_ir_to_flow()` actually imports modules dynamically. Non-existent modules cause import errors.
+- **Symptoms**:
+  - Integration tests fail with `ModuleNotFoundError: No module named 'test'`
+  - Tests that should test execution errors instead fail during compilation
+  - Mocking at wrong level (node class) doesn't prevent dynamic imports
+  - All unit tests pass but integration tests fail mysteriously
+- **Better approach**: Either define test nodes in the test file itself and reference that module, or use real nodes from the project
+- **Example of failure**:
+  ```python
+  # DON'T DO THIS - Registry with non-existent modules
+  registry_data = {
+      "echo": {
+          "module": "test.module",  # Doesn't exist!
+          "class_name": "TestNode"
+      }
+  }
+
+  # DO THIS - Reference actual test file
+  class TestNode(BaseNode):
+      # Define in test file
+      pass
+
+  registry_data = {
+      "echo": {
+          "module": "tests.test_nodes.test_workflow.test_integration",
+          "class_name": "TestNode",
+          "file_path": __file__  # Current test file
+      }
+  }
+
+  # OR DO THIS - Use real project nodes
+  registry_data = {
+      "read-file": {
+          "module": "pflow.nodes.file.read_file",
+          "class_name": "ReadFileNode"
+      }
+  }
+  ```
+- **Key Lesson**: Integration tests that use `compile_ir_to_flow()` need a registry pointing to real, importable modules. The compiler performs actual dynamic imports, not just lookups.
+
+---
+
 <!-- New pitfalls are appended below this line -->
