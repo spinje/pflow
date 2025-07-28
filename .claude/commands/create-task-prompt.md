@@ -2,18 +2,29 @@
 
 This command instructs an AI agent to generate a comprehensive implementation prompt for another AI agent who will implement a pflow task.
 
-## Usage
+## Inputs
 
-```
-/create-task-prompt <task_id>
-```
+Inputs: $ARGUMENTS
+
+Available inputs:
+- --task_id: The ID of the task to create an implementation prompt for
+- --read_context: Whether to read the context files or not (default: false)
+
+> If only recieve a number in inputs, you will assume that the task_id is that number and that read_context is false.
 
 ## Your Task as the Prompt-Generating Agent
 
 You are tasked with creating a comprehensive implementation prompt for another AI agent who will implement a pflow task. You will:
 
+If `read_context` is true, AND ONLY IF EXPLICITLY set to true, you will:
+
 1. **Read ALL files** in `.taskmaster/tasks/<task_id>/starting-context/`
 2. **Extract key information** from these files to understand the task completely
+
+and then go to step 3.
+
+If `read_context` is false or not set, you will:
+
 3. **Fill in the template below** by replacing ALL `{{placeholders}}` with specific content from the context files
 4. **Output a complete prompt** that another agent can use to implement the task successfully
 
@@ -25,16 +36,39 @@ Use this exact structure and replace ALL placeholders with content extracted fro
 
 # Task {{task_number}}: {{task_title}} - Agent Instructions
 
+## The Problem You're Solving
+
+{{problem_statement}}
+<!-- Extract from spec or context files. 2-3 sentences explaining what's broken or missing and why it matters -->
+
 ## Your Mission
 
 {{brief_mission_statement}}
 <!-- Extract from task spec/description. Should be 1-2 sentences explaining the core objective -->
 
-## Required Reading (Read in This Order)
+## Required Reading (IN THIS ORDER)
 
-1. **FIRST**: `.taskmaster/workflow/epistemic-manifesto.md` - The manifesto that guides your thinking. Your mindset while working on this task.
-2. **SECOND**: `.taskmaster/tasks/task_{{task_id}}/starting_context/{{primary_context_file}}` - {{context_description}}
-<!-- List all files from starting-context/ folder in priority order -->
+### 1. FIRST: Understand the Epistemic Approach
+**File**: `.taskmaster/workflow/epistemic-manifesto.md`
+
+**Purpose**: Core principles for deep understanding and robust development. This document establishes:
+- Your role as a reasoning system, not just an instruction follower
+- The importance of questioning assumptions and validating truth
+- How to handle ambiguity and uncertainty
+- Why elegance must be earned through robustness
+
+**Why read first**: This mindset is critical for implementing any task correctly. You'll need to question existing patterns, validate assumptions, and ensure the solution survives scrutiny.
+
+### 2. SECOND: {{primary_context_title}}
+**File**: `.taskmaster/tasks/task_{{task_id}}/starting_context/{{primary_context_file}}`
+
+**Purpose**: {{primary_context_purpose}}
+<!-- What this document contains and why it's important -->
+
+**Why read second**: {{primary_context_reasoning}}
+<!-- Why this needs to be read before other files -->
+
+<!-- Continue numbering for all files in starting-context/ folder -->
 <!-- Always include pocketflow/__init__.py for tasks involving pocketflow -->
 <!-- Include spec file last if present -->
 
@@ -48,6 +82,17 @@ Example:
 ```{{language}}
 {{usage_example}}
 ```
+
+## Key Outcomes You Must Achieve
+
+### {{outcome_category_1}}
+{{outcome_list_1}}
+<!-- List specific deliverables as bullet points -->
+
+### {{outcome_category_2}}
+{{outcome_list_2}}
+
+<!-- Add more categories as needed based on task complexity -->
 
 ## Implementation Strategy
 
@@ -79,6 +124,17 @@ Use subagents to maximize efficiency and avoid context window limitations.
 
 <!-- Add more sections as needed based on task complexity -->
 
+## Critical Warnings from Experience
+
+### {{warning_1_title}}
+{{warning_1_content}}
+<!-- Specific pitfall with example and solution -->
+
+### {{warning_2_title}}
+{{warning_2_content}}
+
+<!-- Extract from context files or generate based on task complexity -->
+
 ## Key Decisions Already Made
 
 {{decisions_list}}
@@ -89,9 +145,9 @@ Use subagents to maximize efficiency and avoid context window limitations.
 
 Your implementation is complete when:
 
-{{success_criteria_list}}
-<!-- Extract from spec, format as checkbox list -->
-<!-- Always include: make test passes, make check passes -->
+{{success_criteria_checklist}}
+<!-- Extract from spec, format as checkbox list with ✅ -->
+<!-- Always include: ✅ make test passes, ✅ make check passes -->
 
 ## Common Pitfalls to Avoid
 
@@ -118,6 +174,7 @@ Reading epistemic manifesto and understanding the approach...
 
 {{ordered_implementation_steps}}
 <!-- Extract from implementation plan or generate based on phases -->
+<!-- Format as numbered list with clear actions -->
 
 ## Real-Time Learning Capture
 
@@ -186,6 +243,13 @@ Append deviation to progress log:
 
 **Remember**: Quality tests that catch real bugs > many trivial tests
 
+## What NOT to Do
+
+{{what_not_to_do_list}}
+<!-- Extract from spec or generate based on common mistakes -->
+<!-- Format as bullet points starting with DON'T -->
+<!-- Include project-specific anti-patterns -->
+
 ## Getting Started
 
 {{getting_started_steps}}
@@ -199,41 +263,71 @@ Append deviation to progress log:
 <!-- Emphasize critical aspects -->
 <!-- Include any warnings or special considerations -->
 
+## Remember
+
+{{remember_section}}
+<!-- Final reinforcement of key concepts -->
+<!-- Extract key themes from the task -->
+
+{{motivational_ending}}
+<!-- End with encouragement and context about impact -->
+
 ---
 
 ## How to Extract Information and Fill the Template
 
 When reading the context files, look for:
 
-1. **Task Number and Title**: Usually in the filename or document header
-2. **Mission Statement**: First paragraph of spec or "Objective" section
-3. **Primary Context File**: Look for comprehensive context documents or main spec files
-4. **Detailed Description**: "What You're Building" or "Overview" sections
-5. **Implementation Phases**: Break down from implementation plans or create logical phases
-6. **Technical Details**: Requirements, constraints, or technical considerations sections
-7. **Key Decisions**: "Decisions Made" sections or handover documents
-8. **Success Criteria**: "Success Criteria" or "Test Requirements" sections
-9. **Getting Started Steps**: First concrete actions from implementation plans
+1. **Problem Statement**: Look for sections explaining what's broken, missing, or needs improvement
+2. **Task Number and Title**: Usually in the filename or document header
+3. **Mission Statement**: First paragraph of spec or "Objective" section
+4. **Primary Context File**: Look for comprehensive context documents or main spec files
+5. **Key Outcomes**: Look for deliverables, components to build, or specific changes needed
+6. **Detailed Description**: "What You're Building" or "Overview" sections
+7. **Implementation Phases**: Break down from implementation plans or create logical phases
+8. **Technical Details**: Requirements, constraints, or technical considerations sections
+9. **Warnings**: Look for "gotchas", "pitfalls", or "lessons learned" sections
+10. **Key Decisions**: "Decisions Made" sections or handover documents
+11. **What NOT to Do**: Anti-patterns, things to avoid, or explicit "don't" statements
+12. **Success Criteria**: "Success Criteria", "Test Requirements", or "Acceptance Criteria" sections
+13. **Getting Started Steps**: First concrete actions from implementation plans
 
 ## Example Output
 
-Here's an example of what your generated prompt should look like:
+Here's what your generated prompt should look like:
 
 ```markdown
 # Task 20: Implement WorkflowNode - Agent Instructions
+
+## The Problem You're Solving
+
+Currently, workflows cannot compose other workflows as reusable components. This limits code reuse and forces duplication of common workflow patterns. Users need a way to call workflows from within workflows, similar to how functions call other functions.
 
 ## Your Mission
 
 Implement WorkflowNode, a new node type that allows workflows to execute other workflows as sub-components. This is a critical feature that enables workflow composition and reusability in pflow.
 
-## Required Reading (Read in This Order)
+## Required Reading (IN THIS ORDER)
 
-1. **FIRST**: `.taskmaster/workflow/epistemic-manifesto.md` - The manifesto that guides your thinking. Your mindset while working on this task.
-2. **SECOND**: `.taskmaster/tasks/task_20/starting_context/workflownode-comprehensive-context.md` - Deep understanding of how WorkflowNode fits into pflow
-3. **THIRD**: `.taskmaster/tasks/task_20/starting_context/20_handover.md` - Additional context about the investigation phase
-4. **FOURTH**: `pocketflow/__init__.py` - The pocketflow framework (yes this is all the code, less than 200 lines of code)
-5. **FIFTH**: `.taskmaster/tasks/task_20/starting_context/20_spec.md` - The complete specification with all requirements, rules, and test criteria
-6. **SIXTH**: `.taskmaster/tasks/task_20/starting_context/workflownode-implementation-plan.md` - Step-by-step implementation guide with complete code
+### 1. FIRST: Understand the Epistemic Approach
+**File**: `.taskmaster/workflow/epistemic-manifesto.md`
+
+**Purpose**: Core principles for deep understanding and robust development. This document establishes:
+- Your role as a reasoning system, not just an instruction follower
+- The importance of questioning assumptions and validating truth
+- How to handle ambiguity and uncertainty
+- Why elegance must be earned through robustness
+
+**Why read first**: This mindset is critical for implementing any task correctly. You'll need to question existing patterns, validate assumptions, and ensure the solution survives scrutiny.
+
+### 2. SECOND: Deep Understanding of WorkflowNode
+**File**: `.taskmaster/tasks/task_20/starting_context/workflownode-comprehensive-context.md`
+
+**Purpose**: Complete architectural understanding of how WorkflowNode fits into pflow's execution model, including storage isolation, parameter mapping, and error handling strategies.
+
+**Why read second**: This gives you the conceptual foundation before diving into implementation details.
+
+[... rest of numbered readings ...]
 
 ## What You're Building
 
@@ -254,6 +348,28 @@ Think of it as enabling this:
   }
 }
 ```
+
+## Key Outcomes You Must Achieve
+
+### 1. Core Implementation
+- WorkflowNode class in `src/pflow/nodes/workflow/`
+- Support for both file references and inline workflows
+- Four storage modes: mapped, isolated, scoped, shared
+- Proper error handling with context preservation
+
+### 2. Safety Features
+- Circular dependency detection
+- Depth limiting (default: 10 levels)
+- Clear error messages with workflow paths
+- Template variable resolution
+
+### 3. Testing & Documentation
+- All 26 test criteria from spec passing
+- Complete unit and integration tests
+- Updated documentation in docs/
+- Working examples in examples/
+
+[... continues with all sections filled ...]
 
 ## Implementation Strategy
 
@@ -325,11 +441,13 @@ except Exception as e:
 
 Your implementation is complete when:
 
-1. ✅ All 26 test criteria from the spec pass
-2. ✅ `make test` passes with no regressions
-3. ✅ `make check` passes (linting, type checking)
-4. ✅ Documentation is complete
-5. ✅ At least one example workflow demonstrates the feature
+- ✅ All 26 test criteria from the spec pass
+- ✅ `make test` passes with no regressions
+- ✅ `make check` passes (linting, type checking)
+- ✅ Documentation is complete and accurate
+- ✅ At least one example workflow demonstrates the feature
+- ✅ Error messages are clear and actionable
+- ✅ No existing functionality is broken
 
 ## Common Pitfalls to Avoid
 
@@ -441,6 +559,15 @@ This affects how we handle all dynamic imports.
 
 **Remember**: Quality tests that catch real bugs > many trivial tests
 
+## What NOT to Do
+
+- **DON'T** modify any node implementations
+- **DON'T** change the workflow IR structure
+- **DON'T** add ANY backward compatibility code
+- **DON'T** add features not in spec - No caching, no registry, no timeouts
+- **DON'T** skip tests - All test criteria must be covered
+- **DON'T** cheat when writing tests - Write tests that actually test the code
+
 ## Getting Started
 
 1. Start with Phase 1, Step 1: Create the package structure
@@ -455,12 +582,14 @@ This affects how we handle all dynamic imports.
 - The spec has all the rules and edge cases clearly defined
 - This is a regular node - it doesn't require special treatment by the compiler
 
-Good luck! This feature will significantly enhance pflow's capabilities. Think hard and critically, this is hard task!
+## Remember
 
+You're implementing a foundational feature that will unlock workflow composition in pflow. The design in the implementation guide is solid and battle-tested. Trust it, but verify against the epistemic principles. When faced with ambiguity, surface it rather than guessing.
+
+Good luck! This feature will significantly enhance pflow's capabilities by enabling workflow reuse and composition. Think hard!
 ```
 
-> Note: This is an example of what your generated prompt should look like. It is not a template that you should use. You should use the template to create a prompt that is tailored to the task at hand.
-> Ignore all the specific details in the example above. Remember it is just an example.
+> Note: This is an example of what your generated prompt should look like. The specific details above are from Task 20 and should NOT be copied. Extract the actual content from the task's context files.
 
 ## Critical Reminders for the Prompt-Generating Agent
 
@@ -471,17 +600,21 @@ Good luck! This feature will significantly enhance pflow's capabilities. Think h
 5. **Include concrete examples** - Add code snippets from context files where relevant
 6. **Success criteria must include** - Always add "make test passes" and "make check passes"
 7. **Epistemic manifesto is always first** - This must be the first item in the reading list
+8. **Extract, don't invent** - Pull content from context files rather than making it up
 
 ## What Makes a Good Implementation Prompt
 
 Your generated prompt should:
+- Open with the problem to create urgency and context
 - Give the implementing agent a clear mission
-- Provide all necessary context through the reading list
-- Break down work into manageable phases
+- Provide all necessary context through the reading list with clear purposes
+- Break down work into manageable phases with time estimates
+- Warn about specific pitfalls from experience
 - Emphasize continuous progress logging
 - Include specific technical details from the task
 - Provide concrete examples and code snippets
-- Set clear success criteria
-- Warn about common pitfalls
+- Explicitly state what NOT to do
+- Set clear, measurable success criteria
+- End with motivation and impact
 
 Remember: The implementing agent will rely entirely on your generated prompt to complete the task successfully. Make it comprehensive, clear, and actionable.
