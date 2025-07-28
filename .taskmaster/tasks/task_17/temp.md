@@ -179,6 +179,13 @@ Workflows can use other workflows, but HOW?
   - stdin_data?
   - Contract not specified
 
+
+12. Component vs Node Terminology
+
+  - Sometimes "components" = nodes
+  - Sometimes "components" = nodes + workflows
+  - Inconsistent usage
+
 ---
 
 
@@ -546,14 +553,105 @@ ultrathink and create a detailed plan how we should update the documents in the 
 
 ---
 
+read .taskmaster/tasks/task_17/task-17-overview.md and all the mentioned core documents mentioned in full. think hard to try to grasp what this task is about. let me know when you are done and ready for the next step.
+
+>>>
+
 Are there any critical contradictions or ambiguities between any of these documents? ultrathink and carefully analyze every nuance
 
 
 ---
 
-perfect, lets begin by integrating the relevant things into .taskmaster/tasks/task_17/task-17-architecture-and-patterns.md first. ONLY do this file and let me know when you are done. STOP after integration of ask-17-architecture-and-patterns.md is done. think hard and carefully add the changes, following the requirements discussed before.
+The file .taskmaster/tasks/task_17/task-17-architecture-and-patterns.md has been updated and is considered complete. However, I want you to perform a thorough review to ensure the following:
+- All recent changes are accurate and fully integrated.
+- There are no contradictions, ambiguities, or inconsistencies within the file.
+- No important details or required updates have been omitted.
+- The architectural reasoning and justifications for the changes are sound and clearly articulated.
+- The new content aligns with the overall design principles and project requirements.
+- All terminology, node names, and flow diagrams are consistent with the latest architecture.
+- The file remains internally coherent and logically structured after the updates.
 
-remember that you have read .taskmaster/tasks/task_17/task-17-architecture-and-patterns.md, you dont need to read the whole file again, just the parts that are relevant to the changes you are making.
+Do not review or reference any other files—focus exclusively on this file. Think critically and carefully about every aspect of the update!
+
+You can see all the changes by inspecting the staged git changes for the file.
+
+
+
+
+The file .taskmaster/tasks/task_17/task-17-core-concepts.md has been updated and is considered complete. However, this architectural decision has been made and we need to update the document to reflect this. Think hard and critically if there are any mentions of the old design that should be updated.
+
+Only update this file, do not update any other file. We are only interested in this file for now.
+ONLY update things related to the new pattern (DO NOT add any new information at all, ONLY update the old information IF PRESENT and contradictory to the new pattern)
+
+New pattern:
+
+# Task 17 Architecture Review: Parameter Discovery Design Update
+
+After reviewing the architecture file and our discussion about parameter discovery design, I've identified a fundamental improvement needed in how ParameterDiscoveryNode works. The current design has it returning a simple list of values, but it should extract parameters WITH names from the natural language query.
+
+## Architectural Improvement Needed
+
+### Current Design Issue
+The current ParameterDiscoveryNode returns a list:
+```python
+# Input: "fix issue 1234 in repo pflow"
+# Output: ["1234", "pflow"]  # Just values, no context
+```
+
+This creates unnecessary complexity:
+- ValidatorNode can't properly validate templates without knowing parameter names
+- GeneratorNode has to guess which value maps to which parameter
+- Type inconsistency between list and dict throughout the flow
+
+### Improved Design
+ParameterDiscoveryNode should extract named parameters from the start:
+```python
+# Input: "fix github issue 1234 in the pflow repo"
+# Output: {
+#     "issue_number": "1234",
+#     "repo_name": "pflow"
+# }
+```
+
+## Benefits of This Design
+
+1. **Consistency**: Same dict type flows through the entire system
+2. **Clarity**: Parameter names are discovered once and used throughout
+3. **Validation**: ValidatorNode can properly validate templates
+4. **Simplicity**: No type conversions or guessing of parameter mappings
+5. **Context Preservation**: The semantic meaning from natural language is preserved
+
+## Additional Recommendations
+
+1. **Rename consistently**: Use `discovered_params` throughout instead of `discovered_values`
+2. **Update comments**: Remove all mentions of list-to-dict conversion
+3. **Simplify helper methods**: ParameterMappingNode's logic becomes much simpler
+
+## Conclusion
+
+This design change makes the architecture much cleaner by having ParameterDiscoveryNode do intelligent extraction with naming from the start. All the context needed for parameter naming IS in the query, and this approach leverages that fact. The workflow generator can then use these pre-named parameters directly, eliminating type mismatches and complex mapping logic.
+
+This aligns better with the principle that each node should do one thing well - ParameterDiscoveryNode discovers parameters (with names), not just values.
+
+---
+
+**IMPORTANT:** ONLY update things related to the new pattern (DO NOT add any new information at all, ONLY update the old information IF PRESENT and contradictory to the new pattern)
+
+
+---
+
+consider this pattern and how it affects the proposed changes to the .taskmaster/tasks/task_17/task-17-implementation-guide.md. ONLY consider the changes to the implementation guide, do not consider the changes to the architecture and patterns. We are focusing solely on the implementation guide for now.
+
+The pattern:
+
+---
+
+Perfect, lets begin by integrating all your proposed changes from the task17-discussion-synthesis.md and task17-integration-plan.md into .taskmaster/tasks/task_17/task-17-implementation-guide.md first. ONLY do this file and let me know when you are done. STOP after integration of task-17-implementation-guide.md is done. think hard and carefully add the changes, following the requirements discussed before.
+
+Remember that you have read .taskmaster/tasks/task_17/task-17-implementation-guide.md, you dont need to read the whole file again, just the parts that are relevant to the changes you are making.
+
+
+
 
 **UPDATE:** you began working on the file but your context window ran out, this is what is done and whats next.
 
@@ -629,3 +727,42 @@ I need to update the Mermaid diagram to add ParameterDiscoveryNode after Compone
 
   Good! Now I need to update any references to "extracted_params" in the shared state example to reflect the new naming. Let me check
    the shared state example.
+
+
+
+---
+
+
+Before proceeding, perform a rigorous ambiguity check: Do not proceed if there is any uncertainty, missing context, or potential for misunderstanding regarding how this change will impact the system. If you detect even the slightest gap in your understanding, immediately deploy parallel subagents to investigate and gather all relevant information from the codebase, documentation, and architectural references. Your goal is to achieve absolute clarity and leave no room for assumptions.
+
+To ensure complete coverage, mentally simulate the end-to-end flow of this change through the entire pflow system. Identify every code path, module, data structure, and integration point that could be affected. For each, analyze the direct and indirect consequences of the change, including edge cases, error handling, and downstream dependencies. Document all findings.
+
+Once you have achieved total certainty and mapped the full impact, produce two deliverables:
+
+1. **Comprehensive Context File**: Create a single, atomic, and fully self-contained document. This file must include all relevant background, architectural context, affected components, data flows, and rationale. It should be detailed enough that any AI agent or developer—regardless of prior familiarity—can understand the full scope and implications of the change, as well as the broader pflow system context.
+
+2. **Step-by-Step Implementation Plan**: Create a second document that provides a precise, actionable implementation plan. This plan should break down the work into clear, ordered steps, specifying exactly what to change, where, and in what sequence. Include details on code modifications, refactoring, testing, and validation. Highlight any parallelizable tasks and recommend the use of subagents to maximize efficiency and avoid context window limitations.
+
+Throughout this process, maintain a mindset of extreme thoroughness. Question every assumption, validate every dependency, and ensure that your outputs are robust, unambiguous, and ready for direct use by the ai agent responsible for implementing this. Good luck!
+
+Remember: When doing this task YOU should use subagents to maximize efficiency and avoid context window limitations.
+
+
+---
+
+
+Can you create a comprehensive prompt to kick start the agent to start working on task 20. reference
+.taskmaster/tasks/task_20/20_handover.md
+.taskmaster/tasks/task_20/20_spec.md
+scratchpads/nested-workflows/workflownode-comprehensive-context.md
+scratchpads/nested-workflows/workflownode-implementation-plan.md
+ as a must read for the agent. ultrathink and make a plan how to make this prompt extremely effective. then write the prompt in
+markdown format in .taskmaster/tasks/task_20/ folder.
+
+
+---
+
+
+
+
+---
