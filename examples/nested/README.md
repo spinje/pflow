@@ -1,6 +1,6 @@
 # Nested Workflow Examples
 
-This directory contains examples demonstrating the WorkflowNode feature, which allows workflows to execute other workflows as sub-components.
+This directory contains examples demonstrating nested workflows, which allow workflows to execute other workflows as sub-components using `type: "workflow"` in the workflow definition.
 
 ## Examples
 

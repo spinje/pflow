@@ -363,3 +363,37 @@ A chronological record of significant architectural and design decisions made du
 ---
 
 <!-- New decisions are appended below this line -->
+
+
+---
+
+## Decision: Workflow Composition via Runtime Component Instead of User-Facing Node
+- **Date**: 2025-07-27
+- **Made during**: Task 20 (Nested Workflows) and subsequent refactoring
+- **Status**: Accepted
+- **Context**: Needed to enable workflows to execute other workflows as sub-components for reusability and composition. Initial implementation created WorkflowNode as a regular node, but this violated the conceptual model where nodes are building blocks and workflows are compositions.
+- **Alternatives considered**:
+  1. **WorkflowNode as regular node** - Implement as standard node in nodes/ directory
+     - Pros: Consistent with "everything is a node" philosophy, simple implementation
+     - Cons: Appears in planner as selectable node, confuses users ("is workflow a building block?"), violates conceptual model
+  2. **Explicit workflow references in IR** - Extend IR schema with top-level workflow references
+     - Pros: Most conceptually pure, clear separation in IR structure
+     - Cons: Major architectural change, breaks existing IR schema, complex implementation
+  3. **WorkflowExecutor as runtime component** - Move to runtime/ with compiler special handling
+     - Pros: Maintains conceptual clarity, hidden from users, clean planner output
+     - Cons: Requires compiler special case, deviates from "all nodes equal" principle
+- **Decision**: Implement as WorkflowExecutor in runtime/ directory with special compiler handling for `type: "workflow"`
+- **Rationale**:
+  - Preserves user mental model: nodes are ingredients, workflows are recipes, runtime components are kitchen appliances
+  - Keeps planner clean - only shows actual building blocks, not infrastructure
+  - Users still write simple `type: "workflow"` in IR without knowing about WorkflowExecutor
+  - Follows existing pattern of runtime components (like TemplateAwareNodeWrapper)
+  - Small compiler special case is worthwhile trade-off for conceptual clarity
+- **Consequences**:
+  - Compiler has one special case for workflow type
+  - WorkflowExecutor doesn't appear in registry or planner
+  - Clear separation between user features (nodes/) and infrastructure (runtime/)
+  - Future workflow execution improvements can be made without affecting node system
+  - Sets precedent that some execution machinery belongs in runtime, not nodes
+- **Review date**: 2026-01-27 (6 months)
+EOF < /dev/null

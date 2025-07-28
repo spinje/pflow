@@ -165,6 +165,12 @@ def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
             - Class not found in module (phase: "node_import")
             - Class doesn't inherit from BaseNode (phase: "node_validation")
     """
+    # Special handling for workflow execution
+    if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
+        from pflow.runtime.workflow_executor import WorkflowExecutor
+
+        return WorkflowExecutor
+
     logger.debug("Looking up node in registry", extra={"phase": "node_resolution", "node_type": node_type})
 
     # Step 1: Load registry and check if node exists
@@ -304,12 +310,12 @@ def _instantiate_nodes(
                 )
                 node_instance = TemplateAwareNodeWrapper(node_instance, node_id, initial_params)
 
-            # For WorkflowNode, inject registry as special parameter
-            if node_type == "pflow.nodes.workflow":
+            # For workflow type, inject registry as special parameter
+            if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
                 params = params.copy()  # Don't modify original
                 params["__registry__"] = registry
                 logger.debug(
-                    "Injecting registry for WorkflowNode",
+                    "Injecting registry for WorkflowExecutor",
                     extra={"phase": "node_instantiation", "node_id": node_id},
                 )
 

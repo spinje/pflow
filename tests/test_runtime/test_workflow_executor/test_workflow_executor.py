@@ -1,16 +1,16 @@
-"""Unit tests for WorkflowNode."""
+"""Unit tests for WorkflowExecutor."""
 
 import pytest
 
-from pflow.nodes.workflow import WorkflowNode
+from pflow.runtime.workflow_executor import WorkflowExecutor
 
 
-class TestWorkflowNode:
-    """Test WorkflowNode functionality."""
+class TestWorkflowExecutor:
+    """Test WorkflowExecutor functionality."""
 
     def test_node_creation(self):
         """Test basic node instantiation."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         assert node is not None
         assert hasattr(node, "prep")
         assert hasattr(node, "exec")
@@ -18,7 +18,7 @@ class TestWorkflowNode:
 
     def test_parameter_validation(self):
         """Test parameter validation in prep phase."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         shared = {}
 
         # No parameters should raise error
@@ -33,7 +33,7 @@ class TestWorkflowNode:
 
     def test_circular_dependency_detection(self):
         """Test circular dependency detection."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
 
         # Set up circular reference
         shared = {"_pflow_stack": ["/path/to/workflow1.json", "/path/to/workflow2.json"]}
@@ -47,7 +47,7 @@ class TestWorkflowNode:
 
     def test_max_depth_enforcement(self):
         """Test maximum nesting depth."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
 
         shared = {
             "_pflow_depth": 10  # Already at max depth
@@ -60,7 +60,7 @@ class TestWorkflowNode:
 
     def test_parameter_mapping(self):
         """Test parameter mapping resolution."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
 
         shared = {"input_data": "test_value", "config": {"api_key": "secret"}}
 
@@ -77,7 +77,7 @@ class TestWorkflowNode:
 
     def test_storage_modes(self):
         """Test different storage isolation modes."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         parent_shared = {"parent_data": "value", "child_data": "child_value", "_pflow_internal": "reserved"}
 
         prep_res = {

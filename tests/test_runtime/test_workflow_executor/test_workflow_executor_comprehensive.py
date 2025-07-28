@@ -1,12 +1,12 @@
-"""Comprehensive unit tests for WorkflowNode covering all 26 test criteria."""
+"""Comprehensive unit tests for WorkflowExecutor covering all 26 test criteria."""
 
 import json
 from unittest.mock import Mock, patch
 
 import pytest
 
-from pflow.nodes.workflow import WorkflowNode
 from pflow.registry import Registry
+from pflow.runtime.workflow_executor import WorkflowExecutor
 from pocketflow import BaseNode
 
 
@@ -24,7 +24,7 @@ class FailingTestNode(BaseNode):
         return "default"
 
 
-class TestWorkflowNodeComprehensive:
+class TestWorkflowExecutorComprehensive:
     """Comprehensive tests covering all 26 test criteria from spec."""
 
     @pytest.fixture
@@ -59,7 +59,7 @@ class TestWorkflowNodeComprehensive:
         with open(workflow_file, "w") as f:
             json.dump(simple_workflow_ir, f)
 
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ref": str(workflow_file)})
 
         shared = {}
@@ -71,7 +71,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 2: workflow_ir only provided → executes inline workflow
     def test_workflow_ir_only(self, simple_workflow_ir):
         """Test executing inline workflow."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir})
 
         shared = {}
@@ -83,7 +83,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 3: neither parameter provided → raises ValueError
     def test_neither_parameter_provided(self):
         """Test error when neither workflow_ref nor workflow_ir provided."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({})
 
         shared = {}
@@ -93,7 +93,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 4: both parameters provided → raises ValueError
     def test_both_parameters_provided(self, simple_workflow_ir):
         """Test error when both workflow_ref and workflow_ir provided."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ref": "test.json", "workflow_ir": simple_workflow_ir})
 
         shared = {}
@@ -103,7 +103,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 5: depth at max_depth → raises RecursionError
     def test_max_depth_exceeded(self, simple_workflow_ir):
         """Test error when maximum nesting depth exceeded."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "max_depth": 5})
 
         shared = {"_pflow_depth": 5}  # Already at max
@@ -116,7 +116,7 @@ class TestWorkflowNodeComprehensive:
         workflow_file = tmp_path / "workflow.json"
         workflow_file.write_text(json.dumps(simple_workflow_ir))
 
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ref": str(workflow_file)})
 
         shared = {
@@ -129,7 +129,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 7: workflow file missing → raises FileNotFoundError
     def test_workflow_file_missing(self):
         """Test error when workflow file doesn't exist."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ref": "/non/existent/file.json"})
 
         shared = {}
@@ -142,7 +142,7 @@ class TestWorkflowNodeComprehensive:
         workflow_file = tmp_path / "malformed.json"
         workflow_file.write_text("{invalid json")
 
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ref": str(workflow_file)})
 
         shared = {}
@@ -152,7 +152,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 9: param_mapping with template → resolves correctly
     def test_template_resolution(self, simple_workflow_ir):
         """Test template resolution in parameter mapping."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
             "param_mapping": {"simple": "$value", "nested": "$obj.field", "static": "literal"},
@@ -168,7 +168,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 10: storage_mode "mapped" → child sees only mapped params
     def test_storage_mode_mapped(self, simple_workflow_ir):
         """Test mapped storage mode isolation."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
             "param_mapping": {"allowed": "$value"},
@@ -187,7 +187,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 11: storage_mode "isolated" → child sees empty storage
     def test_storage_mode_isolated(self, simple_workflow_ir):
         """Test isolated storage mode."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "isolated"})
 
         parent_shared = {"data": "parent_data"}
@@ -201,7 +201,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 12: storage_mode "scoped" → child sees filtered storage
     def test_storage_mode_scoped(self, simple_workflow_ir):
         """Test scoped storage mode."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "scoped", "scope_prefix": "child_"})
 
         parent_shared = {"child_data": "visible", "parent_data": "hidden", "child_nested": {"key": "value"}}
@@ -216,7 +216,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 13: storage_mode "shared" → child uses parent storage
     def test_storage_mode_shared(self, simple_workflow_ir):
         """Test shared storage mode."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "shared"})
 
         parent_shared = {"data": "shared_data"}
@@ -228,7 +228,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 14: child compilation error → returns error result
     def test_compilation_error(self, simple_workflow_ir):
         """Test handling of compilation errors."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
             "__registry__": None,  # Will cause compilation to fail
@@ -257,7 +257,7 @@ class TestWorkflowNodeComprehensive:
 
         registry_data = {
             "failing_node": {
-                "module": "tests.test_nodes.test_workflow.test_workflow_node_comprehensive",
+                "module": "tests.test_runtime.test_workflow_executor.test_workflow_executor_comprehensive",
                 "class_name": "FailingTestNode",
                 "docstring": "A test node that fails during execution",
                 "file_path": __file__,
@@ -272,7 +272,7 @@ class TestWorkflowNodeComprehensive:
             "edges": [],
         }
 
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": workflow_ir, "__registry__": registry})
 
         # Prepare and execute
@@ -287,7 +287,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 16: successful execution → applies output mapping
     def test_output_mapping(self, simple_workflow_ir):
         """Test output mapping after successful execution."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
             "output_mapping": {"result": "parent_result", "score": "analysis_score"},
@@ -312,7 +312,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 17: child returns "custom_action" → returns "custom_action"
     def test_custom_action_return(self, simple_workflow_ir):
         """Test propagation of custom action from child."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir})
 
         shared = {}
@@ -325,7 +325,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 18: child returns None → returns "default"
     def test_none_return_default(self, simple_workflow_ir):
         """Test default action when child returns None."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir})
 
         shared = {}
@@ -347,7 +347,7 @@ class TestWorkflowNodeComprehensive:
         child_file = child_dir / "child.json"
         child_file.write_text(json.dumps(simple_workflow_ir))
 
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({
             "workflow_ref": "../child/child.json"  # Relative path
         })
@@ -360,7 +360,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 20: missing param in mapping → handles gracefully
     def test_missing_param_mapping(self, simple_workflow_ir):
         """Test handling of missing parameters in mapping."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
             "param_mapping": {"exists": "$present", "missing": "$not_there"},
@@ -375,7 +375,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 21: missing output key → skips mapping
     def test_missing_output_key(self, simple_workflow_ir):
         """Test handling of missing output keys."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
             "output_mapping": {"exists": "target1", "missing": "target2"},
@@ -398,7 +398,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 22: invalid storage_mode → raises ValueError
     def test_invalid_storage_mode(self, simple_workflow_ir):
         """Test error on invalid storage mode."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "invalid_mode"})
 
         parent_shared = {}
@@ -413,7 +413,7 @@ class TestWorkflowNodeComprehensive:
         workflow_file = tmp_path / "workflow.json"
         workflow_file.write_text(json.dumps(simple_workflow_ir))
 
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ref": str(workflow_file)})
 
         shared = {
@@ -433,7 +433,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 24: malformed child IR → wraps error with context
     def test_malformed_child_ir_context(self):
         """Test error context for malformed child IR."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": {"missing": "nodes"},  # Invalid IR
             "__registry__": Mock(),
@@ -452,7 +452,7 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 25: reserved key modification → isolated to child
     def test_reserved_key_isolation(self, simple_workflow_ir):
         """Test that reserved keys are isolated to child."""
-        node = WorkflowNode()
+        node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "mapped"})
 
         parent_shared = {"_pflow_depth": 1}
@@ -467,8 +467,8 @@ class TestWorkflowNodeComprehensive:
     # Test Criteria 26: concurrent execution → independent instances
     def test_concurrent_execution_independence(self, simple_workflow_ir):
         """Test that concurrent executions are independent."""
-        node1 = WorkflowNode()
-        node2 = WorkflowNode()
+        node1 = WorkflowExecutor()
+        node2 = WorkflowExecutor()
 
         node1.set_params({"workflow_ir": simple_workflow_ir, "param_mapping": {"data": "value1"}})
         node2.set_params({"workflow_ir": simple_workflow_ir, "param_mapping": {"data": "value2"}})

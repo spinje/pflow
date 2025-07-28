@@ -1,8 +1,8 @@
-"""A node that executes another workflow as a sub-workflow."""
+"""Runtime component for executing workflows as sub-workflows."""
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from pflow.registry import Registry
 from pflow.runtime import compile_ir_to_flow
@@ -10,11 +10,13 @@ from pflow.runtime.template_resolver import TemplateResolver
 from pocketflow import BaseNode
 
 
-class WorkflowNode(BaseNode):
-    """Execute another workflow as a sub-workflow.
+class WorkflowExecutor(BaseNode):
+    """Runtime executor for nested workflow execution.
 
-    This node enables workflow composition by loading and executing
-    other workflows with controlled parameter passing and storage isolation.
+    This is an internal runtime component that enables workflow composition
+    by loading and executing other workflows with controlled parameter passing
+    and storage isolation. This is NOT a user-facing node but rather part of
+    the pflow runtime infrastructure.
 
     Inputs:
         - Any keys defined in param_mapping will be read from shared store
@@ -40,7 +42,7 @@ class WorkflowNode(BaseNode):
     MAX_DEPTH_DEFAULT = 10
     RESERVED_KEY_PREFIX = "_pflow_"
 
-    def prep(self, shared: Dict[str, Any]) -> Dict[str, Any]:
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Load and prepare the sub-workflow for execution."""
         # Get parameters with defaults
         workflow_ref = self.params.get("workflow_ref")
@@ -69,7 +71,7 @@ class WorkflowNode(BaseNode):
 
             # Check circular dependency
             if str(workflow_path) in execution_stack:
-                cycle = " -> ".join(execution_stack + [str(workflow_path)])
+                cycle = " -> ".join([*execution_stack, str(workflow_path)])
                 raise ValueError(f"Circular workflow reference detected: {cycle}")
 
             # Load workflow file
@@ -89,7 +91,7 @@ class WorkflowNode(BaseNode):
             "parent_shared": shared,  # Pass the parent shared storage
         }
 
-    def exec(self, prep_res: Dict[str, Any]) -> Dict[str, Any]:
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Compile and execute the sub-workflow."""
         workflow_ir = prep_res["workflow_ir"]
         workflow_path = prep_res["workflow_path"]
@@ -108,7 +110,7 @@ class WorkflowNode(BaseNode):
             # Compile the sub-workflow
             sub_flow = compile_ir_to_flow(
                 workflow_ir,
-                registry=registry,  # type: ignore
+                registry=registry,  # type: ignore[arg-type]
                 initial_params=child_params,
                 validate=True,
             )
@@ -135,7 +137,7 @@ class WorkflowNode(BaseNode):
                 "child_storage": child_storage,
             }
 
-    def post(self, shared: Dict[str, Any], prep_res: Dict[str, Any], exec_res: Dict[str, Any]) -> str:
+    def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Process results and update parent storage."""
         if not exec_res.get("success", False):
             # Handle failure
@@ -143,7 +145,7 @@ class WorkflowNode(BaseNode):
             workflow_path = exec_res.get("workflow_path", "<unknown>")
 
             # Store error in shared storage
-            shared["error"] = f"WorkflowNode failed at {workflow_path}: {error_msg}"
+            shared["error"] = f"WorkflowExecutor failed at {workflow_path}: {error_msg}"
 
             # Return error action
             error_action = self.params.get("error_action", "error")
@@ -168,7 +170,7 @@ class WorkflowNode(BaseNode):
             return child_result
         return "default"
 
-    def _resolve_safe_path(self, workflow_ref: str, shared: Dict[str, Any]) -> Path:
+    def _resolve_safe_path(self, workflow_ref: str, shared: dict[str, Any]) -> Path:
         """Resolve workflow path."""
         # Convert to Path object
         path = Path(workflow_ref)
@@ -186,7 +188,7 @@ class WorkflowNode(BaseNode):
         # Return resolved absolute path
         return path.resolve()
 
-    def _load_workflow_file(self, path: Path) -> Dict[str, Any]:
+    def _load_workflow_file(self, path: Path) -> dict[str, Any]:
         """Load workflow from file."""
         # Check file exists
         if not path.exists():
@@ -197,19 +199,19 @@ class WorkflowNode(BaseNode):
             with open(path) as f:
                 workflow_ir = json.load(f)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in workflow file: {e}")
+            raise ValueError(f"Invalid JSON in workflow file: {e}") from e
         except Exception as e:
-            raise OSError(f"Error reading workflow file: {e}")
+            raise OSError(f"Error reading workflow file: {e}") from e
 
         # Basic validation
         if not isinstance(workflow_ir, dict):
-            raise ValueError("Workflow must be a JSON object")
+            raise TypeError("Workflow must be a JSON object")
         if "nodes" not in workflow_ir:
             raise ValueError("Workflow must contain 'nodes' array")
 
         return workflow_ir
 
-    def _resolve_parameter_mappings(self, param_mapping: Dict[str, Any], shared: Dict[str, Any]) -> Dict[str, Any]:
+    def _resolve_parameter_mappings(self, param_mapping: dict[str, Any], shared: dict[str, Any]) -> dict[str, Any]:
         """Resolve parameter mappings using template resolution."""
         if not param_mapping:
             return {}
@@ -225,7 +227,7 @@ class WorkflowNode(BaseNode):
                 try:
                     resolved[child_param] = TemplateResolver.resolve_string(parent_value, context)
                 except Exception as e:
-                    raise ValueError(f"Failed to resolve parameter '{child_param}': {e}")
+                    raise ValueError(f"Failed to resolve parameter '{child_param}': {e}") from e
             else:
                 # Static value
                 resolved[child_param] = parent_value
@@ -233,13 +235,13 @@ class WorkflowNode(BaseNode):
         return resolved
 
     def _create_child_storage(
-        self, parent_shared: Dict[str, Any], storage_mode: str, prep_res: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, parent_shared: dict[str, Any], storage_mode: str, prep_res: dict[str, Any]
+    ) -> dict[str, Any]:
         """Create storage for child workflow based on isolation mode."""
         # Update depth and stack for child
         child_depth = prep_res["current_depth"] + 1
-        child_stack = prep_res["execution_stack"] + [prep_res["workflow_path"]]
-        child_storage: Dict[str, Any]
+        child_stack = [*prep_res["execution_stack"], prep_res["workflow_path"]]
+        child_storage: dict[str, Any]
 
         if storage_mode == "mapped":
             # Only mapped parameters available

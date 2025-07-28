@@ -1,18 +1,18 @@
-"""Integration tests for WorkflowNode with full workflow execution."""
+"""Integration tests for WorkflowExecutor with full workflow execution."""
 
 import json
 from unittest.mock import Mock, patch
 
 import pytest
 
-from pflow.nodes.workflow import WorkflowNode
 from pflow.registry import Registry
 from pflow.runtime import compile_ir_to_flow
+from pflow.runtime.workflow_executor import WorkflowExecutor
 from pocketflow import BaseNode
 
 
-class TestWorkflowNodeIntegration:
-    """Integration tests for WorkflowNode."""
+class TestWorkflowExecutorIntegration:
+    """Integration tests for WorkflowExecutor."""
 
     def _setup_mock_imports(self, mock_test_node_class=None):
         """Setup mock imports for test nodes.
@@ -43,17 +43,17 @@ class TestWorkflowNodeIntegration:
         # Create the patch context
         mock_module = Mock()
         mock_module.TestNode = mock_test_node_class
-        mock_module.WorkflowNode = WorkflowNode  # Real WorkflowNode
+        mock_module.WorkflowExecutor = WorkflowExecutor  # Real WorkflowExecutor
         mock_module.WriteFileNode = Mock()  # For other tests
 
         def side_effect(module_path):
             if module_path == "pflow.nodes.test_node":
                 return mock_module
-            elif module_path == "pflow.nodes.workflow.workflow_node":
+            elif module_path == "pflow.runtime.workflow_executor":
                 # Return the actual workflow module
-                import pflow.nodes.workflow.workflow_node
+                import pflow.runtime.workflow_executor
 
-                return pflow.nodes.workflow.workflow_node
+                return pflow.runtime.workflow_executor
             elif module_path == "pflow.nodes.file.write_file":
                 # For file tests
                 return mock_module
@@ -95,7 +95,7 @@ class TestWorkflowNodeIntegration:
             "nodes": [
                 {
                     "id": "sub",
-                    "type": "pflow.nodes.workflow",
+                    "type": "pflow.runtime.workflow_executor",
                     "params": {
                         "workflow_ir": {
                             "ir_version": "0.1.0",
@@ -124,11 +124,11 @@ class TestWorkflowNodeIntegration:
                 "docstring": "Test node for testing",
                 "file_path": "/mock/path/test_node.py",
             },
-            "pflow.nodes.workflow": {
-                "module": "pflow.nodes.workflow.workflow_node",
-                "class_name": "WorkflowNode",
-                "docstring": "Execute another workflow as a sub-workflow",
-                "file_path": "/mock/path/workflow_node.py",
+            "pflow.runtime.workflow_executor": {
+                "module": "pflow.runtime.workflow_executor",
+                "class_name": "WorkflowExecutor",
+                "docstring": "Runtime executor for nested workflow execution",
+                "file_path": "/mock/path/workflow_executor.py",
             },
             "pflow.nodes.file.write_file": {
                 "module": "pflow.nodes.file.write_file",
@@ -164,13 +164,13 @@ class TestWorkflowNodeIntegration:
 
     def test_inline_workflow_execution(self, simple_workflow_ir, mock_registry):
         """Test executing an inline workflow."""
-        # Create parent workflow with WorkflowNode
+        # Create parent workflow with WorkflowExecutor
         parent_ir = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "sub",
-                    "type": "pflow.nodes.workflow",
+                    "type": "pflow.runtime.workflow_executor",
                     "params": {
                         "workflow_ir": simple_workflow_ir,
                         "param_mapping": {"test_input": "$message"},
@@ -197,7 +197,7 @@ class TestWorkflowNodeIntegration:
             "nodes": [
                 {
                     "id": "sub",
-                    "type": "pflow.nodes.workflow",
+                    "type": "pflow.runtime.workflow_executor",
                     "params": {"workflow_ref": str(workflow_file), "param_mapping": {"test_input": "Hello from file"}},
                 }
             ],
@@ -242,7 +242,7 @@ class TestWorkflowNodeIntegration:
             "nodes": [
                 {
                     "id": "sub",
-                    "type": "pflow.nodes.workflow",
+                    "type": "pflow.runtime.workflow_executor",
                     "params": {"workflow_ir": simple_workflow_ir, "error_action": "workflow_error"},
                 }
             ],
@@ -255,7 +255,7 @@ class TestWorkflowNodeIntegration:
                 return None
 
             def exec(self, prep_res):
-                raise Exception("Child failed")
+                raise RuntimeError("Child failed")
 
             def post(self, shared, prep_res, exec_res):
                 return "default"
@@ -276,7 +276,7 @@ class TestWorkflowNodeIntegration:
             "nodes": [
                 {
                     "id": "sub",
-                    "type": "pflow.nodes.workflow",
+                    "type": "pflow.runtime.workflow_executor",
                     "params": {"workflow_ir": simple_workflow_ir, "storage_mode": "isolated"},
                 }
             ],
@@ -317,7 +317,7 @@ class TestWorkflowNodeIntegration:
             "nodes": [
                 {
                     "id": "writer",
-                    "type": "pflow.nodes.workflow",
+                    "type": "pflow.runtime.workflow_executor",
                     "params": {
                         "workflow_ir": file_workflow_ir,
                         "param_mapping": {"output_file": str(output_file), "content": "$message"},
@@ -348,14 +348,14 @@ class TestWorkflowNodeIntegration:
         # Create custom mock that includes WriteFileNode
         mock_module = Mock()
         mock_module.TestNode = Mock()
-        mock_module.WorkflowNode = WorkflowNode
+        mock_module.WorkflowExecutor = WorkflowExecutor
         mock_module.WriteFileNode = MockWriteFileNode
 
         def side_effect(module_path):
-            if module_path == "pflow.nodes.workflow.workflow_node":
-                import pflow.nodes.workflow.workflow_node
+            if module_path == "pflow.runtime.workflow_executor":
+                import pflow.runtime.workflow_executor
 
-                return pflow.nodes.workflow.workflow_node
+                return pflow.runtime.workflow_executor
             elif module_path == "pflow.nodes.file.write_file":
                 return mock_module
             else:
@@ -381,13 +381,13 @@ class TestWorkflowNodeIntegration:
 
         level2 = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "l2", "type": "pflow.nodes.workflow", "params": {"workflow_ir": level3}}],
+            "nodes": [{"id": "l2", "type": "pflow.runtime.workflow_executor", "params": {"workflow_ir": level3}}],
             "edges": [],
         }
 
         level1 = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "l1", "type": "pflow.nodes.workflow", "params": {"workflow_ir": level2}}],
+            "nodes": [{"id": "l1", "type": "pflow.runtime.workflow_executor", "params": {"workflow_ir": level2}}],
             "edges": [],
         }
 

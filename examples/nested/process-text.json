@@ -13,7 +13,7 @@
   "nodes": [
     {
       "id": "normalize",
-      "type": "pflow.nodes.test_node",
+      "type": "test",
       "params": {
         "operation": "$mode"
       }

@@ -1,27 +1,36 @@
 # New Patterns Discovered in Task 20
 
-## 1. System Node Compiler Injection Pattern
+## 1. Runtime Component with Compiler Special Handling Pattern (UPDATED)
 
-**Problem**: System nodes (like WorkflowNode) need access to system resources (like the registry) but shouldn't require users to manually pass them.
+**Problem**: Some functionality (like workflow execution) is infrastructure, not a user-facing node, but needs to be invoked via IR.
 
-**Solution**: Modify the compiler to automatically inject system dependencies for specific node types.
+**Solution**: Place the component in `runtime/` and add special handling in the compiler.
 
 ```python
-# In compiler.py:_instantiate_nodes()
-if node_type == "pflow.nodes.workflow":
+# In compiler.py:import_node_class()
+# Special handling for workflow execution
+if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
+    from pflow.runtime.workflow_executor import WorkflowExecutor
+    return WorkflowExecutor
+
+# Also in _instantiate_nodes() for registry injection
+if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
     params = params.copy()
     params["__registry__"] = registry
 ```
 
+**Note**: This pattern was refined during implementation. Originally WorkflowNode was in `nodes/workflow/`, but was refactored to `runtime/workflow_executor.py` to maintain architectural clarity.
+
 **Benefits**:
-- Transparent to users
-- Ensures system nodes always have required resources
-- No breaking changes to workflow format
+- Keeps infrastructure separate from user features
+- Prevents confusion in planner/registry
+- Maintains clean conceptual model
+- Transparent to users (they just use `type: "workflow"`)
+- Infrastructure doesn't appear as selectable nodes
 
 **When to use**:
-- Nodes that need registry access
-- Nodes that need runtime context
-- Future: MCP nodes, remote execution nodes
+- Infrastructure that executes via IR but isn't a user-facing node
+- Future: Batch processors, async executors, remote runners
 
 ## 2. Storage Isolation Modes Pattern
 
@@ -102,3 +111,31 @@ context_keys = {
 - Any recursive/nested execution
 - Debugging and tracing features
 - Audit trails
+
+## 5. Architectural Separation Pattern (NEW)
+
+**Problem**: Not all components that execute via IR should be user-visible nodes.
+
+**Solution**: Maintain clear separation between user features and infrastructure:
+- `nodes/` = User-facing features (appear in planner)
+- `runtime/` = Internal infrastructure (hidden from users)
+
+**Example**: WorkflowExecutor lives in `runtime/` because it's infrastructure for executing workflows, not a building block users combine.
+
+**Conceptual Model**:
+- **Nodes** = Building blocks (ingredients like flour, eggs)
+- **Workflows** = Compositions (recipes like cake)
+- **Runtime Components** = Infrastructure (oven that bakes)
+
+**Benefits**:
+- Clean conceptual model for users
+- Planner output remains focused
+- Infrastructure can evolve independently
+- Prevents user confusion
+
+**When to use**:
+- Any component that's internal machinery
+- Features that shouldn't appear in planner
+- Infrastructure that supports user features
+
+**Implementation Note**: This pattern was applied retroactively to WorkflowNode, moving it from `nodes/workflow/` to `runtime/workflow_executor.py` after recognizing it was infrastructure, not a user-facing building block.

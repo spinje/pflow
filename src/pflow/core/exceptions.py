@@ -1,6 +1,6 @@
 """Custom exceptions for pflow."""
 
-from typing import List, Optional
+from typing import Optional
 
 
 class PflowError(Exception):
@@ -13,7 +13,7 @@ class WorkflowExecutionError(PflowError):
     """Error during nested workflow execution."""
 
     def __init__(
-        self, message: str, workflow_path: Optional[List[str]] = None, original_error: Optional[Exception] = None
+        self, message: str, workflow_path: Optional[list[str]] = None, original_error: Optional[Exception] = None
     ):
         self.workflow_path = workflow_path or []
         self.original_error = original_error

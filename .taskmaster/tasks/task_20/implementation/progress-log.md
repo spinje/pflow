@@ -237,3 +237,44 @@ This elegant solution means:
 - ✅ All code quality checks pass
 
 Task 20 is now 100% complete with all tests passing!
+
+## [2025-07-28] - Architectural Refactoring: WorkflowNode → WorkflowExecutor
+
+### Critical Architectural Issue Identified
+After implementation review, identified that WorkflowNode violated the conceptual model:
+- Nodes are user-facing building blocks (ingredients)
+- Workflows are compositions (recipes)
+- WorkflowNode was infrastructure (the oven) misplaced as a user-facing node
+
+### Refactoring Decision
+Move WorkflowNode from `nodes/` to `runtime/` and rename to WorkflowExecutor to properly categorize it as internal infrastructure.
+
+### Refactoring Implementation
+1. **File Movement**:
+   - ✅ Moved `src/pflow/nodes/workflow/workflow_node.py` → `src/pflow/runtime/workflow_executor.py`
+   - ✅ Renamed class from `WorkflowNode` to `WorkflowExecutor`
+   - ✅ Removed entire `src/pflow/nodes/workflow/` directory
+
+2. **Compiler Updates**:
+   - ✅ Added special handling for `type: "workflow"` in `import_node_class()`
+   - ✅ Updated registry injection to check for both "workflow" and "pflow.runtime.workflow_executor"
+   - ✅ Import WorkflowExecutor directly instead of through registry
+
+3. **Test Migration**:
+   - ✅ Moved tests from `tests/test_nodes/test_workflow/` → `tests/test_runtime/test_workflow_executor/`
+   - ✅ Updated all imports in test files
+   - ✅ All 39 tests still passing
+
+4. **Documentation Updates**:
+   - ✅ Created `docs/architecture/runtime-components.md` explaining runtime vs node distinction
+   - ✅ Updated references to reflect WorkflowExecutor as runtime component
+   - ✅ Preserved user-facing documentation (users still use `type: "workflow"`)
+
+### Verification Results
+- No "workflow" entry in registry (as intended)
+- Examples still work with `type: "workflow"`
+- Clean separation: user features in `nodes/`, infrastructure in `runtime/`
+- Conceptual model preserved: workflows are compositions, not building blocks
+
+### Final Status
+Task 20 is complete with architectural refactoring applied. WorkflowExecutor properly lives in the runtime layer as internal infrastructure, maintaining all functionality while improving architectural clarity.

@@ -162,6 +162,12 @@ def prep(self, shared):
         raise ValueError("key must be in shared store or params")
 ```
 
+## Node Type Reference
+
+This section documents user-facing node types that can be used in workflows. For information about how workflows can execute other workflows as sub-components, see the [Nested Workflows Guide](../features/nested-workflows.md).
+
+> **Note**: Workflow execution (using `type: "workflow"` in your JSON) is handled internally by the pflow runtime. Users simply specify `type: "workflow"` and the runtime handles the execution details.
+
 ## See Also
 
 - [Simple Nodes Pattern](../features/simple-nodes.md) - Understanding single-purpose node design

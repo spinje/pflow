@@ -1,7 +1,7 @@
 {
   "ir_version": "0.1.0",
   "metadata": {
-    "description": "Demonstrates storage isolation modes with WorkflowNode"
+    "description": "Demonstrates storage isolation modes with nested workflows"
   },
   "nodes": [
     {
