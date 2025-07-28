@@ -286,6 +286,7 @@ Is this what you're expecting?
 - Document decisions and tradeoffs
 - Create `CLAUDE.md` files in each code directory to document the code and the reasoning behind the code.
 - Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/<conversation-subject>/` directory. Always create them in a subdirectory relevant to the current conversation.
+- *Always use subagents* when gathering information, context, do research and verifying assumptions. This is important, it is the only way to avoid running out of context window when working on complex tasks.
 
 ### Documentation Navigation
 
@@ -335,6 +336,8 @@ Folders:
 Always read the documentation in `pocketflow/docs` and relevant examples in `pocketflow/cookbook` when needed for any task that requires using the pocketflow framework.
 
 *All documentation follows a single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
+
+> Remember: Always use subagents when reading documentation, examples and code. If you need specific information, ask a subagent to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
 
 ### Current State of the Project
 
