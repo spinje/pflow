@@ -225,21 +225,10 @@ pflow/
 ├── .taskmaster/           # Task management and planning
 │   ├── tasks/            # Task tracking
 │   │   ├── task_1/
-│   │   │   ├── project-context.md
-│   │   │   ├── decomposition-plan.md
-│   │   │   ├── subtask_1.1/
-│   │   │   ├── subtask_1.2/
 │   │   │   └── task-review.md # Read this file to understand what has been implemented in previously completed tasks
-│   │   ├── task_2/
+│   │   └── task_2/
 │   │   │   └── (same structure)
-│   │   └── tasks.json    # Detailed task list with subtasks
 │   ├── docs/             # Planning documentation
-│   ├── workflow/         # Epistemic workflow system
-│   │   ├── workflow-overview.md       # Complete workflow guide
-│   │   ├── refine-task.md            # Main task workflow
-│   │   ├── refine-subtask.md         # Subtask refinement workflow
-│   │   ├── implement-subtask.md      # Implementation workflow
-│   │   └── templates/                # Workflow artifact templates
 │   ├── knowledge/        # Consolidated learning repository
 │   │   ├── CLAUDE.md    # Knowledge maintenance guide
 │   │   ├── patterns.md  # Successful implementation patterns
@@ -296,7 +285,7 @@ Is this what you're expecting?
 - Run `make test` (pytest) and `make check` (linting, type checking, etc.) before finalizing any implementation to ensure code quality
 - Document decisions and tradeoffs
 - Create `CLAUDE.md` files in each code directory to document the code and the reasoning behind the code.
-- Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/` directory.
+- Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/<conversation-subject>/` directory. Always create them in a subdirectory relevant to the current conversation.
 
 ### Documentation Navigation
 
@@ -354,8 +343,7 @@ The codebase is in early development with:
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
 - ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/features/mvp-implementation-guide.md`
-- ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap (**Do not access this file directly**, always use `taskmaster list` to view the tasks or `taskmaster show  <taskId>` to view a task)
-- ✅ Establish epistemic workflow for task execution in `.taskmaster/workflow/`
+- ✅ Create a detailed todo list with tasks. Use `taskmaster show  <taskId>` to view a task
 - ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
 - ✅ Task 2 complete: Basic CLI run command with stdio/stdin support
 - ✅ Task 3 complete: Execute a Hardcoded 'Hello World' Workflow
@@ -368,35 +356,15 @@ The codebase is in early development with:
 - ✅ Task 16 complete: Create planning context builder
 - ✅ Task 14 complete: Implement type, structure, description and semantic documentation for all Interface components
 - ✅ Task 15 complete: Extend context builder for two-phase discovery and structure documentation support (modify and extend the context builder implemented in Task 16)
-- ⏳ Implementing features for the MVP using the epistemic workflow (current task: Task 9 - Implement shared store collision detection and proxy mapping)
+- ✅ Task 18 complete: Template Variable System
+- ✅ Task 19 complete: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
 
 *Update this list as you complete tasks.*
-
-## Task Implementation Workflow
-
-**Use the unified epistemic workflow in `.taskmaster/workflow/`**:
-- `refine-task.md` - Main task understanding, project context creation, and decomposition
-- `refine-subtask.md` - Subtask refinement with knowledge loading
-- `implement-subtask.md` - Implementation with real-time learning capture
-
-**Core Principles**:
-1. **Task Understanding First**: Deeply understand the current task and create project context before decomposition
-2. **Natural Decomposition**: Break down tasks based on understanding, with optional reference to similar tasks
-3. **Compound Learning**: Each implementation builds on previous technical learnings
-
-The workflow ensures:
-- MAIN TASKS: Understand deeply, create project context, generate logical subtasks
-- ALL SUBTASKS: Read shared project context, load implementation knowledge
-- NEW TASKS: Optionally review similar tasks for inspiration
-- CONTINUING SUBTASKS: Read sibling reviews within current task
-- ALL WORK: Capture technical discoveries in real-time for future benefit
-
-See `.taskmaster/workflow/workflow-overview.md` for the complete system.
 
 ## User Decisions and Recommendations
 
 Every time you need the user to make a decision, you should:
-1. Create a new markdown file in the folder `scratchpads/critical-user-decisions/` and write down the details about the decision and the reasoning why it is needed.
+1. Create a new markdown file in the folder `scratchpads/<conversation-subject>/critical-user-decisions/` and write down the details about the decision and the reasoning why it is needed.
 2. Give at least 2 options with clear recommendations.
 3. Add a markdown checkbox for each option so the user can select the option they prefer easily.
 
