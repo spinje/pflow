@@ -547,3 +547,85 @@ ultrathink and create a detailed plan how we should update the documents in the 
 ---
 
 Are there any critical contradictions or ambiguities between any of these documents? ultrathink and carefully analyze every nuance
+
+
+---
+
+perfect, lets begin by integrating the relevant things into .taskmaster/tasks/task_17/task-17-architecture-and-patterns.md first. ONLY do this file and let me know when you are done. STOP after integration of ask-17-architecture-and-patterns.md is done. think hard and carefully add the changes, following the requirements discussed before.
+
+remember that you have read .taskmaster/tasks/task_17/task-17-architecture-and-patterns.md, you dont need to read the whole file again, just the parts that are relevant to the changes you are making.
+
+**UPDATE:** you began working on the file but your context window ran out, this is what is done and whats next.
+
+THESE CHANGES HAVE BEEN MADE:
+
+I need to update the Mermaid diagram to add ParameterDiscoveryNode after ComponentBrowsingNode in Path B, and rename
+  ParameterExtractionNode to ParameterMappingNode. Let me make these changes.
+
+  Good, I've updated the Mermaid diagram. Now I need to update the key architectural implications to reflect the changes. Let me
+  check what's there and update accordingly.
+>
+
+  Good. Now I need to update the MVP architecture description to reflect ParameterDiscoveryNode and ParameterMappingNode. Let me
+  check the content.
+
+
+
+  I need to update this section to distinguish between parameter discovery and parameter mapping. Let me fix this.
+
+
+
+  Now I need to update the "What the Planner Includes" section to reflect the two-phase parameter handling. Let me do that.
+
+
+
+  Now I need to add the ParameterDiscoveryNode implementation after ComponentBrowsingNode. Let me find where ComponentBrowsingNode
+  ends.
+
+
+  I need to see where ComponentBrowsingNode ends and then insert ParameterDiscoveryNode after it.
+
+
+  Perfect, I can see ComponentBrowsingNode ends at line 354, and ParameterExtractionNode starts at line 356. I need to insert
+  ParameterDiscoveryNode between them, and then rename ParameterExtractionNode to ParameterMappingNode.
+
+  Good, I've added ParameterDiscoveryNode and renamed the class to ParameterMappingNode. Now I need to update the docstring and
+  implementation of ParameterMappingNode to clarify its mapping vs extraction role.
+
+  I need to update the ParameterMappingNode to reflect that it's now the convergence point and does mapping, not initial extraction.
+  Let me check if there's more of this class definition.
+
+
+  Now I need to update the ParameterMappingNode docstring and implementation to clarify that it's mapping discovered values (from
+  Path B) or extracting from natural language (Path A), not doing initial discovery. Let me update this.
+
+  Good, I've updated the ParameterMappingNode. Now I also need to update the post method to use "mapped" instead of "extracted". Let
+  me fix that.
+
+
+  Now I need to update the ValidatorNode to include discovered_params in its validation. Let me find the ValidatorNode class.
+
+
+  I found two ValidatorNode classes - one is the main implementation and one is in the error context enrichment section. I need to
+  update the main ValidatorNode (around line 526) to include discovered_params for full validation.
+
+
+  Good, I've updated the ValidatorNode. Now I need to update the flow creation function to include the ParameterDiscoveryNode and
+  update the edges. Let me find the create_planner_flow function.
+
+
+  I found the main create_planner_flow function. I need to:
+  1. Add ParameterDiscoveryNode to the nodes
+  2. Rename param_extract to param_mapping
+  3. Update the edges to include the discovery node in Path B
+
+  Let me update this now.
+
+   DONE!
+
+---
+
+  Next up (this is not done yet) CONTINUE HERE:
+
+  Good! Now I need to update any references to "extracted_params" in the shared state example to reflect the new naming. Let me check
+   the shared state example.
