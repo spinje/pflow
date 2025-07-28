@@ -65,7 +65,7 @@ Ultrathink and make a detailed plan of what to include in the document before yo
 
 ## Output
 
-Write your output in markdown format in a `.taskmaster/tasks/task_<taskId>/<taskId>_handover.md` file.
+Write your output in markdown format in a `.taskmaster/tasks/task_<taskId>/task_<taskId>_handover.md` file.
 
 
 ## Notes
