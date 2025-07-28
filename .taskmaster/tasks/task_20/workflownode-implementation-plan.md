@@ -79,7 +79,6 @@ class WorkflowNode(BaseNode):
 
     # Class-level constants
     MAX_DEPTH_DEFAULT = 10
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
     RESERVED_KEY_PREFIX = "_pflow_"
 
     def prep(self, shared: Dict[str, Any]) -> Dict[str, Any]:
@@ -213,7 +212,7 @@ class WorkflowNode(BaseNode):
         return "default"
 
     def _resolve_safe_path(self, workflow_ref: str, shared: Dict[str, Any]) -> Path:
-        """Resolve workflow path with security checks."""
+        """Resolve workflow path."""
         # Convert to Path object
         path = Path(workflow_ref)
 
@@ -227,24 +226,14 @@ class WorkflowNode(BaseNode):
                 # Resolve from current working directory
                 path = Path.cwd() / path
 
-        # Resolve to absolute path and check it's within allowed directories
-        path = path.resolve()
-
-        # Security check: ensure path is within allowed directories
-        # For now, allow any path (could be restricted in production)
-
-        return path
+        # Return resolved absolute path
+        return path.resolve()
 
     def _load_workflow_file(self, path: Path) -> Dict[str, Any]:
-        """Load workflow from file with size and format validation."""
+        """Load workflow from file."""
         # Check file exists
         if not path.exists():
             raise FileNotFoundError(f"Workflow file not found: {path}")
-
-        # Check file size
-        file_size = path.stat().st_size
-        if file_size > self.MAX_FILE_SIZE:
-            raise ValueError(f"Workflow file too large: {file_size} bytes (max: {self.MAX_FILE_SIZE})")
 
         # Load and parse JSON
         try:
@@ -750,7 +739,7 @@ Synchronization points:
 
 1. **Before Starting**: Create a feature branch
 2. **During Development**: Run tests frequently
-3. **Code Review**: Focus on security validations and error handling
+3. **Code Review**: Focus on error handling and test coverage
 4. **Performance Testing**: Test with deeply nested workflows
 5. **Documentation Review**: Ensure all edge cases are documented
 
