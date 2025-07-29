@@ -30,7 +30,7 @@ Available inputs:
 
 You are tasked with creating a comprehensive task overview file for a pflow task. Your primary source of information should be **your existing context window** - everything you already know from your conversation with the user about this task.
 
-**Your output**: Generate the task overview and save it to `.taskmaster/tasks/task_{{task_id}}/task_{{task_id}}.md`
+**Your output**: Generate the task overview and save it to `.taskmaster/tasks/task_{{task_id}}/task-{{task_id}}.md`
 
 ### 🧠 Your Knowledge Sources
 
@@ -216,7 +216,7 @@ Comprehensive testing will ensure the validator handles all edge cases:
 `.taskmaster/tasks/task_{{task_id}}/task_{{task_id}}.md`
 
 **Example**: For Task 24, save to:
-`.taskmaster/tasks/task_24/task_24.md`
+`.taskmaster/tasks/task_24/task-24.md`
 
 ## 🚀 MVP Context - IMPORTANT
 

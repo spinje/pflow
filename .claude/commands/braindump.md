@@ -6,18 +6,18 @@ Available inputs:
 
 ---
 
-Before resetting your context window, your final responsibility is to prepare a handoff memo for the agent who will implement **Task <taskId>**.
+Before resetting your context window, your final responsibility is to prepare a handoff memo for the agent who will implement **Task {{taskId}}**.
 
 ## 🎯 **Your mission**:
-Perform a strategic *braindump* of the most important information the next agent needs to know implementing **Task <taskId>**. This is **not** a summary or a formal report. It's a focused transfer of **tacit knowledge**—insights that would otherwise vanish with your context window.
+Perform a strategic *braindump* of the most important information the next agent needs to know implementing **Task {{taskId}}**. This is **not** a summary or a formal report. It's a focused transfer of **tacit knowledge**—insights that would otherwise vanish with your context window.
 
 ## 🧠 **Your Edge**:
 You have been selected to write this handoff memo based on what you have in your context window. Everything you have in your context window is most likely relevant to the task and you should write from your unique perspective and consider the task based on your knowledge and experience from the conversation with the user. Do NOT rely on anything outside of your context window when writing details. Focus on what you know!
 
 ## ✅ **What to include:**
 
-- The **core outcomes and side effects** that <taskId> must build on or avoid
-- Any **assumptions made** that might constrain or impact <taskId>
+- The **core outcomes and side effects** that {{taskId}} must build on or avoid
+- Any **assumptions made** that might constrain or impact {{taskId}}
 - Unexpected **discoveries, edge cases, or fixes** that changed your approach
 - **Patterns or anti-patterns** you uncovered that should be reused or avoided
 - Warnings about **subtle bugs, performance issues, or architectural caveats**
@@ -29,7 +29,7 @@ You have been selected to write this handoff memo based on what you have in your
 
 ## 🚫 **What NOT to include:**
 
-- Do not rehash the refined spec for <taskId>—it will be read separately
+- Do not rehash the refined spec for {{taskId}}—it will be read separately
 - Do not list implementation steps or details
 - Do not include generic advice or boilerplate reminders
 - Do not repeat the context file or the implementation plan, here is your chance to provide context that fills the gaps of what the other documents are missing
@@ -65,7 +65,7 @@ Ultrathink and make a detailed plan of what to include in the document before yo
 
 ## Output
 
-Write your output in markdown format in a `.taskmaster/tasks/task_<taskId>/task_<taskId>_handover.md` file.
+Write your output in markdown format in a `.taskmaster/tasks/task_{{taskId}}/starting-context/task-{{taskId}}-handover.md` file.
 
 
 ## Notes

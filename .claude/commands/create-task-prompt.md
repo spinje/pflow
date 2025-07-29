@@ -24,7 +24,7 @@ Available inputs:
 
 You are tasked with creating a comprehensive implementation prompt for another AI agent who will implement a pflow task. Your primary source of information should be **your existing context window** - everything you already know from your conversation with the user.
 
-**Your output**: Generate the prompt and save it to `.taskmaster/tasks/task_{{task_id}}/starting-context/implementation-prompt.md`
+**Your output**: Generate the prompt and save it to `.taskmaster/tasks/task_{{task_id}}/task-{{task_id}}-implementation-prompt.md`
 
 ### 🧠 Your Knowledge Sources
 
@@ -918,7 +918,7 @@ Your generated prompt should:
 
 After thinking extensively and planned the prompt write it to:
 
-`.taskmaster/tasks/task_{{task_id}}/starting-context/implementation-prompt.md`
+`.taskmaster/tasks/task_{{task_id}}/task-{{task_id}}-implementation-prompt.md`
 
 
 ## 🔑 Key Principles to Remember
