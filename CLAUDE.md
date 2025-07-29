@@ -362,9 +362,10 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 18 complete: Template Variable System
 - ✅ Task 19 complete: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
 - ✅ Task 20 complete: Implement Nested Workflow Execution
+- ✅ Task 21: Implement Workflow Input Declaration - workflows to declare their expected input and output parameters in the IR schema
 
 Next up:
-- ⏳ Task 21: Implement Workflow Input Declaration (workflows to declare their expected input and output parameters in the IR schema)
+
 - ⏳ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
 - ⏳ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
 
