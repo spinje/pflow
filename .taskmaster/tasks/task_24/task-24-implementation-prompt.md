@@ -204,7 +204,32 @@ Deploy parallel subagents for:
 
 > Note: Be specific and detailed in subagent prompts, providing exact context and expectations. The above examples is just the descriptions of what to do not the full prompts you should use.
 
-### Step 2: Write Your Implementation Plan
+### Step 2: STOP AND DISCUSS WITH USER
+
+**🛑 IMPORTANT: After completing context gathering with subagents, you MUST stop and discuss the findings with the user before creating your implementation plan.**
+
+Create a discussion document at: `.taskmaster/tasks/task_24/implementation/context-discussion.md`
+
+Include in your discussion:
+1. **Key Findings** - What you discovered during context gathering
+2. **Clarifying Questions** - Any ambiguities or uncertainties you need resolved
+3. **Design Decisions** - Major architectural or implementation choices that need user input
+4. **Potential Risks** - Issues or challenges you've identified
+5. **Recommended Approach** - Your suggested path forward based on findings
+
+Present options with checkboxes for user selection when appropriate:
+```markdown
+## Design Decision: Storage Location
+- [ ] Option A: Store in ~/.pflow/workflows/ (current approach)
+- [ ] Option B: Store in project-specific .pflow/ directory
+- [ ] Option C: Support both with configuration
+
+**Recommendation**: Option A - maintains consistency with existing patterns
+```
+
+**Wait for user confirmation and decisions before proceeding to Step 3.**
+
+### Step 3: Write Your Implementation Plan
 
 Create at: `.taskmaster/tasks/task_24/implementation/implementation-plan.md`
 
@@ -215,7 +240,7 @@ Include:
 4. **Risk identification** - Mitigation strategies
 5. **Testing strategy** - Verification approach
 
-### Subagent Task Scoping
+### Step 4: Subagent Task Scoping
 
 **✅ GOOD Subagent Tasks:**
 ```markdown
