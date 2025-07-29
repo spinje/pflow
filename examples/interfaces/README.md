@@ -34,31 +34,102 @@ Shows how workflows can compose other workflows:
 
 ## Running the Examples
 
-### Basic execution with all inputs:
+While the pflow CLI doesn't support direct parameter passing yet, you can run these examples using wrapper workflows that provide the required parameters:
+
+### Running the Text Analyzer Example:
+
 ```bash
-pflow run examples/interfaces/text_analyzer.json \
-  --param text="Hello world, this is a test" \
-  --param language="en" \
-  --param max_length=50
+# Run using the wrapper workflow
+uv run pflow --file examples/interfaces/run_text_analyzer.json
+
+# See validation error for missing required input
+uv run pflow --file examples/interfaces/run_missing_input.json
 ```
 
-### Using default values (omit optional params):
-```bash
-pflow run examples/interfaces/text_analyzer.json \
-  --param text="Hello world, this is a test"
+This wrapper workflow:
+1. Uses the WorkflowExecutor to call `text_analyzer.json`
+2. Provides the required parameters via `param_mapping`
+3. Demonstrates how input validation and defaults work
+
+The missing input example shows the helpful error message:
+```
+Workflow requires input 'text' (Text to analyze)
 ```
 
-### Missing required input (will show helpful error):
+### Running the Workflow Composition Example:
+
 ```bash
-pflow run examples/interfaces/text_analyzer.json
-# Error: Workflow requires input 'text' (Text to analyze)
+# Run the composition example
+uv run pflow --file examples/interfaces/run_workflow_composition.json
 ```
 
-### Workflow composition:
+This wrapper:
+1. Creates a test file
+2. Runs the workflow composition that reads and analyzes it
+3. Shows how workflows can be chained with validated interfaces
+
+### How It Works:
+
+The wrapper workflows use the `workflow` node type (WorkflowExecutor) to:
+- Load the target workflow
+- Map parameters from parent to child
+- Validate inputs against declarations
+- Apply default values for optional inputs
+
+### What the Examples Demonstrate:
+
+1. **Input Validation** - Missing required inputs cause compile-time errors
+2. **Default Values** - Optional parameters use defaults when not provided
+3. **Type Documentation** - Interfaces show expected types
+4. **Workflow Composition** - Parent workflows can validate child interfaces
+
+## How to Run These Examples NOW
+
+Since the CLI doesn't support direct parameter passing yet, you need to use wrapper workflows:
+
+### Method 1: Static Parameters (Wrapper Workflow)
+
 ```bash
-pflow run examples/interfaces/workflow_composition.json \
-  --param file_path="input.txt"
+# Run with hardcoded parameters
+uv run pflow --file examples/interfaces/run_text_analyzer.json
 ```
+
+This wrapper workflow provides the required parameters via `param_mapping`.
+
+### Method 2: Using Stdin Data
+
+```bash
+# Pipe text data to the analyzer
+echo "This is some text to analyze" | uv run pflow --file examples/interfaces/run_text_analyzer_stdin.json
+```
+
+This wrapper maps stdin data to the text parameter.
+
+### Method 3: Create Your Own Wrapper
+
+Create a wrapper workflow that provides the parameters you want:
+
+```json
+{
+  "ir_version": "0.1.0",
+  "nodes": [{
+    "id": "run_analyzer",
+    "type": "workflow",
+    "params": {
+      "workflow_ref": "examples/interfaces/text_analyzer.json",
+      "param_mapping": {
+        "text": "Your text here",
+        "language": "es",
+        "max_length": 200
+      }
+    }
+  }]
+}
+```
+
+### Note About test-node
+
+The example workflows use `test-node` which simply passes through data. In a real workflow, you'd use actual processing nodes like `llm`, `text-processor`, etc.
 
 ## Benefits
 

@@ -1,0 +1,17 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "run",
+      "type": "workflow",
+      "params": {
+        "workflow_ref": "examples/interfaces/simple_text_workflow.json",
+        "param_mapping": {
+          "message": "Hello from pflow! This demonstrates workflow input declarations.",
+          "filename": "test_output.txt"
+        }
+      }
+    }
+  ],
+  "edges": []
+}

@@ -1,0 +1,30 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "show_params",
+      "type": "test-node",
+      "params": {
+        "data": "Testing parameter passing"
+      }
+    },
+    {
+      "id": "run_workflow",
+      "type": "workflow",
+      "params": {
+        "workflow_ref": "examples/interfaces/text_analyzer.json",
+        "param_mapping": {
+          "text": "Hello world test",
+          "language": "en",
+          "max_length": 50
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "show_params",
+      "to": "run_workflow"
+    }
+  ]
+}

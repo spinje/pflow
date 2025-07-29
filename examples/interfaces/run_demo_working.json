@@ -1,0 +1,16 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "demo",
+      "type": "workflow",
+      "params": {
+        "workflow_ref": "examples/interfaces/demo_working.json",
+        "param_mapping": {
+          "message": "Hello from pflow! This demonstrates workflow input validation and template resolution."
+        }
+      }
+    }
+  ],
+  "edges": []
+}

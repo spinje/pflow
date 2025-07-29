@@ -1,0 +1,33 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "setup",
+      "type": "test",
+      "params": {
+        "data": {
+          "text_to_analyze": "Hello world, this is a test of the workflow input system. It demonstrates how nested workflows can receive parameters through the WorkflowExecutor.",
+          "language_code": "en"
+        }
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "workflow",
+      "params": {
+        "workflow_ref": "examples/interfaces/text_analyzer.json",
+        "param_mapping": {
+          "text": "$text_to_analyze",
+          "language": "$language_code",
+          "max_length": 50
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "setup",
+      "to": "analyze"
+    }
+  ]
+}

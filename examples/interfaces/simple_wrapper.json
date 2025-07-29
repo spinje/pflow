@@ -1,0 +1,17 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "run",
+      "type": "workflow",
+      "params": {
+        "workflow_ref": "examples/interfaces/text_analyzer.json",
+        "param_mapping": {
+          "text": "Hello world, let's test this workflow!",
+          "language": "en"
+        }
+      }
+    }
+  ],
+  "edges": []
+}
