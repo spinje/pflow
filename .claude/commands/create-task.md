@@ -13,14 +13,14 @@ This command instructs an AI agent to generate a task overview file that documen
 Inputs: $ARGUMENTS
 
 Available inputs:
-- `task_id`: The ID of the task to create an overview file for (required)
+- `--task_id`: The ID of the task to create an overview file for (required)
 - `--read_spec`: Whether to read the spec file if it exists (default: false)
 
 > If you receive only a number (e.g., "24"), assume that is the task_id with read_spec=false
 
 ## 🚨 CRITICAL: File Reading Rules
 
-**NEVER read files unless `--read_spec` is explicitly set to true!**
+**NEVER read files unless `read_spec` is explicitly set to true!**
 
 - If `read_spec` is false or not specified → DO NOT read any files
 - If `read_spec` is true → Read ONLY the spec file in `.taskmaster/tasks/<task_id>/starting-context/*-spec.md`
