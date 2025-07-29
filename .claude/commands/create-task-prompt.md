@@ -45,20 +45,22 @@ You are tasked with creating a comprehensive implementation prompt for another A
 **Use your existing knowledge from the conversation to fill the template:**
 
 1. **Draw from your context window** - What do you already know about Task {{task_id}}?
-2. **Fill in the template** using your existing knowledge
-3. **Be explicit about what you know** vs what the implementing agent needs to verify
-4. **NEVER make things up** - If you don't know something, mark it as `{{placeholder_name - TO BE VERIFIED}}`
-5. **Output a prompt** that acknowledges both what's known and what needs verification
+2. **Use LS tool** to list files in `.taskmaster/tasks/{{task_id}}/starting-context/` (DO NOT read them)
+3. **Fill in the template** using your existing knowledge and the file list
+4. **Be explicit about what you know** vs what the implementing agent needs to verify
+5. **NEVER make things up** - If you don't know something, mark it as `{{placeholder_name - TO BE VERIFIED}}`
+6. **Output a prompt** that acknowledges both what's known and what needs verification
 
 ### Path 2: Enhanced Mode (read_context=true)
 
 **Combine your existing knowledge with file contents:**
 
 1. **Start with what you already know** from your context window
-2. **Read the files** in `.taskmaster/tasks/<task_id>/starting-context/`
-3. **Merge your knowledge** - Use files to verify, correct, and expand your understanding
-4. **Fill the template completely** with the combined knowledge
-5. **Output a comprehensive prompt** ready for immediate use
+2. **Use LS tool** to list files in `.taskmaster/tasks/{{task_id}}/starting-context/`
+3. **Read the files** you just listed
+4. **Merge your knowledge** - Use files to verify, correct, and expand your understanding
+5. **Fill the template completely** with the combined knowledge and explicit file list
+6. **Output a comprehensive prompt** ready for immediate use
 
 ### 🛑 Decision Points: When to STOP and ASK
 
@@ -125,13 +127,13 @@ Implement improvements to workflow input handling. The exact scope and requireme
 ### 3. Read ALL Context Files
 **Directory**: `.taskmaster/tasks/task_21/starting-context/`
 
-**Instructions**: Read ALL files in this directory, paying special attention to:
-- The specification file (look for `-spec.md`) - this contains the requirements and test criteria for the task which all must be met before the task is considered complete
-- Any implementation guides or technical context
-- Handover documents from previous work
-- All other files
+**Files to read (in this order):**
+1. `workflow-input-comprehensive-context.md` - Deep understanding of the feature
+2. `task-21-spec.md` - The specification (FOLLOW THIS PRECISELY)
+3. `task-21-handover.md` - Important context from investigation phase
+4. `workflow-input-implementation-plan.md` - Step-by-step implementation guide
 
-After reading each file, pause to understand how it fits into the overall picture.
+**Instructions**: Read EACH file listed above in order. The specification (`task-21-spec.md`) contains all requirements and test criteria that MUST be met. After reading each file, pause to understand how it relates to the others.
 
 [... continue with what you do know from the conversation ...]
 ```
@@ -177,20 +179,24 @@ Use this exact structure and replace ALL placeholders with content from your kno
 ### 3. Read ALL Context Files
 **Directory**: `.taskmaster/tasks/task_{{task_id}}/starting-context/`
 
-**Instructions**: Read ALL files in this directory. After reading each file, pause to consider:
+**Files to read (in this order):**
+{{context_file_list}}
+<!-- Use LS tool to list all files in the directory, then format as numbered list -->
+<!-- Example:
+1. `comprehensive-context.md` - Read this for overall understanding
+2. `task-21-spec.md` - The specification (source of truth for requirements)
+3. `task-21-handover.md` - Context from previous work
+4. `implementation-plan.md` - Technical approach
+-->
+
+**Instructions**: Read EACH file listed above. After reading each file, pause to consider:
 - What this document tells you about the task
 - How it relates to other files you've read
 - What implementation decisions it implies
 
-**Key files to look for**:
-- Specification files (often ending in `_spec.md`)
-- Implementation guides or plans
-- Context documents
-- Handover notes from previous work
+**IMPORTANT**: The specification file (`*-spec.md`) is the source of truth for requirements and test criteria. Follow it PRECISELY.
 
-**IMPORTANT**: If you find a specification file, follow it PRECISELY. The spec is the source of truth for requirements and test criteria.
-
-<!-- If you know specific files, list them. Otherwise, this generic instruction ensures nothing is missed -->
+<!-- The prompt-generating agent should use LS to get the actual filenames and list them explicitly -->
 
 ## What You're Building
 
