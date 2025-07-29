@@ -284,3 +284,39 @@ Successfully implemented complete workflow interface declarations with:
 - Better developer experience with helpful error messages
 
 Task 21 is now complete! 🎉
+
+## 2025-07-29 12:00 - Post-Implementation Cleanup
+
+After initial completion, discovered critical issues that needed addressing:
+
+### Metadata Removal Confusion
+- **Initial Mistake**: Subagents made metadata-level inputs/outputs OPTIONAL instead of removing support
+- **Problem**: This maintained the confusion about source of truth
+- **Resolution**: Completely removed support for metadata-level inputs/outputs
+- **Result**: Context builder now ONLY recognizes IR-level declarations
+
+### What Was Actually Done:
+1. **Removed validation** for metadata-level inputs/outputs entirely
+2. **Updated display logic** to only read from IR (no fallback)
+3. **Test fixtures** cleaned up to remove redundant fields
+4. **Established single source of truth**: IR is the ONLY place for interfaces
+
+### Security Fixes
+- **Issue**: 12 hardcoded `/tmp/` paths in test files flagged as security warnings (S108)
+- **Files Fixed**:
+  - test_compiler_interfaces.py (9 instances)
+  - test_shell_integration.py (2 instances)
+  - test_dual_mode_stdin.py (1 instance)
+- **Solution**: Replaced with simple filenames since they're test parameters
+
+### Final State:
+- ✅ IR is the single source of truth for workflow interfaces
+- ✅ No backward compatibility code for metadata-level declarations
+- ✅ All security warnings resolved
+- ✅ All 719 tests passing
+- ✅ All quality checks passing
+
+### Lesson Learned:
+When implementing breaking changes in an MVP with no users, be explicit about REMOVING old patterns rather than making them optional. Half-measures create more confusion than clean breaks.
+
+Total time: ~10 hours (including cleanup and fixes)
