@@ -341,7 +341,7 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 
 ### Current State of the Project
 
-The codebase is in early development with:
+The codebase is in early development with these tasks completed:
 - ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
@@ -361,8 +361,16 @@ The codebase is in early development with:
 - ✅ Task 15 complete: Extend context builder for two-phase discovery and structure documentation support (modify and extend the context builder implemented in Task 16)
 - ✅ Task 18 complete: Template Variable System
 - ✅ Task 19 complete: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
+- ✅ Task 20 complete: Implement Nested Workflow Execution
+
+Next up:
+- ⏳ Task 21: Implement Workflow Input Declaration (workflows to declare their expected input and output parameters in the IR schema)
+- ⏳ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
+- ⏳ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
 
 *Update this list as you complete tasks.*
+
+> We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
 
 ## User Decisions and Recommendations
 
