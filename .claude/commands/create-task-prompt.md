@@ -144,13 +144,20 @@ Use this exact structure and replace ALL placeholders with content from your kno
 
 **Why read first**: This mindset is critical for implementing any task correctly. You'll need to question existing patterns, validate assumptions, and ensure the solution survives scrutiny.
 
-### 2. SECOND: {{primary_context_title}}
+### 2. SECOND: Task Overview
+**File**: `.taskmaster/tasks/task_{{task_id}}/task_{{task_id}}.md`
+
+**Purpose**: High-level overview of the task, its objectives, and current state. This document provides the essential context and background for understanding what needs to be built.
+
+**Why read second**: This gives you the big picture before diving into detailed specifications and implementation guides.
+
+### 3. THIRD: {{primary_context_title}}
 **File**: `.taskmaster/tasks/task_{{task_id}}/starting_context/{{primary_context_file}}`
 
 **Purpose**: {{primary_context_purpose}}
 <!-- What this document contains and why it's important -->
 
-**Why read second**: {{primary_context_reasoning}}
+**Why read third**: {{primary_context_reasoning}}
 <!-- Why this needs to be read before other files -->
 
 <!-- Continue numbering for all files in starting-context/ folder -->
@@ -415,12 +422,19 @@ Implement WorkflowNode, a new node type that allows workflows to execute other w
 
 **Why read first**: This mindset is critical for implementing any task correctly. You'll need to question existing patterns, validate assumptions, and ensure the solution survives scrutiny.
 
-### 2. SECOND: Deep Understanding of WorkflowNode
+### 2. SECOND: Task Overview
+**File**: `.taskmaster/tasks/task_20/task_20.md`
+
+**Purpose**: High-level overview of the task, its objectives, and current state. This document provides the essential context and background for understanding what needs to be built.
+
+**Why read second**: This gives you the big picture before diving into detailed specifications and implementation guides.
+
+### 3. THIRD: Deep Understanding of WorkflowNode
 **File**: `.taskmaster/tasks/task_20/starting_context/workflownode-comprehensive-context.md`
 
 **Purpose**: Complete architectural understanding of how WorkflowNode fits into pflow's execution model, including storage isolation, parameter mapping, and error handling strategies.
 
-**Why read second**: This gives you the conceptual foundation before diving into implementation details.
+**Why read third**: This gives you the conceptual foundation before diving into implementation details.
 
 [... rest of numbered readings ...]
 
