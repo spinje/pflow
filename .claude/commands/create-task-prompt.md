@@ -300,8 +300,9 @@ Your plan should include:
 
 **✅ GOOD Subagent Tasks:**
 ```markdown
-- "Add WorkflowNode import to src/pflow/nodes/__init__.py"
-- "Write unit tests for parameter validation in test_workflow_node_params.py"
+- "Write a new test case for foo.py that covers the logged‑out user edge case; avoid mocks."
+- "Follow the pattern in HotDogWidget.php to implement a new CalendarWidget that lets users paginate months & years (no extra libraries)."
+- "Write unit tests for parameter validation in test_workflow_node_params.py. Include these test cases... [list of test cases]"
 ```
 
 **❌ BAD Subagent Tasks:**
@@ -317,7 +318,9 @@ Your plan should include:
 - Include full context about what the subagent needs to know
 - Never assign overlapping file modifications
 - Always use subagents to fix bugs, test, and write tests
-- Always use subagents to gather information from the codebase or docs. Subagents are your best weapon against unverified assumptions.
+- Always use subagents to gather information from the codebase or docs
+- Parallelise only when subtasks are independent and with explicit bounds
+- Subagents are your best weapon against unverified assumptions
 
 ### Implementation Plan Template
 
