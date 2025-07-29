@@ -7,26 +7,111 @@ This command instructs an AI agent to generate a comprehensive implementation pr
 Inputs: $ARGUMENTS
 
 Available inputs:
-- --task_id: The ID of the task to create an implementation prompt for
-- --read_context: Whether to read the context files or not (default: false)
+- `--task_id`: The ID of the task to create an implementation prompt for (required)
+- `--read_context`: Whether to read the context files from disk (default: false)
 
-> If only recieve a number in inputs, you will assume that the task_id is that number and that read_context is false.
+> If you receive only a number (e.g., "21"), assume that is the task_id with read_context=false
+
+## 🚨 CRITICAL: File Reading Rules
+
+**NEVER read files unless `--read_context` is explicitly set to true!**
+
+- If `read_context` is false or not specified → DO NOT read any files
+- If `read_context` is true → Read the files in `.taskmaster/tasks/<task_id>/starting-context/`
+- No exceptions to this rule
 
 ## Your Task as the Prompt-Generating Agent
 
-You are tasked with creating a comprehensive implementation prompt for another AI agent who will implement a pflow task. You will:
+You are tasked with creating a comprehensive implementation prompt for another AI agent who will implement a pflow task. Your primary source of information should be **your existing context window** - everything you already know from your conversation with the user.
 
-If `read_context` is true, AND ONLY IF EXPLICITLY set to true, you will:
+### 🧠 Your Knowledge Sources
 
-1. **Read ALL files** in `.taskmaster/tasks/<task_id>/starting-context/`
-2. **Extract key information** from these files to understand the task completely
+1. **Primary Source (ALWAYS)**: Your existing context window
+   - Task discussions you've had with the user
+   - Implementation details you've learned
+   - Architectural decisions you're aware of
+   - Patterns and anti-patterns you've discovered
+   - Any relevant context from your conversation
 
-and then go to step 3.
+2. **Secondary Source (ONLY if read_context=true)**: Files on disk
+   - Read to supplement and verify your existing knowledge
+   - Fill gaps in your understanding
+   - Get precise specifications
 
-If `read_context` is false or not set, you will:
+### Path 1: DEFAULT Behavior (read_context=false)
 
-3. **Fill in the template below** by replacing ALL `{{placeholders}}` with specific content from the context files
-4. **Output a complete prompt** that another agent can use to implement the task successfully
+**Use your existing knowledge from the conversation to fill the template:**
+
+1. **Draw from your context window** - What do you already know about Task {{task_id}}?
+2. **Fill in the template** using your existing knowledge
+3. **Be explicit about what you know** vs what the implementing agent needs to verify
+4. **NEVER make things up** - If you don't know something, mark it as `{{placeholder_name - TO BE VERIFIED}}`
+5. **Output a prompt** that acknowledges both what's known and what needs verification
+
+### Path 2: Enhanced Mode (read_context=true)
+
+**Combine your existing knowledge with file contents:**
+
+1. **Start with what you already know** from your context window
+2. **Read the files** in `.taskmaster/tasks/<task_id>/starting-context/`
+3. **Merge your knowledge** - Use files to verify, correct, and expand your understanding
+4. **Fill the template completely** with the combined knowledge
+5. **Output a comprehensive prompt** ready for immediate use
+
+### 🛑 Decision Points: When to STOP and ASK
+
+**Do NOT proceed with generating the prompt if:**
+
+1. You have NO knowledge of the task in your context window AND read_context=false
+2. The task_id doesn't match any task you've discussed
+3. Critical information is missing that you can't mark as "TO BE VERIFIED"
+4. You're unsure whether your understanding is correct
+
+**Instead, ask the user:**
+- "I don't have sufficient context about Task {{task_id}} in my current conversation. Should I read the context files (--read_context=true) or can you provide more information? Currently these are the ambiguous parts... go on to describe all the things you are not sure about along with a alternative options and recommendations"
+- "I'm not certain about [specific aspect]. Could you clarify before I generate the prompt?"
+- "Currently I have to make a lot of assumptions about the current state of the codebase. Should I deploy subagents to gather more information about [specific aspect] in the codebase?"
+
+### 📝 Quality Checks Before Output
+
+Before generating the prompt, ask yourself:
+
+1. **What do I know from our conversation?** List it mentally
+2. **What am I uncertain about?** Mark these clearly
+3. **Am I making any assumptions?** Verify or mark them
+4. **Is this enough to be useful?** If not, ask for clarification
+
+### Example Outputs
+
+**When you KNOW the task well (read_context=false):**
+```markdown
+# Task 21: Implement Workflow Input Declaration - Agent Instructions
+
+## The Problem You're Solving
+
+Workflows currently cannot declare their expected inputs, making validation impossible and usage unclear. Users get cryptic errors when required parameters are missing. [Based on our discussion about parameter validation issues]
+
+## Your Mission
+
+Implement input declaration for workflows in the IR schema, enabling workflows to specify required and optional parameters with types and defaults. [As we discussed in the context of improving workflow usability]
+
+[... continue with known information, marking uncertain areas ...]
+```
+
+**When you have LIMITED knowledge (read_context=false):**
+```markdown
+# Task 21: {{Verify exact title from context files}} - Agent Instructions
+
+## The Problem You're Solving
+
+{{TO BE VERIFIED - Check the spec for the exact problem statement. From our discussion, this relates to workflow parameter handling}}
+
+## Your Mission
+
+Based on our conversation, this task involves workflow input improvements, but you'll need to verify the exact scope in the context files.
+
+[... template with clear markers for what needs verification ...]
+```
 
 ## Template to Fill
 
@@ -276,7 +361,17 @@ Append deviation to progress log:
 
 ## How to Extract Information and Fill the Template
 
-When reading the context files, look for:
+### From Your Context Window (Primary Source):
+
+Reflect on your conversation and extract:
+- Problem descriptions and pain points discussed
+- Task objectives and goals mentioned
+- Technical decisions and constraints shared
+- Implementation strategies considered
+- Warnings or pitfalls identified
+- Patterns and anti-patterns discovered
+
+### From Context Files (Only if read_context=true):
 
 1. **Problem Statement**: Look for sections explaining what's broken, missing, or needs improvement
 2. **Task Number and Title**: Usually in the filename or document header
@@ -617,4 +712,12 @@ Your generated prompt should:
 - Set clear, measurable success criteria
 - End with motivation and impact
 
-Remember: The implementing agent will rely entirely on your generated prompt to complete the task successfully. Make it comprehensive, clear, and actionable.
+## 🔑 Key Principles to Remember
+
+1. **Context Window First**: Your existing knowledge from the conversation is your PRIMARY source
+2. **Never Read Without Permission**: DO NOT read files unless --read_context=true
+3. **Never Invent Information**: Mark unknowns as "TO BE VERIFIED" rather than guessing
+4. **Ask When Uncertain**: Better to ask for clarification than generate an unhelpful prompt
+5. **Be Explicit**: Clearly distinguish what you KNOW vs what needs verification
+
+Remember: The implementing agent will rely entirely on your generated prompt to complete the task successfully. Make it comprehensive, clear, and actionable - using the knowledge you already have.
