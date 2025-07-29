@@ -247,6 +247,146 @@ Your implementation is complete when:
 <!-- Extract from context or generate based on task complexity -->
 <!-- Include project-specific patterns to avoid -->
 
+## 📋 Create Your Implementation Plan FIRST
+
+Before writing any code, you MUST create a comprehensive implementation plan. This is not optional - it's a critical step that will save hours of rework and prevent subagents from conflicting.
+
+### Why Planning Matters
+
+1. **Prevents duplicate work and conflicts**: Multiple subagents won't edit the same files
+2. **Identifies dependencies**: Discover what needs to be built in what order
+3. **Optimizes parallelization**: Know exactly what can be done simultaneously
+4. **Surfaces unknowns early**: Find gaps before they block implementation
+
+### Step 1: Context Gathering with Parallel Subagents
+
+Start by deploying parallel subagents to gather ALL necessary context:
+
+```markdown
+## Context Gathering Tasks (Deploy in Parallel)
+
+1. **Codebase Structure Analysis**
+   - Task: "Analyze the structure of src/pflow/nodes/ and identify the pattern for adding new node types"
+   - Task: "Find all existing node implementations and extract common patterns"
+
+2. **Integration Points Discovery**
+   - Task: "Identify how nodes are registered in the registry system"
+   - Task: "Analyze how the compiler handles different node types"
+
+3. **Testing Pattern Analysis**
+   - Task: "Examine tests/test_nodes/ structure and testing patterns"
+   - Task: "Identify test utilities and fixtures used for node testing"
+
+4. **Documentation Requirements**
+   - Task: "Check docs/reference/node-reference.md structure for adding new nodes"
+   - Task: "Find examples of node documentation in the codebase"
+```
+
+> Note: Your prompts to the subagents should be very specific and detailed. You should be able to tell the subagent exactly what to do and what to look for while providing as much context as possible to the subagent.
+
+### Step 2: Write Your Implementation Plan
+
+Create your plan at: `.taskmaster/tasks/task_{{task_id}}/implementation/implementation-plan.md`
+
+Your plan should include:
+
+1. **Comprehensive task breakdown** - Every file to create/modify
+2. **Dependency mapping** - What must be done before what
+3. **Subagent task assignments** - Who does what, ensuring no conflicts
+4. **Risk identification** - What could go wrong and mitigation strategies
+5. **Testing strategy** - How you'll verify each component works
+
+### Subagent Task Scoping Guidelines
+
+**✅ GOOD Subagent Tasks:**
+```markdown
+- "Add WorkflowNode import to src/pflow/nodes/__init__.py"
+- "Write unit tests for parameter validation in test_workflow_node_params.py"
+```
+
+**❌ BAD Subagent Tasks:**
+```markdown
+- "Implement the entire WorkflowNode feature" (too broad)
+- "Update all files related to nodes" (multiple agents will conflict)
+- "Fix any issues you find" (too vague)
+```
+
+**Key Rules:**
+- One subagent per file
+- Specific, bounded edits when modifying existing files
+- Include full context about what the subagent needs to know
+- Never assign overlapping file modifications
+- Always use subagents to fix bugs, test, and write tests
+- Always use subagents to gather information from the codebase or docs. Subagents are your best weapon against unverified assumptions.
+
+### Implementation Plan Template
+
+```markdown
+# Task {{task_id}} Implementation Plan
+
+## Context Gathered
+
+### Codebase Patterns
+- [Key patterns discovered from context gathering]
+
+### Integration Points
+- [How this feature connects to existing code]
+
+### Dependencies
+- [What this implementation depends on]
+
+## Implementation Steps
+
+### Phase 1: Core Infrastructure (Parallel Execution Possible)
+1. **Create Package Structure** (Subagent A)
+   - Files: src/pflow/nodes/{{feature}}/
+   - Context: [What the subagent needs to know]
+
+2. **Add Base Classes** (Subagent B)
+   - Files: src/pflow/nodes/{{feature}}/base.py
+   - Context: [Specific requirements]
+
+### Phase 2: Implementation (Sequential)
+1. **Implement Core Logic**
+   - Files: [Specific files]
+   - Dependencies: Phase 1 must be complete
+   - Key considerations: [Technical details]
+
+### Phase 3: Testing (Parallel Execution Possible)
+[Testing tasks broken down by file]
+
+### Phase 4: Integration
+[How to integrate with existing system]
+
+### Phase 5: Documentation
+[Documentation tasks]
+
+## Risk Mitigation
+
+| Risk | Mitigation Strategy |
+|------|-------------------|
+| Circular imports | [Specific approach] |
+| Breaking changes | [How to verify] |
+
+## Validation Strategy
+
+- How to verify each component works
+- Integration testing approach
+- Performance considerations
+```
+
+> Use as many Phases and sub tasks as you need to make the plan as detailed and comprehensive as possible.
+
+### When to Revise Your Plan
+
+Your plan is a living document. Update it when:
+- Context gathering reveals new requirements
+- Implementation hits unexpected obstacles
+- Dependencies change
+- Better approaches become apparent
+
+Document plan changes in your progress log with rationale.
+
 ## Your Implementation Order
 
 ### 0. Create Progress Log (FIRST!)
@@ -566,6 +706,10 @@ Your implementation is complete when:
 4. **Don't skip tests** - All 26 test criteria must be covered
 5. **Don't modify existing code** unless absolutely necessary
 
+## 📋 Create Your Implementation Plan FIRST
+
+Before writing any code, you MUST create a comprehensive implementation plan following the detailed instructions in the template section above. For WorkflowNode, this means understanding how nodes integrate with the registry, compiler, and execution system before starting implementation.
+
 ## Your Implementation Order
 
 ### 0. Create Progress Log (FIRST!)
@@ -581,22 +725,26 @@ Reading epistemic manifesto and understanding the approach...
 
 **Update this file AS YOU WORK** - every discovery, every bug, every insight!
 
-### 1. Create the package structure
+### 1. Create Implementation Plan (SECOND!)
+
+Follow the instructions in the "Create Your Implementation Plan FIRST" section above to create a comprehensive plan before any coding.
+
+### 2. Create the package structure
 Set up the WorkflowNode package in the correct location
 
-### 2. Implement core functionality
+### 3. Implement core functionality
 Build the WorkflowNode class with all required methods
 
-### 3. Add error handling
+### 4. Add error handling
 Implement proper error messages and context preservation
 
-### 4. Write comprehensive tests
+### 5. Write comprehensive tests
 Cover all test criteria from the specification
 
-### 5. Update documentation
+### 6. Update documentation
 Add to node reference and create feature docs
 
-### 6. Verify everything works
+### 7. Verify everything works
 Run full test suite and fix any issues
 
 ## Real-Time Learning Capture
