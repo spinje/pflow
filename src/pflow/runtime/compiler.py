@@ -18,6 +18,7 @@ from pocketflow import BaseNode, Flow
 from .node_wrapper import TemplateAwareNodeWrapper
 from .template_resolver import TemplateResolver
 from .template_validator import TemplateValidator
+from .workflow_validator import prepare_inputs, validate_ir_structure
 
 # Set up module logger
 logger = logging.getLogger(__name__)
@@ -94,55 +95,6 @@ def _parse_ir_input(ir_json: Union[str, dict[str, Any]]) -> dict[str, Any]:
 
     logger.debug("IR provided as dictionary", extra={"phase": "parsing"})
     return ir_json
-
-
-def _validate_ir_structure(ir_dict: dict[str, Any]) -> None:
-    """Validate basic IR structure (nodes, edges arrays).
-
-    This performs minimal structural validation to ensure the IR has
-    the required top-level keys. Full validation should be done by
-    the IR schema validator before compilation.
-
-    Args:
-        ir_dict: The IR dictionary to validate
-
-    Raises:
-        CompilationError: If required keys are missing or have wrong types
-    """
-    logger.debug("Validating IR structure", extra={"phase": "validation"})
-
-    # Check for required 'nodes' key
-    if "nodes" not in ir_dict:
-        raise CompilationError(
-            "Missing 'nodes' key in IR", phase="validation", suggestion="IR must contain 'nodes' array"
-        )
-
-    # Check nodes is a list
-    if not isinstance(ir_dict["nodes"], list):
-        raise CompilationError(
-            f"'nodes' must be an array, got {type(ir_dict['nodes']).__name__}",
-            phase="validation",
-            suggestion="Ensure 'nodes' is an array of node objects",
-        )
-
-    # Check for required 'edges' key
-    if "edges" not in ir_dict:
-        raise CompilationError(
-            "Missing 'edges' key in IR", phase="validation", suggestion="IR must contain 'edges' array (can be empty)"
-        )
-
-    # Check edges is a list
-    if not isinstance(ir_dict["edges"], list):
-        raise CompilationError(
-            f"'edges' must be an array, got {type(ir_dict['edges']).__name__}",
-            phase="validation",
-            suggestion="Ensure 'edges' is an array of edge objects",
-        )
-
-    logger.debug(
-        "IR structure validated",
-        extra={"phase": "validation", "node_count": len(ir_dict["nodes"]), "edge_count": len(ir_dict["edges"])},
-    )
 
 
 def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
@@ -467,77 +419,82 @@ def _get_start_node(
     return nodes[start_node_id]
 
 
-def _validate_inputs(workflow_ir: dict[str, Any], initial_params: dict[str, Any]) -> None:
-    """Validate workflow inputs and apply defaults.
+def _validate_workflow(
+    ir_dict: dict[str, Any], registry: Registry, initial_params: dict[str, Any], validate_templates: bool
+) -> dict[str, Any]:
+    """Validate workflow IR and prepare parameters.
 
-    This function validates that all required inputs are present in initial_params,
-    applies default values for missing optional inputs, and validates input names
-    are valid Python identifiers.
+    This function consolidates all validation steps to reduce complexity
+    in the main compile_ir_to_flow function.
 
     Args:
-        workflow_ir: The workflow IR dictionary containing input declarations
-        initial_params: Parameters provided for workflow execution (modified in-place)
+        ir_dict: The workflow IR dictionary
+        registry: Registry instance for node metadata lookup
+        initial_params: Initial parameters for the workflow
+        validate_templates: Whether to validate template variables
+
+    Returns:
+        Updated initial_params with defaults applied
 
     Raises:
-        ValidationError: If required inputs are missing or input names are invalid
+        CompilationError: If structure validation fails
+        ValidationError: If input/output validation fails
+        ValueError: If template validation fails
     """
-    # Extract input declarations (backward compatible with workflows without inputs)
-    inputs = workflow_ir.get("inputs", {})
+    # Step 2: Validate structure
+    try:
+        validate_ir_structure(ir_dict)
+    except CompilationError:
+        logger.exception("IR validation failed", extra={"phase": "validation"})
+        raise
 
-    # If no inputs declared, nothing to validate
-    if not inputs:
-        logger.debug("No inputs declared for workflow", extra={"phase": "input_validation"})
-        return
-
-    logger.debug(
-        "Validating workflow inputs", extra={"phase": "input_validation", "declared_inputs": list(inputs.keys())}
-    )
-
-    # Validate each declared input
-    for input_name, input_spec in inputs.items():
-        # First validate the input name is a valid Python identifier
-        if not input_name.isidentifier():
-            raise ValidationError(
-                message=f"Invalid input name '{input_name}' - must be a valid Python identifier",
-                path=f"inputs.{input_name}",
-                suggestion="Use only letters, numbers, and underscores. Cannot start with a number.",
-            )
-
-        # Check if input is required
-        is_required = input_spec.get("required", True)  # Default to required if not specified
-
-        # Check if input is provided
-        if input_name not in initial_params:
-            if is_required:
-                # Required input is missing
-                description = input_spec.get("description", "No description provided")
-                raise ValidationError(
-                    message=f"Workflow requires input '{input_name}' ({description})",
-                    path=f"inputs.{input_name}",
-                    suggestion="Provide this parameter in initial_params when compiling the workflow",
-                )
+    # Step 3: Validate inputs and apply defaults
+    try:
+        errors, defaults = prepare_inputs(ir_dict, initial_params)
+        if errors:
+            if len(errors) == 1:
+                # Single error - keep current behavior for backward compatibility
+                message, path, suggestion = errors[0]
+                raise ValidationError(message, path=path, suggestion=suggestion)
             else:
-                # Optional input is missing, apply default
-                default_value = input_spec.get("default")
-                if default_value is not None:
-                    logger.debug(
-                        f"Applying default value for optional input '{input_name}'",
-                        extra={"phase": "input_validation", "input": input_name, "default": default_value},
-                    )
-                    initial_params[input_name] = default_value
-                else:
-                    # Optional with no default means it can be omitted entirely
-                    logger.debug(
-                        f"Optional input '{input_name}' not provided and has no default",
-                        extra={"phase": "input_validation", "input": input_name},
-                    )
-        else:
-            # Input is provided
-            logger.debug(f"Input '{input_name}' provided", extra={"phase": "input_validation", "input": input_name})
+                # Multiple errors - aggregate them for better UX
+                error_lines = []
+                for msg, path, _ in errors:  # Ignore individual suggestions
+                    # Extract just the input name from path like "inputs.api_key"
+                    input_name = path.split(".")[-1] if "." in path else path
+                    error_lines.append(f"  • '{input_name}' - {msg}")
 
-    logger.debug(
-        "Input validation complete", extra={"phase": "input_validation", "final_params": list(initial_params.keys())}
-    )
+                combined_message = f"Found {len(errors)} input validation errors:\n" + "\n".join(error_lines)
+                raise ValidationError(
+                    message=combined_message,
+                    path="inputs",
+                    suggestion="Fix all validation errors above before compiling the workflow",
+                )
+        initial_params.update(defaults)  # Explicit mutation
+    except ValidationError:
+        logger.exception("Input validation failed", extra={"phase": "input_validation"})
+        raise
+
+    # Step 4: Validate outputs
+    try:
+        _validate_outputs(ir_dict, registry)
+    except ValidationError:
+        logger.exception("Output validation failed", extra={"phase": "output_validation"})
+        raise
+
+    # Step 5: Validate templates if requested
+    if validate_templates:
+        logger.debug("Validating template variables", extra={"phase": "template_validation"})
+        template_errors = TemplateValidator.validate_workflow_templates(ir_dict, initial_params, registry)
+        if template_errors:
+            error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in template_errors)
+            logger.error(
+                "Template validation failed",
+                extra={"phase": "template_validation", "error_count": len(template_errors), "errors": template_errors},
+            )
+            raise ValueError(error_msg)
+
+    return initial_params
 
 
 def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
@@ -658,43 +615,8 @@ def compile_ir_to_flow(
         logger.exception("JSON parsing failed", extra={"phase": "parsing"})
         raise
 
-    # Step 2: Validate structure
-    try:
-        _validate_ir_structure(ir_dict)
-    except CompilationError:
-        # Re-raise compilation errors with proper context
-        logger.exception("IR validation failed", extra={"phase": "validation"})
-        raise
-
-    # Step 3: Validate inputs and apply defaults
-    try:
-        _validate_inputs(ir_dict, initial_params)
-    except ValidationError:
-        # Re-raise validation errors with proper context
-        logger.exception("Input validation failed", extra={"phase": "input_validation"})
-        raise
-
-    # Step 4: Validate outputs
-    try:
-        _validate_outputs(ir_dict, registry)
-    except ValidationError:
-        # Re-raise validation errors with proper context
-        logger.exception("Output validation failed", extra={"phase": "output_validation"})
-        raise
-
-    # Step 5: Validate templates if requested
-    if validate:
-        logger.debug("Validating template variables", extra={"phase": "template_validation"})
-        # Note: This is separate from validate_ir() which checks workflow structure.
-        # This validates we have the runtime parameters needed to execute.
-        errors = TemplateValidator.validate_workflow_templates(ir_dict, initial_params, registry)
-        if errors:
-            error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
-            logger.error(
-                "Template validation failed",
-                extra={"phase": "template_validation", "error_count": len(errors), "errors": errors},
-            )
-            raise ValueError(error_msg)
+    # Steps 2-5: Validate workflow and prepare parameters
+    initial_params = _validate_workflow(ir_dict, registry, initial_params, validate)
 
     # Step 6: Log compilation steps
     logger.info(

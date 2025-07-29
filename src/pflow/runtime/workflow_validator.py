@@ -1,0 +1,154 @@
+"""Workflow validation functions for pflow runtime.
+
+This module contains validation functions extracted from the compiler to improve
+code organization and separation of concerns. These functions validate workflow
+IR structure and prepare inputs with defaults.
+
+Key functions:
+- validate_ir_structure: Validates basic IR structure (nodes, edges arrays)
+- prepare_inputs: Validates inputs and returns defaults to apply
+"""
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def validate_ir_structure(ir_dict: dict[str, Any]) -> None:
+    """Validate basic IR structure (nodes, edges arrays).
+
+    This performs minimal structural validation to ensure the IR has
+    the required top-level keys. Full validation should be done by
+    the IR schema validator before compilation.
+
+    Args:
+        ir_dict: The IR dictionary to validate
+
+    Raises:
+        CompilationError: If required keys are missing or have wrong types
+    """
+    from .compiler import CompilationError
+
+    logger.debug("Validating IR structure", extra={"phase": "validation"})
+
+    # Check for required 'nodes' key
+    if "nodes" not in ir_dict:
+        raise CompilationError(
+            "Missing 'nodes' key in IR", phase="validation", suggestion="IR must contain 'nodes' array"
+        )
+
+    # Check nodes is a list
+    if not isinstance(ir_dict["nodes"], list):
+        raise CompilationError(
+            f"'nodes' must be an array, got {type(ir_dict['nodes']).__name__}",
+            phase="validation",
+            suggestion="Ensure 'nodes' is an array of node objects",
+        )
+
+    # Check for required 'edges' key
+    if "edges" not in ir_dict:
+        raise CompilationError(
+            "Missing 'edges' key in IR", phase="validation", suggestion="IR must contain 'edges' array (can be empty)"
+        )
+
+    # Check edges is a list
+    if not isinstance(ir_dict["edges"], list):
+        raise CompilationError(
+            f"'edges' must be an array, got {type(ir_dict['edges']).__name__}",
+            phase="validation",
+            suggestion="Ensure 'edges' is an array of edge objects",
+        )
+
+    logger.debug(
+        "IR structure validated",
+        extra={"phase": "validation", "node_count": len(ir_dict["nodes"]), "edge_count": len(ir_dict["edges"])},
+    )
+
+
+def prepare_inputs(
+    workflow_ir: dict[str, Any], provided_params: dict[str, Any]
+) -> tuple[list[tuple[str, str, str]], dict[str, Any]]:
+    """Validate workflow inputs and return defaults to apply.
+
+    This function validates that all required inputs are present in provided_params,
+    determines default values for missing optional inputs, and validates input names
+    are valid Python identifiers. Unlike the original _validate_inputs, this function
+    does NOT mutate provided_params - it returns defaults to be applied by the caller.
+
+    Args:
+        workflow_ir: The workflow IR dictionary containing input declarations
+        provided_params: Parameters provided for workflow execution (NOT modified)
+
+    Returns:
+        tuple: (errors, defaults_to_apply) where:
+            - errors: List of (message, path, suggestion) tuples for ValidationError
+            - defaults_to_apply: Dict of default values to apply for missing optional inputs
+
+    Note:
+        This function was renamed from _validate_inputs to prepare_inputs to better
+        reflect its dual purpose of validation and default preparation.
+    """
+    errors: list[tuple[str, str, str]] = []
+    defaults: dict[str, Any] = {}
+
+    # Extract input declarations (backward compatible with workflows without inputs)
+    inputs = workflow_ir.get("inputs", {})
+
+    # If no inputs declared, nothing to validate
+    if not inputs:
+        logger.debug("No inputs declared for workflow", extra={"phase": "input_validation"})
+        return errors, defaults
+
+    logger.debug(
+        "Validating workflow inputs", extra={"phase": "input_validation", "declared_inputs": list(inputs.keys())}
+    )
+
+    # Validate each declared input
+    for input_name, input_spec in inputs.items():
+        # First validate the input name is a valid Python identifier
+        if not input_name.isidentifier():
+            errors.append((
+                f"Invalid input name '{input_name}' - must be a valid Python identifier",
+                f"inputs.{input_name}",
+                "Use only letters, numbers, and underscores. Cannot start with a number.",
+            ))
+            continue
+
+        # Check if input is required
+        is_required = input_spec.get("required", True)  # Default to required if not specified
+
+        # Check if input is provided
+        if input_name not in provided_params:
+            if is_required:
+                # Required input is missing
+                description = input_spec.get("description", "No description provided")
+                errors.append((
+                    f"Workflow requires input '{input_name}' ({description})",
+                    f"inputs.{input_name}",
+                    "Provide this parameter in initial_params when compiling the workflow",
+                ))
+            else:
+                # Optional input is missing, prepare default
+                default_value = input_spec.get("default")
+                if default_value is not None:
+                    logger.debug(
+                        f"Applying default value for optional input '{input_name}'",
+                        extra={"phase": "input_validation", "input": input_name, "default": default_value},
+                    )
+                    defaults[input_name] = default_value
+                else:
+                    # Optional with no default means it can be omitted entirely
+                    logger.debug(
+                        f"Optional input '{input_name}' not provided and has no default",
+                        extra={"phase": "input_validation", "input": input_name},
+                    )
+        else:
+            # Input is provided
+            logger.debug(f"Input '{input_name}' provided", extra={"phase": "input_validation", "input": input_name})
+
+    logger.debug(
+        "Input validation complete", extra={"phase": "input_validation", "final_params": list(provided_params.keys())}
+    )
+
+    return errors, defaults

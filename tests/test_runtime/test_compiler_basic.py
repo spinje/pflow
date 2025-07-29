@@ -12,7 +12,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pflow.runtime import compile_ir_to_flow
-from pflow.runtime.compiler import CompilationError, _parse_ir_input, _validate_ir_structure
+from pflow.runtime.compiler import CompilationError, _parse_ir_input
+from pflow.runtime.workflow_validator import validate_ir_structure
 
 
 class TestCompilationError:
@@ -108,13 +109,13 @@ class TestParseIrInput:
 
 
 class TestValidateIrStructure:
-    """Test the _validate_ir_structure helper function."""
+    """Test the validate_ir_structure helper function."""
 
     def test_valid_structure(self):
         """Test validation passes for valid structure."""
         ir_dict = {"nodes": [], "edges": []}
         # Should not raise
-        _validate_ir_structure(ir_dict)
+        validate_ir_structure(ir_dict)
 
     def test_valid_structure_with_content(self):
         """Test validation passes with actual nodes and edges."""
@@ -124,14 +125,14 @@ class TestValidateIrStructure:
             "other": "fields are ignored",
         }
         # Should not raise
-        _validate_ir_structure(ir_dict)
+        validate_ir_structure(ir_dict)
 
     def test_missing_nodes_key(self):
         """Test validation fails when 'nodes' key is missing."""
         ir_dict = {"edges": []}
 
         with pytest.raises(CompilationError) as exc_info:
-            _validate_ir_structure(ir_dict)
+            validate_ir_structure(ir_dict)
 
         error = exc_info.value
         assert error.phase == "validation"
@@ -143,7 +144,7 @@ class TestValidateIrStructure:
         ir_dict = {"nodes": []}
 
         with pytest.raises(CompilationError) as exc_info:
-            _validate_ir_structure(ir_dict)
+            validate_ir_structure(ir_dict)
 
         error = exc_info.value
         assert error.phase == "validation"
@@ -155,7 +156,7 @@ class TestValidateIrStructure:
         ir_dict = {"nodes": "not-a-list", "edges": []}
 
         with pytest.raises(CompilationError) as exc_info:
-            _validate_ir_structure(ir_dict)
+            validate_ir_structure(ir_dict)
 
         error = exc_info.value
         assert error.phase == "validation"
@@ -167,7 +168,7 @@ class TestValidateIrStructure:
         ir_dict = {"nodes": [], "edges": {"not": "a-list"}}
 
         with pytest.raises(CompilationError) as exc_info:
-            _validate_ir_structure(ir_dict)
+            validate_ir_structure(ir_dict)
 
         error = exc_info.value
         assert error.phase == "validation"
