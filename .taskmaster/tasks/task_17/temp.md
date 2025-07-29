@@ -783,3 +783,9 @@ can you update the prompt you were given to reference the existing state and the
 
 
 ---
+
+
+can you review and update the .taskmaster/tasks/task_21/research/the-missing-piece.md document for task 21 based on your understanding of this task, only update things you are sure about and that would make the spec clearly better. think hard before you update the document! remember this is an mvp with no users so no backwards compatibility is needed
+
+
+---
