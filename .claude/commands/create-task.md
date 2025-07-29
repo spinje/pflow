@@ -72,6 +72,9 @@ You are tasked with creating a comprehensive task overview file for a pflow task
 1. You have NO knowledge of the task in your context window
 2. The task_id doesn't match any task you've discussed
 3. Critical information is missing (title, description, or purpose)
+4. There is ambiguity of what scope the task has
+5. There is contradictions in what the spec file says and what you know from the conversation,
+6. There is internal contradictions from the conversation that has not been resolved yet
 
 **Instead, ask the user:**
 - "I don't have sufficient context about Task {{task_id}}. Could you provide a brief description of what this task should accomplish?"
@@ -105,7 +108,8 @@ Use this exact structure for the task file:
 ## Dependencies
 {{dependencies}}
 <!-- List task IDs that must be completed before this task -->
-<!-- Format as bullet points: "- Task 18: Template Variable System" -->
+<!-- For each dependency, explain WHY it's needed and WHAT integration points exist -->
+<!-- Format: "- Task X: Title - Explanation of why this is a dependency" -->
 <!-- If none, write "None" -->
 
 ## Priority
@@ -134,55 +138,74 @@ Use this exact structure for the task file:
 -->
 ```
 
+**⚠️ IMPORTANT**: Use ONLY these 8 top-level headings (##) exactly as shown:
+- `## ID`
+- `## Title`
+- `## Description`
+- `## Status`
+- `## Dependencies`
+- `## Priority`
+- `## Details`
+- `## Test Strategy`
+
+Do NOT add additional top-level headings. You MAY add sub-headings (### or ####) within these sections if needed for organization.
+
 ## Example Output
 
 Here's what your generated task file should look like:
 
 ```markdown
-# Task 24: Implement Workflow Manager
+# Task 99: Implement Pizza Topping Validator
 
 ## ID
-24
+99
 
 ## Title
-Implement Workflow Manager
+Implement Pizza Topping Validator
 
 ## Description
-Create a centralized service that owns the workflow lifecycle, including save, load, and resolve operations. This will provide a clean API for managing workflows and enable future features like workflow versioning and sharing.
+Create a validation service that ensures pizza topping combinations are compatible and within acceptable limits. This will prevent invalid orders and improve customer satisfaction by catching configuration errors early.
 
 ## Status
 not started
 
 ## Dependencies
-- Task 21: Implement Workflow Input Declaration
-- Task 20: Implement Nested Workflow Execution
+- Task 87: Implement Ingredient Database - The validator needs access to ingredient properties and compatibility rules stored in the database
+- Task 92: Create Pricing Engine - Topping validation must integrate with pricing to enforce maximum topping limits based on pizza size
 
 ## Priority
 high
 
 ## Details
-The Workflow Manager will be a core service in pflow that centralizes all workflow-related operations. Currently, workflow handling is scattered across different components. This task will:
+The Pizza Topping Validator will ensure order integrity by validating topping combinations before orders are submitted. Currently, invalid combinations cause kitchen errors and customer complaints. This task will:
 
-- Create a `WorkflowManager` class that handles workflow persistence
-- Implement save/load operations for workflow JSON files
-- Add workflow resolution logic to find workflows by name or path
-- Provide a clean API that other components can use
-- Set up proper error handling for missing or invalid workflows
+- Create a `ToppingValidator` class with rule-based validation logic
+- Implement compatibility checking between toppings (e.g., no ice cream on hot pizzas)
+- Add quantity limits based on pizza size
+- Provide detailed error messages for rejected combinations
+- Support custom validation rules for special dietary restrictions
 
-Key design decisions:
-- Workflows stored as JSON files in a configurable directory
-- Simple file-based storage for MVP (no database)
-- Workflow names must be unique within their namespace
+### Key Design Decisions
+- Rule definitions stored in JSON for easy updates
+- Validation runs synchronously before order submission
+- Failed validations return specific error codes for UI handling
+
+### Technical Considerations
+- Must complete validation within 100ms for good UX
+- Need to handle dynamic rule updates without service restart
+- Should log validation failures for menu optimization
 
 ## Test Strategy
-Comprehensive testing will ensure the Workflow Manager is reliable:
+Comprehensive testing will ensure the validator handles all edge cases:
 
-- Unit tests for all public methods of WorkflowManager
-- Test save/load round-trips with various workflow types
-- Test error cases (missing files, invalid JSON, duplicate names)
-- Integration tests with the compiler and runtime
-- Performance tests for workflow resolution with many workflows
+- Unit tests for each validation rule type
+- Test known incompatible combinations (documented in test data)
+- Test boundary conditions for topping quantities
+- Integration tests with the ordering system
+- Performance tests with complex multi-topping pizzas
 ```
+
+> Note: This is just and example output, you should generate the task file based on the template and YOUR knowledge about the task at hand.
 
 ## 📁 Output: Where to Save Your Generated Task File
 
@@ -193,6 +216,22 @@ Comprehensive testing will ensure the Workflow Manager is reliable:
 **Example**: For Task 24, save to:
 `.taskmaster/tasks/task_24/task_24.md`
 
+## 🚀 MVP Context - IMPORTANT
+
+**We are building an MVP with ZERO users**. This means:
+
+- **NO backwards compatibility concerns** - We can change anything
+- **NO migration code needed** - There's nothing to migrate from
+- **No over-engineering** - Build only what's needed for the current requirements
+- **Breaking changes are fine** - We can refactor freely as long as we just break functionality that was intended to be broken
+
+When writing task details, always favor:
+- Simple, direct solutions over complex abstractions
+- Minimal code that solves the immediate problem
+- Clear, obvious implementations over clever ones
+
+> With the above in mind, you should always describe the task that you and the user has agreed on, do not change the task in any way unless the user explicitly asks you to. If you feel like you need to change the task, 🛑 STOP and ask the user for input before continuing.
+
 ## 🔑 Key Principles to Remember
 
 1. **Context Window First**: Your existing knowledge from the conversation is your PRIMARY source
@@ -200,5 +239,6 @@ Comprehensive testing will ensure the Workflow Manager is reliable:
 3. **Be Honest About Uncertainty**: Note when you're making reasonable assumptions
 4. **Consistency Matters**: Follow the template structure exactly
 5. **Focus on Clarity**: Write for someone who hasn't been part of your conversation
+6. **MVP Mindset**: Always describe the simplest solution that meets requirements
 
 Remember: This task overview file will guide the implementation, so make it clear, accurate, and comprehensive based on what you know.
