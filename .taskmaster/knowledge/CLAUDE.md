@@ -9,6 +9,15 @@ This directory contains consolidated knowledge from all task implementations. Ea
 - **decisions.md** - Architectural decisions with rationale and context
 - **decision-deep-dives/** - Detailed investigations for complex decisions (referenced from decisions.md)
 
+## What should be in the knowledge base?
+
+- Only add patterns that are:
+  - Genuinely unique to this codebase, or
+  - Difficult to realize or non-obvious, even for advanced LLMs
+- Do NOT add patterns that are already widely known or standard practice (for humans or llms)
+- Prioritize quality over quantity—each entry should be highly valuable for this specific codebase
+- Patterns included here should be broadly applicable and beneficial to multiple areas of the codebase or valuable to know for AI coding agents reading the knowledge base
+
 ## For AI Agents: How to Add Knowledge
 
 ### CRITICAL: Check for Duplicates First
