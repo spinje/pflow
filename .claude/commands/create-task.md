@@ -185,15 +185,17 @@ The Pizza Topping Validator will ensure order integrity by validating topping co
 - Provide detailed error messages for rejected combinations
 - Support custom validation rules for special dietary restrictions
 
-### Key Design Decisions
-- Rule definitions stored in JSON for easy updates
+### Key Design Decisions (MVP Approach)
+- Simple hardcoded rules in Python (no complex rule engine)
 - Validation runs synchronously before order submission
 - Failed validations return specific error codes for UI handling
+- ...
 
 ### Technical Considerations
-- Must complete validation within 100ms for good UX
-- Need to handle dynamic rule updates without service restart
-- Should log validation failures for menu optimization
+- Must display validation errors in the UI
+- No caching or optimization in v1
+- Simple dict-based rule storage
+- ...
 
 ## Test Strategy
 Comprehensive testing will ensure the validator handles all edge cases:
