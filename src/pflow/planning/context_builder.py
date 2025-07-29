@@ -93,7 +93,7 @@ def _validate_workflow_fields(workflow_data: dict[str, Any], filename: str) -> b
         True if all validations pass, False otherwise
     """
     # Validate required fields presence
-    required_fields = ["name", "description", "inputs", "outputs", "ir"]
+    required_fields = ["name", "description", "ir"]
     missing_fields = [field for field in required_fields if field not in workflow_data]
 
     if missing_fields:
@@ -104,8 +104,6 @@ def _validate_workflow_fields(workflow_data: dict[str, Any], filename: str) -> b
     validations = [
         ("name", str, "string"),
         ("description", str, "string"),
-        ("inputs", list, "list"),
-        ("outputs", list, "list"),
         ("ir", dict, "dict"),
     ]
 
@@ -164,8 +162,6 @@ def _load_saved_workflows() -> list[dict[str, Any]]:
         List of workflow metadata dicts with at least:
         - name: str
         - description: str
-        - inputs: list[str]
-        - outputs: list[str]
         - ir: dict (full workflow IR)
 
         Additional fields preserved if present:
@@ -689,6 +685,81 @@ def _add_enhanced_structure_display(lines: list[str], key: str, structure: dict[
         lines.append(line)
 
 
+def _format_workflow_inputs(workflow: dict[str, Any]) -> list[str]:
+    """Format workflow inputs section.
+
+    Args:
+        workflow: Workflow metadata dict
+
+    Returns:
+        List of formatted input lines
+    """
+    lines: list[str] = []
+
+    # Only use IR-level inputs
+    ir = workflow.get("ir", {})
+    ir_inputs = ir.get("inputs", {})
+
+    if ir_inputs:
+        # Use detailed format from IR
+        lines.append("**Inputs**:")
+        for name, spec in ir_inputs.items():
+            # Build input description
+            input_desc = f"- `{name}: {spec.get('type', 'any')}`"
+
+            # Add description if available
+            if spec.get("description"):
+                input_desc += f" - {spec['description']}"
+
+            # Add optional/default info
+            if not spec.get("required", True):
+                if "default" in spec:
+                    input_desc += f" (optional, default: {spec['default']})"
+                else:
+                    input_desc += " (optional)"
+
+            lines.append(input_desc)
+    else:
+        lines.append("**Inputs**: none")
+
+    lines.append("")
+    return lines
+
+
+def _format_workflow_outputs(workflow: dict[str, Any]) -> list[str]:
+    """Format workflow outputs section.
+
+    Args:
+        workflow: Workflow metadata dict
+
+    Returns:
+        List of formatted output lines
+    """
+    lines: list[str] = []
+
+    # Only use IR-level outputs
+    ir = workflow.get("ir", {})
+    ir_outputs = ir.get("outputs", {})
+
+    if ir_outputs:
+        # Use detailed format from IR
+        lines.append("**Outputs**:")
+        for name, spec in ir_outputs.items():
+            # Build output description
+            output_desc = f"- `{name}: {spec.get('type', 'any')}`"
+
+            # Add description if available
+            if spec.get("description"):
+                output_desc += f" - {spec['description']}"
+
+            lines.append(output_desc)
+    else:
+        lines.append("**Outputs**: none")
+
+    lines.append("")
+    return lines
+
+
 def _format_workflow_section(workflow: dict[str, Any]) -> str:
     """Format a workflow's information for planning context.
 
@@ -709,24 +780,10 @@ def _format_workflow_section(workflow: dict[str, Any]) -> str:
     lines.append("")
 
     # Format inputs
-    inputs = workflow.get("inputs", [])
-    if inputs:
-        lines.append("**Inputs**:")
-        for inp in inputs:
-            lines.append(f"- `{inp}`")
-    else:
-        lines.append("**Inputs**: none")
-    lines.append("")
+    lines.extend(_format_workflow_inputs(workflow))
 
     # Format outputs
-    outputs = workflow.get("outputs", [])
-    if outputs:
-        lines.append("**Outputs**:")
-        for out in outputs:
-            lines.append(f"- `{out}`")
-    else:
-        lines.append("**Outputs**: none")
-    lines.append("")
+    lines.extend(_format_workflow_outputs(workflow))
 
     # Add metadata if available
     if "version" in workflow:

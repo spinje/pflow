@@ -1,12 +1,6 @@
 {
   "name": "test-retry-workflow",
   "description": "Tests retry capabilities with fallback handling",
-  "inputs": [
-    "retry_input"
-  ],
-  "outputs": [
-    "final_output"
-  ],
   "ir_version": "0.1.0",
   "tags": [
     "retry",
@@ -35,6 +29,13 @@
         "condition": "fail"
       }
     ],
-    "start_node": "retry_node"
+    "start_node": "retry_node",
+    "inputs": {},
+    "outputs": {
+      "retry_result": {
+        "description": "Result from retry node or fallback",
+        "type": "string"
+      }
+    }
   }
 }

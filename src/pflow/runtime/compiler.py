@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Any, Optional, Union, cast
 
+from pflow.core.ir_schema import ValidationError
 from pflow.registry import Registry
 from pocketflow import BaseNode, Flow
 
@@ -466,6 +467,153 @@ def _get_start_node(
     return nodes[start_node_id]
 
 
+def _validate_inputs(workflow_ir: dict[str, Any], initial_params: dict[str, Any]) -> None:
+    """Validate workflow inputs and apply defaults.
+
+    This function validates that all required inputs are present in initial_params,
+    applies default values for missing optional inputs, and validates input names
+    are valid Python identifiers.
+
+    Args:
+        workflow_ir: The workflow IR dictionary containing input declarations
+        initial_params: Parameters provided for workflow execution (modified in-place)
+
+    Raises:
+        ValidationError: If required inputs are missing or input names are invalid
+    """
+    # Extract input declarations (backward compatible with workflows without inputs)
+    inputs = workflow_ir.get("inputs", {})
+
+    # If no inputs declared, nothing to validate
+    if not inputs:
+        logger.debug("No inputs declared for workflow", extra={"phase": "input_validation"})
+        return
+
+    logger.debug(
+        "Validating workflow inputs", extra={"phase": "input_validation", "declared_inputs": list(inputs.keys())}
+    )
+
+    # Validate each declared input
+    for input_name, input_spec in inputs.items():
+        # First validate the input name is a valid Python identifier
+        if not input_name.isidentifier():
+            raise ValidationError(
+                message=f"Invalid input name '{input_name}' - must be a valid Python identifier",
+                path=f"inputs.{input_name}",
+                suggestion="Use only letters, numbers, and underscores. Cannot start with a number.",
+            )
+
+        # Check if input is required
+        is_required = input_spec.get("required", True)  # Default to required if not specified
+
+        # Check if input is provided
+        if input_name not in initial_params:
+            if is_required:
+                # Required input is missing
+                description = input_spec.get("description", "No description provided")
+                raise ValidationError(
+                    message=f"Workflow requires input '{input_name}' ({description})",
+                    path=f"inputs.{input_name}",
+                    suggestion="Provide this parameter in initial_params when compiling the workflow",
+                )
+            else:
+                # Optional input is missing, apply default
+                default_value = input_spec.get("default")
+                if default_value is not None:
+                    logger.debug(
+                        f"Applying default value for optional input '{input_name}'",
+                        extra={"phase": "input_validation", "input": input_name, "default": default_value},
+                    )
+                    initial_params[input_name] = default_value
+                else:
+                    # Optional with no default means it can be omitted entirely
+                    logger.debug(
+                        f"Optional input '{input_name}' not provided and has no default",
+                        extra={"phase": "input_validation", "input": input_name},
+                    )
+        else:
+            # Input is provided
+            logger.debug(f"Input '{input_name}' provided", extra={"phase": "input_validation", "input": input_name})
+
+    logger.debug(
+        "Input validation complete", extra={"phase": "input_validation", "final_params": list(initial_params.keys())}
+    )
+
+
+def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
+    """Validate declared workflow outputs can be produced by nodes.
+
+    This function validates that declared outputs CAN be produced by nodes in the workflow.
+    Since nodes may write dynamic keys at runtime, this only issues warnings, not errors.
+
+    Args:
+        workflow_ir: The workflow IR dictionary containing output declarations
+        registry: Registry instance for accessing node metadata
+
+    Raises:
+        ValidationError: If output names are invalid identifiers
+    """
+    # Extract output declarations (backward compatible with workflows without outputs)
+    outputs = workflow_ir.get("outputs", {})
+
+    # If no outputs declared, nothing to validate
+    if not outputs:
+        logger.debug("No outputs declared for workflow", extra={"phase": "output_validation"})
+        return
+
+    logger.debug(
+        "Validating workflow outputs", extra={"phase": "output_validation", "declared_outputs": list(outputs.keys())}
+    )
+
+    # First validate all output names are valid Python identifiers
+    for output_name, _output_spec in outputs.items():
+        if not output_name.isidentifier():
+            raise ValidationError(
+                message=f"Invalid output name '{output_name}' - must be a valid Python identifier",
+                path=f"outputs.{output_name}",
+                suggestion="Use only letters, numbers, and underscores. Cannot start with a number.",
+            )
+
+    # Get all possible outputs from nodes in the workflow
+    all_node_outputs = TemplateValidator._extract_node_outputs(workflow_ir, registry)
+
+    # For nested workflows, we need to also consider their output_mapping
+    for node in workflow_ir.get("nodes", []):
+        if node.get("type") in ["workflow", "pflow.runtime.workflow_executor"]:
+            # Get the output_mapping parameter if present
+            output_mapping = node.get("params", {}).get("output_mapping", {})
+            # The values in output_mapping become available outputs in parent workflow
+            for _child_key, parent_key in output_mapping.items():
+                all_node_outputs[parent_key] = {"type": "any"}
+
+    logger.debug(
+        f"Found {len(all_node_outputs)} possible outputs from nodes",
+        extra={"phase": "output_validation", "available_outputs": sorted(all_node_outputs.keys())},
+    )
+
+    # Validate each declared output can be produced
+    for output_name, _output_spec in outputs.items():
+        # Check if output can be traced to any node
+        if output_name not in all_node_outputs:
+            # Issue warning, not error, since nodes may write dynamic keys
+            logger.warning(
+                f"Declared output '{output_name}' cannot be traced to any node in the workflow. "
+                f"This may be fine if nodes write dynamic keys.",
+                extra={
+                    "phase": "output_validation",
+                    "output": output_name,
+                    "available_outputs": sorted(all_node_outputs.keys()),
+                },
+            )
+        else:
+            logger.debug(
+                f"Output '{output_name}' can be produced by workflow nodes",
+                extra={"phase": "output_validation", "output": output_name},
+            )
+
+    logger.debug("Output validation complete", extra={"phase": "output_validation"})
+
+
 def compile_ir_to_flow(
     ir_json: Union[str, dict[str, Any]],
     registry: Registry,
@@ -518,7 +666,23 @@ def compile_ir_to_flow(
         logger.exception("IR validation failed", extra={"phase": "validation"})
         raise
 
-    # Step 3: Validate templates if requested
+    # Step 3: Validate inputs and apply defaults
+    try:
+        _validate_inputs(ir_dict, initial_params)
+    except ValidationError:
+        # Re-raise validation errors with proper context
+        logger.exception("Input validation failed", extra={"phase": "input_validation"})
+        raise
+
+    # Step 4: Validate outputs
+    try:
+        _validate_outputs(ir_dict, registry)
+    except ValidationError:
+        # Re-raise validation errors with proper context
+        logger.exception("Output validation failed", extra={"phase": "output_validation"})
+        raise
+
+    # Step 5: Validate templates if requested
     if validate:
         logger.debug("Validating template variables", extra={"phase": "template_validation"})
         # Note: This is separate from validate_ir() which checks workflow structure.
@@ -532,7 +696,7 @@ def compile_ir_to_flow(
             )
             raise ValueError(error_msg)
 
-    # Step 4: Log compilation steps
+    # Step 6: Log compilation steps
     logger.info(
         "IR validated, ready for compilation",
         extra={
@@ -543,28 +707,28 @@ def compile_ir_to_flow(
         },
     )
 
-    # Step 5: Instantiate nodes with template support
+    # Step 7: Instantiate nodes with template support
     try:
         nodes = _instantiate_nodes(ir_dict, registry, initial_params)
     except CompilationError:
         logger.exception("Node instantiation failed", extra={"phase": "node_instantiation"})
         raise
 
-    # Step 6: Wire nodes together
+    # Step 8: Wire nodes together
     try:
         _wire_nodes(nodes, ir_dict.get("edges", []))
     except CompilationError:
         logger.exception("Node wiring failed", extra={"phase": "flow_wiring"})
         raise
 
-    # Step 7: Get start node
+    # Step 9: Get start node
     try:
         start_node = _get_start_node(nodes, ir_dict)
     except CompilationError:
         logger.exception("Start node detection failed", extra={"phase": "start_detection"})
         raise
 
-    # Step 8: Create and return Flow
+    # Step 10: Create and return Flow
     logger.debug("Creating Flow object", extra={"phase": "flow_creation"})
     flow = Flow(start=start_node)
 

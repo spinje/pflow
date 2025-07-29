@@ -62,8 +62,6 @@ class TestDiscoveryPlanningFlow:
             workflow_data = {
                 "name": "test-integration-workflow",
                 "description": "Test workflow for integration testing",
-                "inputs": ["input_data"],
-                "outputs": ["processed_data"],
                 "ir": {"nodes": [], "flows": []},
                 "created_at": "2024-01-01T00:00:00Z",
             }

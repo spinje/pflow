@@ -1,0 +1,49 @@
+{
+  "ir_version": "0.1.0",
+  "inputs": {
+    "text": {
+      "description": "Text to analyze",
+      "required": true,
+      "type": "string"
+    },
+    "language": {
+      "description": "Language code (ISO 639-1)",
+      "required": false,
+      "type": "string",
+      "default": "en"
+    },
+    "max_length": {
+      "description": "Maximum summary length",
+      "required": false,
+      "type": "number",
+      "default": 100
+    }
+  },
+  "outputs": {
+    "summary": {
+      "description": "Generated text summary",
+      "type": "string"
+    },
+    "word_count": {
+      "description": "Total word count",
+      "type": "number"
+    },
+    "language_detected": {
+      "description": "Detected language if different from input",
+      "type": "string"
+    }
+  },
+  "nodes": [
+    {
+      "id": "analyze",
+      "type": "test-node",
+      "params": {
+        "data": {
+          "text": "$text",
+          "lang": "$language",
+          "limit": "$max_length"
+        }
+      }
+    }
+  ]
+}

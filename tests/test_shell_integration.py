@@ -309,12 +309,12 @@ class TestReadStdinWithLimit:
         with patch("sys.stdin.buffer.read", side_effect=mock_read), patch("tempfile.NamedTemporaryFile") as mock_temp:
             # Mock temp file
             mock_file = mock_temp.return_value
-            mock_file.name = "/tmp/test_temp_file"  # noqa: S108
+            mock_file.name = "test_temp_file"
 
             result = read_stdin_with_limit(max_size=500)
 
             assert result.is_temp_file is True
-            assert result.temp_path == "/tmp/test_temp_file"  # noqa: S108
+            assert result.temp_path == "test_temp_file"
 
             # Verify data was written
             mock_file.write.assert_called()

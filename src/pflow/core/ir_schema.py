@@ -179,6 +179,42 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
             },
             "default": {},
         },
+        "inputs": {
+            "type": "object",
+            "description": "Declared workflow input parameters with their schemas",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "Human-readable description"},
+                    "required": {"type": "boolean", "default": True, "description": "Whether input is required"},
+                    "type": {
+                        "type": "string",
+                        "enum": ["string", "number", "boolean", "object", "array"],
+                        "description": "Data type hint",
+                    },
+                    "default": {"description": "Default value if not provided"},
+                },
+                "additionalProperties": False,
+            },
+            "default": {},
+        },
+        "outputs": {
+            "type": "object",
+            "description": "Declared workflow outputs that will be written to shared store",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "Human-readable description"},
+                    "type": {
+                        "type": "string",
+                        "enum": ["string", "number", "boolean", "object", "array"],
+                        "description": "Data type hint",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "default": {},
+        },
     },
     "required": ["ir_version", "nodes"],
     "additionalProperties": False,

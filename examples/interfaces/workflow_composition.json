@@ -1,0 +1,67 @@
+{
+  "ir_version": "0.1.0",
+  "inputs": {
+    "file_path": {
+      "description": "Path to text file to analyze",
+      "required": true,
+      "type": "string"
+    },
+    "output_file": {
+      "description": "Path to save analysis results",
+      "required": false,
+      "type": "string",
+      "default": "analysis_result.txt"
+    }
+  },
+  "outputs": {
+    "analysis_saved": {
+      "description": "Whether the analysis was saved successfully",
+      "type": "boolean"
+    },
+    "summary": {
+      "description": "Text summary from the analyzer",
+      "type": "string"
+    }
+  },
+  "nodes": [
+    {
+      "id": "read",
+      "type": "read-file",
+      "params": {
+        "file_path": "$file_path"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "workflow",
+      "params": {
+        "workflow_ref": "./text_analyzer.json",
+        "param_mapping": {
+          "text": "$content"
+        },
+        "output_mapping": {
+          "summary": "text_summary",
+          "word_count": "words"
+        }
+      }
+    },
+    {
+      "id": "save",
+      "type": "write-file",
+      "params": {
+        "file_path": "$output_file",
+        "content": "Analysis Results:\n\nSummary: $text_summary\nWord Count: $words"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "read",
+      "to": "analyze"
+    },
+    {
+      "from": "analyze",
+      "to": "save"
+    }
+  ]
+}

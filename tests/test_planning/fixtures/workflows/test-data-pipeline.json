@@ -1,12 +1,6 @@
 {
   "name": "test-data-pipeline",
   "description": "Processes user data through multiple transformations",
-  "inputs": [
-    "user_id"
-  ],
-  "outputs": [
-    "processed_data"
-  ],
   "ir_version": "0.1.0",
   "version": "1.0.0",
   "tags": [
@@ -37,6 +31,19 @@
         "to": "process",
         "condition": "default"
       }
-    ]
+    ],
+    "inputs": {
+      "user_id": {
+        "description": "User ID to fetch data for",
+        "required": true,
+        "type": "string"
+      }
+    },
+    "outputs": {
+      "processed_data": {
+        "description": "Processed user data",
+        "type": "object"
+      }
+    }
   }
 }

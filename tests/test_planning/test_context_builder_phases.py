@@ -133,8 +133,6 @@ class TestDiscoveryContext:
             {
                 "name": "test-pipeline",
                 "description": "Test workflow for data processing",
-                "inputs": ["data"],
-                "outputs": ["result"],
                 "ir": {},
             }
         ]
@@ -251,7 +249,7 @@ class TestPlanningContext:
 
     def test_planning_context_missing_workflows(self):
         """Test error dict returned when workflows are missing."""
-        workflows = [{"name": "workflow1", "description": "Test", "inputs": [], "outputs": [], "ir": {}}]
+        workflows = [{"name": "workflow1", "description": "Test", "ir": {}}]
 
         result = build_planning_context(
             selected_node_ids=[],
@@ -400,8 +398,6 @@ class TestPlanningContext:
             {
                 "name": "data-pipeline",
                 "description": "Process data through steps",
-                "inputs": ["raw_data", "config"],
-                "outputs": ["processed_data", "report"],
                 "version": "1.0.0",
                 "tags": ["data", "etl"],
                 "ir": {},
@@ -419,10 +415,8 @@ class TestPlanningContext:
         assert "## Selected Workflows" in result
         assert "### data-pipeline (workflow)" in result
         assert "Process data through steps" in result
-        assert "**Inputs**:" in result
-        assert "raw_data" in result
-        assert "**Outputs**:" in result
-        assert "processed_data" in result
+        assert "**Inputs**: none" in result  # No IR-level inputs
+        assert "**Outputs**: none" in result  # No IR-level outputs
         assert "**Version**: 1.0.0" in result
         assert "**Tags**: data, etl" in result
 

@@ -281,7 +281,7 @@ class TestBinaryStdinHandling:
         workflow_file.write_text('{"ir_version": "0.1.0"}')
 
         # Mock enhanced stdin to return temp file path
-        temp_path = "/tmp/pflow_stdin_test123"  # noqa: S108
+        temp_path = "pflow_stdin_test123"
         stdin_obj = StdinData(temp_path=temp_path)
 
         # Mock isatty to indicate piped input

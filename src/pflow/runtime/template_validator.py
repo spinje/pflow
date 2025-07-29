@@ -18,6 +18,35 @@ class TemplateValidator:
     """Validates template variables before workflow execution."""
 
     @staticmethod
+    def _get_input_description(variable: str, workflow_ir: dict[str, Any]) -> str:
+        """Get description for an input variable if available.
+
+        Args:
+            variable: The variable name to look up
+            workflow_ir: The workflow IR containing input declarations
+
+        Returns:
+            A descriptive string with input info, or empty string if not a declared input
+        """
+        inputs = workflow_ir.get("inputs", {})
+        if variable in inputs:
+            input_def = inputs[variable]
+            desc = input_def.get("description", "")
+            required = input_def.get("required", True)
+            default = input_def.get("default")
+
+            parts = []
+            if desc:
+                parts.append(desc)
+            if not required and default is not None:
+                parts.append(f"(optional, default: {default})")
+            elif required:
+                parts.append("(required)")
+
+            return " - " + " ".join(parts) if parts else ""
+        return ""
+
+    @staticmethod
     def validate_workflow_templates(
         workflow_ir: dict[str, Any], available_params: dict[str, Any], registry: Registry
     ) -> list[str]:
@@ -67,19 +96,34 @@ class TemplateValidator:
                             f"Template path ${template} cannot be validated - initial_params values are runtime-dependent"
                         )
                     else:
+                        # Check if base variable is a declared input
+                        input_desc = TemplateValidator._get_input_description(base_var, workflow_ir)
+
                         # Extract the path component after the base variable
                         path_component = template[len(base_var) + 1 :] if "." in template else template
-                        errors.append(
-                            f"Template variable ${template} has no valid source - "
-                            f"not provided in initial_params and path '{path_component}' "
-                            f"not found in outputs from any node in the workflow"
-                        )
+
+                        if input_desc:
+                            errors.append(
+                                f"Required input '${base_var}' not provided{input_desc} - "
+                                f"attempted to access path '{path_component}'"
+                            )
+                        else:
+                            errors.append(
+                                f"Template variable ${template} has no valid source - "
+                                f"not provided in initial_params and path '{path_component}' "
+                                f"not found in outputs from any node in the workflow"
+                            )
                 else:
                     # Simple variable not found
-                    errors.append(
-                        f"Template variable ${template} has no valid source - "
-                        f"not provided in initial_params and not written by any node"
-                    )
+                    input_desc = TemplateValidator._get_input_description(template, workflow_ir)
+
+                    if input_desc:
+                        errors.append(f"Required input '${template}' not provided{input_desc}")
+                    else:
+                        errors.append(
+                            f"Template variable ${template} has no valid source - "
+                            f"not provided in initial_params and not written by any node"
+                        )
 
         if errors:
             logger.warning(

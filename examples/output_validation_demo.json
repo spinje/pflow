@@ -1,0 +1,39 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "read",
+      "type": "read-file",
+      "params": {
+        "path": "input.txt"
+      }
+    },
+    {
+      "id": "process",
+      "type": "llm",
+      "params": {
+        "prompt": "Summarize this text: $content"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "read",
+      "to": "process"
+    }
+  ],
+  "outputs": {
+    "content": {
+      "description": "The file content read by read-file node",
+      "type": "string"
+    },
+    "response": {
+      "description": "The LLM response",
+      "type": "string"
+    },
+    "dynamic_result": {
+      "description": "A dynamically written key that cannot be traced",
+      "type": "object"
+    }
+  }
+}

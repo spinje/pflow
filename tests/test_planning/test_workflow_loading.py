@@ -57,8 +57,6 @@ class TestWorkflowLoading:
         valid_workflow = {
             "name": "test-workflow",
             "description": "A test workflow",
-            "inputs": ["input1", "input2"],
-            "outputs": ["output1"],
             "ir": {"nodes": [{"id": "node1", "type": "test-node"}], "edges": []},
             "version": "1.0.0",  # Optional field
             "tags": ["test", "example"],  # Optional field
@@ -73,8 +71,6 @@ class TestWorkflowLoading:
         assert len(workflows) == 1
         assert workflows[0]["name"] == "test-workflow"
         assert workflows[0]["description"] == "A test workflow"
-        assert workflows[0]["inputs"] == ["input1", "input2"]
-        assert workflows[0]["outputs"] == ["output1"]
         assert workflows[0]["ir"]["nodes"][0]["id"] == "node1"
         # Optional fields should be preserved
         assert workflows[0]["version"] == "1.0.0"
@@ -95,8 +91,6 @@ class TestWorkflowLoading:
             workflow = {
                 "name": f"workflow-{i}",
                 "description": f"Workflow {i}",
-                "inputs": [f"input{i}"],
-                "outputs": [f"output{i}"],
                 "ir": {"nodes": [{"id": f"node{i}", "type": "test-node"}]},
             }
             workflow_file = workflow_dir / f"workflow-{i}.json"
@@ -129,8 +123,6 @@ class TestWorkflowLoading:
         valid_workflow = {
             "name": "valid-workflow",
             "description": "Valid workflow",
-            "inputs": [],
-            "outputs": [],
             "ir": {"nodes": []},
         }
         valid_file = workflow_dir / "valid.json"
@@ -157,15 +149,15 @@ class TestWorkflowLoading:
         workflow_dir.mkdir(parents=True)
 
         # Create workflow missing 'name' field
-        missing_name = {"description": "Missing name", "inputs": [], "outputs": [], "ir": {}}
+        missing_name = {"description": "Missing name", "ir": {}}
         (workflow_dir / "missing-name.json").write_text(json.dumps(missing_name))
 
         # Create workflow missing 'ir' field
-        missing_ir = {"name": "missing-ir", "description": "Missing IR", "inputs": [], "outputs": []}
+        missing_ir = {"name": "missing-ir", "description": "Missing IR"}
         (workflow_dir / "missing-ir.json").write_text(json.dumps(missing_ir))
 
         # Create valid workflow
-        valid = {"name": "valid", "description": "Valid", "inputs": [], "outputs": [], "ir": {}}
+        valid = {"name": "valid", "description": "Valid", "ir": {}}
         (workflow_dir / "valid.json").write_text(json.dumps(valid))
 
         # Load workflows
@@ -190,11 +182,11 @@ class TestWorkflowLoading:
         workflow_dir.mkdir(parents=True)
 
         # Create workflow with wrong type for 'inputs' (should be list)
+        # This should now load since we don't validate metadata-level inputs
         wrong_inputs = {
             "name": "wrong-inputs",
             "description": "Wrong inputs type",
-            "inputs": "should be a list",  # Wrong type
-            "outputs": [],
+            "inputs": "should be a list",  # Wrong type - but ignored now
             "ir": {},
         }
         (workflow_dir / "wrong-inputs.json").write_text(json.dumps(wrong_inputs))
@@ -203,8 +195,6 @@ class TestWorkflowLoading:
         wrong_ir = {
             "name": "wrong-ir",
             "description": "Wrong ir type",
-            "inputs": [],
-            "outputs": [],
             "ir": [],  # Wrong type
         }
         (workflow_dir / "wrong-ir.json").write_text(json.dumps(wrong_ir))
@@ -212,11 +202,12 @@ class TestWorkflowLoading:
         # Load workflows
         workflows = _load_saved_workflows()
 
-        # Should not load any
-        assert len(workflows) == 0
+        # Should load the one with wrong inputs (since we don't validate metadata inputs)
+        # But not the one with wrong ir type
+        assert len(workflows) == 1
+        assert workflows[0]["name"] == "wrong-inputs"
 
-        # Should log warnings
-        assert "Invalid 'inputs' type in wrong-inputs.json: expected list" in caplog.text
+        # Should only log warning about ir type
         assert "Invalid 'ir' type in wrong-ir.json: expected dict" in caplog.text
 
     def test_skips_empty_files(self, tmp_path, monkeypatch, caplog):
@@ -260,7 +251,7 @@ class TestWorkflowLoading:
         (workflow_dir / ".hidden.json").write_text('{"hidden": true}')
 
         # Create valid JSON file
-        valid_workflow = {"name": "valid", "description": "Valid", "inputs": [], "outputs": [], "ir": {}}
+        valid_workflow = {"name": "valid", "description": "Valid", "ir": {}}
         (workflow_dir / "valid.json").write_text(json.dumps(valid_workflow))
 
         # Load workflows
@@ -339,8 +330,6 @@ class TestWorkflowLoading:
         full_workflow = {
             "name": "full-workflow",
             "description": "A complete workflow",
-            "inputs": ["input1"],
-            "outputs": ["output1"],
             "ir": {"nodes": []},
             "ir_version": "0.1.0",
             "version": "2.0.0",

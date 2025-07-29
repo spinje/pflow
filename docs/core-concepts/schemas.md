@@ -43,6 +43,171 @@ Both schemas work together to enable metadata-driven flow planning and validatio
 
 ---
 
+## Workflow Input/Output Declaration
+
+Workflows can declare their expected inputs and outputs, enabling workflow composition and validation. This feature is essential for the natural language planner (Task 17) and nested workflow execution (Task 20).
+
+### Workflow Input Declaration
+
+The optional `inputs` field defines the parameters a workflow expects to receive:
+
+```json
+{
+  "$schema": "https://pflow.dev/schemas/flow-0.1.json",
+  "ir_version": "0.1.0",
+  "inputs": {
+    "url": {
+      "type": "str",
+      "required": true,
+      "description": "YouTube video URL to process"
+    },
+    "language": {
+      "type": "str",
+      "required": false,
+      "default": "en",
+      "description": "Language code for transcript extraction"
+    }
+  },
+  "nodes": [...],
+  "edges": [...]
+}
+```
+
+**Input Field Specifications:**
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | string | Data type: `str`, `int`, `float`, `bool`, `dict`, `list`, `any` |
+| `required` | boolean | Whether the input must be provided |
+| `default` | any | Default value if not provided (only for optional inputs) |
+| `description` | string | Human-readable description for documentation |
+
+### Workflow Output Declaration
+
+The optional `outputs` field declares what the workflow produces:
+
+```json
+{
+  "$schema": "https://pflow.dev/schemas/flow-0.1.json",
+  "ir_version": "0.1.0",
+  "outputs": {
+    "summary": {
+      "type": "str",
+      "description": "Generated summary of the video content",
+      "source_node": "create-summary",
+      "source_key": "response"
+    },
+    "metadata": {
+      "type": "dict",
+      "description": "Video metadata including title and duration",
+      "source_node": "fetch-metadata",
+      "source_key": "video_info"
+    }
+  },
+  "nodes": [...],
+  "edges": [...]
+}
+```
+
+**Output Field Specifications:**
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | string | Data type of the output |
+| `description` | string | Human-readable description |
+| `source_node` | string | ID of the node that produces this output |
+| `source_key` | string | Shared store key from the source node |
+
+### Complete Example with Inputs and Outputs
+
+```json
+{
+  "$schema": "https://pflow.dev/schemas/flow-0.1.json",
+  "ir_version": "0.1.0",
+  "metadata": {
+    "description": "Extract and summarize YouTube video transcript",
+    "created": "2025-01-29T10:00:00Z"
+  },
+  "inputs": {
+    "url": {
+      "type": "str",
+      "required": true,
+      "description": "YouTube video URL"
+    },
+    "summary_style": {
+      "type": "str",
+      "required": false,
+      "default": "concise",
+      "description": "Summary style: concise, detailed, or bullet-points"
+    }
+  },
+  "outputs": {
+    "summary": {
+      "type": "str",
+      "description": "Video summary in requested style",
+      "source_node": "summarize",
+      "source_key": "response"
+    },
+    "word_count": {
+      "type": "int",
+      "description": "Word count of original transcript",
+      "source_node": "analyze",
+      "source_key": "stats.word_count"
+    }
+  },
+  "nodes": [
+    {
+      "id": "fetch-transcript",
+      "registry_id": "core/yt-transcript",
+      "params": {}
+    },
+    {
+      "id": "summarize",
+      "registry_id": "core/llm",
+      "params": {
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    {
+      "id": "analyze",
+      "registry_id": "core/text-analyzer",
+      "params": {}
+    }
+  ],
+  "edges": [
+    {"from": "fetch-transcript", "to": "summarize"},
+    {"from": "fetch-transcript", "to": "analyze"}
+  ]
+}
+```
+
+### Validation Rules
+
+1. **Required Inputs**: The runtime validates that all required inputs are provided before execution
+2. **Type Validation**: Input values are validated against declared types
+3. **Default Values**: Optional inputs use defaults when not provided
+4. **Output Traceability**: Output declarations must reference valid nodes and their output keys
+5. **Backward Compatibility**: Both `inputs` and `outputs` fields are optional for compatibility
+
+### Benefits of Workflow Interfaces
+
+1. **Workflow Composition**: Workflows can be nested and composed by matching outputs to inputs
+2. **Validation**: Early detection of missing or incompatible parameters
+3. **Documentation**: Self-documenting workflows with clear interface contracts
+4. **Planning**: The natural language planner uses interface declarations to understand workflow capabilities
+5. **Type Safety**: Runtime type checking prevents data mismatches
+
+### Integration with Other Components
+
+- **WorkflowExecutor** (Task 20): Uses input declarations to validate parameters and output declarations to extract results
+- **Natural Language Planner** (Task 17): Analyzes workflow interfaces to select and compose appropriate workflows
+- **Registry**: Workflow interfaces are indexed alongside node metadata for discovery
+- **CLI**: The `pflow run` command validates inputs against workflow declarations
+
+> **Note**: While nodes declare their interfaces in docstrings (extracted to metadata), workflows declare their interfaces directly in the IR. This enables workflows to be first-class citizens in the pflow ecosystem, reusable and composable just like nodes.
+
+---
+
 ## Node Metadata Schema
 
 Node metadata is extracted from Python docstrings and stored as JSON for fast planner access.
