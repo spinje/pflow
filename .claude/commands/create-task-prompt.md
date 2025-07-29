@@ -14,7 +14,7 @@ Available inputs:
 
 ## 🚨 CRITICAL: File Reading Rules
 
-**NEVER read files unless `--read_context` is explicitly set to true!**
+**NEVER read files unless `read_context` is explicitly set to true!**
 
 - If `read_context` is false or not specified → DO NOT read any files
 - If `read_context` is true → Read the files in `.taskmaster/tasks/<task_id>/starting-context/`
@@ -321,6 +321,7 @@ Your plan should include:
 - Always use subagents to gather information from the codebase or docs
 - Parallelise only when subtasks are independent and with explicit bounds
 - Subagents are your best weapon against unverified assumptions
+- Always define termination criteria for subagents
 
 ### Implementation Plan Template
 
