@@ -115,7 +115,7 @@ Based on our conversation, this task involves workflow input improvements, but y
 
 ## Template to Fill
 
-Use this exact structure and replace ALL placeholders with content extracted from the context files:
+Use this exact structure and replace ALL placeholders with content from your knowledge:
 
 ---
 
@@ -567,23 +567,23 @@ Reading epistemic manifesto and understanding the approach...
 
 **Update this file AS YOU WORK** - every discovery, every bug, every insight!
 
-### 1. Start with understanding
-Read the MetadataExtractor tests to see all format variations
+### 1. Create the package structure
+Set up the WorkflowNode package in the correct location
 
-### 2. Implement scanner changes
-Add dependency injection and interface parsing
+### 2. Implement core functionality
+Build the WorkflowNode class with all required methods
 
-### 3. Update validator
-Full path traversal replacing heuristics
+### 3. Add error handling
+Implement proper error messages and context preservation
 
-### 4. Simplify context builder
-Remove parsing, use stored data
+### 4. Write comprehensive tests
+Cover all test criteria from the specification
 
-### 5. Run full test suite
-Ensure nothing breaks
+### 5. Update documentation
+Add to node reference and create feature docs
 
-### 6. Clean up
-Remove all old heuristic code
+### 6. Verify everything works
+Run full test suite and fix any issues
 
 ## Real-Time Learning Capture
 
@@ -690,12 +690,12 @@ Good luck! This feature will significantly enhance pflow's capabilities by enabl
 
 1. **ALL placeholders must be replaced** - No `{{placeholder}}` should remain in your output
 2. **Progress log sections are CRITICAL** - Preserve these sections exactly as shown
-3. **Read ALL context files** - Don't skip any files in the starting-context folder
+3. **Read ALL context files (when read_context=true)** - Don't skip any files in the starting-context folder when reading is enabled
 4. **Maintain template structure** - Keep all sections in the exact order shown
-5. **Include concrete examples** - Add code snippets from context files where relevant
+5. **Include concrete examples** - Add code snippets from your knowledge where relevant
 6. **Success criteria must include** - Always add "make test passes" and "make check passes"
 7. **Epistemic manifesto is always first** - This must be the first item in the reading list
-8. **Extract, don't invent** - Pull content from context files rather than making it up
+8. **Extract, don't invent** - Pull content from your knowledge/context files rather than making it up
 
 ## What Makes a Good Implementation Prompt
 
