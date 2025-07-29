@@ -102,17 +102,38 @@ Implement input declaration for workflows in the IR schema, enabling workflows t
 
 **When you have LIMITED knowledge (read_context=false):**
 ```markdown
-# Task 21: {{Verify exact title from context files}} - Agent Instructions
+# Task 21: Workflow Input Enhancement - Agent Instructions
 
 ## The Problem You're Solving
 
-{{TO BE VERIFIED - Check the spec for the exact problem statement. From our discussion, this relates to workflow parameter handling}}
+Based on our discussion, this task relates to improving how workflows handle input parameters. You'll need to read the specification for the complete problem statement and requirements.
 
 ## Your Mission
 
-Based on our conversation, this task involves workflow input improvements, but you'll need to verify the exact scope in the context files.
+Implement improvements to workflow input handling. The exact scope and requirements are detailed in the specification file in your starting-context folder.
 
-[... template with clear markers for what needs verification ...]
+## Required Reading (IN THIS ORDER)
+
+### 1. FIRST: Understand the Epistemic Approach
+**File**: `.taskmaster/workflow/epistemic-manifesto.md`
+[... standard epistemic section ...]
+
+### 2. SECOND: Task Overview
+**File**: `.taskmaster/tasks/task_21/task_21.md`
+[... standard task overview ...]
+
+### 3. Read ALL Context Files
+**Directory**: `.taskmaster/tasks/task_21/starting-context/`
+
+**Instructions**: Read ALL files in this directory, paying special attention to:
+- The specification file (look for `-spec.md`) - this contains the requirements and test criteria for the task which all must be met before the task is considered complete
+- Any implementation guides or technical context
+- Handover documents from previous work
+- All other files
+
+After reading each file, pause to understand how it fits into the overall picture.
+
+[... continue with what you do know from the conversation ...]
 ```
 
 ## Template to Fill
@@ -153,18 +174,23 @@ Use this exact structure and replace ALL placeholders with content from your kno
 
 **Why read second**: This gives you the big picture before diving into detailed specifications and implementation guides.
 
-### 3. THIRD: {{primary_context_title}}
-**File**: `.taskmaster/tasks/task_{{task_id}}/starting_context/{{primary_context_file}}`
+### 3. Read ALL Context Files
+**Directory**: `.taskmaster/tasks/task_{{task_id}}/starting-context/`
 
-**Purpose**: {{primary_context_purpose}}
-<!-- What this document contains and why it's important -->
+**Instructions**: Read ALL files in this directory. After reading each file, pause to consider:
+- What this document tells you about the task
+- How it relates to other files you've read
+- What implementation decisions it implies
 
-**Why read third**: {{primary_context_reasoning}}
-<!-- Why this needs to be read before other files -->
+**Key files to look for**:
+- Specification files (often ending in `_spec.md`)
+- Implementation guides or plans
+- Context documents
+- Handover notes from previous work
 
-<!-- Continue numbering for all files in starting-context/ folder -->
-<!-- Always include pocketflow/__init__.py for tasks involving pocketflow -->
-<!-- Include spec file last if present -->
+**IMPORTANT**: If you find a specification file, follow it PRECISELY. The spec is the source of truth for requirements and test criteria.
+
+<!-- If you know specific files, list them. Otherwise, this generic instruction ensures nothing is missed -->
 
 ## What You're Building
 
@@ -234,6 +260,8 @@ Use subagents to maximize efficiency and avoid context window limitations.
 {{decisions_list}}
 <!-- Extract from spec or handover documents -->
 <!-- Format as numbered list -->
+
+**📋 Note on Specifications**: If a specification file exists for this task, it is the authoritative source. Follow it precisely - do not deviate from specified behavior, test criteria, or implementation requirements unless you discover a critical issue (in which case, document the deviation clearly or STOP and ask the user for clarification).
 
 ## Success Criteria
 
