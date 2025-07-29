@@ -1,276 +1,171 @@
-# Task 21: Workflow Input Declaration - Handover Document
+# Task 21 Handoff Memo: Workflow Interface Declaration
 
-## Context & Problem Statement
+## Why I Was Looking at Task 21
 
-Currently, pflow workflows use template variables (e.g., `$issue_number`) in node parameters, but there's no mechanism in the IR schema to declare what inputs a workflow expects. This creates several problems:
+I was deep in Task 17 (Natural Language Planner) implementation analysis when I discovered that the planner needs to understand workflow interfaces to compose them effectively. This led me to investigate how workflows declare their inputs/outputs, which brought me to Task 21.
 
-1. **Discovery**: No way to programmatically know what parameters a workflow needs
-2. **Validation**: Can't validate at compile-time that all required inputs are provided
-3. **Documentation**: No standardized way to document workflow interfaces
-4. **Composition**: WorkflowNode users must read workflow files to know param_mapping requirements
-5. **Planning**: The planner (Task 17) can't determine what parameters to provide
+## ✅ Update: Output Declarations Added!
 
-## Current State Analysis
+Based on earlier analysis, Task 21 has been expanded to include **both input and output** declarations. This critical enhancement enables proper workflow composition and validation.
 
-### What Exists Today
+What Task 21 now provides:
+- Workflows can declare both inputs AND outputs in their IR
+- Complete interface parity with nodes
+- Enables static validation of workflow composition
 
-1. **Template Variables in Nodes**:
+## The Three-Way Split Problem
+
+I discovered workflow interface information is scattered in three places:
+
+1. **Metadata level** (current):
    ```json
    {
-     "id": "analyzer",
-     "type": "analyze-text",
-     "params": {
-       "text": "$input_text",
-       "language": "$lang"
+     "inputs": ["issue_number"],      // Simple strings
+     "outputs": ["pr_url"],           // No validation!
+     "ir": {...}
+   }
+   ```
+
+2. **IR level** (Task 21 now includes):
+   ```json
+   {
+     "ir": {
+       "inputs": {                    // Detailed input declarations
+         "issue_number": {"required": true, "type": "string"}
+       },
+       "outputs": {                   // Output declarations now included!
+         "pr_url": {"type": "string", "description": "Created PR URL"}
+       }
      }
    }
    ```
 
-2. **Workflow Metadata** (stored separately from IR):
-   ```json
-   {
-     "name": "sentiment-analyzer",
-     "description": "Analyzes text sentiment",
-     "inputs": ["input_text", "lang"],  // Just documentation
-     "outputs": ["sentiment_score"],
-     "ir": { ... }  // The actual workflow
-   }
-   ```
+3. **Runtime reality**: What actually happens (no validation against declarations)
 
-3. **Runtime Validation**:
-   - Template validation happens at runtime via TemplateValidator
-   - Checks if template variables can be resolved from initial_params + shared store
-   - Fails at runtime if required variables are missing
+## Critical Architectural Tensions
 
-### What's Missing
+### 1. The User's Clear Vision
+The user explicitly stated that:
+- **Contract** (inputs/outputs) belongs in the IR
+- **Metadata** (timestamps, costs, execution info) is system-generated
 
-The IR schema itself has no way to declare inputs. When WorkflowNode loads a workflow, it can't know what parameters are expected without parsing all template usage.
+This aligns perfectly with expanding Task 21 to include outputs.
 
-## Proposed Solution
+### 2. Name vs Path Reference Hell
+- Planner (Task 17) discovers workflows by name: "fix-issue"
+- WorkflowExecutor (Task 20) loads by path: "./fix-issue.json"
+- No component bridges this gap!
+- WorkflowExecutor doesn't even expand `~` in paths
 
-### 1. Extend IR Schema
+### 3. No Workflow Saving Exists
+While investigating, I found that workflow saving isn't implemented anywhere. The planner docs mention it, but the code doesn't exist. This connects to Task 24 (WorkflowManager).
 
-Add optional `inputs` field to the IR schema:
+## Why Output Declarations Were Essential
 
-```json
-{
-  "ir_version": "0.1.0",
-  "inputs": {
-    "input_text": {
-      "description": "Text to analyze",
-      "required": true,
-      "type": "string"
-    },
-    "lang": {
-      "description": "Language code",
-      "required": false,
-      "type": "string",
-      "default": "en"
-    }
-  },
-  "nodes": [...],
-  "edges": [...]
-}
-```
-
-### 2. Key Design Decisions
-
-1. **Backward Compatibility**: `inputs` field is optional - existing workflows continue to work
-2. **Simple Types**: Start with basic validation (string, number, boolean, object, array)
-3. **Runtime Focus**: Types are for documentation/validation, not strict typing
-4. **Template Alignment**: Input names must match template variable names
-
-## Integration Points
-
-### 1. IR Schema (`src/pflow/core/ir_schema.py`)
-
-Add new Pydantic models:
+The addition of output declarations enables:
 ```python
-class WorkflowInput(BaseModel):
-    description: Optional[str] = None
-    required: bool = True
-    type: Optional[str] = None  # "string", "number", "boolean", "object", "array"
-    default: Optional[Any] = None
-
-class WorkflowIR(BaseModel):
-    ir_version: str = "0.1.0"
-    inputs: Optional[Dict[str, WorkflowInput]] = None  # NEW
-    nodes: List[NodeConfig]
-    edges: List[EdgeConfig]
-    # ... rest of schema
+# Workflow A outputs: {"summary": {"type": "string"}}
+# Workflow B inputs: {"text_input": {"type": "string"}}
+# Can A feed into B? YES - we can validate this statically!
 ```
 
-### 2. Compiler (`src/pflow/runtime/compiler.py`)
+The planner can now:
+- Know what workflows produce
+- Validate if outputs match next workflow's inputs
+- Verify template paths like `$workflow_result.field` are valid
 
-Enhance `compile_ir_to_flow()` to:
-1. Extract declared inputs from IR
-2. Validate initial_params against declarations
-3. Apply defaults for missing optional inputs
-4. Provide clear errors for missing required inputs
+## Connected Systems You Must Consider
 
-### 3. Template Validator (`src/pflow/runtime/template_validator.py`)
+### Task 17 (Natural Language Planner)
+- Needs complete workflow interfaces for composition
+- Can't validate workflow chains without outputs
+- My analysis in `/scratchpads/task-17-implementation/` shows this clearly
 
-Could be enhanced to:
-1. Check that all template variables have corresponding input declarations
-2. Warn about declared inputs that aren't used
-3. Provide better error messages using input descriptions
+### Task 20 (WorkflowExecutor)
+- Uses `output_mapping` to map child outputs to parent
+- But can't validate if those outputs actually exist!
+- See `/scratchpads/task-17-implementation/task-20-impact-analysis.md`
 
-### 4. Registry/Metadata (`src/pflow/registry/metadata_extractor.py`)
+### Task 24 (WorkflowManager)
+- Will handle workflow lifecycle (save/load/resolve)
+- Should probably own the name→path resolution
+- Critical for Task 21's integration
 
-When extracting workflow metadata:
-1. Include the `inputs` declaration from IR
-2. Make this available for discovery
-3. Could validate saved workflows have proper input declarations
+## Files and Code to Review
 
-### 5. Context Builder (`src/pflow/planning/context_builder.py`)
+1. **Current Loading Pattern**:
+   - `/src/pflow/planning/context_builder.py` - `_load_saved_workflows()` (lines 158-213)
+   - Shows the current metadata structure with inputs/outputs as strings
 
-For Task 17 planner support:
-1. Include input declarations when loading saved workflows
-2. Format them clearly for LLM understanding
-3. Enable planner to provide correct parameters
+2. **Template Validation Gap**:
+   - `/src/pflow/runtime/template_validator.py`
+   - Only validates node outputs, not workflow outputs
+   - Can't handle `$workflow_result.field` paths
 
-### 6. WorkflowNode Enhancement (Optional)
+3. **My Analysis Documents**:
+   - `/scratchpads/task-17-implementation/workflow-outputs-gap-analysis.md`
+   - `/scratchpads/task-17-implementation/critical-user-decisions/workflow-output-declarations.md`
 
-WorkflowNode could:
-1. Read child workflow's input declarations
-2. Validate param_mapping covers all required inputs
-3. Provide better error messages using input descriptions
-4. Apply defaults for unmapped optional inputs
+## Warnings and Gotchas
 
-## Implementation Order
+1. **Don't just add inputs** - The system needs complete interfaces
+2. **Metadata vs IR confusion** - There's already confusion about where things belong
+3. **Validation complexity** - How do you validate that declared outputs are actually produced?
+4. **Backward compatibility** - Existing workflows have metadata-level outputs
 
-### Phase 1: Core Schema & Validation (Required)
-1. Extend IR schema with inputs field
-2. Update compiler to validate against declarations
-3. Add tests for validation logic
+## Implementation Considerations
 
-### Phase 2: Integration (Required)
-1. Update template validator to use input info
-2. Ensure backward compatibility
-3. Add comprehensive tests
+1. ✅ Task renamed to "Workflow Input/Output Declaration"
+2. Output validation approach (from spec): Check declared outputs against union of all node outputs using registry interface data
+3. Output detail level: Basic types for MVP, structure can be enhanced later
+4. WorkflowManager integration: Will use these declarations for workflow compatibility validation
 
-### Phase 3: Enhanced Features (Optional)
-1. Registry metadata extraction
-2. Context builder integration for planner
-3. WorkflowNode validation improvements
+## The Current Implementation
 
-## Example Implementation
+Task 21 now implements complete workflow interfaces:
 
-### Simple Workflow with Inputs
 ```json
 {
   "ir_version": "0.1.0",
   "inputs": {
-    "file_path": {
-      "description": "Path to the file to process",
+    "issue_number": {
+      "description": "GitHub issue to fix",
       "required": true,
       "type": "string"
-    },
-    "output_format": {
-      "description": "Output format (json or text)",
-      "required": false,
-      "type": "string",
-      "default": "json"
     }
   },
-  "nodes": [
-    {
-      "id": "read",
-      "type": "read-file",
-      "params": {
-        "path": "$file_path"
-      }
+  "outputs": {
+    "pr_url": {
+      "description": "Created PR URL",
+      "type": "string"
     },
-    {
-      "id": "format",
-      "type": "format-output",
-      "params": {
-        "data": "$content",
-        "format": "$output_format"
-      }
+    "pr_number": {
+      "description": "Created PR number",
+      "type": "number"
     }
-  ],
-  "edges": [
-    {"source": "read", "target": "format"}
-  ]
+  },
+  "nodes": [...]
 }
 ```
 
-### Using with WorkflowNode
-```json
-{
-  "id": "process",
-  "type": "workflow",
-  "params": {
-    "workflow_ref": "processor.json",
-    "param_mapping": {
-      "file_path": "$input_file"
-      // output_format not mapped, will use default "json"
-    }
-  }
-}
-```
+This enables:
+- Static validation of workflow composition
+- Template path validation (`$result.pr_url`)
+- Discovery by outputs ("find workflows that produce pr_url")
+- Complete contracts for reuse
 
-## Success Criteria
+## Final Implementation Status
 
-1. ✅ IR schema supports optional input declarations
-2. ✅ Compiler validates initial_params against declarations
-3. ✅ Defaults are applied for missing optional inputs
-4. ✅ Clear errors for missing required inputs
-5. ✅ Backward compatibility - workflows without inputs still work
-6. ✅ Template validator can leverage input information
-7. ✅ All tests pass, no regressions
+✅ The complete interface (inputs AND outputs) is now properly placed in the IR where it belongs, following the principle that:
+- **Contract** (inputs/outputs) = IR (source of truth)
+- **Metadata** (timestamps, costs) = system-generated information
 
-## Technical Considerations
+This enables:
+- Static validation of workflow composition
+- Template path validation (`$result.pr_url`)
+- Discovery by inputs OR outputs
+- Complete contracts for workflow reuse
 
-### Validation Timing
-- Compile-time: Validate initial_params against declarations
-- Runtime: Template resolution still happens at runtime
-- This provides early feedback while maintaining flexibility
+---
 
-### Type System
-- Keep it simple - basic types only for MVP
-- Types are hints for validation, not strict enforcement
-- Focus on required/optional and defaults
-
-### Error Messages
-When validation fails, include:
-- Which input is missing/invalid
-- The input's description (if provided)
-- Whether it's required or has a default
-
-## Risks & Mitigations
-
-1. **Risk**: Breaking existing workflows
-   - **Mitigation**: inputs field is completely optional
-
-2. **Risk**: Over-complicating the type system
-   - **Mitigation**: Start with simple types, enhance later
-
-3. **Risk**: Confusion between compile-time and runtime validation
-   - **Mitigation**: Clear documentation about what validates when
-
-## Not in Scope (Future Enhancements)
-
-- Complex type validation (schemas, patterns)
-- Type inference from template usage
-- Automatic documentation generation
-- IDE integration for autocomplete
-- Workflow "interfaces" or "contracts"
-
-## Key Insights for Implementation
-
-1. This feature makes workflows more like "functions with signatures"
-2. It's primarily about discovery and documentation, not strict typing
-3. The implementation should be minimally invasive
-4. Focus on making workflow composition easier and safer
-5. This directly enables better planner integration (Task 17)
-
-## Questions to Resolve
-
-1. Should we validate that declared inputs are actually used in templates?
-2. Should we warn about template variables without declarations?
-3. How detailed should the type system be for MVP?
-4. Should WorkflowNode enforce child workflow input requirements?
-
-These can be decided during implementation based on complexity vs. value trade-offs.
+**Current Status**: Task 21 specification has been updated to include both input and output declarations. The implementation should follow the patterns in the 21_spec.md file, which provides comprehensive validation rules and test criteria for both inputs and outputs.
