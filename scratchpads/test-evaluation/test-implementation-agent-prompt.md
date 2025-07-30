@@ -18,6 +18,51 @@ When tests fail, you must:
 3. Document what was discovered
 4. Never take shortcuts or "cheat" to pass tests
 
+## Test Execution Scope - Stay Focused!
+
+**CRITICAL**: Only run tests relevant to your current task. Getting distracted by unrelated failures wastes time and causes confusion.
+
+### Scope Rules:
+
+1. **Single Test Task** → Run ONLY that test
+   ```bash
+   # ✅ RIGHT: Run specific test
+   pytest path/to/test_file.py::test_specific_function -v
+
+   # ❌ WRONG: Run entire suite
+   make test  # Don't do this for single test fixes!
+   ```
+
+2. **Single File Task** → Run ONLY that file
+   ```bash
+   # ✅ RIGHT: Run specific file
+   pytest path/to/test_file.py -v
+
+   # ❌ WRONG: Run all tests
+   pytest  # Too broad!
+   ```
+
+3. **Module Task** → Run ONLY that module
+   ```bash
+   # ✅ RIGHT: Run specific module
+   pytest tests/test_nodes/ -v
+   ```
+
+4. **When to Run Broader Tests**:
+   - You're explicitly asked to run all tests
+   - You've made changes that could affect other modules
+   - You're verifying integration impacts
+
+### Ignore Unrelated Failures
+
+If other tests are failing:
+- **Don't get distracted** - They're not your current responsibility
+- **Don't try to fix them** - Stay focused on your assigned task
+- **Don't report them** - Unless explicitly asked about test suite health
+- **Do note them** - If they might be related to your changes
+
+**Remember**: Focus is key. Other agents may have instructions to fix other tests, multiple agents working on the same test could lead to catastrophe and infinite debugging loops.
+
 ## The Seven Commandments of Testing
 
 ### 1. **Test Behavior, Not Implementation**
@@ -338,6 +383,9 @@ When a test fails, follow this concrete debugging approach:
 def debug_failing_test():
     """Run ONLY the failing test to ensure it's not environmental"""
     # pytest path/to/test.py::test_specific_function -v
+
+    # NEVER run 'make test' when debugging a specific test!
+    # Other failures will distract you from your current task
 
 # STEP 2: Add strategic debug output
 def test_workflow_with_debug():
