@@ -14,7 +14,6 @@ We've completed a thorough evaluation of the test suite and found:
 
 Detailed reports are available at:
 - **Consolidated Report**: `/Users/andfal/projects/pflow/scratchpads/test-evaluation/consolidated-report.md`
-- **Test-Writer-Fixer Agent Instructions**: `/Users/andfal/projects/pflow/scratchpads/test-evaluation/test-implementation-agent-prompt.md`
 - **Individual Directory Reports**:
   - `/Users/andfal/projects/pflow/scratchpads/test-evaluation/cli-tests-report.md`
   - `/Users/andfal/projects/pflow/scratchpads/test-evaluation/registry-tests-report.md`
