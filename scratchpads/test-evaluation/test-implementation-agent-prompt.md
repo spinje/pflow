@@ -161,8 +161,11 @@ When any test fails, you MUST follow this process:
 
 ```
 Test Failed
+├─ 0. Understand the requirements
+│  ├─ Make sure you understand what the correct behavior is
+│  └─ Verify ALL your assumptions
 │
-├─ 1. UNDERSTAND the failure
+├─ 1. Understand the failure
 │  ├─ What was the test trying to verify?
 │  ├─ What was the expected behavior?
 │  └─ What actually happened?
