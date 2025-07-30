@@ -179,47 +179,146 @@ Test Failed
    └─ Update test patterns if needed
 ```
 
-### Making the Test vs Code Decision
+### Making the Test vs Code Decision: Think, Don't Guess
 
-When diagnosing root cause, use this evidence-based approach:
+**CRITICAL**: Never jump to conclusions. Always investigate BOTH the test and the code thoroughly before deciding what to fix. The hard but most important part of fixing a test is to understand the root cause of the failure.
 
-#### Temporal Evidence (What changed?)
-- **Test just added/modified** → Suspect test first (70% probability)
-- **Code just changed** → Suspect code first (70% probability)
-- **Nothing changed recently** → Environmental/flaky issue (90% probability)
-- **Both changed** → Examine the specific changes
+#### The Investigation Mindset
 
-#### Failure Pattern Evidence
-- **Only this test fails** → Equal probability test or code
-- **Multiple related tests fail** → Code issue (80% probability)
-- **Unrelated tests fail** → Environmental issue (90% probability)
-- **All tests in module fail** → Definite code issue (95% probability)
+When a test fails, resist the urge to immediately "fix" it. Instead, become a detective:
 
-#### Test Quality Evidence
 ```python
-# High-quality test (trust it more)
-def test_user_cannot_access_others_data():
-    user1 = create_user()
-    user2 = create_user()
-    data = create_private_data(user1)
-
-    with pytest.raises(PermissionError):
-        access_data(data, user=user2)
-
-# Low-quality test (question it first)
-@patch('db.get')
-@patch('cache.get')
-@patch('validator.check')
-def test_something(mock1, mock2, mock3):
-    # Too many mocks = unreliable test
+# Your thought process should be:
+"""
+1. What is this test trying to verify? (Read test name, docstring, assertions)
+2. What behavior does the code actually implement? (Read the implementation)
+3. What should the correct behavior be? (Check requirements, ask if unclear)
+4. Why is there a mismatch? (This is where the real thinking happens)
+"""
 ```
 
-#### Decision Matrix
-When evidence conflicts, use this priority:
-1. **Temporal** (what changed) - Highest weight
-2. **Failure Pattern** (how many failed) - High weight
-3. **Test Quality** (how it's written) - Medium weight
-4. **Test Age** (how long stable) - Low weight
+#### Deep Investigation Process
+
+**Step 1: Understand the Test's Intent**
+```python
+# Read the test thoroughly
+def test_user_cannot_access_others_data():
+    # Ask yourself:
+    # - What scenario is being tested?
+    # - What is the expected outcome?
+    # - Does this expectation make business sense?
+    # - Is the test name accurate?
+```
+
+**Step 2: Understand the Code's Behavior**
+```python
+# Read the implementation carefully
+def access_data(data, user):
+    # Ask yourself:
+    # - What does this code actually do?
+    # - What assumptions does it make?
+    # - Are there edge cases not considered?
+    # - Does it match what the test expects?
+```
+
+**Step 3: Build Mental Models**
+- **Test's Mental Model**: "Users should only access their own data"
+- **Code's Mental Model**: "Anyone can access any data"
+- **The Gap**: These models don't match - now investigate WHY
+
+**Step 4: Gather Evidence (Don't Assume)**
+
+```python
+# Instead of assuming based on "what changed", investigate:
+evidence = {
+    "test_intent": "What is the test trying to verify?",
+    "code_behavior": "What does the code actually do?",
+    "recent_changes": "What changed and why?",
+    "related_tests": "Do other tests reveal the intended behavior?",
+    "business_logic": "What should happen from a user perspective?"
+}
+```
+
+#### Evidence to Gather
+
+**Temporal Evidence** (What changed?)
+- Don't just note WHAT changed, understand WHY it changed
+- Read commit messages, PR descriptions, linked issues
+- A recent change doesn't automatically mean it's wrong
+
+**Failure Pattern Evidence**
+- If multiple tests fail, read ALL of them before deciding
+- Look for the common thread - what connects these failures?
+- Don't assume; investigate the actual connection
+
+**Test Quality Evidence**
+- A well-written test can still be wrong about requirements
+- A poorly-written test might still catch a real bug
+- Judge the test's assumption, not just its implementation
+
+**Code Behavior Evidence**
+- Step through the code mentally or with a debugger
+- Understand the actual execution path
+- Don't assume the code is correct just because it's been there longer
+
+#### The Thinking Process
+
+```python
+# DON'T DO THIS - Mechanical thinking:
+if test_recently_changed:
+    fix_test()  # Too simplistic!
+
+# DO THIS - Deep thinking:
+def investigate_failure():
+    # 1. What does the test expect?
+    test_expectation = understand_test_intent()
+
+    # 2. What does the code do?
+    code_behavior = trace_code_execution()
+
+    # 3. What SHOULD happen?
+    correct_behavior = verify_requirements()
+
+    # 4. Where's the mismatch?
+    if code_behavior != correct_behavior:
+        return "Code is wrong"
+    elif test_expectation != correct_behavior:
+        return "Test is wrong"
+    else:
+        return "Both might need updates"
+```
+
+#### Red Flags That Require Deeper Thinking
+
+1. **Test name doesn't match test body** - Which represents the true intent?
+2. **Test has no comments/docstring** - What was the original author thinking?
+3. **Code has no comments** - What is the intended behavior?
+4. **Conflicting tests** - Two tests expect opposite behaviors
+5. **Mock-heavy test fails** - Is it testing real behavior or mock behavior?
+
+#### Decision Guidelines (After Investigation)
+
+Only after thorough investigation, consider these patterns:
+
+**Temporal Patterns:**
+- **Test just added/modified** → Start by verifying the test's assumptions are correct
+- **Code just changed** → Understand the intent of the change, not just the diff
+- **Both changed recently** → Check if they're aligned with the same requirements
+- **Nothing changed recently** → Look for environmental/external factors
+
+**Failure Patterns:**
+- **Multiple related tests fail** → Likely code issue (but verify the relationship!)
+- **Only this specific test fails** → Could be either (needs deeper investigation!)
+- **Unrelated tests fail** → Environmental issue or shared dependency problem
+- **All tests in module fail** → Strong indicator of code issue (but check setup/teardown!)
+
+**Test Quality Patterns:**
+- **Test uses many mocks** → Question test validity (but check if mocks are justified!)
+- **Test has clear intent** → Trust it more (but verify assumptions are correct!)
+- **Test matches business logic** → Strong indicator test is correct
+- **Test seems contrived** → Investigate the original requirements
+
+**Remember**: These patterns are investigation guides, not automatic decisions. Each pattern should prompt specific questions, not conclusions.
 
 ### Systematic Debugging Protocol
 
