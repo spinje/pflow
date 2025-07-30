@@ -1,10 +1,11 @@
 # CLAUDE.md - Core Module Documentation
 
-This file provides guidance for understanding and working with the pflow core module, which contains foundational components for workflow validation, shell integration, and error handling.
+This file provides guidance for understanding and working with the pflow core module, which contains foundational components for workflow validation, shell integration, error handling, and workflow management.
 
 ## Module Overview
 
 The `core` module is responsible for:
+- **Workflow Management**: Centralized lifecycle management (save/load/list/delete) with format bridging
 - **Workflow Validation**: Defining and validating the JSON schema for pflow's Intermediate Representation (IR)
 - **Shell Integration**: Handling stdin/stdout operations for CLI pipe syntax support
 - **Error Handling**: Providing a structured exception hierarchy for the entire pflow system
@@ -18,6 +19,7 @@ src/pflow/core/
 ├── exceptions.py        # Custom exception hierarchy for structured error handling
 ├── ir_schema.py         # JSON schema definition and validation for workflow IR
 ├── shell_integration.py # Unix pipe and stdin/stdout handling for CLI integration
+├── workflow_manager.py  # Workflow lifecycle management with format transformation
 └── CLAUDE.md           # This file
 ```
 
@@ -33,6 +35,9 @@ Defines the exception hierarchy used throughout pflow:
   - Preserves original error details
   - Shows execution hierarchy (e.g., "main.json → sub-workflow.json → failing-node")
 - **`CircularWorkflowReferenceError`**: Detects and reports circular workflow references
+- **`WorkflowExistsError`**: Raised when attempting to save a workflow with existing name
+- **`WorkflowNotFoundError`**: Raised when requested workflow doesn't exist
+- **`WorkflowValidationError`**: Raised when workflow structure or name is invalid
 
 **Usage Pattern**:
 ```python
@@ -121,7 +126,38 @@ echo '{"ir_version": "0.1.0", ...}' | pflow run
 cat data.txt | pflow run workflow.json
 ```
 
-### 4. __init__.py - Public API
+### 4. workflow_manager.py - Workflow Lifecycle Management
+
+Centralizes all workflow operations and bridges the format gap between components:
+
+**Key Features**:
+- **Format Bridging**: Handles transformation between metadata wrapper and raw IR
+- **Atomic Operations**: Thread-safe file operations prevent race conditions
+- **Name-Based References**: Workflows referenced by kebab-case names (e.g., "fix-issue")
+- **Storage Location**: `~/.pflow/workflows/*.json`
+
+**Core Methods**:
+- **`save(name, workflow_ir, description)`**: Wraps IR in metadata, saves atomically
+- **`load(name)`**: Returns full metadata wrapper (for Context Builder)
+- **`load_ir(name)`**: Returns just the IR (for WorkflowExecutor)
+- **`list_all()`**: Lists all saved workflows with metadata
+- **`exists(name)`**: Checks if workflow exists
+- **`delete(name)`**: Removes workflow
+- **`get_path(name)`**: Returns absolute file path
+
+**Storage Format**:
+```json
+{
+  "name": "fix-issue",
+  "description": "Fixes GitHub issues",
+  "ir": { /* actual workflow IR */ },
+  "created_at": "2025-01-29T10:00:00+00:00",
+  "updated_at": "2025-01-29T10:00:00+00:00",
+  "version": "1.0.0"
+}
+```
+
+### 5. __init__.py - Public API
 
 Aggregates and exposes the module's functionality:
 
@@ -129,6 +165,9 @@ Aggregates and exposes the module's functionality:
 - `PflowError`
 - `WorkflowExecutionError`
 - `CircularWorkflowReferenceError`
+- `WorkflowExistsError`
+- `WorkflowNotFoundError`
+- `WorkflowValidationError`
 
 **Exported from ir_schema.py**:
 - `FLOW_IR_SCHEMA`
@@ -142,6 +181,9 @@ Aggregates and exposes the module's functionality:
 - `read_stdin`
 - `read_stdin_enhanced`
 - `populate_shared_store`
+
+**Exported from workflow_manager.py**:
+- `WorkflowManager`
 
 ## Connection to Examples
 
@@ -161,6 +203,28 @@ The `examples/` directory contains real-world usage of the IR schema:
 - **`examples/invalid/wrong-types.json`** - Type validation (string vs array vs object)
 
 ## Common Usage Patterns
+
+### Managing Workflow Lifecycle
+```python
+from pflow.core import WorkflowManager, WorkflowExistsError
+
+workflow_manager = WorkflowManager()
+
+# Save a workflow
+try:
+    path = workflow_manager.save("data-pipeline", workflow_ir, "Processes daily data")
+    print(f"Saved to: {path}")
+except WorkflowExistsError:
+    print("Workflow already exists!")
+
+# Load for different purposes
+metadata = workflow_manager.load("data-pipeline")  # Full metadata for display
+workflow_ir = workflow_manager.load_ir("data-pipeline")  # Just IR for execution
+
+# List all workflows
+for wf in workflow_manager.list_all():
+    print(f"{wf['name']}: {wf['description']}")
+```
 
 ### Validating Workflow IR
 ```python
@@ -189,7 +253,12 @@ if detect_stdin():
 
 ### Structured Error Handling
 ```python
-from pflow.core import WorkflowExecutionError
+from pflow.core import WorkflowExecutionError, WorkflowNotFoundError
+
+try:
+    workflow_ir = workflow_manager.load_ir("missing-workflow")
+except WorkflowNotFoundError as e:
+    print(f"Workflow not found: {e}")
 
 try:
     # Execute workflow
@@ -240,9 +309,14 @@ pytest tests/test_core/test_ir_schema.py -v
 ## Integration Points
 
 The core module is used throughout pflow:
-- **CLI** (`cli/main.py`): Uses shell integration for pipe support
+- **CLI** (`cli/main.py`):
+  - Uses shell integration for pipe support
+  - Uses WorkflowManager for saving workflows after execution
+  - Handles workflow exceptions during execution
 - **Compiler** (`runtime/compiler.py`): Validates IR before compilation
-- **Planner** (`planning/`): Generates valid IR from natural language
+- **Context Builder** (`planning/context_builder.py`): Uses WorkflowManager.list_all() for workflow discovery
+- **WorkflowExecutor** (`runtime/workflow_executor.py`): Uses WorkflowManager.load_ir() for name-based workflow loading
+- **Planner** (`planning/`): Will generate valid IR and use WorkflowManager to save workflows
 - **Nodes**: Use exceptions for error reporting
 
 ## Design Decisions
@@ -252,6 +326,9 @@ The core module is used throughout pflow:
 3. **Helpful Errors**: ValidationError includes paths and fix suggestions
 4. **Clean API**: __init__.py provides single import point for consumers
 5. **Type Annotations**: Full type hints for better IDE support
+6. **Format Bridging**: WorkflowManager handles metadata wrapper vs raw IR transformation transparently
+7. **Atomic Operations**: WorkflowManager uses atomic file operations to prevent race conditions
+8. **Kebab-Case Names**: Workflow names use kebab-case for CLI friendliness (e.g., "fix-issue")
 
 ## Best Practices
 
@@ -262,6 +339,9 @@ The core module is used throughout pflow:
 5. **Building MVP**: We do not need to worry about backward compatibility for now, no migrations are needed since we dont have any users yet.
 6. **Handle stdin modes explicitly**: Always check if stdin contains workflow JSON or data before processing
 7. **Preserve error context**: Use WorkflowExecutionError to maintain the full error chain and workflow path
+8. **Use WorkflowManager for all workflow operations**: Don't implement custom file loading/saving for workflows
+9. **Test concurrent access**: Always test with real threads when dealing with file operations
+10. **Handle format differences**: Use load() for metadata needs, load_ir() for execution needs
 
 ## Related Documentation
 
@@ -269,5 +349,15 @@ The core module is used throughout pflow:
 - **Schemas**: `docs/core-concepts/schemas.md` - Conceptual schema overview
 - **Examples**: `examples/` - Valid and invalid workflow examples
 - **Runtime**: `src/pflow/runtime/compiler.py` - How validation fits execution
+- **Task 24 Review**: `.taskmaster/tasks/task_24/task-review.md` - Comprehensive WorkflowManager implementation details
+- **Workflow Management**: All workflow lifecycle operations should use WorkflowManager
+
+## Key Lessons from Task 24
+
+1. **The Race Condition Discovery**: Initial tests were too shallow. Only when proper concurrent tests were written was a critical race condition discovered in WorkflowManager.save(). This was fixed using atomic file operations with os.link().
+
+2. **Format Bridging is Critical**: The system has a fundamental format mismatch - Context Builder expects metadata wrapper while WorkflowExecutor expects raw IR. WorkflowManager transparently handles this transformation.
+
+3. **Test Quality Matters**: Always write real tests with actual threading, file I/O, and error conditions. Mocking too much can hide real bugs.
 
 Remember: This module provides the foundation for pflow's reliability and CLI-first design. Changes here affect the entire system, so verify thoroughly against existing tests and usage patterns.

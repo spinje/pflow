@@ -13,7 +13,8 @@ tests/
 ├── test_docs/             # Documentation validation
 ├── test_integration/      # End-to-end integration tests
 ├── test_nodes/            # Node implementation tests
-│   └── test_file/        # File node specific tests
+│   └── test_file/         # File node specific tests
+├── test_planning/         # Workflow planning tests
 ├── test_registry/         # Registry and scanner tests
 └── test_runtime/          # Runtime, compiler, flow tests
 ```
