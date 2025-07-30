@@ -1,175 +1,431 @@
-# Implementation Review for Task 20: Nested Workflows (WorkflowExecutor)
+# Task 20: WorkflowExecutor Implementation Review
 
-## Summary
-- Started: 2025-07-27 10:00
-- Completed: 2025-07-28 (including architectural refactoring)
-- Deviations from plan: 2 (1 minor - test approach, 1 major - architectural refactoring)
+## Quick Reference Card
 
-## Cookbook Pattern Evaluation
+**What It Does**: Enables workflows to execute other workflows as sub-components with parameter mapping and storage isolation.
 
-### Patterns Applied
+**Node Type**: `"workflow"` or `"pflow.runtime.workflow_executor"`
+**Implementation**: `src/pflow/runtime/workflow_executor.py`
+**Test Location**: `tests/test_runtime/test_workflow_executor/`
+**Examples**: `examples/nested/`
 
-1. **BaseNode Lifecycle Pattern** (pocketflow/cookbook/01_basic_nodes/)
-   - Applied for: Core WorkflowExecutor implementation (prep/exec/post)
-   - Success level: Full
-   - Key adaptations: Extended for sub-workflow compilation and execution with storage isolation
-   - Would use again: Yes - fundamental pattern that provided clear structure for complex operations
+**30-Second Usage**:
+```json
+{
+  "id": "run_sub_workflow",
+  "type": "workflow",
+  "params": {
+    "workflow_ref": "path/to/workflow.json",
+    "param_mapping": {"input": "$parent_value"},
+    "output_mapping": {"result": "parent_result"}
+  }
+}
+```
 
-2. **Flow Orchestration Pattern** (pocketflow/docs/core_abstraction/flow.md)
-   - Applied for: Understanding how to execute sub-workflows within parent flows
-   - Success level: Full
-   - Key adaptations: Used Flow._orch() insights for parameter passing and action propagation
-   - Would use again: Yes - critical for understanding workflow composition mechanics
+## Executive Summary
 
-3. **Shared Store Communication Pattern** (pocketflow/docs/core_abstraction/communication.md)
-   - Applied for: Implementing storage isolation modes and parameter mapping
-   - Success level: Full
-   - Key adaptations: Created 4 distinct isolation modes (mapped, isolated, scoped, shared)
-   - Would use again: Yes - essential for safe sub-workflow execution
+### What This Enables
+- Workflow composition and reusability
+- Modular workflow design with proper isolation
+- Dynamic workflow loading and execution
+- Safe parameter passing between workflow levels
 
-### Cookbook Insights
-- Most valuable pattern: BaseNode lifecycle - provided clear structure for implementing complex workflow execution logic
-- Unexpected discovery: PocketFlow's comment about parameter handling in Flow._orch() gave crucial insight into registry passing
-- Gap identified: No cookbook examples of nodes that compile/execute other flows dynamically - this would be valuable
+### Critical Architectural Decision
+WorkflowExecutor was moved from `nodes/` to `runtime/` because it's infrastructure, not a user-facing computation node. This maintains conceptual clarity: users think of workflows as compositions, not as nodes.
 
-## Test Creation Summary
+### Critical Integration Points
+- **Compiler**: Modified to auto-inject registry for workflow nodes
+- **Registry**: Passed via `__registry__` parameter
+- **Template Resolver**: Used for parameter mapping
+- **Storage System**: Four isolation modes implemented
 
-### Tests Created
-- **Total test files**: 3 new, 0 modified
-- **Total test cases**: 39 created
-- **Coverage achieved**: 100% of new code
-- **Test execution time**: ~0.1 seconds for unit tests, ~0.2 seconds for integration tests
+### Breaking Changes
+None. The implementation is purely additive.
 
-### Test Breakdown by Feature
+### Security Model
+- Default "mapped" storage mode prevents data leakage
+- Path traversal protection for workflow_ref
+- Circular dependency detection
+- Maximum nesting depth enforcement
 
-1. **Parameter Validation & Safety**
-   - Test file: `tests/test_runtime/test_workflow_executor/test_workflow_executor.py`
-   - Test cases: 6
-   - Coverage: 100%
-   - Key scenarios tested: Missing params, circular dependencies, max depth, parameter mapping
+## System Architecture Impact
 
-2. **All 26 Specification Test Criteria**
-   - Test file: `tests/test_runtime/test_workflow_executor/test_workflow_executor_comprehensive.py`
-   - Test cases: 26
-   - Coverage: 100%
-   - Key scenarios tested: All spec requirements including storage modes, error handling, edge cases
+```
+┌─────────────────┐
+│   User writes   │
+│   workflow.json │
+└────────┬────────┘
+         │
+         v
+┌─────────────────┐     ┌──────────────────┐
+│    Compiler     │────>│ WorkflowExecutor │
+│ (injects reg.)  │     │  (runtime/)      │
+└─────────────────┘     └────────┬─────────┘
+         │                       │
+         │                       v
+         │              ┌──────────────────┐
+         └─────────────>│  Sub-Workflow    │
+                        │   Compilation    │
+                        └──────────────────┘
 
-3. **Integration Testing**
-   - Test file: `tests/test_runtime/test_workflow_executor/test_integration.py`
-   - Test cases: 7
-   - Coverage: 100%
-   - Key scenarios tested: Full workflow execution, nested workflows, error propagation, storage isolation
+Key: Registry injection happens transparently during compilation
+```
 
-### Testing Insights
-- Most valuable test: Circular dependency detection - caught potential infinite recursion scenarios
-- Testing challenges: Integration tests required proper registry setup with importable test nodes
-- Future test improvements: Performance tests for deeply nested workflows, stress testing with large parameter sets
+## Integration Points Matrix
 
-## What Worked Well
+### 1. Compiler Integration (`src/pflow/runtime/compiler.py`)
 
-1. **Epistemic Approach**: Reading documentation skeptically revealed WorkflowNode shouldn't use Flow-as-Node capability
-   - Reusable: Yes
-   - Key insight: "WorkflowNode is NOT using PocketFlow's Flow-as-Node capability"
-   - This understanding shaped the entire implementation
+**Modification Location**: Line 311-316 in `_instantiate_nodes()`
+```python
+# Special case: inject registry for workflow executor
+if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
+    params = params.copy()
+    params["__registry__"] = registry
+```
 
-2. **Registry Injection Pattern**: Compiler modification to auto-inject registry
-   - Reusable: Yes
-   - Code example:
-   ```python
-   if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
-       params = params.copy()
-       params["__registry__"] = registry
-   ```
+**Why**: WorkflowExecutor needs registry to compile sub-workflows
+**When to use**: Any system node needing access to registry
+**Impact**: Transparent to users, no API changes
 
-3. **Storage Isolation Design**: Four modes provide flexibility with safety
-   - Reusable: Yes
-   - Mapped mode as default prevents data pollution while allowing explicit data flow
+### 2. Registry Access Pattern
 
-4. **Architectural Refactoring**: Moving from nodes/ to runtime/
-   - Reusable: Yes (as a pattern)
-   - Preserved user mental model while improving code organization
+**How WorkflowExecutor Gets Registry**:
+```python
+# In WorkflowExecutor.exec()
+registry = self.params.get("__registry__")
+if not isinstance(registry, Registry):
+    registry = None
 
-## What Didn't Work
+# Pass to sub-workflow compilation
+sub_flow = compile_ir_to_flow(
+    workflow_ir,
+    registry=registry,
+    initial_params=child_params,
+    validate=True
+)
+```
 
-1. **Initial Placement in nodes/ Directory**: Created conceptual confusion
-   - Root cause: Following implementation plan without questioning architectural implications
-   - How to avoid: Consider user mental models and architectural boundaries early
+### 3. Template Resolution Integration
 
-2. **Initial Test Patching**: Tried to patch around test failures instead of fixing root causes
-   - Root cause: Tests used non-existent module paths in mock registries
-   - How to avoid: Always ensure test registries point to real, importable modules
+**Parameter Mapping**:
+```python
+def _resolve_parameter_mappings(self, param_mapping: dict[str, Any],
+                               shared: dict[str, Any]) -> dict[str, Any]:
+    resolved = {}
+    for child_param, parent_value in param_mapping.items():
+        if isinstance(parent_value, str) and TemplateResolver.has_templates(parent_value):
+            resolved[child_param] = TemplateResolver.resolve_string(parent_value, context)
+        else:
+            resolved[child_param] = parent_value
+    return resolved
+```
 
-## Key Learnings
+### 4. Storage System Integration
 
-1. **Fundamental Truth**: User-facing components belong in nodes/, infrastructure belongs in runtime/
-   - Evidence: WorkflowExecutor appearing in planner would confuse users
-   - Implications: Future system-level features should be placed in runtime/ from the start
+**Storage Mode Creation**:
+```python
+def _create_child_storage(self, parent_shared: dict[str, Any],
+                         storage_mode: str, prep_res: dict[str, Any]) -> dict[str, Any]:
+    if storage_mode == "mapped":
+        child_storage = prep_res["child_params"].copy()
+    elif storage_mode == "isolated":
+        child_storage = {}
+    elif storage_mode == "scoped":
+        # Filter parent storage by prefix
+    elif storage_mode == "shared":
+        child_storage = parent_shared  # Same reference!
+```
 
-2. **Fundamental Truth**: Integration tests must use real, importable node modules
-   - Evidence: Tests failed with mock module paths but passed with real modules
-   - Implications: Define test nodes in test files with proper module paths
+## API Specification
 
-3. **Fundamental Truth**: The compiler is the right place to inject system dependencies
-   - Evidence: Clean solution that works transparently without user intervention
-   - Implications: Other system nodes can benefit from similar patterns
+### Parameters
 
-## Patterns Extracted
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `workflow_ref` | str | None | Path to workflow JSON file |
+| `workflow_ir` | dict | None | Inline workflow definition |
+| `param_mapping` | dict | {} | Maps parent values to child params |
+| `output_mapping` | dict | {} | Maps child outputs to parent |
+| `storage_mode` | str | "mapped" | Storage isolation strategy |
+| `max_depth` | int | 10 | Maximum nesting depth |
+| `error_action` | str | "error" | Action to return on error |
 
-1. **System Node Compiler Injection Pattern**: Nodes requiring system resources get them via compiler injection
-   - See: new-patterns.md
-   - Applicable to: Future system nodes (MCP nodes, remote execution nodes)
+### Storage Modes Behavior
 
-2. **Storage Isolation Modes Pattern**: Multiple storage strategies for controlled data access
-   - See: new-patterns.md
-   - Applicable to: Any node executing untrusted code or spawning sub-processes
+| Mode | Child Sees | Parent Sees | Use When |
+|------|------------|-------------|----------|
+| `mapped` | Only mapped params | No changes | Default - safe isolation |
+| `isolated` | Empty storage | No changes | Running untrusted workflows |
+| `scoped` | Filtered by prefix | No changes | Namespace organization |
+| `shared` | Everything | All changes | Parent-child cooperation |
 
-3. **Test Node Self-Reference Pattern**: Define test nodes in test files and reference the test module
-   - See: new-patterns.md
-   - Applicable to: All integration tests needing custom node behavior
+### Error Types
 
-4. **Execution Context Tracking Pattern**: Reserved namespace for execution metadata
-   - See: new-patterns.md
-   - Applicable to: Any recursive/nested execution, debugging features, audit trails
+```python
+# Validation Errors
+ValueError("Either 'workflow_ref' or 'workflow_ir' must be provided")
+ValueError("Circular workflow reference detected: A -> B -> A")
 
-## Impact on Other Tasks
+# Execution Errors
+RecursionError("Maximum workflow nesting depth (10) exceeded")
+FileNotFoundError("Workflow file not found: /path/to/workflow.json")
+TypeError("Workflow must be a JSON object")
 
-- **Future Workflow Features**: Can build on WorkflowExecutor for advanced composition
-- **Natural Language Planner**: Can now generate workflows that use other workflows
-- **Testing Standards**: Established patterns for integration testing with registries
-- **Architecture Guidelines**: Clear separation between user features and runtime infrastructure
+# Context-Aware Errors
+WorkflowExecutionError(
+    message="Sub-workflow execution failed",
+    workflow_path=["main.json", "sub.json"],
+    original_error=original_exception
+)
+```
 
-## Documentation Updates Needed
+## Implementation Patterns
 
-- [x] Update node reference (removed WorkflowNode)
-- [x] Create nested workflows guide
-- [x] Add architecture documentation for runtime components
-- [x] Add examples in examples/nested/
-- [x] Update architectural decision records with runtime vs nodes distinction
+### Pattern 1: System Node Compiler Injection
 
-## Advice for Future Implementers
+**Problem**: System nodes need access to runtime resources (registry, config, etc.)
 
-If you're implementing something similar:
+**Solution**: Compiler injects dependencies transparently
+```python
+# In compiler
+if is_system_node(node_type):
+    params["__registry__"] = registry
+    params["__config__"] = config
+```
 
-1. **Start with architectural placement** - Decide if it's a user feature (nodes/) or infrastructure (runtime/)
-2. **Question the mental model** - How will users think about this feature?
-3. **Watch out for test setup** - Ensure integration tests use real, importable modules
-4. **Use storage isolation by default** - Start with "mapped" mode for safety
-5. **Consider compiler integration** - System dependencies can be injected transparently
-6. **Test all storage modes separately** - Each mode has different behavior
-7. **Document parameter flow clearly** - Use examples to show data movement
-8. **Think about error context** - Nested execution needs good error messages
+**Applicable To**: MCP nodes, remote execution nodes, monitoring nodes
 
-## Success Metrics Achieved
+### Pattern 2: Reserved Namespace Pattern
 
-- ✅ All 26 test criteria from spec implemented and tested
-- ✅ 100% test coverage on new code
-- ✅ Zero breaking changes to existing code
-- ✅ Clean integration via compiler modification
-- ✅ Comprehensive documentation with examples
-- ✅ Architectural integrity maintained through refactoring
+**Problem**: System metadata conflicts with user data
 
-## Final Assessment
+**Solution**: Reserve namespace prefix
+```python
+RESERVED_KEY_PREFIX = "_pflow_"
 
-Task 20 successfully implemented nested workflow support through WorkflowExecutor, enabling workflow composition and reusability. The architectural refactoring from nodes/ to runtime/ improved conceptual clarity while maintaining all functionality. The implementation demonstrates careful attention to safety (storage isolation), usability (transparent registry injection), and maintainability (clear separation of concerns).
+# System keys
+shared["_pflow_depth"] = current_depth
+shared["_pflow_stack"] = execution_stack
+shared["_pflow_workflow_file"] = workflow_path
+```
 
-The key achievement is enabling workflows to execute other workflows while preserving the user's mental model that workflows are compositions, not building blocks. This foundation enables powerful workflow composition patterns while keeping the system conceptually clean and architecturally sound.
+**Applicable To**: Any feature needing metadata in shared storage
+
+### Pattern 3: Test Node Self-Reference
+
+**Problem**: Integration tests need custom nodes but imports fail
+
+**Solution**: Define nodes in test file, reference test module
+```python
+# In test file
+class TestNode(BaseNode):
+    def exec(self, prep_res):
+        return "test"
+
+# In test registry
+registry_data = {
+    "test_node": {
+        "module": "tests.test_integration",  # THIS FILE
+        "class_name": "TestNode",
+        "file_path": __file__
+    }
+}
+```
+
+## DO NOT Section - Critical Warnings
+
+### DO NOT Place WorkflowExecutor in nodes/
+- **Why**: It's infrastructure, not a user computation
+- **Impact**: Would appear in planner, confusing users
+- **Exception**: None
+
+### DO NOT Use "shared" Storage Mode Without Justification
+- **Why**: Child can modify ALL parent data
+- **Risk**: Data corruption, security issues
+- **When OK**: Parent-child designed together, trust established
+
+### DO NOT Skip Registry Injection
+- **Why**: Sub-workflow compilation will fail
+- **How to verify**: Check params["__registry__"] exists
+- **Fix**: Ensure compiler modification is present
+
+### DO NOT Allow Unrestricted Nesting
+- **Why**: Stack overflow, resource exhaustion
+- **Default**: max_depth=10
+- **Monitor**: Check _pflow_depth in shared storage
+
+## Testing Guide
+
+### How to Test Nodes Using WorkflowExecutor
+
+1. **Create Test Registry**:
+```python
+@pytest.fixture
+def test_registry(tmp_path):
+    registry_path = tmp_path / "registry.json"
+    registry = Registry(registry_path)
+
+    # Define test nodes IN THIS FILE
+    registry_data = {
+        "my_test_node": {
+            "module": __name__,
+            "class_name": "MyTestNode",
+            "file_path": __file__
+        }
+    }
+    registry.save(registry_data)
+    return registry
+```
+
+2. **Test Storage Isolation**:
+```python
+def test_storage_isolation(test_registry):
+    workflow_ir = {
+        "nodes": [{
+            "id": "sub",
+            "type": "workflow",
+            "params": {
+                "workflow_ir": sub_workflow,
+                "storage_mode": "isolated"
+            }
+        }]
+    }
+
+    flow = compile_ir_to_flow(workflow_ir, registry=test_registry)
+    shared = {"secret": "should_not_leak"}
+    flow.run(shared)
+
+    # Verify secret didn't leak to child
+```
+
+3. **Test Error Propagation**:
+```python
+def test_error_context(test_registry):
+    # Create failing sub-workflow
+    # Verify error includes full path
+    # Check original exception preserved
+```
+
+## Common Integration Scenarios
+
+### Scenario 1: Planner Generating Nested Workflows
+```python
+# Planner can now generate:
+{
+    "nodes": [{
+        "id": "reuse_analyzer",
+        "type": "workflow",
+        "params": {
+            "workflow_ref": "~/.pflow/workflows/analyze.json",
+            "param_mapping": {"data": "$input"}
+        }
+    }]
+}
+```
+
+### Scenario 2: Conditional Sub-Workflow Execution
+```python
+{
+    "edges": [
+        {"from": "check", "to": "complex_workflow", "action": "complex"},
+        {"from": "check", "to": "simple_workflow", "action": "simple"}
+    ]
+}
+```
+
+### Scenario 3: Error Recovery
+```python
+{
+    "params": {
+        "error_action": "fallback"
+    },
+    "edges": [
+        {"from": "workflow_node", "to": "success", "action": "default"},
+        {"from": "workflow_node", "to": "error_handler", "action": "fallback"}
+    ]
+}
+```
+
+## Files Modified
+
+### Core Implementation
+- `src/pflow/runtime/workflow_executor.py` - Main implementation (NEW)
+- `src/pflow/runtime/compiler.py` - Registry injection (lines 311-316)
+- `src/pflow/core/exceptions.py` - WorkflowExecutionError class (NEW)
+
+### Tests
+- `tests/test_runtime/test_workflow_executor/` - All tests (NEW)
+  - `test_workflow_executor.py` - Basic tests
+  - `test_workflow_executor_comprehensive.py` - 26 spec criteria
+  - `test_integration.py` - Full execution tests
+
+### Documentation
+- `docs/reference/node-reference.md` - Removed WorkflowNode section
+- `docs/features/nested-workflows.md` - Usage guide (NEW)
+- `examples/nested/` - Example workflows (NEW)
+
+### No Changes To
+- Registry system
+- Template resolver
+- Node discovery
+- CLI interface
+- Existing nodes
+
+## Performance Considerations
+
+### Memory Usage
+- Each nested workflow creates new storage dictionary
+- "shared" mode has zero overhead
+- "mapped" mode copies only specified keys
+
+### Compilation Overhead
+- Sub-workflows compiled on each execution
+- No caching in current implementation
+- Future: Consider workflow compilation cache
+
+### Recursion Limits
+- Default max_depth=10 prevents stack issues
+- Each level adds ~3 entries to shared storage
+- Python recursion limit still applies
+
+## Future Enhancements
+
+### Planned (v2.0)
+1. Workflow compilation caching
+2. Async workflow execution
+3. Progress reporting for nested workflows
+4. Workflow registry integration
+
+### Possible Extensions
+1. Parallel sub-workflow execution
+2. Conditional workflow loading
+3. Remote workflow execution
+4. Workflow versioning support
+
+## Troubleshooting Playbook
+
+### "Module not found" in Tests
+**Symptom**: `ModuleNotFoundError: No module named 'test.module'`
+**Cause**: Registry points to non-existent module
+**Fix**: Define test nodes in test file, use `__name__` as module
+
+### "No registry available"
+**Symptom**: `TypeError: 'NoneType' object has no attribute 'load'`
+**Cause**: Registry not injected by compiler
+**Fix**: Verify node type matches in compiler check
+
+### "Circular reference detected"
+**Symptom**: `ValueError: Circular workflow reference detected`
+**Debug**: Check `_pflow_stack` in shared storage
+**Fix**: Redesign workflow dependencies
+
+### "Maximum depth exceeded"
+**Symptom**: `RecursionError: Maximum workflow nesting depth exceeded`
+**Debug**: Check `_pflow_depth` value
+**Fix**: Increase max_depth or flatten workflow structure
+
+## Conclusion
+
+WorkflowExecutor successfully enables workflow composition while maintaining architectural clarity through its placement in runtime/. The implementation prioritizes safety (default "mapped" storage), usability (transparent registry injection), and debuggability (comprehensive error context).
+
+Key achievement: Workflows can now be building blocks without becoming conceptual nodes, preserving the user's mental model while enabling powerful composition patterns.
