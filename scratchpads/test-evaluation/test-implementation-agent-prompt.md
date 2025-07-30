@@ -179,6 +179,48 @@ Test Failed
    └─ Update test patterns if needed
 ```
 
+### Making the Test vs Code Decision
+
+When diagnosing root cause, use this evidence-based approach:
+
+#### Temporal Evidence (What changed?)
+- **Test just added/modified** → Suspect test first (70% probability)
+- **Code just changed** → Suspect code first (70% probability)
+- **Nothing changed recently** → Environmental/flaky issue (90% probability)
+- **Both changed** → Examine the specific changes
+
+#### Failure Pattern Evidence
+- **Only this test fails** → Equal probability test or code
+- **Multiple related tests fail** → Code issue (80% probability)
+- **Unrelated tests fail** → Environmental issue (90% probability)
+- **All tests in module fail** → Definite code issue (95% probability)
+
+#### Test Quality Evidence
+```python
+# High-quality test (trust it more)
+def test_user_cannot_access_others_data():
+    user1 = create_user()
+    user2 = create_user()
+    data = create_private_data(user1)
+
+    with pytest.raises(PermissionError):
+        access_data(data, user=user2)
+
+# Low-quality test (question it first)
+@patch('db.get')
+@patch('cache.get')
+@patch('validator.check')
+def test_something(mock1, mock2, mock3):
+    # Too many mocks = unreliable test
+```
+
+#### Decision Matrix
+When evidence conflicts, use this priority:
+1. **Temporal** (what changed) - Highest weight
+2. **Failure Pattern** (how many failed) - High weight
+3. **Test Quality** (how it's written) - Medium weight
+4. **Test Age** (how long stable) - Low weight
+
 ### Systematic Debugging Protocol
 
 When a test fails, follow this concrete debugging approach:
@@ -694,6 +736,116 @@ def test_workflow_transforms_csv_to_json():
         ]
 ```
 
+### Testing IR Compilation
+
+```python
+# ❌ WRONG: Testing compilation structure
+def test_workflow_compilation():
+    ir = {"nodes": [...]}
+    compiled = compile_workflow(ir)
+    assert isinstance(compiled, Flow)  # Who cares?
+    assert len(compiled.nodes) == 2    # Implementation detail!
+
+# ✅ RIGHT: Testing compilation behavior
+def test_workflow_compilation_preserves_behavior():
+    ir = {
+        "nodes": [
+            {"id": "read", "type": "read_file", "config": {"path": "input.txt"}},
+            {"id": "write", "type": "write_file", "config": {"path": "output.txt"}}
+        ],
+        "edges": [{"from": "read", "to": "write"}]
+    }
+
+    # Create test input
+    Path("input.txt").write_text("test data")
+
+    # Test that compiled workflow behaves correctly
+    workflow = compile_workflow(ir)
+    workflow.run()
+
+    assert Path("output.txt").read_text() == "test data"
+```
+
+### Testing Template Resolution (Task 18)
+
+```python
+# ✅ RIGHT: Test templates in context
+def test_template_variables_resolve_correctly():
+    workflow_ir = {
+        "nodes": [{
+            "type": "write_file",
+            "config": {
+                "path": "{{output_dir}}/{{filename}}.txt",
+                "content": "Hello {{name}}"
+            }
+        }]
+    }
+
+    result = run_workflow(workflow_ir, {
+        "output_dir": "/tmp",
+        "filename": "greeting",
+        "name": "World"
+    })
+
+    assert Path("/tmp/greeting.txt").read_text() == "Hello World"
+```
+
+### Testing Node Interfaces (Task 19)
+
+```python
+# ✅ RIGHT: Verify interface contracts
+def test_node_enforces_required_inputs():
+    node = FileReaderNode()
+    interface = node.get_interface()
+
+    # Test that declared required inputs are actually required
+    for param in interface.required_parameters:
+        with pytest.raises(MissingParameterError):
+            node.exec({}, **{k: "value" for k in interface.required_parameters if k != param})
+```
+
+### Testing Shell Integration
+
+```python
+# ✅ RIGHT: Test actual shell behavior
+def test_workflow_handles_piped_input():
+    # Create a workflow that reads from stdin
+    workflow_json = create_stdin_workflow()
+
+    # Test with actual shell pipe
+    result = subprocess.run(
+        f"echo 'test data' | pflow run {workflow_json}",
+        shell=True,
+        capture_output=True,
+        text=True
+    )
+
+    assert "TEST DATA" in result.stdout  # Workflow uppercased the input
+```
+
+### 🚫 **Never Mock the Shared Store**
+
+The shared store is the central communication mechanism in pflow. Mocking it defeats the entire purpose of testing node interactions:
+
+```python
+# ❌ FATAL MISTAKE: Mocking shared store
+def test_node_communication():
+    with patch.dict('shared', {"data": "mocked"}):
+        node.exec(shared)  # This tests nothing!
+
+# ✅ RIGHT: Use real shared store
+def test_node_communication():
+    shared = {}
+
+    producer = ProducerNode()
+    producer.exec(shared, data="real")
+
+    consumer = ConsumerNode()
+    result = consumer.exec(shared)
+
+    assert result == "processed: real"
+```
+
 ### 💡 **When Testing Reveals Design Problems**
 
 If you need excessive mocking or complex setup to test something, the code design may be the problem:
@@ -722,6 +874,14 @@ class OrderProcessor:
 ```
 
 **Rule of Thumb**: If a test needs more than 3 mocks, consider refactoring the code instead of adding more mocks.
+
+### pflow Testing Principles
+
+1. **Test behavior, not structure** - IR structure will change; behavior shouldn't
+2. **Never mock core abstractions** - Shared store, Node, Flow are sacred
+3. **Test the full stack when reasonable** - IR → Compile → Execute → Result
+4. **Templates need context** - Always test with realistic variable resolution
+5. **Shell integration is a feature** - Test pipes and stdin/stdout behavior
 
 ## Common Anti-patterns to Avoid
 
@@ -794,6 +954,19 @@ def test_api_response():
     assert response.status == 200
     # assert response.user.name == "John"  # Commented out because it fails
     # ↑ NO! Fix the API or update the expectation!
+
+# ❌ ANTI-PATTERN: Testing implementation after IR changes
+def test_workflow_structure():
+    # After IR schema change, don't do this:
+    assert workflow_ir["version"] == "1.0"  # Version changed!
+    assert workflow_ir["nodes"][0]["metadata"]["created_by"]  # New field!
+
+# ✅ RIGHT: Test behavior remains stable
+def test_workflow_behavior():
+    # Workflow should still DO the same thing
+    result = run_workflow(workflow_ir)
+    assert result["success"] == True
+    assert Path(result["output"]).exists()
 ```
 
 ## Performance Optimization for Slow Tests
