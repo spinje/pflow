@@ -496,19 +496,6 @@ def test_file_permissions():
     assert str(test_dir) in str(exc.value)
 ```
 
-### The Task 24 Lesson
-
-**Real Story**: In Task 24 (WorkflowManager), the original tests all passed but were too shallow. They used:
-- Sequential calls instead of real threading
-- Mocked file operations instead of real I/O
-- Happy path testing only
-
-When challenged to write REAL tests:
-1. A race condition was discovered in the save() method
-2. The bug would have shipped to production
-3. It was fixed using atomic file operations
-4. The lesson: **Shallow tests hide real bugs**
-
 ### Documentation Requirements for Fixed Tests
 
 Every time you fix a test, add a docstring or comment explaining:
@@ -1268,8 +1255,7 @@ If any answer is "No", revise the test.
 4. **When in doubt, use real components** - Mocking is the exception, not the rule
 5. **Fast feedback is critical** - Slow tests won't be run by AI agents
 6. **NEVER CHEAT** - A passing test that hides bugs is worse than a failing test
-7. **Learn from Task 24** - Shallow tests let a race condition almost ship to production
-8. **Document your fixes** - Future agents need to know what bugs were found and fixed
+7. **Document your fixes** - Future agents need to know what bugs were found and fixed
 
 Remember: You're not writing tests to achieve coverage metrics or to see green checkmarks. You're writing tests to make AI-driven development safer and more efficient. Every test should earn its place by catching real bugs and enabling confident changes.
 
