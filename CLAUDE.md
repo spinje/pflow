@@ -345,8 +345,6 @@ The codebase is in early development with these tasks completed:
 - ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
-- ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/features/mvp-implementation-guide.md`
-- ✅ Create a detailed todo list with tasks. Use `taskmaster show  <taskId>` to view a task
 - ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
 - ✅ Task 2 complete: Basic CLI run command with stdio/stdin support
 - ✅ Task 3 complete: Execute a Hardcoded 'Hello World' Workflow
