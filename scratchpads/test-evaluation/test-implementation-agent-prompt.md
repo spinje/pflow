@@ -90,6 +90,12 @@ def test_workflow_rejects_circular_dependencies():
 def test_missing_required_parameter_raises_validation_error():
 ```
 
+**Test Naming Formula:**
+```
+def test_<component>_<action>_<expected_outcome>():
+    """When <condition>, <component> should <behavior>"""
+```
+
 ### 5. **Avoid Brittle Assertions**
 ```python
 # ❌ BAD: Exact string matching
@@ -1168,6 +1174,18 @@ Strike 3 → Rewrite from scratch
          Apply all lessons learned
          Focus on behavior, not implementation
 ```
+
+### Emergency Checklist
+
+When a test is failing and you don't know why:
+
+1. **Is it testing behavior or implementation?**
+2. **Would this test break if I renamed a variable?**
+3. **Can I understand what broke from the error message?**
+4. **Is the test dependent on other tests?**
+5. **Am I mocking something I shouldn't?**
+
+If you answer "yes" to #2 or #4, or "no" to #1 or #3, the test needs fixing.
 
 If any answer is "No", revise the test.
 
