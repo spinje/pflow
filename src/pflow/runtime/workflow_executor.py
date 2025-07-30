@@ -1,13 +1,17 @@
 """Runtime component for executing workflows as sub-workflows."""
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
+from pflow.core.workflow_manager import WorkflowManager
 from pflow.registry import Registry
 from pflow.runtime import compile_ir_to_flow
 from pflow.runtime.template_resolver import TemplateResolver
 from pocketflow import BaseNode
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowExecutor(BaseNode):
@@ -25,13 +29,17 @@ class WorkflowExecutor(BaseNode):
         - Keys defined in output_mapping will be written to shared store
 
     Parameters:
+        - workflow_name (str): Name of a saved workflow to execute (e.g., "fix-issue")
         - workflow_ref (str): Path to workflow file (absolute or relative)
-        - workflow_ir (dict): Inline workflow definition (alternative to ref)
+        - workflow_ir (dict): Inline workflow definition
         - param_mapping (dict): Map parent values to child parameters
         - output_mapping (dict): Map child outputs to parent keys
         - storage_mode (str): "mapped" (default), "scoped", "isolated", or "shared"
         - max_depth (int): Maximum nesting depth (default: 10)
         - error_action (str): Action to return on error (default: "error")
+
+    Note: Only one of workflow_name, workflow_ref, or workflow_ir should be provided.
+    Priority order: workflow_name > workflow_ref > workflow_ir
 
     Actions:
         - default: Workflow executed successfully
@@ -45,15 +53,19 @@ class WorkflowExecutor(BaseNode):
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Load and prepare the sub-workflow for execution."""
         # Get parameters with defaults
+        workflow_name = self.params.get("workflow_name")
         workflow_ref = self.params.get("workflow_ref")
         workflow_ir = self.params.get("workflow_ir")
         max_depth = self.params.get("max_depth", self.MAX_DEPTH_DEFAULT)
 
-        # Validate inputs
-        if not workflow_ref and not workflow_ir:
-            raise ValueError("Either 'workflow_ref' or 'workflow_ir' must be provided")
-        if workflow_ref and workflow_ir:
-            raise ValueError("Only one of 'workflow_ref' or 'workflow_ir' should be provided")
+        # Validate inputs - ensure exactly one workflow source is provided
+        sources_provided = sum(bool(x) for x in [workflow_name, workflow_ref, workflow_ir])
+        if sources_provided == 0:
+            raise ValueError(
+                "WorkflowExecutor requires either 'workflow_name', 'workflow_ref', or 'workflow_ir' parameter"
+            )
+        if sources_provided > 1:
+            raise ValueError("Only one of 'workflow_name', 'workflow_ref', or 'workflow_ir' should be provided")
 
         # Check nesting depth
         current_depth = shared.get(f"{self.RESERVED_KEY_PREFIX}depth", 0)
@@ -63,9 +75,34 @@ class WorkflowExecutor(BaseNode):
         # Track execution stack for circular dependency detection
         execution_stack = shared.get(f"{self.RESERVED_KEY_PREFIX}stack", [])
 
-        # Load workflow
+        # Determine workflow source and load the workflow
         workflow_path = None
-        if workflow_ref:
+        workflow_source = None
+
+        if workflow_name:
+            # Load by name using WorkflowManager
+            logger.debug(f"Loading workflow by name: {workflow_name}")
+            workflow_source = f"name:{workflow_name}"
+            workflow_manager = WorkflowManager()
+
+            try:
+                workflow_ir = workflow_manager.load_ir(workflow_name)
+                # Use the resolved path for circular dependency checking
+                workflow_path = Path(workflow_manager.get_path(workflow_name))
+
+                # Check circular dependency
+                if str(workflow_path) in execution_stack:
+                    cycle = " -> ".join([*execution_stack, str(workflow_path)])
+                    raise ValueError(f"Circular workflow reference detected: {cycle}")
+
+            except Exception as e:
+                raise ValueError(f"Failed to load workflow '{workflow_name}': {e!s}") from e
+
+        elif workflow_ref:
+            # Load from file path (existing logic)
+            logger.debug(f"Loading workflow by file reference: {workflow_ref}")
+            workflow_source = f"ref:{workflow_ref}"
+
             # Validate path security
             workflow_path = self._resolve_safe_path(workflow_ref, shared)
 
@@ -77,6 +114,11 @@ class WorkflowExecutor(BaseNode):
             # Load workflow file
             workflow_ir = self._load_workflow_file(workflow_path)
 
+        else:
+            # Use inline workflow_ir
+            logger.debug("Using inline workflow definition")
+            workflow_source = "inline"
+
         # Prepare child parameters
         param_mapping = self.params.get("param_mapping", {})
         child_params = self._resolve_parameter_mappings(param_mapping, shared)
@@ -84,6 +126,7 @@ class WorkflowExecutor(BaseNode):
         return {
             "workflow_ir": workflow_ir,
             "workflow_path": str(workflow_path) if workflow_path else "<inline>",
+            "workflow_source": workflow_source,
             "child_params": child_params,
             "storage_mode": self.params.get("storage_mode", "mapped"),
             "current_depth": current_depth,
@@ -95,15 +138,18 @@ class WorkflowExecutor(BaseNode):
         """Compile and execute the sub-workflow."""
         workflow_ir = prep_res["workflow_ir"]
         workflow_path = prep_res["workflow_path"]
+        workflow_source = prep_res.get("workflow_source", "unknown")
         child_params = prep_res["child_params"]
         storage_mode = prep_res["storage_mode"]
         parent_shared = prep_res.get("parent_shared", {})
 
+        logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
+
         # Get registry from node parameters (injected by compiler)
         registry = self.params.get("__registry__")
-        if not isinstance(registry, Registry):
-            # If no registry available, compilation might fail
-            # Let the error propagate with clear message
+        if registry is not None and not isinstance(registry, Registry):
+            # If registry is provided but not the right type, that's an error
+            # Otherwise None is acceptable (compilation might still work with default registry)
             registry = None
 
         try:

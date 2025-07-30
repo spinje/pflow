@@ -32,3 +32,21 @@ class CircularWorkflowReferenceError(WorkflowExecutionError):
     """Circular reference detected in workflow execution."""
 
     pass
+
+
+class WorkflowExistsError(PflowError):
+    """Raised when attempting to save a workflow that already exists."""
+
+    pass
+
+
+class WorkflowNotFoundError(PflowError):
+    """Raised when a workflow cannot be found."""
+
+    pass
+
+
+class WorkflowValidationError(PflowError):
+    """Raised when workflow validation fails."""
+
+    pass

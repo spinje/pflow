@@ -421,12 +421,17 @@ class TestErrorAndEdgeCases:
 
     def test_empty_registry_handling(self):
         """Test behavior with empty registry."""
-        discovery = build_discovery_context(registry_metadata={})
+        # Mock the workflow manager to return empty list
+        with patch("pflow.planning.context_builder._get_workflow_manager") as mock_manager:
+            mock_wf_manager = mock_manager.return_value
+            mock_wf_manager.list_all.return_value = []
 
-        # Should handle empty registry gracefully
-        assert "## Available Nodes" in discovery
-        # Should not show category headers for empty registry
-        assert "###" not in discovery
+            discovery = build_discovery_context(registry_metadata={})
+
+            # Should handle empty registry gracefully
+            assert "## Available Nodes" in discovery
+            # Should not show category headers for empty registry
+            assert "###" not in discovery
 
     def test_malformed_registry_handling(self):
         """Test error handling with malformed registry data."""

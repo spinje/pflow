@@ -12,6 +12,7 @@ from typing import Any
 import click
 
 from pflow.core import StdinData, ValidationError, validate_ir
+from pflow.core.exceptions import WorkflowExistsError, WorkflowValidationError
 from pflow.core.shell_integration import (
     determine_stdin_mode,
     read_stdin_enhanced,
@@ -19,6 +20,7 @@ from pflow.core.shell_integration import (
 from pflow.core.shell_integration import (
     read_stdin as read_stdin_content,
 )
+from pflow.core.workflow_manager import WorkflowManager
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, compile_ir_to_flow
 
@@ -246,6 +248,41 @@ def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> No
                 click.echo(f"cli: Warning - could not clean up temp file: {stdin_data.temp_path}", err=True)
 
 
+def _prompt_workflow_save(ir_data: dict[str, Any]) -> None:
+    """Prompt user to save workflow after execution.
+
+    Args:
+        ir_data: The workflow IR data to save
+    """
+    save_response = click.prompt("\nSave this workflow? (y/n)", type=str, default="n").lower()
+    if save_response != "y":
+        return
+
+    workflow_manager = WorkflowManager()
+
+    # Get workflow name
+    workflow_name = click.prompt("Workflow name", type=str)
+
+    # Get optional description
+    description = click.prompt("Description (optional)", default="", type=str)
+
+    try:
+        # Save the workflow
+        saved_path = workflow_manager.save(workflow_name, ir_data, description)
+        click.echo(f"\n✅ Workflow saved to: {saved_path}")
+    except WorkflowExistsError:
+        click.echo(f"\n❌ Error: A workflow named '{workflow_name}' already exists.")
+        # Offer to use a different name
+        retry = click.prompt("Try with a different name? (y/n)", type=str, default="n").lower()
+        if retry == "y":
+            # Recursive call to try again
+            _prompt_workflow_save(ir_data)
+    except WorkflowValidationError as e:
+        click.echo(f"\n❌ Error: Invalid workflow name: {e!s}")
+    except Exception as e:
+        click.echo(f"\n❌ Error saving workflow: {e!s}")
+
+
 def execute_json_workflow(
     ctx: click.Context,
     ir_data: dict[str, Any],
@@ -309,6 +346,10 @@ def execute_json_workflow(
             # Only show success message if we didn't produce output
             if not output_produced:
                 click.echo("Workflow executed successfully")
+
+            # Offer to save the workflow (only if not from a file and in interactive mode)
+            if ctx.obj.get("input_source") != "file" and sys.stdin.isatty():
+                _prompt_workflow_save(ir_data)
     except (click.ClickException, SystemExit):
         # Let Click exceptions and exits propagate normally
         raise
@@ -467,3 +508,11 @@ def main(
         # Temporary output for non-file inputs
         click.echo(f"Collected workflow from {source}: {raw_input}")
         _display_stdin_data(stdin_data)
+
+        # TODO: Task 17 - Natural Language Planner Integration
+        # When the planner is implemented, it will:
+        # 1. Process the natural language input into a workflow IR
+        # 2. Display the generated workflow
+        # 3. Execute it using execute_json_workflow()
+        # The save prompt will automatically be triggered after execution
+        # since execute_json_workflow now includes _prompt_workflow_save()

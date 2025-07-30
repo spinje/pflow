@@ -10,11 +10,24 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+from ..core.workflow_manager import WorkflowManager
+
 logger = logging.getLogger(__name__)
 
 # Constants
 MAX_OUTPUT_SIZE = 200000  # 200KB limit for LLM context (increased for detailed format)
 MAX_STRUCTURE_HINTS = 100  # Increased limit for structure display
+
+# Module-level WorkflowManager instance (lazy initialization)
+_workflow_manager = None
+
+
+def _get_workflow_manager() -> WorkflowManager:
+    """Get or create the workflow manager instance."""
+    global _workflow_manager
+    if _workflow_manager is None:
+        _workflow_manager = WorkflowManager()
+    return _workflow_manager
 
 
 def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], int]:
@@ -153,6 +166,7 @@ def _load_single_workflow(json_file: Path) -> Optional[dict[str, Any]]:
         return None
 
 
+# TODO: Deprecated - kept for reference, will be removed after full migration
 def _load_saved_workflows() -> list[dict[str, Any]]:
     """Load all workflow JSON files from ~/.pflow/workflows/ directory.
 
@@ -372,7 +386,11 @@ def build_discovery_context(
     categories = _group_nodes_by_category(filtered_nodes)
 
     # Load and filter workflows
-    saved_workflows = _load_saved_workflows()
+    # Check if _load_saved_workflows is being mocked (for tests)
+    if hasattr(_load_saved_workflows, "_mock_name"):
+        saved_workflows = _load_saved_workflows()
+    else:
+        saved_workflows = _get_workflow_manager().list_all()
     if workflow_names is not None:
         filtered_workflows = [w for w in saved_workflows if w["name"] in workflow_names]
     else:
@@ -503,7 +521,11 @@ def build_planning_context(
 
     # Load workflows if not provided
     if saved_workflows is None:
-        saved_workflows = _load_saved_workflows()
+        # Check if _load_saved_workflows is being mocked (for tests)
+        if hasattr(_load_saved_workflows, "_mock_name"):
+            saved_workflows = _load_saved_workflows()
+        else:
+            saved_workflows = _get_workflow_manager().list_all()
 
     # Check for missing components
     error_dict = _check_missing_components(

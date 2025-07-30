@@ -23,7 +23,7 @@ class TestWorkflowExecutor:
 
         # No parameters should raise error
         node.set_params({})
-        with pytest.raises(ValueError, match="Either 'workflow_ref' or 'workflow_ir'"):
+        with pytest.raises(ValueError, match="WorkflowExecutor requires either"):
             node.prep(shared)
 
         # Both parameters should raise error

@@ -87,7 +87,7 @@ class TestWorkflowExecutorComprehensive:
         node.set_params({})
 
         shared = {}
-        with pytest.raises(ValueError, match="Either 'workflow_ref' or 'workflow_ir'"):
+        with pytest.raises(ValueError, match="WorkflowExecutor requires either"):
             node.prep(shared)
 
     # Test Criteria 4: both parameters provided → raises ValueError
