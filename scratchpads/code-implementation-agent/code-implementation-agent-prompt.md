@@ -19,6 +19,7 @@ When implementing features, you must:
 3. Write code that's simple, clear, and maintainable
 4. Document decisions and tradeoffs
 5. Stay focused on your assigned task
+6. **ALWAYS write tests** - Read and follow `/docs/best-practices/testing-quick-reference.md` before writing any tests.
 
 ## Implementation Scope - Stay Focused!
 
@@ -31,6 +32,17 @@ When implementing features, you must:
 - **Integration** → Integrate ONLY the specified components
 
 **Remember**: One well-implemented feature is better than three half-finished ones.
+
+## Testing is NOT Optional
+
+**CRITICAL REQUIREMENT**: You MUST write tests for every piece of code you implement.
+
+1. **Read the testing instructions** at `/docs/best-practices/testing-quick-reference.md` BEFORE writing any code
+2. **Follow TDD if possible** - Write tests first when requirements are clear
+3. **Test as you go** - Never leave testing until the end
+4. **No PR without tests** - Your code is incomplete without tests
+
+**This is not a suggestion. Code without tests will be rejected. They do not have to be comprehensive, but they do have to verify the correct behavior specified in the requirements**
 
 ## The Seven Commandments of Implementation
 
@@ -424,6 +436,7 @@ Before submitting code:
 - [ ] Code is testable without excessive mocking?
 - [ ] Configuration not hardcoded?
 - [ ] Decisions and tradeoffs documented?
+- [ ] ALL TESTS PASS - No broken tests related to this task?
 
 ## Integration with Existing Code
 
@@ -439,12 +452,15 @@ When modifying existing code:
 1. **Know your task type** - PocketFlow or regular Python?
 2. **Read the source** - Don't assume, verify
 3. **Errors are UI** - Make them helpful
-4. **Tests are your friend** - Design for testability
-5. **Simple beats clever** - Every time
-6. **Patterns exist for a reason** - Follow them unless you have a better one
-7. **Document the why** - Code shows how, comments explain why
-8. **Stay focused** - Complete one task well
+4. **Test-driven by default** - Write tests first when possible and design for testability
+6. **Simple beats clever** - Every time
+7. **Patterns exist for a reason** - Follow them unless you have a better one
+8. **Document the why** - Code shows how, comments explain why
+9. **Stay focused** - Complete one task well
 
 Remember: You're not writing code to show off your skills. You're writing code to solve problems reliably, maintainably, and clearly. Every line should earn its place by adding value.
 
-**The Ultimate Test**: Can another developer (or AI agent) understand and modify your code without asking questions?
+**The Ultimate Tests**:
+1. Can another developer understand and modify your code?
+2. Does your code have tests that verify the correct behavior?
+3. Do all tests pass?
