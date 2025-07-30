@@ -1,5 +1,7 @@
 # Workflow Manager Design - Importance 5/5
 
+**UPDATE (Task 21 Impact)**: Task 21's implementation adds urgency - there's now a format mismatch between how workflows are stored (with metadata wrapper) vs executed (raw IR only).
+
 The investigation reveals that workflow management is scattered across the codebase with no central authority. This affects Task 17's ability to reference workflows and the overall system's workflow lifecycle management.
 
 ## Context:
@@ -22,6 +24,10 @@ This fragmentation causes:
 2. Inconsistent behavior
 3. Missing features (save!)
 4. The planner's reference problem
+5. **Format mismatch** (NEW from Task 21):
+   - Context Builder expects: `{"name": "...", "description": "...", "ir": {...}}`
+   - WorkflowExecutor expects: `{...}` (just the IR)
+   - No component handles this transformation
 
 ## Options:
 
@@ -93,17 +99,23 @@ Where should WorkflowManager live?
 
 ```python
 # For Task 17 planner
-workflow = workflow_manager.load("fix-issue")
+workflow = workflow_manager.load("fix-issue")  # Full metadata
 
-# For CLI saving
-workflow_manager.save("fix-issue", workflow_ir)
+# For CLI saving (with Task 21's new format)
+workflow_manager.save("fix-issue", workflow_ir)  # IR has inputs/outputs
 
-# For WorkflowExecutor
+# For WorkflowExecutor (needs raw IR only)
 if "workflow_name" in params:
+    # Option 1: Get path
     params["workflow_ref"] = workflow_manager.get_path(params["workflow_name"])
+    # Option 2: Get IR directly (NEW)
+    params["workflow_ir"] = workflow_manager.load_ir(params["workflow_name"])
 
 # For context builder
 workflows = workflow_manager.list_all()
+
+# NEW: Handle format mismatch
+workflow_manager.load_ir("fix-issue")  # Returns just IR for execution
 ```
 
-This design provides a clean, minimal API that solves immediate needs while leaving room for future enhancements.
+This design provides a clean API that solves immediate needs while handling the format mismatch discovered from Task 21.
