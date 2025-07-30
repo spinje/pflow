@@ -59,12 +59,10 @@ Execute these steps for each directory, ONE AT A TIME:
 Mark the current directory as "in_progress" using TodoWrite.
 
 #### Step 2: Deploy Test-Writer-Fixer Sub-Agent
-Use the Task tool with subagent_type="general-purpose" and this template:
+Use the Task tool with subagent_type="test-writer-fixer" and this prompt template:
 
 ```
 You are a specialized test-writer-fixer agent tasked with fixing all test quality issues in /Users/andfal/projects/pflow/tests/[DIRECTORY_NAME]/
-
-Your system prompt with detailed instructions is at: /Users/andfal/projects/pflow/scratchpads/test-evaluation/test-implementation-agent-prompt.md
 
 The specific issues for this directory are documented at: /Users/andfal/projects/pflow/scratchpads/test-evaluation/[REPORT_FILENAME]
 
@@ -78,6 +76,7 @@ Your task:
    - Fix brittle assertions
    - Improve test names
    - Add missing test coverage
+   - Remove shallow tests that it does not make sense to improve
 
 Specific issues to address:
 [INSERT KEY ISSUES FROM REPORT]
@@ -88,13 +87,23 @@ Constraints:
 - Do NOT run 'make test' or fix unrelated failures
 - Preserve test coverage while improving quality
 - Document significant changes in docstrings
+- Do not make ANY changes to the codebase except for the tests you are fixing
+- Carefully look at the codebase and make sure you understand the codebase and the tests before you start fixing them (you should have no assumptions, if you do, dig deeper)
 
 Deliverables:
 1. Summary of tests fixed
 2. Count of anti-patterns removed
 3. Any tests that couldn't be fixed and why
 4. Confirmation that all modified tests pass
+5. Any found issues with the codebase that needs to be fixed (cases where the test is correct but the code is not)
+
+Notes:
+This is a hard task, think hard and gather as much context as you need to before you start fixing the tests.
 ```
+
+> Note: Replace the  [DIRECTORY_NAME] and [REPORT_FILENAME] with the actual directory name and report filename relevant to the directory you are assigning the agent to fix.
+
+**Critical**: Use this prompt template exactly as is when using the sub agent tool.
 
 #### Step 3: Wait for Completion
 Let the agent complete their work. They will provide a summary.
@@ -154,55 +163,6 @@ Include:
 3. **Use Specific Reports**: Each agent needs their directory's report
 4. **Track Everything**: Use todos for visibility
 5. **Don't Break Working Tests**: Improve quality without losing coverage
-
-## Example: First Directory (test_cli)
-
-Here's exactly how to deploy the test-writer-fixer sub-agent for the first directory:
-
-```python
-# Using the Task tool:
-Task(
-    subagent_type="general-purpose",
-    description="Fix test quality in test_cli",
-    prompt="""
-You are a specialized test-writer-fixer agent tasked with fixing all test quality issues in /Users/andfal/projects/pflow/tests/test_cli/
-
-Your system prompt with detailed instructions is at: /Users/andfal/projects/pflow/scratchpads/test-evaluation/test-implementation-agent-prompt.md
-
-The specific issues for this directory are documented at: /Users/andfal/projects/pflow/scratchpads/test-evaluation/cli-tests-report.md
-
-Your task:
-1. Read the test implementation instructions thoroughly
-2. Read the specific report for this directory
-3. Fix ALL issues identified in the report
-4. Focus on the most critical issues first:
-   - Remove excessive mocking
-   - Test behavior, not implementation
-   - Fix brittle assertions
-   - Improve test names
-   - Add missing test coverage
-
-Specific issues to address:
-- Excessive mocking (18 instances) - especially in stdin and integration tests
-- Implementation testing (12 instances) - testing internals rather than behavior
-- Poor isolation (8 instances) - complex dependencies between tests
-- Missing coverage (9 instances) - no edge cases or error paths
-
-Constraints:
-- ONLY fix tests in the test_cli directory
-- Run ONLY tests for files you modify (pytest tests/test_cli/specific_test.py)
-- Do NOT run 'make test' or fix unrelated failures
-- Preserve test coverage while improving quality
-- Document significant changes in docstrings
-
-Deliverables:
-1. Summary of tests fixed
-2. Count of anti-patterns removed
-3. Any tests that couldn't be fixed and why
-4. Confirmation that all modified tests pass
-"""
-)
-```
 
 ## Start Execution
 
