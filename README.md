@@ -16,7 +16,7 @@ $ pflow "analyze customer churn from stripe and hubspot for last month"
 
 # Every time after: Finds and runs it instantly (2 seconds)
 $ pflow "analyze customer churn for this week"  # Different time period, same workflow
-→ Found 'analyze-churn'. Running with period: this week
+→ Found 'analyze-churn'. Running with period: 2025-07-22 to 2025-07-28
 ✅ Analysis complete!
 ```
 
