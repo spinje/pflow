@@ -366,6 +366,7 @@ Next up:
 
 - ⏳ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
 - ⏳ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
+- ⏳ Task 9: Implement shared store collision detection and proxy mapping
 
 *Update this list as you complete tasks.*
 
