@@ -377,6 +377,22 @@ uv run pytest --cov=src/pflow --cov-report=term-missing
 **Problem**: Async tests not running or hanging
 **Solution**: Use `pytest-asyncio`, mark async tests with `@pytest.mark.asyncio`
 
+### 6. Test Node Type Confusion
+**Problem**: `CompilationError: Node type 'basic-node' not found in registry`
+**Solution**: Use actual registered names: `test-node`, `test-node-retry`. Common aliases like `basic-node`, `transform-node` are conventions but not registered.
+
+### 7. Test Node Interface Inconsistency
+**Problem**: `KeyError: 'test_output'` when using wrong test node
+**Solution**: `TestNode` uses `test_input`/`test_output`, `TestNodeRetry` uses `retry_input`/`retry_output`. Check node interfaces before use.
+
+### 8. Click Interactive Testing Limitation
+**Problem**: Can't test interactive prompts (workflow save dialog) with CliRunner
+**Solution**: CliRunner always returns False for `isatty()`. Test components separately - execution and save functionality independently.
+
+### 9. Mock Pollution Between Test Files
+**Problem**: Mocks from one test file persist and break other tests (e.g., performance tests mocking `_process_nodes`)
+**Solution**: Use `@pytest.fixture(autouse=True)` with `patch.stopall()` and `importlib.reload()` for modules with persistent mocks.
+
 ## Test Maintenance
 
 ### When to Update Tests

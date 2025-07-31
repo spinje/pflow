@@ -572,8 +572,6 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
-<!-- New patterns are appended below this line -->
-
 ## Pattern: Connection Tracking in Mock Nodes
 - **Date**: 2025-06-29
 - **Discovered in**: Task 4.3
@@ -1075,3 +1073,71 @@ A consolidated collection of successful patterns and approaches discovered durin
 - **Benefits**: Enables graceful error recovery, provides actionable error information, maintains workflow integrity
 
 ---
+
+## Pattern: Centralized Test Node Definitions
+- **Date**: 2025-07-31
+- **Discovered in**: Test suite quality fixes
+- **Problem**: Test nodes scattered across test files have inconsistent interfaces (TestNode uses test_input/test_output, TestNodeRetry uses retry_input/retry_output), causing confusion and errors when tests share nodes
+- **Solution**: Define all test nodes in a central location with consistent, well-documented interfaces
+- **Example**:
+  ```python
+  # src/pflow/nodes/test_nodes.py - Central test node definitions
+  class TestNode(Node):
+      """Standard test node for pflow test suite.
+
+      Interface:
+      - Reads: shared["test_input"]: str
+      - Writes: shared["test_output"]: str
+      - Actions: default
+      """
+      def exec(self, prep_res):
+          return f"Processed: {prep_res['input']}"
+
+      def post(self, shared, prep_res, exec_res):
+          shared["test_output"] = exec_res
+          return "default"
+
+  class TestNodeRetry(Node):
+      """Test node with retry behavior.
+
+      Interface:
+      - Reads: shared["retry_input"]: str  # Different key!
+      - Writes: shared["retry_output"]: str
+      - Actions: default, retry, error
+      """
+      # Implementation...
+
+  # tests/conftest.py - Register test nodes globally
+  @pytest.fixture(scope="session")
+  def test_registry():
+      registry = Registry()
+      registry.register({
+          "test-node": {
+              "module": "pflow.nodes.test_nodes",
+              "class_name": "TestNode"
+          },
+          "test-node-retry": {
+              "module": "pflow.nodes.test_nodes",
+              "class_name": "TestNodeRetry"
+          }
+      })
+      # Also register common aliases
+      registry.add_aliases({
+          "basic-node": "test-node",
+          "transform-node": "test-node",
+          "error-node": "test-node-retry"
+      })
+      return registry
+  ```
+- **When to use**: Any test suite that uses mock nodes across multiple test files
+- **Benefits**:
+  - Consistent interfaces prevent key errors
+  - Single source of truth for test node behavior
+  - Easy to add new test nodes with clear conventions
+  - Tests are more maintainable and less brittle
+  - Aliases defined in one place
+- **Key Insight**: Test infrastructure is real infrastructure - it needs the same architectural care as production code
+
+---
+
+<!-- New patterns are appended below this line -->
