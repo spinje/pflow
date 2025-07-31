@@ -23,7 +23,7 @@ Task 17 is the core feature that makes pflow unique - the Natural Language Plann
 
 The planner combines all these decisions into a cohesive workflow generation system:
 
-1. **Input Processing**: Natural language → intent + parameter extraction
+1. **Input Processing**: Natural language → intent + parameter discovery
 2. **Discovery Phase**: Context builder provides nodes + workflows → LLM selects components
 3. **Generation Phase**:
    - Pydantic models ensure syntactically valid JSON
@@ -43,12 +43,12 @@ This architecture ensures that every generated workflow is not only syntacticall
 Understanding these challenges helps avoid common pitfalls during implementation:
 
 1. **Early misconceptions persist** - Previous understanding may influence implementation incorrectly
-2. **Two-path architecture is subtle** - Easy to miss that both paths converge at parameter extraction
-3. **Parameter extraction dual role** - It's not just extraction, but also verification of executability
+2. **Two-path architecture is subtle** - Easy to miss that both paths converge at parameter mapping
+3. **Parameter mapping dual role** - It's not just extraction, but also verification of executability
 4. **Separation of concerns** - Planner prepares workflows, CLI handles approval and execution
 5. **Template variables in params** - Templates go directly in params, not in separate structures
 
-## Parameter Extraction as Verification Gate
+## Parameter Mapping as Verification Gate
 
 ### Parameters Need Interpretation AND Verification
 The ParameterMappingNode serves as the critical convergence point where both paths meet. It's not just extracting parameters - it's verifying the workflow can actually execute:
@@ -113,7 +113,7 @@ CLI: Prompts user "What issue number?"
 
 This separation ensures workflows are only executed when they have all necessary inputs, preventing runtime failures and improving user experience.
 
-## Two-Phase Parameter Extraction Architecture
+## Two-Phase Parameter Handling Architecture
 
 The planner uses a sophisticated two-phase approach to parameter handling:
 
@@ -1253,8 +1253,8 @@ This dual approach provides early error detection with retry opportunity while m
 1. **Understand the Meta-Workflow Nature**
    - The planner orchestrates discovery, generation, and parameter mapping
    - Returns structured results for CLI to execute
-   - Two distinct paths that converge at parameter extraction
-   - Parameter extraction is verification, not just extraction
+   - Two distinct paths that converge at parameter mapping
+   - Parameter mapping is verification, not just extraction
 
 2. **Template Variables are Sacred**
    - NEVER hardcode extracted values
