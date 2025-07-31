@@ -62,15 +62,20 @@ def create_retry_loop_flow():
 
     class AttemptCounterNode(Node):
         def prep(self, shared):
-            # Pass shared dict to exec for attempt counting
-            return shared
+            # Extract current attempt count
+            return shared.get("attempts", 0)
 
         def exec(self, prep_res):
-            shared = prep_res  # prep_res is the shared dict
-            shared["attempts"] = shared.get("attempts", 0) + 1
-            if shared["attempts"] > 3:
-                return "max_attempts"
-            return "continue"
+            current_attempts = prep_res
+            new_attempts = current_attempts + 1
+            if new_attempts > 3:
+                return {"attempts": new_attempts, "action": "max_attempts"}
+            return {"attempts": new_attempts, "action": "continue"}
+
+        def post(self, shared, prep_res, exec_res):
+            # Update shared with new attempt count
+            shared["attempts"] = exec_res["attempts"]
+            return exec_res["action"]
 
     flow.add_node("counter", AttemptCounterNode())
     flow.add_node("generate", WorkflowGeneratorNode())
@@ -113,7 +118,8 @@ class WorkflowGeneratorNode(Node):
     def prep(self, shared):
         """Prepare context for generation."""
         return {
-            "base_prompt": shared.get("base_prompt", ""),
+            "user_input": shared["user_input"],
+            "planning_context": shared.get("planning_context", ""),
             "generation_attempts": shared.get("generation_attempts", 0),
             "validation_errors": shared.get("validation_errors", [])
         }
@@ -123,11 +129,14 @@ class WorkflowGeneratorNode(Node):
         # Use attempt count for progressive enhancement
         attempt = prep_res["generation_attempts"]
 
+        # Build base prompt
+        base_prompt = self._build_prompt(prep_res["user_input"], prep_res["planning_context"])
+
         if attempt > 0:
             # Add specific error feedback to prompt
-            prompt = enhance_prompt_with_errors(prep_res["base_prompt"], prep_res["validation_errors"])
+            prompt = enhance_prompt_with_errors(base_prompt, prep_res["validation_errors"])
         else:
-            prompt = prep_res["base_prompt"]
+            prompt = base_prompt
 
         # Generate workflow
         response = self.model.prompt(prompt, schema=WorkflowIR)
@@ -846,18 +855,21 @@ class WorkflowGeneratorNode(Node):
 
     def prep(self, shared):
         """Prepare data including attempt tracking for progressive enhancement."""
-        return shared  # Pass entire shared dict for comprehensive context
+        return {
+            "user_input": shared["user_input"],
+            "planning_context": shared.get("planning_context", ""),
+            "generation_attempts": shared.get("generation_attempts", 0),
+            "validation_errors": shared.get("validation_errors", []),
+            "prompt_enhancements": shared.get("prompt_enhancements", [])
+        }
 
     def exec(self, prep_res):
         """Generate workflow with progressive enhancement."""
-        shared = prep_res  # prep_res is the shared dict
-
         # Track attempts for progressive enhancement
-        attempt = shared.get("generation_attempts", 0)
-        shared["generation_attempts"] = attempt + 1
+        attempt = prep_res["generation_attempts"]
 
         # Build prompt with progressive enhancements
-        prompt = self._build_prompt(shared, attempt)
+        prompt = self._build_prompt(prep_res, attempt)
 
         # Generate with structured output
         response = self.model.prompt(
@@ -871,17 +883,19 @@ class WorkflowGeneratorNode(Node):
         # Validate with JSONSchema
         validate_ir(workflow_dict)
 
-        shared["generated_workflow"] = workflow_dict
-        return "validate"
+        return {
+            "workflow": workflow_dict,
+            "attempt": attempt + 1
+        }
 
-    def _build_prompt(self, shared, attempt):
+    def _build_prompt(self, prep_res, attempt):
         """Build prompt with progressive enhancements based on retry attempt."""
-        base_prompt = self._create_base_prompt(shared)
+        base_prompt = self._create_base_prompt(prep_res["user_input"], prep_res["planning_context"])
 
         # Add error context on retries
-        if attempt > 0 and "validation_errors" in shared:
+        if attempt > 0 and prep_res["validation_errors"]:
             base_prompt += "\n\nPrevious attempt had these issues:\n"
-            for error in shared["validation_errors"][:3]:  # Limit to avoid prompt bloat
+            for error in prep_res["validation_errors"][:3]:  # Limit to avoid prompt bloat
                 base_prompt += f"- {error}\n"
             base_prompt += "\nPlease address these issues in your response."
 
@@ -891,11 +905,18 @@ class WorkflowGeneratorNode(Node):
 
         return base_prompt
 
+    def post(self, shared, prep_res, exec_res):
+        """Store generated workflow and update attempt count."""
+        shared["generated_workflow"] = exec_res["workflow"]
+        shared["generation_attempts"] = exec_res["attempt"]
+        return "validate"
+
     def exec_fallback(self, prep_res, exc):
         """Handle final failure after all retries."""
-        shared = prep_res  # prep_res is the shared dict
-        shared["generation_failed"] = True
-        shared["final_error"] = str(exc)
+        # Log error with available context
+        print(f"Generation failed after {prep_res['generation_attempts']} attempts")
+        print(f"Error: {exc}")
+        print(f"User input: {prep_res['user_input']}")
         return "generation_failed"
 ```
 
@@ -904,12 +925,12 @@ class WorkflowGeneratorNode(Node):
 The prompt must explicitly guide the LLM to use template variables:
 
 ```python
-def _create_base_prompt(self, shared):
+def _create_base_prompt(self, user_input, planning_context):
     """Create prompt that emphasizes template variables."""
-    return f"""Generate a workflow for: {shared['user_input']}
+    return f"""Generate a workflow for: {user_input}
 
 Available nodes:
-{shared['node_context']}
+{planning_context}
 
 CRITICAL Requirements:
 1. Use template variables ($variable) in params for ALL dynamic values

@@ -866,9 +866,31 @@ def exec(self, prep_res):
     # exec() receives clean, focused inputs
 ```
 
-**When to return the entire shared dict:**
-The only common exception is when using `exec_fallback()` for error handling, since `exec_fallback()` only receives `prep_res` and the exception, not the shared dict:
+**Best Practices for prep() Return Values:**
 
+1. **Single Value** (most common):
+```python
+def prep(self, shared):
+    return shared["user_input"]  # Direct value return
+```
+
+2. **Multiple Values** (use tuple):
+```python
+def prep(self, shared):
+    return shared["user_input"], shared["context"], shared.get("attempts", 0)
+```
+
+3. **Structured Data** (use dict):
+```python
+def prep(self, shared):
+    return {
+        "user_input": shared["user_input"],
+        "planning_context": shared.get("planning_context", ""),
+        "attempt_count": shared.get("generation_attempts", 0)
+    }
+```
+
+**Valid Exception - When exec_fallback Needs Shared Access**:
 ```python
 def prep(self, shared):
     # Return shared when exec_fallback needs access to it
@@ -877,12 +899,86 @@ def prep(self, shared):
 def exec_fallback(self, prep_res, exc):
     shared = prep_res  # Access shared through prep_res
     shared["error"] = str(exc)
+    # Can update shared state, restore from checkpoints, etc.
     return "error"
 ```
 
-For most nodes, `prep()` should extract specific data to maintain clean separation of concerns.
+This pattern is valid when:
+- exec_fallback needs to update error tracking in shared
+- The node performs recovery/restoration operations
+- Error context enrichment requires access to shared state
+- No cleaner way exists to handle the error scenario
 
-### prep() Method Best Practices
+**Important**: For most nodes, return specific data from prep(). Only return the entire shared dict when exec_fallback genuinely needs shared store access.
+
+### prep() Method Best Practices for Planner Nodes
+
+When implementing planner nodes, follow these specific patterns for prep() methods:
+
+**1. Discovery Nodes (extracting context)**:
+```python
+def prep(self, shared):
+    # Extract user input and any discovery context
+    return {
+        "user_input": shared["user_input"],
+        "discovery_context": shared.get("discovery_context", "")
+    }
+```
+
+**2. Generation Nodes (needing multiple context pieces)**:
+```python
+def prep(self, shared):
+    # Extract all data needed for generation
+    return {
+        "user_input": shared["user_input"],
+        "planning_context": shared.get("planning_context", ""),
+        "generation_attempts": shared.get("generation_attempts", 0),
+        "validation_errors": shared.get("validation_errors", [])
+    }
+```
+
+**3. Validation Nodes (checking workflow structure)**:
+```python
+def prep(self, shared):
+    # Extract workflow and validation context
+    return {
+        "workflow": shared.get("generated_workflow", {}),
+        "discovered_params": shared.get("discovered_params", {}),
+        "registry": shared.get("registry")
+    }
+```
+
+**4. Parameter Extraction Nodes (processing user input)**:
+```python
+def prep(self, shared):
+    # Extract data needed for parameter extraction
+    return {
+        "user_input": shared["user_input"],
+        "workflow": shared.get("found_workflow") or shared.get("generated_workflow"),
+        "current_date": shared.get("current_date", datetime.now().isoformat()[:10])
+    }
+```
+
+**Key Principles**:
+- Return specific data structures unless exec_fallback needs shared access
+- Use dictionaries when multiple related values are needed
+- Include sensible defaults for optional values
+- Name keys clearly to indicate their purpose
+- Keep prep() focused on data extraction, not computation
+
+**Exception for Error Handling**:
+When a planner node needs comprehensive error handling with exec_fallback:
+```python
+class PlannerNodeWithErrorHandling(PlannerNodeBase):
+    def prep(self, shared):
+        # Return shared when exec_fallback needs to enrich error context
+        return shared
+
+    def exec_fallback(self, prep_res, exc):
+        shared = prep_res  # Access shared for error tracking
+        self.enrich_error_context(shared, exc, {...})
+        return "error_handled"
+```
 
 **Preferred Pattern - Simple Extraction**:
 ```python
@@ -1017,7 +1113,8 @@ class ProgressiveGeneratorNode(Node):
 
         return {
             "prompt": prompt,
-            "attempt": attempt
+            "attempt": attempt,
+            "planning_context": shared.get("planning_context", "")
         }
 
     def exec(self, prep_res):
@@ -1317,32 +1414,32 @@ class CheckpointNode(Node):
         self.checkpoint_name = checkpoint_name
 
     def prep(self, shared):
-        # Return shared so we can access it in exec_fallback if needed
-        return shared
+        # Extract data needed for checkpointing
+        return {
+            "checkpoint_name": self.checkpoint_name,
+            "current_state": {
+                "generated_workflow": shared.get("generated_workflow"),
+                "validation_state": shared.get("validation_state"),
+                "attempt_count": shared.get("generation_attempts", 0)
+            }
+        }
+
+    def exec(self, prep_res):
+        # Checkpoint logic could go here if needed
+        return {"status": "checkpoint_created"}
 
     def post(self, shared, prep_res, exec_res):
         # Save checkpoint after successful execution
         checkpoint = {
-            "name": self.checkpoint_name,
+            "name": prep_res["checkpoint_name"],
             "timestamp": time.time(),
-            "shared_state": shared.copy()
+            "state": prep_res["current_state"]
         }
 
         if "checkpoints" not in shared:
             shared["checkpoints"] = []
         shared["checkpoints"].append(checkpoint)
-
-    def exec_fallback(self, prep_res, exc):
-        # prep_res is the shared dict (from prep method)
-        shared = prep_res
-
-        # On failure, restore from checkpoint
-        if "checkpoints" in shared and shared["checkpoints"]:
-            last_checkpoint = shared["checkpoints"][-1]
-            for key in ["generated_workflow", "validation_state"]:
-                if key in last_checkpoint["shared_state"]:
-                    shared[key] = last_checkpoint["shared_state"][key]
-        return "recovery"
+        return "continue"
 ```
 
 ### Parallel Strategy Simulation Pattern
@@ -1439,24 +1536,31 @@ class ClassifyInputNode(Node):
         if self._looks_like_cli(user_input):
             return {
                 "input_type": "cli_syntax",
-                "action": "parse_cli"
+                "classification": "cli"
             }
         elif self._looks_like_natural(user_input):
             return {
                 "input_type": "natural_language",
-                "action": "natural_language"
+                "classification": "natural"
             }
         else:
             # Ambiguous - need more analysis
             return {
                 "input_type": "ambiguous",
-                "action": "ask_user"
+                "classification": "ambiguous"
             }
 
     def post(self, shared, prep_res, exec_res):
         # Store classification result
         shared["input_type"] = exec_res["input_type"]
-        return exec_res["action"]  # Return the routing action
+
+        # Map classification to action
+        action_map = {
+            "cli": "parse_cli",
+            "natural": "natural_language",
+            "ambiguous": "ask_user"
+        }
+        return action_map[exec_res["classification"]]
 
     def _looks_like_cli(self, input_str):
         """Check if input looks like CLI syntax."""
@@ -2037,10 +2141,11 @@ class WorkflowGeneratorNode(PlannerNodeBase):
 
 class ValidatorNode(PlannerNodeBase):
     def prep(self, shared):
-        # Return both workflow and shared for access in exec
+        # Return workflow and registry for validation
         return {
             "workflow": shared.get("generated_workflow", {}),
-            "shared": shared
+            "discovered_params": shared.get("discovered_params", {}),
+            "registry": shared.get("registry")
         }
 
     def exec(self, prep_res):
