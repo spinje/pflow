@@ -69,7 +69,8 @@ Your task:
 1. Read the test implementation instructions thoroughly
 2. Read the specific report for this directory
 3. Fix ALL issues identified in the report
-4. Focus on the most critical issues first:
+4. For each issue, carefully look at the codebase and make sure you understand the codebase and the tests before you start fixing them (you should have no assumptions, if you do, dig deeper)
+5. Focus on the most critical issues first:
    - Remove excessive mocking
    - Test behavior, not implementation
    - Fix brittle assertions
@@ -87,7 +88,6 @@ Constraints:
 - Preserve test coverage while improving quality
 - Document significant changes in docstrings
 - Do not make ANY changes to the codebase except for the tests you are fixing
-- Carefully look at the codebase and make sure you understand the codebase and the tests before you start fixing them (you should have no assumptions, if you do, dig deeper)
 
 Deliverables:
 1. Summary of tests fixed
