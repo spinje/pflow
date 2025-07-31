@@ -67,22 +67,23 @@ class TestDiscoveryPlanningFlow:
             }
             workflow_file.write_text(json.dumps(workflow_data))
 
-            # Mock the workflow loading to use our test directory
+            # Mock the workflow loading to use our test directory and isolate registry
             with patch("pflow.planning.context_builder.Path.home") as mock_home:
                 mock_home.return_value = Path(tmpdir).parent
                 with patch("pflow.planning.context_builder._load_saved_workflows") as mock_load:
                     mock_load.return_value = [workflow_data]
+                    # Isolate workflow manager to prevent state pollution
+                    with patch("pflow.planning.context_builder._workflow_manager", None):
+                        # Discovery should include workflow - pass empty registry to avoid loading real one
+                        discovery = build_discovery_context(registry_metadata={})
+                        assert "## Available Workflows" in discovery
+                        assert "test-integration-workflow" in discovery
 
-                    # Discovery should include workflow
-                    discovery = build_discovery_context()
-                    assert "## Available Workflows" in discovery
-                    assert "test-integration-workflow" in discovery
-
-                    # Planning should show workflow details
-                    planning = build_planning_context([], ["test-integration-workflow"], {})
-                    assert "## Selected Workflows" in planning
-                    assert "test-integration-workflow" in planning
-                    assert "Test workflow for integration testing" in planning
+                        # Planning should show workflow details
+                        planning = build_planning_context([], ["test-integration-workflow"], {})
+                        assert "## Selected Workflows" in planning
+                        assert "test-integration-workflow" in planning
+                        assert "Test workflow for integration testing" in planning
 
     def test_error_recovery_flow(self):
         """Test error handling and recovery in planning phase."""

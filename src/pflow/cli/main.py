@@ -260,27 +260,32 @@ def _prompt_workflow_save(ir_data: dict[str, Any]) -> None:
 
     workflow_manager = WorkflowManager()
 
-    # Get workflow name
-    workflow_name = click.prompt("Workflow name", type=str)
+    # Loop until successful save or user cancels
+    while True:
+        # Get workflow name
+        workflow_name = click.prompt("Workflow name", type=str)
 
-    # Get optional description
-    description = click.prompt("Description (optional)", default="", type=str)
+        # Get optional description
+        description = click.prompt("Description (optional)", default="", type=str)
 
-    try:
-        # Save the workflow
-        saved_path = workflow_manager.save(workflow_name, ir_data, description)
-        click.echo(f"\n✅ Workflow saved to: {saved_path}")
-    except WorkflowExistsError:
-        click.echo(f"\n❌ Error: A workflow named '{workflow_name}' already exists.")
-        # Offer to use a different name
-        retry = click.prompt("Try with a different name? (y/n)", type=str, default="n").lower()
-        if retry == "y":
-            # Recursive call to try again
-            _prompt_workflow_save(ir_data)
-    except WorkflowValidationError as e:
-        click.echo(f"\n❌ Error: Invalid workflow name: {e!s}")
-    except Exception as e:
-        click.echo(f"\n❌ Error saving workflow: {e!s}")
+        try:
+            # Save the workflow
+            saved_path = workflow_manager.save(workflow_name, ir_data, description)
+            click.echo(f"\n✅ Workflow saved to: {saved_path}")
+            break  # Success, exit loop
+        except WorkflowExistsError:
+            click.echo(f"\n❌ Error: A workflow named '{workflow_name}' already exists.")
+            # Offer to use a different name
+            retry = click.prompt("Try with a different name? (y/n)", type=str, default="n").lower()
+            if retry != "y":
+                break  # User declined to retry, exit loop
+            # Continue loop to try again
+        except WorkflowValidationError as e:
+            click.echo(f"\n❌ Error: Invalid workflow name: {e!s}")
+            break  # Invalid name, don't retry
+        except Exception as e:
+            click.echo(f"\n❌ Error saving workflow: {e!s}")
+            break  # Other error, don't retry
 
 
 def execute_json_workflow(

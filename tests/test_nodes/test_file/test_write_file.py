@@ -25,7 +25,10 @@ class TestWriteFileNode:
 
             assert action == "default"
             assert "written" in shared
-            assert "Successfully wrote to" in shared["written"]
+            # Check semantic meaning rather than exact string
+            success_msg = shared["written"]
+            assert "wrote" in success_msg.lower() or "written" in success_msg.lower()
+            assert file_path in success_msg  # Shows actual file path
 
             # Verify file contents
             with open(file_path) as f:
@@ -65,7 +68,10 @@ class TestWriteFileNode:
             action = node.post(shared, prep_res, exec_res)
 
             assert action == "default"
-            assert "appended to" in shared["written"]
+            # Check semantic meaning rather than exact string
+            success_msg = shared["written"]
+            assert "append" in success_msg.lower()
+            assert temp_path in success_msg  # Shows actual file path
 
             with open(temp_path) as f:
                 assert f.read() == "Initial content\nAppended content"

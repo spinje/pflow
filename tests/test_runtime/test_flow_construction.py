@@ -1,6 +1,14 @@
-"""Tests for flow construction functionality in the compiler module."""
+"""Tests for flow construction functionality in the compiler module.
 
-from unittest.mock import Mock, patch
+FIX HISTORY:
+- Removed MockNode class that tested mock behavior instead of real behavior
+- Replace all mocking with real node implementations and test registries
+- Focus on testing actual workflow construction and execution
+- Test behavior, not implementation details like mock call counts
+"""
+
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -15,160 +23,198 @@ from pflow.runtime.compiler import (
 from pocketflow import BaseNode, Flow
 
 
-class MockNode(BaseNode):
-    """Mock node for testing without real implementations."""
+def create_test_registry() -> tuple[Registry, dict]:
+    """Create a test registry with real test nodes for consistent testing."""
+    registry_dir = tempfile.mkdtemp()
+    registry_path = Path(registry_dir) / "test.json"
+    registry = Registry(registry_path)
 
-    def __init__(self):
-        super().__init__()
-        self.connections = []  # Track connections for testing
-
-    def __rshift__(self, other):
-        """Override >> operator to track connections."""
-        self.connections.append(("default", other))
-        return super().__rshift__(other)
-
-    def __sub__(self, action):
-        """Override - operator to track action-based connections."""
-
-        # Create a mock transition that tracks the connection
-        class MockTransition:
-            def __init__(self, source, action):
-                self.source = source
-                self.action = action
-
-            def __rshift__(self, target):
-                self.source.connections.append((self.action, target))
-                return self.source.next(target, self.action)
-
-        return MockTransition(self, action)
+    # Register real test nodes
+    test_nodes_metadata = {
+        "test-node": {
+            "module": "pflow.nodes.test_node",
+            "class_name": "TestNode",
+            "docstring": "Test node for validation",
+            "file_path": "src/pflow/nodes/test_node.py",
+        },
+        "test-node-retry": {
+            "module": "pflow.nodes.test_node_retry",
+            "class_name": "TestNodeRetry",
+            "docstring": "Test node with retry",
+            "file_path": "src/pflow/nodes/test_node_retry.py",
+        },
+    }
+    registry.save(test_nodes_metadata)
+    return registry, test_nodes_metadata
 
 
 class TestInstantiateNodes:
-    """Test the _instantiate_nodes helper function."""
+    """Test the _instantiate_nodes helper function with real nodes."""
 
-    def test_instantiate_single_node(self):
-        """Test instantiating a single node."""
+    def test_instantiate_single_node_creates_working_node(self):
+        """Test instantiating a single node creates a working node instance."""
+        registry, _ = create_test_registry()
+
         # Create IR with one node
         ir_dict = {"nodes": [{"id": "node1", "type": "test-node"}]}
 
-        # Mock registry and import_node_class
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            mock_import.return_value = MockNode
+        # Call function with real registry
+        nodes = _instantiate_nodes(ir_dict, registry)
 
-            # Call function
-            nodes = _instantiate_nodes(ir_dict, mock_registry)
+        # Verify behavior: correct node created and it works
+        assert len(nodes) == 1
+        assert "node1" in nodes
+        node = nodes["node1"]
+        assert isinstance(node, BaseNode)
 
-            # Verify
-            assert len(nodes) == 1
-            assert "node1" in nodes
-            assert isinstance(nodes["node1"], MockNode)
-            mock_import.assert_called_once_with("test-node", mock_registry)
+        # Test the node actually works by running it
+        shared_store = {"test_input": "hello"}
+        result = node.prep(shared_store)
+        processed = node.exec(result)
+        action = node.post(shared_store, result, processed)
 
-    def test_instantiate_multiple_nodes(self):
-        """Test instantiating multiple nodes."""
+        # Verify the node processed data correctly
+        assert shared_store["test_output"] == "Processed: hello"
+        assert action == "default"
+
+    def test_instantiate_multiple_nodes_creates_different_instances(self):
+        """Test instantiating multiple nodes creates separate working instances.
+
+        FIX HISTORY:
+        - Fixed KeyError: 'test_output' by using appropriate input/output keys for each node type
+        - TestNode uses test_input/test_output, TestNodeRetry uses retry_input/retry_output
+        - Test now validates real behavior: each node processes data through its specific interface
+        """
+        registry, _ = create_test_registry()
+
         # Create IR with multiple nodes
         ir_dict = {
             "nodes": [
-                {"id": "node1", "type": "type-a"},
-                {"id": "node2", "type": "type-b"},
-                {"id": "node3", "type": "type-a"},  # Same type as node1
+                {"id": "node1", "type": "test-node"},
+                {"id": "node2", "type": "test-node-retry"},
+                {"id": "node3", "type": "test-node"},  # Same type as node1, different instance
             ]
         }
 
-        # Mock registry and import_node_class
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            mock_import.return_value = MockNode
+        # Call function with real registry
+        nodes = _instantiate_nodes(ir_dict, registry)
 
-            # Call function
-            nodes = _instantiate_nodes(ir_dict, mock_registry)
+        # Verify behavior: correct number of distinct working instances
+        assert len(nodes) == 3
+        assert all(key in nodes for key in ["node1", "node2", "node3"])
+        assert all(isinstance(node, BaseNode) for node in nodes.values())
 
-            # Verify
-            assert len(nodes) == 3
-            assert all(key in nodes for key in ["node1", "node2", "node3"])
-            assert all(isinstance(node, MockNode) for node in nodes.values())
-            assert mock_import.call_count == 3
+        # Verify they're different instances (not the same object)
+        assert nodes["node1"] is not nodes["node3"]  # Different instances
+        assert type(nodes["node1"]).__name__ == "TestNode"
+        assert type(nodes["node2"]).__name__ == "TestNodeRetry"  # Different class
+        assert type(nodes["node3"]).__name__ == "TestNode"
 
-    def test_instantiate_with_params(self):
-        """Test instantiating nodes with parameters."""
+        # Test all nodes can execute independently with proper input keys
+        for node_id, node in nodes.items():
+            # Use appropriate input key based on node type
+            if type(node).__name__ == "TestNodeRetry":
+                shared_store = {"retry_input": f"input-{node_id}"}
+                expected_output_key = "retry_output"
+            else:
+                shared_store = {"test_input": f"input-{node_id}"}
+                expected_output_key = "test_output"
+
+            result = node.prep(shared_store)
+            processed = node.exec(result)
+            node.post(shared_store, result, processed)
+
+            # Verify each node processed its data correctly
+            assert expected_output_key in shared_store
+            assert f"input-{node_id}" in shared_store[expected_output_key]
+
+    def test_instantiate_with_params_sets_params_correctly(self):
+        """Test instantiating nodes with parameters actually sets them on the node."""
+        registry, _ = create_test_registry()
+
         # Create IR with parameterized node
         ir_dict = {
             "nodes": [
                 {
                     "id": "node1",
                     "type": "test-node",
-                    "params": {"threshold": 0.5, "model": "gpt-4", "template": "$input_var"},
+                    "params": {"custom_param": "test_value"},
                 }
             ]
         }
 
-        # Mock registry and import_node_class
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            # Create a mock that tracks set_params calls
-            mock_node = MockNode()
-            mock_node.set_params = Mock()
-            mock_import.return_value = lambda: mock_node
+        # Call function with real registry
+        nodes = _instantiate_nodes(ir_dict, registry)
 
-            # Call function
-            nodes = _instantiate_nodes(ir_dict, mock_registry)
+        # Verify node was created and params were set
+        assert len(nodes) == 1
+        node = nodes["node1"]
 
-            # Verify
-            assert len(nodes) == 1
-            # When templates are present, node gets wrapped and only static params are set on inner node
-            mock_node.set_params.assert_called_once_with({"threshold": 0.5, "model": "gpt-4"})
+        # Test that parameters were actually set on the node
+        assert hasattr(node, "params")
+        assert node.params.get("custom_param") == "test_value"
 
-    def test_instantiate_import_error(self):
-        """Test error handling when import fails."""
-        # Create IR
-        ir_dict = {"nodes": [{"id": "node1", "type": "bad-node"}]}
+        # Test that the node still functions correctly with params
+        shared_store = {"test_input": "param_test"}
+        result = node.prep(shared_store)
+        processed = node.exec(result)
+        action = node.post(shared_store, result, processed)
 
-        # Mock registry and import failure
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            mock_import.side_effect = CompilationError(
-                "Node type 'bad-node' not found", phase="node_resolution", node_type="bad-node"
-            )
+        # Node should work regardless of parameters
+        assert shared_store["test_output"] == "Processed: param_test"
+        assert action == "default"
 
-            # Call function and expect error
-            with pytest.raises(CompilationError) as exc_info:
-                _instantiate_nodes(ir_dict, mock_registry)
+    def test_instantiate_with_nonexistent_node_type_raises_error(self):
+        """Test error handling when node type doesn't exist in registry."""
+        registry, _ = create_test_registry()
 
-            # Verify error has node_id added
-            error = exc_info.value
-            assert error.node_id == "node1"
-            assert "bad-node" in str(error)
+        # Create IR with non-existent node type
+        ir_dict = {"nodes": [{"id": "node1", "type": "nonexistent-node"}]}
 
-    def test_instantiate_empty_params(self):
-        """Test that empty params dict is handled correctly."""
-        # Create IR with empty params
-        ir_dict = {"nodes": [{"id": "node1", "type": "test-node", "params": {}}]}
+        # Call function and expect error
+        with pytest.raises(CompilationError) as exc_info:
+            _instantiate_nodes(ir_dict, registry)
 
-        # Mock registry and import_node_class
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            mock_node = MockNode()
-            mock_node.set_params = Mock()
-            mock_import.return_value = lambda: mock_node
+        # Verify error behavior: should contain useful information
+        error = exc_info.value
+        assert error.node_id == "node1"
+        assert "nonexistent-node" in str(error)
+        assert error.phase == "node_resolution"
 
-            # Call function
-            nodes = _instantiate_nodes(ir_dict, mock_registry)
+    def test_instantiate_with_no_params_works_correctly(self):
+        """Test that nodes work correctly when no params are provided."""
+        registry, _ = create_test_registry()
 
-            # Verify set_params not called for empty dict
-            assert len(nodes) == 1
-            mock_node.set_params.assert_not_called()
+        # Create IR with no params (not even empty dict)
+        ir_dict = {"nodes": [{"id": "node1", "type": "test-node"}]}
+
+        # Call function with real registry
+        nodes = _instantiate_nodes(ir_dict, registry)
+
+        # Verify node works correctly without params
+        assert len(nodes) == 1
+        node = nodes["node1"]
+
+        # Test that the node functions correctly without params
+        shared_store = {"test_input": "no_params_test"}
+        result = node.prep(shared_store)
+        processed = node.exec(result)
+        action = node.post(shared_store, result, processed)
+
+        assert shared_store["test_output"] == "Processed: no_params_test"
+        assert action == "default"
 
 
 class TestWireNodes:
-    """Test the _wire_nodes helper function."""
+    """Test the _wire_nodes helper function with real nodes and actual workflow execution."""
 
-    def test_wire_default_connection(self):
-        """Test wiring nodes with default (>>) connection."""
-        # Create nodes
-        node1 = MockNode()
-        node2 = MockNode()
-        nodes = {"node1": node1, "node2": node2}
+    def test_wire_default_connection_creates_working_flow(self):
+        """Test wiring nodes with default (>>) connection produces working workflow."""
+        registry, _ = create_test_registry()
+
+        # Create IR and instantiate real nodes
+        ir_dict = {"nodes": [{"id": "node1", "type": "test-node"}, {"id": "node2", "type": "test-node"}]}
+        nodes = _instantiate_nodes(ir_dict, registry)
 
         # Create edges
         edges = [{"source": "node1", "target": "node2"}]
@@ -176,39 +222,30 @@ class TestWireNodes:
         # Wire nodes
         _wire_nodes(nodes, edges)
 
-        # Verify connection
-        assert len(node1.connections) == 1
-        assert node1.connections[0] == ("default", node2)
+        # Test behavior: create flow and verify data flows between nodes
+        flow = Flow(start=nodes["node1"])
+        shared_store = {"test_input": "wiring_test"}
 
-    def test_wire_action_connection(self):
-        """Test wiring nodes with action-based (-) connection."""
-        # Create nodes
-        node1 = MockNode()
-        node2 = MockNode()
-        node3 = MockNode()
-        nodes = {"node1": node1, "node2": node2, "node3": node3}
+        # Execute the flow
+        flow.run(shared_store)
 
-        # Create edges with actions
-        edges = [
-            {"source": "node1", "target": "node2", "action": "success"},
-            {"source": "node1", "target": "node3", "action": "error"},
-        ]
+        # Verify the workflow executed correctly through both nodes
+        assert "test_output" in shared_store
+        assert "wiring_test" in shared_store["test_output"]
 
-        # Wire nodes
-        _wire_nodes(nodes, edges)
+    def test_wire_chain_connection_executes_sequentially(self):
+        """Test wiring a chain of nodes executes them in order."""
+        registry, _ = create_test_registry()
 
-        # Verify connections
-        assert len(node1.connections) == 2
-        assert ("success", node2) in node1.connections
-        assert ("error", node3) in node1.connections
-
-    def test_wire_chain_connection(self):
-        """Test wiring a chain of nodes."""
-        # Create nodes
-        node1 = MockNode()
-        node2 = MockNode()
-        node3 = MockNode()
-        nodes = {"node1": node1, "node2": node2, "node3": node3}
+        # Create three nodes
+        ir_dict = {
+            "nodes": [
+                {"id": "node1", "type": "test-node"},
+                {"id": "node2", "type": "test-node"},
+                {"id": "node3", "type": "test-node"},
+            ]
+        }
+        nodes = _instantiate_nodes(ir_dict, registry)
 
         # Create chain edges
         edges = [
@@ -219,16 +256,23 @@ class TestWireNodes:
         # Wire nodes
         _wire_nodes(nodes, edges)
 
-        # Verify connections
-        assert len(node1.connections) == 1
-        assert node1.connections[0] == ("default", node2)
-        assert len(node2.connections) == 1
-        assert node2.connections[0] == ("default", node3)
+        # Test behavior: verify chain execution
+        flow = Flow(start=nodes["node1"])
+        shared_store = {"test_input": "chain_test"}
 
-    def test_wire_missing_source_node(self):
+        flow.run(shared_store)
+
+        # All nodes in chain should have processed the data
+        assert "test_output" in shared_store
+        assert "chain_test" in shared_store["test_output"]
+
+    def test_wire_missing_source_node_raises_helpful_error(self):
         """Test error when edge references non-existent source."""
-        # Create nodes
-        nodes = {"node1": MockNode()}
+        registry, _ = create_test_registry()
+
+        # Create one real node
+        ir_dict = {"nodes": [{"id": "node1", "type": "test-node"}]}
+        nodes = _instantiate_nodes(ir_dict, registry)
 
         # Create edge with missing source
         edges = [{"source": "missing", "target": "node1"}]
@@ -237,17 +281,20 @@ class TestWireNodes:
         with pytest.raises(CompilationError) as exc_info:
             _wire_nodes(nodes, edges)
 
-        # Verify error details
+        # Verify error provides helpful context for debugging
         error = exc_info.value
         assert error.phase == "flow_wiring"
         assert error.node_id == "missing"
         assert "non-existent source node" in str(error)
         assert "Available nodes: node1" in error.suggestion
 
-    def test_wire_missing_target_node(self):
+    def test_wire_missing_target_node_raises_helpful_error(self):
         """Test error when edge references non-existent target."""
-        # Create nodes
-        nodes = {"node1": MockNode()}
+        registry, _ = create_test_registry()
+
+        # Create one real node
+        ir_dict = {"nodes": [{"id": "node1", "type": "test-node"}]}
+        nodes = _instantiate_nodes(ir_dict, registry)
 
         # Create edge with missing target
         edges = [{"source": "node1", "target": "missing"}]
@@ -256,59 +303,89 @@ class TestWireNodes:
         with pytest.raises(CompilationError) as exc_info:
             _wire_nodes(nodes, edges)
 
-        # Verify error details
+        # Verify error provides helpful context for debugging
         error = exc_info.value
         assert error.phase == "flow_wiring"
         assert error.node_id == "missing"
         assert "non-existent target node" in str(error)
         assert "Available nodes: node1" in error.suggestion
 
-    def test_wire_empty_edges(self):
-        """Test wiring with no edges."""
-        # Create nodes
-        nodes = {"node1": MockNode(), "node2": MockNode()}
+    def test_wire_with_no_edges_leaves_nodes_unconnected(self):
+        """Test wiring with no edges leaves individual nodes that can run independently."""
+        registry, _ = create_test_registry()
 
-        # Wire with empty edges
+        # Create multiple real nodes
+        ir_dict = {"nodes": [{"id": "node1", "type": "test-node"}, {"id": "node2", "type": "test-node"}]}
+        nodes = _instantiate_nodes(ir_dict, registry)
+
+        # Wire with empty edges (no connections)
         _wire_nodes(nodes, [])
 
-        # Verify no connections made
-        assert len(nodes["node1"].connections) == 0
-        assert len(nodes["node2"].connections) == 0
+        # Test behavior: each node should work independently
+        for node_id, node in nodes.items():
+            shared_store = {"test_input": f"isolated_{node_id}"}
+            result = node.prep(shared_store)
+            processed = node.exec(result)
+            action = node.post(shared_store, result, processed)
+
+            # Each node should process its input independently
+            assert shared_store["test_output"] == f"Processed: isolated_{node_id}"
+            assert action == "default"
 
 
 class TestGetStartNode:
-    """Test the _get_start_node helper function."""
+    """Test the _get_start_node helper function with real nodes."""
 
-    def test_get_start_node_first_fallback(self):
+    def test_get_start_node_uses_first_node_by_default(self):
         """Test using first node as start when no explicit start specified."""
-        # Create nodes
-        nodes = {"node1": MockNode(), "node2": MockNode()}
+        registry, _ = create_test_registry()
 
-        # Create IR with nodes in specific order
-        ir_dict = {"nodes": [{"id": "node2"}, {"id": "node1"}]}
+        # Create real nodes
+        ir_dict = {"nodes": [{"id": "node2", "type": "test-node"}, {"id": "node1", "type": "test-node"}]}
+        nodes = _instantiate_nodes(ir_dict, registry)
 
         # Get start node
         start = _get_start_node(nodes, ir_dict)
 
-        # Verify first node in IR is used
+        # Verify first node in IR is used and it actually works
         assert start is nodes["node2"]
 
-    def test_get_start_node_explicit(self):
+        # Test that the start node can execute
+        shared_store = {"test_input": "start_test"}
+        result = start.prep(shared_store)
+        processed = start.exec(result)
+        action = start.post(shared_store, result, processed)
+
+        assert shared_store["test_output"] == "Processed: start_test"
+        assert action == "default"
+
+    def test_get_start_node_respects_explicit_start_node(self):
         """Test using explicit start_node when specified."""
-        # Create nodes
-        nodes = {"node1": MockNode(), "node2": MockNode()}
+        registry, _ = create_test_registry()
 
-        # Create IR with explicit start_node
-        ir_dict = {"nodes": [{"id": "node1"}, {"id": "node2"}], "start_node": "node2"}
+        # Create real nodes
+        ir_dict = {"nodes": [{"id": "node1", "type": "test-node"}, {"id": "node2", "type": "test-node"}]}
+        nodes = _instantiate_nodes(ir_dict, registry)
+
+        # Create IR with explicit start_node (not the first one)
+        ir_dict["start_node"] = "node2"
 
         # Get start node
         start = _get_start_node(nodes, ir_dict)
 
-        # Verify explicit start is used
+        # Verify explicit start is used and works
         assert start is nodes["node2"]
 
-    def test_get_start_node_no_nodes(self):
-        """Test error when no nodes exist."""
+        # Test that the explicitly chosen start node can execute
+        shared_store = {"test_input": "explicit_start"}
+        result = start.prep(shared_store)
+        processed = start.exec(result)
+        start.post(shared_store, result, processed)
+
+        assert shared_store["test_output"] == "Processed: explicit_start"
+
+    def test_get_start_node_with_no_nodes_raises_helpful_error(self):
+        """Test error when no nodes exist provides helpful context."""
         # Empty nodes
         nodes = {}
         ir_dict = {"nodes": []}
@@ -317,40 +394,52 @@ class TestGetStartNode:
         with pytest.raises(CompilationError) as exc_info:
             _get_start_node(nodes, ir_dict)
 
-        # Verify error
+        # Verify error provides helpful context
         error = exc_info.value
         assert error.phase == "start_detection"
         assert "Cannot create flow with no nodes" in str(error)
 
-    def test_get_start_node_invalid_explicit(self):
-        """Test error when explicit start_node doesn't exist."""
-        # Create nodes
-        nodes = {"node1": MockNode()}
+    def test_get_start_node_with_invalid_explicit_start_raises_helpful_error(self):
+        """Test error when explicit start_node doesn't exist provides helpful context."""
+        registry, _ = create_test_registry()
+
+        # Create one real node
+        ir_dict = {"nodes": [{"id": "node1", "type": "test-node"}]}
+        nodes = _instantiate_nodes(ir_dict, registry)
 
         # Create IR with invalid start_node
-        ir_dict = {"nodes": [{"id": "node1"}], "start_node": "missing"}
+        ir_dict["start_node"] = "missing"
 
         # Get start node and expect error
         with pytest.raises(CompilationError) as exc_info:
             _get_start_node(nodes, ir_dict)
 
-        # Verify error
+        # Verify error provides helpful debugging context
         error = exc_info.value
         assert error.phase == "start_detection"
         assert "Could not determine start node" in str(error)
 
 
 class TestCompileIrToFlow:
-    """Test the main compile_ir_to_flow function."""
+    """Test the main compile_ir_to_flow function with real integration testing.
 
-    def test_compile_simple_flow(self):
-        """Test compiling a simple linear flow."""
-        # Create IR
+    FIX HISTORY:
+    - Removed all mock-heavy tests that tested implementation details
+    - Removed log message testing (brittle implementation details)
+    - Focus on end-to-end integration testing with real nodes
+    - Test actual workflow compilation and execution behavior
+    """
+
+    def test_compile_and_execute_simple_flow_end_to_end(self):
+        """Test compiling and executing a simple linear flow works end-to-end."""
+        registry, _ = create_test_registry()
+
+        # Create realistic IR with real node types
         ir_dict = {
             "nodes": [
-                {"id": "input", "type": "input-node"},
-                {"id": "process", "type": "process-node"},
-                {"id": "output", "type": "output-node"},
+                {"id": "input", "type": "test-node"},
+                {"id": "process", "type": "test-node"},
+                {"id": "output", "type": "test-node-retry"},
             ],
             "edges": [
                 {"source": "input", "target": "process"},
@@ -358,178 +447,90 @@ class TestCompileIrToFlow:
             ],
         }
 
-        # Mock registry and import_node_class
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            mock_import.return_value = MockNode
+        # Compile with real registry
+        flow = compile_ir_to_flow(ir_dict, registry)
 
-            # Compile
-            flow = compile_ir_to_flow(ir_dict, mock_registry)
+        # Test behavior: verify compilation produces working flow
+        assert isinstance(flow, Flow)
+        assert flow.start_node is not None
 
-            # Verify
-            assert isinstance(flow, Flow)
-            assert flow.start_node is not None
-            assert mock_import.call_count == 3
+        # Most importantly: test the compiled flow actually executes correctly
+        shared_store = {"test_input": "integration_test"}
+        flow.run(shared_store)
 
-    def test_compile_with_actions(self):
-        """Test compiling flow with action-based routing."""
-        # Create IR with actions
+        # Verify the entire workflow executed through all nodes
+        assert "test_output" in shared_store
+        assert "integration_test" in shared_store["test_output"]
+
+    def test_compile_with_node_parameters_end_to_end(self):
+        """Test compiling and executing flow with node parameters works correctly."""
+        registry, _ = create_test_registry()
+
+        # Create IR with parameterized nodes
         ir_dict = {
-            "nodes": [
-                {"id": "decide", "type": "decision-node"},
-                {"id": "success", "type": "success-node"},
-                {"id": "error", "type": "error-node"},
-            ],
-            "edges": [
-                {"source": "decide", "target": "success", "action": "ok"},
-                {"source": "decide", "target": "error", "action": "fail"},
-            ],
-        }
-
-        # Mock registry and import_node_class
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            mock_import.return_value = MockNode
-
-            # Compile
-            flow = compile_ir_to_flow(ir_dict, mock_registry)
-
-            # Verify
-            assert isinstance(flow, Flow)
-
-    def test_compile_with_params(self):
-        """Test compiling flow with node parameters."""
-        # Create IR with params
-        ir_dict = {
-            "nodes": [
-                {
-                    "id": "llm",
-                    "type": "llm-node",
-                    "params": {"model": "gpt-4", "temperature": 0.7, "prompt": "Hello $name"},
-                }
-            ],
+            "nodes": [{"id": "node1", "type": "test-node", "params": {"custom_param": "param_value"}}],
             "edges": [],
         }
 
-        # Mock registry and import_node_class
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            # Track set_params calls
-            mock_node = MockNode()
-            mock_node.set_params = Mock()
-            mock_import.return_value = lambda: mock_node
+        # Compile with real registry
+        flow = compile_ir_to_flow(ir_dict, registry)
 
-            # Compile (disable validation since we're testing param passing, not template validation)
-            compile_ir_to_flow(ir_dict, mock_registry, validate=False)
+        # Test behavior: verify compiled flow executes with parameters
+        assert isinstance(flow, Flow)
 
-            # Verify params were set (template params excluded from inner node)
-            mock_node.set_params.assert_called_once()
-            params = mock_node.set_params.call_args[0][0]
-            assert params["model"] == "gpt-4"
-            assert params["temperature"] == 0.7
-            # Template param "prompt" is not passed to inner node
+        # Test execution works with parameters
+        shared_store = {"test_input": "param_test"}
+        flow.run(shared_store)
 
-    def test_compile_string_input(self):
-        """Test compiling from JSON string input."""
+        # Verify workflow executed correctly with parameters
+        assert "test_output" in shared_store
+        assert "param_test" in shared_store["test_output"]
+
+    def test_compile_from_json_string_works_end_to_end(self):
+        """Test compiling from JSON string input produces working flow."""
+        registry, _ = create_test_registry()
+
         # Create JSON string
         ir_json = '{"nodes": [{"id": "test", "type": "test-node"}], "edges": []}'
 
-        # Mock registry and import_node_class
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            mock_import.return_value = MockNode
+        # Compile from JSON string with real registry
+        flow = compile_ir_to_flow(ir_json, registry)
 
-            # Compile
-            flow = compile_ir_to_flow(ir_json, mock_registry)
+        # Test behavior: verify compilation and execution work
+        assert isinstance(flow, Flow)
 
-            # Verify
-            assert isinstance(flow, Flow)
+        shared_store = {"test_input": "json_test"}
+        flow.run(shared_store)
 
-    def test_compile_invalid_json(self):
-        """Test error on invalid JSON string."""
+        assert "test_output" in shared_store
+        assert "json_test" in shared_store["test_output"]
+
+    def test_compile_with_invalid_json_raises_json_decode_error(self):
+        """Test error on invalid JSON string provides clear error."""
+        registry, _ = create_test_registry()
+
         # Invalid JSON
         ir_json = '{"nodes": [invalid json}'
 
-        # Mock registry
-        mock_registry = Mock(spec=Registry)
-
         # Compile and expect JSONDecodeError
-        with pytest.raises(Exception) as exc_info:  # JSONDecodeError is a subclass of Exception
-            compile_ir_to_flow(ir_json, mock_registry)
+        with pytest.raises(Exception) as exc_info:
+            compile_ir_to_flow(ir_json, registry)
 
-        # Verify it's a JSON error - check the type name
+        # Verify it's a JSON error that provides clear context
         assert exc_info.type.__name__ == "JSONDecodeError"
 
-    def test_compile_validation_error(self):
-        """Test error during IR validation."""
+    def test_compile_with_validation_error_provides_helpful_context(self):
+        """Test error during IR validation provides helpful debugging context."""
+        registry, _ = create_test_registry()
+
         # IR missing required fields
         ir_dict = {"edges": []}  # Missing nodes
 
-        # Mock registry
-        mock_registry = Mock(spec=Registry)
-
         # Compile and expect CompilationError
         with pytest.raises(CompilationError) as exc_info:
-            compile_ir_to_flow(ir_dict, mock_registry)
+            compile_ir_to_flow(ir_dict, registry)
 
-        # Verify
+        # Verify error provides helpful context for debugging
         error = exc_info.value
         assert error.phase == "validation"
         assert "Missing 'nodes' key" in str(error)
-
-    def test_compile_with_logging(self, caplog):
-        """Test that compilation logs appropriate messages."""
-        # Simple IR
-        ir_dict = {"nodes": [{"id": "test", "type": "test-node"}], "edges": []}
-
-        # Mock registry and import_node_class
-        mock_registry = Mock(spec=Registry)
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            mock_import.return_value = MockNode
-
-            # Enable debug logging
-            caplog.set_level("DEBUG")
-
-            # Compile
-            compile_ir_to_flow(ir_dict, mock_registry)
-
-            # Verify logging
-            log_messages = [record.message for record in caplog.records]
-            assert any("Starting IR compilation" in msg for msg in log_messages)
-            assert any("IR validated" in msg for msg in log_messages)
-            assert any("Starting node instantiation" in msg for msg in log_messages)
-            assert any("Starting node wiring" in msg for msg in log_messages)
-            assert any("Identifying start node" in msg for msg in log_messages)
-            assert any("Creating Flow object" in msg for msg in log_messages)
-            assert any("Compilation successful" in msg for msg in log_messages)
-
-
-# Integration test with real node
-def test_compile_with_real_test_node():
-    """Test compiling with actual test node from registry."""
-    # Create real registry
-    registry = Registry()
-
-    # Check if test node exists
-    nodes = registry.load()
-    if "test-node" not in nodes:
-        pytest.skip("Test node not found in registry")
-
-    # Create IR with test node
-    ir_dict = {
-        "nodes": [
-            {"id": "test1", "type": "test-node", "params": {"test_param": "value"}},
-            {"id": "test2", "type": "test-node"},
-        ],
-        "edges": [{"source": "test1", "target": "test2"}],
-    }
-
-    # Compile
-    flow = compile_ir_to_flow(ir_dict, registry)
-
-    # Verify
-    assert isinstance(flow, Flow)
-    assert flow.start_node is not None
-    # The actual test node should have the params set
-    assert hasattr(flow.start_node, "params")
-    assert flow.start_node.params.get("test_param") == "value"

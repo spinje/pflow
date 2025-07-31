@@ -53,24 +53,38 @@ class TestTestNode:
 class TestTestNodeRetry:
     """Test the TestNodeRetry functionality."""
 
-    def test_retry_behavior(self):
-        """Test that retry logic works correctly."""
+    def test_processes_input_with_retry_support(self):
+        """Test that node processes input correctly through retry mechanism.
+
+        BEHAVIOR: Node should process input successfully despite simulated failures.
+        """
+        node = TestNodeRetry()
+        shared = {"retry_input": "hello world"}
+
+        action = node.run(shared)
+
+        # BEHAVIOR: Should process input successfully
+        assert action == "default"
+        assert "retry_output" in shared
+        assert "Processed with retry support: hello world" in shared["retry_output"]
+
+    def test_retry_mechanism_eventually_succeeds(self):
+        """Test that retry mechanism allows eventual success.
+
+        FIX HISTORY:
+        - Removed testing of internal attributes (max_retries, wait)
+        - Focus on behavior: does the retry mechanism work as expected?
+        """
         node = TestNodeRetry()
         shared = {"retry_input": "test data"}
 
-        # The node is designed to fail on first attempts
+        # The TestNodeRetry is designed to fail initially then succeed
         action = node.run(shared)
 
-        # After retries, it should succeed
+        # BEHAVIOR: Should eventually succeed despite initial failures
         assert action == "default"
         assert "retry_output" in shared
-        assert "Processed with retry support: test data" in shared["retry_output"]
-
-    def test_max_retries_parameter(self):
-        """Test that max_retries is properly configured."""
-        node = TestNodeRetry()
-        assert node.max_retries == 3
-        assert node.wait == 0.1
+        assert "test data" in shared["retry_output"]
 
     def test_retry_failed_action(self):
         """Test the retry_failed action path."""

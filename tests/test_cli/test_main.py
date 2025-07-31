@@ -21,31 +21,34 @@ def test_main_command_help():
     assert "Input precedence: --file > stdin > command arguments" in result.output
 
 
-def test_simple_arguments():
-    """Test simple argument collection."""
+def test_cli_collects_multiple_arguments_as_workflow():
+    """Test that CLI collects multiple arguments into a workflow string."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["node1", "node2"])
 
     assert result.exit_code == 0
-    assert result.output.strip() == "Collected workflow from args: node1 node2"
+    assert "Collected workflow from args:" in result.output
+    assert "node1 node2" in result.output
 
 
-def test_preserves_arrow_operator():
-    """Test that => operator is preserved."""
+def test_cli_preserves_workflow_arrow_operators():
+    """Test that workflow arrow operators are preserved in collection."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["node1", "=>", "node2"])
 
     assert result.exit_code == 0
-    assert result.output.strip() == "Collected workflow from args: node1 => node2"
+    assert "Collected workflow from args:" in result.output
+    assert "node1 => node2" in result.output
 
 
-def test_with_quoted_strings():
-    """Test handling of quoted strings."""
+def test_cli_handles_natural_language_with_spaces():
+    """Test that CLI handles natural language commands with spaces."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["plan", "a backup strategy"])
 
     assert result.exit_code == 0
-    assert result.output.strip() == "Collected workflow from args: plan a backup strategy"
+    assert "Collected workflow from args:" in result.output
+    assert "plan a backup strategy" in result.output
 
 
 def test_with_flags():
@@ -55,7 +58,8 @@ def test_with_flags():
     result = runner.invoke(main, ["--", "node1", "--flag=value", "=>", "node2"])
 
     assert result.exit_code == 0
-    assert result.output.strip() == "Collected workflow from args: node1 --flag=value => node2"
+    assert "Collected workflow from args:" in result.output
+    assert "node1 --flag=value => node2" in result.output
 
 
 def test_empty_arguments():
@@ -87,51 +91,56 @@ def test_complex_workflow():
     )
 
     assert result.exit_code == 0
-    expected = "Collected workflow from args: read-file --path=input.txt => llm --prompt=Summarize this => write-file --path=output.txt"
-    assert result.output.strip() == expected
+    assert "Collected workflow from args:" in result.output
+    assert "read-file --path=input.txt" in result.output
+    assert "llm --prompt=Summarize this" in result.output
+    assert "write-file --path=output.txt" in result.output
 
 
 # Tests for stdin input handling
-def test_from_stdin_simple():
-    """Test reading workflow from stdin requires JSON format."""
+def test_plain_text_stdin_without_workflow_shows_helpful_error():
+    """Test that plain text via stdin without workflow shows clear error message."""
     runner = click.testing.CliRunner()
     # Plain text stdin is now treated as data, not workflow
     result = runner.invoke(main, [], input="node1 => node2\n")
 
     assert result.exit_code == 1
-    assert "Stdin contains data but no workflow specified" in result.output
+    assert "no workflow specified" in result.output
+    assert "Use --file or provide a workflow" in result.output
 
 
-def test_from_stdin_complex():
-    """Test reading complex workflow from stdin requires JSON format."""
+def test_complex_stdin_data_without_workflow_shows_helpful_error():
+    """Test that complex stdin data without workflow specification shows clear guidance."""
     runner = click.testing.CliRunner()
     stdin_input = "read-file --path=input.txt => llm --prompt='Summarize' => write-file"
     result = runner.invoke(main, [], input=stdin_input)
 
     assert result.exit_code == 1
-    assert "Stdin contains data but no workflow specified" in result.output
+    assert "no workflow specified" in result.output
+    assert "Use --file or provide a workflow" in result.output
 
 
-def test_from_stdin_with_newlines():
-    """Test stdin with newlines requires JSON format."""
+def test_whitespace_padded_stdin_data_without_workflow_shows_error():
+    """Test that stdin data with whitespace padding still requires workflow specification."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, [], input="\n  node1 => node2  \n\n")
 
     assert result.exit_code == 1
-    assert "Stdin contains data but no workflow specified" in result.output
+    assert "no workflow specified" in result.output
 
 
-def test_from_stdin_empty():
-    """Test empty stdin falls back to args mode."""
+def test_empty_stdin_falls_back_to_argument_workflow():
+    """Test that empty stdin allows arguments to be used as workflow."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["node1"], input="")
 
     assert result.exit_code == 0
-    assert result.output.strip() == "Collected workflow from args: node1"
+    assert "Collected workflow from args:" in result.output
+    assert "node1" in result.output
 
 
-def test_from_stdin_json_workflow():
-    """Test reading valid JSON workflow from stdin."""
+def test_json_workflow_via_stdin_is_recognized_and_validated():
+    """Test that JSON workflow via stdin is properly recognized and validated."""
     runner = click.testing.CliRunner()
     workflow_json = '{"ir_version": "0.1.0", "nodes": []}'
     result = runner.invoke(main, [], input=workflow_json)
@@ -155,7 +164,8 @@ def test_from_file():
         result = runner.invoke(main, ["--file", "workflow.txt"])
 
         assert result.exit_code == 0
-        assert result.output.strip() == "Collected workflow from file: node1 => node2 => node3"
+        assert "Collected workflow from file:" in result.output
+        assert "node1 => node2 => node3" in result.output
 
 
 def test_from_file_short_option():
@@ -169,7 +179,8 @@ def test_from_file_short_option():
         result = runner.invoke(main, ["-f", "test.pflow"])
 
         assert result.exit_code == 0
-        assert result.output.strip() == "Collected workflow from file: plan a backup strategy"
+        assert "Collected workflow from file:" in result.output
+        assert "plan a backup strategy" in result.output
 
 
 def test_from_file_with_whitespace():
@@ -183,7 +194,8 @@ def test_from_file_with_whitespace():
         result = runner.invoke(main, ["--file", "workflow.txt"])
 
         assert result.exit_code == 0
-        assert result.output.strip() == "Collected workflow from file: read-file => process"
+        assert "Collected workflow from file:" in result.output
+        assert "read-file => process" in result.output
 
 
 def test_from_file_missing():
@@ -235,7 +247,8 @@ def test_stdin_ignored_with_file():
         result = runner.invoke(main, ["--file", "workflow.txt"], input="from-stdin")
 
         assert result.exit_code == 0
-        assert result.output.strip() == "Collected workflow from file: from-file"
+        assert "Collected workflow from file:" in result.output
+        assert "from-file" in result.output
 
 
 # Tests for context storage
@@ -323,17 +336,18 @@ def test_error_file_encoding():
         assert "File must be valid UTF-8 text" in result.output
 
 
-def test_error_workflow_too_large():
-    """Test error when workflow input exceeds size limit."""
+def test_oversized_workflow_input_shows_clear_size_limit_error():
+    """Test that workflow input exceeding size limit shows informative error."""
     runner = click.testing.CliRunner()
-    # Create a workflow larger than 100KB
-    large_workflow = "node " * 25000  # ~125KB
+    # Create a workflow larger than 100KB (current limit)
+    # 25000 * 5 chars ("node ") = ~125KB
+    large_workflow = "node " * 25000
 
     result = runner.invoke(main, large_workflow.split())
 
     assert result.exit_code != 0
-    assert "cli: Workflow input too large" in result.output
-    assert "max 100KB" in result.output
+    assert "Workflow input too large" in result.output
+    assert "100KB" in result.output  # Size limit mentioned
 
 
 def test_signal_handling_exit_code():

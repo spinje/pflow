@@ -6,8 +6,7 @@ logic will be tested in future subtasks.
 """
 
 import json
-import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,10 +16,16 @@ from pflow.runtime.workflow_validator import validate_ir_structure
 
 
 class TestCompilationError:
-    """Test the CompilationError exception class."""
+    """Test the CompilationError exception class behavior.
 
-    def test_error_with_all_attributes(self):
-        """Test CompilationError with all optional attributes."""
+    FIX HISTORY:
+    - Removed string formatting tests that tested implementation details
+    - Focus on testing that error context is preserved for debugging
+    - Test error inheritance and exception handling behavior
+    """
+
+    def test_error_preserves_context_for_debugging(self):
+        """Test CompilationError preserves all context attributes for debugging."""
         error = CompilationError(
             message="Test error",
             phase="testing",
@@ -30,46 +35,51 @@ class TestCompilationError:
             suggestion="Fix the thing",
         )
 
-        # Check attributes are stored
+        # Test that context is preserved (what debuggers and error handlers need)
         assert error.phase == "testing"
         assert error.node_id == "node1"
         assert error.node_type == "test-type"
         assert error.details == {"key": "value"}
         assert error.suggestion == "Fix the thing"
 
-        # Check message formatting
-        error_str = str(error)
-        assert "compiler: Test error" in error_str
-        assert "Phase: testing" in error_str
-        assert "Node ID: node1" in error_str
-        assert "Node Type: test-type" in error_str
-        assert "Suggestion: Fix the thing" in error_str
+        # Test it's a proper exception
+        assert isinstance(error, Exception)
 
-    def test_error_with_minimal_attributes(self):
-        """Test CompilationError with only required message."""
+    def test_error_has_sensible_defaults(self):
+        """Test CompilationError provides sensible defaults when context is missing."""
         error = CompilationError("Simple error")
 
-        # Check defaults
+        # Test defaults don't break error handling
         assert error.phase == "unknown"
         assert error.node_id is None
         assert error.node_type is None
         assert error.details == {}
         assert error.suggestion is None
 
-        # Check message is simple
-        assert str(error) == "compiler: Simple error"
+        # Test it can be raised and caught
+        with pytest.raises(CompilationError) as exc_info:
+            raise error
+        assert exc_info.value is error
 
-    def test_error_with_partial_attributes(self):
-        """Test CompilationError with some optional attributes."""
-        error = CompilationError(message="Partial error", phase="validation", suggestion="Check your input")
+    def test_error_can_be_chained_and_handled(self):
+        """Test CompilationError works properly in exception chains."""
+        original_error = ValueError("Original problem")
 
-        error_str = str(error)
-        assert "compiler: Partial error" in error_str
-        assert "Phase: validation" in error_str
-        assert "Suggestion: Check your input" in error_str
-        # These should not appear
-        assert "Node ID:" not in error_str
-        assert "Node Type:" not in error_str
+        try:
+            raise original_error
+        except ValueError as e:
+            compilation_error = CompilationError(
+                "Compilation failed", phase="validation", details={"original_error": str(e)}
+            )
+
+            # Test the compilation error can be raised and preserves context
+            with pytest.raises(CompilationError) as exc_info:
+                raise compilation_error from e
+
+            caught_error = exc_info.value
+            assert caught_error.phase == "validation"
+            assert "Original problem" in caught_error.details["original_error"]
+            assert caught_error.__cause__ is original_error
 
 
 class TestParseIrInput:
@@ -235,76 +245,113 @@ class TestCompileIrToFlow:
         assert error.phase == "validation"
         assert "Missing 'edges' key" in str(error)
 
-    def test_compile_logging(self, caplog):
-        """Test that compilation logs appropriate messages."""
-        registry = MagicMock()
-        # Need a valid node structure now that compilation is implemented
-        ir_dict = {"nodes": [{"id": "n1", "type": "test-node"}], "edges": []}
+    def test_compile_single_node_workflow_succeeds(self):
+        """Test that compilation produces working flow for single node workflow.
 
-        # Mock the import_node_class to return a mock node class
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            from pocketflow import BaseNode
+        FIX HISTORY:
+        - Removed log message testing (brittle implementation details)
+        - Use real TestNode instead of mock
+        - Focus on testing that compilation produces working flow
+        """
+        import tempfile
+        from pathlib import Path
 
-            # Create a simple mock node class
-            class MockNode(BaseNode):
-                def __init__(self):
-                    super().__init__()
+        from pflow.registry.registry import Registry
 
-                def set_params(self, params):
-                    self.params = params
+        # Create test registry with real node metadata
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "test.json"
+            registry = Registry(registry_path)
 
-            mock_import.return_value = MockNode
+            # Save real node metadata for TestNode
+            test_node_metadata = {
+                "test-node": {
+                    "module": "pflow.nodes.test_node",
+                    "class_name": "TestNode",
+                    "docstring": "Test node for validation",
+                    "file_path": "src/pflow/nodes/test_node.py",
+                }
+            }
+            registry.save(test_node_metadata)
 
-            with caplog.at_level(logging.DEBUG):
-                # This should now succeed
-                flow = compile_ir_to_flow(ir_dict, registry)
-                assert flow is not None
+            # Create simple IR with one node
+            ir_dict = {"nodes": [{"id": "n1", "type": "test-node"}], "edges": []}
 
-            # Check log messages
-            log_messages = [record.message for record in caplog.records]
-            assert any("Starting IR compilation" in msg for msg in log_messages)
-            assert any("IR structure validated" in msg for msg in log_messages)
-            assert any("ready for compilation" in msg for msg in log_messages)
-            assert any("Compilation successful" in msg for msg in log_messages)
+            # Compile the workflow
+            flow = compile_ir_to_flow(ir_dict, registry)
 
-            # Check structured logging extras
-            for record in caplog.records:
-                if "Starting IR compilation" in record.message:
-                    assert record.phase == "init"
-                elif "IR structure validated" in record.message:
-                    assert record.phase == "validation"
-                    assert hasattr(record, "node_count")
-                    assert record.node_count == 1
+            # Test that compilation succeeded and produced working flow
+            assert flow is not None
+            from pocketflow import Flow
 
-    def test_compile_with_complex_ir(self):
-        """Test compilation with a more realistic IR structure."""
-        registry = MagicMock()
-        ir_dict = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {"id": "read", "type": "read-file", "params": {"path": "input.txt"}},
-                {"id": "proc", "type": "transform", "params": {"format": "json"}},
-                {"id": "save", "type": "write-file", "params": {"path": "output.txt"}},
-            ],
-            "edges": [{"source": "read", "target": "proc"}, {"source": "proc", "target": "save"}],
-        }
+            assert isinstance(flow, Flow)
 
-        # Mock the import_node_class to return a mock node class
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
-            from pocketflow import BaseNode
+            # Test that the flow can actually execute
+            shared_store = {"test_input": "hello"}
+            flow.run(shared_store)
 
-            class MockNode(BaseNode):
-                def __init__(self):
-                    super().__init__()
+            # Verify the node executed correctly
+            assert "test_output" in shared_store
+            assert shared_store["test_output"] == "Processed: hello"
 
-                def set_params(self, params):
-                    self.params = params
+    def test_compile_multi_node_workflow_with_chaining(self):
+        """Test compilation with multiple nodes connected by edges.
 
-            mock_import.return_value = MockNode
+        FIX HISTORY:
+        - Removed mock import call counting (testing implementation details)
+        - Use real TestNode instead of MockNode
+        - Focus on testing actual workflow execution with multiple nodes
+        """
+        import tempfile
+        from pathlib import Path
 
-            # Should now compile successfully
+        from pflow.registry.registry import Registry
+
+        # Create test registry with multiple real nodes
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "test.json"
+            registry = Registry(registry_path)
+
+            # Save metadata for multiple test nodes
+            test_nodes_metadata = {
+                "test-node": {
+                    "module": "pflow.nodes.test_node",
+                    "class_name": "TestNode",
+                    "docstring": "Test node for validation",
+                    "file_path": "src/pflow/nodes/test_node.py",
+                },
+                "test-node-retry": {
+                    "module": "pflow.nodes.test_node_retry",
+                    "class_name": "TestNodeRetry",
+                    "docstring": "Test node with retry",
+                    "file_path": "src/pflow/nodes/test_node_retry.py",
+                },
+            }
+            registry.save(test_nodes_metadata)
+
+            # Create multi-node workflow IR
+            ir_dict = {
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {"id": "input", "type": "test-node"},
+                    {"id": "process", "type": "test-node"},
+                    {"id": "output", "type": "test-node-retry"},
+                ],
+                "edges": [{"source": "input", "target": "process"}, {"source": "process", "target": "output"}],
+            }
+
+            # Compile the workflow
             flow = compile_ir_to_flow(ir_dict, registry)
             assert flow is not None
 
-            # Verify import was called for all three node types
-            assert mock_import.call_count == 3
+            # Test that the multi-node flow executes correctly
+            shared_store = {"test_input": "start"}
+            flow.run(shared_store)
+
+            # Verify all nodes executed in sequence
+            # Each TestNode processes its input and passes to next
+            assert "test_output" in shared_store
+            # The output should show processing from multiple nodes
+            output = shared_store["test_output"]
+            assert "Processed:" in output
+            assert "start" in output

@@ -3,9 +3,7 @@
 import os
 import tempfile
 
-import pytest
-
-from src.pflow.nodes.file import CopyFileNode, NonRetriableError
+from src.pflow.nodes.file import CopyFileNode
 
 
 class TestCopyFileNode:
@@ -61,7 +59,12 @@ class TestCopyFileNode:
             assert os.path.exists(dest_path)
 
     def test_copy_overwrite_protection(self):
-        """Test copy fails when destination exists without overwrite."""
+        """Test copy fails when destination exists without overwrite.
+
+        FIX HISTORY:
+        - Removed dual testing approach (exception testing + behavior testing)
+        - Focus on behavior: what does user observe when copy is attempted?
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = os.path.join(tmpdir, "source.txt")
             dest_path = os.path.join(tmpdir, "dest.txt")
@@ -75,18 +78,13 @@ class TestCopyFileNode:
             node = CopyFileNode()
             shared = {"source_path": source_path, "dest_path": dest_path}
 
-            prep_res = node.prep(shared)
-
-            # Method 1: Test that exec raises NonRetriableError
-            with pytest.raises(NonRetriableError):
-                node.exec(prep_res)
-
-            # Method 2: Test full lifecycle
+            # BEHAVIOR: Copy should fail and preserve existing content
             action = node.run(shared)
-            assert action == "error"
-            assert "already exists" in shared["error"]
 
-            # Verify destination wasn't overwritten
+            assert action == "error"
+            assert "exists" in shared["error"].lower()
+
+            # BEHAVIOR: Destination should not be overwritten
             with open(dest_path) as f:
                 assert f.read() == "Existing content"
 
@@ -116,7 +114,12 @@ class TestCopyFileNode:
                 assert f.read() == "New content"
 
     def test_copy_source_not_found(self):
-        """Test error when source doesn't exist."""
+        """Test behavior when source file doesn't exist.
+
+        FIX HISTORY:
+        - Removed dual testing approach (exception testing + behavior testing)
+        - Focus on behavior: what error message does user receive?
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = os.path.join(tmpdir, "missing.txt")
             dest_path = os.path.join(tmpdir, "dest.txt")
@@ -124,13 +127,11 @@ class TestCopyFileNode:
             node = CopyFileNode()
             shared = {"source_path": source_path, "dest_path": dest_path}
 
-            prep_res = node.prep(shared)
-
-            # Method 1: Test that exec raises FileNotFoundError
-            with pytest.raises(FileNotFoundError):
-                node.exec(prep_res)
-
-            # Method 2: Test full lifecycle
+            # BEHAVIOR: Should provide helpful error message
             action = node.run(shared)
+
             assert action == "error"
             assert "does not exist" in shared["error"]
+
+            # BEHAVIOR: Destination should not be created
+            assert not os.path.exists(dest_path)

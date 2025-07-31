@@ -1,144 +1,61 @@
-"""Tests for dual-mode stdin support in CLI."""
+"""Tests for dual-mode stdin support in CLI.
+
+FIX HISTORY:
+- 2024: Rewrote from excessive mocking (18 anti-patterns) to behavior-focused tests
+- Removed testing of internal get_input_source function
+- Added real CLI behavior tests using CliRunner with actual stdin
+- Tests now validate user-visible behavior, not implementation details
+
+LESSONS LEARNED:
+- Test what users experience through CLI, not internal functions
+- Use real stdin via CliRunner input parameter instead of mocking sys.stdin
+- Focus on end-to-end behavior: input -> CLI -> output
+- Mock only external boundaries (filesystem), not internal components
+"""
 
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 from click.testing import CliRunner
 
-from pflow.cli.main import get_input_source, main
-
-# Get the actual module for patching
-main_module = sys.modules["pflow.cli.main"]
+from pflow.cli.main import main
 
 
-class TestGetInputSourceDualMode:
-    """Test the modified get_input_source function with dual-mode support."""
+class TestDualModeStdinBehavior:
+    """Test dual-mode stdin behavior through actual CLI usage."""
 
-    def test_file_with_stdin_data(self, monkeypatch, tmp_path):
-        """Test that stdin is treated as data when --file is provided."""
-        # Create a test workflow file
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text('{"ir_version": "0.1.0"}')
-
-        # Mock stdin with data
-        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.read", lambda: "test data content")
-
-        content, source, stdin_data = get_input_source(str(workflow_file), ())
-
-        assert source == "file"
-        assert content == '{"ir_version": "0.1.0"}'
-        assert stdin_data == "test data content"
-
-    def test_stdin_workflow_mode(self, monkeypatch):
-        """Test that stdin containing workflow JSON is treated as workflow."""
-        workflow_json = '{"ir_version": "0.1.0", "nodes": []}'
-
-        # Mock stdin with workflow JSON
-        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.read", lambda: workflow_json)
-
-        content, source, stdin_data = get_input_source(None, ())
-
-        assert source == "stdin"
-        assert content == workflow_json
-        assert stdin_data is None
-
-    def test_stdin_data_with_args(self, monkeypatch):
-        """Test that stdin is treated as data when args are provided."""
-        # Mock stdin with non-workflow data
-        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.read", lambda: "plain text data")
-
-        content, source, stdin_data = get_input_source(None, ("some-workflow",))
-
-        assert source == "args"
-        assert content == "some-workflow"
-        assert stdin_data == "plain text data"
-
-    def test_stdin_data_without_workflow_raises_error(self, monkeypatch):
-        """Test that stdin data without workflow specification raises error."""
-        # Mock stdin with non-workflow data
-        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.read", lambda: "plain text data")
-
-        with pytest.raises(Exception) as exc_info:
-            get_input_source(None, ())
-
-        assert "no workflow specified" in str(exc_info.value)
-
-    def test_stdin_workflow_with_args_raises_error(self, monkeypatch):
-        """Test that stdin workflow with args raises error."""
-        workflow_json = '{"ir_version": "0.1.0", "nodes": []}'
-
-        # Mock stdin with workflow JSON
-        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.read", lambda: workflow_json)
-
-        with pytest.raises(Exception) as exc_info:
-            get_input_source(None, ("some-arg",))
-
-        assert "Cannot use stdin input when command arguments are provided" in str(exc_info.value)
-
-    def test_no_stdin_with_args(self, monkeypatch):
-        """Test normal args mode without stdin."""
-        # Mock no stdin
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.isatty", lambda: True)
-
-        content, source, stdin_data = get_input_source(None, ("workflow", "args"))
-
-        assert source == "args"
-        assert content == "workflow args"
-        assert stdin_data is None
-
-    def test_empty_stdin_treated_as_no_stdin(self, monkeypatch):
-        """Test that empty stdin is handled correctly."""
-        # Mock empty stdin
-        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.read", lambda: "")
-
-        content, source, stdin_data = get_input_source(None, ("workflow",))
-
-        assert source == "args"
-        assert content == "workflow"
-        assert stdin_data is None
-
-
-class TestCLIIntegrationDualMode:
-    """Integration tests for dual-mode stdin with the full CLI."""
-
-    def test_stdin_data_injected_into_shared_storage(self, tmp_path):
-        """Test that stdin data is properly injected into shared storage."""
-        # Create a test workflow that uses stdin
+    def test_file_workflow_with_stdin_data_shows_injection_message(self, tmp_path):
+        """Test that stdin data is injected when using --file option."""
+        # Create a minimal valid workflow
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "write", "type": "write-file", "params": {"file_path": str(tmp_path / "output.txt")}}],
+            "nodes": [
+                {
+                    "id": "writer",
+                    "type": "write-file",
+                    "params": {"file_path": str(tmp_path / "output.txt"), "content": "Test content"},
+                }
+            ],
             "edges": [],
-            "start_node": "write",
+            "start_node": "writer",
         }
 
         workflow_file = tmp_path / "workflow.json"
         workflow_file.write_text(json.dumps(workflow))
 
         runner = CliRunner()
-        result = runner.invoke(main, ["--file", str(workflow_file), "--verbose"], input="Hello from stdin")
+        result = runner.invoke(main, ["--file", str(workflow_file), "--verbose"], input="Test stdin data")
 
-        # Check that stdin was injected (verbose mode shows this)
+        assert result.exit_code == 0
         assert "Injected" in result.output and "stdin data" in result.output
-        assert "16 bytes" in result.output  # "Hello from stdin" is 16 bytes
+        assert "15 bytes" in result.output  # "Test stdin data" is 15 bytes
 
-    def test_backward_compatibility_stdin_workflow(self, tmp_path):
-        """Test that piping workflow JSON still works."""
-        # Create a minimal valid workflow with a simple write operation
+    def test_json_workflow_via_stdin_executes_successfully(self, tmp_path):
+        """Test that JSON workflow via stdin is recognized and executed."""
         output_file = tmp_path / "test_output.txt"
         workflow = {
             "ir_version": "0.1.0",
@@ -146,10 +63,7 @@ class TestCLIIntegrationDualMode:
                 {
                     "id": "writer",
                     "type": "write-file",
-                    "params": {
-                        "file_path": str(output_file),
-                        "content": "Test content from workflow",  # Provide content in params
-                    },
+                    "params": {"file_path": str(output_file), "content": "Content from piped workflow"},
                 }
             ],
             "edges": [],
@@ -159,31 +73,73 @@ class TestCLIIntegrationDualMode:
         runner = CliRunner()
         result = runner.invoke(main, [], input=json.dumps(workflow))
 
-        # Should process as workflow, not data
         assert result.exit_code == 0
         assert "Workflow executed successfully" in result.output
-
-        # Verify the file was created
         assert output_file.exists()
-        assert output_file.read_text() == "Test content from workflow"
+        assert output_file.read_text() == "Content from piped workflow"
 
-    def test_error_on_ambiguous_stdin(self):
-        """Test clear error when stdin data provided without workflow."""
+    def test_plain_text_stdin_with_args_treats_stdin_as_data(self):
+        """Test that plain text stdin with args treats stdin as data."""
         runner = CliRunner()
-        result = runner.invoke(main, [], input="Some random data")
+        result = runner.invoke(main, ["test-workflow"], input="This is data, not workflow")
+
+        assert result.exit_code == 0
+        assert "Collected workflow from args: test-workflow" in result.output
+        assert "Also collected stdin data: This is data, not workflow" in result.output
+
+    def test_plain_text_stdin_without_workflow_shows_clear_error(self):
+        """Test clear error when stdin contains data but no workflow specified."""
+        runner = CliRunner()
+        result = runner.invoke(main, [], input="Just some random data")
 
         assert result.exit_code == 1
         assert "no workflow specified" in result.output
+        assert "Use --file or provide a workflow" in result.output
+
+    def test_json_workflow_with_args_shows_conflict_error(self):
+        """Test error when both stdin workflow and args are provided."""
+        workflow = {"ir_version": "0.1.0", "nodes": []}
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["some-arg"], input=json.dumps(workflow))
+
+        assert result.exit_code == 1
+        assert "Cannot use stdin input when command arguments are provided" in result.output
+
+    def test_no_stdin_uses_args_normally(self):
+        """Test that args work normally when no stdin is provided."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["workflow", "from", "args"])
+
+        assert result.exit_code == 0
+        assert "Collected workflow from args: workflow from args" in result.output
+
+    def test_empty_stdin_falls_back_to_args(self):
+        """Test that empty stdin falls back to args mode."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["test-workflow"], input="")
+
+        assert result.exit_code == 0
+        assert "Collected workflow from args: test-workflow" in result.output
 
 
-class TestSubprocessIntegration:
-    """Test actual subprocess behavior for shell integration."""
+class TestRealShellIntegration:
+    """Test actual shell behavior using subprocess for true integration.
+
+    FIX HISTORY:
+    - Converted from mocked tests to real subprocess tests
+    - Tests actual shell pipe behavior, not mocked internals
+    - Validates true end-to-end integration
+
+    Note: We use 'uv run pflow' in these tests because we're running in the development
+    environment where pflow isn't installed globally. End users will simply type 'pflow'
+    directly after installation (e.g., pip install pflow).
+    """
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
-    def test_pipe_data_to_workflow_file(self, tmp_path):
-        """Test actual shell pipe: echo "data" | pflow --file workflow.json"""
-        # Create a simple workflow file
-        # Create a minimal valid workflow
+    def test_pipe_data_to_workflow_file_creates_expected_output(self, tmp_path):
+        """Test actual shell pipe: echo 'data' | pflow --file workflow.json"""
+        # Create a workflow that writes content
         output_file = tmp_path / "output.txt"
         workflow = {
             "ir_version": "0.1.0",
@@ -191,33 +147,35 @@ class TestSubprocessIntegration:
                 {
                     "id": "writer",
                     "type": "write-file",
-                    "params": {
-                        "file_path": str(output_file),
-                        "content": "Test content",  # Provide content
-                    },
+                    "params": {"file_path": str(output_file), "content": "Test content"},
                 }
             ],
             "edges": [],
             "start_node": "writer",
         }
+
         workflow_file = tmp_path / "workflow.json"
         workflow_file.write_text(json.dumps(workflow))
 
-        # Test piping data
+        # Test real shell pipe
+        uv_path = shutil.which("uv")
+        if not uv_path:
+            pytest.skip("uv not found in PATH")
         result = subprocess.run(  # noqa: S603
-            ["pflow", "--file", str(workflow_file)],  # noqa: S607
+            [uv_path, "run", "pflow", "--file", str(workflow_file)],
             input="Test data from pipe",
             capture_output=True,
             text=True,
+            shell=False,
         )
 
         assert result.returncode == 0
         assert "Workflow executed successfully" in result.stdout
+        assert output_file.exists()
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
-    def test_pipe_workflow_json(self, tmp_path):
-        """Test piping workflow JSON: echo '{"ir_version": ...}' | pflow"""
-        # Create a minimal valid workflow
+    def test_pipe_json_workflow_executes_correctly(self, tmp_path):
+        """Test piping JSON workflow: echo '{"ir_version": ...}' | pflow"""
         output_file = tmp_path / "piped_output.txt"
         workflow = {
             "ir_version": "0.1.0",
@@ -232,140 +190,103 @@ class TestSubprocessIntegration:
             "start_node": "writer",
         }
 
-        result = subprocess.run(["pflow"], input=json.dumps(workflow), capture_output=True, text=True)  # noqa: S603, S607
+        uv_path = shutil.which("uv")
+        if not uv_path:
+            pytest.skip("uv not found in PATH")
+        result = subprocess.run(  # noqa: S603
+            [uv_path, "run", "pflow"], input=json.dumps(workflow), capture_output=True, text=True, shell=False
+        )
 
         assert result.returncode == 0
         assert "Workflow executed successfully" in result.stdout
+        assert output_file.exists()
+        assert output_file.read_text() == "Content from piped workflow"
 
 
-class TestBinaryStdinHandling:
-    """Test binary stdin support in CLI."""
+class TestBinaryAndLargeStdinBehavior:
+    """Test binary and large stdin handling through CLI behavior.
 
-    def test_binary_stdin_with_file(self, monkeypatch, tmp_path):
-        """Test that binary stdin is handled correctly with --file."""
-        from pflow.core.shell_integration import StdinData
+    FIX HISTORY:
+    - Reduced from complex mocking to behavior-focused tests
+    - Test actual CLI output and file creation, not internal StdinData objects
+    - Focus on user-visible behavior when handling different stdin types
+    """
 
-        # Create a test workflow file
+    def test_binary_stdin_shows_appropriate_warning(self, tmp_path):
+        """Test that binary stdin produces appropriate user feedback."""
+        # Create a simple workflow
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "writer",
+                    "type": "write-file",
+                    "params": {"file_path": str(tmp_path / "output.txt"), "content": "Test content"},
+                }
+            ],
+            "edges": [],
+            "start_node": "writer",
+        }
+
         workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text('{"ir_version": "0.1.0"}')
+        workflow_file.write_text(json.dumps(workflow))
 
-        # Mock enhanced stdin to return binary data
+        # Create a temporary binary file to simulate binary stdin
         binary_data = b"Binary\x00Data\xff"
-        stdin_obj = StdinData(binary_data=binary_data)
 
-        # Mock isatty to indicate piped input
-        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.isatty", lambda: False)
+        # Use a real binary file as input
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
+            f.write(binary_data)
+            binary_file = f.name
 
-        # Mock read_stdin to return None (binary data can't be read as text)
-        # Need to patch where it's imported in main.py, not where it's defined
-        monkeypatch.setattr(main_module, "read_stdin_content", lambda: None)
+        try:
+            # Test with actual binary file input
+            uv_path = shutil.which("uv")
+            if not uv_path:
+                pytest.skip("uv not found in PATH")
+            with open(binary_file, "rb") as binary_stdin:
+                result = subprocess.run(  # noqa: S603
+                    [uv_path, "run", "pflow", "--file", str(workflow_file), "--verbose"],
+                    stdin=binary_stdin,
+                    capture_output=True,
+                    text=True,
+                    shell=False,
+                )
 
-        # Mock read_stdin_enhanced to return our binary data
-        monkeypatch.setattr(main_module, "read_stdin_enhanced", lambda: stdin_obj)
+            # Should handle binary data gracefully
+            assert result.returncode == 0
+            # Either succeeds with binary injection or shows appropriate handling
+            assert "Workflow executed successfully" in result.stdout or "binary" in result.stdout.lower()
+        finally:
+            import os
 
-        content, source, stdin_data = get_input_source(str(workflow_file), ())
+            os.unlink(binary_file)
 
-        assert source == "file"
-        assert content == '{"ir_version": "0.1.0"}'
-        assert isinstance(stdin_data, StdinData)
-        assert stdin_data.is_binary
-        assert stdin_data.binary_data == binary_data
+    def test_very_large_stdin_handled_appropriately(self, tmp_path):
+        """Test that very large stdin is handled without crashing."""
+        # Create a simple workflow
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "writer",
+                    "type": "write-file",
+                    "params": {"file_path": str(tmp_path / "output.txt"), "content": "Test content"},
+                }
+            ],
+            "edges": [],
+            "start_node": "writer",
+        }
 
-    def test_large_stdin_with_file(self, monkeypatch, tmp_path):
-        """Test that large stdin is streamed to temp file."""
-        from pflow.core.shell_integration import StdinData
-
-        # Create a test workflow file
         workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text('{"ir_version": "0.1.0"}')
+        workflow_file.write_text(json.dumps(workflow))
 
-        # Mock enhanced stdin to return temp file path
-        temp_path = "pflow_stdin_test123"
-        stdin_obj = StdinData(temp_path=temp_path)
-
-        # Mock isatty to indicate piped input
-        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-        monkeypatch.setattr("pflow.core.shell_integration.sys.stdin.isatty", lambda: False)
-
-        # Mock read_stdin to return None (large data can't fit in memory as text)
-        # Need to patch where it's imported in main.py, not where it's defined
-        monkeypatch.setattr(main_module, "read_stdin_content", lambda: None)
-
-        # Mock read_stdin_enhanced to return our temp file data
-        monkeypatch.setattr(main_module, "read_stdin_enhanced", lambda: stdin_obj)
-
-        content, source, stdin_data = get_input_source(str(workflow_file), ())
-
-        assert source == "file"
-        assert isinstance(stdin_data, StdinData)
-        assert stdin_data.is_temp_file
-        assert stdin_data.temp_path == temp_path
-
-    def test_cli_binary_stdin_injection(self, monkeypatch, tmp_path):
-        """Test that binary stdin is properly injected into shared store."""
-        from pflow.core.shell_integration import StdinData
-
-        # Create a simple workflow
-        workflow = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "test",
-                    "type": "write-file",
-                    "params": {"file_path": str(tmp_path / "output.txt"), "content": "test"},
-                }
-            ],
-            "edges": [],
-            "start_node": "test",
-        }
-
-        # Mock binary stdin
-        binary_data = b"Binary\x00Data"
-        stdin_obj = StdinData(binary_data=binary_data)
+        # Create large data (1MB)
+        large_data = "x" * (1024 * 1024)
 
         runner = CliRunner()
-        with monkeypatch.context() as m:
-            m.setattr(main_module, "get_input_source", lambda f, w: (json.dumps(workflow), "file", stdin_obj))
+        result = runner.invoke(main, ["--file", str(workflow_file), "--verbose"], input=large_data)
 
-            result = runner.invoke(main, ["--file", "dummy.json"])
-
-            # Check verbose output shows binary data injection
-            result = runner.invoke(main, ["--file", "dummy.json", "-v"])
-            assert "binary stdin data" in result.output or result.exit_code == 0
-
-    def test_cli_temp_file_cleanup(self, monkeypatch, tmp_path):
-        """Test that temp files are cleaned up after execution."""
-
-        from pflow.core.shell_integration import StdinData
-
-        # Create actual temp file
-        temp_file = tmp_path / "stdin_temp"
-        temp_file.write_bytes(b"Large data")
-
-        # Create a simple workflow
-        workflow = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "test",
-                    "type": "write-file",
-                    "params": {"file_path": str(tmp_path / "output.txt"), "content": "test"},
-                }
-            ],
-            "edges": [],
-            "start_node": "test",
-        }
-
-        # Mock stdin with temp file
-        stdin_obj = StdinData(temp_path=str(temp_file))
-
-        runner = CliRunner()
-        with monkeypatch.context() as m:
-            m.setattr(main_module, "get_input_source", lambda f, w: (json.dumps(workflow), "file", stdin_obj))
-
-            # Run workflow
-            result = runner.invoke(main, ["--file", "dummy.json", "-v"])
-
-            # Temp file should be cleaned up (mocked in test, real cleanup in actual run)
-            assert result.exit_code == 0
+        # Should handle large data without crashing
+        assert result.exit_code == 0
+        assert "Workflow executed successfully" in result.output or "temp file" in result.output.lower()

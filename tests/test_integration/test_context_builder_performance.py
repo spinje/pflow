@@ -7,11 +7,30 @@ and with large amounts of data, ensuring they remain responsive for real-world u
 import time
 from unittest.mock import Mock, patch
 
+import pytest
+
 from pflow.planning.context_builder import (
     _format_structure_combined,
     build_discovery_context,
     build_planning_context,
 )
+
+
+@pytest.fixture(autouse=True)
+def ensure_clean_mocks():
+    """Ensure mocks are cleaned up after each test to prevent test pollution."""
+    yield
+    # Force cleanup of ALL patches to prevent test pollution
+    from unittest.mock import patch
+
+    patch.stopall()
+
+    # Additionally, reload the module to reset any stuck mocks
+    import importlib
+
+    import pflow.planning.context_builder
+
+    importlib.reload(pflow.planning.context_builder)
 
 
 class TestContextBuilderPerformance:

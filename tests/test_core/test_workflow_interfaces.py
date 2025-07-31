@@ -151,29 +151,34 @@ class TestWorkflowInterfaces:
     class TestInvalidDeclarations:
         """Test invalid declarations raise appropriate errors."""
 
-        def test_invalid_input_name_with_dash(self):
-            """Test input name with dash is currently allowed (no pattern validation)."""
-            # Note: In the current implementation, input names are not validated to be identifiers
-            # This test documents current behavior. Future versions may add identifier validation.
+        def test_input_name_with_dash_currently_allowed(self):
+            """Test that input names with dashes are currently allowed.
+
+            Current behavior: Input names are not validated against identifier rules.
+            This allows names like 'invalid-name' which might not be valid in some contexts.
+            """
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
-                "inputs": {"invalid-name": {"description": "Invalid input name", "type": "string"}},
+                "inputs": {"param-with-dash": {"description": "Parameter with dash", "type": "string"}},
             }
 
-            # Currently this passes - no identifier validation
+            # This currently passes - documents current behavior
             validate_ir(ir)
 
-        def test_invalid_input_name_starting_with_number(self):
-            """Test input name starting with number is currently allowed."""
-            # Note: In the current implementation, input names are not validated to be identifiers
+        def test_input_name_starting_with_number_currently_allowed(self):
+            """Test that input names starting with numbers are currently allowed.
+
+            Current behavior: Input names are not validated against identifier rules.
+            This allows names like '123param' which might not be valid identifiers in some contexts.
+            """
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
-                "inputs": {"123invalid": {"description": "Invalid input name", "type": "string"}},
+                "inputs": {"123param": {"description": "Parameter starting with number", "type": "string"}},
             }
 
-            # Currently this passes - no identifier validation
+            # This currently passes - documents current behavior
             validate_ir(ir)
 
         def test_invalid_type_value(self):
@@ -245,16 +250,19 @@ class TestWorkflowInterfaces:
             error = exc_info.value
             assert "outputs" in error.path
 
-        def test_invalid_output_name_with_special_chars(self):
-            """Test output name with special characters is currently allowed."""
-            # Note: In the current implementation, output names are not validated to be identifiers
+        def test_output_name_with_special_chars_currently_allowed(self):
+            """Test that output names with special characters are currently allowed.
+
+            Current behavior: Output names are not validated against identifier rules.
+            This allows names like 'result!data' which might not be valid identifiers in some contexts.
+            """
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
-                "outputs": {"invalid!name": {"description": "Invalid output name", "type": "string"}},
+                "outputs": {"result!data": {"description": "Result with special character", "type": "string"}},
             }
 
-            # Currently this passes - no identifier validation
+            # This currently passes - documents current behavior
             validate_ir(ir)
 
         def test_output_with_invalid_type(self):

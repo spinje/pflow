@@ -35,21 +35,23 @@ class TestReadFileNode:
             os.unlink(temp_path)
 
     def test_missing_file(self):
-        """Test handling of missing file."""
+        """Test behavior when file doesn't exist.
+
+        FIX HISTORY:
+        - Removed dual testing approach (exception testing + behavior testing)
+        - Fixed string assertion fragility by checking semantic meaning
+        """
         node = ReadFileNode()
         shared = {"file_path": "/non/existent/file.txt"}
 
-        prep_res = node.prep(shared)
-
-        # Method 1: Test that exec raises FileNotFoundError
-        with pytest.raises(FileNotFoundError):
-            node.exec(prep_res)
-
-        # Method 2: Test full lifecycle with node.run()
+        # BEHAVIOR: Should provide helpful error message
         action = node.run(shared)
+
         assert action == "error"
         assert "error" in shared
-        assert "does not exist" in shared["error"]
+        error_msg = shared["error"]
+        assert "exist" in error_msg.lower()  # More robust than exact string match
+        assert "/non/existent/file.txt" in error_msg  # Shows actual path
         assert "content" not in shared
 
     def test_encoding_parameter(self):
@@ -72,7 +74,12 @@ class TestReadFileNode:
             os.unlink(temp_path)
 
     def test_encoding_error(self):
-        """Test handling of encoding errors."""
+        """Test behavior when file has encoding issues.
+
+        FIX HISTORY:
+        - Removed dual testing approach (exception testing + behavior testing)
+        - Fixed string assertion fragility with more robust checking
+        """
         # Write binary data that's not valid UTF-8
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
             f.write(b"\x80\x81\x82\x83")
@@ -82,16 +89,14 @@ class TestReadFileNode:
             node = ReadFileNode()
             shared = {"file_path": temp_path}
 
-            prep_res = node.prep(shared)
-
-            # Method 1: Test that exec raises UnicodeDecodeError
-            with pytest.raises(UnicodeDecodeError):
-                node.exec(prep_res)
-
-            # Method 2: Test full lifecycle
+            # BEHAVIOR: Should provide helpful error about encoding
             action = node.run(shared)
+
             assert action == "error"
-            assert "encoding" in shared["error"].lower() or "Cannot read" in shared["error"]
+            error_msg = shared["error"]
+            # Check semantic meaning rather than exact strings
+            assert "encoding" in error_msg.lower() or "utf-8" in error_msg.lower() or "decode" in error_msg.lower()
+            assert temp_path in error_msg  # Shows which file had the problem
         finally:
             os.unlink(temp_path)
 

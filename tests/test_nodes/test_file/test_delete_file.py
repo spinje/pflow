@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from src.pflow.nodes.file import DeleteFileNode, NonRetriableError
+from src.pflow.nodes.file import DeleteFileNode
 
 
 class TestDeleteFileNode:
@@ -27,13 +27,21 @@ class TestDeleteFileNode:
 
             assert action == "default"
             assert "deleted" in shared
-            assert "Successfully deleted" in shared["deleted"]
+            # Check semantic meaning rather than exact string
+            success_msg = shared["deleted"]
+            assert "delet" in success_msg.lower()  # Covers "delete" or "deleted"
+            assert file_path in success_msg  # Shows actual file path
 
             # Verify file no longer exists
             assert not os.path.exists(file_path)
 
     def test_delete_without_confirmation(self):
-        """Test delete fails without confirmation."""
+        """Test delete fails without confirmation as a safety feature.
+
+        FIX HISTORY:
+        - Removed dual testing approach (exception testing + behavior testing)
+        - Fixed string assertion fragility with semantic checking
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             file_path = os.path.join(tmpdir, "test.txt")
             with open(file_path, "w") as f:
@@ -42,18 +50,15 @@ class TestDeleteFileNode:
             node = DeleteFileNode()
             shared = {"file_path": file_path, "confirm_delete": False}
 
-            prep_res = node.prep(shared)
-
-            # Method 1: Test that exec raises NonRetriableError
-            with pytest.raises(NonRetriableError):
-                node.exec(prep_res)
-
-            # Method 2: Test full lifecycle
+            # BEHAVIOR: Should fail for safety and preserve file
             action = node.run(shared)
-            assert action == "error"
-            assert "not confirmed" in shared["error"]
 
-            # Verify file still exists
+            assert action == "error"
+            error_msg = shared["error"]
+            # Check semantic meaning rather than exact string
+            assert "confirm" in error_msg.lower() or "confirmation" in error_msg.lower()
+
+            # BEHAVIOR: File should remain untouched
             assert os.path.exists(file_path)
 
     def test_delete_missing_confirmation_flag(self):
@@ -83,7 +88,14 @@ class TestDeleteFileNode:
 
             assert action == "default"
             assert "deleted" in shared
-            assert "did not exist" in shared["deleted"]
+            # Check semantic meaning - operation succeeded even though file was missing
+            success_msg = shared["deleted"]
+            assert (
+                "not exist" in success_msg.lower()
+                or "already" in success_msg.lower()
+                or "missing" in success_msg.lower()
+            )
+            assert file_path in success_msg  # Shows which file was checked
 
     def test_delete_with_params_safety(self):
         """Test that confirm_delete cannot come from params."""

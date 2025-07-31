@@ -3,9 +3,7 @@
 import os
 import tempfile
 
-import pytest
-
-from src.pflow.nodes.file import MoveFileNode, NonRetriableError
+from src.pflow.nodes.file import MoveFileNode
 
 
 class TestMoveFileNode:
@@ -63,7 +61,12 @@ class TestMoveFileNode:
             assert os.path.exists(dest_path)
 
     def test_move_overwrite_protection(self):
-        """Test move fails when destination exists without overwrite."""
+        """Test move fails when destination exists without overwrite.
+
+        FIX HISTORY:
+        - Removed dual testing approach (exception testing + behavior testing)
+        - Focus on behavior: what happens when move is attempted with existing destination?
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = os.path.join(tmpdir, "source.txt")
             dest_path = os.path.join(tmpdir, "dest.txt")
@@ -77,25 +80,28 @@ class TestMoveFileNode:
             node = MoveFileNode()
             shared = {"source_path": source_path, "dest_path": dest_path}
 
-            prep_res = node.prep(shared)
-
-            # Method 1: Test that exec raises NonRetriableError
-            with pytest.raises(NonRetriableError):
-                node.exec(prep_res)
-
-            # Method 2: Test full lifecycle
+            # BEHAVIOR: Move should fail and preserve both files
             action = node.run(shared)
-            assert action == "error"
-            assert "already exists" in shared["error"]
 
-            # Verify source still exists
+            assert action == "error"
+            assert "exists" in shared["error"].lower()
+
+            # BEHAVIOR: Source should remain untouched
             assert os.path.exists(source_path)
-            # Verify destination wasn't overwritten
+            with open(source_path) as f:
+                assert f.read() == "Source content"
+
+            # BEHAVIOR: Destination should not be overwritten
             with open(dest_path) as f:
                 assert f.read() == "Existing content"
 
     def test_move_source_not_found(self):
-        """Test error when source doesn't exist."""
+        """Test behavior when source file doesn't exist.
+
+        FIX HISTORY:
+        - Removed dual testing approach (exception testing + behavior testing)
+        - Focus on behavior: what error message does user receive?
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = os.path.join(tmpdir, "missing.txt")
             dest_path = os.path.join(tmpdir, "dest.txt")
@@ -103,13 +109,11 @@ class TestMoveFileNode:
             node = MoveFileNode()
             shared = {"source_path": source_path, "dest_path": dest_path}
 
-            prep_res = node.prep(shared)
-
-            # Method 1: Test that exec raises FileNotFoundError
-            with pytest.raises(FileNotFoundError):
-                node.exec(prep_res)
-
-            # Method 2: Test full lifecycle
+            # BEHAVIOR: Should provide helpful error message
             action = node.run(shared)
+
             assert action == "error"
             assert "does not exist" in shared["error"]
+
+            # BEHAVIOR: Destination should not be created
+            assert not os.path.exists(dest_path)

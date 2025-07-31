@@ -5,14 +5,6 @@ import click.testing
 from pflow.cli import main
 
 
-def test_cli_entry_point_imports():
-    """Test that the CLI entry point can be imported without errors."""
-    # The import at the top of this file already tests this
-    # but we make it explicit here
-    assert main is not None
-    assert callable(main)
-
-
 def test_cli_help_command():
     """Test that the help command shows expected output."""
     runner = click.testing.CliRunner()
