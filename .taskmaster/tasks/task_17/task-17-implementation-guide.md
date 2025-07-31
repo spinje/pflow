@@ -220,6 +220,43 @@ class WorkflowGeneratorNode(Node):
 
 ## Structured Context Provision Pattern
 
+### Actual Context Builder Output Formats
+
+**Discovery Context** (lightweight browsing):
+```markdown
+## Available Nodes
+
+### File Operations
+### read-file
+Read content from a file and add line numbers for display
+
+### write-file
+Write content to a file
+
+## Available Workflows
+
+### text-analyzer (workflow)
+Analyzes text using AI and returns insights
+```
+
+**Planning Context** (detailed interfaces):
+```markdown
+## Selected Components
+
+### read-file
+Read content from a file and add line numbers for display
+
+**Inputs**:
+- `file_path: str` - Path to the file to read
+- `encoding: str` - File encoding (optional, default: utf-8)
+
+**Outputs**:
+- `content: str` - File contents with line numbers
+- `error: str` - Error message if operation failed
+
+**Parameters**: none
+```
+
 ### Building Rich Context for Planning
 The context builder must provide comprehensive, well-structured information:
 
@@ -966,6 +1003,22 @@ The runtime will handle substitution transparently.
 Generate complete JSON matching the IR schema with nodes, edges, and params."""
 ```
 
+### Saving Generated Workflows
+
+With WorkflowManager (Task 24), the planner can now save generated workflows:
+
+```python
+# In ResultPreparationNode or CLI after planner returns
+from pflow.core.workflow_manager import WorkflowManager
+
+workflow_manager = WorkflowManager()
+saved_path = workflow_manager.save(
+    name="fix-issue",
+    workflow_ir=generated_workflow,
+    description="Fixes GitHub issues and creates PR"
+)
+```
+
 ### Template Variable Validation
 The compiler handles template validation automatically when validate=True (default):
 
@@ -979,7 +1032,7 @@ discovered_params = {"issue_number": "1234", "repo": "pflow"}  # From ParameterD
 errors = TemplateValidator.validate_workflow_templates(
     workflow,
     discovered_params,  # Named parameters discovered from NL
-    registry
+    self.registry      # Uses pre-parsed interface data from Task 19
 )
 
 # Note: In the planner, execution_params come from ParameterDiscoveryNode
@@ -999,7 +1052,7 @@ def validate_templates_before_execution(workflow: dict, execution_params: dict, 
     errors = TemplateValidator.validate_workflow_templates(
         workflow,
         execution_params,
-        registry  # NEW: Required to check actual node outputs
+        registry  # Required to check actual node outputs
     )
 
     if errors:
@@ -1312,6 +1365,26 @@ The discovery phase is fundamentally about **browsing** for potentially relevant
 1. **Workflow Reuse**: A workflow might be found among browsed components
 2. **Node Composition**: Multiple nodes might be needed for new workflows
 3. **Flexibility**: The planner can make final decisions with full context
+
+### Workflow as Building Block Example
+
+When ComponentBrowsingNode selects a workflow, it becomes a node:
+
+```json
+{
+  "id": "analyze_step",
+  "type": "workflow",
+  "params": {
+    "workflow_name": "text-analyzer",  // Saved workflow name
+    "param_mapping": {
+      "input_text": "$document_content"
+    },
+    "output_mapping": {
+      "analysis": "document_analysis"
+    }
+  }
+}
+```
 
 ### Implementation of Smart Context Loading
 

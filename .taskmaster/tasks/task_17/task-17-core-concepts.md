@@ -644,23 +644,29 @@ This enables the planner to generate valid template paths and the validator to v
 
 ### Simple Design: Runtime Resolution with Path Support
 
-The system uses a **runtime resolution pattern** for template variables that now includes path traversal:
+The system uses a **runtime resolution pattern** for template variables:
 
-1. **CLI parameters**: `$issue_number` → resolved from `--issue_number=1234`
+1. **CLI parameters**: `$issue_number` → resolved from execution_params
 2. **Shared store values**: `$issue_data` → resolved from `shared["issue_data"]`
-3. **Path traversal**: `$issue_data.user.login` → resolved from `shared["issue_data"]["user"]["login"]`
-4. **Transparent to nodes**: Nodes receive already-resolved values
+3. **Path traversal**: `$issue_data.user.login` → resolved from nested data
+4. **NO node ID prefixes**: `$api1.response` does NOT work (nodes write to fixed keys)
 
 ### MVP Enhancement: Template Paths
 
-Template variables now support dot notation for accessing nested data:
+Template variables support dot notation for accessing nested data:
 
 ```python
-# Simple template variable
-"$issue_number"  # Resolves to shared["issue_number"]
+# ✅ CORRECT - Simple template variable
+"$issue_number"  # From execution_params
 
-# Template with path
-"$issue_data.user.login"  # Resolves to shared["issue_data"]["user"]["login"]
+# ✅ CORRECT - Shared store key
+"$issue_data"    # From shared["issue_data"]
+
+# ✅ CORRECT - Nested path
+"$issue_data.user.login"  # From shared["issue_data"]["user"]["login"]
+
+# ❌ WRONG - Node ID prefix (doesn't work)
+"$api1.response"  # Nodes don't write to ID-prefixed keys!
 
 # In workflow params
 {"id": "analyze", "type": "llm", "params": {
@@ -769,6 +775,41 @@ The description field is all we need for semantic matching. The LLM can understa
 - `inputs`: Expected parameters (enables validation and prompting)
 - `outputs`: What the workflow produces (for composition)
 - `ir`: Complete JSON IR with template variables preserved
+
+### Workflow Interface Declarations (Task 21)
+
+Workflows now declare their expected inputs and outputs:
+
+```json
+{
+  "name": "fix-issue",
+  "description": "Fixes GitHub issues and creates PR",
+  "ir": {
+    "ir_version": "0.1.0",
+    "inputs": {
+      "issue_number": {
+        "description": "GitHub issue number to fix",
+        "required": true,
+        "type": "string"
+      }
+    },
+    "outputs": {
+      "pr_url": {
+        "description": "URL of created pull request",
+        "type": "string"
+      }
+    },
+    "nodes": [...],
+    "edges": [...]
+  }
+}
+```
+
+This enables:
+- Parameter validation at compile time
+- Better discovery matching
+- Clear workflow contracts
+- Integration with WorkflowManager for proper storage
 
 ## Critical Pattern: The Exclusive Parameter Fallback
 
@@ -1006,11 +1047,35 @@ Template variables convert ALL values to strings:
 
 ## MVP Approach: Node Output Behavior
 
-### Fixed Output Keys
-For MVP, nodes write to fixed output keys determined by their type, not their ID:
-- `github-get-issue` always writes to `shared["issue_data"]`
-- `llm` always writes to `shared["response"]`
+### Nodes Write to Fixed Keys
+**CRITICAL**: In the MVP, nodes write to FIXED output keys
+- `github-get-issue` ALWAYS writes to `shared["issue_data"]`
+- `llm` ALWAYS writes to `shared["response"]`
+- `read-file` ALWAYS writes to `shared["content"]`
 - Node IDs are for workflow clarity only, they don't affect data storage
+
+### Collision Problem
+**MVP Limitation**: Using the same node type twice causes data collision:
+```json
+{
+  "nodes": [
+    {"id": "api1", "type": "api-call"},  // Writes to shared["response"]
+    {"id": "api2", "type": "api-call"}   // OVERWRITES shared["response"]!
+  ]
+}
+```
+
+### Workarounds
+1. **Use different node types when possible**:
+   ```json
+   [{"id": "get_data", "type": "http-get"},
+    {"id": "post_data", "type": "http-post"}]
+   ```
+2. **Use workflow composition to isolate repeated operations**:
+   ```json
+   {"type": "workflow", "params": {"workflow_name": "api-caller"}}
+   ```
+3. **Design workflows to avoid same-type repetition**
 
 ### No Collision Detection
 MVP assumes each node type is used once or sequentially. If the same node type is used multiple times, later executions overwrite earlier data. This limitation is acceptable for MVP and will be addressed in v2.0 with proxy mappings.

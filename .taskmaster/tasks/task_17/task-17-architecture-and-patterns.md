@@ -353,6 +353,34 @@ class ComponentBrowsingNode(Node):
         shared["selected_components"] = exec_res["selected_components"]
         return "discover_params"
 
+### Saving Generated Workflows with WorkflowManager
+
+With WorkflowManager (Task 24), the planner can now save generated workflows after they're approved by the user:
+
+```python
+# In ResultPreparationNode, the planner returns the generated workflow
+# The CLI then handles saving after user approval:
+
+from pflow.core.workflow_manager import WorkflowManager
+
+workflow_manager = WorkflowManager()
+saved_path = workflow_manager.save(
+    name="fix-issue",
+    workflow_ir=generated_workflow,
+    description="Fixes GitHub issues and creates PR"
+)
+
+# The saved workflow can then be referenced by name in future workflows:
+{
+  "id": "reuse_fixer",
+  "type": "workflow",
+  "params": {
+    "workflow_name": "fix-issue",  // Reference by name!
+    "param_mapping": {"issue_number": "$new_issue"}
+  }
+}
+```
+
 class ParameterDiscoveryNode(Node):
     """Extract named parameters from natural language BEFORE workflow generation.
 
@@ -1695,6 +1723,33 @@ planning_context = build_planning_context(
 ```
 
 **Key Architectural Principle**: Workflows are just reusable node compositions - they should appear alongside nodes as building blocks!
+
+### Workflow as Building Block Example
+
+When ComponentBrowsingNode selects a workflow, it becomes a node in the generated workflow:
+
+```json
+{
+  "id": "analyze_step",
+  "type": "workflow",
+  "params": {
+    "workflow_name": "text-analyzer",  // Saved workflow name
+    "param_mapping": {
+      "input_text": "$document_content"
+    },
+    "output_mapping": {
+      "analysis": "document_analysis"
+    },
+    "storage_mode": "mapped"  // Default safe isolation
+  }
+}
+```
+
+This enables powerful composition patterns:
+- Reuse complex workflows as single steps
+- Maintain proper isolation between parent and child
+- Map parameters and outputs explicitly
+- Leverage existing, tested workflows
 
 ## Testing PocketFlow Flows
 
