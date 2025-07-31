@@ -24,9 +24,10 @@ Create general-purpose LLM node wrapping Simon Willison's library.
 
 - `shared`: dict - Shared store dictionary containing:
   - `prompt`: str - Text prompt to send to model (required)
+  - `system`: str - System prompt for behavior guidance (optional)
+- `params`: the nodes parameters (not in shared)
   - `model`: str - Model identifier or alias (optional)
   - `temperature`: float - Sampling temperature 0.0-2.0 (optional)
-  - `system`: str - System prompt for behavior guidance (optional)
   - `max_tokens`: int - Maximum response tokens (optional)
 
 ## Outputs
