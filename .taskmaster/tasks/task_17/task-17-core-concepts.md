@@ -846,8 +846,9 @@ With template path support handling most data access needs, proxy mappings are d
    {"id": "api1", "type": "api-call"},  // Writes to shared["response"]
    {"id": "api2", "type": "api-call"},  // Also writes to shared["response"] - collision!
 
-   // MVP workaround: Use template paths to access both
-   {"params": {"comparison": "API1: $api1.response\nAPI2: $api2.response"}}
+   // MVP limitation: Both API calls write to same key - collision! This is a known limitation for the system when implementing task 17. And will be fixed in task 9, AFTER task 17 is complete.
+   // Using same node type twice will overwrite data
+   {"params": {"comparison": "API response: $response"}}  // Only gets last API's response
 
    // v2.0 solution with output_mappings:
    {
@@ -942,16 +943,17 @@ The JSON IR structure is:
 For MVP, the runtime only needs to handle template resolution with paths:
 
 ```json
-// MVP approach using template paths:
+// MVP approach - collision limitation:
 {
   "nodes": [
-    {"id": "api1", "type": "api-call"},  // Writes to shared["api1"]
-    {"id": "api2", "type": "api-call"},  // Writes to shared["api2"]
+    {"id": "api1", "type": "api-call"},  // Writes to shared["response"]
+    {"id": "api2", "type": "api-call"},  // Overwrites shared["response"] - collision!
     {"id": "analyze", "type": "llm", "params": {
-      "prompt": "Compare API responses:\n1: $api1.response\n2: $api2.response"
+      "prompt": "Analyze API response: $response"  // Only sees api2's response
     }}
   ]
 }
+// Note: Using same node type twice causes collision - known MVP limitation. Create examples that only use one node type once when implementing the planner (task 17).
 ```
 
 **v2.0 Note**: When proxy mappings are added, order of operations will matter:

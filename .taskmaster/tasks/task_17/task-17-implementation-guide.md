@@ -1038,13 +1038,13 @@ When user says "fix github issue 123", the LLM generates:
   "nodes": [
     {"id": "get_issue", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
     {"id": "analyze", "type": "claude-code", "params": {
-      "prompt": "<instructions>Fix the issue described below</instructions>\n\nIssue #$get_issue.issue_data.number: $get_issue.issue_data.title\nReported by: $get_issue.issue_data.user.login\n\nDescription:\n$get_issue.issue_data.body"
+      "prompt": "<instructions>Fix the issue described below</instructions>\n\nIssue #$issue_data.number: $issue_data.title\nReported by: $issue_data.user.login\n\nDescription:\n$issue_data.body"
     }},
-    {"id": "commit", "type": "git-commit", "params": {"message": "Fix #$issue_number: $get_issue.issue_data.title"}},
+    {"id": "commit", "type": "git-commit", "params": {"message": "Fix #$issue_number: $issue_data.title"}},
     {"id": "push", "type": "git-push", "params": {}},
     {"id": "create_pr", "type": "github-create-pr", "params": {
-      "title": "Fix: $get_issue.issue_data.title",
-      "body": "Fixes #$issue_number\n\n$analyze.code_report"
+      "title": "Fix: $issue_data.title",
+      "body": "Fixes #$issue_number\n\n$code_report"
     }}
   ],
   "edges": [
@@ -1068,8 +1068,8 @@ The planner returns this IR along with parameter values:
 
 Template variables in params will be resolved by runtime:
 - `$issue_number` → "123" (from CLI parameters)
-- `$get_issue.issue_data.title` → "Bug in login" (path traversal from shared store)
-- `$analyze.code_report` → "Fixed by..." (from shared store during execution)
+- `$issue_data.title` → "Bug in login" (path traversal from shared store)
+- `$code_report` → "Fixed by..." (from shared store during execution)
 
 ## Common Workflow Patterns
 
