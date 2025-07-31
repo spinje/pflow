@@ -565,6 +565,32 @@ for input_spec in interface["inputs"]:
 # which ensures consistent structure across all interface data
 ```
 
+### Registry Access Pattern
+
+Following PocketFlow's established patterns, nodes should access the Registry through direct import and instantiation:
+
+```python
+from pflow.registry import Registry
+
+class ComponentBrowsingNode(Node):
+    def __init__(self):
+        super().__init__()
+        self.registry = Registry()
+
+    def exec(self, user_input):
+        # Direct registry access
+        metadata = self.registry.get_nodes_metadata()
+        return metadata
+```
+
+**Key Principles:**
+- **Direct imports** for external services (Registry is an external service)
+- **Shared store** for data flow between nodes only
+- **No dependency injection** through shared store
+- **Node autonomy** - each node manages its own dependencies
+
+This pattern is consistent with all PocketFlow cookbook examples where services like databases, LLMs, and APIs are accessed through direct imports, not passed through the shared store.
+
 ### Concrete Integration Implementation
 
 #### CLI to Planner Integration
@@ -1444,22 +1470,20 @@ class WorkflowDiscoveryNode(Node):
 ### Using IR Validation
 ```python
 from pflow.core import validate_ir, ValidationError
+from pflow.registry import Registry
 
 class ValidatorNode(Node):
+    def __init__(self):
+        super().__init__()
+        self.registry = Registry()  # Direct instantiation following PocketFlow pattern
+
     def prep(self, shared):
         """Prepare data for validation."""
-        # Registry should be passed from CLI in shared context
-        registry = shared.get("registry")
-        if not registry:
-            from pflow.registry import Registry
-            registry = Registry()
-
         workflow = shared.get("generated_workflow", {})
         discovered_params = shared.get("discovered_params", {})  # Already a dict!
 
         return {
             "workflow": workflow,
-            "registry": registry,  # Pass full registry for Task 19 validator
             "discovered_params": discovered_params
         }
 
@@ -1468,7 +1492,6 @@ class ValidatorNode(Node):
         from pflow.runtime.template_validator import TemplateValidator
 
         workflow = prep_res["workflow"]
-        registry = prep_res["registry"]
         params = prep_res["discovered_params"]
 
         try:
@@ -1477,7 +1500,7 @@ class ValidatorNode(Node):
 
             # 2. Validate templates using Task 19's registry-based validator
             errors = TemplateValidator.validate_workflow_templates(
-                workflow, params, registry  # Registry is now required
+                workflow, params, self.registry  # Use self.registry
             )
 
             if errors:
@@ -1537,19 +1560,18 @@ This approach keeps CLI simple and lets the planner handle all interpretation lo
 ```python
 # The CLI will invoke the planner like this:
 from pflow.planning import create_planner_flow
-from pflow.registry import Registry
 
 # In cli/main.py
-registry = Registry()
 planner_flow = create_planner_flow()
 
-# Pass registry instance, not metadata
-# The planner will call get_nodes_metadata() internally
+# Nodes will import and instantiate Registry directly
+# Following PocketFlow pattern - no dependency injection through shared
 result = planner_flow.run({
     "user_input": ctx.obj["raw_input"],  # Raw string, no preprocessing
     "input_source": ctx.obj["input_source"],
     "stdin_data": ctx.obj.get("stdin_data"),
-    "registry": registry  # Pass registry instance
+    "current_date": datetime.now().isoformat()
+    # No registry in shared - nodes handle it internally
 })
 
 # Result contains the planner output (workflow IR + parameter values)

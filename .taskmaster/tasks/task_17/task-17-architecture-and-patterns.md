@@ -527,12 +527,16 @@ class GeneratorNode(Node):
 
 class ValidatorNode(Node):
     """Validates generated workflow structure and templates"""
+    def __init__(self):
+        super().__init__()
+        from pflow.registry import Registry
+        self.registry = Registry()
+
     def prep(self, shared):
         """Get workflow and discovered params to validate."""
         return {
             "workflow": shared.get("generated_workflow", {}),
-            "discovered_params": shared.get("discovered_params", {}),
-            "registry": shared.get("registry")
+            "discovered_params": shared.get("discovered_params", {})
         }
 
     def exec(self, prep_res):
@@ -548,7 +552,7 @@ class ValidatorNode(Node):
         errors = TemplateValidator.validate_workflow_templates(
             workflow,
             prep_res["discovered_params"],
-            prep_res["registry"]
+            self.registry
         )
 
         if errors:
@@ -943,9 +947,9 @@ def prep(self, shared):
     # Extract workflow and validation context
     return {
         "workflow": shared.get("generated_workflow", {}),
-        "discovered_params": shared.get("discovered_params", {}),
-        "registry": shared.get("registry")
+        "discovered_params": shared.get("discovered_params", {})
     }
+    # Registry accessed via self.registry (see Registry Access Pattern section)
 ```
 
 **4. Parameter Extraction Nodes (processing user input)**:
@@ -1020,6 +1024,33 @@ while current_node:
 3. **Edges are tuples** - `(from_node, action) -> to_node`
 4. **Retries are per-node** - Not per-flow
 5. **Synchronous execution** - No async/parallel (simulated only)
+
+### Registry Access Pattern
+
+The planner nodes follow PocketFlow's standard pattern for external service access:
+
+```python
+# ✅ CORRECT - Direct instantiation pattern
+from pflow.registry import Registry
+import llm
+
+class GeneratorNode(Node):
+    def __init__(self):
+        super().__init__()
+        self.registry = Registry()
+        self.model = llm.get_model("claude-sonnet-4-20250514")
+
+    def exec(self, inputs):
+        # Both registry and LLM accessed directly
+        nodes = self.registry.get_nodes_metadata()
+        response = self.model.prompt(...)
+        return response
+```
+
+This aligns with PocketFlow's philosophy where:
+- External services are imported and instantiated directly
+- Shared store is reserved for data flow only
+- Nodes maintain autonomy with their own dependencies
 
 ## Advanced Implementation Patterns
 
@@ -2140,12 +2171,16 @@ class WorkflowGeneratorNode(PlannerNodeBase):
         return "generation_failed"
 
 class ValidatorNode(PlannerNodeBase):
+    def __init__(self):
+        super().__init__()
+        from pflow.registry import Registry
+        self.registry = Registry()
+
     def prep(self, shared):
-        # Return workflow and registry for validation
+        # Return workflow and discovered params for validation
         return {
             "workflow": shared.get("generated_workflow", {}),
-            "discovered_params": shared.get("discovered_params", {}),
-            "registry": shared.get("registry")
+            "discovered_params": shared.get("discovered_params", {})
         }
 
     def exec(self, prep_res):
