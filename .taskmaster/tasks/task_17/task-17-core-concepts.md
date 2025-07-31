@@ -757,14 +757,30 @@ The description field is all we need for semantic matching. The LLM can understa
 {
   "name": "fix-issue",
   "description": "Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR",
-  "inputs": ["issue_number"],
-  "outputs": ["pr_number", "pr_url"],
   "ir": {
     "ir_version": "0.1.0",
+    "inputs": {
+      "issue_number": {
+        "description": "GitHub issue number to fix",
+        "required": true,
+        "type": "string"
+      }
+    },
+    "outputs": {
+      "pr_url": {
+        "description": "URL of created pull request",
+        "type": "string"
+      },
+      "pr_number": {
+        "description": "Pull request number",
+        "type": "string"
+      }
+    },
     "nodes": [...],
     "edges": [...]
   },
-  "created": "2025-01-01T00:00:00Z",
+  "created_at": "2025-01-29T10:00:00Z",
+  "updated_at": "2025-01-29T10:00:00Z",
   "version": "1.0.0"
 }
 ```
@@ -772,9 +788,7 @@ The description field is all we need for semantic matching. The LLM can understa
 **Key Fields**:
 - `name`: Workflow identifier for execution (`pflow fix-issue`)
 - `description`: Natural language description for discovery matching
-- `inputs`: Expected parameters (enables validation and prompting)
-- `outputs`: What the workflow produces (for composition)
-- `ir`: Complete JSON IR with template variables preserved
+- `ir`: Complete JSON IR with template variables preserved and interface declarations
 
 ### Workflow Interface Declarations (Task 21)
 
@@ -879,7 +893,9 @@ The combination of fallback pattern + template variables handles many common dat
 
 ### When Proxy Mappings Would Be Needed (v2.0 Feature)
 
-With template path support handling most data access needs, proxy mappings are deferred to v2.0 for specific advanced cases:
+With template path support handling most data access needs, proxy mappings are deferred to v2.0 for specific advanced cases.
+
+**Note**: When using nested workflows, the default `storage_mode: "mapped"` provides safe isolation between parent and child workflows, preventing unintended data sharing.
 
 1. **Output collision avoidance** (v2.0):
    ```json

@@ -287,8 +287,10 @@ class WorkflowDiscoveryNode(Node):
         return shared["user_input"]
 
     def exec(self, user_input):
-        # Load workflows during execution
-        saved_workflows = self._load_saved_workflows()  # From ~/.pflow/workflows/
+        # Load workflows during execution using WorkflowManager
+        from pflow.core.workflow_manager import WorkflowManager
+        workflow_manager = WorkflowManager()
+        saved_workflows = workflow_manager.list_all()  # Returns metadata format
 
         # Match based on intent, not parameter presence
         prompt = f"""
@@ -337,6 +339,7 @@ class ComponentBrowsingNode(Node):
 
         # Step 2: Get details for selected components only
         # Note: Task 19 made this ~75 lines simpler and faster - uses pre-parsed interface data
+        # Task 21 enables workflows to declare inputs/outputs for better composition matching
         planning_context = build_planning_context(
             components["node_ids"],
             components["workflow_names"]  # Sub-workflows as building blocks!
@@ -573,7 +576,7 @@ class ValidatorNode(Node):
 
         workflow = prep_res["workflow"]
 
-        # 1. Structure validation
+        # 1. Structure validation (includes Task 21 input/output declarations)
         validate_ir(workflow)
 
         # 2. Full template validation with discovered params
@@ -1743,6 +1746,7 @@ When ComponentBrowsingNode selects a workflow, it becomes a node in the generate
     "storage_mode": "mapped"  // Default safe isolation
   }
 }
+# Note: storage_mode defaults to "mapped" for safe isolation between parent and child workflows
 ```
 
 This enables powerful composition patterns:

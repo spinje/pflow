@@ -1325,15 +1325,30 @@ Workflows are stored with metadata that enables discovery and reuse:
 {
   "name": "fix-issue",
   "description": "Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR",
-  "inputs": ["issue_number"],
-  "outputs": ["pr_number", "pr_url"],
   "ir": {
     "ir_version": "0.1.0",
+    "inputs": {
+      "issue_number": {
+        "description": "GitHub issue number to fix",
+        "required": true,
+        "type": "string"
+      }
+    },
+    "outputs": {
+      "pr_url": {
+        "description": "URL of created pull request",
+        "type": "string"
+      },
+      "pr_number": {
+        "description": "Pull request number",
+        "type": "string"
+      }
+    },
     "nodes": [...],
-    "edges": [...],
-    "mappings": {...}
+    "edges": [...]
   },
-  "created": "2025-01-01T00:00:00Z",
+  "created_at": "2025-01-29T10:00:00Z",
+  "updated_at": "2025-01-29T10:00:00Z",
   "version": "1.0.0"
 }
 ```
@@ -1341,8 +1356,8 @@ Workflows are stored with metadata that enables discovery and reuse:
 **Key Fields**:
 - `name`: Workflow identifier for execution (`pflow fix-issue`)
 - `description`: Natural language description for discovery matching
-- `inputs`: Expected parameters (enables validation and prompting)
-- `outputs`: What the workflow produces (for composition)
+- `ir.inputs`: Expected parameters with schemas (Task 21 format - enables validation)
+- `ir.outputs`: What the workflow produces with types (enables composition)
 - `ir`: Complete JSON IR with template variables preserved
 
 **Key Insight**: The description field is all we need for semantic matching. The LLM can understand "fix github issue 1234" matches a workflow described as "Fetches a GitHub issue, analyzes it with AI, generates a fix".
