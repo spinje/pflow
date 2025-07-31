@@ -664,6 +664,9 @@ def create_planner_flow():
 
 ### Concrete Shared State Example
 The planner's shared state accumulates throughout execution:
+
+For a complete end-to-end execution example showing both Path A (reuse) and Path B (generate) with full details, see the "End-to-End Execution Example" in the implementation guide.
+
 ```python
 shared = {
     # Initial input

@@ -567,29 +567,11 @@ for input_spec in interface["inputs"]:
 
 ### Registry Access Pattern
 
-Following PocketFlow's established patterns, nodes should access the Registry through direct import and instantiation:
+For the PocketFlow standard pattern of accessing the Registry through direct import and instantiation, see:
+- **Architecture document**: Registry Access Pattern section (comprehensive example with both Registry and LLM)
+- **patterns-and-conventions.md**: Complete DO/DON'T examples with rationale
 
-```python
-from pflow.registry import Registry
-
-class ComponentBrowsingNode(Node):
-    def __init__(self):
-        super().__init__()
-        self.registry = Registry()
-
-    def exec(self, user_input):
-        # Direct registry access
-        metadata = self.registry.get_nodes_metadata()
-        return metadata
-```
-
-**Key Principles:**
-- **Direct imports** for external services (Registry is an external service)
-- **Shared store** for data flow between nodes only
-- **No dependency injection** through shared store
-- **Node autonomy** - each node manages its own dependencies
-
-This pattern is consistent with all PocketFlow cookbook examples where services like databases, LLMs, and APIs are accessed through direct imports, not passed through the shared store.
+Key principles: Direct imports for external services, shared store for data flow only, node autonomy.
 
 ### Concrete Integration Implementation
 
