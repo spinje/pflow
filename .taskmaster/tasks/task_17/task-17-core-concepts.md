@@ -51,7 +51,7 @@ Understanding these challenges helps avoid common pitfalls during implementation
 ## Parameter Extraction as Verification Gate
 
 ### Parameters Need Interpretation AND Verification
-The ParameterExtractionNode serves as the critical convergence point where both paths meet. It's not just extracting parameters - it's verifying the workflow can actually execute:
+The ParameterMappingNode serves as the critical convergence point where both paths meet. It's not just extracting parameters - it's verifying the workflow can actually execute:
 
 1. **Extract**: Get concrete values from natural language
 2. **Interpret**: Convert references like "yesterday" to actual dates
@@ -60,7 +60,7 @@ The ParameterExtractionNode serves as the critical convergence point where both 
 
 ### The Three Core Responsibilities
 
-ParameterExtractionNode performs three distinct but related functions:
+ParameterMappingNode performs three distinct but related functions:
 
 1. **Simple Extraction**: Direct value extraction
    - "fix issue 1234" → {"issue_number": "1234"}
