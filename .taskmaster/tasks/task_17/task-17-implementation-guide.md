@@ -497,13 +497,13 @@ def get_available_paths(node_type: str, output_key: str, registry_data: dict) ->
 
     return paths
 
-def validate_template_usage(template: str, available_outputs: dict, initial_params: list[str]) -> bool:
+def validate_template_usage(template: str, available_outputs: dict, execution_params: list[str]) -> bool:
     """Check if a template will be valid at runtime.
 
     Args:
         template: Template string without $ prefix (e.g., "api_config.endpoint.url")
         available_outputs: Dict of {variable_name: output_spec} from previous nodes
-        initial_params: List of parameter names provided to workflow
+        execution_params: List of parameter names provided to workflow
 
     Returns:
         True if template will validate, False otherwise
@@ -511,9 +511,9 @@ def validate_template_usage(template: str, available_outputs: dict, initial_para
     parts = template.split(".")
     base_var = parts[0]
 
-    # Check initial params first (higher priority)
-    if base_var in initial_params:
-        return True  # Initial params are trusted to exist
+    # Check execution params first (higher priority)
+    if base_var in execution_params:
+        return True  # Execution params are trusted to exist
 
     # Check node outputs
     if base_var not in available_outputs:
@@ -596,7 +596,7 @@ def process_natural_language(raw_input: str, stdin_data: Any = None) -> None:
     # Extract results
     planner_output = shared.get("planner_output")
     if planner_output:
-        handle_planner_output(planner_output)  # CLI handles execution with initial_params
+        handle_planner_output(planner_output)  # CLI handles execution with execution_params
 ```
 
 #### Planner Node Integration Examples
@@ -731,7 +731,7 @@ class ValidationNode(Node):
 #### Parameter Passing by CLI (After Planner Returns)
 ```python
 # In CLI after receiving planner output
-def execute_with_parameters(workflow_ir: dict, parameter_values: dict) -> None:
+def execute_with_parameters(workflow_ir: dict, execution_params: dict) -> None:
     """Execute workflow with parameters from planner."""
     from pflow.runtime.compiler import compile_ir_to_flow
     from pflow.registry import Registry
@@ -741,7 +741,7 @@ def execute_with_parameters(workflow_ir: dict, parameter_values: dict) -> None:
     flow = compile_ir_to_flow(
         workflow_ir,
         registry,
-        initial_params=parameter_values,  # Template resolution happens at runtime
+        initial_params=execution_params,  # Template resolution happens at runtime
         validate=True  # Validates all required params are provided
     )
 
@@ -760,7 +760,7 @@ def execute_with_parameters(workflow_ir: dict, parameter_values: dict) -> None:
 The planner generates JSON IR, but users need to see CLI syntax. A separate IR-to-CLI compiler maintains separation of concerns:
 
 ```python
-def ir_to_cli_syntax(workflow_ir: dict, parameter_values: dict) -> str:
+def ir_to_cli_syntax(workflow_ir: dict, execution_params: dict) -> str:
     """Convert JSON IR to human-readable CLI syntax."""
     lines = []
 
@@ -982,14 +982,14 @@ errors = TemplateValidator.validate_workflow_templates(
     registry
 )
 
-# Note: In the planner, parameter_values come from ParameterDiscoveryNode
+# Note: In the planner, execution_params come from ParameterDiscoveryNode
 # At runtime, they come from CLI flags (post-MVP) or saved values
 
 # In the planner's validation node
 from pflow.runtime.template_validator import TemplateValidator
 from pflow.registry import Registry
 
-def validate_templates_before_execution(workflow: dict, parameter_values: dict, registry: Registry) -> None:
+def validate_templates_before_execution(workflow: dict, execution_params: dict, registry: Registry) -> None:
     """Validate that all template variables can be resolved.
 
     Task 19 update: Validator now requires registry to check actual node outputs.
@@ -998,7 +998,7 @@ def validate_templates_before_execution(workflow: dict, parameter_values: dict, 
     # The validation API (updated in Task 19):
     errors = TemplateValidator.validate_workflow_templates(
         workflow,
-        parameter_values,
+        execution_params,
         registry  # NEW: Required to check actual node outputs
     )
 
@@ -1014,7 +1014,7 @@ try:
     flow = compile_ir_to_flow(
         workflow_ir,
         registry,
-        initial_params=parameter_values,
+        initial_params=execution_params,
         validate=True  # Default - validates templates automatically
     )
 except ValueError as e:
@@ -1060,7 +1060,7 @@ The planner returns this IR along with parameter values:
 ```json
 {
   "workflow_ir": {...above...},
-  "parameter_values": {
+  "execution_params": {
     "issue_number": "123"  // Extracted from user input
   }
 }
@@ -1160,10 +1160,10 @@ def test_workflow_generation_completeness():
     # Verify workflow structure
     assert "nodes" in result["workflow_ir"]
     assert "edges" in result["workflow_ir"]
-    assert "parameter_values" in result
+    assert "execution_params" in result
 
     # Verify extracted parameters
-    assert result["parameter_values"]["issue_number"] == "123"
+    assert result["execution_params"]["issue_number"] == "123"
 
     # Verify template variables in params
     nodes = result["workflow_ir"]["nodes"]
@@ -1736,7 +1736,7 @@ shared["found_workflow"] = {
 # → ParameterMappingNode executes
 # → Extract: "123" from user input
 # → Verify: workflow needs issue_number, we have it ✓
-shared["extracted_params"] = {"issue_number": "123"}
+shared["extracted_params"] = {"issue_number": "123"}  # Raw extraction from NL
 # → Returns "params_complete"
 
 # Path B: Generate New Workflow (if no match found)
@@ -1769,7 +1769,7 @@ shared["discovered_params"] = {
 # Both Paths Continue:
 # 3. Parameter Preparation
 # → ParameterPreparationNode executes
-shared["parameter_values"] = {
+shared["execution_params"] = {
     "issue_number": "123"  # Formatted for execution
 }
 # → Returns "prepare_result"
@@ -1784,7 +1784,7 @@ shared["planner_output"] = {
         "inputs": ["issue_number"],
         "outputs": ["pr_url"]
     },
-    "parameter_values": {"issue_number": "123"}
+    "execution_params": {"issue_number": "123"}
 }
 # → Returns "complete"
 
@@ -1799,7 +1799,7 @@ shared["planner_output"] = {
 ### ParameterMappingNode's Simplified Role
 
 With ParameterDiscoveryNode extracting named parameters, ParameterMappingNode's job becomes:
-1. Verify all required workflow parameters have values in discovered_params
+1. Verify all required workflow parameters have values in discovered_params (or extracted values for Path A)
 2. Handle any additional runtime parameters (e.g., environment variables)
 3. Route to "params_incomplete" if any required params are missing
 

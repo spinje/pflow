@@ -318,7 +318,7 @@ Understanding the distinction between different parameter types is crucial:
    - Values extracted from natural language by the planner
    - In MVP: These come ONLY from natural language, never from CLI flags
    - Examples: "1234" from "fix issue 1234" becomes `{"issue_number": "1234"}`
-   - These are the `available_params` passed to template validation
+   - These are the `execution_params` passed to template validation
 
 3. **Template Variables** (Runtime References)
    - Placeholders in workflow params: `$issue_number`, `$issue_data.title`
@@ -326,6 +326,26 @@ Understanding the distinction between different parameter types is crucial:
      - Initial parameters: `$issue_number` → resolved from extracted values
      - Node outputs: `$issue_data` → resolved from shared store at runtime
    - Enable workflow reusability - same workflow, different parameters
+
+### Standardized Parameter Terminology
+
+To ensure clarity and consistency across the planner implementation, we use these standardized terms:
+
+1. **`extracted_params`** - Raw parameters extracted from natural language (both paths)
+   - Example: User says "fix issue 1234" → `{"issue_number": "1234"}`
+
+2. **`discovered_params`** - Same as extracted_params but specifically for Path B context
+   - Kept for backward compatibility and clarity about pre-generation context
+   - Provides parameter context to the generator before workflow creation
+
+3. **`verified_params`** - Parameters after ParameterMappingNode verification
+   - Confirms all required workflow parameters have values
+   - Routes to error handling if parameters are missing
+
+4. **`execution_params`** - Final parameters ready for execution
+   - What the planner returns to the CLI
+   - What the compiler receives for runtime substitution
+   - Replaces the confusing `parameter_values`/`initial_params` duality
 
 ### Context
 Template variables are the KEY to pflow's "Plan Once, Run Forever" value proposition. They enable workflow reusability by allowing parameters to change between executions while keeping the workflow structure constant.
@@ -383,11 +403,11 @@ pflow fix-issue --issue=5678  # $issue → "5678"
 1. Recognize "1234" as a parameter value (not part of the intent)
 2. Generate IR with `"issue_number": "$issue_number"` (NOT `"issue_number": "1234"`)
 3. Store the workflow with template variables intact
-4. Pass `{"issue_number": "1234"}` as `initial_params` to the compiler
+4. Pass `{"issue_number": "1234"}` as `execution_params` to the compiler
 
 **Simple variables are most common**: `$issue_number`, `$file_path`, `$repo_name`. Path traversal (`$data.field`) is supported but less frequently needed.
 
-**Runtime Resolution**: Templates are resolved during workflow execution, NOT during compilation. The compiler validates that required parameters exist in initial_params (unless validate=False), enabling access to both initial_params and runtime shared store data.
+**Runtime Resolution**: Templates are resolved during workflow execution, NOT during compilation. The compiler validates that required parameters exist in execution_params (unless validate=False), enabling access to both execution_params and runtime shared store data.
 
 ## Template-Driven Workflow Architecture
 
@@ -401,7 +421,7 @@ workflow = {
     "nodes": [
         # Simple variables (most common)
         {"id": "get", "type": "github-get-issue",
-         "params": {"issue": "$issue_number", "repo": "$repo_name"}},  # From initial_params
+         "params": {"issue": "$issue_number", "repo": "$repo_name"}},  # From execution_params
 
         {"id": "fix", "type": "claude-code",
          "params": {"prompt": "Fix issue: $issue_data"}},  # From shared store
@@ -663,7 +683,7 @@ def resolve_template(var_name, shared):
     return str(shared.get(var_name, ''))
 ```
 
-**Note**: This is a conceptual example. The actual implementation handles edge cases like None values, missing paths, and proper string conversion. The planner just needs to generate workflows with `$variables` and pass extracted values as `initial_params` to the compiler.
+**Note**: This is a conceptual example. The actual implementation handles edge cases like None values, missing paths, and proper string conversion. The planner just needs to generate workflows with `$variables` and pass extracted values as `execution_params` to the compiler.
 
 This approach ensures:
 - No complex mapping structures needed for common cases

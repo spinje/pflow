@@ -69,7 +69,7 @@ User Input: "fix github issue 1234"
     ├─> Parameter Mapping: {"issue_number": "1234"}
     ├─> Verification: Can workflow execute with these params?
     ├─> Workflow contains: {"params": {"issue": "$issue_number"}}
-    └─> Returns to CLI: (workflow_ir, metadata, parameter_values)
+    └─> Returns to CLI: (workflow_ir, metadata, execution_params)
     ↓
 [CLI Takes Over - Separate from Planner]
     ├─> Shows approval: "Will run fix-issue with issue=1234"
@@ -427,10 +427,10 @@ class ParameterMappingNode(Node):
         # For Path A: Extract from natural language
         if prep_res["discovered_params"]:
             # Path B: Already have named parameters, just validate against workflow
-            mapped = prep_res["discovered_params"]
+            extracted = prep_res["discovered_params"]
         else:
             # Path A: Extract from natural language
-            mapped = self._extract_from_natural_language(
+            extracted = self._extract_from_natural_language(
                 prep_res["user_input"],
                 prep_res["workflow"],
                 prep_res["current_date"]
@@ -438,10 +438,10 @@ class ParameterMappingNode(Node):
 
         # CRITICAL: Verify all required params are available
         required = self._get_required_params(prep_res["workflow"])
-        missing = required - set(mapped.keys())
+        missing = required - set(extracted.keys())
 
         return {
-            "mapped": mapped,
+            "verified": extracted,  # Now verified as complete
             "missing": missing
         }
 
@@ -452,7 +452,7 @@ class ParameterMappingNode(Node):
             shared["parameter_error"] = f"Workflow cannot be executed: missing {exec_res['missing']}"
             return "params_incomplete"
 
-        shared["mapped_params"] = exec_res["mapped"]
+        shared["verified_params"] = exec_res["verified"]
         return "params_complete"
 
     def _extract_from_natural_language(self, user_input: str, workflow: dict, current_date: str) -> dict:
@@ -480,8 +480,8 @@ class ParameterMappingNode(Node):
 class ParameterPreparationNode(Node):
     """Prepares parameters for runtime substitution"""
     def prep(self, shared):
-        """Get mapped parameters."""
-        return shared.get("mapped_params", {})
+        """Get verified parameters."""
+        return shared.get("verified_params", {})
 
     def exec(self, prep_res):
         """Pass through parameters unchanged."""
@@ -490,8 +490,8 @@ class ParameterPreparationNode(Node):
         return prep_res
 
     def post(self, shared, prep_res, exec_res):
-        """Store parameter values for CLI."""
-        shared["parameter_values"] = exec_res
+        """Store execution parameters for CLI."""
+        shared["execution_params"] = exec_res
         return "prepare_result"
 
 class GeneratorNode(Node):
@@ -605,7 +605,7 @@ class ResultPreparationNode(Node):
             "workflow_description": shared.get("workflow_description", "Generated workflow"),
             "workflow_inputs": shared.get("workflow_inputs", []),
             "workflow_outputs": shared.get("workflow_outputs", []),
-            "parameter_values": shared.get("parameter_values", {})
+            "execution_params": shared.get("execution_params", {})
         }
 
     def exec(self, prep_res):
@@ -618,7 +618,7 @@ class ResultPreparationNode(Node):
                 "inputs": prep_res["workflow_inputs"],
                 "outputs": prep_res["workflow_outputs"]
             },
-            "parameter_values": prep_res["parameter_values"]
+            "execution_params": prep_res["execution_params"]
         }
 
     def post(self, shared, prep_res, exec_res):
@@ -704,7 +704,7 @@ shared = {
     "validation_errors": [],
 
     # Parameter mapping results
-    "mapped_params": {
+    "verified_params": {
         "issue_number": "123"  # Discovered parameter validated against workflow
     },
 
@@ -717,7 +717,7 @@ shared = {
             "inputs": ["issue_number"],
             "outputs": ["pr_url"]
         },
-        "parameter_values": {
+        "execution_params": {
             "issue_number": "123"  # From discovered params or natural language
         }
     }
@@ -809,7 +809,7 @@ The planner returns a structured result that contains everything the CLI needs f
         "inputs": ["issue_number", "repo_name"],
         "outputs": ["pr_url", "pr_number"]
     },
-    "parameter_values": {
+    "execution_params": {
         # Extracted and interpreted values from natural language
         "issue_number": "1234",
         "repo_name": "pflow"  # Could be inferred from context
@@ -1879,14 +1879,14 @@ def test_specific_flow_path():
     class ResultPreparationNode(Node):
         def prep(self, shared):
             # Extract specific data
-            return shared.get("workflow_ir"), shared.get("parameter_values")
+            return shared.get("workflow_ir"), shared.get("execution_params")
 
         def exec(self, prep_res):
-            workflow_ir, parameter_values = prep_res
+            workflow_ir, execution_params = prep_res
             # Package the results
             return {
                 "workflow_ir": workflow_ir,
-                "parameter_values": parameter_values
+                "execution_params": execution_params
             }
 
         def post(self, shared, prep_res, exec_res):
