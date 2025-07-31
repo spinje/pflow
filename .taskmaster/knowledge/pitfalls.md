@@ -233,4 +233,26 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
+## Pitfall: Global State in context_builder Module Causes Test Pollution
+- **Date**: 2025-07-31
+- **Discovered in**: Test Suite Quality Fix
+- **What we tried**: Running planning tests individually (they passed) vs. in full test suite (14 failures)
+- **Why it seemed good**: Tests were well-isolated with proper mocking and fixtures
+- **Why it failed**: `_workflow_manager` global variable in `src/pflow/planning/context_builder.py` persists between tests
+- **Symptoms**:
+  - Tests pass in isolation but fail in full suite
+  - AssertionError: nodes appear as 'node-000' instead of expected names
+  - Mock data from one test pollutes others
+  - Random test failures depending on execution order
+- **Better approach**: Always patch `_workflow_manager` to None when testing context builder functions
+- **Example of fix**:
+  ```python
+  # Required for ANY test using build_discovery_context or build_planning_context
+  with patch("pflow.planning.context_builder._workflow_manager", None):
+      context = build_discovery_context(registry_metadata=metadata)
+  ```
+- **Critical Note**: This global state design is a production code issue, not just a test problem. Consider refactoring to dependency injection.
+
+---
+
 <!-- New pitfalls are appended below this line -->

@@ -393,6 +393,23 @@ uv run pytest --cov=src/pflow --cov-report=term-missing
 **Problem**: Mocks from one test file persist and break other tests (e.g., performance tests mocking `_process_nodes`)
 **Solution**: Use `@pytest.fixture(autouse=True)` with `patch.stopall()` and `importlib.reload()` for modules with persistent mocks.
 
+### 10. Test Registry Must Point to Real Modules
+**Problem**: `CompilationError: Node type 'basic-node' not found` when registry has fake modules like `"test.module"`
+**Solution**: Registry entries must point to importable modules. Use actual test file paths:
+```python
+# DON'T: {"module": "test.module", "class_name": "TestNode"}  # Module doesn't exist
+# DO: {"module": "tests.test_runtime.test_compiler_integration", "class_name": "TestNode"}
+# OR: {"module": "pflow.nodes.test_node", "class_name": "TestNode"}  # Real project nodes
+```
+
+### 11. Global State in context_builder Requires Isolation
+**Problem**: 14 planning tests fail due to `_workflow_manager` global persisting between tests
+**Solution**: Always patch when testing context builder:
+```python
+with patch("pflow.planning.context_builder._workflow_manager", None):
+    context = build_discovery_context(registry_metadata=metadata)
+```
+
 ## Test Maintenance
 
 ### When to Update Tests
