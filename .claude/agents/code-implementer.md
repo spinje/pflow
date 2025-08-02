@@ -1,6 +1,7 @@
 ---
 name: code-implementer
 description: Use this agent when you need to implement production code for the pflow project. This includes writing new features, fixing bugs, refactoring existing code, or integrating components. The agent follows established patterns, writes testable code, and stays focused on the specific implementation task at hand. This agent should only be used for isolated tasks, always provide as much context as the agent needs to complete the task. Bigger tasks needs bigger context. Always provide clear requirements when using this agent, the agent needs to know when it is done and what the end result should be.
+model: opus
 color: green
 ---
 
