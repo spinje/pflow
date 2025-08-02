@@ -20,18 +20,44 @@ Create a general-purpose LLM node that wraps Simon Willison's `llm` library. Thi
 - Users can run: `pflow llm --prompt="Hello world"`
 - Planner can include this node when generating workflows
 - Registry discovers the node automatically via `name = "llm"` attribute
-- All 20 test criteria from the spec pass
+- Token usage is tracked in shared["llm_usage"] for cost analysis (empty dict {} if unavailable)
+- All 22 test criteria from the spec pass (including usage tracking)
+
+### Real-World Usage Context
+When the planner generates workflows, your LLM node will be used like this:
+```bash
+# User types:
+pflow "summarize the file data.txt"
+
+# Planner generates workflow with your node:
+read-file --path=data.txt >> llm --prompt="Summarize this: $content"
+```
+
+This shows why the shared store pattern matters - `$content` comes from the previous node's output (read-file writes to shared["content"]), and the runtime substitutes it before your node executes. Your node just receives the actual resolved text.
+
+### Why Token Usage Tracking Matters
+pflow's key advantage is "Plan Once, Run Forever" - we track token usage to demonstrate:
+- Initial planning cost (higher tokens for workflow generation)
+- Execution cost (minimal tokens for rerunning saved workflows)
+- Cache benefits (Anthropic's prompt caching reduces costs by ~90% for cached tokens)
+- ROI calculation: After ~3-5 runs, pflow becomes cheaper than re-analyzing with AI agents each time
+
+The `llm_usage` data enables comparing pflow's efficiency against tools like Claude-Code that re-analyze everything on each run. Cache tracking is especially important - when workflows reuse the same prompts/contexts, cached tokens cost 10x less than regular tokens.
 
 ## 🔧 Critical Implementation Details
 
 ### Library Integration Pattern
 ```python
-import llm  # From llm-main directory in this codebase
+import llm  # From pip-installed package, NOT llm-main/
 
 # Basic usage pattern:
-model = llm.get_model("claude-sonnet-4-20250514")  # Default model
+model = llm.get_model("claude-sonnet-4-20250514")  # Accepts model ID or alias
 response = model.prompt("Your prompt", temperature=0.7)
 text = response.text()  # Force evaluation - responses are lazy!
+
+# CRITICAL: The llm library handles its own internal retries for API failures.
+# Our PocketFlow retry mechanism (max_retries=3) is for complete node failures only.
+# Do NOT implement additional retry logic for API calls.
 ```
 
 ### Node Structure (MUST FOLLOW)
@@ -41,7 +67,28 @@ import llm
 from typing import Dict, Any
 
 class LLMNode(Node):
-    """General-purpose LLM node for text processing."""
+    """
+    General-purpose LLM node for text processing.
+
+    Interface:
+    - Reads: shared["prompt"]: str  # Text prompt to send to model
+    - Reads: shared["system"]: str  # System prompt (optional)
+    - Writes: shared["response"]: str  # Model's text response
+    - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
+        # Structure when available:
+        # {
+        #   "model": "claude-sonnet-4-20250514",
+        #   "input_tokens": 150,
+        #   "output_tokens": 75,
+        #   "total_tokens": 225,
+        #   "cache_creation_input_tokens": 0,
+        #   "cache_read_input_tokens": 0
+        # }
+    - Params: model: str  # Model to use (default: claude-sonnet-4-20250514)
+    - Params: temperature: float  # Sampling temperature (default: 0.7)
+    - Params: max_tokens: int  # Max response tokens (optional)
+    - Actions: default (always)
+    """
 
     name = "llm"  # CRITICAL: Required for registry discovery
 
@@ -59,16 +106,23 @@ class LLMNode(Node):
                 "or provide --prompt parameter."
             )
 
+        # System also uses fallback pattern
+        system = shared.get("system") or self.params.get("system")
+
+        # Temperature with clamping
+        temperature = self.params.get("temperature", 0.7)
+        temperature = max(0.0, min(2.0, temperature))
+
         return {
             "prompt": prompt,
             "model": self.params.get("model", "claude-sonnet-4-20250514"),
-            "temperature": self.params.get("temperature", 0.7),
-            "system": self.params.get("system"),
+            "temperature": temperature,
+            "system": system,
             "max_tokens": self.params.get("max_tokens")
         }
 
     def exec(self, prep_res: Dict[str, Any]) -> Dict[str, Any]:
-        # Use llm library directly
+        # Use llm library directly - NO try/except! Let exceptions bubble up
         model = llm.get_model(prep_res["model"])
 
         kwargs = {"temperature": prep_res["temperature"]}
@@ -79,14 +133,45 @@ class LLMNode(Node):
         if prep_res["max_tokens"] is not None:
             kwargs["max_tokens"] = prep_res["max_tokens"]
 
+        # Let exceptions bubble up for retry mechanism
         response = model.prompt(prep_res["prompt"], **kwargs)
 
         # CRITICAL: Force evaluation with text()
-        return {"response": response.text()}
+        text = response.text()
+
+        # Capture usage data (may return None)
+        usage_obj = response.usage()
+
+        return {
+            "response": text,
+            "usage": usage_obj,  # Pass raw object or None
+            "model": prep_res["model"]
+        }
 
     def post(self, shared: Dict[str, Any], prep_res: Dict[str, Any],
              exec_res: Dict[str, Any]) -> str:
         shared["response"] = exec_res["response"]
+
+        # Store usage metrics matching spec structure exactly
+        usage_obj = exec_res.get("usage")
+        if usage_obj:
+            # Extract cache metrics from details if available
+            details = getattr(usage_obj, 'details', {}) or {}
+            cache_creation = details.get('cache_creation_input_tokens', 0)
+            cache_read = details.get('cache_read_input_tokens', 0)
+
+            shared["llm_usage"] = {
+                "model": exec_res.get("model", "unknown"),
+                "input_tokens": usage_obj.input,
+                "output_tokens": usage_obj.output,
+                "total_tokens": usage_obj.input + usage_obj.output,
+                "cache_creation_input_tokens": cache_creation,
+                "cache_read_input_tokens": cache_read
+            }
+        else:
+            # Empty dict per spec when usage unavailable
+            shared["llm_usage"] = {}
+
         return "default"  # Always return "default"
 
     def exec_fallback(self, prep_res: Dict[str, Any], exc: Exception) -> None:
@@ -116,11 +201,13 @@ class LLMNode(Node):
 
 ### MUST DO:
 1. **Use `name = "llm"`** - Required class attribute for registry discovery
-2. **Parameters via `set_params()`** - NOT constructor arguments
+2. **Parameters via `set_params()`** - NOT constructor arguments (for testing)
 3. **Force evaluation with `response.text()`** - Responses are lazy
 4. **Check for None before adding to kwargs** - Don't pass None values
-5. **Use parameter fallback pattern** - Check shared store first, then params
-6. **Temperature clamping** - Clamp to [0.0, 2.0] range per spec
+5. **Use parameter fallback pattern** - Check shared store first, then params (for both prompt and system)
+6. **Temperature clamping** - Clamp to [0.0, 2.0] range using max(0.0, min(2.0, temp))
+7. **Follow PocketFlow retry pattern** - NO try/except in exec(), let exceptions bubble up
+8. **Use enhanced Interface docstring** - With type annotations and proper formatting
 
 ### MUST NOT DO:
 1. **Don't access `shared` in exec()** - Only in prep() and post()
@@ -170,8 +257,8 @@ def test_real_api_call():
     assert "response" in shared
 ```
 
-### All 20 Test Criteria from Spec
-The spec lists 20 specific test cases - implement ALL of them. They cover:
+### All 22 Test Criteria from Spec
+The spec lists 22 specific test cases - implement ALL of them. They cover:
 - Prompt extraction from shared vs params
 - Model parameter usage
 - Temperature handling and clamping
@@ -233,7 +320,7 @@ llm keys set openai
    __all__ = ["LLMNode"]
    ```
 
-4. **Create comprehensive tests** covering all 20 criteria
+4. **Create comprehensive tests** covering all 22 criteria
 
 5. **Update pyproject.toml** with llm dependency
 
@@ -283,13 +370,13 @@ Mitigation: Make default configurable (future enhancement)
 You've succeeded when:
 1. ✅ `pflow llm --prompt="Hello"` works
 2. ✅ Registry auto-discovers the node
-3. ✅ All 20 test cases pass
+3. ✅ All 22 test cases pass
 4. ✅ Error messages are helpful (point to solutions)
 5. ✅ Planner can include this node in generated workflows
 
 ## Final Critical Reminders
 
-- The `llm` library is already in the codebase at `llm-main/`
+- The `llm-main/` directory is for reference only - use pip-installed `llm` package
 - This is the ONLY LLM node - no need for specific prompt nodes
 - Keep it simple for MVP - no advanced features yet
 - The planner (Task 17) depends on this node existing
