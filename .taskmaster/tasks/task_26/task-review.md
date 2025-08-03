@@ -4,7 +4,7 @@
 
 **What We Built**: Six production-ready nodes enabling GitHub and Git automation - three GitHub nodes (`github-get-issue`, `github-list-issues`, `github-create-pr`) using `gh` CLI and three Git nodes (`git-status`, `git-commit`, `git-push`) using native git commands.
 
-**Why It Matters**: Unblocks Task 17 (Natural Language Planner) by providing the essential nodes for the canonical "fix github issue 1234" workflow example.
+**Why It Matters**: Unblocks Task 17 (Natural Language Planner) by providing the essential nodes for the canonical "generate changelog from closed issues" workflow example.
 
 **Critical Limitation**: Git nodes operate only on the current directory where pflow executes, while GitHub nodes can target any repository via the `repo` parameter.
 
@@ -25,10 +25,11 @@
 ```json
 {
   "nodes": [
-    {"id": "1", "type": "github-get-issue", "params": {"issue_number": "123"}},
-    {"id": "2", "type": "llm", "params": {"prompt": "Fix {{issue_data.title}} by {{issue_data.author.login}}"}},
-    {"id": "3", "type": "git-commit", "params": {"message": "Fix #{{issue_data.number}}"}},
-    {"id": "4", "type": "github-create-pr", "params": {"title": "Fix: {{issue_data.title}}", "head": "fix-{{issue_data.number}}"}}
+    {"id": "1", "type": "github-list-issues", "params": {"state": "closed", "limit": "20"}},
+    {"id": "2", "type": "llm", "params": {"prompt": "Generate a changelog from these issues: $issues"}},
+    {"id": "3", "type": "write-file", "params": {"path": "CHANGELOG.md", "content": "$response"}},
+    {"id": "4", "type": "git-commit", "params": {"message": "Update changelog for release"}},
+    {"id": "5", "type": "github-create-pr", "params": {"title": "Update CHANGELOG.md", "base": "main"}}
   ]
 }
 ```
@@ -51,7 +52,7 @@ Interface:
     - number: int
     - title: str
     - author: dict
-      - login: str  # Template: {{issue_data.author.login}}
+      - login: str  # Template: $issue_data.author.login
     - createdAt: str  # ISO format timestamp
 - Actions: default (always)
 """
@@ -122,14 +123,14 @@ nodes = scan_for_nodes([Path('src/pflow/nodes')])
 
 **Runtime Wrapping**:
 - Compiler wraps nodes in `RuntimeNode` for execution
-- Template resolver handles `{{issue_data.author.login}}` paths
+- Template resolver handles `$issue_data.author.login` paths
 - Parameter fallback chain: shared → params → defaults (automatic!)
 
 **Template Variable Resolution**:
 ```python
 # Templates can access nested fields:
-"Fix issue by {{issue_data.author.login}}"  # Resolves to author's username
-"Label: {{issue_data.labels[0].name}}"      # First label's name (NOTE: Array access not yet implemented in template resolver)
+"Summarize issue by $issue_data.author.login"  # Resolves to author's username
+"Title: $issue_data.title"      # Issue title (Note: Array indexing like [0] is NOT supported)
 ```
 
 ### Planner Integration (Task 17)
@@ -239,25 +240,33 @@ Interface:
 
 ## Usage Cookbook
 
-### Fix Issue and Create PR
+### Generate Changelog and Create PR
 ```python
-# 1. Get issue details
-shared = {"issue_number": "1234", "repo": "owner/repo"}
-node = GitHubGetIssueNode()
+# 1. Get closed issues
+shared = {"state": "closed", "limit": "20"}
+node = GitHubListIssuesNode()
 node.run(shared)
-# shared["issue_data"] now contains full issue
+# shared["issues"] now contains list of closed issues
 
-# 2. Create fix (using LLM or manual)
-fix_content = generate_fix(shared["issue_data"])
+# 2. Generate changelog using LLM
+shared["prompt"] = f"Generate changelog from: {shared['issues']}"
+node = LLMNode()
+node.run(shared)
 
-# 3. Commit fix
-shared["message"] = f"Fix #{shared['issue_data']['number']}"
+# 3. Write changelog file
+shared["path"] = "CHANGELOG.md"
+shared["content"] = shared["response"]
+node = WriteFileNode()
+node.run(shared)
+
+# 4. Commit changes
+shared["message"] = "Update changelog for release"
 node = GitCommitNode()
 node.run(shared)
 
-# 4. Create PR
-shared["title"] = f"Fix: {shared['issue_data']['title']}"
-shared["body"] = f"Fixes #{shared['issue_data']['number']}"
+# 5. Create PR
+shared["title"] = "Update CHANGELOG.md"
+shared["body"] = "Automated changelog update from closed issues"
 node = GitHubCreatePRNode()
 node.run(shared)
 ```
