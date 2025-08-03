@@ -128,6 +128,15 @@ Currently contains file nodes, structured for future node types:
 
 **Purpose**: Validate full system behavior from CLI to execution
 
+## Critical Testing Rules
+
+### Retry Testing
+**ALWAYS use `wait=0`** when testing retries to ensure fast execution:
+```python
+node = SomeNode(max_retries=2, wait=0)  # ✅ Fast
+# If not in constructor: node.wait = 0
+```
+
 ## Writing New Tests
 
 ### Where to Place New Tests - Decision Tree

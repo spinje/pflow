@@ -129,6 +129,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
+"tests/test_integration/test_git_*.py" = ["S603", "S607"]  # Allow subprocess calls for git integration tests
 
 [tool.ruff.format]
 preview = true

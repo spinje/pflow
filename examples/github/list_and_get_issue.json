@@ -1,0 +1,56 @@
+{
+  "name": "list-and-get-first-issue",
+  "description": "List GitHub issues and get details of the first one",
+  "version": "1.0.0",
+  "inputs": {
+    "repo": {
+      "type": "string",
+      "description": "Repository in owner/repo format",
+      "required": true
+    },
+    "state": {
+      "type": "string",
+      "description": "Issue state (open, closed, all)",
+      "default": "open"
+    }
+  },
+  "outputs": {
+    "issues": {
+      "type": "array",
+      "description": "List of issues found"
+    },
+    "first_issue_details": {
+      "type": "object",
+      "description": "Detailed information about the first issue"
+    }
+  },
+  "nodes": [
+    {
+      "id": "list-issues",
+      "type": "github-list-issues",
+      "params": {
+        "state": "{{state}}",
+        "limit": "10"
+      },
+      "inputs": {
+        "repo": "{{repo}}"
+      }
+    },
+    {
+      "id": "get-first-issue",
+      "type": "github-get-issue",
+      "params": {},
+      "inputs": {
+        "repo": "{{repo}}",
+        "issue_number": "{{issues[0].number}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "list-issues",
+      "to": "get-first-issue",
+      "action": "default"
+    }
+  ]
+}
