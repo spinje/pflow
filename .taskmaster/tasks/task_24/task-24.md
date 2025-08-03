@@ -10,7 +10,7 @@ Implement Workflow Manager
 Create a centralized service that manages the complete workflow lifecycle including saving, loading, discovery, and name resolution. This service consolidates scattered workflow management logic across the codebase and bridges the format gap between how workflows are stored (with metadata wrapper) versus how they're executed (raw IR only). The WorkflowManager enables the "Plan Once, Run Forever" philosophy by finally implementing the missing save functionality.
 
 ## Status
-not started
+done
 
 ## Dependencies
 - Task 21: Implement Workflow Input Declaration - WorkflowManager leverages the new input/output declarations in the IR for interface-based discovery and validation. The format changes from Task 21 (inputs/outputs in IR) must be handled correctly.

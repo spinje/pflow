@@ -154,7 +154,7 @@ Create a mechanism for workflows to declare their complete interface with:
 - Invalid output key: "Output key 'invalid-key!' must be a valid identifier"
 
 ## Status
-pending
+done
 
 ## Test Strategy
 
