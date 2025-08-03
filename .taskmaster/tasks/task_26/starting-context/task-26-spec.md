@@ -2,7 +2,7 @@
 
 ## Objective
 
-Create GitHub and Git operation nodes using GitHub CLI (gh) wrapper for workflow automation.
+Create GitHub and Git operation nodes using GitHub CLI (gh) for GitHub operations and native git commands for version control automation.
 
 ## Prerequisites
 
@@ -14,8 +14,10 @@ Create GitHub and Git operation nodes using GitHub CLI (gh) wrapper for workflow
 
 ## Requirements
 
-- Must wrap gh CLI commands via subprocess
-- Must parse JSON output to Python dictionaries
+- Must wrap gh CLI commands via subprocess for GitHub operations
+- Must use native git commands via subprocess for version control operations
+- Must parse JSON output to Python dictionaries (gh commands only)
+- Must parse git porcelain output to structured data (git status)
 - Must integrate with shared store pattern (read inputs, write outputs)
 - Must have name class attribute for registry discovery
 - Must handle subprocess errors and return codes
@@ -78,30 +80,84 @@ Create GitHub and Git operation nodes using GitHub CLI (gh) wrapper for workflow
 
 ### `github-get-issue`:
 - Writes `issue_data` to shared: dict containing issue details from gh CLI JSON output
-- Expected to include fields like number, title, body, state, and nested author/labels data
-- ⚠️ VERIFY actual gh output structure and transform as needed for Task 17 compatibility
+- Verified structure includes:
+  ```json
+  {
+    "number": 123,
+    "title": "Issue title",
+    "body": "Issue description",
+    "state": "OPEN",
+    "author": {
+      "login": "username",
+      "name": "Full Name",
+      "id": "MDQ6VXNlcjM2NzI4OTMx"
+    },
+    "labels": [
+      {"name": "bug", "color": "d73a4a", "description": ""}
+    ],
+    "assignees": [
+      {"login": "username", "name": "Full Name"}
+    ],
+    "createdAt": "2024-01-15T10:30:00Z",
+    "updatedAt": "2024-01-16T14:22:00Z"
+  }
+  ```
 
 ### `github-list-issues`:
 - Writes `issues` to shared: array of issue objects from gh CLI JSON output
+- Each issue in array follows same structure as `github-get-issue` output
 
 ### `github-create-pr`:
-- Writes `pr_data` to shared: dict containing PR details from gh CLI JSON output
-- Expected to include PR number and URL at minimum
+- Writes `pr_data` to shared: dict containing PR details
+- NOTE: `gh pr create` returns URL only (not JSON), requires parsing:
+  1. Extract PR URL from stdout: `https://github.com/owner/repo/pull/456`
+  2. Parse PR number from URL
+  3. Call `gh pr view` to get full JSON data
+- Final structure:
+  ```json
+  {
+    "number": 456,
+    "url": "https://github.com/owner/repo/pull/456",
+    "title": "PR title",
+    "state": "OPEN",
+    "author": {"login": "username"}
+  }
+  ```
 
 ### `git-status`:
 - Writes `git_status` to shared: dict containing repository status information
-- Structure depends on gh/git command output format
+- Uses `git status --porcelain=v2` and parses output to:
+  ```json
+  {
+    "modified": ["file1.py", "file2.py"],
+    "untracked": ["newfile.py"],
+    "staged": ["staged.py"],
+    "branch": "feature-branch",
+    "ahead": 2,
+    "behind": 0
+  }
+  ```
 
 ### `git-commit`:
-- Writes `commit_sha` to shared: string
-- Writes `commit_message` to shared: string
+- Writes `commit_sha` to shared: string (extracted from git output)
+- Writes `commit_message` to shared: string (echoed from input)
+- Uses native `git add` and `git commit` commands
 
 ### `git-push`:
 - Writes `push_result` to shared: dict containing push operation results
+- Uses native `git push` command
+- Structure:
+  ```json
+  {
+    "success": true,
+    "branch": "feature-branch",
+    "remote": "origin"
+  }
+  ```
 
 All nodes return action string: `"default"`
 
-**Note**: Exact output structures depend on gh CLI version and must be verified during implementation
+**Note**: Output structures have been verified against gh CLI v2.0+ documentation
 
 ## Structured Formats
 
@@ -172,8 +228,8 @@ All nodes return action string: `"default"`
 14. Issue numbers must be positive integers or numeric strings
 15. Repository format must match "owner/repo" pattern when provided
 16. Branch names must not contain spaces or special characters except dash and underscore
-17. Parse gh JSON output and store in shared with appropriate transformations
-18. Transform field names as needed for Task 17 compatibility (e.g., author → user)
+17. Parse gh JSON output and store in shared without transformation (use native field names)
+18. Use native gh field names (author, createdAt) - Task 17 will be updated to match
 19. Log subprocess command before execution at debug level
 20. Include gh command in error messages for debugging
 
@@ -269,7 +325,7 @@ node.run(shared)
 17. Empty string parameter → verify `ValueError` raised
 18. Invalid repo format → verify "invalid-format" raises error
 19. Branch name validation → verify "my branch" raises error
-20. Field transformation → verify field name transformations work correctly
+20. Native field usage → verify native gh field names are preserved
 21. Command logging → verify debug log contains command
 22. Error message includes command → verify `ValueError` contains gh command
 
@@ -303,7 +359,7 @@ node.run(shared)
 | 15     | 18              | Repo format validation      |
 | 16     | 19              | Branch name validation      |
 | 17     | 3               | Parse and transform output  |
-| 18     | 20              | Field transformations       |
+| 18     | 20              | Native field preservation   |
 | 19     | 21              | Command logging             |
 | 20     | 22              | Error messages              |
 
@@ -316,12 +372,14 @@ node.run(shared)
 
 ## Epistemic Appendix
 
-### Assumptions & Unknowns
+### Verified Information
 
-- Assumes gh CLI v2.0+ JSON output format stability
-- Unknown if gh handles all GitHub Enterprise endpoints identically
+- Verified gh CLI v2.0+ JSON output format via documentation
+- Verified field names: `author` (not `user`), `createdAt` (not `created_at`)
+- Verified `gh pr create` returns URL only, not JSON
+- Verified git commands must be native (gh doesn't wrap git)
 - Assumes subprocess isolation sufficient for concurrent execution
-- Unknown optimal timeout value for slow network conditions
+- Timeout value of 30 seconds chosen as reasonable default
 
 ### Conflicts & Resolutions
 
