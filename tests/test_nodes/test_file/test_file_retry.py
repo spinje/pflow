@@ -40,6 +40,7 @@ class TestFileNodeRetryBehavior:
 
         try:
             node = ReadFileNode()
+            node.wait = 0  # Speed up tests by removing retry delays
             shared = {"file_path": temp_path}
 
             # Simulate transient permission issues that resolve
@@ -74,6 +75,7 @@ class TestFileNodeRetryBehavior:
 
         try:
             node = DeleteFileNode()
+            node.wait = 0  # Speed up tests by removing retry delays
             # Missing required confirmation - this is a validation error
             shared = {"file_path": temp_path, "confirm_delete": False}
 
@@ -96,6 +98,7 @@ class TestFileNodeRetryBehavior:
         BEHAVIOR: Users should get actionable error messages, not technical details.
         """
         node = ReadFileNode()
+        node.wait = 0  # Speed up tests by removing retry delays
 
         # Test with missing file
         shared = {"file_path": "/nonexistent/path/file.txt"}
@@ -137,6 +140,7 @@ class TestFileNodeRetryBehavior:
             def concurrent_read():
                 """Simulate concurrent access to same file."""
                 node = ReadFileNode()
+                node.wait = 0  # Speed up tests by removing retry delays
                 shared = {"file_path": temp_path}
                 action = node.run(shared)
                 results.append((action, shared.get("content", ""), shared.get("error", "")))
@@ -169,6 +173,7 @@ class TestFileNodeRetryBehavior:
             target_path = os.path.join(tmpdir, "test_file.txt")
 
             node = WriteFileNode()
+            node.wait = 0  # Speed up tests by removing retry delays
             shared = {"file_path": target_path, "content": "test content"}
 
             # Simulate system under memory pressure by making atomic write fail initially
@@ -207,6 +212,7 @@ class TestFileNodeRetryBehavior:
                 f.write("source content to copy")
 
             node = CopyFileNode()
+            node.wait = 0  # Speed up tests by removing retry delays
             shared = {"source_path": source_path, "dest_path": dest_path}
 
             # Simulate resource contention by temporarily making copy fail
@@ -249,6 +255,7 @@ class TestFileNodeRetryBehavior:
                 f.write(original_content)
 
             node = MoveFileNode()
+            node.wait = 0  # Speed up tests by removing retry delays
             shared = {"source_path": source_path, "dest_path": dest_path}
 
             action = node.run(shared)
@@ -276,6 +283,7 @@ class TestFileNodeRetryBehavior:
 
         try:
             node = DeleteFileNode()
+            node.wait = 0  # Speed up tests by removing retry delays
             shared = {"file_path": temp_path, "confirm_delete": True}
 
             # Simulate file being temporarily locked by another process
@@ -316,6 +324,7 @@ class TestFileNodeRetryBehavior:
         """
         # Test 1: Configuration error (directory instead of file)
         node1 = CopyFileNode()
+        node1.wait = 0  # Speed up tests by removing retry delays
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = os.path.join(tmpdir, "source.txt")
             dest_path = os.path.join(tmpdir, "dest.txt")
@@ -337,6 +346,7 @@ class TestFileNodeRetryBehavior:
 
         # Test 2: System error with retry verification
         node2 = CopyFileNode()
+        node2.wait = 0  # Speed up tests by removing retry delays
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = os.path.join(tmpdir, "source.txt")
             dest_path = os.path.join(tmpdir, "dest.txt")
@@ -373,6 +383,7 @@ class TestFileNodeRetryBehavior:
 
         # Test 3: Successful operation (no retries needed)
         node3 = CopyFileNode()
+        node3.wait = 0  # Speed up tests by removing retry delays
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = os.path.join(tmpdir, "source.txt")
             dest_path = os.path.join(tmpdir, "dest.txt")
@@ -400,6 +411,7 @@ class TestFileNodeRetryBehavior:
 
         try:
             node = ReadFileNode()
+            node.wait = 0  # Speed up tests by removing retry delays
             shared = {"file_path": temp_path, "encoding": "utf-8"}
 
             action = node.run(shared)

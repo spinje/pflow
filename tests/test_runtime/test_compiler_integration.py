@@ -360,6 +360,69 @@ class TestPerformanceBenchmarks:
 
         return {"nodes": nodes, "edges": edges}
 
+    def _set_wait_time_zero(self, flow):
+        """Set wait=0 on all nodes in the flow for faster test execution.
+
+        Traverses the flow graph starting from the start node and sets
+        wait=0 on any node that has a wait attribute to eliminate retry delays.
+        """
+        if not flow or not flow.start_node:
+            return
+
+        visited = set()
+        to_visit = [flow.start_node]
+
+        while to_visit:
+            node = to_visit.pop()
+            if node is None or id(node) in visited:
+                continue
+
+            visited.add(id(node))
+
+            # Set wait=0 if the node has a wait attribute (Node instances)
+            if hasattr(node, "wait"):
+                node.wait = 0
+
+            # Also check wrapped nodes
+            if hasattr(node, "wrapped_node") and hasattr(node.wrapped_node, "wait"):
+                node.wrapped_node.wait = 0
+
+            # Add successor nodes to visit
+            if hasattr(node, "successors") and node.successors:
+                to_visit.extend(node.successors.values())
+
+    def _verify_wait_times_are_zero(self, flow):
+        """Verify that all nodes in the flow have wait=0 for test validation."""
+        if not flow or not flow.start_node:
+            return
+
+        visited = set()
+        to_visit = [flow.start_node]
+        nodes_with_wait = []
+
+        while to_visit:
+            node = to_visit.pop()
+            if node is None or id(node) in visited:
+                continue
+
+            visited.add(id(node))
+
+            # Check if node has wait attribute and collect info
+            if hasattr(node, "wait"):
+                nodes_with_wait.append((type(node).__name__, node.wait))
+
+            # Also check wrapped nodes
+            if hasattr(node, "wrapped_node") and hasattr(node.wrapped_node, "wait"):
+                nodes_with_wait.append((f"Wrapped{type(node.wrapped_node).__name__}", node.wrapped_node.wait))
+
+            # Add successor nodes to visit
+            if hasattr(node, "successors") and node.successors:
+                to_visit.extend(node.successors.values())
+
+        # Verify all wait times are 0
+        non_zero_waits = [(name, wait) for name, wait in nodes_with_wait if wait != 0]
+        assert not non_zero_waits, f"Found nodes with non-zero wait times: {non_zero_waits}"
+
     def test_real_compilation_performance_scales_with_nodes(self, test_registry):
         """Test that compilation time with real nodes meets performance targets."""
         # Test with different sizes using real nodes
@@ -393,6 +456,12 @@ class TestPerformanceBenchmarks:
         # Compile the workflow
         flow = compile_ir_to_flow(ir, test_registry)
         assert flow is not None
+
+        # Speed up test execution by setting wait=0 on all nodes
+        self._set_wait_time_zero(flow)
+
+        # Verify wait times are actually set to 0 for faster execution
+        self._verify_wait_times_are_zero(flow)
 
         # Most importantly: verify the compiled workflow actually executes
         shared_store = {"test_input": "performance_test", "user_id": "perf-user", "retry_input": "retry_test"}

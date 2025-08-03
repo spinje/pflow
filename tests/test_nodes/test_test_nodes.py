@@ -59,6 +59,7 @@ class TestTestNodeRetry:
         BEHAVIOR: Node should process input successfully despite simulated failures.
         """
         node = TestNodeRetry()
+        node.wait = 0  # Speed up tests by removing retry delays
         shared = {"retry_input": "hello world"}
 
         action = node.run(shared)
@@ -76,6 +77,7 @@ class TestTestNodeRetry:
         - Focus on behavior: does the retry mechanism work as expected?
         """
         node = TestNodeRetry()
+        node.wait = 0  # Speed up tests by removing retry delays
         shared = {"retry_input": "test data"}
 
         # The TestNodeRetry is designed to fail initially then succeed
