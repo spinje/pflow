@@ -237,7 +237,7 @@ Example:
 Use subagents to maximize efficiency and avoid context window limitations.
 
 > Always use subagents to gather information, context, do research and verifying assumptions. This is important!
-> Always use subagents to work on debugging, testing and writing tests.
+> Always use the `test-writer-fixer` subagent for writing tests, fixing test failures, and debugging test issues. Deploy it alongside implementation, not as a separate phase.
 
 ## Critical Technical Details
 
@@ -338,7 +338,8 @@ Your plan should include:
 ```markdown
 - "Write a new test case for foo.py that covers the logged‑out user edge case; avoid mocks."
 - "Follow the pattern in HotDogWidget.php to implement a new CalendarWidget that lets users paginate months & years (no extra libraries)."
-- "Write unit tests for parameter validation in test_workflow_node_params.py. Include these test cases... [list of test cases]"
+- "test-writer-fixer: Write unit tests for parameter validation in test_workflow_node_params.py focusing on edge cases and error conditions"
+- "test-writer-fixer: Review and improve existing tests to ensure they catch real bugs, not just achieve coverage"
 ```
 
 **❌ BAD Subagent Tasks:**
@@ -353,7 +354,7 @@ Your plan should include:
 - Specific, bounded edits when modifying existing files
 - Include full context about what the subagent needs to know
 - Never assign overlapping file modifications
-- Always use subagents to fix bugs, test, and write tests
+- Always use test-writer-fixer subagent for test creation, test fixes, and final test review
 - Always use subagents to gather information from the codebase or docs
 - Parallelise only when subtasks are independent and with explicit bounds
 - Subagents are your best weapon against unverified assumptions
@@ -400,6 +401,13 @@ Your plan should include:
 
 ### Phase 5: Documentation
 [Documentation tasks]
+
+### Phase 6: Final Test Review (use test-writer-fixer)
+Deploy test-writer-fixer subagent to review all created tests and ensure they:
+- Catch real bugs, not just achieve coverage
+- Follow project testing patterns
+- Have proper error messages and assertions
+- Cover critical edge cases
 
 ## Risk Mitigation
 
@@ -486,6 +494,8 @@ Append deviation to progress log:
 ```
 
 ## Test Creation Guidelines
+
+**Use the `test-writer-fixer` subagent**: Deploy this specialized agent for all test tasks - it writes tests that catch real bugs, not just achieve coverage. Also use it for a final test review after implementation.
 
 **Core Principle**: "Test what matters"
 
@@ -682,7 +692,7 @@ Think of it as enabling this:
 Use subagents to maximize efficiency and avoid context window limitations.
 
 > Always use subagents to gather information, context, do research and verifying assumptions. This is important!
-> Always use subagents to work on debugging, testing and writing tests.
+> Always use the `test-writer-fixer` subagent for writing tests, fixing test failures, and debugging test issues. Deploy it alongside implementation, not as a separate phase.
 
 ## Critical Technical Details
 
@@ -825,6 +835,8 @@ Append deviation to progress log:
 ```
 
 ## Test Creation Guidelines
+
+**Use the `test-writer-fixer` subagent**: Deploy this specialized agent for all test tasks - it writes tests that catch real bugs, not just achieve coverage. Also use it for a final test review after implementation.
 
 **Core Principle**: "Test what matters"
 
