@@ -16,9 +16,20 @@ check: ## Run code quality tools.
 	@uv run deptry src
 
 .PHONY: test
-test: ## Test the code with pytest
+test: ## Test the code with pytest (mocked tests only)
 	@echo "🚀 Testing code: Running pytest"
 	@uv run python -m pytest --doctest-modules
+
+.PHONY: test-llm
+test-llm: ## Run LLM integration tests with real API calls (requires API keys)
+	@echo "🚀 Testing LLM with real API calls"
+	@echo "📝 Note: Requires 'llm keys set openai' (or 'llm keys set anthropic' with llm-anthropic plugin)"
+	@RUN_LLM_TESTS=1 uv run python -m pytest tests/test_nodes/test_llm/test_llm_integration.py -v
+
+.PHONY: test-all
+test-all: ## Run all tests including LLM integration tests
+	@echo "🚀 Testing code: Running all tests including integration"
+	@RUN_LLM_TESTS=1 uv run python -m pytest --doctest-modules
 
 .PHONY: build
 build: clean-build ## Build wheel file

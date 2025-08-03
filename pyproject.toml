@@ -20,9 +20,13 @@ classifiers = [
 dependencies = [
     "click",          # CLI framework (more flexible than Typer)
     "jsonschema>=4.20.0",  # JSON Schema validation for workflow IR
+    "llm>=0.19.0",    # Simon Willison's LLM library for text processing
     # "pydantic",       # IR/metadata validation (future: for JSON schema validation)
-    # "llm>=0.26",      # Simon W simple prompts native integration (future: for natural language planning)
 ]
+
+[project.optional-dependencies]
+anthropic = ["llm-anthropic>=0.17"]
+all-llms = ["llm-anthropic>=0.17"]  # Can add more plugins here
 
 [project.scripts]
 pflow = "pflow.cli:main"
@@ -129,5 +133,7 @@ ignore = [
 [tool.ruff.format]
 preview = true
 
-[tool.deptry]
-per_rule_ignores = {"DEP001" = ["pocketflow"], "DEP003" = ["pocketflow"]}
+[tool.deptry.per_rule_ignores]
+DEP001 = ["pocketflow"]
+DEP002 = ["llm-anthropic"]  # Plugin for llm library, not directly imported
+DEP003 = ["pocketflow"]
