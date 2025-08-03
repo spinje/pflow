@@ -77,66 +77,31 @@ Create GitHub and Git operation nodes using GitHub CLI (gh) wrapper for workflow
 ## Outputs
 
 ### `github-get-issue`:
-- Writes `issue_data` to shared:
-```json
-{
-  "number": 123,
-  "title": "Bug in login",
-  "body": "Description...",
-  "state": "open",
-  "author": {"login": "username"},
-  "labels": [{"name": "bug"}],
-  "assignees": [{"login": "dev1"}],
-  "createdAt": "2024-01-15T10:00:00Z",
-  "updatedAt": "2024-01-15T14:30:00Z"
-}
-```
+- Writes `issue_data` to shared: dict containing issue details from gh CLI JSON output
+- Expected to include fields like number, title, body, state, and nested author/labels data
+- ⚠️ VERIFY actual gh output structure and transform as needed for Task 17 compatibility
 
 ### `github-list-issues`:
-- Writes `issues` to shared (array of issue objects)
+- Writes `issues` to shared: array of issue objects from gh CLI JSON output
 
 ### `github-create-pr`:
-- Writes `pr_data` to shared:
-```json
-{
-  "number": 456,
-  "url": "https://github.com/owner/repo/pull/456",
-  "title": "Feature: Add auth",
-  "state": "open",
-  "head": {"ref": "feature-branch"},
-  "base": {"ref": "main"}
-}
-```
+- Writes `pr_data` to shared: dict containing PR details from gh CLI JSON output
+- Expected to include PR number and URL at minimum
 
 ### `git-status`:
-- Writes `git_status` to shared:
-```json
-{
-  "branch": "main",
-  "ahead": 2,
-  "behind": 0,
-  "modified": ["file1.py", "file2.md"],
-  "untracked": ["newfile.txt"],
-  "staged": ["file3.js"]
-}
-```
+- Writes `git_status` to shared: dict containing repository status information
+- Structure depends on gh/git command output format
 
 ### `git-commit`:
-- Writes `commit_sha` to shared (string)
-- Writes `commit_message` to shared (string)
+- Writes `commit_sha` to shared: string
+- Writes `commit_message` to shared: string
 
 ### `git-push`:
-- Writes `push_result` to shared:
-```json
-{
-  "branch": "main",
-  "remote": "origin",
-  "commits_pushed": 2,
-  "url": "https://github.com/owner/repo"
-}
-```
+- Writes `push_result` to shared: dict containing push operation results
 
 All nodes return action string: `"default"`
+
+**Note**: Exact output structures depend on gh CLI version and must be verified during implementation
 
 ## Structured Formats
 
@@ -207,8 +172,8 @@ All nodes return action string: `"default"`
 14. Issue numbers must be positive integers or numeric strings
 15. Repository format must match "owner/repo" pattern when provided
 16. Branch names must not contain spaces or special characters except dash and underscore
-17. Extract only documented fields from gh JSON output, ignore extras
-18. If required field is missing from gh output, raise KeyError with field name
+17. Parse gh JSON output and store in shared with appropriate transformations
+18. Transform field names as needed for Task 17 compatibility (e.g., author → user)
 19. Log subprocess command before execution at debug level
 20. Include gh command in error messages for debugging
 
@@ -220,7 +185,6 @@ All nodes return action string: `"default"`
 - Issue not found → stderr contains "Could not find issue"
 - Network timeout → `subprocess.TimeoutExpired`
 - Invalid JSON from gh → `json.JSONDecodeError`
-- Missing required field in response → `KeyError`
 - Rate limit exceeded → stderr contains "rate limit"
 - No git repository → stderr contains "not a git repository"
 - Nothing to commit → git-commit returns exit code 1
@@ -235,7 +199,6 @@ All nodes return action string: `"default"`
 - "Could not find issue" in stderr → "Issue #{issue_number} not found"
 - `TimeoutExpired` → "Command timed out after 30 seconds"
 - `JSONDecodeError` → "Failed to parse JSON output: {output}"
-- `KeyError` → "Missing required field '{field}' in response"
 - "rate limit" in stderr → "GitHub API rate limit exceeded"
 - "not a git repository" in stderr → "Not in a git repository"
 - Exit code 1 from git-commit → "Nothing to commit"
@@ -306,7 +269,7 @@ node.run(shared)
 17. Empty string parameter → verify `ValueError` raised
 18. Invalid repo format → verify "invalid-format" raises error
 19. Branch name validation → verify "my branch" raises error
-20. Missing response field → verify `KeyError` with field name
+20. Field transformation → verify field name transformations work correctly
 21. Command logging → verify debug log contains command
 22. Error message includes command → verify `ValueError` contains gh command
 
@@ -339,8 +302,8 @@ node.run(shared)
 | 14     | 12, 13          | Issue number types          |
 | 15     | 18              | Repo format validation      |
 | 16     | 19              | Branch name validation      |
-| 17     | 3               | Field extraction            |
-| 18     | 20              | Missing field error         |
+| 17     | 3               | Parse and transform output  |
+| 18     | 20              | Field transformations       |
 | 19     | 21              | Command logging             |
 | 20     | 22              | Error messages              |
 
