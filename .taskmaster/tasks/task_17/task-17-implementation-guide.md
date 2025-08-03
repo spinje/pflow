@@ -16,8 +16,8 @@ This flexibility is crucial for workflow generation and is available on ALL node
 ## MVP Context: Natural Language Only
 
 **Critical**: In the MVP, users NEVER provide CLI-style parameters. Everything goes through natural language:
-- ✅ `pflow "fix github issue 1234"`
-- ❌ `pflow fix-issue --issue=1234` (this is post-MVP)
+- ✅ `pflow "generate changelog from closed issues"`
+- ❌ `pflow generate-changelog --state=closed --limit=20` (this is post-MVP)
 
 This affects how we think about "initial parameters" - they're always extracted from natural language by the planner, never provided as CLI flags by users.
 
@@ -178,7 +178,7 @@ class WorkflowGeneratorNode(Node):
     def __init__(self):
         super().__init__(max_retries=3)  # For API failures only
         # Get model with proper configuration
-        self.model = llm.get_model("claude-sonnet-4-20250514")
+        self.model = llm.get_model("gpt-4o-mini")  # Default from Task 12
 
     def prep(self, shared):
         """Prepare context for workflow generation."""
@@ -679,7 +679,7 @@ class ParameterDiscoveryNode(Node):
         Extract parameters with appropriate names from: "{prep_res['user_input']}"
 
         Examples:
-        - "fix github issue 1234" → {{"issue_number": "1234"}}
+        - "generate changelog from last 20 closed issues" → {{"state": "closed", "limit": "20"}}
         - "analyze report.pdf from yesterday" → {{"file_path": "report.pdf", "date": "2024-01-15"}}
         - "deploy version 2.1.0 to staging" → {{"version": "2.1.0", "environment": "staging"}}
 
@@ -850,6 +850,8 @@ class NodeIR(BaseModel):
     id: str = Field(..., pattern="^[a-zA-Z0-9_-]+$")
     type: str = Field(..., description="Node type from registry")
     params: Dict[str, Any] = Field(default_factory=dict)
+    # Note: Template variables use $var syntax, not {{var}}
+    # Array indexing like $data[0] is NOT supported
 
 class EdgeIR(BaseModel):
     """Edge representation for IR generation."""
@@ -896,7 +898,7 @@ class WorkflowGeneratorNode(Node):
 
     def __init__(self):
         super().__init__(max_retries=3, wait=1.0)
-        self.model = llm.get_model("claude-sonnet-4-20250514")
+        self.model = llm.get_model("gpt-4o-mini")  # Default from Task 12
 
     def prep(self, shared):
         """Prepare data including attempt tracking for progressive enhancement."""
@@ -985,9 +987,9 @@ CRITICAL Requirements:
 5. You can use ANY variable name that nodes write - check the registry!
 
 Example of CORRECT usage:
-- User says "fix issue 1234"
-- Generate: {{"params": {{"issue": "$issue_number"}}}}
-- NOT: {{"params": {{"issue": "1234"}}}}
+- User says "generate changelog from closed issues"
+- Generate: {{"params": {{"state": "$state", "limit": "$limit"}}}}
+- NOT: {{"params": {{"state": "closed", "limit": "20"}}}}
 
 Real workflow example:
 - User says "summarize report.pdf and save to summary.txt"
@@ -1013,9 +1015,9 @@ from pflow.core.workflow_manager import WorkflowManager
 
 workflow_manager = WorkflowManager()
 saved_path = workflow_manager.save(
-    name="fix-issue",
+    name="generate-changelog",
     workflow_ir=generated_workflow,
-    description="Fixes GitHub issues and creates PR"
+    description="Generates changelog from closed issues"
 )
 ```
 
@@ -1083,28 +1085,29 @@ except ValueError as e:
 - Set `validate=False` only when some params come from runtime
 
 ### Example: LLM-Generated Complete Workflow
-When user says "fix github issue 123", the LLM generates:
+When user says "generate changelog from closed issues", the LLM generates:
 
 ```json
 {
   "ir_version": "0.1.0",
   "nodes": [
-    {"id": "get_issue", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
-    {"id": "analyze", "type": "claude-code", "params": {
-      "prompt": "<instructions>Fix the issue described below</instructions>\n\nIssue #$issue_data.number: $issue_data.title\nReported by: $issue_data.user.login\n\nDescription:\n$issue_data.body"
+    {"id": "list", "type": "github-list-issues", "params": {"state": "$state", "limit": "$limit"}},
+    {"id": "generate", "type": "llm", "params": {
+      "prompt": "Generate a CHANGELOG.md entry from these issues:\n$issues\n\nGroup by type (feature/bug/enhancement) and include issue numbers."
     }},
-    {"id": "commit", "type": "git-commit", "params": {"message": "Fix #$issue_number: $issue_data.title"}},
-    {"id": "push", "type": "git-push", "params": {}},
+    {"id": "write", "type": "write-file", "params": {"path": "CHANGELOG.md", "content": "$response"}},
+    {"id": "commit", "type": "git-commit", "params": {"message": "Update changelog for release"}},
     {"id": "create_pr", "type": "github-create-pr", "params": {
-      "title": "Fix: $issue_data.title",
-      "body": "Fixes #$issue_number\n\n$code_report"
+      "title": "Update CHANGELOG.md",
+      "body": "Automated changelog update from last $limit $state issues",
+      "base": "main"
     }}
   ],
   "edges": [
-    {"from": "get_issue", "to": "analyze"},
-    {"from": "analyze", "to": "commit"},
-    {"from": "commit", "to": "push"},
-    {"from": "push", "to": "create_pr"}
+    {"from": "list", "to": "generate"},
+    {"from": "generate", "to": "write"},
+    {"from": "write", "to": "commit"},
+    {"from": "commit", "to": "create_pr"}
   ]
 }
 ```
@@ -1137,7 +1140,7 @@ When generating workflows, the planner should recognize these common patterns:
 ### Pattern 2: Nested Data Access (Enabled by Node IR)
 ```python
 # Node writes complex structure (e.g., github-get-issue writes issue_data)
-# Access specific fields: "$issue_data.user.login", "$issue_data.labels"
+# Access specific fields: "$issue_data.author.login", "$issue_data.labels"
 # The validator knows these paths exist from the registry's structure info
 ```
 
@@ -1198,17 +1201,17 @@ def test_workflow_generation_completeness():
         "ir_version": "0.1.0",
         "nodes": [
             {"id": "get", "type": "github-get-issue",
-             "params": {"issue": "$issue_number", "repo": "$repo_name"}},  # Simple vars
-            {"id": "fix", "type": "claude-code",
-             "params": {"prompt": "Fix: $issue_data"}},  # Simple var from shared
+             "params": {"issue_number": "$issue_number", "repo": "$repo_name"}},  # Simple vars
+            {"id": "analyze", "type": "llm",
+             "params": {"prompt": "Analyze: $issue_data"}},  # Simple var from shared
             {"id": "notify", "type": "send-message",
-             "params": {"to": "$issue_data.user.login", "title": "$issue_data.title"}}  # Path vars
+             "params": {"to": "$issue_data.author.login", "title": "$issue_data.title"}}  # Path vars
         ],
-        "edges": [{"from": "get", "to": "fix"}, {"from": "fix", "to": "notify"}]
+        "edges": [{"from": "get", "to": "analyze"}, {"from": "analyze", "to": "notify"}]
     })
 
     planner = create_planner_flow()
-    result = planner.run({"user_input": "fix github issue 123"})
+    result = planner.run({"user_input": "generate changelog from closed issues"})
 
     # Verify workflow structure
     assert "nodes" in result["workflow_ir"]
@@ -1262,9 +1265,9 @@ def test_natural_language_interpretation():
     """Test various natural language inputs produce correct workflows."""
     test_cases = [
         {
-            "input": "fix github issue 123",
-            "expected_nodes": ["github-get-issue", "claude-code", "git-commit"],
-            "expected_template_vars": ["issue_number", "issue_data", "commit_message"]
+            "input": "generate changelog from closed issues",
+            "expected_nodes": ["github-list-issues", "llm", "write-file", "git-commit"],
+            "expected_template_vars": ["state", "limit", "issues", "response"]
         },
         {
             "input": "analyze this youtube video",
@@ -1300,8 +1303,8 @@ def test_resolution_order_calculation():
     workflow = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "n1", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
-            {"id": "n2", "type": "claude-code", "params": {"prompt": "Fix issue: $issue_data"}},
+            {"id": "n1", "type": "github-get-issue", "params": {"issue_number": "$issue_number"}},
+            {"id": "n2", "type": "llm", "params": {"prompt": "Analyze issue: $issue_data"}},
             {"id": "n3", "type": "llm", "params": {"prompt": "Summarize: $code_report"}}
         ],
         "edges": [
@@ -1323,13 +1326,18 @@ Workflows are stored with metadata that enables discovery and reuse:
 
 ```json
 {
-  "name": "fix-issue",
-  "description": "Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR",
+  "name": "generate-changelog",
+  "description": "Generates changelog from closed issues and creates a PR",
   "ir": {
     "ir_version": "0.1.0",
     "inputs": {
-      "issue_number": {
-        "description": "GitHub issue number to fix",
+      "state": {
+        "description": "Issue state to filter (open/closed)",
+        "required": true,
+        "type": "string"
+      },
+      "limit": {
+        "description": "Number of issues to include",
         "required": true,
         "type": "string"
       }
@@ -1354,13 +1362,13 @@ Workflows are stored with metadata that enables discovery and reuse:
 ```
 
 **Key Fields**:
-- `name`: Workflow identifier for execution (`pflow fix-issue`)
+- `name`: Workflow identifier for execution (`pflow generate-changelog`)
 - `description`: Natural language description for discovery matching
 - `ir.inputs`: Expected parameters with schemas (Task 21 format - enables validation)
 - `ir.outputs`: What the workflow produces with types (enables composition)
 - `ir`: Complete JSON IR with template variables preserved
 
-**Key Insight**: The description field is all we need for semantic matching. The LLM can understand "fix github issue 1234" matches a workflow described as "Fetches a GitHub issue, analyzes it with AI, generates a fix".
+**Key Insight**: The description field is all we need for semantic matching. The LLM can understand "generate changelog from closed issues" matches a workflow described as "Generates changelog from closed issues and creates a PR".
 
 ## Component Browsing with Smart Context Loading
 
@@ -1468,7 +1476,7 @@ This approach:
 The planner must decide which values in natural language should become parameters (reusable) vs static values (fixed).
 
 ### Context
-- Example: "fix issue 1234" - should "1234" be parameterized as `$issue`?
+- Example: "last 20 closed issues" - should "20" be parameterized as `$limit`?
 - Affects reusability of saved workflows
 - Critical for "Plan Once, Run Forever" philosophy
 
@@ -1664,7 +1672,7 @@ result = planner_flow.run({
 With template paths, users see exactly what data is being accessed in a natural, readable format:
 
 1. **Each node has its own parameter namespace** - `--prompt` on one node doesn't conflict with `--prompt` on another
-2. **Natural paths everywhere** - Users see `$issue_data.user.login` directly in prompts
+2. **Natural paths everywhere** - Users see `$issue_data.author.login` directly in prompts
 3. **Data flow is transparent** - Template paths show exactly where data comes from
 4. **Intuitive understanding** - `$data.field` syntax is familiar to developers
 
@@ -1673,7 +1681,7 @@ With template paths, users see exactly what data is being accessed in a natural,
 ```bash
 # What user sees with template paths:
 github-get-issue --issue=1234 >>
-llm --prompt="Fix issue #$issue_data.id: $issue_data.title (by $issue_data.user.login)"
+llm --prompt="Analyze issue #$issue_data.id: $issue_data.title (by $issue_data.author.login)"
 
 # Clear data flow:
 # 1. github-get-issue writes to shared["issue_data"]
@@ -1684,16 +1692,16 @@ llm --prompt="Fix issue #$issue_data.id: $issue_data.title (by $issue_data.user.
 ### What Users See
 
 ```bash
-$ pflow "fix github issue 1234"
+$ pflow "generate changelog from closed issues"
 
 Generated workflow:
 
-github-get-issue --issue=1234 >>
-claude-code --prompt="Fix this issue: $issue" >>
-llm --prompt="Write commit message for: $code_report" >>
-git-commit --message="$commit_message"
+github-list-issues --state=closed --limit=20 >>
+llm --prompt="Generate changelog from: $issues" >>
+write-file --path=CHANGELOG.md --content="$response" >>
+git-commit --message="Update changelog"
 
-Save as 'fix-issue' and execute? [Y/n]: y
+Save as 'generate-changelog' and execute? [Y/n]: y
 ```
 
 **Note**: The `$variables` shown are template placeholders that will be resolved from the workflow's data flow, not CLI parameters the user needs to provide.
@@ -1714,14 +1722,14 @@ The planner needs to handle both interactive terminal sessions and automated/CI 
 - Can prompt for missing parameters
 - Shows progress indicators
 - Allows Y/n approval prompts
-- Example: `pflow "fix github issue"` → "What issue number?"
+- Example: `pflow "generate changelog"` → "From which state? (open/closed)"
 
 **Batch Mode** (--batch flag or no TTY):
 - No user interaction possible
 - Missing parameters cause immediate failure
 - No progress indicators (clean output)
 - Auto-approve with --yes flag or fail
-- Example: `pflow --batch "fix issue"` → ERROR: Missing issue parameter
+- Example: `pflow --batch "generate changelog"` → ERROR: Missing state parameter
 
 ### Implementation
 ```python
@@ -1796,35 +1804,35 @@ The investigation confirms the architectural decisions in this document are corr
 
 ## End-to-End Execution Example
 
-### Complete Flow: "fix github issue 123"
+### Complete Flow: "generate changelog from closed issues"
 
 ```python
 # Initial shared state
 shared = {
-    "user_input": "fix github issue 123",
+    "user_input": "generate changelog from closed issues",
     "input_source": "args"
 }
 
 # Path A: Existing Workflow Found
 # 1. Discovery Phase
 # → WorkflowDiscoveryNode executes
-shared["available_workflows"] = ["fix-issue", "analyze-logs", ...]
-# → LLM matches "fix github issue" to "fix-issue" workflow
+shared["available_workflows"] = ["generate-changelog", "analyze-logs", ...]
+# → LLM matches "generate changelog" to "generate-changelog" workflow
 shared["found_workflow"] = {
     "ir_version": "0.1.0",
     "nodes": [
-        {"id": "get-issue", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
-        {"id": "fix", "type": "claude-code", "params": {"prompt": "Fix this issue: $issue_data"}}
+        {"id": "list", "type": "github-list-issues", "params": {"state": "$state", "limit": "$limit"}},
+        {"id": "generate", "type": "llm", "params": {"prompt": "Generate changelog: $issues"}}
     ],
-    "edges": [{"from": "get-issue", "to": "fix"}]
+    "edges": [{"from": "list", "to": "generate"}]
 }
 # → Returns "found_existing"
 
 # 2. Parameter Mapping (Convergence Point)
 # → ParameterMappingNode executes
-# → Extract: "123" from user input
-# → Verify: workflow needs issue_number, we have it ✓
-shared["extracted_params"] = {"issue_number": "123"}  # Raw extraction from NL
+# → Extract: "closed" and "20" from user input
+# → Verify: workflow needs state and limit, we have them ✓
+shared["extracted_params"] = {"state": "closed", "limit": "20"}  # Raw extraction from NL
 # → Returns "params_complete"
 
 # Path B: Generate New Workflow (if no match found)
@@ -1833,9 +1841,10 @@ shared["extracted_params"] = {"issue_number": "123"}  # Raw extraction from NL
 
 # 2. Parameter Discovery Phase (NEW - Path B only)
 # → ParameterDiscoveryNode executes
-# → Extracts: {"issue_number": "123"} with names!
+# → Extracts: {"state": "closed", "limit": "20"} with names!
 shared["discovered_params"] = {
-    "issue_number": "123"
+    "state": "closed",
+    "limit": "20"
 }
 # → Returns "generate"
 
@@ -1867,20 +1876,20 @@ shared["execution_params"] = {
 shared["planner_output"] = {
     "workflow_ir": shared["found_workflow"] or shared["generated_workflow"],
     "workflow_metadata": {
-        "suggested_name": "fix-issue",
-        "description": "Fix a GitHub issue and create PR",
-        "inputs": ["issue_number"],
-        "outputs": ["pr_url"]
+        "suggested_name": "generate-changelog",
+        "description": "Generate changelog from closed issues",
+        "inputs": ["state", "limit"],
+        "outputs": ["changelog"]
     },
-    "execution_params": {"issue_number": "123"}
+    "execution_params": {"state": "closed", "limit": "20"}
 }
 # → Returns "complete"
 
 # 5. CLI Takes Over
 # → Planner returns shared["planner_output"] to CLI
-# → CLI shows approval: "Will run 'fix-issue' with issue=123"
+# → CLI shows approval: "Will run 'generate-changelog' with state=closed, limit=20"
 # → User approves
-# → CLI saves workflow to ~/.pflow/workflows/fix-issue.json
+# → CLI saves workflow to ~/.pflow/workflows/generate-changelog.json
 # → CLI executes with parameter substitution
 ```
 

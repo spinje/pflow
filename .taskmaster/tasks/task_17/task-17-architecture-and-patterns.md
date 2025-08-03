@@ -10,20 +10,20 @@ The Natural Language Planner is fundamentally a **meta-workflow** - a PocketFlow
 
 ```mermaid
 graph TD
-    START[User: "fix github issue 1234"] --> WD[WorkflowDiscoveryNode]
+    START[User: "generate changelog from closed issues"] --> WD[WorkflowDiscoveryNode]
 
     WD --> CHECK{Complete workflow exists?}
 
-    CHECK -->|YES: Found 'fix-issue'| FOUND_PATH[Path A: Reuse Existing]
+    CHECK -->|YES: Found 'generate-changelog'| FOUND_PATH[Path A: Reuse Existing]
     CHECK -->|NO: Must create| CREATE_PATH[Path B: Generate New]
 
     %% Path A: Direct reuse
-    FOUND_PATH --> PM[ParameterMappingNode<br/>Map: "1234" → issue_number<br/>Verify: All params available?]
+    FOUND_PATH --> PM[ParameterMappingNode<br/>Map: "closed" → state, "20" → limit<br/>Verify: All params available?]
 
     %% Path B: Generation
     CREATE_PATH --> CB[ComponentBrowsingNode<br/>Find building blocks:<br/>nodes + sub-workflows]
-    CB --> PD[ParameterDiscoveryNode<br/>Extract named params:<br/>issue_number: "1234"<br/>repo_name: "pflow"]
-    PD --> GEN[GeneratorNode<br/>LLM creates workflow<br/>Uses discovered params<br/>Designs templates: $issue_number]
+    CB --> PD[ParameterDiscoveryNode<br/>Extract named params:<br/>state: "closed"<br/>limit: "20"]
+    PD --> GEN[GeneratorNode<br/>LLM creates workflow<br/>Uses discovered params<br/>Designs templates: $state, $limit]
     GEN --> VAL[ValidatorNode<br/>Validate IR structure<br/>+ template variables]
     VAL -->|invalid| GEN
     VAL -->|valid| META[MetadataGenerationNode<br/>Extract name, description,<br/>inputs, outputs]
@@ -58,28 +58,28 @@ graph TD
 
 **MVP (All planning through planner, execution in CLI):**
 ```
-User Input: "fix github issue 1234"
+User Input: "generate changelog from closed issues"
     ↓
 [Planner Meta-Workflow]
-    ├─> Discovery: Does "fix-issue" workflow exist?
+    ├─> Discovery: Does "generate-changelog" workflow exist?
     ├─> If creating new:
-    │   ├─> Parameter Discovery: Extract {"issue_number": "1234"} (named params)
+    │   ├─> Parameter Discovery: Extract {"state": "closed", "limit": "20"} (named params)
     │   ├─> Generation: Create workflow using discovered parameters
     │   └─> Validation: Check structure + templates
-    ├─> Parameter Mapping: {"issue_number": "1234"}
+    ├─> Parameter Mapping: {"state": "closed", "limit": "20"}
     ├─> Verification: Can workflow execute with these params?
-    ├─> Workflow contains: {"params": {"issue": "$issue_number"}}
+    ├─> Workflow contains: {"params": {"state": "$state", "limit": "$limit"}}
     └─> Returns to CLI: (workflow_ir, metadata, execution_params)
     ↓
 [CLI Takes Over - Separate from Planner]
-    ├─> Shows approval: "Will run fix-issue with issue=1234"
-    ├─> Saves workflow: ~/.pflow/workflows/fix-issue.json
+    ├─> Shows approval: "Will run generate-changelog with state=closed, limit=20"
+    ├─> Saves workflow: ~/.pflow/workflows/generate-changelog.json
     └─> Executes: Runs workflow with parameter substitution
 ```
 
 **v2.0+ (Direct execution for known workflows):**
 ```
-pflow fix-issue --issue=1234  # Bypasses planner entirely
+pflow generate-changelog --state=closed --limit=20  # Bypasses planner entirely
 ```
 
 ### CRITICAL CLARIFICATION: What the Planner Includes
@@ -103,7 +103,7 @@ This means the planner doesn't just generate and hand off - it orchestrates disc
 
 **MVP Architecture**: Every natural language request goes through the planner
 ```
-"fix github issue 1234" → Planner finds/creates → Extracts params → Returns to CLI → CLI executes
+"generate changelog from closed issues" → Planner finds/creates → Extracts params → Returns to CLI → CLI executes
 ```
 
 **Future v2.0+**: Known workflows can be executed directly
@@ -155,7 +155,7 @@ The planner leverages the Node IR (Node Intermediate Representation) implemented
 
 ### Critical Benefits for Workflow Generation
 
-1. **Path Validation**: Can verify complex paths like `$issue_data.user.login` exist
+1. **Path Validation**: Can verify complex paths like `$issue_data.author.login` exist
 2. **Type Information**: Knows that `issue_data` is a dict with specific structure
 3. **No False Positives**: Workflows that should work will validate correctly
 4. **Better Error Messages**: "Template variable $api_config has no valid source" instead of guessing
@@ -368,9 +368,9 @@ from pflow.core.workflow_manager import WorkflowManager
 
 workflow_manager = WorkflowManager()
 saved_path = workflow_manager.save(
-    name="fix-issue",
+    name="generate-changelog",
     workflow_ir=generated_workflow,
-    description="Fixes GitHub issues and creates PR"
+    description="Generates changelog from closed issues"
 )
 
 # The saved workflow can then be referenced by name in future workflows:
@@ -378,7 +378,7 @@ saved_path = workflow_manager.save(
   "id": "reuse_fixer",
   "type": "workflow",
   "params": {
-    "workflow_name": "fix-issue",  // Reference by name!
+    "workflow_name": "generate-changelog",  // Reference by name!
     "param_mapping": {"issue_number": "$new_issue"}
   }
 }
@@ -401,10 +401,10 @@ class ParameterDiscoveryNode(Node):
         Extract parameters with appropriate names from: {user_input}
 
         Examples:
-        - "fix issue 1234" → {{"issue_number": "1234"}}
+        - "generate changelog from last 20 closed issues" → {{"state": "closed", "limit": "20"}}
         - "analyze sales report from yesterday" → {{"report_type": "sales", "date": "2024-01-14"}}
         - "deploy version 2.1.0 to staging" → {{"version": "2.1.0", "environment": "staging"}}
-        - "fix github issue 1234 in the pflow repo" → {{"issue_number": "1234", "repo_name": "pflow"}}
+        - "create triage report for open issues" → {{"state": "open"}}
 
         Rules:
         - Use descriptive parameter names
@@ -538,9 +538,10 @@ class GeneratorNode(Node):
         # Generate complete workflow with template variables
         # CRITICAL: The LLM must handle ALL workflow generation in one call:
         # 1. Design the workflow structure (node selection and sequencing)
-        # 2. Identify dynamic values (like "1234" in "fix issue 1234")
+        # 2. Identify dynamic values (like "20" in "last 20 closed issues")
         # 3. Create template variables (like $issue_number) instead of hardcoding
         # 4. Use template paths for data access ($data.field.subfield)
+        #    Note: Array indexing like $data[0] is NOT supported - use full arrays only
         # 5. Avoid collisions through descriptive node IDs
         # 6. Produce complete JSON IR with all required fields:
         #    - ir_version, nodes (with params), edges
@@ -701,17 +702,17 @@ For a complete end-to-end execution example showing both Path A (reuse) and Path
 ```python
 shared = {
     # Initial input
-    "user_input": "fix github issue 123",
+    "user_input": "generate changelog from closed issues",
     "input_type": "natural_language",
 
     # Discovery phase
     "llm_context": "Available nodes: github-get-issue, llm, ...",
-    "available_workflows": ["analyze-logs", "fix-issue", ...],
+    "available_workflows": ["analyze-logs", "generate-changelog", ...],
 
     # Parameter discovery phase (Path B)
     "discovered_params": {
-        "issue_number": "123",
-        "repo_name": "pflow"
+        "state": "closed",
+        "limit": "20"
     },  # Named parameters discovered early
 
     # Generation attempts
@@ -724,10 +725,10 @@ shared = {
     "generated_workflow": {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "get", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
-            {"id": "fix", "type": "llm", "params": {"prompt": "Fix issue: $issue_data"}}
+            {"id": "list", "type": "github-list-issues", "params": {"state": "$state", "limit": "$limit"}},
+            {"id": "generate", "type": "llm", "params": {"prompt": "Generate changelog from: $issues"}}
         ],
-        "edges": [{"from": "get", "to": "fix"}]
+        "edges": [{"from": "list", "to": "generate"}]
     },
 
     # Validation results (now with discovered params)
@@ -743,13 +744,14 @@ shared = {
     "planner_output": {
         "workflow_ir": {...},  # Contains nodes with $variables in params
         "workflow_metadata": {
-            "suggested_name": "fix-issue",
-            "description": "Fix a GitHub issue",
-            "inputs": ["issue_number"],
-            "outputs": ["pr_url"]
+            "suggested_name": "generate-changelog",
+            "description": "Generate changelog from closed issues",
+            "inputs": ["state", "limit"],
+            "outputs": ["changelog"]
         },
         "execution_params": {
-            "issue_number": "123"  # From discovered params or natural language
+            "state": "closed",  # From discovered params or natural language
+            "limit": "20"
         }
     }
 }
@@ -835,15 +837,15 @@ The planner returns a structured result that contains everything the CLI needs f
         # mappings field omitted in MVP (v2.0 feature)
     },
     "workflow_metadata": {
-        "suggested_name": "fix-issue",
-        "description": "Fixes a GitHub issue and creates a PR",
-        "inputs": ["issue_number", "repo_name"],
-        "outputs": ["pr_url", "pr_number"]
+        "suggested_name": "generate-changelog",
+        "description": "Generates changelog from closed issues",
+        "inputs": ["state", "limit"],
+        "outputs": ["changelog"]
     },
     "execution_params": {
         # Extracted and interpreted values from natural language
-        "issue_number": "1234",
-        "repo_name": "pflow"  # Could be inferred from context
+        "state": "closed",
+        "limit": "20"
     }
 }
 ```
@@ -854,11 +856,11 @@ Upon receiving the planner output, the CLI:
 
 1. **Shows Approval**
    ```
-   Generated workflow: fix-issue
-   Description: Fixes a GitHub issue and creates a PR
+   Generated workflow: generate-changelog
+   Description: Generates changelog from closed issues
    Will execute with:
-     - issue_number: 1234
-     - repo_name: pflow
+     - state: closed
+     - limit: 20
 
    Approve and save? [Y/n]:
    ```
@@ -877,16 +879,16 @@ Upon receiving the planner output, the CLI:
 
 The runtime proxy transparently handles template variable substitution:
 ```python
-# Workflow contains: {"prompt": "Fix issue: $issue_data"}
+# Workflow contains: {"prompt": "Generate changelog from: $issues"}
 # At runtime:
-# 1. CLI parameters: {"issue_number": "1234"} → substituted first
-# 2. Shared store: {"issue_data": "...actual issue..."} → substituted during execution
-# Node sees: {"prompt": "Fix issue: ...actual issue..."}
+# 1. CLI parameters: {"state": "closed", "limit": "20"} → substituted first
+# 2. Shared store: {"issues": "[...list of issues...]"} → substituted during execution
+# Node sees: {"prompt": "Generate changelog from: [...list of issues...]"}
 ```
 
 This enables the "Plan Once, Run Forever" philosophy:
 - First time: Generate workflow with template variables in params
-- Future runs: `pflow fix-issue --issue=5678`
+- Future runs: `pflow generate-changelog --state=merged --limit=50`
 - Runtime proxy handles all substitution transparently
 
 ## PocketFlow Execution Model Deep Dive
@@ -1126,7 +1128,7 @@ Each validation tier provides specific error information that guides recovery:
    - "Missing required field 'type' in node"
 
 2. **Static Analysis Errors** → Retry with specific fixes
-   - "Node 'analyze-code' not found. Did you mean 'claude-code'?"
+   - "Node 'analyze-code' not found. Did you mean 'llm'?"
    - "Parameter 'temp' invalid. Did you mean 'temperature'?"
    - "Circular dependency: A → B → C → A"
 
@@ -1300,14 +1302,14 @@ class ValidationNode(Node):
                 if similar:
                     errors.append(f"Unknown node '{node_type}' - did you mean '{similar[0]}'?")
                 else:
-                    errors.append(f"Unknown node '{node_type}' - use 'claude-code' for complex operations")
+                    errors.append(f"Unknown node '{node_type}' - use 'llm' for AI operations")
 
         # Check template variables in params
         for node in workflow.get("nodes", []):
             # Check if node has template variables in params
             for param_key, param_value in node.get("params", {}).items():
                 if isinstance(param_value, str) and '$' in param_value:
-                    # Extract template variables including paths like $issue_data.user.login
+                    # Extract template variables including paths like $issue_data.author.login
                     template_vars = re.findall(r'\$(\w+(?:\.[\w\[\]]+)*)', param_value)
                     for var in template_vars:
                         # Just note that it has templates - runtime will handle resolution
@@ -1866,7 +1868,7 @@ def test_specific_flow_path():
    ```python
    # ❌ WRONG - Rigid and inflexible
    WORKFLOW_PATTERNS = {
-       "github_fix": ["github-get-issue", "claude-code", "git-commit"],
+       "changelog": ["github-list-issues", "llm", "write-file", "git-commit"],
        "document_analysis": ["read-file", "llm", "write-file"]
    }
 
@@ -1966,7 +1968,7 @@ def test_specific_flow_path():
     workflow = {
         "nodes": [
             {"id": "get-issue", "type": "github-get-issue"},
-            {"id": "fix", "type": "claude-code"}
+            {"id": "analyze", "type": "llm"}
         ]
     }
     ```
@@ -2101,7 +2103,7 @@ def test_specific_flow_path():
     # The schema has top-level "mappings" but it's a v2.0 feature
 
     # ✅ CORRECT - Use template variables with path support for MVP
-    # Template paths like $issue_data.user.login handle 90% of use cases
+    # Template paths like $issue_data.author.login handle 90% of use cases
     # Proxy mappings are explicitly deferred to v2.0
     # Focus on the simpler, more elegant template variable solution
     ```
@@ -2284,11 +2286,11 @@ This enriched error context immediately reveals:
 1. **LLM Generation Issues**:
    ```python
    "error_context": {
-       "user_input": "fix github issue 1234 and notify team on slack",
+       "user_input": "generate changelog and notify team on slack",
        "generation_attempts": 3,
        "last_prompt_length": 15234,  # Prompt might be too long
        "validation_errors": [
-           {"error": "Unknown node 'slack-notify'", "workflow_nodes": ["github-get-issue", "slack-notify"]},
+           {"error": "Unknown node 'slack-notify'", "workflow_nodes": ["github-list-issues", "slack-notify"]},
            {"error": "Template variable $team_channel not defined"}
        ]
    }

@@ -63,7 +63,7 @@ The ParameterMappingNode serves as the critical convergence point where both pat
 ParameterMappingNode performs three distinct but related functions:
 
 1. **Simple Extraction**: Direct value extraction
-   - "fix issue 1234" → {"issue_number": "1234"}
+   - "generate changelog from 20 closed issues" → {"state": "closed", "limit": "20"}
    - "analyze report.pdf" → {"file": "report.pdf"}
 
 2. **Complex Interpretation**: Context-aware value resolution
@@ -84,9 +84,9 @@ ParameterMappingNode performs three distinct but related functions:
 
 ### Example: Verification Success
 ```
-User: "fix github issue 1234"
-Workflow needs: issue_number
-Extracted: {issue_number: "1234"}
+User: "generate changelog from closed issues"
+Workflow needs: state, limit
+Extracted: {state: "closed", limit: "20"}
 Verification: ✓ All parameters available
 Result: Continue to execution
 ```
@@ -102,13 +102,13 @@ Result: Cannot execute - prompt for missing parameters
 
 ### Example: Intent Match with Missing Parameters
 ```
-User: "fix github issue"  (no issue number!)
-WorkflowDiscoveryNode: Finds "fix-issue" workflow (intent matches)
-Workflow needs: issue_number
-Extracted: {} (no number in input)
+User: "create triage report"  (no state specified!)
+WorkflowDiscoveryNode: Finds "triage-report" workflow (intent matches)
+Workflow needs: state
+Extracted: {} (no state in input)
 Verification: ✗ Missing required params
 Result: Return to CLI with missing params list
-CLI: Prompts user "What issue number?"
+CLI: Prompts user "For which state? (open/closed/all)"
 ```
 
 This separation ensures workflows are only executed when they have all necessary inputs, preventing runtime failures and improving user experience.
@@ -121,7 +121,7 @@ The planner uses a sophisticated two-phase approach to parameter handling:
 - **When**: Before workflow generation
 - **What**: Extract named parameters from natural language
 - **Purpose**: Provide context for intelligent workflow generation
-- **Example**: "fix issue 1234" → discovers {"issue_number": "1234"}
+- **Example**: "generate changelog from 20 issues" → discovers {"limit": "20"}
 
 ### Phase 2: Parameter Mapping (Both paths)
 - **When**: After workflow is found/generated
@@ -138,7 +138,7 @@ This architecture enables:
 
 ### The Core Challenge
 How does the planner extract and handle parameters from natural language?
-- User says "fix github issue 1234" - how does planner know 1234 is the issue parameter?
+- User says "generate changelog from 20 issues" - how does planner know 20 is the limit parameter?
 - How are template variables created from natural language?
 - What happens when parameters are missing?
 
@@ -156,36 +156,36 @@ When creating a new workflow, the planner must perform several sophisticated ste
 
 #### 1. Intent + Parameter Extraction
 
-When user says "fix github issue 1234", the planner must:
-- Recognize the intent: "fix github issue"
-- Extract the concrete value: "1234"
-- Critical: Generate a template variable $issue_number instead of hardcoding "1234"
+When user says "generate changelog from last 20 closed issues", the planner must:
+- Recognize the intent: "generate changelog"
+- Extract the concrete values: "closed" and "20"
+- Critical: Generate template variables $state and $limit instead of hardcoding values
 
 #### 2. Template Variable Generation
 
 The planner must be intelligent about creating reusable template variables:
 ```
-User input: "fix github issue 1234 in the pflow repo"
+User input: "generate changelog from last 20 closed issues"
 ↓
 Planner extracts:
-- issue_number: 1234 → creates $issue_number
-- repo: pflow → creates $repo_name
+- state: "closed" → creates $state
+- limit: "20" → creates $limit
 ↓
 Generates workflow with templates:
-github-get-issue --issue=$issue_number --repo=$repo_name
+github-list-issues --state=$state --limit=$limit
 ```
 
 #### 3. Multi-Step Parameter Threading
 
 Complex workflows require parameter flow between nodes:
 ```
-User: "analyze the bug in issue 1234 and create a fix"
+User: "generate changelog and create PR for release"
 
 Planner must:
-1. Create $issue_number from "1234"
-2. Plan that github-get-issue outputs to shared["issue_data"]
-3. Reference $issue_data in subsequent nodes
-4. Create template strings like "Fix for issue #$issue_number: $issue_title"
+1. Create $state and $limit from context
+2. Plan that github-list-issues outputs to shared["issues"]
+3. Reference $issues in subsequent nodes
+4. Create template strings like "Changelog for $limit $state issues"
 ```
 
 #### 4. Implicit Parameter Inference
@@ -207,10 +207,10 @@ This is a fundamentally different process:
 #### 1. Workflow Discovery Phase
 
 ```
-User: "fix github issue 5678"
+User: "generate changelog from closed issues"
 ↓
 Planner searches existing workflows:
-- Finds "fix-issue" workflow with description "Fetches GitHub issue and creates fix"
+- Finds "generate-changelog" workflow with description "Generates changelog from closed issues"
 - Recognizes semantic match
 ```
 
@@ -223,10 +223,11 @@ Existing workflow expects:
 - $repo_name (optional, default: current)
 - $priority (optional, default: normal)
 
-User provided: "fix github issue 5678"
+User provided: "generate changelog from 20 closed issues"
 ↓
 Planner maps:
-- 5678 → $issue_number
+- "closed" → $state
+- "20" → $limit
 - Missing: $repo_name (use default)
 - Missing: $priority (use default)
 ```
@@ -235,10 +236,10 @@ Planner maps:
 
 Before reuse, validate all required parameters are available:
 ```
-If workflow requires $issue_number and $repo_name:
-- User says "fix github issue" (missing number)
-- Planner must prompt: "What issue number?"
-- Or suggest: "Recent issues: #1234, #5678, #9012"
+If workflow requires $state and $limit:
+- User says "create triage report" (missing state)
+- Planner must prompt: "For which state? (open/closed/all)"
+- Or use smart default: state="open"
 ```
 
 ### Key Differences Between Creation and Reuse
@@ -295,7 +296,7 @@ This separation is crucial because parameter handling strategy completely change
 ### The Core Ambiguity
 There's a fundamental ambiguity about how template variables (`$variable`) work throughout the system.
 
-**⚠️ CRITICAL WARNING**: The planner must NEVER hardcode values extracted from natural language. When user says "fix github issue 1234", the planner must generate `"issue_number": "$issue"` (NOT `"issue_number": "1234"`). The value "1234" is only for the first execution - saved workflows must work with ANY value.
+**⚠️ CRITICAL WARNING**: The planner must NEVER hardcode values extracted from natural language. When user says "generate changelog from 20 closed issues", the planner must generate `"limit": "$limit"` (NOT `"limit": "20"`). The value "20" is only for the first execution - saved workflows must work with ANY value.
 
 ### The Ambiguity
 - Documentation says template resolution is "planner-internal only"
@@ -317,7 +318,7 @@ Understanding the distinction between different parameter types is crucial:
 2. **Initial Parameters** (Workflow-level)
    - Values extracted from natural language by the planner
    - In MVP: These come ONLY from natural language, never from CLI flags
-   - Examples: "1234" from "fix issue 1234" becomes `{"issue_number": "1234"}`
+   - Examples: "20" from "generate changelog from 20 issues" becomes `{"limit": "20"}`
    - These are the `execution_params` passed to template validation
 
 3. **Template Variables** (Runtime References)
@@ -332,7 +333,7 @@ Understanding the distinction between different parameter types is crucial:
 To ensure clarity and consistency across the planner implementation, we use these standardized terms:
 
 1. **`extracted_params`** - Raw parameters extracted from natural language (both paths)
-   - Example: User says "fix issue 1234" → `{"issue_number": "1234"}`
+   - Example: User says "generate changelog from 20 issues" → `{"limit": "20"}`
 
 2. **`discovered_params`** - Same as extracted_params but specifically for Path B context
    - Kept for backward compatibility and clarity about pre-generation context
@@ -353,22 +354,22 @@ Template variables are the KEY to pflow's "Plan Once, Run Forever" value proposi
 **Workflow Lifecycle Example:**
 ```bash
 # 1. PLANNING TIME: User provides natural language with specific value
-pflow "fix github issue 1234"
+pflow "generate changelog from closed issues"
 
 # 2. PLANNER GENERATES: IR with template variables (NOT hardcoded values)
 {
   "nodes": [{
-    "type": "github-get-issue",
-    "params": {"issue_number": "$issue"}  # Template variable preserved
+    "type": "github-list-issues",
+    "params": {"state": "$state", "limit": "$limit"}  # Template variables preserved
   }]
 }
 
 # 3. WORKFLOW SAVED: Template variables remain in saved workflow
-~/.pflow/workflows/fix-issue.json  # Contains $issue variable
+~/.pflow/workflows/generate-changelog.json  # Contains $state and $limit variables
 
 # 4. RUNTIME: Different values substituted each execution
-pflow fix-issue --issue=1234  # $issue → "1234"
-pflow fix-issue --issue=5678  # $issue → "5678"
+pflow generate-changelog --state=closed --limit=20  # $state → "closed", $limit → "20"
+pflow generate-changelog --state=merged --limit=50  # $state → "merged", $limit → "50"
 ```
 
 **Critical Distinction:**
@@ -386,7 +387,7 @@ pflow fix-issue --issue=5678  # $issue → "5678"
 - [x] **Option B: Runtime resolves template variables WITH PATH SUPPORT**
   - JSON IR contains `$variables` that get resolved during execution
   - Enables parameterized workflows (the core value prop!)
-  - **MVP Enhancement**: Template variables support paths: `$issue_data.user.login`
+  - **MVP Enhancement**: Template variables support paths: `$issue_data.author.login`
   - Handles 90% of data access needs without proxy mappings
   - **Confirmed**: This is the correct approach for MVP
 
@@ -395,15 +396,15 @@ pflow fix-issue --issue=5678  # $issue → "5678"
   - Others remain as parameters for runtime (like `$issue_number`)
   - Most flexible but most complex
 
-**Resolution**: Option B - Runtime resolution is ESSENTIAL. Template variables are resolved during execution, enabling parameterized workflows (the core value prop!). Most use cases need simple variables (`$issue_number`, `$file_path`), with path support (`$data.user.login`) available for complex data access.
+**Resolution**: Option B - Runtime resolution is ESSENTIAL. Template variables are resolved during execution, enabling parameterized workflows (the core value prop!). Most use cases need simple variables (`$issue_number`, `$file_path`), with path support (`$data.author.login`) available for complex data access.
 
 **Validation Note**: The template validator (updated in Task 19) uses the registry to check template variables against actual node outputs, ensuring all required variables can be resolved before execution with clear error messages.
 
-**Implementation Note for Planner**: When the user says "fix github issue 1234", the planner must:
-1. Recognize "1234" as a parameter value (not part of the intent)
-2. Generate IR with `"issue_number": "$issue_number"` (NOT `"issue_number": "1234"`)
+**Implementation Note for Planner**: When the user says "generate changelog from 20 closed issues", the planner must:
+1. Recognize "20" and "closed" as parameter values (not part of the intent)
+2. Generate IR with `"limit": "$limit"` (NOT `"limit": "20"`)
 3. Store the workflow with template variables intact
-4. Pass `{"issue_number": "1234"}` as `execution_params` to the compiler
+4. Pass `{"state": "closed", "limit": "20"}` as `execution_params` to the compiler
 
 **Simple variables are most common**: `$issue_number`, `$file_path`, `$repo_name`. Path traversal (`$data.field`) is supported but less frequently needed.
 
@@ -420,19 +421,19 @@ workflow = {
     "ir_version": "0.1.0",
     "nodes": [
         # Simple variables (most common)
-        {"id": "get", "type": "github-get-issue",
-         "params": {"issue": "$issue_number", "repo": "$repo_name"}},  # From execution_params
+        {"id": "list", "type": "github-list-issues",
+         "params": {"state": "$state", "limit": "$limit"}},  # From execution_params
 
-        {"id": "fix", "type": "claude-code",
-         "params": {"prompt": "Fix issue: $issue_data"}},  # From shared store
+        {"id": "generate", "type": "llm",
+         "params": {"prompt": "Generate changelog: $issues"}},  # From shared store
 
         # Path variables for nested data (when needed)
-        {"id": "notify", "type": "send-message",
-         "params": {"user": "$issue_data.user.login", "title": "$issue_data.title"}}
+        {"id": "write", "type": "write-file",
+         "params": {"path": "CHANGELOG.md", "content": "$response"}}
     ],
     "edges": [
-        {"from": "get", "to": "fix"},
-        {"from": "fix", "to": "notify"}
+        {"from": "list", "to": "generate"},
+        {"from": "generate", "to": "write"}
     ]
 }
 ```
@@ -442,29 +443,29 @@ workflow = {
 This example shows how the planner handles both Path A (reuse) and Path B (generate):
 
 ```
-User: "fix github issue 1234"
+User: "generate changelog from closed issues"
 ↓
 [PLANNER META-WORKFLOW]
 Path A (if workflow exists):
-  WorkflowDiscoveryNode: Found 'fix-issue' workflow
+  WorkflowDiscoveryNode: Found 'generate-changelog' workflow
   ↓
   ParameterMappingNode:
-    - Map: {"issue_number": "1234"}
-    - Verify: Workflow needs issue_number ✓
+    - Map: {"state": "closed", "limit": "20"}
+    - Verify: Workflow needs state, limit ✓
   ↓
   ResultPreparationNode: Package for CLI
 
 Path B (if no workflow exists):
   WorkflowDiscoveryNode: No complete match
   ↓
-  ComponentBrowsingNode: Find github-get-issue, claude-code nodes
+  ComponentBrowsingNode: Find github-list-issues, llm, write-file nodes
     (Can also select existing workflows as sub-workflows!)
   ↓
   ParameterDiscoveryNode: Extract named parameters from input
-    - Discovers: {"issue_number": "1234"}
+    - Discovers: {"state": "closed", "limit": "20"}
     - Provides context for generation
   ↓
-  GeneratorNode: Create workflow with params: {"issue": "$issue_number"}
+  GeneratorNode: Create workflow with params: {"state": "$state", "limit": "$limit"}
     (Creates template variables using discovered parameters as context)
   ↓
   ValidatorNode: Validate structure AND templates
@@ -533,18 +534,18 @@ Without a sophisticated solution, workflows would need many intermediate "glue" 
   - **Deferred to v2.0** due to implementation complexity
 
 - [x] **Option D: Template Variables with Path Support (MVP CHOICE)**
-  - Extend template variables to support paths: `$issue_data.user.login`
+  - Extend template variables to support paths: `$issue_data.author.login`
   - Covers 90% of data access needs with minimal implementation (~20 lines)
-  - Example: `"prompt": "Fix issue #$issue_data.number by $issue_data.user.login"`
+  - Example: `"prompt": "Fix issue #$issue_data.number by $issue_data.author.login"`
   - Proxy mappings entirely deferred to v2.0
   - Collision handling in MVP: Design workflows to avoid collisions
   - If two nodes write same key: That's a validation error, not something to fix with mappings
 
 ### The Decision: Template Variables with Path Support (MVP)
 
-**Resolution**: Extend template variables to support paths: `$issue_data.user.login`
+**Resolution**: Extend template variables to support paths: `$issue_data.author.login`
 - Covers 90% of data access needs with minimal implementation (~20 lines)
-- Example: `"prompt": "Fix issue #$issue_data.number by $issue_data.user.login"`
+- Example: `"prompt": "Fix issue #$issue_data.number by $issue_data.author.login"`
 - Proxy mappings entirely deferred to v2.0
 - Collision handling in MVP: Design workflows to avoid collisions
 - If two nodes write same key: That's a validation error, not something to fix with mappings
@@ -557,8 +558,8 @@ Without a sophisticated solution, workflows would need many intermediate "glue" 
 {
   "id": 1234,
   "title": "Fix login",
-  "user": {"login": "john"},
-  "labels": [{"name": "bug"}, {"name": "urgent"}]
+  "author": {"login": "john"},
+  "createdAt": "2024-01-15T10:30:00Z"
 }
 
 // Simply use paths in template variables:
@@ -567,7 +568,7 @@ Without a sophisticated solution, workflows would need many intermediate "glue" 
     "id": "analyzer",
     "type": "llm",
     "params": {
-      "prompt": "Issue #$issue_data.id: $issue_data.title (by $issue_data.user.login)"
+      "prompt": "Issue #$issue_data.id: $issue_data.title (by $issue_data.author.login)"
     }
   }]
 }
@@ -580,7 +581,7 @@ Without a sophisticated solution, workflows would need many intermediate "glue" 
     "id": "summarize",
     "type": "llm",
     "params": {
-      "prompt": "Summarize PR #$pr_data.number:\nTitle: $pr_data.title\nAuthor: $pr_data.user.login\nFiles changed: $pr_data.changed_files"
+      "prompt": "Summarize PR #$pr_data.number:\nTitle: $pr_data.title\nAuthor: $pr_data.author.login\nFiles changed: $pr_data.changed_files"
     }
   }]
 }
@@ -614,7 +615,7 @@ Without a sophisticated solution, workflows would need many intermediate "glue" 
 
 **Implementation Approach**:
 With structure documentation already implemented (Task 14), the planner can:
-1. See available paths in the context (e.g., `issue_data.user.login`)
+1. See available paths in the context (e.g., `issue_data.author.login`)
 2. Generate template variables using these paths directly
 3. Validate paths exist using the structure metadata
 
@@ -622,7 +623,7 @@ The validation framework can verify template variable paths are valid before exe
 
 ### Structure Documentation Enables Template Paths
 
-**UPDATE**: Task 14 successfully implemented structure documentation, and Task 19 enhanced it further by storing pre-parsed interface metadata in the registry. The planner can now see available paths like `issue_data.user.login` in the context builder output and use them confidently in template variables.
+**UPDATE**: Task 14 successfully implemented structure documentation, and Task 19 enhanced it further by storing pre-parsed interface metadata in the registry. The planner can now see available paths like `issue_data.author.login` in the context builder output and use them confidently in template variables.
 
 The context builder now provides structure information in a dual format that's perfect for LLM consumption (using pre-parsed data from the registry's interface field):
 
@@ -637,7 +638,7 @@ Structure (JSON format):
 }
 
 Available paths:
-- issue_data.user.login (str)
+- issue_data.author.login (str)
 ```
 
 This enables the planner to generate valid template paths and the validator to verify they exist using actual node outputs from the registry.
@@ -648,7 +649,7 @@ The system uses a **runtime resolution pattern** for template variables:
 
 1. **CLI parameters**: `$issue_number` → resolved from execution_params
 2. **Shared store values**: `$issue_data` → resolved from `shared["issue_data"]`
-3. **Path traversal**: `$issue_data.user.login` → resolved from nested data
+3. **Path traversal**: `$issue_data.author.login` → resolved from nested data
 4. **NO node ID prefixes**: `$api1.response` does NOT work (nodes write to fixed keys)
 
 ### MVP Enhancement: Template Paths
@@ -663,14 +664,14 @@ Template variables support dot notation for accessing nested data:
 "$issue_data"    # From shared["issue_data"]
 
 # ✅ CORRECT - Nested path
-"$issue_data.user.login"  # From shared["issue_data"]["user"]["login"]
+"$issue_data.author.login"  # From shared["issue_data"]["author"]["login"]
 
 # ❌ WRONG - Node ID prefix (doesn't work)
 "$api1.response"  # Nodes don't write to ID-prefixed keys!
 
 # In workflow params
 {"id": "analyze", "type": "llm", "params": {
-    "prompt": "Fix issue #$issue_data.number by $issue_data.user.login: $issue_data.title"
+    "prompt": "Fix issue #$issue_data.number by $issue_data.author.login: $issue_data.title"
 }}
 ```
 
@@ -728,8 +729,8 @@ Discovery works exactly like node discovery - using descriptions:
   - LLM sees both nodes and workflows in unified format
   - Example workflow entry:
     ```markdown
-    ### fix-github-issue
-    Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR
+    ### generate-changelog
+    Generates a changelog from closed GitHub issues
     ```
   - Reuses existing infrastructure perfectly
 
@@ -743,20 +744,20 @@ Discovery works exactly like node discovery - using descriptions:
 
 Example workflow entry in context:
 ```markdown
-### fix-github-issue
-Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR
+### generate-changelog
+Generates a changelog from closed GitHub issues
 ```
 
 ### Key Discovery Principle
 
-The description field is all we need for semantic matching. The LLM can understand "fix github issue 1234" matches a workflow described as "Fetches a GitHub issue, analyzes it with AI, generates a fix".
+The description field is all we need for semantic matching. The LLM can understand "generate changelog from closed issues" matches a workflow described as "Generates changelog from closed issues".
 
 ### Workflow Storage Format
 
 ```json
 {
-  "name": "fix-issue",
-  "description": "Fetches a GitHub issue, analyzes it with AI, generates a fix, and creates a PR",
+  "name": "generate-changelog",
+  "description": "Generates changelog from closed issues",
   "ir": {
     "ir_version": "0.1.0",
     "inputs": {
@@ -786,7 +787,7 @@ The description field is all we need for semantic matching. The LLM can understa
 ```
 
 **Key Fields**:
-- `name`: Workflow identifier for execution (`pflow fix-issue`)
+- `name`: Workflow identifier for execution (`pflow generate-changelog`)
 - `description`: Natural language description for discovery matching
 - `ir`: Complete JSON IR with template variables preserved and interface declarations
 
@@ -796,8 +797,8 @@ Workflows now declare their expected inputs and outputs:
 
 ```json
 {
-  "name": "fix-issue",
-  "description": "Fixes GitHub issues and creates PR",
+  "name": "generate-changelog",
+  "description": "Generates changelog from closed issues",
   "ir": {
     "ir_version": "0.1.0",
     "inputs": {
@@ -980,10 +981,10 @@ Template variables can **only** be used in the `params` field of nodes, now with
 
 ```json
 // ✅ CORRECT - Simple template in params
-{"id": "analyze", "type": "llm", "params": {"prompt": "Fix: $issue_data"}}
+{"id": "analyze", "type": "llm", "params": {"prompt": "Summarize: $issue_data"}}
 
 // ✅ CORRECT - Template with path in params
-{"id": "analyze", "type": "llm", "params": {"prompt": "Fix issue #$issue_data.number by $issue_data.user.login"}}
+{"id": "analyze", "type": "llm", "params": {"prompt": "Issue #$issue_data.number by $issue_data.author.login: $issue_data.title"}}
 
 // ❌ IMPOSSIBLE - No "reads" or "writes" fields exist in IR
 {"id": "analyze", "type": "llm", "reads": ["$issue_data"]}  // This field doesn't exist!
@@ -1039,8 +1040,9 @@ Template variables convert ALL values to strings:
 
 **For MVP, use template variables (with optional path support) for all dynamic data access:**
 - Simple values (most common): `$issue_number`, `$file_path`, `$prompt`
-- Nested data (when needed): `$issue_data.user.login`, `$api_response.data.items` (**Note: Array indexing like [0] is NOT supported**)
-- String composition: `"Fix issue #$issue_number in $repo_name"`
+- Nested data: `$issue_data.author.login` (object paths only)
+- Array indexing NOT supported: Cannot use [0] or [*] syntax
+- String composition: `"Changelog for $limit issues in $repo_name"`
 - CLI parameters: `$issue_number` (from --issue_number=1234)
 
 **For static values:**
@@ -1164,7 +1166,7 @@ This provides a powerful MVP that can generate sophisticated sequential workflow
 **Risk**: LLM uses incorrect template variables or paths
 **Mitigation**:
 - Validate template variables match expected patterns (including paths)
-- Use structure documentation to verify paths like `$data.user.login` exist
+- Use structure documentation to verify paths like `$data.author.login` exist
 - Ensure CLI parameters are properly named
 - Check that referenced nodes exist in the workflow
 
@@ -1261,7 +1263,7 @@ Based on implementation clarifications, the following key decisions have been re
 ### 2. Component Browsing Scope - RESOLVED ✓
 **Resolution**: ComponentBrowsingNode can select BOTH individual nodes AND existing workflows to use as sub-workflows. This enables workflow composition and reuse.
 
-Example: If user wants "fix github issue and notify team", and "fix-github-issue" workflow exists, ComponentBrowsingNode can select that workflow plus a "send-notification" node to create a new composite workflow.
+Example: If user wants "generate changelog and notify team", and "generate-changelog" workflow exists, ComponentBrowsingNode can select that workflow plus a "send-notification" node to create a new composite workflow.
 
 ### 3. Parameter Extraction Two-Phase Architecture - RESOLVED ✓
 **Resolution**: Parameter handling uses a sophisticated two-phase approach:
@@ -1269,7 +1271,7 @@ Example: If user wants "fix github issue and notify team", and "fix-github-issue
 **Phase 1 - Parameter Discovery (Path B only)**:
 - ParameterDiscoveryNode extracts named parameters BEFORE workflow generation
 - Provides context for intelligent workflow design
-- Example: "fix issue 1234" → discovers {"issue_number": "1234"}
+- Example: "generate changelog from 20 issues" → discovers {"limit": "20"}
 
 **Phase 2 - Parameter Mapping (Both paths)**:
 - ParameterMappingNode maps values to workflow parameters
