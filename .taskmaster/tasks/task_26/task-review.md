@@ -129,7 +129,7 @@ nodes = scan_for_nodes([Path('src/pflow/nodes')])
 ```python
 # Templates can access nested fields:
 "Fix issue by {{issue_data.author.login}}"  # Resolves to author's username
-"Label: {{issue_data.labels[0].name}}"      # First label's name
+"Label: {{issue_data.labels[0].name}}"      # First label's name (NOTE: Array access not yet implemented in template resolver)
 ```
 
 ### Planner Integration (Task 17)
