@@ -361,12 +361,12 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 19 complete: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
 - ✅ Task 20 complete: Implement Nested Workflow Execution
 - ✅ Task 21: Implement Workflow Input Declaration - workflows to declare their expected input and output parameters in the IR schema
-- ✅ Task 26: Implement GitHub and Git Operation Nodes - 6 nodes for GitHub/Git automation, unblocking Task 17
+- ✅ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
+- ✅ Task 12: Implement LLM Node - Create a general-purpose LLM node - infinitely reusable building block by combining prompts with template variables
+- ✅ Task 26: Implement GitHub and Git Operation Nodes - 6 nodes for GitHub/Git automation
 
 Next up:
-
-- ⏳ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
-- ⏳ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows) - NOW UNBLOCKED
+- ⏳ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
 - ⏳ Task 9: Implement shared store collision detection and proxy mapping
 
 *Update this list as you complete tasks.*
