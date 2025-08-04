@@ -1270,16 +1270,11 @@ class ValidationNode(Node):
         return "retry_with_feedback"
 
     def _identify_primary_issue(self, errors):
-        """Identify the main issue to address first."""
-        # Prioritize errors for clearer feedback
-        for error in errors:
-            if "template variable" in error:
-                return "template_variable_issue"
-            elif "unknown node" in error.lower():
-                return "invalid_nodes"
-            elif "ir_version" in error or "structure" in error:
-                return "invalid_structure"
-        return "general_validation_error"
+        """For MVP, use simple validation feedback."""
+        # MVP uses simple "invalid" routing for all validation errors
+        # Future versions could categorize for smarter retry strategies
+        # All errors are included in shared["validation_errors"] for retry context
+        return "invalid"  # Simplified for MVP
 
     def _validate_workflow(self, workflow):
         """Perform comprehensive validation with prompt-ready error messages.

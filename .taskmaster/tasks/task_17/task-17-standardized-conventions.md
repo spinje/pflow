@@ -118,7 +118,7 @@ else:
 
 ## Action Strings - Standardized
 
-These are the ONLY valid action strings for Task 17:
+These are the recommended action strings for consistency:
 
 ### WorkflowDiscoveryNode:
 - `"found_existing"` → Path A (reuse)
@@ -127,7 +127,7 @@ These are the ONLY valid action strings for Task 17:
 ### ValidatorNode:
 - `"valid"` → proceed to metadata
 - `"invalid"` → retry generation (up to 3 times)
-- `"failed"` → all retries exhausted
+- `"failed"` → all retries exhausted (generation failed)
 
 ### ParameterMappingNode:
 - `"params_complete"` → all required params extracted
@@ -136,6 +136,8 @@ These are the ONLY valid action strings for Task 17:
 ### All other nodes:
 - Use descriptive action strings that clearly indicate the next step
 - Default to `"continue"` or `"done"` for linear progression
+
+**Note**: The key is consistency within your implementation. If you find better names during implementation, use them consistently throughout.
 
 ## Model Configuration
 

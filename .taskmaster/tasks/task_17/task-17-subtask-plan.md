@@ -232,7 +232,7 @@ The decomposition follows these principles:
 - `ValidatorNode` with dual validation approach:
   - Structure validation via existing `validate_ir()`
   - Template validation using registry's Node IR (Task 19)
-  - Routes "invalid" back to generator with specific errors
+  - Routes "invalid" back to generator with specific errors (max 3 retries)
 - `MetadataGenerationNode` for workflow metadata extraction
   - ONLY runs after successful validation
   - Extracts name, description, inputs, outputs
@@ -248,7 +248,7 @@ The decomposition follows these principles:
 **Implementation Checklist**:
 - [ ] ValidatorNode validates structure and templates
 - [ ] Template paths verified against registry
-- [ ] Routes: "valid" → metadata, "invalid" → generator
+- [ ] Routes: "valid" → metadata, "invalid" → generator, "failed" → result
 - [ ] MetadataGenerationNode extracts workflow info
 - [ ] Error messages actionable for retry
 - [ ] Tests cover valid/invalid scenarios

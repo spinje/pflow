@@ -167,13 +167,14 @@ def create_planner_flow():
     browse >> param_disc
     param_disc >> generator
     generator >> validator
-    validator - "invalid" >> generator  # Retry loop
+    validator - "invalid" >> generator  # Retry loop (max 3)
     validator - "valid" >> metadata
+    validator - "failed" >> result  # Max retries exceeded
     metadata >> param_map
 
     # Convergence point
-    param_map - "complete" >> param_prep
-    param_map - "incomplete" >> result  # Missing params
+    param_map - "params_complete" >> param_prep
+    param_map - "params_incomplete" >> result  # Missing params
 
     param_prep >> result
 

@@ -189,8 +189,8 @@ validator - "valid" >> metadata_generation
 metadata_generation >> parameter_mapping
 
 # CONVERGENCE: Both paths meet at parameter_mapping
-parameter_mapping - "complete" >> parameter_preparation >> result_preparation
-parameter_mapping - "incomplete" >> result_preparation  # Missing params
+parameter_mapping - "params_complete" >> parameter_preparation >> result_preparation
+parameter_mapping - "params_incomplete" >> result_preparation  # Missing params
 ```
 
 **CRITICAL INSIGHT**: ParameterMappingNode is the **verification gate** - it:
@@ -214,7 +214,7 @@ class ValidationNode(Node):
                 logger.info(f"Retrying generation (attempt {attempts + 1}/3)")
                 shared["generation_attempts"] = attempts + 1
                 shared["validation_errors"] = exec_res["errors"][:3]  # Top 3 only
-                return "retry"
+                return "invalid"  # Retry generation
             logger.error(f"Generation failed after {attempts + 1} attempts")
             return "failed"
         logger.info("Validation passed")

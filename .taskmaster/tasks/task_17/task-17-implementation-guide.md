@@ -98,10 +98,10 @@ The planner aims for **single-shot generation** success through comprehensive co
 
 ```python
 # The planner flow structure enables smart retry:
-generator >> validator >> metadata >> param_extract
-validator - "invalid_structure" >> error_feedback >> generator
-validator - "invalid_paths" >> enhance_context >> generator
-generator - "max_retries_exceeded" >> fallback_strategy
+generator >> validator
+validator - "valid" >> metadata >> param_extract
+validator - "invalid" >> generator  # Retry with error feedback
+validator - "failed" >> result  # Max retries exceeded
 ```
 
 ### How Structured Retry Works

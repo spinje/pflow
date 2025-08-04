@@ -38,12 +38,12 @@ Shows how to handle failures elegantly without crashing the entire system.
 class ContentRetrievalNode(Node):
     def __init__(self):
         super().__init__(max_retries=3, wait=1.0)
-    
+
     def exec_fallback(self, prep_res, exc):
         """After all retries failed, return structured failure."""
         # prep_res contains the context we need for error reporting
         logger.error(f"Failed after {self.max_retries} attempts: {exc}")
-        
+
         # Return structured result even on failure
         return {
             "success": False,
@@ -61,12 +61,12 @@ class WorkflowGeneratorNode(Node):
     def prep(self, shared):
         # Return everything exec_fallback might need
         return shared  # Return full context for fallback
-    
+
     def exec_fallback(self, prep_res, exc):
         """Fallback to simpler generation strategy."""
         # Can access full context from prep_res
         user_input = prep_res.get("user_input", "")
-        
+
         # Return simplified workflow
         return {
             "workflow": {
@@ -115,7 +115,7 @@ def post(self, shared, prep_res, exec_res):
     # Don't replace - augment
     shared["abstractions"] = exec_res["found_abstractions"]
     shared["context"] += f"\nFound {len(exec_res['found_abstractions'])} abstractions"
-    
+
     # Build on previous discoveries
     shared["relationships"] = self._analyze_with_context(
         shared["abstractions"],  # Use previous stage output
@@ -150,39 +150,39 @@ Shows how to validate at multiple levels with clear retry boundaries.
 class ValidationNode(Node):
     def __init__(self):
         super().__init__(max_retries=1)  # Don't retry validation itself
-    
+
     def exec(self, prep_res):
         workflow = prep_res["workflow"]
         errors = []
-        
+
         # Tier 1: Structure
         if not self._validate_structure(workflow):
             errors.append({"level": "structure", "message": "Invalid IR structure"})
-            
+
         # Tier 2: Nodes exist
         if not errors:  # Only if structure is valid
             for node in workflow.get("nodes", []):
                 if node["type"] not in prep_res["registry"]:
                     errors.append({"level": "node", "message": f"Unknown node: {node['type']}"})
-        
+
         # Tier 3: Templates valid
         if not errors:  # Only if nodes are valid
             template_errors = self._validate_templates(workflow, prep_res["params"])
             errors.extend(template_errors)
-        
+
         return {"valid": len(errors) == 0, "errors": errors[:3]}  # Limit errors
-    
+
     def post(self, shared, prep_res, exec_res):
         shared["validation_result"] = exec_res
-        
+
         if not exec_res["valid"]:
             attempts = shared.get("generation_attempts", 0)
             if attempts < 3:  # Bounded retries
                 shared["generation_attempts"] = attempts + 1
                 shared["validation_errors"] = exec_res["errors"]
-                return "retry"
-            return "failed"
-        
+                return "invalid"  # Retry generation
+            return "failed"  # All retries exhausted
+
         return "valid"
 ```
 
@@ -215,20 +215,20 @@ class WorkflowDecision(BaseModel):
 class WorkflowGeneratorNode(Node):
     def exec(self, prep_res):
         model = llm.get_model("anthropic/claude-sonnet-4-0")
-        
+
         prompt = f"""Analyze if existing workflow satisfies the request.
-        
+
         User request: {prep_res['user_input']}
         Available workflows: {prep_res['workflows']}
-        
+
         Determine if an existing workflow completely satisfies the request."""
-        
+
         # Use schema parameter for structured output
         response = model.prompt(prompt, schema=WorkflowDecision)
-        
+
         # Get validated JSON directly
         result = response.json()  # Returns dict matching schema
-        
+
         # Already validated by llm library!
         return result
 
@@ -237,27 +237,27 @@ class FlowIR(BaseModel):
     ir_version: str = "0.1.0"
     nodes: List[dict]
     edges: List[dict]
-    
+
 class WorkflowGeneratorNode(Node):
     def exec(self, prep_res):
         model = llm.get_model("anthropic/claude-sonnet-4-0")
-        
+
         prompt = f"""Generate a workflow for: {prep_res['user_input']}
-        
+
         Available components:
         {prep_res['planning_context']}
-        
+
         Generate a valid workflow using these components."""
-        
+
         try:
             # Direct schema-based generation
             response = model.prompt(prompt, schema=FlowIR)
             workflow = response.json()
-            
+
             # Add any extracted parameters as template variables
             workflow = self._add_template_variables(workflow, prep_res)
             return {"success": True, "workflow": workflow}
-            
+
         except Exception as e:
             # Fallback for generation failures
             logger.error(f"Generation failed: {e}")
@@ -290,23 +290,23 @@ class WorkflowGeneratorNode(Node):
             "previous_errors": shared.get("validation_errors", []),
             "attempt": shared.get("generation_attempts", 0)
         }
-    
+
     def exec(self, prep_res):
         model = llm.get_model("anthropic/claude-sonnet-4-0")
-        
+
         # Build prompt with error context
         prompt = f"Generate a workflow for: {prep_res['user_input']}\n"
         prompt += f"Available context: {prep_res['context']}\n"
-        
+
         # Add previous errors if this is a retry
         if prep_res["attempt"] > 0 and prep_res["previous_errors"]:
             prompt += "\nPrevious attempt failed with these errors:\n"
             for error in prep_res["previous_errors"][:3]:  # Limit to 3
                 prompt += f"- {error['level']}: {error['message']}\n"
             prompt += "\nPlease fix these specific issues in your new attempt.\n"
-        
+
         prompt += "\nGenerate valid JSON IR that addresses all requirements."
-        
+
         response = model.prompt(prompt)
         # ... parse and return workflow ...
 ```
@@ -324,17 +324,17 @@ shared = {
     # === INPUT === (what came from user/CLI)
     "user_input": str,
     "initial_params": dict,
-    
+
     # === DISCOVERY === (what we found)
     "available_workflows": list,
     "available_nodes": list,
     "discovery_result": dict,
-    
+
     # === GENERATION === (what we're building)
     "generation_attempts": int,
     "validation_errors": list,  # Critical for retry context
     "generated_workflow": dict,
-    
+
     # === OUTPUT === (what we return)
     "workflow_ir": dict,
     "execution_params": dict,
