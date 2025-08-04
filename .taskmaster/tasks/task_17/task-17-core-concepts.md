@@ -330,24 +330,15 @@ Understanding the distinction between different parameter types is crucial:
 
 ### Standardized Parameter Terminology
 
-To ensure clarity and consistency across the planner implementation, we use these standardized terms:
+**→ See `task-17-standardized-conventions.md` for detailed parameter definitions and flow**
 
-1. **`discovered_params`** - Parameters with assigned names found during discovery (Path B only)
-   - Example: User says "generate changelog from 20 issues" → `{"limit": "20", "state": "closed"}`
-   - Used by generator to know what template variables to create
+Quick reference:
+- **`discovered_params`** (Path B only) - Named parameters for generator context
+- **`extracted_params`** (Both paths) - Values for workflow's defined inputs
+- **`execution_params`** (Both paths) - Final format for runtime
+- **`missing_params`** (Both paths) - List of required params that couldn't be extracted
 
-2. **`extracted_params`** - Values extracted for workflow's defined inputs (both paths)
-   - Example: Workflow expects "issue_number" → extract "1234" from user input
-   - ParameterMappingNode does this INDEPENDENTLY, not using discovered_params
-
-3. **`verified_params`** - Parameters after ParameterMappingNode verification
-   - Confirms all required workflow parameters have values
-   - Routes to error handling if parameters are missing
-
-4. **`execution_params`** - Final parameters ready for execution
-   - What the planner returns to the CLI
-   - What the compiler receives for runtime substitution
-   - Replaces the confusing `parameter_values`/`initial_params` duality
+Key principle: ParameterMappingNode does INDEPENDENT extraction, not reusing discovered_params.
 
 ### Context
 Template variables are the KEY to pflow's "Plan Once, Run Forever" value proposition. They enable workflow reusability by allowing parameters to change between executions while keeping the workflow structure constant.

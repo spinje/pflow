@@ -100,56 +100,15 @@ class WorkflowGeneratorNode(Node):
 
 ### 2. Shared Store Design (CRITICAL)
 
-The shared store is the communication backbone. Design it BEFORE implementation:
+The shared store is the communication backbone. Design it BEFORE implementation.
 
-```python
-shared = {
-    # === INPUT STAGE ===
-    "user_input": str,              # "generate changelog from closed issues"
-    "stdin_data": Any,              # Optional stdin input
-    "current_date": str,            # ISO format timestamp
-    
-    # === DISCOVERY STAGE ===
-    "discovery_context": str,       # Lightweight context for browsing
-    "discovery_result": {
-        "found": bool,
-        "workflow": dict,           # If found
-        "workflows": list,          # Available workflows
-    },
-    "browsed_components": {
-        "node_ids": list,
-        "workflow_names": list,
-    },
-    
-    # === GENERATION STAGE ===
-    "discovered_params": dict,      # {"state": "closed", "limit": "20"}
-    "planning_context": str,        # Detailed interface specs
-    "generation_attempts": int,
-    "validation_errors": list,
-    
-    # === WORKFLOW STAGE ===
-    "generated_workflow": dict,     # Generated IR
-    "found_workflow": dict,         # Found existing workflow
-    "workflow_metadata": {
-        "suggested_name": str,
-        "description": str,
-        "inputs": list,
-        "outputs": list,
-    },
-    
-    # === PARAMETER STAGE ===
-    "extracted_params": dict,       # Raw from NL
-    "verified_params": dict,        # After mapping verification
-    "execution_params": dict,       # Final runtime format
-    
-    # === OUTPUT STAGE ===
-    "planner_output": {
-        "workflow_ir": dict,
-        "execution_params": dict,
-        "workflow_metadata": dict,
-    }
-}
-```
+**→ See `task-17-standardized-conventions.md` for the complete recommended schema**
+
+Key principles:
+- Group data by stages (Input → Discovery → Generation → Parameters → Output)
+- ParameterMappingNode does independent extraction (doesn't reuse discovered_params)
+- Track both successful extractions and missing params for routing
+- This is a starting point - iterate as needed during implementation
 
 ### 3. Node Design Pattern
 
@@ -158,14 +117,14 @@ Each node follows the prep→exec→post lifecycle with CLEAR responsibilities:
 ```python
 class ComponentBrowsingNode(Node):
     """Browse for building blocks - single responsibility."""
-    
+
     def prep(self, shared):
         """Extract what we need from shared store."""
         return {
             "user_input": shared["user_input"],
             "discovery_context": shared.get("discovery_context", "")
         }
-    
+
     def exec(self, prep_res):
         """Pure computation - browsing logic with LLM."""
         # NO shared store access here
@@ -174,7 +133,7 @@ class ComponentBrowsingNode(Node):
         model = llm.get_model("anthropic/claude-sonnet-4-0")
         # ... browsing logic ...
         return {"node_ids": [...], "workflow_names": [...]}
-    
+
     def post(self, shared, prep_res, exec_res):
         """Update shared store and return action."""
         shared["browsed_components"] = exec_res
@@ -189,7 +148,7 @@ The flow wiring should be EXPLICIT and VISUAL:
 # flow.py
 def create_planner_flow():
     """Wire the complete planner meta-workflow."""
-    
+
     # Create all nodes
     discovery = WorkflowDiscoveryNode()
     browse = ComponentBrowsingNode()
@@ -200,10 +159,10 @@ def create_planner_flow():
     param_map = ParameterMappingNode()
     param_prep = ParameterPreparationNode()
     result = ResultPreparationNode()
-    
+
     # Path A: Found existing workflow
     discovery - "found" >> param_map
-    
+
     # Path B: Generate new workflow
     discovery - "not_found" >> browse
     browse >> param_disc
@@ -212,13 +171,13 @@ def create_planner_flow():
     validator - "invalid" >> generator  # Retry loop
     validator - "valid" >> metadata
     metadata >> param_map
-    
+
     # Convergence point
     param_map - "complete" >> param_prep
     param_map - "incomplete" >> result  # Missing params
-    
+
     param_prep >> result
-    
+
     return Flow(start=discovery)
 ```
 
@@ -256,19 +215,19 @@ def test_generation_path(mock_get_model):
     mock_model = Mock()
     mock_model.prompt.return_value = Mock(json=lambda: {...})
     mock_get_model.return_value = mock_model
-    
+
     # Run REAL flow
     flow = create_planner_flow()
     shared = {"user_input": "test"}
     flow.run(shared)
-    
+
     # Verify complete execution
     assert "planner_output" in shared
 ```
 
 **Integration Tests** (real LLM when needed):
 ```python
-@pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), 
+@pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"),
                     reason="Set RUN_LLM_TESTS=1")
 def test_real_generation():
     # Real LLM call with anthropic/claude-sonnet-4-0

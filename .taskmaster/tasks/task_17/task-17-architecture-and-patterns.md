@@ -483,7 +483,8 @@ class ParameterMappingNode(Node):
             shared["parameter_error"] = f"Workflow cannot be executed: missing {exec_res['missing']}"
             return "params_incomplete"
 
-        shared["verified_params"] = exec_res["verified"]
+        shared["extracted_params"] = exec_res["verified"]  # Values extracted for workflow's inputs
+        shared["missing_params"] = []  # No missing params if we got here
         return "params_complete"
 
     def _extract_from_natural_language(self, user_input: str, workflow: dict, current_date: str) -> dict:
@@ -511,8 +512,8 @@ class ParameterMappingNode(Node):
 class ParameterPreparationNode(Node):
     """Prepares parameters for runtime substitution"""
     def prep(self, shared):
-        """Get verified parameters."""
-        return shared.get("verified_params", {})
+        """Get extracted parameters."""
+        return shared.get("extracted_params", {})
 
     def exec(self, prep_res):
         """Pass through parameters unchanged."""

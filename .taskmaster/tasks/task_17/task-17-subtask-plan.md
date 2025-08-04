@@ -48,22 +48,12 @@ WorkflowDiscoveryNode → ComponentBrowsingNode → ParameterDiscoveryNode → G
 | ParameterPreparationNode | ✓ | ✓ | Format for runtime | Prepares execution_params |
 | ResultPreparationNode | ✓ | ✓ | Package for CLI | Creates planner_output dict |
 
-## ⚠️ CRITICAL: Understanding Parameter Extraction Independence
+## ⚠️ CRITICAL: Parameter Extraction Independence
 
-**ParameterDiscoveryNode** (Path B only):
-- Discovers values and ASSIGNS parameter names: `{"limit": "20", "state": "closed"}`
-- These names guide the Generator to create workflow with `$limit` and `$state` inputs
+**→ See `task-17-standardized-conventions.md` for full parameter flow details**
 
-**ParameterMappingNode** (Both paths) - INDEPENDENT EXTRACTION:
-- Takes the workflow's ALREADY-DEFINED input names
-- Extracts values from user input to match THOSE specific names
-- Does NOT use discovered_params - does its own extraction
-- This verifies the workflow can actually execute with the user's input
-
+Key insight: ParameterMappingNode does **INDEPENDENT EXTRACTION** - it doesn't use discovered_params from Path B. This independence makes it a verification gate that ensures the workflow is actually executable with the user's input.
 **Example**: If workflow expects `inputs: {"issue_number": ..., "repo": ...}`, ParameterMappingNode tries to extract values for exactly "issue_number" and "repo" from the natural language.
-
-This independence is crucial - it's the verification gate that ensures the workflow is executable.
-
 ## Critical Implementation Concepts
 
 See core documentation for detailed guidance. Key reminders:

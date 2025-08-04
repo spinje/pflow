@@ -42,7 +42,7 @@ class WorkflowGeneratorNode(Node):
         result = {"workflow": {"nodes": [], "edges": []}}
         logger.debug(f"Generator returning: {len(result['workflow']['nodes'])} nodes")
         return result
-    
+
     def post(self, shared, prep_res, exec_res):
         logger.debug(f"Generator routing to validation")
         shared["generated_workflow"] = exec_res["workflow"]
@@ -57,38 +57,21 @@ Logging helps you see:
 
 THEN iterate to add real logic.
 
-### 2. The Planner's Shared Store is Sacred
+### 2. The Planner's Shared Store
 
-Task 17's shared store has specific stages. **Use these keys as a starting point and iterate from there** (see also Pattern 7 in advanced-patterns.md):
+**→ See `task-17-standardized-conventions.md` for the complete shared store schema**
 
-```python
-# Stage 1: Input (from CLI)
-shared["user_input"] = "generate changelog from closed issues"
-shared["stdin_data"] = None  # Optional stdin input
-shared["current_date"] = "2024-01-30T10:00:00Z"
-
-# Stage 2: Discovery (what exists?)
-shared["discovery_context"] = "..."  # Lightweight context string
-shared["discovery_result"] = {"found": False, "workflows": [...]}
-shared["browsed_components"] = {"node_ids": [...], "workflow_names": [...]}
-
-# Stage 3: Generation (what we're building)
-shared["discovered_params"] = {"state": "closed", "limit": "20"}
-shared["planning_context"] = "..."  # Detailed interface specs
-shared["generation_attempts"] = 0
-shared["validation_errors"] = [...]  # For retry context
-shared["generated_workflow"] = {...}
-
-# Stage 4: Convergence (both paths meet here)
-shared["extracted_params"] = {...}  # Raw from NL
-shared["verified_params"] = {...}  # After ParameterMappingNode
-shared["execution_params"] = {...}  # Final runtime format
-
-# Stage 5: Output (to CLI)
-shared["planner_output"] = {"workflow_ir": {...}, "execution_params": {...}}
+Quick reference - key data flow:
+```
+Input → Discovery → Generation/Found → Convergence → Output
+         ↓           ↓                  ↓
+    discovery_result discovered_params  extracted_params → execution_params
 ```
 
-**Note**: These are the EXACT keys for Task 17. Full schema documentation will be created in Subtask 1.
+Critical points:
+- ParameterMappingNode does INDEPENDENT extraction (doesn't use discovered_params)
+- Track `missing_params` for routing decisions
+- Use these as starting points, iterate during implementation
 
 ### 3. LLM Calls Use Structured Output
 
@@ -117,11 +100,11 @@ class WorkflowDecision(BaseModel):
 class WorkflowDiscoveryNode(Node):
     def exec(self, prep_res):
         model = llm.get_model("anthropic/claude-sonnet-4-0")
-        
+
         # Use schema parameter for structured output
         response = model.prompt(prompt, schema=WorkflowDecision)
         result = response.json()  # Already validated by llm library!
-        
+
         return result
 ```
 
@@ -193,7 +176,7 @@ Task 17 has two paths that converge. Understand this deeply:
 # Path A: Found existing workflow
 workflow_discovery - "found" >> parameter_mapping
 
-# Path B: Generate new workflow  
+# Path B: Generate new workflow
 workflow_discovery - "not_found" >> component_browsing
 component_browsing >> parameter_discovery
 parameter_discovery >> workflow_generator
@@ -209,7 +192,7 @@ parameter_mapping - "incomplete" >> result_preparation  # Missing params
 
 **CRITICAL INSIGHT**: ParameterMappingNode is the **verification gate** - it:
 - Extracts parameters from natural language
-- Maps them to workflow requirements  
+- Maps them to workflow requirements
 - Verifies ALL required parameters exist
 - Routes to "incomplete" if parameters missing (CLI will prompt user)
 - This is NOT just parameter extraction - it's executability verification!
@@ -356,7 +339,7 @@ From PocketFlow guide: *"Expect to repeat Steps 3–6 hundreds of times."*
 
 For Task 17:
 - Each node: 10-20 iterations
-- Flow wiring: 5-10 iterations  
+- Flow wiring: 5-10 iterations
 - Integration: 20+ iterations
 - Total: 100+ iterations
 
