@@ -13,28 +13,19 @@ Available inputs:
 
 ## Your Task as the Prompt-Generating Agent
 
-You are tasked with creating a comprehensive implementation prompt for another AI agent who will implement a subtask of Task 17 (Natural Language Planner). All necessary context files have been provided to you in your conversation with the user.
+Generate a comprehensive implementation prompt for Subtask {{subtask_number}} of Task 17.
+
+**Key assumption**: The implementing agent has read ALL Task 17 documentation except the subtask spec.
 
 **Your output**: Generate the prompt and save it to `.taskmaster/tasks/task_17/starting-context/task-17-subtask-{{subtask_number}}-implementation-prompt.md`
-
-### 🧠 Your Knowledge Sources
-
-**All context has been provided to you**, including:
-- Task 17 architecture and discussions
-- Subtask decomposition and dependencies
-- Implementation principles and patterns
-- The subtask-specific specification file
-- All supporting documentation
 
 ### How to Create the Implementation Prompt
 
 1. **Focus on the subtask specification** - The file `.taskmaster/tasks/task_17/starting-context/task-17-subtask-{{subtask_number}}-spec.md` is the PRIMARY source of truth
 2. **Carefully evaluate the subtask plan** - The file `.taskmaster/tasks/task_17/starting-context/task-17-subtask-plan.md` is the plan for all the subtasks, focus especially on the subtask you are implementing. This information is critical for understanding the subtask and its dependencies to other subtasks.
-3. **Review supporting documents** - Use other Task 17 documents for context and patterns
-4. **Fill in the template** using the complete information from your context
-5. **Be explicit and detailed** - The implementing agent needs comprehensive guidance
-6. **Include all relevant patterns** - Apply patterns from task-17-advanced-patterns.md
-7. **Output a complete prompt** ready for immediate use
+3. **Fill in the template** with specific details from the spec and your knowledge
+4. **Be explicit about interfaces** - How this subtask connects to others
+5. **Include implementation specifics** - Not general Task 17 info they already know
 
 ### 🛑 Decision Points: When to STOP and ASK
 
@@ -68,6 +59,17 @@ Use this exact structure and replace ALL placeholders with content from your kno
 ---
 
 # Task 17 - Subtask {{subtask_number}}: {{subtask_title}} - Agent Instructions
+
+## Critical Pre-Requirement
+
+**IMPORTANT**: This prompt assumes you have already thoroughly read and understand:
+- All Task 17 documentation in `.taskmaster/tasks/task_17/`
+- The epistemic manifesto
+- The two-path architecture (Path A: reuse, Path B: generate)
+- How subtasks interconnect and depend on each other
+- The shared progress log system
+
+If you haven't read these yet, STOP and read them first.
 
 ## The Problem You're Solving
 
@@ -109,71 +111,20 @@ Before implementing this subtask, you MUST understand the overall architecture:
 - `WorkflowDiscoveryNode` routing logic from Subtask 2
 -->
 
-## Required Context Review (IN THIS ORDER)
+## Required Context Review
 
-### 1. FIRST: Understand the Epistemic Approach
-**File**: `.taskmaster/workflow/epistemic-manifesto.md`
-
-**Purpose**: Core principles for deep understanding and robust development. This document establishes:
-- Your role as a reasoning system, not just an instruction follower
-- The importance of questioning assumptions and validating truth
-- How to handle ambiguity and uncertainty
-- Why elegance must be earned through robustness
-
-**Why review first**: This mindset is critical for implementing any subtask correctly. You'll need to question existing patterns, validate assumptions, and ensure the solution survives scrutiny.
-
-### 2. SECOND: Task 17 Overview and Architecture
-**File**: `.taskmaster/tasks/task_17/task-17-overview.md`
-
-**Purpose**: Understand the complete Natural Language Planner architecture, the two-path execution model, and how all subtasks fit together.
-
-**Why review second**: You need the big picture before implementing your piece of the puzzle.
-
-### 3. THIRD: Task 17 Implementation Principles
-**File**: `.taskmaster/tasks/task_17/task-17-implementation-principles.md`
-
-**Purpose**: Practical implementation guidance specific to Task 17, including:
-- Walking skeleton approach with logging
-- Critical PocketFlow rules
-- Shared store keys and stages
-- Common mistakes to avoid
-
-**Focus on**: Section for Subtask {{subtask_number}} at the end of the document.
-
-### 4. FOURTH: Task 17 Advanced Patterns
-**File**: `.taskmaster/tasks/task_17/task-17-advanced-patterns.md`
-
-**Purpose**: Production-proven patterns that directly solve Task 17's challenges, including:
-- Two-path decision with convergence
-- Graceful failure recovery
-- Progressive context building
-- Multi-tier validation
-- Structured LLM output
-
-**Apply**: Patterns relevant to your subtask's functionality.
-
-### 5. FIFTH: Task 17 Ambiguities (Resolved)
-**File**: `.taskmaster/tasks/task_17/task-17-ambiguities.md`
-
-**Purpose**: Key decisions already made about Task 17's implementation, including:
-- LLM model selection (anthropic/claude-sonnet-4-0)
-- Retry strategies
-- Parameter handling architecture
-- Testing approach
-
-### 6. SIXTH: Subtask-Specific Specification (PRIMARY SOURCE)
+### Primary Source: Your Subtask Specification
 **File**: `.taskmaster/tasks/task_17/starting-context/task-17-subtask-{{subtask_number}}-spec.md`
 
 **This is your PRIMARY source of truth** for requirements, interface contracts, and implementation details specific to Subtask {{subtask_number}}.
 
-**Key sections to focus on**:
-- Dependencies and prerequisites
-- Interface contracts with other subtasks
-- Shared store keys (reads/writes)
-- Specific implementation requirements
-- Success criteria
+Since you've already read all Task 17 documentation, focus on:
+1. How your subtask's spec relates to the overall architecture
+2. Dependencies listed in the spec vs what's actually implemented
+3. Interface contracts specific to your subtask
+4. Success criteria unique to this subtask
 
-**IMPORTANT**: Follow the specification PRECISELY. It defines the exact behavior and interfaces required.
+**CRITICAL**: The spec defines exact behavior and interfaces. Follow it PRECISELY.
 
 ## 🔄 Shared Progress Log (CRITICAL!)
 
@@ -552,35 +503,6 @@ You're implementing Subtask {{subtask_number}} of 7 for Task 17's Natural Langua
 <!-- End with encouragement about the subtask's importance -->
 
 ---
-
-## How to Extract Information and Fill the Template
-
-### From Your Context (All information is available):
-
-Extract the following from the provided context:
-- The two-path architecture (Path A: reuse, Path B: generate)
-- Convergence at ParameterMappingNode
-- Subtask dependencies and sequence
-- Template variable requirements
-- Interface contracts between subtasks
-- Shared store keys and stages
-- Implementation principles and patterns
-
-### From the Subtask Specification and Subtask breakdown plan (Primary focus):
-
-1. **Problem Statement**: What challenge this subtask addresses
-2. **Subtask Number and Title**: From the specification header
-3. **Dependencies**: Which subtasks must be complete first
-4. **Mission Statement**: Objective section
-5. **Deliverables**: Components to build, files to create
-6. **Interface Contracts**: How this subtask connects to others
-7. **Shared Store Keys**: What to read/write
-8. **Implementation Phases**: Logical breakdown of work
-9. **Technical Details**: Requirements, constraints, patterns to follow
-10. **Warnings**: Pitfalls to avoid
-11. **Key Decisions**: From task-17-ambiguities.md
-12. **Success Criteria**: Specific checklist items
-13. **Getting Started Steps**: First concrete actions
 
 ## Example Output
 
