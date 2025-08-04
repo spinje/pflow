@@ -332,12 +332,13 @@ Understanding the distinction between different parameter types is crucial:
 
 To ensure clarity and consistency across the planner implementation, we use these standardized terms:
 
-1. **`extracted_params`** - Raw parameters extracted from natural language (both paths)
-   - Example: User says "generate changelog from 20 issues" → `{"limit": "20"}`
+1. **`discovered_params`** - Parameters with assigned names found during discovery (Path B only)
+   - Example: User says "generate changelog from 20 issues" → `{"limit": "20", "state": "closed"}`
+   - Used by generator to know what template variables to create
 
-2. **`discovered_params`** - Same as extracted_params but specifically for Path B context
-   - Kept for backward compatibility and clarity about pre-generation context
-   - Provides parameter context to the generator before workflow creation
+2. **`extracted_params`** - Values extracted for workflow's defined inputs (both paths)
+   - Example: Workflow expects "issue_number" → extract "1234" from user input
+   - ParameterMappingNode does this INDEPENDENTLY, not using discovered_params
 
 3. **`verified_params`** - Parameters after ParameterMappingNode verification
    - Confirms all required workflow parameters have values

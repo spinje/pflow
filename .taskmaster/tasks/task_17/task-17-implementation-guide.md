@@ -693,7 +693,7 @@ class ParameterDiscoveryNode(Node):
         return discovered_params
 
     def post(self, shared, prep_res, exec_res):
-        shared["discovered_params"] = exec_res  # Dict, not list!
+        shared["discovered_params"] = exec_res  # Dict for generator context (NOT used by ParameterMappingNode)
         return "generate"
 
 class GeneratorNode(Node):
