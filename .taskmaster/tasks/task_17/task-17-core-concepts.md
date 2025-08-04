@@ -1237,7 +1237,7 @@ Based on comprehensive analysis, here's the recommended approach:
 
 **Critical Implementation Details**:
 - Template path resolution: ~20 lines of code to split on '.' and traverse dictionaries
-- Use Simon Willison's `llm` library with model "claude-sonnet-4-20250514"
+- Use Simon Willison's `llm` library with model "anthropic/claude-sonnet-4-0"
 - Pydantic models for type-safe IR generation, then JSONSchema validation
 
 **Implementation Checklist**:

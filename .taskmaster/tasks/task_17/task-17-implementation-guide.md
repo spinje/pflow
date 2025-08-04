@@ -178,7 +178,7 @@ class WorkflowGeneratorNode(Node):
     def __init__(self):
         super().__init__(max_retries=3)  # For API failures only
         # Get model with proper configuration
-        self.model = llm.get_model("gpt-4o-mini")  # Default from Task 12
+        self.model = llm.get_model("anthropic/claude-sonnet-4-0")  # Planner's internal model
 
     def prep(self, shared):
         """Prepare context for workflow generation."""
@@ -898,7 +898,7 @@ class WorkflowGeneratorNode(Node):
 
     def __init__(self):
         super().__init__(max_retries=3, wait=1.0)
-        self.model = llm.get_model("gpt-4o-mini")  # Default from Task 12
+        self.model = llm.get_model("anthropic/claude-sonnet-4-0")  # Planner's internal model
 
     def prep(self, shared):
         """Prepare data including attempt tracking for progressive enhancement."""
