@@ -32,9 +32,8 @@ Based on the PocketFlow guide, the planner should follow this exact structure:
 
 ```
 src/pflow/planning/
-├── main.py           # Entry point - create_planner_flow()
+├── flow.py           # Contains create_planner_flow() function
 ├── nodes.py          # ALL node definitions in one file
-├── flow.py           # Flow wiring and orchestration logic
 ├── utils/            # ONLY external interactions
 │   ├── __init__.py
 │   ├── workflow_loader.py    # Load workflows from disk

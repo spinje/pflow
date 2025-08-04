@@ -160,7 +160,8 @@ llm keys set anthropic  # Set API key
 
 ```
 src/pflow/planning/
-├── flow.py              # Contains create_planner_flow()
+├── __init__.py          # Exports: from .flow import create_planner_flow
+├── flow.py              # Contains create_planner_flow() function
 ├── nodes.py             # All node implementations (start here)
 ├── ir_models.py         # Pydantic models for structured output
 ├── utils/               # ONLY external I/O operations
@@ -168,6 +169,8 @@ src/pflow/planning/
 │   └── registry_helper.py
 └── prompts/             # Prompt templates (data, not code)
 ```
+
+**Note**: The CLI imports via `from pflow.planning import create_planner_flow`
 
 ## Testing Conventions
 
