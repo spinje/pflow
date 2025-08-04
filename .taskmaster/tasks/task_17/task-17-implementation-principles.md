@@ -134,7 +134,10 @@ def exec_fallback(self, prep_res, exc):
 
 # ✅ CORRECT - Return shared from prep() if fallback needs it
 def prep(self, shared):
-    return shared  # EXCEPTION PATTERN: Only when fallback needs context
+    # ⚠️ WARNING: This is an EXCEPTION PATTERN, not default!
+    # Only do this when exec_fallback needs context for error recovery
+    # See task-17-advanced-patterns.md Pattern 2 for full explanation
+    return shared  # Most nodes should return specific data instead!
 
 def exec_fallback(self, prep_res, exc):
     # prep_res is the full shared dict now

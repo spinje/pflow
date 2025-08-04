@@ -80,7 +80,7 @@ The planner makes sophisticated decisions requiring strong reasoning capabilitie
 
 **Recommendation**: Option B - Use `anthropic/claude-sonnet-4-0` (the llm library's alias) for ALL planner internal reasoning. This ensures consistent, high-quality workflow generation.
 
-**Implementation Note**: 
+**Implementation Note**:
 - Install requirement: `llm-anthropic` plugin must be installed
 - The planner's internal nodes will use: `self.model = llm.get_model("anthropic/claude-sonnet-4-0")`
 - This is separate from Task 12's LLM node which users can configure independently
@@ -225,17 +225,19 @@ The prep() method should extract specific data, but exec_fallback sometimes need
   - **Drawbacks**: exec_fallback can't enrich errors with context
   - **Example**: `return shared["user_input"], shared["context"]`
 
-- [x] **Option B: Return shared when exec_fallback needs it** ✓ **SELECTED**
-  - **Benefits**: Flexibility for error handling
-  - **Drawbacks**: Less clean separation
-  - **Example**: `return shared  # exec_fallback needs access`
-  - **Precedent**: Valid pattern found in PocketFlow examples
+- [x] **Option B: Return shared ONLY when exec_fallback needs it** ✓ **SELECTED**
+  - **⚠️ WARNING**: This is an EXCEPTION PATTERN, not default behavior
+  - **Benefits**: Flexibility for error handling and recovery
+  - **Drawbacks**: Violates normal prep() isolation principle
+  - **When to use**: ONLY when exec_fallback genuinely needs context for error recovery
+  - **Example**: `return shared  # EXCEPTION: exec_fallback needs full context`
+  - **See**: task-17-advanced-patterns.md Pattern 2 for detailed explanation
 
 - [ ] **Option C: Pass shared to exec_fallback directly**
   - **Benefits**: Would be cleaner
   - **Drawbacks**: Requires framework modification
 
-**Recommendation**: Option B - Return shared dict when exec_fallback genuinely needs it, with clear comments explaining why.
+**Recommendation**: Option B - Return shared dict ONLY when exec_fallback genuinely needs it for error recovery. Always include clear comments marking this as an exception pattern. Most nodes should return specific data from prep().
 
 **Subagent Findings**:
 - Pattern is documented as valid exception in architecture

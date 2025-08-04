@@ -172,6 +172,30 @@ src/pflow/planning/
 
 **Note**: The CLI imports via `from pflow.planning import create_planner_flow`
 
+## exec_fallback Pattern - EXCEPTION ONLY
+
+**→ See `task-17-advanced-patterns.md` Pattern 2 for full explanation**
+
+### Default Pattern (99% of nodes):
+```python
+def prep(self, shared):
+    # Return ONLY what exec() needs
+    return {
+        "user_input": shared["user_input"],
+        "context": shared.get("context", "")
+    }
+```
+
+### Exception Pattern (when exec_fallback needs context):
+```python
+def prep(self, shared):
+    # ⚠️ WARNING: Exception pattern - only for error recovery!
+    # See advanced-patterns.md Pattern 2 before using this
+    return shared  # Full context for exec_fallback error handling
+```
+
+**Rule**: Most nodes should NEVER return the full shared dict. Only use the exception pattern when exec_fallback genuinely needs context for error recovery or fallback strategies.
+
 ## Testing Conventions
 
 ### Mocked Tests (default):
