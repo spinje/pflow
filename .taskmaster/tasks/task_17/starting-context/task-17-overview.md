@@ -22,8 +22,8 @@ This document set provides comprehensive guidance for implementing the planner, 
 We have **9 comprehensive documents** organized into three categories:
 
 1. **Core Documentation (4 docs)**: The foundation - architecture, implementation guide, core concepts, and standardized conventions
-2. **Planning & Design (2 docs)**: Resolved ambiguities and subtask decomposition
-3. **Implementation Resources (3 docs)**: Practical patterns, PocketFlow insights, and debugging principles
+2. **Implementation Resources (4 docs)**: Practical patterns, PocketFlow insights, debugging principles, and resolved ambiguities
+3. **Implementation Roadmap (1 doc)**: Subtask decomposition and planning
 
 Each document serves a specific purpose in the implementation journey, from understanding the system to debugging production issues.
 
@@ -31,7 +31,7 @@ Each document serves a specific purpose in the implementation journey, from unde
 
 ### Core Documentation (Foundation)
 
-These four documents form the foundation - **read them first in full**:
+These four documents form the foundation - **read them first in full** (directly, not via delegation):
 
 1. **task-17-standardized-conventions.md** - Consolidated guidelines resolving documentation conflicts
    - Recommended shared store schema
@@ -62,9 +62,9 @@ These four documents form the foundation - **read them first in full**:
    - Implementation recommendations and resolutions
    - MVP feature boundaries and scope
 
-### Planning & Design Documents
+### Implementation Resources
 
-These documents provide critical decisions and planning structure:
+These documents provide practical patterns and guidance:
 
 5. **task-17-ambiguities.md** - Resolved design decisions and ambiguities
    - LLM model selection (anthropic/claude-sonnet-4-0)
@@ -74,24 +74,7 @@ These documents provide critical decisions and planning structure:
    - Workflow storage integration
    - Clear recommendations for each decision
 
-6. **task-17-subtask-plan.md** - Decomposition into 7 logical subtasks
-   - Subtask 1: Foundation & Infrastructure
-   - Subtask 2: Discovery System
-   - Subtask 3: Parameter Management System
-   - Subtask 4: Generation System
-   - Subtask 5: Validation & Refinement System
-   - Subtask 6: Flow Orchestration
-   - Subtask 7: Integration & Polish
-   - Critical parameter extraction independence explained
-   - Dependencies and testing strategy
-
-> IMPORTANT: These should be implemented one by one in the order of the subtasks. You should have been asigned a single subtask to implement.
-
-### Implementation Resources
-
-These documents provide practical patterns and guidance:
-
-7. **task-17-advanced-patterns.md** - Production-proven PocketFlow patterns
+6. **task-17-advanced-patterns.md** - Production-proven PocketFlow patterns
    - Pattern 1: Two-path decision with convergence
    - Pattern 2: Graceful failure recovery with exec_fallback
    - Pattern 3: Progressive context building
@@ -101,14 +84,14 @@ These documents provide practical patterns and guidance:
    - Pattern 7: Structured shared store design
    - Implementation checklist and anti-patterns to avoid
 
-8. **task-17-pocketflow-insights.md** - PocketFlow conventions and implementation philosophy
+7. **task-17-pocketflow-insights.md** - PocketFlow conventions and implementation philosophy
    - Critical distinction: Implementing agent vs planner structure
    - File structure conventions (nodes.py, flow.py, utils/)
    - What patterns apply (Workflow, Supervisor) vs don't apply (Agent)
    - Shared store design principles
    - Agentic Coding process for implementers
 
-9. **task-17-implementation-principles.md** - Practical debugging and implementation guide
+8. **task-17-implementation-principles.md** - Practical debugging and implementation guide
    - Walking skeleton WITH LOGGING approach
    - Critical PocketFlow framework rules (4 rules with ❌/✅ examples)
    - LLM setup instructions for anthropic/claude-sonnet-4-0
@@ -125,15 +108,12 @@ These documents provide practical patterns and guidance:
 3. Read **task-17-architecture-and-patterns.md** for the system design
 4. Review **task-17-ambiguities.md** to understand resolved decisions
 
-### For Planning Implementation:
-1. Read **task-17-subtask-plan.md** to understand the work breakdown
-2. Review **task-17-pocketflow-insights.md** for framework conventions
-3. Study **task-17-advanced-patterns.md** for proven solutions
-
-### For Active Implementation:
-1. Keep **task-17-implementation-principles.md** open for debugging help
-2. Reference **task-17-implementation-guide.md** for code examples
-3. Use **task-17-advanced-patterns.md** for specific pattern implementations
+### For Implementation:
+1. Review **task-17-pocketflow-insights.md** for framework conventions
+2. Study **task-17-advanced-patterns.md** for proven solutions
+3. Keep **task-17-implementation-principles.md** open for debugging help
+4. Reference **task-17-implementation-guide.md** for code examples
+5. Read **task-17-subtask-plan.md** to understand the work breakdown
 
 ## Quick Reference Guide
 
@@ -145,5 +125,24 @@ These documents provide practical patterns and guidance:
 - **Debugging issues?** → task-17-implementation-principles.md (debugging checklist)
 - **Understanding your subtask?** → task-17-subtask-plan.md + your subtask spec
 - **PocketFlow questions?** → task-17-pocketflow-insights.md + pocketflow/__init__.py
+
+---
+
+## Implementation Roadmap
+
+### task-17-subtask-plan.md - Decomposition into 7 logical subtasks
+
+9. **task-17-subtask-plan.md** - Natural Language Planner broken down into manageable subtasks:
+   - Subtask 1: Foundation & Infrastructure
+   - Subtask 2: Discovery System
+   - Subtask 3: Parameter Management System
+   - Subtask 4: Generation System
+   - Subtask 5: Validation & Refinement System
+   - Subtask 6: Flow Orchestration
+   - Subtask 7: Integration & Polish
+   - Critical parameter extraction independence explained
+   - Dependencies and testing strategy
+
+> IMPORTANT: These should be implemented one by one in the order of the subtasks. You should have been assigned a single subtask to implement or are just about to be assigned one.
 
 ---
