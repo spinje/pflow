@@ -367,6 +367,13 @@ The codebase is in early development with these tasks completed:
 
 Next up:
 - ⏳ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
+   - Task 17 Subtask 1: Foundation & Infrastructure ✅ Completed
+   - 🎯 Task 17 Subtask 2: Discovery System (Currently implementing)
+   - Task 17 Subtask 3: Parameter Management System
+   - Task 17 Subtask 4: Generation System
+   - Task 17 Subtask 5: Validation & Refinement System
+   - Task 17 Subtask 6: Flow Orchestration
+   - Task 17 Subtask 7: Integration & Polish
 - ⏳ Task 9: Implement shared store collision detection and proxy mapping
 
 *Update this list as you complete tasks.*
