@@ -291,7 +291,7 @@ Your implementation is complete when:
 
 Before writing any code, you MUST create a comprehensive implementation plan. This is not optional - it's a critical step that will save hours of rework and prevent conflicts with other subtasks.
 
-**Location**: `.taskmaster/tasks/task_17/subtask_2/implementation-plan.md`
+**Location**: `.taskmaster/tasks/task_17/implementation/subtask_2/implementation-plan.md`
 
 ### Why Planning Matters for Subtasks
 
