@@ -69,7 +69,7 @@ WorkflowDiscoveryNode:
   shared["user_input"] → LLM semantic matching → "found_existing" | "not_found"
 
 ComponentBrowsingNode (Path B only):
-  shared["user_input"] → Component browsing → "found"
+  shared["user_input"] → Component browsing → "generate"
 ```
 
 ## Constraints
@@ -92,11 +92,11 @@ ComponentBrowsingNode (Path B only):
 9. ComponentBrowsingNode must call build_discovery_context() for initial browsing
 10. ComponentBrowsingNode must call build_planning_context() with registry_metadata parameter
 11. ComponentBrowsingNode must treat workflows as potential building blocks
-12. ComponentBrowsingNode must always return "found" action (continues Path B regardless of components found)
+12. ComponentBrowsingNode must always return "generate" action (routes to ParameterDiscoveryNode)
 13. Both nodes must use logger = logging.getLogger(__name__) for logging
 14. Both nodes must instantiate Registry() when needed (not singleton)
 15. Both nodes must import from pflow.planning.context_builder using absolute imports
-16. Both nodes must use response.json() for LLM response extraction
+16. Both nodes must extract structured data from LLM response using response_data['content'][0]['input']
 17. WorkflowManager must be instantiated when loading workflows
 18. nodes.py must contain both node classes in single file
 
@@ -182,7 +182,9 @@ User request: {prep_res['user_input']}
 Return found=true ONLY if a workflow completely satisfies the request."""
 
         response = self.model.prompt(prompt, schema=WorkflowDecision, temperature=0)
-        return response.json()
+        response_data = response.json()
+        # CRITICAL: Structured data is nested in content[0]['input'] for Anthropic
+        return response_data['content'][0]['input']
 
     def post(self, shared, prep_res, exec_res):
         shared["discovery_result"] = exec_res
@@ -240,7 +242,9 @@ User request: {prep_res['user_input']}
 Be over-inclusive - include anything potentially useful."""
 
         response = self.model.prompt(prompt, schema=ComponentSelection, temperature=0)
-        return response.json()
+        response_data = response.json()
+        # CRITICAL: Structured data is nested in content[0]['input'] for Anthropic
+        return response_data['content'][0]['input']
 
     def post(self, shared, prep_res, exec_res):
         logger.debug(f"Selected {len(exec_res['node_ids'])} nodes, {len(exec_res['workflow_names'])} workflows")
@@ -264,7 +268,7 @@ Be over-inclusive - include anything potentially useful."""
         else:
             shared["planning_context"] = planning_context
 
-        return "found"  # Always return "found" - continues Path B generation even with empty components
+        return "generate"  # Always return "generate" - continues Path B to ParameterDiscoveryNode
 
     def exec_fallback(self, prep_res, exc):
         logger.error(f"Component browsing failed: {exc}")
@@ -284,11 +288,11 @@ Be over-inclusive - include anything potentially useful."""
 9. ComponentBrowsingNode calls build_discovery_context() with registry_metadata
 10. ComponentBrowsingNode calls build_planning_context() with all required parameters
 11. ComponentBrowsingNode includes workflow as building block → workflow_names populated
-12. ComponentBrowsingNode always returns "found" → action string verified
+12. ComponentBrowsingNode always returns "generate" → action string verified
 13. Both nodes use logger = logging.getLogger(__name__)
 14. Registry() instantiated in ComponentBrowsingNode prep
 15. context_builder functions imported at module or method level
-16. response.json() used for LLM response extraction
+16. response_data['content'][0]['input'] used for structured data extraction
 17. WorkflowManager() instantiated when loading workflows
 18. Single nodes.py file contains both classes → file structure verified
 19. Empty workflow directory → "not_found" returned
@@ -345,7 +349,7 @@ Be over-inclusive - include anything potentially useful."""
 - Verified: WorkflowManager.load() returns full metadata wrapper, load_ir() returns just IR
 - Verified: Registry() must be instantiated (no singleton)
 - Verified: Node methods have signatures prep(shared), exec(prep_res), post(shared, prep_res, exec_res), exec_fallback(prep_res, exc)
-- Verified: response.json() and json.loads(response.text()) both work for LLM response
+- Verified: Structured data is nested in response_data['content'][0]['input'] for Anthropic models
 - Assumes: llm library is configured with anthropic plugin and API key
 - Unknown: Exact prompt formatting for optimal LLM matching performance
 - Unknown: Optimal confidence threshold for workflow matching
