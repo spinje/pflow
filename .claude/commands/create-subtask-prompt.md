@@ -386,7 +386,7 @@ Check what previous subtasks have implemented: `.taskmaster/tasks/task_17/implem
 
 ### 1. Create Your Implementation Plan (SECOND!)
 
-Location: `.taskmaster/tasks/task_17/implementation/subtask_{{subtask_number}}/implementation-plan.md`
+Location: `.taskmaster/tasks/task_17/implementation/subtask-{{subtask_number}}/implementation-plan.md`
 
 ### Implementation Steps
 
