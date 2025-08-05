@@ -44,7 +44,7 @@ Before implementing this subtask, you MUST understand the overall architecture:
 
 ## Required Context Review
 
-### Primary Source: Your Subtask Specification
+### Primary Source: Your Subtask Specification **Read this first**
 **File**: `.taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-2-spec.md`
 
 **This is your PRIMARY source of truth** for requirements, interface contracts, and implementation details specific to Subtask 2.
@@ -55,7 +55,7 @@ Since you've already read all Task 17 documentation, focus on:
 3. Two-phase context loading pattern with context_builder
 4. Interface contracts for shared store keys
 
-**CRITICAL**: The spec defines exact behavior and interfaces. Follow it PRECISELY.
+**CRITICAL**: The spec defines exact behavior and interfaces. Follow it PRECISELY. Read it carefully and make sure you understand it before you start doing anything else.
 
 ## 🔄 Shared Progress Log (CRITICAL!)
 

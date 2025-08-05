@@ -124,7 +124,7 @@ Since you've already read all Task 17 documentation, focus on:
 3. Interface contracts specific to your subtask
 4. Success criteria unique to this subtask
 
-**CRITICAL**: The spec defines exact behavior and interfaces. Follow it PRECISELY.
+**CRITICAL**: The spec defines exact behavior and interfaces. Follow it PRECISELY. Read it carefully and make sure you understand it before you start doing anything else.
 
 ## 🔄 Shared Progress Log (CRITICAL!)
 
