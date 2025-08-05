@@ -17,11 +17,11 @@ Generate a comprehensive implementation prompt for Subtask {{subtask_number}} of
 
 **Key assumption**: The implementing agent has read ALL Task 17 documentation except the subtask spec.
 
-**Your output**: Generate the prompt and save it to `.taskmaster/tasks/task_17/starting-context/task-17-subtask-{{subtask_number}}-implementation-prompt.md`
+**Your output**: Generate the prompt and save it to `.taskmaster/tasks/task_17/starting-context/prompts/task-17-subtask-{{subtask_number}}-implementation-prompt.md`
 
 ### How to Create the Implementation Prompt
 
-1. **Focus on the subtask specification** - The file `.taskmaster/tasks/task_17/starting-context/task-17-subtask-{{subtask_number}}-spec.md` is the PRIMARY source of truth
+1. **Focus on the subtask specification** - The file `.taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-{{subtask_number}}-spec.md` is the PRIMARY source of truth
 2. **Carefully evaluate the subtask plan** - The file `.taskmaster/tasks/task_17/starting-context/task-17-subtask-plan.md` is the plan for all the subtasks, focus especially on the subtask you are implementing. This information is critical for understanding the subtask and its dependencies to other subtasks (you should not have to read it again, you should have it in your context window)
 3. **Fill in the template** with specific details from the spec and your knowledge
 4. **Be explicit about interfaces** - How this subtask connects to others
@@ -114,7 +114,7 @@ Before implementing this subtask, you MUST understand the overall architecture:
 ## Required Context Review
 
 ### Primary Source: Your Subtask Specification
-**File**: `.taskmaster/tasks/task_17/starting-context/task-17-subtask-{{subtask_number}}-spec.md`
+**File**: `.taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-{{subtask_number}}-spec.md`
 
 **This is your PRIMARY source of truth** for requirements, interface contracts, and implementation details specific to Subtask {{subtask_number}}.
 
