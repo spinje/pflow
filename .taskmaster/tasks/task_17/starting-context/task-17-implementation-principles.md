@@ -6,10 +6,10 @@ Task 17 builds a **meta-workflow** that transforms natural language into executa
 
 ## Required Reading Before Implementation
 
-1. **.taskmaster/tasks/task_17/task-17-ambiguities.md** - Resolved design decisions (model selection, retry strategy, etc.)
-2. **.taskmaster/tasks/task_17/task-17-advanced-patterns.md** - Production-proven patterns for each challenge
-3. **.taskmaster/tasks/task_17/starting-context/task-17-subtask-[N]-spec.md** - Your specific subtask specification
-4. **.taskmaster/tasks/task_17/task-17-pocketflow-insights.md** - Framework conventions and anti-patterns to avoid
+1. **.taskmaster/tasks/task_17/starting-context/task-17-ambiguities.md** - Resolved design decisions (model selection, retry strategy, etc.)
+2. **.taskmaster/tasks/task_17/starting-context/task-17-advanced-patterns.md** - Production-proven patterns for each challenge
+3. **.taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-[N]-spec.md** - Your specific subtask specification
+4. **.taskmaster/tasks/task_17/starting-context/task-17-pocketflow-insights.md** - Framework conventions and anti-patterns to avoid
 5. **pocketflow/__init__.py** - The ACTUAL framework source (100 lines - READ IT!)
 
 ## Implementation Philosophy
