@@ -827,6 +827,7 @@ dependencies = [
     { name = "click" },
     { name = "jsonschema" },
     { name = "llm" },
+    { name = "pydantic" },
 ]
 
 [package.optional-dependencies]
@@ -857,6 +858,7 @@ requires-dist = [
     { name = "llm", specifier = ">=0.19.0" },
     { name = "llm-anthropic", marker = "extra == 'all-llms'", specifier = ">=0.17" },
     { name = "llm-anthropic", marker = "extra == 'anthropic'", specifier = ">=0.17" },
+    { name = "pydantic" },
 ]
 provides-extras = ["anthropic", "all-llms"]
 
