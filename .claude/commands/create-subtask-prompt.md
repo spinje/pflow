@@ -22,7 +22,7 @@ Generate a comprehensive implementation prompt for Subtask {{subtask_number}} of
 ### How to Create the Implementation Prompt
 
 1. **Focus on the subtask specification** - The file `.taskmaster/tasks/task_17/starting-context/task-17-subtask-{{subtask_number}}-spec.md` is the PRIMARY source of truth
-2. **Carefully evaluate the subtask plan** - The file `.taskmaster/tasks/task_17/starting-context/task-17-subtask-plan.md` is the plan for all the subtasks, focus especially on the subtask you are implementing. This information is critical for understanding the subtask and its dependencies to other subtasks.
+2. **Carefully evaluate the subtask plan** - The file `.taskmaster/tasks/task_17/starting-context/task-17-subtask-plan.md` is the plan for all the subtasks, focus especially on the subtask you are implementing. This information is critical for understanding the subtask and its dependencies to other subtasks (you should not have to read it again, you should have it in your context window)
 3. **Fill in the template** with specific details from the spec and your knowledge
 4. **Be explicit about interfaces** - How this subtask connects to others
 5. **Include implementation specifics** - Not general Task 17 info they already know
@@ -607,7 +607,7 @@ Your generated prompt should:
 
 After thinking extensively and planning the prompt, write it to:
 
-`.taskmaster/tasks/task_17/starting-context/task-17-subtask-{{subtask_number}}-implementation-prompt.md`
+`.taskmaster/tasks/task_17/starting-context/prompts/task-17-subtask-{{subtask_number}}-implementation-prompt.md`
 
 ## 🔑 Key Principles to Remember
 
