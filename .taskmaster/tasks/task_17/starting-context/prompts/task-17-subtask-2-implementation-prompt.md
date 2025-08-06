@@ -3,7 +3,7 @@
 ## Critical Pre-Requirement
 
 **IMPORTANT**: This prompt assumes you have already thoroughly read and understand:
-- All Task 17 documentation in `.taskmaster/tasks/task_17/`
+- All Task 17 documentation in `.taskmaster/tasks/task_17/starting-context/`
 - The epistemic manifesto
 - The two-path architecture (Path A: reuse, Path B: generate)
 - How subtasks interconnect and depend on each other
@@ -17,6 +17,7 @@ The Natural Language Planner needs an intelligent entry point that makes the cri
 - **Performance**: Path A is 10x faster (reuse vs generate)
 - **Accuracy**: Path A preserves tested workflows exactly
 - **User Satisfaction**: Quick responses with high-quality results
+- **Infrastructure**: The two-path architecture is the key innovation. You are focusing on YOUR part of the architecture.
 
 Additionally, when generation is needed, the system must browse available components to provide the right building blocks for the workflow generator.
 
