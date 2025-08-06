@@ -25,9 +25,11 @@ Implement parameter discovery, extraction, and preparation nodes for workflow ex
 ## Inputs
 
 - user_input: str - Natural language request from user
-- stdin_data: Optional[Any] - Data piped from stdin (access via shared["stdin"])
+- stdin: Optional[str] - Text data piped from stdin (access via shared["stdin"])
+- stdin_binary: Optional[bytes] - Binary stdin data (access via shared["stdin_binary"])
+- stdin_path: Optional[str] - Temp file path for large stdin (access via shared["stdin_path"])
 - workflow_ir: dict - The workflow to execute (contains 'inputs' field)
-  # Path A: found_workflow from WorkflowManager.load_ir()
+  # Path A: found_workflow["ir"] extracted from WorkflowManager.load() wrapper
   # Path B: generated_workflow from GeneratorNode (post-validation)
 - workflow_metadata: Optional[dict] - Display/storage metadata (Path B only)
   # From MetadataGenerationNode: suggested_name, description
@@ -71,16 +73,18 @@ execution_params = {
 }
 
 # Workflow IR inputs structure (from workflow_ir)
+# Note: Examples show Python dict syntax (True/False for booleans)
+# When saved as JSON files, these become true/false automatically
 workflow_ir = {
     "inputs": {
         "filename": {
             "description": "Input file to process",
-            "required": true,  # defaults to true if not specified
+            "required": True,  # defaults to True if not specified
             "type": "string"
         },
         "output_format": {
             "description": "Output format",
-            "required": false,
+            "required": False,
             "type": "string",
             "default": "json"
         }
@@ -103,12 +107,12 @@ workflow_ir = {
 ## Rules
 
 1. ParameterDiscoveryNode analyzes user_input for parameter hints
-2. ParameterDiscoveryNode outputs empty parameters list if none found
+2. ParameterDiscoveryNode outputs empty parameters dict if none found
 3. ParameterMappingNode extracts parameters from scratch
 4. ParameterMappingNode validates against workflow's inputs field
-5. ParameterMappingNode fails if input with required=true is missing
+5. ParameterMappingNode fails if input with required=True is missing
 6. Template paths resolve using dot notation only
-7. Stdin_data checked as fallback parameter source
+7. Stdin checked as fallback parameter source (via shared["stdin"])
 8. Parameter names preserve exact case from workflow inputs
 9. Execution_params contains final validated parameters
 10. ParameterPreparationNode formats extracted_params into execution_params
@@ -120,12 +124,12 @@ Empty user_input → ParameterDiscovery returns empty discovered_params
 No workflow provided → ParameterMapping logs error, returns "params_incomplete"
 Required param missing → ParameterMapping returns "params_incomplete"
 Malformed template path → Skip parameter, log warning
-Stdin_data is None → Check only user_input for parameters
+Stdin is None → Check only user_input for parameters
 
 ## Error Handling
 
 - No workflow provided → ParameterMappingNode logs error, returns "params_incomplete"
-- LLM failures handled by node retry mechanism (max_retries=3)
+- LLM failures handled by node retry mechanism (max_retries=2 to match existing nodes)
 
 ## Non-Functional Criteria
 
@@ -144,6 +148,7 @@ discovered_params = {
 }
 
 # ParameterMappingNode example
+# Note: For Path A, this would be found_workflow["ir"], not found_workflow directly
 workflow_ir = {
     "inputs": {
         "filename": {
@@ -181,18 +186,18 @@ execution_params = extracted_params.copy()  # Direct pass-through in MVP
 ## Test Criteria
 
 1. ParameterDiscoveryNode with valid input produces discovered_params dict
-2. ParameterDiscoveryNode with empty input returns empty parameters list
-3. ParameterDiscoveryNode detects stdin_data type when present
+2. ParameterDiscoveryNode with empty input returns empty parameters dict
+3. ParameterDiscoveryNode detects stdin type when present
 4. ParameterMappingNode extracts all required parameters successfully
-5. ParameterMappingNode fails when input with required=true is missing
+5. ParameterMappingNode fails when input with required=True is missing
 6. ParameterMappingNode ignores discovered_params in extraction
 7. Template path $data.field resolves correctly
 8. Template path $var resolves to direct value
-9. Stdin_data used when user_input lacks parameter
+9. Stdin used when user_input lacks parameter (via shared["stdin"])
 10. Case sensitivity preserved from workflow inputs field
 11. All three nodes added to existing nodes.py file
 12. Invalid template syntax logged but not fatal
-13. Missing inputs with required=false do not cause failure
+13. Missing inputs with required=False do not cause failure
 14. Execution_params ready for workflow execution
 15. ParameterPreparationNode preserves all parameters in MVP
 16. All three nodes execute in correct sequence
@@ -232,6 +237,10 @@ execution_params = extracted_params.copy()  # Direct pass-through in MVP
 - Verified: Workflow IR uses `inputs` field with `required`, `type`, `description` subfields
 - Verified: Template syntax is $var and $data.field with dot notation
 - Verified: nodes.py created in subtask 2 will contain all three parameter nodes
+- Verified: WorkflowManager.load() returns wrapper, IR is at found_workflow["ir"]
+- Verified: stdin accessed via shared["stdin"], not shared["stdin_data"]
+- Verified: Python code uses True/False booleans (not true/false)
+- Verified: max_retries=2 is the default in existing nodes
 - Unknown: Full set of parameter patterns in user language
 
 ### Conflicts & Resolutions
