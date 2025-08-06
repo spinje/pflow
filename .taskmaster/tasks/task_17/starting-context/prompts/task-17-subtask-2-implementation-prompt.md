@@ -13,7 +13,12 @@ If you haven't read these yet, STOP and read them first.
 
 ## The Problem You're Solving
 
-The Natural Language Planner needs an intelligent entry point that makes the critical routing decision between workflow reuse (Path A) and workflow generation (Path B). This decision point determines whether the system can quickly reuse an existing workflow or must creatively generate a new one. Additionally, when generation is needed, the system must browse available components to provide building blocks for the workflow generator.
+The Natural Language Planner needs an intelligent entry point that makes the critical routing decision between workflow reuse (Path A) and workflow generation (Path B). This single decision determines:
+- **Performance**: Path A is 10x faster (reuse vs generate)
+- **Accuracy**: Path A preserves tested workflows exactly
+- **User Satisfaction**: Quick responses with high-quality results
+
+Additionally, when generation is needed, the system must browse available components to provide the right building blocks for the workflow generator.
 
 ## Your Mission Within Task 17
 
@@ -42,6 +47,18 @@ Before implementing this subtask, you MUST understand the overall architecture:
 - Test fixtures from `tests/test_planning/conftest.py`
 - LLM configuration already set up with anthropic plugin
 
+### Critical Handoff Information from Subtask 1
+**File**: `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-2.md`
+
+⚠️ **CRITICAL DISCOVERY**: When using structured output with Pydantic schemas, the response is NESTED:
+```python
+# The spec documents this pattern - follow it carefully:
+response = model.prompt(prompt, schema=SomeModel)
+response_data = response.json()
+structured_data = response_data['content'][0]['input']  # ✅ Your data is HERE
+```
+This pattern is confirmed and must be used for both nodes.
+
 ## Required Context Review
 
 ### Primary Source: Your Subtask Specification **Read this first**
@@ -57,9 +74,25 @@ Since you've already read all Task 17 documentation, focus on:
 
 **CRITICAL**: The spec defines exact behavior and interfaces. Follow it PRECISELY. Read it carefully and make sure you understand it before you start doing anything else.
 
-## 🔄 Shared Progress Log (CRITICAL!)
+## 🎯 Quick Reference Card
 
-**The progress log is SHARED across ALL Task 17 subtasks!**
+**Your Two Nodes**:
+- `WorkflowDiscoveryNode`: Entry point → routes "found_existing" OR "not_found"
+- `ComponentBrowsingNode`: Path B only → ALWAYS routes "generate"
+
+**Critical Technical Patterns**:
+- Nested response: `response_data['content'][0]['input']`
+- Model: `"anthropic/claude-sonnet-4-0"` (exact string)
+- Registry: Instantiate with `Registry()` when needed
+- Context: Import from `pflow.planning.context_builder`
+
+**Shared Store Keys You Write**:
+- Path A: `discovery_result`, `found_workflow`
+- Path B: `browsed_components`, `planning_context`, `registry_metadata`
+
+## 🔄 Shared Progress Log (CRITICAL - READ FIRST!)
+
+**⚠️ STOP! Before doing ANYTHING else, read the shared progress log to see what Subtask 1 discovered!**
 
 **Location**: `.taskmaster/tasks/task_17/implementation/progress-log.md`
 
@@ -152,7 +185,7 @@ shared["browsed_components"] = {
 
 ### Interface Requirements
 - WorkflowDiscoveryNode MUST return exactly "found_existing" or "not_found"
-- ComponentBrowsingNode MUST always return "found" (even with empty selections)
+- ComponentBrowsingNode MUST always return "generate" (routes to ParameterDiscoveryNode)
 - Both nodes MUST implement exec_fallback for LLM failure recovery
 - Both nodes MUST use structured output with Pydantic models
 
@@ -192,6 +225,18 @@ Use subagents to maximize efficiency and avoid context window limitations.
 > Always use subagents to gather information, context, do research and verifying assumptions. This is important!
 > Always use the `test-writer-fixer` subagent for writing tests, fixing test failures, and debugging test issues. Deploy it alongside implementation, not as a separate phase.
 
+## ⏱️ Your First 30 Minutes (Recommended Start)
+
+1. **[5 min]** Read shared progress log for Subtask 1 insights
+2. **[5 min]** Read handoff document from Subtask 1
+3. **[10 min]** Review your spec focusing on:
+   - Exact action strings ("found_existing", "not_found", "generate")
+   - Shared store contract
+   - The nested response pattern example
+4. **[10 min]** Create implementation plan with risk assessment
+
+This investment prevents hours of debugging and rework!
+
 ## Critical Technical Details
 
 ### Context Builder Integration
@@ -230,12 +275,24 @@ class WorkflowDecision(BaseModel):
 # In your exec method
 model = llm.get_model("anthropic/claude-sonnet-4-0")
 response = model.prompt(prompt, schema=WorkflowDecision, temperature=0)
-return response.json()  # Already validated!
+response_data = response.json()
+# CRITICAL: Extract from nested structure
+return response_data['content'][0]['input']  # NOT response_data directly!
 ```
 
+**Note on LLM Response Structure**: The spec documents this critical pattern where Anthropic's structured responses are nested. Follow the spec's extraction pattern carefully.
+
 ### Binary Decision vs Over-Inclusive Browsing
-- **WorkflowDiscoveryNode**: Binary decision - complete match or not. Partial matches still return "not_found".
-- **ComponentBrowsingNode**: Over-inclusive - better to include extra components than miss critical ones.
+
+**WorkflowDiscoveryNode**: Binary decision with HIGH bar
+- Only "complete satisfaction" → "found_existing"
+- Even 90% match → "not_found" (better to generate perfect than reuse imperfect)
+- Confidence threshold: >0.85 typically
+
+**ComponentBrowsingNode**: Over-inclusive with LOW bar
+- Include anything potentially useful
+- 20% relevance → include it
+- Let the generator decide what to use
 
 ## Critical Warnings from Task 17 Experience
 
@@ -262,6 +319,17 @@ ComponentBrowsingNode can select existing workflows to use as building blocks in
 
 **📋 Note on Specifications**: Your subtask specification is the authoritative source. Follow it precisely - do not deviate from specified behavior, interface contracts, or implementation requirements unless you discover a critical issue (document and ask for clarification).
 
+## 🔍 Integration Verification Checklist
+
+Before considering your implementation complete, verify:
+
+□ WorkflowDiscoveryNode routes exactly "found_existing" or "not_found"
+□ ComponentBrowsingNode ALWAYS routes "generate" (never "found")
+□ Nested response extraction works: `response_data['content'][0]['input']`
+□ Registry metadata is stored for Path B (required by downstream nodes)
+□ Planning context handles error dict case properly
+□ Shared progress log documents your key discoveries
+
 ## Success Criteria
 
 Your implementation is complete when:
@@ -286,6 +354,8 @@ Your implementation is complete when:
 5. **DON'T modify context_builder** - Just import and use it
 6. **DON'T create thin wrappers** - Import directly per PocketFlow patterns
 7. **DON'T forget error dict handling** - planning_context can return errors
+8. **DON'T forget nested response extraction** - response_data['content'][0]['input']
+9. **DON'T return wrong action strings** - "generate" not "found" for ComponentBrowsingNode
 
 ## 📋 Create Your Implementation Plan FIRST
 
@@ -386,11 +456,13 @@ Your plan should include:
 | Wrong action strings | Breaks flow routing | Follow spec exactly |
 | Missing registry_metadata | Breaks validation | Always store in shared |
 | Planning context errors | Breaks generation | Handle error dict case |
+| Nested response extraction | Fails mysteriously | Always use content[0]['input'] |
 
 ## Validation Strategy
 - Verify routing strings match spec exactly
 - Ensure all shared store keys are written
 - Test integration with mocked downstream nodes
+- Verify nested response extraction pattern
 ```
 
 ### When to Revise Your Plan
@@ -474,12 +546,20 @@ Append deviation to SHARED progress log:
 
 **Core Principle**: "Test routing and integration"
 
+**Critical Test Case**: Verify the nested response extraction!
+```python
+def test_nested_response_extraction():
+    """Ensure we extract from response_data['content'][0]['input']"""
+    # This pattern MUST work for both nodes
+```
+
 **Focus on**:
-- Correct routing: "found_existing" vs "not_found"
+- Correct routing: "found_existing" vs "not_found" vs "generate"
 - Shared store keys written correctly
 - Context builder integration
 - LLM failure handling via exec_fallback
 - Over-inclusive browsing behavior
+- Nested response extraction pattern
 
 **What to test**:
 - **Routing logic**: Both paths route correctly
@@ -487,6 +567,7 @@ Append deviation to SHARED progress log:
 - **Integration**: Context builder calls work
 - **Error handling**: LLM failures don't crash
 - **Edge cases**: Empty workflows, no matches, etc.
+- **Nested extraction**: response_data['content'][0]['input'] works
 
 **Progress Log - Only document testing insights**:
 ```markdown
@@ -532,4 +613,22 @@ You're implementing Subtask 2 of 7 for Task 17's Natural Language Planner. Your 
 
 The discovery system you're building is the foundation for the entire planner's decision-making. Every workflow reuse or generation starts with your nodes making the right routing choice.
 
+Update every important detail or event in the shared progress log.
+
 Good luck implementing the discovery system - the gateway to intelligent workflow planning!
+
+---
+
+## 📦 Before You Write Any Code
+
+**Essential Pre-Flight Checklist**:
+1. ✓ Read shared progress log
+2. ✓ Read Subtask 1 handoff document
+3. ✓ Read your spec (especially the examples)
+4. ✓ Understand the nested response pattern
+5. ✓ Know your action strings: "found_existing" / "not_found" / "generate"
+6. ✓ Created your implementation plan
+
+**If any box is unchecked, STOP and complete it first!**
+
+Remember: You're building the gateway to the entire planner. Every workflow starts with your routing decision. Get it right, and the whole system flows smoothly. Good luck! 🚀
