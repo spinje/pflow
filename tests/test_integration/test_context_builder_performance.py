@@ -93,7 +93,7 @@ class TestContextBuilderPerformance:
         for i in range(100):
             registry_metadata[f"node-{i:03d}"] = {
                 "module": "test.module",
-                "class_name": "TestNode",
+                "class_name": "ExampleNode",
                 "interface": {
                     "description": f"Test node {i}",
                     "inputs": [],
@@ -311,7 +311,7 @@ class TestContextBuilderPerformance:
         for i in range(100):
             registry_metadata[f"node-{i:03d}"] = {
                 "module": "test.module",
-                "class_name": "TestNode",
+                "class_name": "ExampleNode",
                 "interface": {
                     "description": f"Test node {i}",
                     "inputs": [],

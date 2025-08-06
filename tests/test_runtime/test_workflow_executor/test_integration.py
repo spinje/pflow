@@ -25,10 +25,10 @@ class TestWorkflowExecutorIntegration:
         """
         from pocketflow import BaseNode
 
-        # Default mock TestNode if not provided
+        # Default mock ExampleNode if not provided
         if mock_test_node_class is None:
 
-            class MockTestNode(BaseNode):
+            class MockExampleNode(BaseNode):
                 def prep(self, shared):
                     return None
 
@@ -38,11 +38,11 @@ class TestWorkflowExecutorIntegration:
                 def post(self, shared, prep_res, exec_res):
                     return "default"
 
-            mock_test_node_class = MockTestNode
+            mock_test_node_class = MockExampleNode
 
         # Create the patch context
         mock_module = Mock()
-        mock_module.TestNode = mock_test_node_class
+        mock_module.ExampleNode = mock_test_node_class
         mock_module.WorkflowExecutor = WorkflowExecutor  # Real WorkflowExecutor
         mock_module.WriteFileNode = Mock()  # For other tests
 
@@ -120,7 +120,7 @@ class TestWorkflowExecutorIntegration:
         registry_data = {
             "pflow.nodes.test_node": {
                 "module": "pflow.nodes.test_node",
-                "class_name": "TestNode",
+                "class_name": "ExampleNode",
                 "docstring": "Test node for testing",
                 "file_path": "/mock/path/test_node.py",
             },
@@ -216,7 +216,7 @@ class TestWorkflowExecutorIntegration:
         # Track execution order
         execution_order = []
 
-        class TrackingTestNode(BaseNode):
+        class TrackingExampleNode(BaseNode):
             def prep(self, shared):
                 return None
 
@@ -227,7 +227,7 @@ class TestWorkflowExecutorIntegration:
             def post(self, shared, prep_res, exec_res):
                 return "default"
 
-        with self._setup_mock_imports(TrackingTestNode):
+        with self._setup_mock_imports(TrackingExampleNode):
             flow = compile_ir_to_flow(nested_workflow_ir, registry=mock_registry)
             shared = {"outer_input": "test_value", "__registry__": mock_registry}
             result = flow.run(shared)
@@ -250,7 +250,7 @@ class TestWorkflowExecutorIntegration:
         }
 
         # Create a failing test node
-        class FailingTestNode(BaseNode):
+        class FailingExampleNode(BaseNode):
             def prep(self, shared):
                 return None
 
@@ -260,7 +260,7 @@ class TestWorkflowExecutorIntegration:
             def post(self, shared, prep_res, exec_res):
                 return "default"
 
-        with self._setup_mock_imports(FailingTestNode):
+        with self._setup_mock_imports(FailingExampleNode):
             flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"__registry__": mock_registry}
             result = flow.run(shared)
@@ -347,7 +347,7 @@ class TestWorkflowExecutorIntegration:
 
         # Create custom mock that includes WriteFileNode
         mock_module = Mock()
-        mock_module.TestNode = Mock()
+        mock_module.ExampleNode = Mock()
         mock_module.WorkflowExecutor = WorkflowExecutor
         mock_module.WriteFileNode = MockWriteFileNode
 

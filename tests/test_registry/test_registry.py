@@ -153,7 +153,7 @@ class TestRegistryScannerIntegration:
                 {
                     "name": "test-node",
                     "module": "pflow.nodes.test",
-                    "class_name": "TestNode",
+                    "class_name": "ExampleNode",
                     "docstring": "Test node",
                     "file_path": "/path/test.py",
                 },
@@ -182,7 +182,7 @@ class TestRegistryScannerIntegration:
 
             # Other fields should be preserved
             assert loaded_data["test-node"]["module"] == "pflow.nodes.test"
-            assert loaded_data["test-node"]["class_name"] == "TestNode"
+            assert loaded_data["test-node"]["class_name"] == "ExampleNode"
 
     def test_handles_scanner_nodes_without_names(self):
         """Test that scanner nodes missing names are skipped gracefully."""

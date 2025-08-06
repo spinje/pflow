@@ -28,7 +28,7 @@ def test_import_node_class_success():
     mock_registry.load.return_value = {
         "test-node": {
             "module": "test.module",
-            "class_name": "TestNode",
+            "class_name": "ExampleNode",
             "docstring": "Test node",
             "file_path": "/path/to/test.py",
         }
@@ -37,7 +37,7 @@ def test_import_node_class_success():
     # Mock the import process
     with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
         mock_module = Mock()
-        mock_module.TestNode = MockValidNode
+        mock_module.ExampleNode = MockValidNode
         mock_import.return_value = mock_module
 
         # Call the function
@@ -74,7 +74,7 @@ def test_import_node_class_module_not_found():
     mock_registry.load.return_value = {
         "test-node": {
             "module": "non.existent.module",
-            "class_name": "TestNode",
+            "class_name": "ExampleNode",
         }
     }
 
@@ -191,14 +191,14 @@ def test_import_node_class_with_logging(caplog):
     mock_registry.load.return_value = {
         "test-node": {
             "module": "test.module",
-            "class_name": "TestNode",
+            "class_name": "ExampleNode",
         }
     }
 
     # Mock successful import
     with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
         mock_module = Mock()
-        mock_module.TestNode = MockValidNode
+        mock_module.ExampleNode = MockValidNode
         mock_import.return_value = mock_module
 
         # Enable debug logging
@@ -238,7 +238,7 @@ def test_import_node_class_real_node():
         # Verify it's a proper class
         assert isinstance(result, type)
         assert issubclass(result, BaseNode)
-        assert result.__name__ == "TestNode"
+        assert result.__name__ == "ExampleNode"
     else:
         # Skip test if registry doesn't have test nodes yet
         pytest.skip("Test node not found in registry - run registry scan first")

@@ -11,7 +11,7 @@ from typing import Any
 from pocketflow import Node
 
 
-class TestNodeRetry(Node):
+class RetryExampleNode(Node):
     """
     Test node that inherits from Node for retry capabilities.
 

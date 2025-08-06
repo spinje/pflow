@@ -38,39 +38,39 @@ def create_real_test_registry():
     real_nodes_metadata = {
         "test-node": {
             "module": "pflow.nodes.test_node",
-            "class_name": "TestNode",
+            "class_name": "ExampleNode",
             "docstring": "Test node for validation",
             "file_path": "src/pflow/nodes/test_node.py",
         },
         "test-node-retry": {
             "module": "pflow.nodes.test_node_retry",
-            "class_name": "TestNodeRetry",
+            "class_name": "RetryExampleNode",
             "docstring": "Test node with retry",
             "file_path": "src/pflow/nodes/test_node_retry.py",
         },
         "test-node-structured": {
             "module": "pflow.nodes.test_node_structured",
-            "class_name": "TestNodeStructured",
+            "class_name": "StructuredExampleNode",
             "docstring": "Structured test node",
             "file_path": "src/pflow/nodes/test_node_structured.py",
         },
         # Add alias for basic-node to test-node for backward compatibility
         "basic-node": {
             "module": "pflow.nodes.test_node",
-            "class_name": "TestNode",
+            "class_name": "ExampleNode",
             "docstring": "Basic test node (alias for test-node)",
             "file_path": "src/pflow/nodes/test_node.py",
         },
         # Add aliases for other common test node types
         "transform-node": {
             "module": "pflow.nodes.test_node_structured",
-            "class_name": "TestNodeStructured",
+            "class_name": "StructuredExampleNode",
             "docstring": "Transform test node (alias for test-node-structured)",
             "file_path": "src/pflow/nodes/test_node_structured.py",
         },
         "conditional-node": {
             "module": "pflow.nodes.test_node_retry",
-            "class_name": "TestNodeRetry",
+            "class_name": "RetryExampleNode",
             "docstring": "Conditional test node (alias for test-node-retry)",
             "file_path": "src/pflow/nodes/test_node_retry.py",
         },
@@ -159,6 +159,7 @@ def branching_ir():
         "edges": [
             {"from": "start", "to": "success_path", "action": "success"},
             {"from": "start", "to": "failure_path", "action": "failure"},
+            {"from": "start", "to": "success_path", "action": "default"},  # Default fallback
         ],
     }
 
@@ -468,7 +469,7 @@ class TestPerformanceBenchmarks:
         flow.run(shared_store)
 
         # Verify the workflow executed through all nodes - check for any output from the test nodes
-        # TestNode writes to test_output, TestNodeStructured writes user_data, TestNodeRetry writes retry_output
+        # ExampleNode writes to test_output, StructuredExampleNode writes user_data, RetryExampleNode writes retry_output
         has_output = "test_output" in shared_store or "user_data" in shared_store or "retry_output" in shared_store
         assert has_output, f"No expected outputs found in shared_store: {shared_store.keys()}"
 
@@ -488,9 +489,10 @@ class TestPerformanceBenchmarks:
             })
 
         # Diamond edges: 0->1, 0->2, 1->3, 2->3
+        # Use different actions to avoid overwriting warning
         edges = [
-            {"from": "node0", "to": "node1"},
-            {"from": "node0", "to": "node2"},
+            {"from": "node0", "to": "node1", "action": "path1"},
+            {"from": "node0", "to": "node2", "action": "path2"},
             {"from": "node1", "to": "node3"},
             {"from": "node2", "to": "node3"},
         ]
@@ -507,6 +509,70 @@ class TestPerformanceBenchmarks:
         # Complex workflow should still compile quickly
         assert flow is not None
         assert compilation_time_ms < 150, f"Complex workflow compilation took {compilation_time_ms:.2f}ms"
+
+    def test_diamond_pattern_with_actions(self, test_registry):
+        """Test that diamond pattern workflows compile and execute correctly with different actions.
+
+        This test specifically validates that:
+        1. Diamond patterns compile without warnings
+        2. Different actions on diverging edges work correctly
+        3. The workflow can still execute properly
+
+        FIX HISTORY:
+        - Added to verify that using different actions for diverging edges
+          (instead of default for both) still creates valid diamond patterns
+        - Confirms the fix to avoid "Overwriting successor" warnings is correct
+        """
+        # Create a diamond pattern with explicit actions
+        nodes = [
+            {"id": "start", "type": "test-node", "params": {"name": "start"}},
+            {"id": "left", "type": "test-node-structured", "params": {"name": "left"}},
+            {"id": "right", "type": "test-node-retry", "params": {"name": "right"}},
+            {"id": "end", "type": "test-node", "params": {"name": "end"}},
+        ]
+
+        # Use different actions for diverging paths to avoid PocketFlow warnings
+        edges = [
+            {"from": "start", "to": "left", "action": "left_path"},
+            {"from": "start", "to": "right", "action": "right_path"},
+            {"from": "left", "to": "end"},
+            {"from": "right", "to": "end"},
+        ]
+
+        ir = {"nodes": nodes, "edges": edges}
+
+        # Compile without warnings
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            flow = compile_ir_to_flow(ir, test_registry)
+
+            # Verify no "Overwriting successor" warnings
+            overwrite_warnings = [warning for warning in w if "Overwriting successor" in str(warning.message)]
+            assert len(overwrite_warnings) == 0, f"Found {len(overwrite_warnings)} 'Overwriting successor' warnings"
+
+        # Verify the flow structure is correct
+        assert flow is not None
+        assert flow.start_node is not None
+
+        # Verify the start node has two successors with different actions
+        start_node = flow.start_node
+        assert len(start_node.successors) == 2
+        assert "left_path" in start_node.successors
+        assert "right_path" in start_node.successors
+
+        # Test execution - the workflow should still be functional
+        # Note: In a real scenario, only one path would be taken based on
+        # the action returned by the start node's post() method
+        shared_store = {"test_input": "diamond_test"}
+
+        # Since test nodes return "default" action, the flow will end at start
+        # But we've verified the structure is correct
+        result = flow.run(shared_store)
+
+        # The flow should execute without errors
+        assert result is not None
 
 
 # =============================================================================

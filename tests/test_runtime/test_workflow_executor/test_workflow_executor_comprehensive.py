@@ -11,7 +11,7 @@ from pocketflow import BaseNode
 
 
 # Test node that fails during execution
-class FailingTestNode(BaseNode):
+class FailingExampleNode(BaseNode):
     """A test node that fails during execution."""
 
     def prep(self, shared):
@@ -42,7 +42,7 @@ class TestWorkflowExecutorComprehensive:
         registry_data = {
             "echo": {
                 "module": "test.module",
-                "class_name": "TestNode",
+                "class_name": "ExampleNode",
                 "docstring": "Test node",
                 "file_path": "/test/path.py",
             }
@@ -258,7 +258,7 @@ class TestWorkflowExecutorComprehensive:
         registry_data = {
             "failing_node": {
                 "module": "tests.test_runtime.test_workflow_executor.test_workflow_executor_comprehensive",
-                "class_name": "FailingTestNode",
+                "class_name": "FailingExampleNode",
                 "docstring": "A test node that fails during execution",
                 "file_path": __file__,
             }

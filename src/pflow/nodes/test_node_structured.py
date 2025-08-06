@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from pocketflow import Node
 
 
-class TestNodeStructured(Node):
+class StructuredExampleNode(Node):
     """
     Test node that produces structured output data.
 

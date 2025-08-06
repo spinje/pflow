@@ -118,7 +118,7 @@ class TestDiscoveryPlanningFlow:
         for i in range(100):
             large_registry[f"test-node-{i:03d}"] = {
                 "module": "test.module",
-                "class_name": "TestNode",
+                "class_name": "ExampleNode",
                 "metadata": {"description": f"Test node {i} for performance testing"},
             }
 
@@ -488,7 +488,7 @@ class TestErrorAndEdgeCases:
 
     def test_unicode_in_descriptions(self):
         """Test handling of Unicode characters."""
-        registry_metadata = {"unicode-node": {"module": "test.module", "class_name": "TestNode"}}
+        registry_metadata = {"unicode-node": {"module": "test.module", "class_name": "ExampleNode"}}
 
         with patch("pflow.planning.context_builder._process_nodes") as mock_process:
             mock_process.return_value = (

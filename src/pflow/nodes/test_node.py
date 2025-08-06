@@ -11,7 +11,7 @@ from typing import Any
 from pocketflow import Node
 
 
-class TestNode(Node):
+class ExampleNode(Node):
     """
     Example node for testing scanner functionality.
 

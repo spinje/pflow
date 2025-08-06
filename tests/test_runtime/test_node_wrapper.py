@@ -8,7 +8,7 @@ from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
 from pocketflow import Node
 
 
-class TestNode(Node):
+class WrapperTestNode(Node):
     """Simple test node for wrapper testing."""
 
     def __init__(self):
@@ -36,7 +36,7 @@ class TestWrapperInitialization:
 
     def test_basic_initialization(self):
         """Test basic wrapper initialization."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         assert wrapper.inner_node is node
@@ -47,7 +47,7 @@ class TestWrapperInitialization:
 
     def test_initialization_with_initial_params(self):
         """Test initialization with initial parameters."""
-        node = TestNode()
+        node = WrapperTestNode()
         initial_params = {"url": "https://example.com", "count": 5}
         wrapper = TemplateAwareNodeWrapper(node, "test_node", initial_params)
 
@@ -59,7 +59,7 @@ class TestParameterSeparation:
 
     def test_separates_template_params(self):
         """Test that params with templates are separated."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         params = {"url": "$endpoint", "format": "json", "message": "Processing $count items"}
@@ -74,7 +74,7 @@ class TestParameterSeparation:
 
     def test_all_static_params(self):
         """Test handling when all params are static."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         params = {"format": "json", "count": 10, "enabled": True}
@@ -86,7 +86,7 @@ class TestParameterSeparation:
 
     def test_all_template_params(self):
         """Test handling when all params have templates."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         params = {"url": "$endpoint", "token": "$auth_token", "id": "$item_id"}
@@ -98,7 +98,7 @@ class TestParameterSeparation:
 
     def test_updates_params_on_subsequent_calls(self):
         """Test that set_params updates parameters correctly."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         # First set
@@ -117,7 +117,7 @@ class TestTemplateResolution:
 
     def test_no_templates_bypasses_resolution(self):
         """Test that execution without templates bypasses resolution."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         # Set only static params
@@ -134,7 +134,7 @@ class TestTemplateResolution:
 
     def test_resolves_simple_templates(self):
         """Test resolution of simple template variables."""
-        node = TestNode()
+        node = WrapperTestNode()
         initial_params = {"endpoint": "https://api.example.com"}
         wrapper = TemplateAwareNodeWrapper(node, "test_node", initial_params)
 
@@ -150,7 +150,7 @@ class TestTemplateResolution:
 
     def test_shared_store_resolution(self):
         """Test resolution from shared store."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         wrapper.set_params({"message": "Processing $item_name"})
@@ -163,7 +163,7 @@ class TestTemplateResolution:
 
     def test_priority_initial_over_shared(self):
         """Test that initial params have priority over shared store."""
-        node = TestNode()
+        node = WrapperTestNode()
         initial_params = {"count": "100"}  # From planner
         wrapper = TemplateAwareNodeWrapper(node, "test_node", initial_params)
 
@@ -178,7 +178,7 @@ class TestTemplateResolution:
 
     def test_path_resolution(self):
         """Test resolution of nested paths."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         wrapper.set_params({"title": "$video.title", "author": "$video.metadata.author"})
@@ -193,7 +193,7 @@ class TestTemplateResolution:
 
     def test_unresolved_templates_remain(self):
         """Test that unresolved templates remain unchanged."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         wrapper.set_params({"found": "$existing", "missing": "$undefined"})
@@ -207,7 +207,7 @@ class TestTemplateResolution:
 
     def test_params_restored_after_execution(self):
         """Test that original params are restored after execution."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node", {"var": "resolved"})
 
         wrapper.set_params({"param": "$var"})
@@ -228,7 +228,7 @@ class TestAttributeDelegation:
 
     def test_getattr_delegation(self):
         """Test that attribute access is delegated to inner node."""
-        node = TestNode()
+        node = WrapperTestNode()
         node.custom_attr = "test_value"
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
@@ -242,7 +242,7 @@ class TestAttributeDelegation:
 
     def test_setattr_delegation(self):
         """Test that attribute setting is delegated correctly."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         # Set attribute through wrapper
@@ -255,7 +255,7 @@ class TestAttributeDelegation:
 
     def test_wrapper_transparency(self):
         """Test that wrapper is transparent to PocketFlow."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         # Wrapper should look like a Node to PocketFlow
@@ -276,7 +276,7 @@ class TestComplexScenarios:
 
     def test_multiple_template_resolution(self):
         """Test resolution of multiple templates in one parameter."""
-        node = TestNode()
+        node = WrapperTestNode()
         initial_params = {"repo": "pflow", "issue": "123"}
         wrapper = TemplateAwareNodeWrapper(node, "github_node", initial_params)
 
@@ -294,7 +294,7 @@ class TestComplexScenarios:
 
     def test_complete_vs_embedded_templates(self):
         """Test that complete value templates work same as embedded."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test", {"video_id": "xyz123"})
 
         wrapper.set_params({
@@ -312,7 +312,7 @@ class TestComplexScenarios:
 
     def test_type_conversion_in_templates(self):
         """Test type conversion during template resolution."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test")
 
         wrapper.set_params({"none_val": "Value: $none", "zero_val": "Count: $zero", "bool_val": "Flag: $flag"})
@@ -332,7 +332,7 @@ class TestErrorHandling:
 
     def test_node_execution_error_propagates(self):
         """Test that node execution errors propagate through wrapper."""
-        node = TestNode()
+        node = WrapperTestNode()
 
         # Make node raise an error
         def failing_exec(prep_res):
@@ -349,7 +349,7 @@ class TestErrorHandling:
 
     def test_handles_non_string_param_values(self):
         """Test handling of non-string parameter values."""
-        node = TestNode()
+        node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         # Mix of types including non-strings

@@ -276,7 +276,7 @@ class TestDiscoveryContext:
         registry_metadata = {
             "no-desc-node": {
                 "module": "test",
-                "class_name": "TestNode",
+                "class_name": "ExampleNode",
                 "file_path": "src/pflow/nodes/test.py",  # Non-test path so it's not skipped
                 "interface": {
                     "description": "",  # Empty description
@@ -755,7 +755,7 @@ class TestNodeProcessing:
             },
             "test-node": {
                 "module": "tests.test_node",
-                "class_name": "TestNode",
+                "class_name": "ExampleNode",
                 "file_path": "tests/fixtures/test_node.py",  # Contains 'test' in path
                 "interface": {
                     "description": "A test node",

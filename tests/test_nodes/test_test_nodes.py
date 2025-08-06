@@ -6,17 +6,17 @@ from pathlib import Path
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.pflow.nodes.test_node import TestNode
-from src.pflow.nodes.test_node_retry import TestNodeRetry
-from src.pflow.nodes.test_node_structured import TestNodeStructured
+from src.pflow.nodes.test_node import ExampleNode
+from src.pflow.nodes.test_node_retry import RetryExampleNode
+from src.pflow.nodes.test_node_structured import StructuredExampleNode
 
 
 class TestTestNode:
-    """Test the basic TestNode functionality."""
+    """Test the basic ExampleNode functionality."""
 
     def test_basic_processing(self):
         """Test successful processing with input."""
-        node = TestNode()
+        node = ExampleNode()
         shared = {"test_input": "hello world"}
 
         # Test full lifecycle
@@ -32,7 +32,7 @@ class TestTestNode:
 
     def test_default_value_handling(self):
         """Test handling when input is missing."""
-        node = TestNode()
+        node = ExampleNode()
         shared = {}  # No test_input
 
         # Test with run() method
@@ -42,7 +42,7 @@ class TestTestNode:
 
     def test_run_method(self):
         """Test using the run() convenience method."""
-        node = TestNode()
+        node = ExampleNode()
         shared = {"test_input": "test data"}
 
         action = node.run(shared)
@@ -51,14 +51,14 @@ class TestTestNode:
 
 
 class TestTestNodeRetry:
-    """Test the TestNodeRetry functionality."""
+    """Test the RetryExampleNode functionality."""
 
     def test_processes_input_with_retry_support(self):
         """Test that node processes input correctly through retry mechanism.
 
         BEHAVIOR: Node should process input successfully despite simulated failures.
         """
-        node = TestNodeRetry()
+        node = RetryExampleNode()
         node.wait = 0  # Speed up tests by removing retry delays
         shared = {"retry_input": "hello world"}
 
@@ -76,11 +76,11 @@ class TestTestNodeRetry:
         - Removed testing of internal attributes (max_retries, wait)
         - Focus on behavior: does the retry mechanism work as expected?
         """
-        node = TestNodeRetry()
+        node = RetryExampleNode()
         node.wait = 0  # Speed up tests by removing retry delays
         shared = {"retry_input": "test data"}
 
-        # The TestNodeRetry is designed to fail initially then succeed
+        # The RetryExampleNode is designed to fail initially then succeed
         action = node.run(shared)
 
         # BEHAVIOR: Should eventually succeed despite initial failures
@@ -93,7 +93,7 @@ class TestTestNodeRetry:
         # This is tricky to test without modifying the node
         # The current implementation always succeeds after 2 retries
         # We'll test the post() method directly
-        node = TestNodeRetry()
+        node = RetryExampleNode()
         shared = {}
 
         action = node.post(shared, "input", "Failed after retries: test error")
@@ -102,17 +102,17 @@ class TestTestNodeRetry:
 
     def test_exec_fallback(self):
         """Test the exec_fallback method."""
-        node = TestNodeRetry()
+        node = RetryExampleNode()
         result = node.exec_fallback("test input", RuntimeError("test error"))
         assert result == "Failed after retries: test error"
 
 
 class TestTestNodeStructured:
-    """Test the TestNodeStructured functionality."""
+    """Test the StructuredExampleNode functionality."""
 
     def test_structured_output_generation(self):
         """Test that structured output is generated correctly."""
-        node = TestNodeStructured()
+        node = StructuredExampleNode()
         shared = {"user_id": "user-123"}
 
         # Test full lifecycle
@@ -131,7 +131,7 @@ class TestTestNodeStructured:
 
     def test_nested_data_structure(self):
         """Test the nested structure of user_data."""
-        node = TestNodeStructured()
+        node = StructuredExampleNode()
         shared = {"user_id": "test-456"}
 
         action = node.run(shared)
@@ -148,7 +148,7 @@ class TestTestNodeStructured:
 
     def test_list_structure(self):
         """Test the list structure of tags."""
-        node = TestNodeStructured()
+        node = StructuredExampleNode()
         shared = {"user_id": "test-789"}
 
         action = node.run(shared)
@@ -165,7 +165,7 @@ class TestTestNodeStructured:
 
     def test_default_user_id(self):
         """Test behavior with no user_id provided."""
-        node = TestNodeStructured()
+        node = StructuredExampleNode()
         shared = {}  # No user_id
 
         action = node.run(shared)

@@ -33,13 +33,13 @@ def create_test_registry() -> tuple[Registry, dict]:
     test_nodes_metadata = {
         "test-node": {
             "module": "pflow.nodes.test_node",
-            "class_name": "TestNode",
+            "class_name": "ExampleNode",
             "docstring": "Test node for validation",
             "file_path": "src/pflow/nodes/test_node.py",
         },
         "test-node-retry": {
             "module": "pflow.nodes.test_node_retry",
-            "class_name": "TestNodeRetry",
+            "class_name": "RetryExampleNode",
             "docstring": "Test node with retry",
             "file_path": "src/pflow/nodes/test_node_retry.py",
         },
@@ -82,7 +82,7 @@ class TestInstantiateNodes:
 
         FIX HISTORY:
         - Fixed KeyError: 'test_output' by using appropriate input/output keys for each node type
-        - TestNode uses test_input/test_output, TestNodeRetry uses retry_input/retry_output
+        - ExampleNode uses test_input/test_output, RetryExampleNode uses retry_input/retry_output
         - Test now validates real behavior: each node processes data through its specific interface
         """
         registry, _ = create_test_registry()
@@ -106,14 +106,14 @@ class TestInstantiateNodes:
 
         # Verify they're different instances (not the same object)
         assert nodes["node1"] is not nodes["node3"]  # Different instances
-        assert type(nodes["node1"]).__name__ == "TestNode"
-        assert type(nodes["node2"]).__name__ == "TestNodeRetry"  # Different class
-        assert type(nodes["node3"]).__name__ == "TestNode"
+        assert type(nodes["node1"]).__name__ == "ExampleNode"
+        assert type(nodes["node2"]).__name__ == "RetryExampleNode"  # Different class
+        assert type(nodes["node3"]).__name__ == "ExampleNode"
 
         # Test all nodes can execute independently with proper input keys
         for node_id, node in nodes.items():
             # Use appropriate input key based on node type
-            if type(node).__name__ == "TestNodeRetry":
+            if type(node).__name__ == "RetryExampleNode":
                 shared_store = {"retry_input": f"input-{node_id}"}
                 expected_output_key = "retry_output"
             else:

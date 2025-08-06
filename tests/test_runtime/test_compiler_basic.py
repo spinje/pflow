@@ -250,7 +250,7 @@ class TestCompileIrToFlow:
 
         FIX HISTORY:
         - Removed log message testing (brittle implementation details)
-        - Use real TestNode instead of mock
+        - Use real ExampleNode instead of mock
         - Focus on testing that compilation produces working flow
         """
         import tempfile
@@ -263,11 +263,11 @@ class TestCompileIrToFlow:
             registry_path = Path(tmpdir) / "test.json"
             registry = Registry(registry_path)
 
-            # Save real node metadata for TestNode
+            # Save real node metadata for ExampleNode
             test_node_metadata = {
                 "test-node": {
                     "module": "pflow.nodes.test_node",
-                    "class_name": "TestNode",
+                    "class_name": "ExampleNode",
                     "docstring": "Test node for validation",
                     "file_path": "src/pflow/nodes/test_node.py",
                 }
@@ -299,7 +299,7 @@ class TestCompileIrToFlow:
 
         FIX HISTORY:
         - Removed mock import call counting (testing implementation details)
-        - Use real TestNode instead of MockNode
+        - Use real ExampleNode instead of MockNode
         - Focus on testing actual workflow execution with multiple nodes
         """
         import tempfile
@@ -316,13 +316,13 @@ class TestCompileIrToFlow:
             test_nodes_metadata = {
                 "test-node": {
                     "module": "pflow.nodes.test_node",
-                    "class_name": "TestNode",
+                    "class_name": "ExampleNode",
                     "docstring": "Test node for validation",
                     "file_path": "src/pflow/nodes/test_node.py",
                 },
                 "test-node-retry": {
                     "module": "pflow.nodes.test_node_retry",
-                    "class_name": "TestNodeRetry",
+                    "class_name": "RetryExampleNode",
                     "docstring": "Test node with retry",
                     "file_path": "src/pflow/nodes/test_node_retry.py",
                 },
@@ -349,7 +349,7 @@ class TestCompileIrToFlow:
             flow.run(shared_store)
 
             # Verify all nodes executed in sequence
-            # Each TestNode processes its input and passes to next
+            # Each ExampleNode processes its input and passes to next
             assert "test_output" in shared_store
             # The output should show processing from multiple nodes
             output = shared_store["test_output"]

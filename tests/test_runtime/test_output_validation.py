@@ -182,7 +182,7 @@ class TestOutputValidationIntegration:
         }
 
         registry = Mock()
-        registry.load.return_value = {"test-node": {"module": "test", "class_name": "TestNode"}}
+        registry.load.return_value = {"test-node": {"module": "test", "class_name": "ExampleNode"}}
 
         with pytest.raises(ValidationError) as exc_info:
             compile_ir_to_flow(ir_dict, registry)
@@ -200,11 +200,11 @@ class TestOutputValidationIntegration:
         }
 
         # Mock node class
-        mock_import.return_value = type("TestNode", (Mock,), {})
+        mock_import.return_value = type("ExampleNode", (Mock,), {})
 
         # Mock registry
         registry = Mock()
-        registry.load.return_value = {"test-node": {"module": "test", "class_name": "TestNode"}}
+        registry.load.return_value = {"test-node": {"module": "test", "class_name": "ExampleNode"}}
         registry.get_nodes_metadata.return_value = {
             "test-node": {
                 "interface": {

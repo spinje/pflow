@@ -392,7 +392,7 @@ uv run pytest --cov=src/pflow --cov-report=term-missing
 
 ### 7. Test Node Interface Inconsistency
 **Problem**: `KeyError: 'test_output'` when using wrong test node
-**Solution**: `TestNode` uses `test_input`/`test_output`, `TestNodeRetry` uses `retry_input`/`retry_output`. Check node interfaces before use.
+**Solution**: `ExampleNode` uses `test_input`/`test_output`, `RetryExampleNode` uses `retry_input`/`retry_output`. Check node interfaces before use.
 
 ### 8. Click Interactive Testing Limitation
 **Problem**: Can't test interactive prompts (workflow save dialog) with CliRunner
@@ -406,9 +406,9 @@ uv run pytest --cov=src/pflow --cov-report=term-missing
 **Problem**: `CompilationError: Node type 'basic-node' not found` when registry has fake modules like `"test.module"`
 **Solution**: Registry entries must point to importable modules. Use actual test file paths:
 ```python
-# DON'T: {"module": "test.module", "class_name": "TestNode"}  # Module doesn't exist
-# DO: {"module": "tests.test_runtime.test_compiler_integration", "class_name": "TestNode"}
-# OR: {"module": "pflow.nodes.test_node", "class_name": "TestNode"}  # Real project nodes
+# DON'T: {"module": "test.module", "class_name": "ExampleNode"}  # Module doesn't exist
+# DO: {"module": "tests.test_runtime.test_compiler_integration", "class_name": "ExampleNode"}
+# OR: {"module": "pflow.nodes.test_node", "class_name": "ExampleNode"}  # Real project nodes
 ```
 
 ### 11. Global State in context_builder Requires Isolation
