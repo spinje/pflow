@@ -105,9 +105,9 @@ class TestWorkflowDiscoveryNode:
     def test_init_configurable_parameters(self):
         """Test node initializes with configurable retry parameters."""
         # Test default parameters
-        node = WorkflowDiscoveryNode()
+        node = WorkflowDiscoveryNode(max_retries=2, wait=0)  # Speed up tests
         assert node.max_retries == 2
-        assert node.wait == 1.0
+        assert node.wait == 0
 
         # Test configurable parameters
         node2 = WorkflowDiscoveryNode(max_retries=3, wait=2.5)
@@ -120,6 +120,7 @@ class TestWorkflowDiscoveryNode:
             mock_build.return_value = "test context"
 
             node = WorkflowDiscoveryNode()
+            node.wait = 0  # Speed up tests
             shared = {"user_input": "create a data pipeline"}
 
             result = node.prep(shared)
@@ -140,6 +141,7 @@ class TestWorkflowDiscoveryNode:
             mock_get_model.return_value = mock_model
 
             node = WorkflowDiscoveryNode()
+            node.wait = 0  # Speed up tests
             prep_res = {
                 "user_input": "create a data pipeline",
                 "discovery_context": "test context",
@@ -166,6 +168,7 @@ class TestWorkflowDiscoveryNode:
             mock_get_model.return_value = mock_model
 
             node = WorkflowDiscoveryNode()
+            node.wait = 0  # Speed up tests
             prep_res = {
                 "user_input": "do something unique",
                 "discovery_context": "test context",
@@ -185,6 +188,7 @@ class TestWorkflowDiscoveryNode:
             mock_wm_class.return_value = mock_workflow_manager
 
             node = WorkflowDiscoveryNode()
+            node.wait = 0  # Speed up tests
             shared = {}
             prep_res = {"discovery_context": "test context"}
             exec_res = {
@@ -205,6 +209,7 @@ class TestWorkflowDiscoveryNode:
     def test_post_routes_not_found_path_b(self, mock_llm_response_nested):
         """Test post routes to 'not_found' for Path B when no workflow found."""
         node = WorkflowDiscoveryNode()
+        node.wait = 0  # Speed up tests
         shared = {}
         prep_res = {"discovery_context": "test context"}
         exec_res = {"found": False, "workflow_name": None, "confidence": 0.2, "reasoning": "No match"}
@@ -223,6 +228,7 @@ class TestWorkflowDiscoveryNode:
             mock_wm_class.return_value = mock_workflow_manager
 
             node = WorkflowDiscoveryNode()
+            node.wait = 0  # Speed up tests
             shared = {}
             prep_res = {"discovery_context": "test context"}
             exec_res = {"found": True, "workflow_name": "not-on-disk", "confidence": 0.9, "reasoning": "Found it"}
@@ -238,6 +244,7 @@ class TestWorkflowDiscoveryNode:
     def test_exec_fallback_handles_llm_failure(self):
         """Test exec_fallback provides safe defaults on LLM failure."""
         node = WorkflowDiscoveryNode()
+        node.wait = 0  # Speed up tests
         prep_res = {"user_input": "test", "discovery_context": "context"}
         exc = ValueError("LLM API failed")
 
@@ -256,6 +263,7 @@ class TestWorkflowDiscoveryNode:
             mock_get_model.return_value = mock_model
 
             node = WorkflowDiscoveryNode()
+            node.wait = 0  # Speed up tests
             prep_res = {
                 "user_input": "analyze CSV files",
                 "discovery_context": "available workflows and nodes here",
@@ -288,6 +296,7 @@ class TestWorkflowDiscoveryNode:
 
             # Configure custom model and temperature via params
             node = WorkflowDiscoveryNode()
+            node.wait = 0  # Speed up tests
             node.params = {"model": "gpt-4", "temperature": 0.5}
 
             with patch("pflow.planning.nodes.build_discovery_context") as mock_build:
@@ -315,9 +324,9 @@ class TestComponentBrowsingNode:
     def test_init_configurable_parameters(self):
         """Test node initializes with configurable retry parameters."""
         # Test default parameters
-        node = ComponentBrowsingNode()
+        node = ComponentBrowsingNode(max_retries=2, wait=0)  # Speed up tests
         assert node.max_retries == 2
-        assert node.wait == 1.0
+        assert node.wait == 0
 
         # Test configurable parameters
         node2 = ComponentBrowsingNode(max_retries=3, wait=2.5)
@@ -334,6 +343,7 @@ class TestComponentBrowsingNode:
             mock_build.return_value = "discovery context"
 
             node = ComponentBrowsingNode()
+            node.wait = 0  # Speed up tests
             shared = {"user_input": "process files"}
 
             result = node.prep(shared)
@@ -358,6 +368,7 @@ class TestComponentBrowsingNode:
             mock_get_model.return_value = mock_model
 
             node = ComponentBrowsingNode()
+            node.wait = 0  # Speed up tests
             prep_res = {
                 "user_input": "process CSV and generate report",
                 "discovery_context": "test context",
@@ -384,6 +395,7 @@ class TestComponentBrowsingNode:
             mock_get_model.return_value = mock_model
 
             node = ComponentBrowsingNode()
+            node.wait = 0  # Speed up tests
             prep_res = {
                 "user_input": "test request",
                 "discovery_context": "components",
@@ -408,6 +420,7 @@ class TestComponentBrowsingNode:
             mock_build.return_value = "detailed planning context"
 
             node = ComponentBrowsingNode()
+            node.wait = 0  # Speed up tests
             shared = {}
             prep_res = {"registry_metadata": {"test": "metadata"}}
             exec_res = {
@@ -434,6 +447,7 @@ class TestComponentBrowsingNode:
             }
 
             node = ComponentBrowsingNode()
+            node.wait = 0  # Speed up tests
             shared = {}
             prep_res = {"registry_metadata": {}}
             exec_res = {
@@ -462,6 +476,7 @@ class TestComponentBrowsingNode:
             mock_build.return_value = "context"
 
             node = ComponentBrowsingNode()
+            node.wait = 0  # Speed up tests
             shared = {}
             prep_res = {"registry_metadata": {"meta": "data"}}
             exec_res = {"node_ids": ["n1", "n2"], "workflow_names": ["w1"], "reasoning": "reason"}
@@ -478,6 +493,7 @@ class TestComponentBrowsingNode:
     def test_exec_fallback_handles_llm_failure(self):
         """Test exec_fallback provides safe defaults on LLM failure."""
         node = ComponentBrowsingNode()
+        node.wait = 0  # Speed up tests
         prep_res = {"user_input": "test", "discovery_context": "context", "registry_metadata": {}}
         exc = RuntimeError("API timeout")
 
@@ -502,6 +518,7 @@ class TestComponentBrowsingNode:
 
                     # Configure custom model and temperature via params
                     node = ComponentBrowsingNode()
+                    node.wait = 0  # Speed up tests
                     node.params = {"model": "gpt-4-turbo", "temperature": 0.7}
 
                     shared = {"user_input": "test"}
@@ -538,6 +555,7 @@ class TestIntegration:
 
                 # Run discovery node
                 discovery_node = WorkflowDiscoveryNode()
+                discovery_node.wait = 0  # Speed up tests
                 shared = {"user_input": "process CSV files"}
 
                 prep_res = discovery_node.prep(shared)
@@ -574,6 +592,7 @@ class TestIntegration:
 
                     # Run discovery node (Path B decision)
                     discovery_node = WorkflowDiscoveryNode()
+                    discovery_node.wait = 0  # Speed up tests
                     shared = {"user_input": "create something new"}
 
                     prep_res1 = discovery_node.prep(shared)
@@ -584,6 +603,7 @@ class TestIntegration:
 
                     # Run browsing node (Path B continues)
                     browsing_node = ComponentBrowsingNode()
+                    browsing_node.wait = 0  # Speed up tests
 
                     prep_res2 = browsing_node.prep(shared)
                     exec_res2 = browsing_node.exec(prep_res2)
@@ -613,6 +633,7 @@ class TestIntegration:
 
                     # Discovery node adds its keys
                     discovery = WorkflowDiscoveryNode()
+                    discovery.wait = 0  # Speed up tests
                     prep1 = discovery.prep(shared)
                     exec1 = discovery.exec(prep1)
                     discovery.post(shared, prep1, exec1)
@@ -623,6 +644,7 @@ class TestIntegration:
 
                     # Browsing node adds its keys
                     browsing = ComponentBrowsingNode()
+                    browsing.wait = 0  # Speed up tests
                     prep2 = browsing.prep(shared)
                     exec2 = browsing.exec(prep2)
                     browsing.post(shared, prep2, exec2)
@@ -638,6 +660,7 @@ class TestEdgeCases:
     def test_discovery_with_empty_user_input(self):
         """Test discovery validates required user_input."""
         node = WorkflowDiscoveryNode()
+        node.wait = 0  # Speed up tests
 
         # Test that missing user_input raises ValueError
         shared = {}  # No user_input key
@@ -651,6 +674,7 @@ class TestEdgeCases:
 
         # Test fallback to params works
         node.params = {"user_input": "test input"}
+        node.wait = 0  # Speed up tests
         with patch("pflow.planning.nodes.build_discovery_context") as mock_build:
             mock_build.return_value = "test context"
             prep_res = node.prep({})  # Empty shared but params has it
@@ -659,6 +683,7 @@ class TestEdgeCases:
     def test_browsing_validates_required_user_input(self):
         """Test browsing validates required user_input."""
         node = ComponentBrowsingNode()
+        node.wait = 0  # Speed up tests
 
         # Test that missing user_input raises ValueError
         shared = {}  # No user_input key
@@ -683,6 +708,7 @@ class TestEdgeCases:
                     mock_build.return_value = "empty context"
 
                     node = ComponentBrowsingNode()
+                    node.wait = 0  # Speed up tests
                     shared = {"user_input": "unclear request"}
 
                     prep_res = node.prep(shared)
@@ -704,6 +730,7 @@ class TestEdgeCases:
             mock_get_model.return_value = mock_model
 
             node = WorkflowDiscoveryNode()
+            node.wait = 0  # Speed up tests
             prep_res = {
                 "user_input": "test",
                 "discovery_context": "context",
@@ -726,6 +753,7 @@ class TestEdgeCases:
                 mock_build.return_value = "minimal context"
 
                 node = ComponentBrowsingNode()
+                node.wait = 0  # Speed up tests
                 shared = {"user_input": "test"}
 
                 # Should not raise - continues with empty registry
@@ -745,6 +773,7 @@ class TestEdgeCases:
             mock_get_model.return_value = mock_model
 
             node = WorkflowDiscoveryNode()
+            node.wait = 0  # Speed up tests
             long_input = "x" * 500  # Very long input
             prep_res = {
                 "user_input": long_input,
