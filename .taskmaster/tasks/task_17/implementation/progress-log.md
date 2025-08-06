@@ -124,3 +124,102 @@ Result: All code quality checks passing
 - 💡 Insight: Modern Python (3.9+) supports built-in generics, no need for typing.Dict/List
 
 All code now meets project quality standards with make check passing cleanly.
+
+## [2024-01-30 14:00] - Subtask 2 - Starting Discovery System Implementation
+Beginning implementation of discovery nodes for the Natural Language Planner.
+
+Context gathering with parallel subagents revealed:
+- ✅ Most utilities from Subtask 1 ready to use
+- ⚠️ Discovery: WorkflowDecision and ComponentSelection models missing from ir_models.py
+- ✅ Context builder functions have exact signatures needed
+- ✅ Test fixtures available including mock_llm_with_schema
+- 💡 Insight: Must create Pydantic models directly in nodes.py per spec
+
+Implementation plan created with risk mitigation strategies.
+
+## [2024-01-30 14:30] - Subtask 2 - Core Implementation Complete
+Successfully implemented both discovery nodes.
+
+Result: All core functionality working
+- ✅ Created nodes.py with WorkflowDiscoveryNode and ComponentBrowsingNode
+- ✅ Defined WorkflowDecision and ComponentSelection Pydantic models
+- ✅ Implemented nested response extraction: response_data['content'][0]['input']
+- ✅ WorkflowDiscoveryNode routes "found_existing" or "not_found" correctly
+- ✅ ComponentBrowsingNode always routes "generate" for Path B
+- ✅ Both nodes implement exec_fallback for error recovery
+- 💡 Critical insight: Must check response_data is not None before accessing
+
+Code patterns that worked:
+```python
+# Nested response extraction with error handling
+if response_data is None:
+    raise ValueError("LLM returned None response")
+content = response_data.get('content')
+if not content or not isinstance(content, list) or len(content) == 0:
+    raise ValueError("Invalid LLM response structure")
+result = content[0]['input']
+```
+
+## [2024-01-30 15:00] - Subtask 2 - Testing Implementation
+Created comprehensive test suite with test-writer-fixer agent.
+
+Result: 25 discovery tests all passing
+- ✅ Test Path A routing (found_existing) with exact workflow match
+- ✅ Test Path B routing (not_found) with no/partial matches
+- ✅ Critical: Nested response extraction pattern tested and working
+- ✅ ComponentBrowsingNode always returns "generate" verified
+- ✅ Planning context error dict handling tested
+- ✅ exec_fallback tested on both nodes
+- ✅ Integration tests verify both paths work end-to-end
+- 💡 Insight: Mock LLM responses must match nested structure exactly
+
+## [2024-01-30 15:30] - Subtask 2 - Quality Checks and Fixes
+Fixed mypy type checking errors and ensured code quality.
+
+Result: All quality checks passing
+- ✅ Fixed: Added return type annotations (__init__ -> None)
+- ✅ Fixed: Safe handling of response.json() return type
+- ✅ Fixed: Explicit dict() conversion for type safety
+- ✅ All 916 tests passing in full suite
+- ✅ make check passes cleanly (mypy, ruff, deptry)
+- 💡 Insight: LLM response.json() can return None, must check
+
+## [2024-01-30 16:00] - Subtask 2 - Completion Summary
+Discovery System complete and ready for future subtasks.
+
+Result: All requirements met
+- ✅ Both nodes in single nodes.py file per PocketFlow pattern
+- ✅ WorkflowDiscoveryNode performs semantic matching for routing
+- ✅ ComponentBrowsingNode uses over-inclusive selection strategy
+- ✅ Context builder integration working (both phases)
+- ✅ Registry instantiation follows direct pattern (not singleton)
+- ✅ Shared store keys written per contract specification
+- ✅ Action strings exact: "found_existing", "not_found", "generate"
+- ✅ 25 comprehensive tests covering all scenarios
+- ✅ All code quality checks passing
+
+Key insights for future subtasks:
+1. Nested response extraction is CRITICAL - always use content[0]['input']
+2. Planning context can return error dict - must check isinstance(dict) and "error" key
+3. Registry metadata must be stored for Path B downstream nodes
+4. ComponentBrowsingNode ALWAYS returns "generate", never "found"
+5. Over-inclusive browsing is by design - better to include too much
+6. Both nodes must implement exec_fallback for robustness
+
+Discovery System validation complete:
+- 126 planning tests passing (includes 25 new discovery tests)
+- Both Path A (reuse) and Path B (generate) routing verified
+- Ready for Subtask 3: Parameter Management System
+
+## [2024-01-30 17:00] - Subtask 2 - PocketFlow Best Practices Review
+Comprehensive review and fixes to ensure exemplary node implementation.
+
+Result: Discovery nodes now fully compliant with PocketFlow patterns
+- ✅ Fixed: Lazy model loading in exec() instead of __init__()
+- ✅ Fixed: Model name and temperature configurable via params
+- ✅ Verified: All method signatures and return types correct
+- ✅ Verified: Error handling follows PocketFlow patterns (no try/catch in exec)
+- ✅ Updated: 28 tests to verify lazy loading and configuration
+- 💡 Critical insight: Always lazy-load resources in exec(), never in __init__()
+
+These nodes now serve as reference implementations for future Task 17 nodes.
