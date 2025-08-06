@@ -1194,6 +1194,8 @@ Before submitting any test, ask yourself:
 - [ ] Are my assertions specific to the behavior, not the implementation?
 - [ ] Have I avoided mocking my own code?
 
+**Final step**: Run `make check` to ensure all linting, type checking, and formatting passes for your test changes.
+
 When fixing a failing test:
 
 - [ ] Did I find the ROOT CAUSE of the failure?
