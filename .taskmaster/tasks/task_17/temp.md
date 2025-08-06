@@ -16,12 +16,324 @@ I should now investigate how we can break down the task into smaller subtasks
 read .taskmaster/workflow/epistemic-manifesto.md and let me know when you have understood it
 
 
-read .taskmaster/tasks/task_17/task-17-overview.md and all the mentioned core documents mentioned in full. think hard to try to grasp what this task is about. let me know when you are done and ready for the next step.
+read .taskmaster/tasks/task_17/starting-context/task-17-overview.md and all 9 mentioned documents mentioned in full. think hard to try to grasp what this task is about. let me know when you are done and ready for the next step.
 
 Are there any critical contradictions or ambiguities between any of these documents? ultrathink
 
 
 ---
+
+we are going to continue with subtask 2, think hard about everything we are going to be implementing, let me know when you are ready to begin! Do not begin yet and dont create a todo, just think it through to prime yourself for starting subtask 2. Before you begin you should read the handoff document left for you by the agent responsible for implementing subtask 1. You can find it in .taskmaster/tasks/task_17/handoffs/handoff-to-subtask-2.md Let me know when you have read it, completely understand the scope of subtask 2 and is ready to begin!
+
+You should get ready to write the spec for subtask 2. prepare to discuss the ins and outs of how it works. think hard and let me know when you are ready!
+
+
+
+Ill fix them. Great job finding issues! I put my developer to work and he made .taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-3-spec.md, can you think hard and make sure there are no obvious contradictions or ambiguities in the document?
+
+think hard and use subagents or ask me to verify any assumptions that you have made before we proceed to modify the document. You need to be sure or we should not change anything.
+
+Great insights but you need to be sure before we make any changes! Every changed or added line needs to be justified and have a clear explanation of why it is needed and how it is relevant to the task 17 agent and adds value to agent implementing subtask 3. Verify all assumtions with subagents, thinking hard or asking me for clarification if needed.
+
+write a task-review in .taskmaster/tasks/task_17/implementation/subtask-<taskId>/task-review.md that explains the most important information that should be known by the agents implementing all the other subtasks.
+
+
+do you think we should create specification documents for each of the subtasks or one spec for all?
+
+/create-task-spec is running… task-17-subtask-1
+
+
+can you make sure you are not making any assumptions that are not absolutely verified in the implementation details in the spec. If you need to validate ANYTHING you are not sure of with subagents. Having implementationdetails that are wrong will make the whole implementation fail. You need to ultrathink and make sure everything stated is absolutely correct and update the document accordingly. Introspect through your contextwindow and verify everything, ask the user or subagents for clarification if needed.
+
+---
+
+before we start implementing subtask 2 I need your help on reviewing the spec file for subtask 2. Learn   everything you can about subtask 2 and get ready to discuss the ins and outs of what it includes and how it should work. think hard on this and let me know when you are ready to review the file. (do not read the spec yet, create your own understanding first)
+
+carefully review the .taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-2-spec.md file. Make  sure to note any inconcistencies and ambiguities with existing documentation. Think hard! I really love your attention to detail and entusiasm! Make sure to verify all your assumptions and try to understand everything DEEPLY!
+
+Great insights but you need to be sure before we make any changes! Every changed or added line needs to be justified and have a clear explanation of why it is needed and how it is relevant to the task 17 subtask 2 agent and adds value to agent implementing subtask 2. Verify all assumtions with subagents, thinking hard or asking me for clarification if needed.
+
+---
+
+
+
+
+
+
+
+---
+
+Go ahead and make a detailed plan of how we can carefully add all your suggested changes to the spec. Think hard and create the plan first, then go ahead and implement it. Remember, make minimal changes, we dont want to bloat the spec with unnecessary details (only high value changes, that add real value to the implementer)
+
+Here are the clarifications:
+
+---
+
+1. What's Actually Happening in ParameterMappingNode
+
+  The node performs verification as an operation:
+  1. Takes workflow's required inputs: {"issue_number": required, "limit": optional}
+  2. Tries to extract values from user_input/stdin
+  3. Determines what's missing
+  4. Routes based on completeness
+
+  What Information Actually Needs to Flow
+
+  Downstream nodes need:
+  - ParameterPreparationNode: Just extracted_params to format
+  - ResultPreparationNode: The final output to return to CLI
+  - CLI: Either ready-to-execute params OR what's missing
+
+  The routing decision itself (params_complete vs params_incomplete) IS the verification result.
+
+  The Key Insight
+
+  verified_params as specified is actually three things:
+  1. status - Redundant with routing action string
+  2. missing - Duplicate of missing_params
+  3. warnings - The only unique value
+
+  So the real question is: Where should warnings live?
+
+  What Makes The Most Sense
+
+  Follow the standardized conventions - NO verified_params. Here's why:
+
+  1. Verification is an operation: The routing decision IS the verification result. We don't need to store "we
+  verified it" - the fact that we routed to params_complete means verification passed.
+  2. Warnings aren't critical for MVP:
+    - "Interpreted 'yesterday' as 2024-01-28" - Nice to have, not essential
+    - "Using default 'json' for format" - The workflow will work fine
+    - These can be logged for debugging without storing in shared
+  3. YAGNI (You Aren't Gonna Need It): The spec shows warnings but never shows who consumes them. If no
+  downstream node needs them, don't store them.
+  4. Simpler is more robust:
+    - extracted_params = what we found
+    - missing_params = what we couldn't find (only on incomplete)
+    - That's it. Clear, simple, sufficient.
+  5. The architecture already handles this:
+  if missing_params:
+      shared["missing_params"] = missing_list
+      shared["parameter_error"] = "Missing required: X, Y"  # Human-readable
+      return "params_incomplete"
+  else:
+      # No missing_params in shared means success
+      return "params_complete"
+
+  Conclusion
+
+  The standardized conventions are correct. The spec should remove verified_params because:
+  - It duplicates information already captured by routing
+  - Warnings can be logged without storing
+  - Simpler state makes the system more maintainable
+  - No downstream consumer actually needs this structure
+
+  The only thing we might want to add is a human-readable error message when params are incomplete, but that's
+  just a string, not a complex structure.
+
+  Recommendation: Remove verified_params from the spec entirely. Keep only extracted_params and missing_params
+  as specified in standardized conventions.
+
+2. Line 125 states: "Template path not in data → Parameter excluded from execution_params"
+
+  This is mixing two completely different concepts that happen at different times:
+
+  What Actually Happens
+
+  During Planning (ParameterMappingNode's job):
+  1. Extract parameter VALUES from user input
+  2. Match them to workflow's declared inputs
+  3. Example: User says "analyze report.csv" → Extract {"filename": "report.csv"}
+
+  During Execution (Runtime's job):
+  1. Workflow nodes have template variables like $filename or $data.field
+  2. Runtime resolves these using execution_params
+  3. Example: Node has --input=$filename → Runtime substitutes "report.csv"
+
+  What Line 125 Seems to Be Trying to Say
+
+  I think it's attempting to describe one of these scenarios:
+
+  Scenario A: Nested parameter extraction?
+  - User provides: {"data": {"field": "value"}}
+  - But workflow only needs top-level "data", not specifically "data.field"
+  - So we include the whole "data" object
+
+  Scenario B: Incomplete nested structures?
+  - Workflow expects to use $data.field in its nodes
+  - User provides: {"data": {}} (missing "field")
+  - This would fail at runtime, not during parameter extraction
+
+  Scenario C: Parameter validation against template usage?
+  - But that's the ValidatorNode's job, not ParameterMappingNode's
+
+  My Recommendation
+
+  Remove line 125 entirely. Here's why:
+
+  1. Wrong Layer: ParameterMappingNode extracts parameters based on workflow.inputs, not based on template
+  paths used in nodes
+  2. Wrong Time: Template path resolution happens at runtime, not during planning
+  3. Already Covered: Missing required parameters are already handled by "Required param missing"
+  4. Confusing: It conflates extraction with resolution
+
+  If we want to clarify the separation:
+
+  Note: Template path validation ($data.field exists) happens in ValidatorNode
+        ParameterMappingNode only extracts parameter values, not validate paths
+
+  The Key Insight
+
+  ParameterMappingNode is answering: "Can I find values for the parameters this workflow needs?"
+
+  It is NOT answering: "Will all template paths in the workflow resolve successfully?"
+
+  That second question is ValidatorNode's responsibility (using the registry's Node IR data).
+
+  My strong recommendation: Remove line 125 as it adds confusion without value to the implementer.
+
+3. What MetadataGenerationNode Actually Does
+
+  Based on the architecture documents, MetadataGenerationNode serves a specific purpose in Path B only:
+
+  1. Runs AFTER successful validation - Only processes valid workflows
+  2. Extracts human-friendly metadata for workflow storage and display:
+    - Suggested workflow name (e.g., "generate-changelog")
+    - Natural language description
+    - Categorization/tags for discovery
+  3. Does NOT modify the workflow IR - It analyzes it to extract metadata
+
+  The Core Confusion
+
+  The spec conflates two different things:
+  - Workflow IR (technical): Contains nodes, edges, inputs, outputs - the executable definition
+  - Workflow Metadata (human-friendly): Contains name, description, created_at - for storage/discovery
+
+  The Real Data Flow
+
+  Path A (Reuse):
+  WorkflowDiscoveryNode finds "generate-changelog"
+      ↓
+  WorkflowManager.load_ir("generate-changelog") returns IR with inputs field
+      ↓
+  ParameterMappingNode uses workflow["inputs"] to validate parameters
+
+  Path B (Generate):
+  GeneratorNode creates workflow IR with inputs field
+      ↓
+  ValidatorNode validates it
+      ↓
+  MetadataGenerationNode extracts name/description (but IR already has inputs!)
+      ↓
+  ParameterMappingNode uses workflow["inputs"] to validate parameters
+
+  My Recommendation
+
+  Replace lines 31-33 with this clarification:
+
+  ## Inputs
+
+  - user_input: str - Natural language request from user
+  - stdin_data: Optional[Any] - Data piped from stdin
+  - workflow_ir: dict - The actual workflow to execute
+    # Path A: found_workflow loaded via WorkflowManager.load_ir()
+    # Path B: generated_workflow from GeneratorNode (post-validation)
+    # Both contain 'inputs' field defining required/optional parameters
+  - workflow_metadata: Optional[dict] - Human-friendly metadata (Path B only)
+    # Generated by MetadataGenerationNode for saving/display
+    # Contains: suggested_name, description, category
+    # NOT needed for parameter extraction (use workflow_ir["inputs"] instead)
+
+  Why This Matters
+
+  1. ParameterMappingNode needs the IR, not metadata, because it must check workflow_ir["inputs"] to know what
+  parameters are required
+  2. MetadataGenerationNode creates supplementary info that helps with:
+    - Saving the workflow with a good name
+    - Future discovery (description matching)
+    - User display in ResultPreparationNode
+  3. The confusion stems from naming - "metadata" suggests it's about the workflow's interface, but it's really
+   about storage/discovery metadata
+
+  Alternative Approach
+
+  If we want to be even clearer, we could rename in the spec:
+  - workflow_metadata → workflow_info or storage_metadata
+  - This would make it clear it's not about the workflow's technical interface
+
+  The Key Insight
+
+  MetadataGenerationNode doesn't generate the inputs field - that's already part of the workflow IR from
+  generation/loading. It generates the human-friendly wrapper that WorkflowManager uses when saving workflows.
+
+  This distinction is critical for the implementer to understand that:
+  - They should read workflow_ir["inputs"] for parameter validation
+  - They should use workflow_metadata only for display/storage purposes
+  - Path A might not even have workflow_metadata if we're reusing an existing workflow
+
+
+---
+
+
+
+
+
+
+
+
+---
+
+1. gpt-4o-mini is the the default model of the llm node (used for user facing workflows generated by the planner). All internal use should be anthropic/claude-sonnet-4-0 (alias for the model in llm library)  what minimal changes do we need to make to correct any obvious errors in the documents? Make minimal changes, every line should be justified and have a clear explanation of why it is needed.
+
+2. A (implementation-principles.md) is the correct here
+
+3.
+
+I think the idea was that the parameter mapping node should make an independent extraction of params, not using the discovered params (when "discovered" in path B for use when creating the workflow). This would verify that they can be "mapped" to a workflow rather than being discovered
+
+
+
+
+
+
+
+
+
+---
+
+1. we should use anthropic/claude-sonnet-4-0 (this is the llm model alias used by llm library) for ALL the planners internal reasoning. (llm node "task 12" should not be used as a node in created outputs, not internallyin the planner if that makes sense)
+
+2. Correct, we should go with otion B here.
+
+3. Option B is correct, in future versions we can explore how the planner can modify existing workflows with additional parameters or capabilities. (not in mvp)
+
+4. Correct, option B!
+
+5. Correct with B, but make sure to only do this when its needed!
+
+6. Correct with B, we need both mocked and real llm integration tests. A note here is that we need to use anthropic/claude-sonnet-4-0 for the mocked tests as well.
+
+7. Yes, go for B here!
+
+8. Yes, option B, CLI handles after approval
+
+---
+
+Every choice is great except for 1. think hard and update the document with any new insights!
+
+
+
+
+
+
+
+
+
+
+
+
+---
+
 
 1. Structured Output Support
 are you sure the document is talking about the llm node and not the actual implementation in planner using these features?
