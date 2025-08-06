@@ -23,7 +23,7 @@ Are there any critical contradictions or ambiguities between any of these docume
 
 ---
 
-we are going to continue with subtask 2, think hard about everything we are going to be implementing, let me know when you are ready to begin! Do not begin yet and dont create a todo, just think it through to prime yourself for starting subtask 2. Before you begin you should read the handoff document left for you by the agent responsible for implementing subtask 1. You can find it in .taskmaster/tasks/task_17/handoffs/handoff-to-subtask-2.md Let me know when you have read it, completely understand the scope of subtask 2 and is ready to begin!
+subtask 1, subtask 2 and subtask 3 has been implemented. we are going to continue with subtask 4, think hard about everything we are going to be implementing, let me know when you are ready to begin! Do not begin yet and dont create a todo, just think it through to prime yourself for starting subtask 4. Before you begin you should read the handoff document left for you by the agent responsible for implementing subtask 3. You can find it in .taskmaster/tasks/task_17/handoffs/handoff-to-subtask-4.md Let me know when you have read it, completely understand the scope of subtask 4 and is ready to begin!
 
 You should get ready to write the spec for subtask 2. prepare to discuss the ins and outs of how it works. think hard and let me know when you are ready!
 
@@ -57,9 +57,219 @@ Great insights but you need to be sure before we make any changes! Every changed
 
 ---
 
+I have created a list of decisions where I DONT AGREE with your current recommendations. If the number is not in the list (only 9 and 12) then we are on the same page.
 
+Please read and reason about each of these (1-12, except 9 and 11) and think hard about the implications of each decision. When you are done, create a plan of how we can create a new overview document that takes all MY insights and recommendations into account. You do not have to include the other options that was discarded. Only focus on writing a clear and concise overview document that takes all our combined insights and recommendations into account that the implementer of subtask 4 can use as a reference for these questions. Ultrathink if you need to. Good luck!
 
+My final thoughts and recommendations:
 
+1. Empty Planning Context Handling
+
+**Planning context should always be available. If it is not the user receives an error. See "12. Registry Metadata Usage" since it is related.**
+
+2. Discovered Parameters → Inputs Field Mapping
+
+discovered_params are just suggestions/hints. The GeneratorNode has full control over the
+  inputs field in the workflow IR, and this is where it can:
+
+  - Rename parameters for better clarity
+  - Decide which are required vs optional
+  - Add parameters that weren't discovered
+  - Omit discovered params that aren't needed
+
+  The only constraint:
+  - Template variables ($param_name) must match the keys in the inputs field
+  - The inputs field defines what ParameterMappingNode will try to extract
+
+  When to Make Parameters Optional
+
+  The LLM should mark a parameter as optional (with a sensible default) when:
+  - It's a preference setting (verbose, format)
+  - It has a universally sensible default (encoding="utf-8")
+  - The workflow can function without it
+  - It's for advanced users
+
+  But NOT when:
+  - It's critical to the operation (input file, API key)
+  - The default would be request-specific (not universal)
+  - Different users would expect different values
+
+Also see "3. Template Variable Naming Convention" belowfor more details regarding this related topic.
+
+3. Template Variable Naming Convention
+
+The Truth About the Verification Chain
+
+  What I Got Wrong
+
+  I incorrectly thought there was a dependency chain like this:
+  ParameterDiscoveryNode discovers "filename"
+      ↓
+  GeneratorNode must use "$filename"
+      ↓
+  ParameterMappingNode looks for "filename"
+
+  The Actual Truth
+
+  The real flow is:
+  ParameterDiscoveryNode discovers "filename" (just a hint)
+      ↓
+  GeneratorNode creates inputs: {"input_file": {...}} (renamed!)
+      ↓
+  GeneratorNode uses template: "$input_file"
+      ↓
+  ParameterMappingNode looks for "input_file" (from inputs spec, not discovered_params)
+
+  The Verification Chain That Actually Exists
+
+  The verification chain is between:
+  1. The inputs field (defined by GeneratorNode)
+  2. The template variables (used in params)
+  3. ParameterMappingNode's extraction (based on inputs field)
+
+The Correct Understanding
+
+  1. discovered_params = Hints/suggestions about what parameters exist in the user's request
+  2. GeneratorNode = Has complete freedom to rename, reorganize, add, or omit parameters
+  3. inputs field = The contract that GeneratorNode creates (can have any names)
+  4. Template variables = Must match the inputs field keys (not discovered_params)
+  5. ParameterMappingNode = Independently extracts based on the inputs field
+
+Template Variable Naming Convention should be:
+
+  ✅ Template variables must match the inputs field keys (which GeneratorNode defines)
+  ❌ NOT discovered_params keys (those are just hints)
+
+  The GeneratorNode has complete freedom to:
+  - Rename parameters for clarity
+  - Use better, more descriptive names
+  - Add new parameters
+  - Omit unnecessary ones
+
+  The only requirement is internal consistency within the generated workflow between:
+  - The inputs field keys
+  - The template variable names used in param
+
+4.Workflow Composition from Browsed Components
+
+- Use workflow_name for saved workflows (from browsed_components["workflow_names"])
+- Always include param_mapping to map parent values to child inputs
+- Include output_mapping to extract specific outputs back to parent
+- Set storage_mode": "mapped" (recommended default for safety)
+
+Example:
+{
+  "id": "analyze",
+  "type": "workflow",
+  "params": {
+    "workflow_name": "text-analyzer",
+    "param_mapping": {"text": "$content"},
+    "output_mapping": {"analysis": "result"},
+    "storage_mode": "mapped"
+  }
+}
+
+Decision 4 has been updated with the correct syntax. The key insight: GeneratorNode should use workflow_name
+(not workflow_ref or workflow_ir) since it gets workflow names from ComponentBrowsingNode's discovery of
+saved workflows in ~/.pflow/workflows/.
+
+5. Progressive Enhancement Strategy
+
+**We should use option C here.**
+
+6. Workflow Complexity for MVP
+
+**we do not have to support branching or complex workflows for the MVP. We should only support simple linear workflows.**
+
+7. exec_fallback Behavior
+
+**Just return with errors to be handled by cli.**
+
+8. Default Values in Inputs
+
+**If the llm feels sure about that the params value would be a good default value, we should use it. But required should be the most common option.**
+
+10. Node ID Strategy
+
+id and type are completely different things:
+
+  - type: The node class to instantiate (e.g., "github-list-issues", "llm", "read-file")
+  - id: The unique instance identifier within the workflow (e.g., "fetch_issues", "analyze_data")
+
+  Yes, We CAN Have Multiple Nodes of Same Type!
+
+  {
+    "nodes": [
+      {"id": "read_input", "type": "read-file", "params": {"path": "input.txt"}},
+      {"id": "read_config", "type": "read-file", "params": {"path": "config.json"}},
+      {"id": "analyze", "type": "llm", "params": {"prompt": "Analyze $content"}},
+      {"id": "summarize", "type": "llm", "params": {"prompt": "Summarize $analysis"}}
+    ],
+    "edges": [
+      {"from": "read_input", "to": "analyze"},
+      {"from": "read_config", "to": "analyze"},
+      {"from": "analyze", "to": "summarize"}
+    ]
+  }
+
+  The Shared Store Collision Problem (You Nailed It!)
+
+  You're absolutely correct! Without Task 9's proxy mapping system:
+
+  # Both read-file nodes write to same key!
+  read_input >> shared["content"] = "input file contents"
+  read_config >> shared["content"] = "config file contents"  # OVERWRITES!
+
+  Current Workarounds (Without Proxy Mapping)
+
+  The system currently avoids collisions through:
+
+  - Careful workflow design - Nodes run sequentially, not in parallel
+  - Different shared store keys - But nodes don't know to do this automatically
+  - Template variables - Different params prevent simultaneous execution
+
+  Why Node IDs Still Matter
+
+  Even with this limitation, unique IDs are crucial because:
+
+  - Edges reference by ID, not type:
+  {"from": "read_input", "to": "analyze"}  // Which read-file node?
+  - The compiler stores instances by ID:
+  nodes["read_input"] = ReadFileNode()
+  nodes["read_config"] = ReadFileNode()  // Different instances
+  - Error messages need specificity:
+  Error: Node 'read_config' failed  // We know which one
+
+  The Real Limitation
+
+  Without proxy mapping (Task 9), having multiple nodes of the same type is problematic
+  because they'll overwrite each other's shared store values. This is a known limitation that's planned to be
+  fixed.
+
+  For GeneratorNode in MVP
+
+  Given this limitation, GeneratorNode should:
+
+  - Avoid generating multiple nodes of the same type (for now)
+  - Or ensure they run sequentially with values consumed between them
+  - Document this as a known limitation until Task 9 is implemented
+
+12. Registry Metadata Usage
+
+For Decision 12, we could simplify to:
+- planning_context: ONLY source for component information in prompts
+- registry_metadata: Completely ignore it (not needed if we trust context)
+- Validation: Happens in ValidatorNode, not GeneratorNode
+
+This removes even more complexity!
+
+The original recommendation was over-engineered. The ComponentBrowsingNode → context_builder → GeneratorNode
+pipeline should work as a unit. If context_builder fails, that's an exceptional case that should be handled
+by exec_fallback, not complex conditional logic in exec().
+
+---
+
+Remember: first think hard, then create a plan, THEN write the overview document.
 
 
 
