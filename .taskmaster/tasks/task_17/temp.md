@@ -31,6 +31,8 @@ You should get ready to write the spec for subtask 2. prepare to discuss the ins
 
 Ill fix them. Great job finding issues! I put my developer to work and he made .taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-3-spec.md, can you think hard and make sure there are no obvious contradictions or ambiguities in the document?
 
+I put my developer to work and he made .taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-3-spec.md, can you think hard and make sure there are no obvious contradictions or ambiguities in the document? Think of this as the final review before implementation. It is critical this document is on point with all the essential requirements correct and in place. Think hard!
+
 think hard and use subagents or ask me to verify any assumptions that you have made before we proceed to modify the document. You need to be sure or we should not change anything.
 
 Great insights but you need to be sure before we make any changes! Every changed or added line needs to be justified and have a clear explanation of why it is needed and how it is relevant to the task 17 agent and adds value to agent implementing subtask 3. Verify all assumtions with subagents, thinking hard or asking me for clarification if needed.
