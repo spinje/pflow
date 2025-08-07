@@ -12,6 +12,7 @@ repos:
         exclude: ^(.devcontainer/devcontainer.json|tests/test_planning/fixtures/workflows/invalid-bad-json.json)
         args: [--autofix, --no-sort-keys]
       - id: end-of-file-fixer
+        exclude: \.md$
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
