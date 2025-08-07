@@ -23,7 +23,28 @@ Are there any critical contradictions or ambiguities between any of these docume
 
 ---
 
-subtask 1, subtask 2 and subtask 3 has been implemented. we are going to continue with subtask 4, think hard about everything we are going to be implementing, let me know when you are ready to begin! Do not begin yet and dont create a todo, just think it through to prime yourself for starting subtask 4. Before you begin you should read the handoff document left for you by the agent responsible for implementing subtask 3. You can find it in .taskmaster/tasks/task_17/handoffs/handoff-to-subtask-4.md Let me know when you have read it, completely understand the scope of subtask 4 and is ready to begin!
+Subtasks 1, 2, and 3 have been completed. We are now ready to continue with Subtask 4.
+
+Before beginning implementation:
+
+1. Read the handoff document from Subtask 3: `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-4.md`
+
+2. Think through what Subtask 4 (Generation System) needs to implement
+
+3. Confirm you understand the scope of Subtask 4
+
+**Important**:
+- Do NOT create a TODO list yet
+- Do NOT start implementing
+- Just read, ultrathink, and confirm you're ready
+
+Let me know when you have:
+- Read the handoff document
+- Understood what Subtask 4 involves
+- Are ready to discuss the ins and outs of how it works and create a spec for it
+
+---
+
 
 You should get ready to write the spec for subtask 2. prepare to discuss the ins and outs of how it works. think hard and let me know when you are ready!
 
@@ -269,7 +290,7 @@ by exec_fallback, not complex conditional logic in exec().
 
 ---
 
-Remember: first think hard, then create a plan, THEN write the overview document.
+Remember: first think hard, then create a plan, THEN write the spec.
 
 
 

@@ -137,6 +137,41 @@ node = SomeNode(max_retries=2, wait=0)  # ✅ Fast
 # If not in constructor: node.wait = 0
 ```
 
+### Workflow Planning Tests
+**Critical insight**: Prompt specificity determines whether pflow creates new workflows or reuses existing ones.
+
+#### Testing Workflow Generation (Path B - Create New)
+Use **specific, detailed prompts** when testing workflow generation:
+```python
+# ✅ CORRECT - Specific prompt triggers generation
+"Create an issue triage report by fetching the last 30 open bug issues
+from github project-x repository, categorize them by priority,
+then write the report to reports/bug-triage.md"
+
+# ❌ WRONG - Too vague, would trigger reuse instead
+"Create an issue triage report"
+```
+
+#### Testing Workflow Reuse (Path A - Find Existing)
+Use **vague, minimal prompts** when testing workflow discovery:
+```python
+# ✅ CORRECT - Vague prompt triggers reuse
+"generate a changelog"
+
+# ❌ WRONG - Too specific, would trigger generation
+"generate a changelog from last 20 closed github issues and write to CHANGELOG.md"
+```
+
+**Why this matters**: Users provide detailed instructions when creating new workflows but use brief commands when running existing ones.
+
+#### Use North Star Examples
+Always reference `docs/vision/north-star-examples.md` for realistic test scenarios:
+- **Primary (Complex)**: Generate changelog - Full GitHub → LLM → Git pipeline 🌟
+- **Secondary (Medium)**: Issue triage report - Simpler analysis workflow
+- **Tertiary (Simple)**: Summarize single issue - Minimal but useful
+
+These examples represent real developer workflows that provide actual value, not toy examples.
+
 ## Writing New Tests
 
 ### Where to Place New Tests - Decision Tree

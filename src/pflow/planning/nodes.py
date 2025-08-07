@@ -1023,3 +1023,208 @@ class ParameterPreparationNode(Node):
 
         # Continue to result preparation
         return ""  # No action string needed for simple continuation
+
+
+class WorkflowGeneratorNode(Node):
+    """Generates workflows using LLM with structured output.
+
+    Path B only: Transforms browsed components and parameter hints into
+    executable workflows with template variables and proper input specifications.
+    """
+
+    name = "generator"  # Class attribute for registry discovery
+
+    def __init__(self, max_retries: int = 3, wait: float = 1.0) -> None:
+        """Initialize generator with retry configuration.
+
+        Args:
+            max_retries: Maximum number of retry attempts
+            wait: Wait time between retries in seconds
+        """
+        super().__init__(max_retries=max_retries, wait=wait)
+
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """Prepare data for workflow generation.
+
+        Args:
+            shared: PocketFlow shared store
+
+        Returns:
+            Dict with all data needed for generation
+        """
+        return {
+            "model_name": self.params.get("model", "anthropic/claude-sonnet-4-0"),
+            "temperature": self.params.get("temperature", 0.0),
+            "planning_context": shared.get("planning_context", ""),
+            "user_input": shared.get("user_input", ""),
+            "discovered_params": shared.get("discovered_params"),
+            "browsed_components": shared.get("browsed_components", {}),
+            "validation_errors": shared.get("validation_errors", []),
+            "generation_attempts": shared.get("generation_attempts", 0),
+        }
+
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Generate workflow using LLM with structured output.
+
+        Args:
+            prep_res: Prepared data including planning context and parameters
+
+        Returns:
+            Dict with generated workflow and attempt count
+
+        Raises:
+            ValueError: If planning context is empty or response parsing fails
+        """
+        logger.debug(f"Generating workflow for: {prep_res['user_input'][:100]}...")
+
+        # CRITICAL: Planning context must be available
+        if not prep_res["planning_context"]:
+            raise ValueError("Planning context is required but was empty")
+
+        # Check if planning context is an error dict
+        if isinstance(prep_res["planning_context"], dict) and "error" in prep_res["planning_context"]:
+            raise ValueError(f"Planning context error: {prep_res['planning_context']['error']}")
+
+        # Lazy load model
+        model = llm.get_model(prep_res["model_name"])
+
+        # Build prompt with template emphasis
+        prompt = self._build_prompt(prep_res)
+
+        # Import FlowIR here to avoid circular imports
+        from pflow.planning.ir_models import FlowIR
+
+        # Generate with schema
+        response = model.prompt(prompt, schema=FlowIR, temperature=prep_res["temperature"])
+
+        # Parse nested Anthropic response
+        result = self._parse_structured_response(response, FlowIR)
+
+        # Convert to dict if it's a Pydantic model
+        if hasattr(result, "model_dump"):
+            workflow = result.model_dump(by_alias=True, exclude_none=True)
+        else:
+            workflow = dict(result)
+
+        logger.debug(f"Generated {len(workflow.get('nodes', []))} nodes")
+
+        return {"workflow": workflow, "attempt": prep_res["generation_attempts"] + 1}
+
+    def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
+        """Store generated workflow and route to validation.
+
+        Args:
+            shared: PocketFlow shared store
+            prep_res: Prepared data
+            exec_res: Execution result with workflow
+
+        Returns:
+            Action string "validate" to route to ValidatorNode
+        """
+        logger.debug(f"Generated {len(exec_res['workflow'].get('nodes', []))} nodes")
+
+        # Store generated workflow for validation
+        shared["generated_workflow"] = exec_res["workflow"]
+        shared["generation_attempts"] = exec_res["attempt"]
+
+        # CRITICAL: Always route to validation
+        return "validate"
+
+    def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
+        """Handle generation failure.
+
+        Args:
+            prep_res: Prepared data that caused the failure
+            exc: Exception that occurred
+
+        Returns:
+            Dict with error information
+        """
+        logger.error(f"GeneratorNode failed: {exc}")
+        return {
+            "success": False,
+            "error": str(exc),
+            "workflow": None,  # No fallback workflow
+        }
+
+    def _build_prompt(self, prep_res: dict[str, Any]) -> str:
+        """Build generation prompt with template emphasis.
+
+        Args:
+            prep_res: Prepared data with context and parameters
+
+        Returns:
+            Formatted prompt string
+        """
+        prompt = f"""Generate a workflow for: {prep_res["user_input"]}
+
+Available components:
+{prep_res["planning_context"]}
+
+CRITICAL Requirements:
+1. Use template variables ($variable) for ALL dynamic values
+2. NEVER hardcode values like "1234" - use $issue_number instead
+3. Generate LINEAR workflow only - no branching
+4. Template variables can use paths like $data.field.subfield
+5. Each template variable MUST have a corresponding key in the inputs field
+6. Create descriptive node IDs (e.g., "fetch_issues", not "n1")
+7. Avoid multiple nodes of the same type (causes shared store collision)
+
+Workflow Structure Requirements:
+- Must include "ir_version": "0.1.0"
+- Must include "inputs" field with parameter specifications
+- Each input should have: description, required, type, and optional default
+- Use universal defaults only (e.g., 100, not request-specific like 20)
+- Rename parameters for clarity (e.g., "filename" -> "input_file")
+"""
+
+        # Add discovered parameters as hints
+        if prep_res["discovered_params"]:
+            prompt += "\nDiscovered parameters (use as hints, rename for clarity):\n"
+            for param, value in prep_res["discovered_params"].items():
+                prompt += f"  - {param}: {value}\n"
+            prompt += "Remember: These are hints. You control the inputs specification.\n"
+
+        # Add validation errors for retry
+        if prep_res["generation_attempts"] > 0 and prep_res["validation_errors"]:
+            prompt += "\n\nFix ONLY these specific issues from the previous attempt:\n"
+            for error in prep_res["validation_errors"][:3]:  # Max 3 errors
+                prompt += f"- {error}\n"
+            prompt += "Keep the rest of the workflow unchanged."
+
+        return prompt
+
+    def _parse_structured_response(self, response: Any, expected_type: type) -> dict[str, Any]:
+        """Parse structured LLM response with Anthropic's nested format.
+
+        Args:
+            response: LLM response object
+            expected_type: Expected Pydantic model type for validation
+
+        Returns:
+            Parsed response as dict
+
+        Raises:
+            ValueError: If response cannot be parsed
+        """
+        try:
+            response_data = response.json()
+            if response_data is None:
+                raise ValueError("LLM returned None response")
+
+            # CRITICAL: Structured data is nested in content[0]['input'] for Anthropic
+            content = response_data.get("content")
+            if not content or not isinstance(content, list) or len(content) == 0:
+                raise ValueError("Invalid LLM response structure: missing or empty content")
+
+            result = content[0]["input"]
+
+            # Convert Pydantic model to dict if needed
+            if hasattr(result, "model_dump"):
+                model_dict: dict[str, Any] = result.model_dump(by_alias=True, exclude_none=True)
+                return model_dict
+            return dict(result)
+
+        except Exception as e:
+            logger.exception("Failed to parse LLM response")
+            raise ValueError(f"Response parsing failed: {e}") from e
