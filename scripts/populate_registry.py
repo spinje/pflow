@@ -47,11 +47,27 @@ def main():
     print("=" * 60)
     print()
 
-    print(f"Scanning for nodes in: {nodes_dir}")
+    # Automatically discover all subdirectories under nodes/
+    # This includes file/, github/, git/, llm/, etc.
+    node_directories = []
+
+    # Find all subdirectories (excluding __pycache__)
+    for subdir in nodes_dir.iterdir():
+        if subdir.is_dir() and subdir.name != "__pycache__" and not subdir.name.startswith("__"):
+            node_directories.append(subdir)
+            print(f"Found node package: {subdir.name}/")
+
+    # If no subdirectories found, scan the main directory
+    # This handles the case where nodes are directly in src/pflow/nodes/
+    if not node_directories:
+        print("No subdirectories found, scanning main nodes directory")
+        node_directories.append(nodes_dir)
+
+    print(f"\nScanning {len(node_directories)} directories for nodes...")
 
     try:
-        # Scan for nodes
-        scan_results = scan_for_nodes([nodes_dir])
+        # Scan for nodes in all discovered directories
+        scan_results = scan_for_nodes(node_directories)
 
         if not scan_results:
             print("Warning: No nodes found!")
