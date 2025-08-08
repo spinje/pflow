@@ -23,15 +23,15 @@ Are there any critical contradictions or ambiguities between any of these docume
 
 ---
 
-Subtasks 1, 2, and 3 have been completed. We are now ready to continue with Subtask 4.
+Subtasks 1, 2, 3 and 4 have been completed. We are now ready to continue with Subtask 5.
 
 Before beginning implementation:
 
-1. Read the handoff document from Subtask 3: `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-4.md`
+1. Read the handoff document from Subtask 4: `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-5.md`
 
-2. Think through what Subtask 4 (Generation System) needs to implement
+2. Think through what Subtask 5 (Validation & Refinement System) needs to implement
 
-3. Confirm you understand the scope of Subtask 4
+3. Confirm you understand the scope of Subtask 5
 
 **Important**:
 - Do NOT create a TODO list yet
@@ -46,7 +46,7 @@ Let me know when you have:
 ---
 
 
-You should get ready to write the spec for subtask 2. prepare to discuss the ins and outs of how it works. think hard and let me know when you are ready!
+You should get ready to write the spec for subtask 5. prepare to discuss the ins and outs of how it works. think hard and let me know when you are ready!
 
 
 
@@ -70,11 +70,33 @@ can you make sure you are not making any assumptions that are not absolutely ver
 
 ---
 
-before we start implementing subtask 2 I need your help on reviewing the spec file for subtask 2. Learn   everything you can about subtask 2 and get ready to discuss the ins and outs of what it includes and how it should work. think hard on this and let me know when you are ready to review the file. (do not read the spec yet, create your own understanding first)
+before we start implementing subtask 5 I need your help on reviewing the spec file for subtask 5. Learn everything you can about subtask 5 and get ready to discuss the ins and outs of what it includes and how it should work. think hard on this and let me know when you are ready to review the file. (do not read the spec yet, create your own understanding first)
 
-carefully review the .taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-2-spec.md file. Make  sure to note any inconcistencies and ambiguities with existing documentation. Think hard! I really love your attention to detail and entusiasm! Make sure to verify all your assumptions and try to understand everything DEEPLY!
+carefully review the .taskmaster/tasks/task_17/starting-context/specs/task-17-subtask-5-spec.md file. Make  sure to note any inconcistencies and ambiguities with existing documentation. Think hard! I really love your attention to detail and entusiasm! Make sure to verify all your assumptions and try to understand everything DEEPLY!
 
 Great insights but you need to be sure before we make any changes! Every changed or added line needs to be justified and have a clear explanation of why it is needed and how it is relevant to the task 17 subtask 2 agent and adds value to agent implementing subtask 2. Verify all assumtions with subagents, thinking hard or asking me for clarification if needed.
+
+---
+
+1. Template Variable Sources: Should validator accept $variables that come from node outputs
+  (like $issues), or only those defined in inputs?
+  2. Hardcoded Detection Rule: What's the exact rule? My interpretation: "If a value was in
+  discovered_params, it MUST be a template variable, not hardcoded. Static strings for
+  prompts/paths are OK."
+  3. Empty Inputs: Is "inputs": {} valid for workflows with no user-provided parameters?
+  4. Linear Edges: Is "action": "default" allowed, or must edges have no action field at all?
+  5. Parameter Renaming: If generator renames parameters for clarity, is that valid as long as
+  the new names are in inputs?
+
+1. Template Variable Sources: Validator should accept $variables that come from both node outputs and workflow inputs.
+2. Hardcoded Detection Rule: Is this even possible to detect? Clarfication: discovered_params are just suggestions/hints. The GeneratorNode has full control over the inputs field in the workflow IR. You should work with workflow inputs, not discovered_params.
+3. Empty Inputs: yes, but this should not be a common scenario.
+4. Linear Edges: yes action "default" is allowed but we should not prompt for this in mvp since we only support linear workflows and specifying the action default makes no difference in this version.
+5. Parameter Renaming: again, you are only working with the workflow IR, so you should not be concerned with the discovered_params.
+
+
+
+
 
 ---
 
