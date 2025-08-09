@@ -579,9 +579,9 @@ This is a game-changer for integration testing!
    - `pocketflow/docs/core_abstraction/node.md` - Node lifecycle patterns
    - `pocketflow/cookbook/pocketflow-flow/flow.py` - Practical flow example
    - Let subagents do additional research into pocketflow/docs/ and pocketflow/cookbook/ if needed if you still don't understand something
-2. Read `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-6.md` for handoff context
-3. Read `.taskmaster/tasks/task_17/handoffs/subtask-6-complete-learnings.md` for critical insights
-4. Check progress-log.md for Subtasks 1-5 insights
+2. **Read the shared progress log**: `.taskmaster/tasks/task_17/implementation/progress-log.md` - See what Subtasks 1-5 implemented and learned
+3. Read `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-6.md` for handoff context
+4. Read `.taskmaster/tasks/task_17/handoffs/subtask-6-complete-learnings.md` for critical insights
 5. Verify all 8 nodes exist in nodes.py
 6. Create implementation plan
 7. Start with ResultPreparationNode
