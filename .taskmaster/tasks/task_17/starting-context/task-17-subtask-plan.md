@@ -248,7 +248,7 @@ The decomposition follows these principles:
 **Implementation Checklist**:
 - [ ] ValidatorNode validates structure and templates
 - [ ] Template paths verified against registry
-- [ ] Routes: "valid" → metadata, "invalid" → generator, "failed" → result
+- [ ] Routes: "metadata_generation" → metadata, "retry" → generator, "failed" → result
 - [ ] MetadataGenerationNode extracts workflow info
 - [ ] Error messages actionable for retry
 - [ ] Tests cover valid/invalid scenarios
@@ -258,10 +258,14 @@ The decomposition follows these principles:
 ### Subtask 6: Flow Orchestration
 
 **Quick Start**:
-1. Create ResultPreparationNode for output formatting
-2. Create create_planner_flow() in flow.py
-3. Wire all nodes with proper edges and action strings
-4. Test both complete paths end-to-end
+1. Read `pocketflow/__init__.py` and understand how pocketflow works
+2. Create a detailed plan of the implementation
+3. Verify that the plan follows all pocketflow conventions and patterns
+4. Verify that the plan is considering what is actually implemented in the codebase (nodes made in previous subtasks)
+5. Create ResultPreparationNode for output formatting
+6. Create create_planner_flow() in flow.py
+7. Wire all nodes with proper edges and action strings
+8. Test both complete paths end-to-end
 
 **Scope**: Wire all nodes together into the complete meta-workflow with proper branching
 
@@ -286,8 +290,17 @@ The decomposition follows these principles:
 # Simplified edge structure
 flow.add_edge("discovery", "found_existing", "param_mapping")  # Path A
 flow.add_edge("discovery", "not_found", "browsing")            # Path B
+flow.add_edge("generator", "validate", "validator")           # Path B validation
+flow.add_edge("validator", "retry", "generator")              # Retry loop
+flow.add_edge("validator", "metadata_generation", "metadata")  # Success
 flow.add_edge("param_mapping", "params_complete", "preparation") # Convergence
 ```
+
+**Required reading (do not delagate to subagents):**:
+- `pocketflow/__init__.py` - The pocketflow framework code (only 200 lines)
+
+**Requirements**:
+- Make sure to follow all pocketflow conventions and patterns (delegate reserach to subagents)
 
 **Implementation Checklist**:
 - [ ] ResultPreparationNode formats planner_output
@@ -296,6 +309,7 @@ flow.add_edge("param_mapping", "params_complete", "preparation") # Convergence
 - [ ] Path B works end-to-end
 - [ ] Both paths converge correctly
 - [ ] Integration tests pass for both paths
+- [ ] Running the full flow works end-to-end with real LLM calls (Path A + B)
 
 ---
 
