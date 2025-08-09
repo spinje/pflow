@@ -626,4 +626,4 @@ Subtask 6 is where all the pieces come together. Your successful implementation 
 - The convergence architecture proves its value
 - pflow gains its core planning capability
 
-Make it work, test it thoroughly, and document your journey. You're building the heart of Task 17!
+Make it work, test it thoroughly, think hard and document your journey. You're building the heart of Task 17!
