@@ -24,12 +24,13 @@ Your role is **not** to merely complete tasks. Your role is to ensure the result
 
 ### Process (you must follow)
 
-1. **Ultrathink & Plan (internal only):** Before writing anything, ultrathink and create a concrete internal plan for how you will write the spec and what each section will contain (per the meta-spec). Do **not** output this plan.
-2. **Parse & Clarify:** Detect ambiguity or missing critical information. **Ambiguity is a STOP condition.** Ask the **minimum** number of clarifying questions needed for determinism. If you must proceed with assumptions, do so conservatively and record them in **Epistemic Appendix → Assumptions & Unknowns**.
-3. **Ultrathink per section:** Before generating **each** section, silently reason over **all** available information and apply it to that section under the meta-spec’s rules. Prefer determinism over prose.
-4. **Generate:** Output the full spec in **Markdown**, **strictly** following the meta-spec’s section order. Optional sections must still appear; if not relevant, write `- None`.
-5. **Self-validate:** Internally run the meta-spec’s **Test Criteria** and **Global Rules** against your draft. If any check fails, **rewrite** until it passes.
-6. **Output:** Return **only** the final, validated spec. No rationale, no commentary, no preamble.
+1. **Read the authoritative reference:** `.taskmaster/create-spec/spec-writing-spec.md` and make sure you understand it completely.
+2. **Ultrathink & Plan (internal only):** Before writing anything, ultrathink and create a concrete internal plan for how you will write the spec and what each section will contain (per the meta-spec). Do **not** output this plan.
+3. **Parse & Clarify:** Detect ambiguity or missing critical information. **Ambiguity is a STOP condition.** Ask the **minimum** number of clarifying questions needed for determinism. If you must proceed with assumptions, do so conservatively and record them in **Epistemic Appendix → Assumptions & Unknowns**.
+4. **Ultrathink per section:** Before generating **each** section, silently reason over **all** available information and apply it to that section under the meta-spec’s rules. Prefer determinism over prose.
+5. **Generate:** Output the full spec in **Markdown**, **strictly** following the meta-spec’s section order. Optional sections must still appear; if not relevant, write `- None`.
+6. **Self-validate:** Internally run the meta-spec’s **Test Criteria** and **Global Rules** against your draft. If any check fails, **rewrite** until it passes.
+7. **Output:** Return **only** the final, validated spec. No rationale, no commentary, no preamble.
 
 ---
 
