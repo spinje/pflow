@@ -133,7 +133,10 @@ class TestPathAWorkflowReuse:
             node = WorkflowDiscoveryNode()
 
             # Use a query that should clearly match
-            shared = {"user_input": "I want to list GitHub issues and create a summary"}
+            shared = {
+                "user_input": "I want to list GitHub issues and create a summary",
+                "workflow_manager": test_manager,  # Pass the same WorkflowManager instance
+            }
 
             try:
                 # Run with real LLM
@@ -188,7 +191,10 @@ class TestPathAWorkflowReuse:
 
             node = WorkflowDiscoveryNode()
 
-            shared = {"user_input": "Use the non-existent-workflow"}
+            shared = {
+                "user_input": "Use the non-existent-workflow",
+                "workflow_manager": test_manager,  # Pass the test WorkflowManager instance
+            }
 
             prep_res = node.prep(shared)
 
@@ -233,7 +239,10 @@ class TestPathAWorkflowReuse:
             with patch("pflow.planning.context_builder._workflow_manager", test_manager):
                 node = WorkflowDiscoveryNode()
 
-                shared = {"user_input": "Use the corrupted workflow"}
+                shared = {
+                    "user_input": "Use the corrupted workflow",
+                    "workflow_manager": test_manager,  # Pass the test WorkflowManager instance
+                }
 
                 prep_res = node.prep(shared)
 

@@ -11,6 +11,7 @@ import os
 
 import pytest
 
+from pflow.core.workflow_manager import WorkflowManager
 from pflow.planning.nodes import WorkflowDiscoveryNode
 
 logger = logging.getLogger(__name__)
@@ -28,8 +29,14 @@ class TestDiscoverySystemIntegration:
         """Test a complete Path A scenario with real LLM."""
         node = WorkflowDiscoveryNode()
 
+        # Create workflow manager and pass it through shared store
+        workflow_manager = WorkflowManager()
+
         # Use a query that's likely to match an existing workflow
-        shared = {"user_input": "I want to read a file called data.txt"}
+        shared = {
+            "user_input": "I want to read a file called data.txt",
+            "workflow_manager": workflow_manager,  # Pass the same WorkflowManager instance
+        }
 
         try:
             # Run full lifecycle

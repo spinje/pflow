@@ -50,7 +50,7 @@ def sample_ir():
             {
                 "id": "echo1",
                 "type": "test_echo",
-                "params": {"message": "Hello World"},
+                "params": {"message": "Hello $text"},  # Use the input as a template
             }
         ],
         "edges": [],
@@ -69,7 +69,7 @@ def another_ir():
             {
                 "id": "greet1",
                 "type": "test_echo",
-                "config": {"message": "Welcome {{name}}!"},
+                "config": {"message": "Welcome $name!"},
             }
         ],
         "edges": [],
@@ -185,6 +185,7 @@ class TestWorkflowLifecycleIntegration:
             _ = flow.run(shared)
 
             # Verify execution - TestEchoNode uses params["message"] when available
+            # The template $text will be resolved to "World"
             assert shared.get("result") == "Hello World"
         finally:
             # Clean up global namespace

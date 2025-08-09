@@ -5,7 +5,7 @@ alwaysApply: true
 ---
 # CLAUDE.md
 
-This file provides guidance to Cursor & Claude Code when working with code in this repository.
+This file provides guidance to Cursor and Claude Code when working with code and documentation in this repository.
 
 ## Core Directive - Epistemic Manifesto
 
@@ -54,6 +54,8 @@ This file provides guidance to Cursor & Claude Code when working with code in th
 We are building a modular, CLI-first system called `pflow`.
 
 pflow is a workflow compiler that transforms natural language and CLI pipe syntax into permanent, deterministic CLI commands. It follows a "Plan Once, Run Forever" philosophy - capturing user intent once and compiling it into reproducible workflows that run instantly without AI overhead.
+
+**What pflow produces**: Executable PocketFlow workflows - users describe what they want, and pflow generates the corresponding PocketFlow Flow objects that can be saved and reused.
 
 The goal is to enable local execution of intelligent workflows with the **minimal viable set of features**. This MVP will later evolve into a scalable cloud-native service.
 
@@ -161,9 +163,36 @@ pflow/
 │   └── tests/             # Framework test suite
 ├── src/pflow/             # Main pflow CLI implementation
 │   ├── __init__.py       # Package initialization
-│   └── cli/              # CLI module
-│       ├── __init__.py   # Exports main CLI entry point
-│       └── main.py       # CLI implementation with click
+│   ├── cli/              # CLI module
+│   │   └── main.py       # CLI implementation with click
+│   ├── core/             # Core utilities and schemas
+│   │   ├── ir_schema.py  # Pydantic models for JSON IR validation
+│   │   └── shell_integration.py  # Shell pipe and stdin/stdout handling
+│   ├── nodes/            # Platform node implementations
+│   │   └── file/         # File operation nodes (read, write, copy, move, delete)
+│   ├── planning/         # Natural language planning system
+│   │   └── context_builder.py  # Build context for LLM planning
+│   ├── registry/         # Node discovery and management
+│   │   ├── registry.py   # Central registry for nodes and metadata
+│   │   ├── scanner.py    # Dynamic node discovery from modules
+│   │   └── metadata_extractor.py  # Extract metadata from node docstrings
+│   └── runtime/          # Workflow execution components
+│       └── compiler.py   # IR to PocketFlow object compilation
+├── tests/                 # Comprehensive test suite
+│   ├── test_cli/         # CLI interface tests
+│   ├── test_core/        # Core functionality tests
+│   ├── test_docs/        # Documentation validation
+│   ├── test_integration/ # End-to-end integration tests
+│   ├── test_nodes/       # Node implementation tests
+│   │   └── test_file/    # File node operation tests
+│   ├── test_planning/    # Planning system tests
+│   ├── test_registry/    # Registry and scanner tests
+│   └── test_runtime/     # Runtime and compiler tests
+├── examples/              # Example workflows and usage patterns
+│   ├── README.md         # Examples overview and guide
+│   ├── core/             # Core workflow examples
+│   ├── advanced/         # Advanced workflow patterns
+│   └── invalid/          # Invalid examples for validation testing
 ├── docs/                  # Comprehensive project specifications
 │   ├── CLAUDE.md                  # Documentation navigation guide for AI
 │   ├── index.md                   # Documentation inventory and overview
@@ -178,7 +207,7 @@ pflow/
 │   │   ├── schemas.md                 # JSON IR and metadata schemas
 │   │   └── shared-store.md            # Shared store + proxy pattern
 │   ├── features/                      # Feature specifications
-│   │   ├── mvp-scope.md               # Clear MVP boundaries
+│   │   ├── mvp-implementation-guide.md  # Comprehensive MVP guide (scope + roadmap)
 │   │   ├── simple-nodes.md            # Simple node design pattern
 │   │   ├── cli-runtime.md             # CLI integration and shared store runtime
 │   │   ├── planner.md                 # Dual-mode planner (CLI + natural language)
@@ -189,6 +218,7 @@ pflow/
 │   ├── reference/                     # Reference documentation
 │   │   ├── cli-reference.md           # CLI commands and syntax
 │   │   ├── execution-reference.md     # Execution model and flow control
+│   │   ├── enhanced-interface-format.md # Docstring format for pflow nodes
 │   │   └── node-reference.md          # Node types and configurations
 │   ├── core-node-packages/            # Platform node package specifications
 │   ├── implementation-details/        # Implementation specifics
@@ -200,35 +230,37 @@ pflow/
 ├── .taskmaster/           # Task management and planning
 │   ├── tasks/            # Task tracking
 │   │   ├── task_1/
-│   │   │   ├── project-context.md
-│   │   │   ├── decomposition-plan.md
-│   │   │   ├── subtask_1.1/
-│   │   │   ├── subtask_1.2/
-│   │   │   └── task-review.md
-│   │   ├── task_2/
+│   │   │   └── task-review.md # Read this file to understand what has been implemented in previously completed tasks
+│   │   └── task_2/
 │   │   │   └── (same structure)
-│   │   └── tasks.json    # Detailed task list with subtasks
 │   ├── docs/             # Planning documentation
-│   │   └── implementation-roadmap.md  # High-level roadmap
-│   ├── workflow/         # Epistemic workflow system
-│   │   ├── workflow-overview.md       # Complete workflow guide
-│   │   ├── refine-task.md            # Main task workflow
-│   │   ├── refine-subtask.md         # Subtask refinement workflow
-│   │   ├── implement-subtask.md      # Implementation workflow
-│   │   └── templates/                # Workflow artifact templates
 │   ├── knowledge/        # Consolidated learning repository
 │   │   ├── CLAUDE.md    # Knowledge maintenance guide
 │   │   ├── patterns.md  # Successful implementation patterns
 │   │   ├── pitfalls.md  # Common mistakes to avoid
 │   │   └── decisions.md # Architectural decisions
-├── tests/                 # Test suite
-│   ├── test_links.py     # Documentation link validation
-│   └── test_cli.py       # CLI tests using click.testing.CliRunner
 ├── Makefile              # Development automation
 ├── pyproject.toml        # Project configuration and dependencies
+└── CLAUDE.md            # This file
 ```
 
 ### Claude's Operating Guidelines
+
+**Show Before You Code**: For any task that changes user-visible output:
+1. Show concrete before/after examples of the expected output when the task is complete
+2. Ask for confirmation before implementing
+3. This takes 30 seconds but saves hours of rework
+
+Example:
+```
+Current output:
+...
+
+Planned output:
+...
+
+Is this what you're expecting?
+```
 
 **Reasoning-First Approach**: Every code generation task must:
 1. Be part of MVP (unless explicitly requested by the user)
@@ -255,9 +287,11 @@ pflow/
 **Development Standards and process**:
 - Start small, build minimal components that can be expanded into reusable components
 - Each task includes its own test strategy. This ensures functionality is validated immediately and helps catch regressions when implementing future tasks.
+- Run `make test` (pytest) and `make check` (linting, type checking, etc.) before finalizing any implementation to ensure code quality
 - Document decisions and tradeoffs
 - Create `CLAUDE.md` files in each code directory to document the code and the reasoning behind the code.
-- Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/` directory.
+- Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/<conversation-subject>/` directory. Always create them in a subdirectory relevant to the current conversation.
+- *Always use subagents* when gathering information, context, do research and verifying assumptions. This is important, it is the only way to avoid running out of context window when working on complex tasks.
 
 ### Documentation Navigation
 
@@ -308,43 +342,53 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 
 *All documentation follows a single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
 
+> Remember: Always use subagents when reading documentation, examples and code. If you need specific information, ask a subagent to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
+
 ### Current State of the Project
 
-The codebase is in early development with:
+The codebase is in early development with these tasks completed:
 - ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
-- ✅ Create an overview roadmap for the MVP in `.taskmaster/docs/implementation-roadmap.md`
-- ✅ Create a detailed todo list with tasks and subtasks in `.taskmaster/tasks/tasks.json` based on the roadmap
-- ✅ Establish epistemic workflow for task execution in `.taskmaster/workflow/`
 - ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
-- ⏳ Implementing features for the MVP using the epistemic workflow (next: Task 5 - Node discovery)
+- ✅ Task 2 complete: Basic CLI run command with stdio/stdin support
+- ✅ Task 3 complete: Execute a Hardcoded 'Hello World' Workflow
+- ✅ Task 4 complete: Implement IR-to-PocketFlow Object Converter
+- ✅ Task 5 complete: Node discovery and registry implementation
+- ✅ Task 6 complete: Define JSON IR schema
+- ✅ Task 7 complete: Extract node metadata from docstrings
+- ✅ Task 8 complete: Build comprehensive shell pipe integration with stdin/stdout
+- ✅ Task 11 complete: Implement read-file and write-file nodes
+- ✅ Task 16 complete: Create planning context builder
+- ✅ Task 14 complete: Implement type, structure, description and semantic documentation for all Interface components
+- ✅ Task 15 complete: Extend context builder for two-phase discovery and structure documentation support (modify and extend the context builder implemented in Task 16)
+- ✅ Task 18 complete: Template Variable System
+- ✅ Task 19 complete: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
+- ✅ Task 20 complete: Implement Nested Workflow Execution
+- ✅ Task 21: Implement Workflow Input Declaration - workflows to declare their expected input and output parameters in the IR schema
+- ✅ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
+- ✅ Task 12: Implement LLM Node - Create a general-purpose LLM node - infinitely reusable building block by combining prompts with template variables
+- ✅ Task 26: Implement GitHub and Git Operation Nodes - 6 nodes for GitHub/Git automation
 
-## Task Implementation Workflow
+Next up:
+- ⏳ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
+   - Task 17 Subtask 1: Foundation & Infrastructure ✅ Completed
+   - Task 17 Subtask 2: Discovery System ✅ Completed
+   - Task 17 Subtask 3: Parameter Management System ✅ Completed
+   - Task 17 Subtask 4: Generation System ✅ Completed
+   - 🎯 Task 17 Subtask 5: Validation & Refinement System (Currently implementing)
+   - Task 17 Subtask 6: Flow Orchestration
+   - Task 17 Subtask 7: Integration & Polish
+- ⏳ Task 9: Implement shared store collision detection and proxy mapping
 
-**Use the unified epistemic workflow in `.taskmaster/workflow/`**:
-- `refine-task.md` - Main task understanding, project context creation, and decomposition
-- `refine-subtask.md` - Subtask refinement with knowledge loading
-- `implement-subtask.md` - Implementation with real-time learning capture
+*Update this list as you complete tasks.*
 
-**Core Principles**:
-1. **Task Understanding First**: Deeply understand the current task and create project context before decomposition
-2. **Natural Decomposition**: Break down tasks based on understanding, with optional reference to similar tasks
-3. **Compound Learning**: Each implementation builds on previous technical learnings
-
-The workflow ensures:
-- MAIN TASKS: Understand deeply, create project context, generate logical subtasks
-- ALL SUBTASKS: Read shared project context, load implementation knowledge
-- NEW TASKS: Optionally review similar tasks for inspiration
-- CONTINUING SUBTASKS: Read sibling reviews within current task
-- ALL WORK: Capture technical discoveries in real-time for future benefit
-
-See `.taskmaster/workflow/workflow-overview.md` for the complete system.
+> We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
 
 ## User Decisions and Recommendations
 
 Every time you need the user to make a decision, you should:
-1. Create a new markdown file in the folder `scratchpads/critical-user-decisions/` and write down the details about the decision and the reasoning why it is needed.
+1. Create a new markdown file in the folder `scratchpads/<conversation-subject>/critical-user-decisions/` and write down the details about the decision and the reasoning why it is needed.
 2. Give at least 2 options with clear recommendations.
 3. Add a markdown checkbox for each option so the user can select the option they prefer easily.
 
@@ -358,6 +402,10 @@ Every time you need the user to make a decision, you should:
 ## 1. Decision Title - Decision importance (1-5)
 
 Describe the decision and the reasoning why it is needed.
+
+### Context:
+
+Describe the context around the problem so it can be understood clearly in isolation.
 
 ### Options:
 
@@ -388,3 +436,12 @@ Document for user decision:
 2. Options with pros/cons
 3. Your recommendation and why
 4. Reversibility of each option
+
+### Project-specific Memories
+
+- **CLI Development Principle**: never commit code unless explicitly instructed by the user
+
+### Project-specific Design Principles and Memories
+
+- **Expectation Setting**: I think it is important that the agent (you) show what the expected output will be BEFORE you start implementing. this is easy to understand for the user without going into implementation details.
+```

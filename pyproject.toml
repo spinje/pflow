@@ -66,7 +66,7 @@ check_untyped_defs = true
 warn_return_any = true
 warn_unused_ignores = true
 show_error_codes = true
-exclude = ["pocketflow"]
+exclude = ["pocketflow", "scripts/debug"]
 
 [[tool.mypy.overrides]]
 module = "pocketflow.*"
@@ -79,7 +79,7 @@ testpaths = ["tests", "pocketflow/tests"]
 target-version = "py39"
 line-length = 120
 fix = true
-exclude = ["pocketflow/*"]
+exclude = ["pocketflow/*", "scripts/debug/*"]
 
 [tool.ruff.lint]
 select = [

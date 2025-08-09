@@ -148,7 +148,9 @@ class TestEnhancedTemplateErrors:
                 {
                     "id": "node1",
                     "type": "llm",
-                    "params": {"prompt": "Using $undeclared_var"},
+                    "params": {
+                        "prompt": "Using $declared_var and $undeclared_var"
+                    },  # Use both to avoid unused input error
                 }
             ],
         }
@@ -156,9 +158,14 @@ class TestEnhancedTemplateErrors:
         registry = create_mock_registry()
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
-        assert len(errors) == 1
-        assert "Template variable $undeclared_var has no valid source" in errors[0]
-        assert "not provided in initial_params and not written by any node" in errors[0]
+        # Should have 2 errors: one for missing required input, one for undeclared variable
+        assert len(errors) == 2
+
+        # Find the error about the undeclared variable
+        undeclared_error = next((e for e in errors if "undeclared_var" in e), None)
+        assert undeclared_error is not None
+        assert "Template variable $undeclared_var has no valid source" in undeclared_error
+        assert "not provided in initial_params and not written by any node" in undeclared_error
 
     def test_workflow_without_inputs_field(self):
         """Test that workflows without inputs field work correctly."""

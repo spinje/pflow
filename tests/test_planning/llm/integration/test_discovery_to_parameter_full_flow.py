@@ -61,13 +61,14 @@ class TestCompletePathAFlow:
             "edges": [],
         }
 
-        # Save test workflow
-        workflow_manager = WorkflowManager()
-        workflow_manager.save(self.workflow_name, test_workflow)
+        # Save test workflow using a shared workflow manager instance
+        self.workflow_manager = WorkflowManager()
+        self.workflow_manager.save(self.workflow_name, test_workflow)
 
     def teardown_method(self):
         """Clean up test workflows."""
-        workflow_manager = WorkflowManager()
+        # Use the same workflow manager instance if available
+        workflow_manager = getattr(self, "workflow_manager", WorkflowManager())
         try:
             workflow_path = Path(workflow_manager.workflow_dir) / f"{self.workflow_name}.json"
             if workflow_path.exists():
@@ -78,8 +79,13 @@ class TestCompletePathAFlow:
 
     def test_path_a_complete_flow_with_parameters(self):
         """Test Path A: Discovery finds workflow → Parameter mapping extracts params."""
-        # Initialize shared store with user request
-        shared = {"user_input": "I want to read a file called data.txt"}
+        # Use the same workflow manager instance from setup
+
+        # Initialize shared store with user request and workflow manager
+        shared = {
+            "user_input": "I want to read a file called data.txt",
+            "workflow_manager": self.workflow_manager,  # Pass the same WorkflowManager instance from setup
+        }
 
         try:
             # Step 1: WorkflowDiscoveryNode
@@ -134,8 +140,14 @@ class TestCompletePathAFlow:
 
     def test_path_a_with_stdin_fallback(self):
         """Test Path A with parameters from stdin when not in user input."""
+        # Use the same workflow manager instance from setup
+
         # Initialize shared store with vague request and stdin data
-        shared = {"user_input": "process the data file", "stdin": "data.txt"}
+        shared = {
+            "user_input": "process the data file",
+            "stdin": "data.txt",
+            "workflow_manager": self.workflow_manager,  # Pass the same WorkflowManager instance from setup
+        }
 
         try:
             # Step 1: WorkflowDiscoveryNode
@@ -167,8 +179,14 @@ class TestCompletePathBFlow:
 
     def test_path_b_complete_flow_generate_changelog(self):
         """Test Path B with generate-changelog example from North Star."""
+        # Create workflow manager and pass it through shared store
+        workflow_manager = WorkflowManager()
+
         # Initialize shared store with North Star example
-        shared = {"user_input": "Generate a changelog for the last 20 closed issues from the pflow repository"}
+        shared = {
+            "user_input": "Generate a changelog for the last 20 closed issues from the pflow repository",
+            "workflow_manager": workflow_manager,  # Pass the same WorkflowManager instance
+        }
 
         try:
             # Step 1: WorkflowDiscoveryNode (should route to Path B)
@@ -260,11 +278,15 @@ class TestCompletePathBFlow:
 
     def test_path_b_with_complex_multi_step_workflow(self):
         """Test Path B with a complex multi-step workflow request."""
+        # Create workflow manager and pass it through shared store
+        workflow_manager = WorkflowManager()
+
         shared = {
             "user_input": (
                 "Read all CSV files from the data folder, combine them into one dataset, "
                 "filter for records where status is 'active', and save the result as output.json"
-            )
+            ),
+            "workflow_manager": workflow_manager,  # Pass the same WorkflowManager instance
         }
 
         try:
@@ -367,8 +389,14 @@ class TestErrorHandlingWithRealLLM:
 
     def test_llm_produces_unexpected_format(self):
         """Test handling when LLM returns unexpected response format."""
+        # Create workflow manager and pass it through shared store
+        workflow_manager = WorkflowManager()
+
         # Use a request that might confuse the LLM
-        shared = {"user_input": "Do something with the thing using the stuff"}
+        shared = {
+            "user_input": "Do something with the thing using the stuff",
+            "workflow_manager": workflow_manager,  # Pass the same WorkflowManager instance
+        }
 
         try:
             discovery_node = WorkflowDiscoveryNode()
@@ -449,7 +477,13 @@ class TestDataFlowIntegrity:
 
     def test_shared_store_accumulation_through_path_b(self):
         """Verify data accumulates correctly through entire Path B flow."""
-        shared = {"user_input": "analyze sales.csv and generate summary report"}
+        # Create workflow manager and pass it through shared store
+        workflow_manager = WorkflowManager()
+
+        shared = {
+            "user_input": "analyze sales.csv and generate summary report",
+            "workflow_manager": workflow_manager,  # Pass the same WorkflowManager instance
+        }
 
         expected_keys_after_each_step = [
             # After discovery

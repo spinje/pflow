@@ -29,7 +29,16 @@ class TestDiscoveryPromptSensitive:
         """Test WorkflowDiscoveryNode with actual LLM API call."""
         # Create node and set up shared store
         node = WorkflowDiscoveryNode()
-        shared = {"user_input": "I want to read a file and analyze its contents"}
+
+        # Create workflow manager and pass it through shared store
+        from pflow.core.workflow_manager import WorkflowManager
+
+        workflow_manager = WorkflowManager()
+
+        shared = {
+            "user_input": "I want to read a file and analyze its contents",
+            "workflow_manager": workflow_manager,  # Pass the same WorkflowManager instance
+        }
 
         # Run the full lifecycle
         prep_res = node.prep(shared)
@@ -79,7 +88,15 @@ class TestDiscoveryPromptSensitive:
             "temperature": 0.5,
         }
 
-        shared = {"user_input": "simple test query"}
+        # Create workflow manager and pass it through shared store
+        from pflow.core.workflow_manager import WorkflowManager
+
+        workflow_manager = WorkflowManager()
+
+        shared = {
+            "user_input": "simple test query",
+            "workflow_manager": workflow_manager,  # Pass the same WorkflowManager instance
+        }
         prep_res = node.prep(shared)
 
         # Verify custom configuration is used

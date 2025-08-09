@@ -94,7 +94,10 @@ class TestConfidenceThresholds:
 
             node = WorkflowDiscoveryNode()
 
-            shared = {"user_input": "Maybe do something with files"}  # Vague query
+            shared = {
+                "user_input": "Maybe do something with files",  # Vague query
+                "workflow_manager": test_manager,  # Pass the same WorkflowManager instance
+            }
 
             prep_res = node.prep(shared)
 
@@ -140,7 +143,10 @@ class TestConfidenceThresholds:
                 node = WorkflowDiscoveryNode()
 
                 # Query that better matches "read-and-analyze-file" than "simple-file-reader"
-                shared = {"user_input": "Read a file and analyze its contents with AI"}
+                shared = {
+                    "user_input": "Read a file and analyze its contents with AI",
+                    "workflow_manager": test_manager,  # Pass the same WorkflowManager instance
+                }
 
                 prep_res = node.prep(shared)
 
@@ -189,7 +195,10 @@ class TestConfidenceThresholds:
 
             node = WorkflowDiscoveryNode()
 
-            shared = {"user_input": "Maybe do something with CSV files, not sure exactly what"}
+            shared = {
+                "user_input": "Maybe do something with CSV files, not sure exactly what",
+                "workflow_manager": test_manager,  # Pass the same WorkflowManager instance
+            }
 
             prep_res = node.prep(shared)
 
@@ -247,7 +256,10 @@ class TestConfidenceThresholds:
             node = WorkflowDiscoveryNode()
 
             # User asks for workflow by name but with additional requirements
-            shared = {"user_input": "Use read-and-analyze-file workflow but also send results via email"}
+            shared = {
+                "user_input": "Use read-and-analyze-file workflow but also send results via email",
+                "workflow_manager": test_manager,  # Pass the same WorkflowManager instance
+            }
 
             prep_res = node.prep(shared)
 

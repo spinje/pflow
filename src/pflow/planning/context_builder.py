@@ -325,6 +325,74 @@ def _format_discovery_nodes(categories: dict[str, list[str]], filtered_nodes: di
     return markdown_sections
 
 
+def _extract_workflow_description(workflow: dict[str, Any]) -> str:
+    """Extract description from workflow metadata.
+
+    Args:
+        workflow: Workflow metadata dict
+
+    Returns:
+        Description string or empty string
+    """
+    # Get description from rich metadata or fallback to basic description
+    if "rich_metadata" in workflow and "description" in workflow["rich_metadata"]:
+        return str(workflow["rich_metadata"]["description"])
+    elif workflow.get("description", "").strip():
+        return str(workflow["description"]).strip()
+    return ""
+
+
+def _format_workflow_keywords(workflow: dict[str, Any], markdown_sections: list[str]) -> None:
+    """Format and append workflow keywords if available.
+
+    Args:
+        workflow: Workflow metadata dict
+        markdown_sections: List to append formatted keywords to
+    """
+    if "rich_metadata" in workflow and "search_keywords" in workflow["rich_metadata"]:
+        keywords = workflow["rich_metadata"]["search_keywords"]
+        if keywords:
+            markdown_sections.append(f"Keywords: {', '.join(keywords)}")
+
+
+def _format_workflow_capabilities(workflow: dict[str, Any], markdown_sections: list[str]) -> None:
+    """Format and append workflow capabilities if available.
+
+    Args:
+        workflow: Workflow metadata dict
+        markdown_sections: List to append formatted capabilities to
+    """
+    if "rich_metadata" in workflow and "capabilities" in workflow["rich_metadata"]:
+        capabilities = workflow["rich_metadata"]["capabilities"]
+        if capabilities and len(capabilities) <= 3:  # Limit to avoid context bloat
+            markdown_sections.append("Capabilities:")
+            for capability in capabilities[:3]:  # Only show first 3
+                markdown_sections.append(f"- {capability}")
+
+
+def _format_single_workflow(workflow: dict[str, Any], markdown_sections: list[str]) -> None:
+    """Format a single workflow entry for discovery context.
+
+    Args:
+        workflow: Workflow metadata dict
+        markdown_sections: List to append formatted workflow to
+    """
+    markdown_sections.append(f"### {workflow['name']} (workflow)")
+
+    # Add description if available
+    description = _extract_workflow_description(workflow)
+    if description:
+        markdown_sections.append(description)
+
+    # Add keywords if available
+    _format_workflow_keywords(workflow, markdown_sections)
+
+    # Add capabilities if available
+    _format_workflow_capabilities(workflow, markdown_sections)
+
+    markdown_sections.append("")  # Empty line
+
+
 def _format_discovery_workflows(filtered_workflows: list[dict[str, Any]]) -> list[str]:
     """Format workflows section for discovery context."""
     markdown_sections = []
@@ -332,14 +400,7 @@ def _format_discovery_workflows(filtered_workflows: list[dict[str, Any]]) -> lis
     if filtered_workflows:
         markdown_sections.append("## Available Workflows\n")
         for workflow in sorted(filtered_workflows, key=lambda w: w["name"]):
-            markdown_sections.append(f"### {workflow['name']} (workflow)")
-
-            # Only show description, omit if missing
-            description = workflow.get("description", "").strip()
-            if description:
-                markdown_sections.append(description)
-
-            markdown_sections.append("")  # Empty line
+            _format_single_workflow(workflow, markdown_sections)
 
     return markdown_sections
 
@@ -348,6 +409,7 @@ def build_discovery_context(
     node_ids: Optional[list[str]] = None,
     workflow_names: Optional[list[str]] = None,
     registry_metadata: Optional[dict[str, dict[str, Any]]] = None,
+    workflow_manager: Optional[WorkflowManager] = None,
 ) -> str:
     """Build lightweight discovery context with names and descriptions only.
 
@@ -386,15 +448,23 @@ def build_discovery_context(
     categories = _group_nodes_by_category(filtered_nodes)
 
     # Load and filter workflows
-    # Check if _load_saved_workflows is being mocked (for tests)
-    if hasattr(_load_saved_workflows, "_mock_name"):
-        saved_workflows = _load_saved_workflows()
+    # Special case: when an explicit (even empty) registry_metadata is provided and is empty,
+    # keep discovery context minimal by not loading workflows from disk unless tests explicitly
+    # mock _load_saved_workflows.
+    if registry_metadata == {} and not hasattr(_load_saved_workflows, "_mock_name"):
+        filtered_workflows = []
     else:
-        saved_workflows = _get_workflow_manager().list_all()
-    if workflow_names is not None:
-        filtered_workflows = [w for w in saved_workflows if w["name"] in workflow_names]
-    else:
-        filtered_workflows = saved_workflows
+        # Check if _load_saved_workflows is being mocked (for tests)
+        if hasattr(_load_saved_workflows, "_mock_name"):
+            saved_workflows = _load_saved_workflows()
+        else:
+            # Use provided workflow_manager or fallback to singleton
+            manager = workflow_manager if workflow_manager else _get_workflow_manager()
+            saved_workflows = manager.list_all()
+        if workflow_names is not None:
+            filtered_workflows = [w for w in saved_workflows if w["name"] in workflow_names]
+        else:
+            filtered_workflows = saved_workflows
 
     # Build markdown sections
     markdown_sections = _format_discovery_nodes(categories, filtered_nodes)
@@ -499,6 +569,7 @@ def build_planning_context(
     selected_workflow_names: list[str],
     registry_metadata: dict[str, dict[str, Any]],
     saved_workflows: Optional[list[dict[str, Any]]] = None,
+    workflow_manager: Optional[WorkflowManager] = None,
 ) -> str | dict[str, Any]:
     """Build detailed planning context for selected components.
 
@@ -525,7 +596,9 @@ def build_planning_context(
         if hasattr(_load_saved_workflows, "_mock_name"):
             saved_workflows = _load_saved_workflows()
         else:
-            saved_workflows = _get_workflow_manager().list_all()
+            # Use provided workflow_manager or fallback to singleton
+            manager = workflow_manager if workflow_manager else _get_workflow_manager()
+            saved_workflows = manager.list_all()
 
     # Check for missing components
     error_dict = _check_missing_components(

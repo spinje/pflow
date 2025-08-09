@@ -401,43 +401,56 @@ uv run pytest --cov=src/pflow --cov-report=term-missing
 
 ## Common Pitfalls and Solutions
 
-### 1. Import Errors
+### 1. Testing Framework Behavior Instead of Your Code
+**Problem**: Creating PocketFlow flows with loops to test retry logic
+**Solution**: Test node outputs and action strings, not flow execution
+```python
+# ❌ WRONG: Testing PocketFlow's loop execution
+flow = Flow(start=generator)
+validator - "retry" >> generator  # Don't create actual loops!
+
+# ✅ RIGHT: Test that nodes return correct action strings
+action = validator.run(shared)
+assert action == "retry"  # PocketFlow handles the routing
+```
+
+### 2. Import Errors
 **Problem**: `ModuleNotFoundError: No module named 'src'`
 **Solution**: Run tests from project root, ensure PYTHONPATH is correct
 
-### 2. File System Tests
+### 3. File System Tests
 **Problem**: Tests fail due to file permissions or existing files
 **Solution**: Always use temporary directories, clean up in finally blocks
 
-### 3. Shared State Between Tests
+### 4. Shared State Between Tests
 **Problem**: Tests pass individually but fail when run together
 **Solution**: Ensure proper test isolation, don't modify global state
 
-### 4. Platform-Specific Issues
+### 5. Platform-Specific Issues
 **Problem**: Tests fail on different OS (Windows vs Unix)
 **Solution**: Use `os.path.join()`, handle line endings, use `pathlib`
 
-### 5. Async Test Issues
+### 6. Async Test Issues
 **Problem**: Async tests not running or hanging
 **Solution**: Use `pytest-asyncio`, mark async tests with `@pytest.mark.asyncio`
 
-### 6. Test Node Type Confusion
+### 7. Test Node Type Confusion
 **Problem**: `CompilationError: Node type 'basic-node' not found in registry`
 **Solution**: Use actual registered names: `test-node`, `test-node-retry`. Common aliases like `basic-node`, `transform-node` are conventions but not registered.
 
-### 7. Test Node Interface Inconsistency
+### 8. Test Node Interface Inconsistency
 **Problem**: `KeyError: 'test_output'` when using wrong test node
 **Solution**: `ExampleNode` uses `test_input`/`test_output`, `RetryExampleNode` uses `retry_input`/`retry_output`. Check node interfaces before use.
 
-### 8. Click Interactive Testing Limitation
+### 9. Click Interactive Testing Limitation
 **Problem**: Can't test interactive prompts (workflow save dialog) with CliRunner
 **Solution**: CliRunner always returns False for `isatty()`. Test components separately - execution and save functionality independently.
 
-### 9. Mock Pollution Between Test Files
+### 10. Mock Pollution Between Test Files
 **Problem**: Mocks from one test file persist and break other tests (e.g., performance tests mocking `_process_nodes`)
 **Solution**: Use `@pytest.fixture(autouse=True)` with `patch.stopall()` and `importlib.reload()` for modules with persistent mocks.
 
-### 10. Test Registry Must Point to Real Modules
+### 11. Test Registry Must Point to Real Modules
 **Problem**: `CompilationError: Node type 'basic-node' not found` when registry has fake modules like `"test.module"`
 **Solution**: Registry entries must point to importable modules. Use actual test file paths:
 ```python

@@ -2,7 +2,7 @@
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class NodeIR(BaseModel):
@@ -35,3 +35,41 @@ class FlowIR(BaseModel):
     def to_dict(self) -> dict:
         """Convert to dict for validation with existing schema."""
         return self.model_dump(by_alias=True, exclude_none=True)
+
+
+class WorkflowMetadata(BaseModel):
+    """Structured metadata for workflow discovery and reuse.
+
+    Critical for Path A success - enables workflows to be found
+    with natural language variations.
+    """
+
+    suggested_name: str = Field(
+        description="Concise, searchable name in kebab-case (max 50 chars)",
+        max_length=50,
+        pattern="^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
+
+    description: str = Field(
+        description="Comprehensive description for discovery (100-500 chars)", min_length=100, max_length=500
+    )
+
+    search_keywords: list[str] = Field(
+        description="Alternative terms users might search for", min_length=3, max_length=10
+    )
+
+    capabilities: list[str] = Field(description="What this workflow can do (bullet points)", min_length=2, max_length=6)
+
+    typical_use_cases: list[str] = Field(description="When/why someone would use this", min_length=1, max_length=3)
+
+    @field_validator("search_keywords")
+    @classmethod
+    def validate_keywords(cls, v: list[str]) -> list[str]:
+        """Ensure keywords are unique and lowercase."""
+        return list(dict.fromkeys(keyword.lower() for keyword in v))
+
+    @field_validator("suggested_name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Ensure name is lowercase kebab-case."""
+        return v.lower().replace("_", "-")

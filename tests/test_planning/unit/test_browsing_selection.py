@@ -115,7 +115,7 @@ class TestComponentBrowsingSelection:
             assert result["temperature"] == 0.0  # Default temperature
 
             mock_build.assert_called_once_with(
-                node_ids=None, workflow_names=None, registry_metadata=mock_registry.load()
+                node_ids=None, workflow_names=None, registry_metadata=mock_registry.load(), workflow_manager=None
             )
 
     def test_exec_extracts_nested_response_correctly(self, mock_llm_response_nested):
@@ -214,6 +214,7 @@ class TestComponentBrowsingSelection:
                 selected_workflow_names=["w1"],
                 registry_metadata={"meta": "data"},
                 saved_workflows=None,
+                workflow_manager=None,
             )
 
     def test_model_configuration_via_params(self, mock_llm_response_nested, mock_registry):

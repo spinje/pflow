@@ -108,7 +108,9 @@ class TestSharedStoreContracts:
             assert result["discovery_context"] == "test context"
             assert result["model_name"] == "anthropic/claude-sonnet-4-0"  # Default model
             assert result["temperature"] == 0.0  # Default temperature
-            mock_build.assert_called_once_with(node_ids=None, workflow_names=None, registry_metadata=None)
+            mock_build.assert_called_once_with(
+                node_ids=None, workflow_names=None, registry_metadata=None, workflow_manager=None
+            )
 
     def test_exec_extracts_nested_response_correctly(self, mock_llm_response_nested):
         """CRITICAL TEST: Verify nested response extraction pattern works."""

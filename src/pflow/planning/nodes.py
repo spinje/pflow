@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from pflow.core.exceptions import WorkflowNotFoundError
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.planning.context_builder import build_discovery_context, build_planning_context
+from pflow.planning.utils.llm_helpers import generate_workflow_name, parse_structured_response
 from pflow.registry import Registry
 from pocketflow import Node
 
@@ -90,12 +91,16 @@ class WorkflowDiscoveryNode(Node):
         model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
         temperature = self.params.get("temperature", 0.0)
 
+        # Get WorkflowManager from shared store if available
+        workflow_manager = shared.get("workflow_manager")
+
         # Load discovery context with all nodes and workflows
         try:
             discovery_context = build_discovery_context(
                 node_ids=None,  # All nodes
                 workflow_names=None,  # All workflows
                 registry_metadata=None,  # Will load from default registry
+                workflow_manager=workflow_manager,  # Pass from shared store
             )
         except Exception as e:
             logger.exception("Failed to build discovery context", extra={"phase": "prep", "error": str(e)})
@@ -140,7 +145,7 @@ Be strict - partial matches should return found=false."""
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
         response = model.prompt(prompt, schema=WorkflowDecision, temperature=prep_res["temperature"])
-        result = self._parse_structured_response(response, WorkflowDecision)
+        result = parse_structured_response(response, WorkflowDecision)
 
         logger.info(
             f"WorkflowDiscoveryNode: Decision - found={result['found']}, "
@@ -149,33 +154,6 @@ Be strict - partial matches should return found=false."""
         )
 
         return result
-
-    def _parse_structured_response(self, response: Any, expected_type: type) -> dict[str, Any]:
-        """Parse structured LLM response with Anthropic's nested format.
-
-        Args:
-            response: LLM response object
-            expected_type: Expected Pydantic model type for validation
-
-        Returns:
-            Parsed response as dict
-
-        Raises:
-            ValueError: If response cannot be parsed
-        """
-        try:
-            response_data = response.json()
-            if response_data is None:
-                raise ValueError("LLM returned None response")
-
-            # CRITICAL: Structured data is nested in content[0]['input'] for Anthropic
-            content = response_data.get("content")
-            if not content or not isinstance(content, list) or len(content) == 0:
-                raise ValueError("Invalid LLM response structure")
-
-            return dict(content[0]["input"])
-        except Exception as e:
-            raise ValueError(f"Failed to parse {expected_type.__name__} from LLM response: {e}") from e
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store discovery results and route to appropriate path.
@@ -194,7 +172,8 @@ Be strict - partial matches should return found=false."""
 
         # If found, load the complete workflow metadata
         if exec_res["found"] and exec_res.get("workflow_name"):
-            workflow_manager = WorkflowManager()
+            # Get WorkflowManager from shared store or create default
+            workflow_manager = shared.get("workflow_manager", WorkflowManager())
             try:
                 # load() returns full metadata wrapper with keys:
                 # name, description, ir, created_at, updated_at, version
@@ -309,10 +288,16 @@ class ComponentBrowsingNode(Node):
             # Continue with empty registry rather than failing
             registry_metadata = {}
 
+        # Get WorkflowManager from shared store if available
+        workflow_manager = shared.get("workflow_manager")
+
         # Get discovery context for browsing
         try:
             discovery_context = build_discovery_context(
-                node_ids=None, workflow_names=None, registry_metadata=registry_metadata
+                node_ids=None,
+                workflow_names=None,
+                registry_metadata=registry_metadata,
+                workflow_manager=workflow_manager,  # Pass from shared store
             )
         except Exception as e:
             logger.exception("Failed to build discovery context", extra={"phase": "prep", "error": str(e)})
@@ -360,7 +345,7 @@ Return lists of node IDs and workflow names that could be helpful."""  # noqa: S
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
         response = model.prompt(prompt, schema=ComponentSelection, temperature=prep_res["temperature"])
-        result = self._parse_structured_response(response, ComponentSelection)
+        result = parse_structured_response(response, ComponentSelection)
 
         logger.info(
             f"ComponentBrowsingNode: Selected {len(result['node_ids'])} nodes, "
@@ -373,33 +358,6 @@ Return lists of node IDs and workflow names that could be helpful."""  # noqa: S
         )
 
         return result
-
-    def _parse_structured_response(self, response: Any, expected_type: type) -> dict[str, Any]:
-        """Parse structured LLM response with Anthropic's nested format.
-
-        Args:
-            response: LLM response object
-            expected_type: Expected Pydantic model type for validation
-
-        Returns:
-            Parsed response as dict
-
-        Raises:
-            ValueError: If response cannot be parsed
-        """
-        try:
-            response_data = response.json()
-            if response_data is None:
-                raise ValueError("LLM returned None response")
-
-            # CRITICAL: Structured data is nested in content[0]['input'] for Anthropic
-            content = response_data.get("content")
-            if not content or not isinstance(content, list) or len(content) == 0:
-                raise ValueError("Invalid LLM response structure")
-
-            return dict(content[0]["input"])
-        except Exception as e:
-            raise ValueError(f"Failed to parse {expected_type.__name__} from LLM response: {e}") from e
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store browsing results and prepare planning context.
@@ -420,12 +378,16 @@ Return lists of node IDs and workflow names that could be helpful."""  # noqa: S
         shared["browsed_components"] = exec_res
         shared["registry_metadata"] = prep_res["registry_metadata"]
 
+        # Get WorkflowManager from shared store if available
+        workflow_manager = shared.get("workflow_manager")
+
         # Get detailed planning context for selected components
         planning_context = build_planning_context(
             selected_node_ids=exec_res["node_ids"],
             selected_workflow_names=exec_res["workflow_names"],
             registry_metadata=prep_res["registry_metadata"],
             saved_workflows=None,  # Will load automatically
+            workflow_manager=workflow_manager,  # Pass from shared store
         )
 
         # Check if planning_context is error dict
@@ -617,7 +579,7 @@ Examples:
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
         response = model.prompt(prompt, schema=ParameterDiscovery, temperature=prep_res["temperature"])
-        result = self._parse_structured_response(response, ParameterDiscovery)
+        result = parse_structured_response(response, ParameterDiscovery)
 
         logger.info(
             f"ParameterDiscoveryNode: Discovered {len(result['parameters'])} parameters",
@@ -625,33 +587,6 @@ Examples:
         )
 
         return result
-
-    def _parse_structured_response(self, response: Any, expected_type: type) -> dict[str, Any]:
-        """Parse structured LLM response with Anthropic's nested format.
-
-        Args:
-            response: LLM response object
-            expected_type: Expected Pydantic model type for validation
-
-        Returns:
-            Parsed response as dict
-
-        Raises:
-            ValueError: If response cannot be parsed
-        """
-        try:
-            response_data = response.json()
-            if response_data is None:
-                raise ValueError("LLM returned None response")
-
-            # CRITICAL: Structured data is nested in content[0]['input'] for Anthropic
-            content = response_data.get("content")
-            if not content or not isinstance(content, list) or len(content) == 0:
-                raise ValueError("Invalid LLM response structure")
-
-            return dict(content[0]["input"])
-        except Exception as e:
-            raise ValueError(f"Failed to parse {expected_type.__name__} from LLM response: {e}") from e
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store discovered parameters and continue Path B.
@@ -833,7 +768,7 @@ Important:
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
         response = model.prompt(prompt, schema=ParameterExtraction, temperature=prep_res["temperature"])
-        result = self._parse_structured_response(response, ParameterExtraction)
+        result = parse_structured_response(response, ParameterExtraction)
 
         # Validate all required parameters are present
         missing_required = []
@@ -857,33 +792,6 @@ Important:
         )
 
         return result
-
-    def _parse_structured_response(self, response: Any, expected_type: type) -> dict[str, Any]:
-        """Parse structured LLM response with Anthropic's nested format.
-
-        Args:
-            response: LLM response object
-            expected_type: Expected Pydantic model type for validation
-
-        Returns:
-            Parsed response as dict
-
-        Raises:
-            ValueError: If response cannot be parsed
-        """
-        try:
-            response_data = response.json()
-            if response_data is None:
-                raise ValueError("LLM returned None response")
-
-            # CRITICAL: Structured data is nested in content[0]['input'] for Anthropic
-            content = response_data.get("content")
-            if not content or not isinstance(content, list) or len(content) == 0:
-                raise ValueError("Invalid LLM response structure")
-
-            return dict(content[0]["input"])
-        except Exception as e:
-            raise ValueError(f"Failed to parse {expected_type.__name__} from LLM response: {e}") from e
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store extraction results and route based on completeness.
@@ -1098,7 +1006,7 @@ class WorkflowGeneratorNode(Node):
         response = model.prompt(prompt, schema=FlowIR, temperature=prep_res["temperature"])
 
         # Parse nested Anthropic response
-        result = self._parse_structured_response(response, FlowIR)
+        result = parse_structured_response(response, FlowIR)
 
         # Convert to dict if it's a Pydantic model
         if hasattr(result, "model_dump"):
@@ -1194,37 +1102,420 @@ Workflow Structure Requirements:
 
         return prompt
 
-    def _parse_structured_response(self, response: Any, expected_type: type) -> dict[str, Any]:
-        """Parse structured LLM response with Anthropic's nested format.
+
+class ValidatorNode(Node):
+    """Orchestrates validation checks for generated workflows.
+
+    Path B only: Validates structure, templates, and node types.
+    Routes to retry (< 3 attempts), metadata_generation (valid), or failed (>= 3 attempts).
+    """
+
+    def __init__(self, wait: int = 0) -> None:
+        """Initialize validator with direct registry instantiation."""
+        super().__init__(wait=wait)
+        self.registry = Registry()  # Direct instantiation per PocketFlow pattern
+
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """Extract workflow and attempt count from shared store.
 
         Args:
-            response: LLM response object
-            expected_type: Expected Pydantic model type for validation
+            shared: PocketFlow shared store
 
         Returns:
-            Parsed response as dict
-
-        Raises:
-            ValueError: If response cannot be parsed
+            Dict with workflow and generation_attempts
         """
+        return {
+            "workflow": shared.get("generated_workflow"),
+            "generation_attempts": shared.get("generation_attempts", 0),
+        }
+
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Orchestrate validation checks.
+
+        Calls:
+        1. validate_ir() for structural validation
+        2. TemplateValidator for template and unused input validation
+        3. Registry check for node type validation
+
+        Args:
+            prep_res: Contains workflow and generation_attempts
+
+        Returns:
+            Dict with errors list (empty if valid)
+        """
+        workflow = prep_res.get("workflow")
+        if not workflow:
+            logger.error("No workflow provided for validation")
+            return {"errors": ["No workflow provided for validation"]}
+
+        errors: list[str] = []
+
+        # Run all validation checks
+        structural_errors = self._validate_structure(workflow)
+        errors.extend(structural_errors)
+
+        template_errors = self._validate_templates(workflow)
+        errors.extend(template_errors)
+
+        node_type_errors = self._validate_node_types(workflow)
+        errors.extend(node_type_errors)
+
+        # Return top 3 most actionable errors
+        if errors:
+            logger.info(f"Validation found {len(errors)} total errors, returning top 3")
+        else:
+            logger.info("All validation checks passed")
+
+        return {"errors": errors[:3]}  # Limit to top 3 for LLM retry
+
+    def _validate_structure(self, workflow: dict[str, Any]) -> list[str]:
+        """Validate workflow structure using IR schema.
+
+        Args:
+            workflow: Workflow IR to validate
+
+        Returns:
+            List of structural validation errors
+        """
+        errors: list[str] = []
         try:
-            response_data = response.json()
-            if response_data is None:
-                raise ValueError("LLM returned None response")
+            from pflow.core.ir_schema import validate_ir
 
-            # CRITICAL: Structured data is nested in content[0]['input'] for Anthropic
-            content = response_data.get("content")
-            if not content or not isinstance(content, list) or len(content) == 0:
-                raise ValueError("Invalid LLM response structure: missing or empty content")
-
-            result = content[0]["input"]
-
-            # Convert Pydantic model to dict if needed
-            if hasattr(result, "model_dump"):
-                model_dict: dict[str, Any] = result.model_dump(by_alias=True, exclude_none=True)
-                return model_dict
-            return dict(result)
-
+            validate_ir(workflow)
+            logger.debug("Structural validation passed")
         except Exception as e:
-            logger.exception("Failed to parse LLM response")
-            raise ValueError(f"Response parsing failed: {e}") from e
+            # Handle both ValidationError and other exceptions
+            if hasattr(e, "path") and hasattr(e, "message"):
+                # ValidationError with path
+                error_msg = f"{e.path}: {e.message}" if e.path else str(e.message)
+            else:
+                # Other exceptions or ValidationError without path
+                error_msg = str(e)
+            errors.append(f"Structure: {error_msg}")
+            logger.warning(f"Structural validation failed: {error_msg}")
+
+        return errors
+
+    def _validate_templates(self, workflow: dict[str, Any]) -> list[str]:
+        """Validate template variables and unused inputs.
+
+        Args:
+            workflow: Workflow IR to validate
+
+        Returns:
+            List of template validation errors
+        """
+        errors: list[str] = []
+        try:
+            from pflow.runtime.template_validator import TemplateValidator
+
+            template_errors = TemplateValidator.validate_workflow_templates(
+                workflow,
+                {},  # Empty dict - no initial_params at generation time
+                self.registry,
+            )
+            errors.extend(template_errors)
+            if template_errors:
+                logger.warning(f"Template validation found {len(template_errors)} errors")
+            else:
+                logger.debug("Template validation passed")
+        except Exception as e:
+            errors.append(f"Template validation error: {e}")
+            logger.exception("Template validation failed")
+
+        return errors
+
+    def _validate_node_types(self, workflow: dict[str, Any]) -> list[str]:
+        """Validate that all node types exist in registry.
+
+        Args:
+            workflow: Workflow IR to validate
+
+        Returns:
+            List of unknown node type errors
+        """
+        errors: list[str] = []
+        try:
+            metadata = self.registry.get_nodes_metadata()  # type: ignore[call-arg]
+            for node in workflow.get("nodes", []):
+                node_type = node.get("type")
+                if node_type and node_type not in metadata:
+                    errors.append(f"Unknown node type: '{node_type}'")
+                    logger.warning(f"Unknown node type: {node_type}")
+
+            if not any("Unknown node type" in e for e in errors):
+                logger.debug("Node type validation passed")
+        except Exception as e:
+            errors.append(f"Registry validation error: {e}")
+            logger.exception("Registry validation failed")
+
+        return errors
+
+    def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
+        """Route based on validation results and retry count.
+
+        Args:
+            shared: PocketFlow shared store
+            prep_res: Prepared data with generation_attempts
+            exec_res: Execution result with errors list
+
+        Returns:
+            Action string: "retry", "metadata_generation", or "failed"
+        """
+        errors = exec_res.get("errors", [])
+        attempts = prep_res.get("generation_attempts", 0)
+
+        if not errors:
+            # All validations passed
+            logger.info("Workflow validated successfully, proceeding to metadata generation")
+            shared["workflow_metadata"] = {}  # Prepare for metadata node
+            return "metadata_generation"
+
+        # Check retry limit
+        if attempts >= 3:
+            logger.warning(f"Validation failed after {attempts} attempts, giving up")
+            shared["validation_errors"] = errors  # Store for result preparation
+            return "failed"
+
+        # Store errors for retry
+        logger.info(f"Validation failed on attempt {attempts}, retrying with errors")
+        shared["validation_errors"] = errors
+        return "retry"
+
+    def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
+        """Fallback for unexpected validation failures.
+
+        Args:
+            prep_res: Prepared data
+            exc: The exception that triggered the fallback
+
+        Returns:
+            Dict with critical error
+        """
+        logger.error(f"ValidatorNode exec_fallback triggered: {exc}")
+        return {"errors": ["Critical validation failure - unable to validate workflow"]}
+
+
+class MetadataGenerationNode(Node):
+    """Generates high-quality metadata using LLM analysis.
+
+    Path B only: Creates searchable metadata that enables Path A reuse.
+    Critical for workflow discoverability and the two-path architecture.
+    """
+
+    def __init__(self, wait: int = 0) -> None:
+        """Initialize metadata generator."""
+        super().__init__(wait=wait)
+
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """Gather data needed for LLM metadata generation.
+
+        Args:
+            shared: PocketFlow shared store
+
+        Returns:
+            Dict with workflow, user_input, and LLM config
+        """
+        return {
+            "workflow": shared.get("generated_workflow", {}),
+            "user_input": shared.get("user_input", ""),
+            "planning_context": shared.get("planning_context", ""),
+            "discovered_params": shared.get("discovered_params", {}),
+            "model_name": self.params.get("model", "anthropic/claude-3-haiku-20240307"),  # Faster model
+            "temperature": self.params.get("temperature", 0.3),  # Lower for consistency
+        }
+
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Use LLM to generate high-quality searchable metadata.
+
+        Args:
+            prep_res: Contains workflow and context for analysis
+
+        Returns:
+            Dict with rich metadata fields for discovery
+        """
+
+        import llm
+
+        from pflow.planning.ir_models import WorkflowMetadata
+        from pflow.planning.utils.llm_helpers import parse_structured_response
+
+        workflow = prep_res.get("workflow", {})
+
+        # Build comprehensive prompt for metadata generation
+        prompt = self._build_metadata_prompt(
+            workflow=workflow,
+            user_input=prep_res.get("user_input", ""),
+            discovered_params=prep_res.get("discovered_params", {}),
+        )
+
+        # Get LLM to analyze and generate metadata
+        model = llm.get_model(prep_res["model_name"])
+        response = model.prompt(prompt, schema=WorkflowMetadata, temperature=prep_res["temperature"])
+
+        # Parse the structured response
+        metadata = parse_structured_response(response, WorkflowMetadata)
+
+        # Convert to plain dict for uniform downstream handling
+        metadata_dict = metadata.model_dump() if hasattr(metadata, "model_dump") else dict(metadata)
+
+        logger.debug(
+            "Generated rich metadata: name=%s, keywords=%s",
+            metadata_dict.get("suggested_name"),
+            len(metadata_dict.get("search_keywords", [])),
+        )
+
+        # Return comprehensive metadata (keep keys as produced by schema/tests)
+        return {
+            "suggested_name": metadata_dict.get("suggested_name"),
+            "description": metadata_dict.get("description"),
+            "search_keywords": metadata_dict.get("search_keywords", []),
+            "capabilities": metadata_dict.get("capabilities", []),
+            "typical_use_cases": metadata_dict.get("typical_use_cases", []),
+            "declared_inputs": list(workflow.get("inputs", {}).keys()),
+            "declared_outputs": self._extract_outputs(workflow),
+        }
+
+    def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
+        """Store metadata and continue flow.
+
+        Args:
+            shared: PocketFlow shared store
+            prep_res: Prepared data
+            exec_res: Execution result with metadata
+
+        Returns:
+            Empty string to continue flow
+        """
+        # Store metadata exactly as produced by exec()
+        shared["workflow_metadata"] = exec_res
+        logger.info("Metadata extracted: %s", exec_res.get("suggested_name"))
+
+        # Return empty string to continue flow to ParameterMappingNode
+        return ""
+
+    def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
+        """Fallback with basic metadata using simple extraction.
+
+        Args:
+            prep_res: Prepared data
+            exc: The exception that triggered the fallback
+
+        Returns:
+            Dict with basic metadata
+        """
+        logger.warning(f"MetadataGenerationNode exec_fallback triggered: {exc}, using simple extraction")
+
+        workflow = prep_res.get("workflow", {})
+        user_input = prep_res.get("user_input", "")
+
+        # Fallback to simple extraction
+        return {
+            "suggested_name": generate_workflow_name(user_input),
+            "description": user_input[:200] if user_input else "Generated workflow",
+            "search_keywords": [],  # Empty in fallback
+            "capabilities": [],  # Empty in fallback
+            "typical_use_cases": [],  # Empty in fallback
+            "declared_inputs": list(workflow.get("inputs", {}).keys()),
+            "declared_outputs": self._extract_outputs(workflow),
+        }
+
+    def _build_metadata_prompt(self, workflow: dict, user_input: str, discovered_params: dict) -> str:
+        """Build comprehensive prompt for metadata generation.
+
+        Args:
+            workflow: The generated workflow IR
+            user_input: Original user request
+            discovered_params: Parameters discovered from user input
+
+        Returns:
+            Detailed prompt for LLM metadata generation
+        """
+
+        # Analyze workflow to understand what it does
+        nodes_summary = self._summarize_nodes(workflow.get("nodes", []))
+
+        return f"""Analyze this workflow and generate high-quality metadata for future discovery.
+
+ORIGINAL USER REQUEST:
+{user_input}
+
+WORKFLOW STRUCTURE:
+Nodes: {nodes_summary}
+Inputs: {", ".join(workflow.get("inputs", {}).keys()) or "none"}
+Parameters discovered: {", ".join(discovered_params.keys()) if discovered_params else "none"}
+
+CRITICAL REQUIREMENT: Generate metadata that enables this workflow to be found with various search queries.
+
+CRITICAL RULES for description and keywords:
+- NEVER include specific parameter values (like "30 issues" or "pflow repo")
+- NEVER mention specific file names or paths from the user's request
+- DO describe capabilities generically ("fetches closed issues", not "fetches 30 issues")
+- DO focus on what the workflow CAN do, not what it WAS configured to do
+- Example BAD: "Fetches the last 30 closed issues from pflow repo"
+- Example GOOD: "Fetches closed issues from any GitHub repository"
+
+The workflow is REUSABLE with different parameters - the metadata must reflect this!
+
+Generate the following metadata:
+
+1. suggested_name (kebab-case, max 50 chars):
+   - Concise, memorable, searchable
+   - Indicates primary function
+   - Examples: "github-changelog-generator", "issue-triage-analyzer"
+
+2. description (100-500 chars):
+   - Explain WHAT it does, WHY it's useful, WHEN to use it
+   - Include key technologies (GitHub, LLM, etc.)
+   - Make it searchable - think about different phrasings
+   - Focus on value, not implementation
+
+3. search_keywords (3-10 terms):
+   - Alternative ways users might search for this
+   - Include synonyms and related concepts
+   - Think: What would someone type when looking for this?
+   - Example: "changelog" → also include "release notes", "version history"
+
+4. capabilities (2-6 bullet points):
+   - What this workflow can do
+   - User-focused benefits
+   - Example: "Fetches GitHub issues", "Categorizes changes automatically"
+
+5. typical_use_cases (1-3 scenarios):
+   - Real-world problems it solves
+   - When someone would use this
+   - Example: "Preparing release documentation"
+
+REMEMBER: The metadata determines whether this workflow will be discovered and reused.
+Poor metadata means duplicate workflows will be created instead of reusing this one."""
+
+    def _summarize_nodes(self, nodes: list) -> str:
+        """Summarize the types of nodes used in the workflow.
+
+        Args:
+            nodes: List of nodes in the workflow
+
+        Returns:
+            Comma-separated list of unique node types
+        """
+        node_types = [node.get("type", "unknown") for node in nodes]
+        unique_types = list(dict.fromkeys(node_types))  # Preserve order, remove duplicates
+        return ", ".join(unique_types[:5]) if unique_types else "none"  # Limit to first 5 for brevity
+
+    def _extract_outputs(self, workflow: dict[str, Any]) -> list[str]:
+        """Extract output keys from workflow.
+
+        Simple approach: Look for outputs field or common output patterns.
+
+        Args:
+            workflow: Workflow IR
+
+        Returns:
+            List of output keys
+        """
+        # Check if workflow has explicit outputs field
+        if "outputs" in workflow:
+            return list(workflow["outputs"].keys())
+
+        # Otherwise, return empty list (can be enhanced later)
+        return []

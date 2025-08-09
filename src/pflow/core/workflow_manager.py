@@ -34,6 +34,111 @@ class WorkflowManager:
         self.workflows_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"WorkflowManager initialized with directory: {self.workflows_dir}")
 
+    def _validate_workflow_name(self, name: str) -> None:
+        """Validate workflow name.
+
+        Args:
+            name: Workflow name to validate
+
+        Raises:
+            WorkflowValidationError: If name is invalid
+        """
+        if not name:
+            raise WorkflowValidationError("Workflow name cannot be empty")
+        if len(name) > 50:
+            raise WorkflowValidationError("Workflow name cannot exceed 50 characters")
+        if "/" in name or "\\" in name:
+            raise WorkflowValidationError("Workflow name cannot contain path separators")
+
+        # Check for invalid characters (allow alphanumeric, hyphens, underscores, dots)
+        import re
+
+        if not re.match(r"^[a-zA-Z0-9._-]+$", name):
+            raise WorkflowValidationError(
+                "Workflow name can only contain letters, numbers, dots, hyphens, and underscores"
+            )
+
+    def _extract_description(
+        self, workflow_ir: dict[str, Any], description: Optional[str]
+    ) -> tuple[str, Optional[dict[str, Any]]]:
+        """Extract description and rich metadata from workflow IR.
+
+        Args:
+            workflow_ir: The workflow IR dictionary
+            description: Optional explicit description
+
+        Returns:
+            Tuple of (final description, rich metadata or None)
+        """
+        ir_description = ""
+        rich_metadata = None
+
+        if "metadata" in workflow_ir:
+            rich_metadata = workflow_ir["metadata"]
+            if not description and "description" in rich_metadata:
+                ir_description = rich_metadata["description"]
+
+        final_description = description or ir_description or ""
+        return final_description, rich_metadata
+
+    def _create_metadata_wrapper(
+        self, name: str, workflow_ir: dict[str, Any], description: str, rich_metadata: Optional[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Create metadata wrapper for workflow.
+
+        Args:
+            name: Workflow name
+            workflow_ir: The workflow IR dictionary
+            description: Workflow description
+            rich_metadata: Optional rich metadata from IR
+
+        Returns:
+            Metadata wrapper dictionary
+        """
+        now = datetime.now(timezone.utc).isoformat()
+
+        metadata = {
+            "name": name,
+            "description": description,
+            "ir": workflow_ir,
+            "created_at": now,
+            "updated_at": now,
+            "version": "1.0.0",
+        }
+
+        # Store rich metadata for discovery if available
+        if rich_metadata:
+            metadata["rich_metadata"] = rich_metadata
+
+        return metadata
+
+    def _perform_atomic_save(self, file_path: Path, temp_path: str) -> None:
+        """Perform atomic file save operation.
+
+        Args:
+            file_path: Target file path
+            temp_path: Temporary file path
+
+        Raises:
+            WorkflowExistsError: If workflow already exists
+            OSError: For other OS-level errors
+        """
+        try:
+            # Create hard link to temp file with target name
+            # This will fail with EEXIST if target already exists
+            os.link(temp_path, file_path)
+            # If successful, remove the temp file
+            os.unlink(temp_path)
+        except FileExistsError:
+            # Clean up temp file and raise our custom error
+            os.unlink(temp_path)
+            raise WorkflowExistsError(f"Workflow '{file_path.stem}' already exists") from None
+        except OSError:
+            # Handle other OS errors (disk full, permission denied, etc.)
+            # Clean up temp file and re-raise
+            Path(temp_path).unlink(missing_ok=True)
+            raise
+
     def save(self, name: str, workflow_ir: dict[str, Any], description: Optional[str] = None) -> str:
         """Save a workflow with metadata wrapper.
 
@@ -50,31 +155,13 @@ class WorkflowManager:
             WorkflowValidationError: If name is invalid
         """
         # Validate name
-        if not name:
-            raise WorkflowValidationError("Workflow name cannot be empty")
-        if len(name) > 50:
-            raise WorkflowValidationError("Workflow name cannot exceed 50 characters")
-        if "/" in name or "\\" in name:
-            raise WorkflowValidationError("Workflow name cannot contain path separators")
+        self._validate_workflow_name(name)
 
-        # Check for invalid characters (allow alphanumeric, hyphens, underscores, dots)
-        import re
-
-        if not re.match(r"^[a-zA-Z0-9._-]+$", name):
-            raise WorkflowValidationError(
-                "Workflow name can only contain letters, numbers, dots, hyphens, and underscores"
-            )
+        # Extract description and metadata
+        final_description, rich_metadata = self._extract_description(workflow_ir, description)
 
         # Create metadata wrapper
-        now = datetime.now(timezone.utc).isoformat()
-        metadata = {
-            "name": name,
-            "description": description or "",
-            "ir": workflow_ir,
-            "created_at": now,
-            "updated_at": now,
-            "version": "1.0.0",
-        }
+        metadata = self._create_metadata_wrapper(name, workflow_ir, final_description, rich_metadata)
 
         # Atomic write: write to temp file first, then rename
         file_path = self.workflows_dir / f"{name}.json"
@@ -85,23 +172,8 @@ class WorkflowManager:
             with open(temp_fd, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2)
 
-            # Attempt atomic rename - this will fail if target exists
-            # Using os.link() + os.unlink() for true atomicity on POSIX
-            try:
-                # Create hard link to temp file with target name
-                # This will fail with EEXIST if target already exists
-                os.link(temp_path, file_path)
-                # If successful, remove the temp file
-                os.unlink(temp_path)
-            except FileExistsError:
-                # Clean up temp file and raise our custom error
-                os.unlink(temp_path)
-                raise WorkflowExistsError(f"Workflow '{name}' already exists") from None
-            except OSError:
-                # Handle other OS errors (disk full, permission denied, etc.)
-                # Clean up temp file and re-raise
-                Path(temp_path).unlink(missing_ok=True)
-                raise
+            # Attempt atomic save
+            self._perform_atomic_save(file_path, temp_path)
 
             logger.info(f"Saved workflow '{name}' to {file_path}")
             return str(file_path)

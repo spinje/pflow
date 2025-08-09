@@ -55,6 +55,7 @@ class TemplateValidator:
 
         Uses the registry to determine which variables are written by nodes
         and validates that all template paths exist in the node outputs.
+        Also validates that all declared inputs are actually used.
 
         Args:
             workflow_ir: The workflow IR containing nodes with template parameters
@@ -69,14 +70,20 @@ class TemplateValidator:
         # Extract all templates from workflow
         all_templates = TemplateValidator._extract_all_templates(workflow_ir)
 
-        if not all_templates:
-            # No templates to validate
+        if all_templates:
+            logger.debug(
+                f"Found {len(all_templates)} template variables to validate", extra={"templates": sorted(all_templates)}
+            )
+        else:
             logger.debug("No template variables found in workflow")
-            return errors
 
-        logger.debug(
-            f"Found {len(all_templates)} template variables to validate", extra={"templates": sorted(all_templates)}
-        )
+        # Check for unused inputs
+        unused_input_errors = TemplateValidator._validate_unused_inputs(workflow_ir, all_templates)
+        errors.extend(unused_input_errors)
+
+        # If no templates, we can return early (after checking for unused inputs)
+        if not all_templates:
+            return errors
 
         # Get full output structure from nodes
         node_outputs = TemplateValidator._extract_node_outputs(workflow_ir, registry)
@@ -88,42 +95,8 @@ class TemplateValidator:
         # Validate each template path
         for template in sorted(all_templates):
             if not TemplateValidator._validate_template_path(template, available_params, node_outputs):
-                # Check if it's a base variable or a path
-                if "." in template:
-                    base_var = template.split(".")[0]
-                    if base_var in available_params:
-                        errors.append(
-                            f"Template path ${template} cannot be validated - initial_params values are runtime-dependent"
-                        )
-                    else:
-                        # Check if base variable is a declared input
-                        input_desc = TemplateValidator._get_input_description(base_var, workflow_ir)
-
-                        # Extract the path component after the base variable
-                        path_component = template[len(base_var) + 1 :] if "." in template else template
-
-                        if input_desc:
-                            errors.append(
-                                f"Required input '${base_var}' not provided{input_desc} - "
-                                f"attempted to access path '{path_component}'"
-                            )
-                        else:
-                            errors.append(
-                                f"Template variable ${template} has no valid source - "
-                                f"not provided in initial_params and path '{path_component}' "
-                                f"not found in outputs from any node in the workflow"
-                            )
-                else:
-                    # Simple variable not found
-                    input_desc = TemplateValidator._get_input_description(template, workflow_ir)
-
-                    if input_desc:
-                        errors.append(f"Required input '${template}' not provided{input_desc}")
-                    else:
-                        errors.append(
-                            f"Template variable ${template} has no valid source - "
-                            f"not provided in initial_params and not written by any node"
-                        )
+                error = TemplateValidator._create_template_error(template, available_params, workflow_ir)
+                errors.append(error)
 
         if errors:
             logger.warning(
@@ -133,6 +106,75 @@ class TemplateValidator:
             logger.info("Template validation passed")
 
         return errors
+
+    @staticmethod
+    def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]) -> list[str]:
+        """Validate that all declared inputs are actually used.
+
+        Args:
+            workflow_ir: The workflow IR
+            all_templates: Set of all template variables found
+
+        Returns:
+            List of error messages for unused inputs
+        """
+        errors: list[str] = []
+        declared_inputs = set(workflow_ir.get("inputs", {}).keys())
+
+        if declared_inputs:
+            # Extract base variable names from templates (before any dots)
+            used_inputs = {var.split(".")[0] for var in all_templates if var.split(".")[0] in declared_inputs}
+
+            unused_inputs = declared_inputs - used_inputs
+            if unused_inputs:
+                errors.append(f"Declared input(s) never used as template variable: {', '.join(sorted(unused_inputs))}")
+                logger.warning(f"Found {len(unused_inputs)} unused inputs", extra={"unused": sorted(unused_inputs)})
+
+        return errors
+
+    @staticmethod
+    def _create_template_error(template: str, available_params: dict[str, Any], workflow_ir: dict[str, Any]) -> str:
+        """Create appropriate error message for missing template variable.
+
+        Args:
+            template: Template variable name
+            available_params: Available parameters
+            workflow_ir: The workflow IR
+
+        Returns:
+            Error message string
+        """
+        if "." in template:
+            base_var = template.split(".")[0]
+            if base_var in available_params:
+                return f"Template path ${template} cannot be validated - initial_params values are runtime-dependent"
+
+            # Check if base variable is a declared input
+            input_desc = TemplateValidator._get_input_description(base_var, workflow_ir)
+            path_component = template[len(base_var) + 1 :]
+
+            if input_desc:
+                return (
+                    f"Required input '${base_var}' not provided{input_desc} - "
+                    f"attempted to access path '{path_component}'"
+                )
+            else:
+                return (
+                    f"Template variable ${template} has no valid source - "
+                    f"not provided in initial_params and path '{path_component}' "
+                    f"not found in outputs from any node in the workflow"
+                )
+        else:
+            # Simple variable not found
+            input_desc = TemplateValidator._get_input_description(template, workflow_ir)
+
+            if input_desc:
+                return f"Required input '${template}' not provided{input_desc}"
+            else:
+                return (
+                    f"Template variable ${template} has no valid source - "
+                    f"not provided in initial_params and not written by any node"
+                )
 
     # More permissive pattern to catch malformed templates for validation
     _PERMISSIVE_PATTERN = re.compile(r"\$([a-zA-Z_]\w*(?:\.\w*)*)")
