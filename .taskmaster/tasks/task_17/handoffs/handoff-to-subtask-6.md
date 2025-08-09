@@ -24,18 +24,18 @@ else:
 
 ## 🚨 PocketFlow Loop Limitation That Will Bite You
 
-**THE PROBLEM**: PocketFlow's `Flow` class uses `copy.copy()` (lines 99, 107 in `pocketflow/__init__.py`) which breaks with loops.
+**THE PROBLEM**: PocketFlow's `Flow` class uses `copy.copy()` (lines 99, 107 in `pocketflow/__init__.py`) which creates fresh node instances on each transition. While our nodes correctly use the shared store for state, integration tests of the complete flow are complex and prone to issues.
 
 **WHAT THIS MEANS FOR YOU**:
-- You CANNOT create actual retry loops in the flow
-- The flow definition will specify edges, but loops won't execute properly
-- I deleted 3 test files that tried to test loops - they all hung indefinitely
+- The retry mechanism is correctly implemented (stops after 3 attempts)
+- Full flow execution tests are fragile and were deleted
+- Focus on testing individual node behavior and flow structure, not full mocked execution
 
 **HOW TO HANDLE THIS**:
-1. Define the edges correctly (for documentation/future)
-2. Accept that retry won't work in actual execution (yet)
-3. Test with `max_retries=0` or mock the retry behavior
-4. Document this limitation clearly
+1. Define the edges correctly (for production use)
+2. Test the flow structure, not execution behavior
+3. Test with WorkflowManager passed via shared store for controlled testing
+4. Document the testing limitation clearly
 
 ## 📊 Shared Store Contract You Must Honor
 
@@ -103,7 +103,7 @@ GeneratorNode (attempt 1)
     → ResultPreparationNode
 ```
 
-**BUT**: Due to PocketFlow limitations, this loop won't actually execute. The edges will be defined but execution stops at first "retry".
+**BUT**: Due to testing limitations with LLM non-determinism, this loop is difficult to test reliably. The edges work in production but full execution tests were removed. This was probably a mistake on the implementing agents part, but we should be aware that this can be hard to write properly. Take care and think hard before you start doing anything like this.
 
 ## 💀 Subtle Bugs I Fixed That Affect You
 
@@ -113,22 +113,22 @@ GeneratorNode (attempt 1)
 
 3. **Node initialization**: Nodes don't accept `name` parameter in `__init__()`. Set `self.name` after calling `super().__init__()`.
 
-## 🧪 Why Integration Tests Are Missing (Don't Add Them)
+## 🧪 Why Integration Tests Are Missing (Consider Adding Them Carefully)
 
 I deleted integration tests that tried to test the retry loop because:
 1. They were testing PocketFlow's routing, not our logic
-2. The loop doesn't work anyway due to `copy.copy()` issue
+2. The loop tests with mocked always-failing LLMs appeared to hang (again probably an implementation mistake when writing the tests)
 3. We have complete coverage via unit tests of action strings
 
-**Your job is to wire the flow, not test loop execution**. The action strings are tested. Trust them.
+**Your job is to wire the flow and test it works end-to-end**. Use WorkflowManager in shared store for controlled testing.
 
 ## 📍 Critical Files and Line Numbers
 
 **Your main work area**:
 - `src/pflow/planning/nodes.py` - All nodes are here
-  - ValidatorNode: lines 1106-1296
-  - MetadataGenerationNode: lines 1299-1440
-  - WorkflowGeneratorNode: lines 936-1103 (check how it routes to "validate")
+  - ValidatorNode: lines 1106-1297
+  - MetadataGenerationNode: lines 1299-1409
+  - WorkflowGeneratorNode: lines 936-1070 (check how it routes to "validate")
 
 **Tests that show the routing**:
 - `tests/test_planning/unit/test_validation.py` - Shows all routing paths
@@ -147,7 +147,7 @@ flow = Flow(start=discovery_node)
 
 # Path B edges you need to define:
 flow.add_edge(generator_node, "validate", validator_node)
-flow.add_edge(validator_node, "retry", generator_node)  # Won't actually loop
+flow.add_edge(validator_node, "retry", generator_node)  # Retry loop works in production
 flow.add_edge(validator_node, "metadata_generation", metadata_node)
 flow.add_edge(validator_node, "failed", result_node)
 flow.add_edge(metadata_node, "", parameter_mapping_node)  # Empty string!
@@ -155,7 +155,7 @@ flow.add_edge(metadata_node, "", parameter_mapping_node)  # Empty string!
 
 ## 🚨 What Will Break Without Warning
 
-1. **If you test with actual loops**: Tests will hang forever. Use mocks or `max_retries=0`.
+1. **If you test with always-failing mocked LLMs**: Tests may appear to hang. Use controlled test scenarios.
 
 2. **If you use wrong action strings**: The flow won't route correctly. Use EXACTLY: "retry", "metadata_generation", "failed".
 
@@ -175,15 +175,15 @@ flow.add_edge(metadata_node, "", parameter_mapping_node)  # Empty string!
 
 You're successful when:
 1. All nodes are wired with correct edges
-2. The flow definition exists (even if loops don't execute)
+2. The flow executes end-to-end successfully
 3. Path A and Path B converge at ParameterMappingNode
-4. Tests verify the flow structure (not execution)
-5. Documentation clearly notes the loop limitation
+4. Tests verify the flow works with controlled test data
+5. Documentation clearly notes any testing limitations
 
 ## ⚠️ Final Warning
 
-The retry mechanism is **defined by action strings**, not by actual flow execution. Your job is to wire the nodes correctly so that when PocketFlow eventually fixes the loop issue, everything will just work.
+The retry mechanism is **defined by action strings** and works correctly in production. The 3-attempt limit prevents infinite loops. Test with controlled scenarios using WorkflowManager in shared store.
 
-Don't waste time trying to make loops work. They won't. Define them correctly and move on.
+Wire the nodes correctly and test the complete planner flow end-to-end.
 
 Good luck with the orchestration! The nodes are solid, you just need to connect them properly.

@@ -16,22 +16,24 @@ I should now investigate how we can break down the task into smaller subtasks
 read .taskmaster/workflow/epistemic-manifesto.md and let me know when you have understood it
 
 
-read .taskmaster/tasks/task_17/starting-context/task-17-overview.md and all 9 mentioned documents mentioned in full. think hard to try to grasp what this task is about. let me know when you are done and ready for the next step.
+read .taskmaster/tasks/task_17/starting-context/task-17-overview.md and all 9 mentioned documents mentioned in full (read them yourself, do not use subagent for this). think hard to try to grasp what this task is about. let me know when you are done and ready for the next step.
 
 Are there any critical contradictions or ambiguities between any of these documents? ultrathink
 
 
 ---
 
-Subtasks 1, 2, 3 and 4 have been completed. We are now ready to continue with Subtask 5.
+Subtasks 1, 2, 3, 4 and 5 have been completed. We are now ready to continue with Subtask 6.
 
 Before beginning implementation:
 
-1. Read the handoff document from Subtask 4: `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-5.md`
+1. Read the handoff document from Subtask 4: `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-6.md`
 
-2. Think through what Subtask 5 (Validation & Refinement System) needs to implement
+2. Read the shared progress log for all subtasks: `.taskmaster/tasks/task_17/implementation/progress-log.md` to understand the current state of the implementation
 
-3. Confirm you understand the scope of Subtask 5
+3. Think through what Subtask 6 (Flow Orchestration) needs to implement
+
+4. Confirm you understand the scope of Subtask 6
 
 **Important**:
 - Do NOT create a TODO list yet
@@ -40,7 +42,8 @@ Before beginning implementation:
 
 Let me know when you have:
 - Read the handoff document
-- Understood what Subtask 4 involves
+- Read the progress log
+- Understood what Subtask 6 involves
 - Are ready to discuss the ins and outs of how it works and create a spec for it
 
 ---
