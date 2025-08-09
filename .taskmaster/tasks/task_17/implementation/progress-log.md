@@ -1263,3 +1263,22 @@ Key Architectural Achievement:
 - Easy to test - just put WorkflowManager in shared store
 
 This fix enables the complete Path A flow to work correctly. Workflows saved via WorkflowManager are now discoverable by WorkflowDiscoveryNode, making workflow reuse actually possible. Without this fix, Path A was fundamentally broken in any scenario using non-default directories.
+
+## [2024-02-03 09:00] - Subtask 6 - Critical Bug Fixed in WorkflowGeneratorNode
+Fixed a critical bug in WorkflowGeneratorNode.exec_fallback() that would crash the flow.
+
+Problem:
+- exec_fallback() returned `{"success": False, "error": str, "workflow": None}`
+- post() expected `exec_res["workflow"].get("nodes")` → crashed with AttributeError on None
+- Test explicitly validated the bug by expecting `workflow: None`
+
+Fix:
+- exec_fallback() now returns same structure as exec(): `{"workflow": dict, "attempt": int}`
+- Returns empty but valid workflow that post() can process
+- ValidatorNode will detect empty workflow and route to "failed" appropriately
+
+Impact:
+- ✅ Flow no longer crashes when generation fails
+- ✅ Error handling works end-to-end
+- ✅ Added integration test to prevent regression
+- 💡 Lesson: exec_fallback() must return compatible structure with exec() for post()

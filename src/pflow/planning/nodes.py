@@ -1039,21 +1039,35 @@ class WorkflowGeneratorNode(Node):
         return "validate"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
-        """Handle generation failure.
+        """Handle generation failure gracefully.
+
+        Returns same structure as exec() to maintain compatibility with post().
+        The empty workflow will be caught by ValidatorNode and routed appropriately.
 
         Args:
             prep_res: Prepared data that caused the failure
             exc: Exception that occurred
 
         Returns:
-            Dict with error information
+            Dict with same structure as exec() - workflow dict and attempt count
         """
-        logger.error(f"GeneratorNode failed: {exc}")
-        return {
-            "success": False,
-            "error": str(exc),
-            "workflow": None,  # No fallback workflow
+        logger.error(f"GeneratorNode failed after retries: {exc}")
+
+        # Return minimal valid workflow structure that post() can process
+        # ValidatorNode will detect this is empty and route to "failed"
+        fallback_workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [],  # Empty nodes will fail validation
+            "edges": [],
+            "start_node": None,
+            "inputs": {},
+            "outputs": {},
+            # Store error information in the workflow for debugging
+            "_error": f"Generation failed: {exc}",
+            "_fallback": True,
         }
+
+        return {"workflow": fallback_workflow, "attempt": prep_res.get("generation_attempts", 0) + 1}
 
     def _build_prompt(self, prep_res: dict[str, Any]) -> str:
         """Build generation prompt with template emphasis.
