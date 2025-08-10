@@ -1250,12 +1250,18 @@ class ValidatorNode(Node):
         """
         errors: list[str] = []
         try:
-            metadata = self.registry.get_nodes_metadata()  # type: ignore[call-arg]
-            for node in workflow.get("nodes", []):
-                node_type = node.get("type")
-                if node_type and node_type not in metadata:
-                    errors.append(f"Unknown node type: '{node_type}'")
-                    logger.warning(f"Unknown node type: {node_type}")
+            # Extract all node types from the workflow
+            node_types = {node.get("type") for node in workflow.get("nodes", []) if node.get("type")}
+
+            if node_types:
+                # Get metadata for these specific node types
+                metadata = self.registry.get_nodes_metadata(node_types)
+
+                # Check if any are unknown
+                for node_type in node_types:
+                    if node_type not in metadata:
+                        errors.append(f"Unknown node type: '{node_type}'")
+                        logger.warning(f"Unknown node type: {node_type}")
 
             if not any("Unknown node type" in e for e in errors):
                 logger.debug("Node type validation passed")
@@ -1533,3 +1539,126 @@ Poor metadata means duplicate workflows will be created instead of reusing this 
 
         # Otherwise, return empty list (can be enhanced later)
         return []
+
+
+class ResultPreparationNode(Node):
+    """Final node that packages the planner output for CLI consumption.
+
+    This node has THREE entry points:
+    1. From ParameterPreparationNode ("") - Success path (both Path A & B)
+    2. From ParameterMappingNode ("params_incomplete") - Missing parameters
+    3. From ValidatorNode ("failed") - Generation failed after 3 attempts
+
+    It determines success/failure and packages all data into a structured
+    output that the CLI can use for execution or error reporting.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the result preparation node."""
+        super().__init__()
+        self.name = "result-preparation"
+
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """Gather all potential inputs from shared store.
+
+        Args:
+            shared: The shared store containing workflow data and state
+
+        Returns:
+            Dictionary with all relevant data for result preparation
+        """
+        # Core workflow data - check both Path A and Path B sources
+        workflow_ir = None
+        if shared.get("found_workflow"):
+            # Path A: Use the found workflow's IR
+            workflow_ir = shared["found_workflow"].get("ir")
+        elif shared.get("generated_workflow"):
+            # Path B: Use the generated workflow
+            workflow_ir = shared["generated_workflow"]
+
+        return {
+            "workflow_ir": workflow_ir,
+            "execution_params": shared.get("execution_params"),
+            "missing_params": shared.get("missing_params", []),
+            "validation_errors": shared.get("validation_errors", []),
+            "generation_attempts": shared.get("generation_attempts", 0),
+            "workflow_metadata": shared.get("workflow_metadata", {}),
+            "discovery_result": shared.get("discovery_result"),
+        }
+
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Determine success/failure and package the output.
+
+        Args:
+            prep_res: Data gathered from prep()
+
+        Returns:
+            Structured output for the planner
+        """
+        # Determine success criteria
+        success = bool(
+            prep_res["workflow_ir"]
+            and prep_res["execution_params"] is not None
+            and not prep_res["missing_params"]
+            and not prep_res["validation_errors"]
+        )
+
+        # Build error message if not successful
+        error = None
+        if not success:
+            error_parts = []
+
+            if not prep_res["workflow_ir"]:
+                if prep_res["generation_attempts"] >= 3:
+                    error_parts.append(f"Workflow generation failed after {prep_res['generation_attempts']} attempts")
+                else:
+                    error_parts.append("No workflow found or generated")
+
+            if prep_res["missing_params"]:
+                params_str = ", ".join(prep_res["missing_params"])
+                error_parts.append(f"Missing required parameters: {params_str}")
+
+            if prep_res["validation_errors"]:
+                errors_str = "; ".join(prep_res["validation_errors"][:3])  # Top 3 errors
+                error_parts.append(f"Validation errors: {errors_str}")
+
+            error = ". ".join(error_parts) if error_parts else "Unknown error occurred"
+
+        # Package the output
+        planner_output = {
+            "success": success,
+            "workflow_ir": prep_res["workflow_ir"] if success else None,
+            "execution_params": prep_res["execution_params"] if success else None,
+            "missing_params": prep_res["missing_params"] if prep_res["missing_params"] else None,
+            "error": error,
+            "workflow_metadata": prep_res["workflow_metadata"] if prep_res["workflow_metadata"] else None,
+        }
+
+        return planner_output
+
+    def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> None:
+        """Store the planner output and return None to end the flow.
+
+        Args:
+            shared: The shared store
+            prep_res: Data from prep()
+            exec_res: The planner output from exec()
+
+        Returns:
+            None to terminate the flow (standard PocketFlow pattern for final nodes)
+        """
+        # Store the final output in shared store for CLI consumption
+        shared["planner_output"] = exec_res
+
+        # Log the outcome for debugging
+        if exec_res["success"]:
+            logger.info("Planner completed successfully")
+            if prep_res["discovery_result"] and prep_res["discovery_result"].get("found"):
+                logger.info(f"Reused existing workflow: {prep_res['discovery_result'].get('workflow_name')}")
+            else:
+                logger.info("Generated new workflow")
+        else:
+            logger.warning(f"Planner failed: {exec_res['error']}")
+
+        # Return None to terminate the flow
+        return None
