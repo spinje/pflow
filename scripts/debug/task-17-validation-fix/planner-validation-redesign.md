@@ -180,7 +180,7 @@ if planner_output.get("needs_user_input"):
     for param in planner_output["missing_params"]:
         value = click.prompt(f"Enter value for {param}")
         shared[f"user_provided_{param}"] = value
-    
+
     # Resume from ParameterMappingNode with additional input
     shared["resume_from"] = "parameter_mapping"
     shared["additional_params"] = collected_params

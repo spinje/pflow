@@ -624,6 +624,52 @@ def build_planning_context(
     return "\n".join(markdown_sections).strip()
 
 
+def _extract_input_keys(inputs: list) -> set:
+    """Extract keys from input list."""
+    input_keys = set()
+    for inp in inputs:
+        if isinstance(inp, dict):
+            input_keys.add(inp["key"])
+        else:
+            input_keys.add(inp)
+    return input_keys
+
+
+def _format_param_line(param: dict | str, input_keys: set) -> str | None:
+    """Format a single parameter line if not in input_keys."""
+    if isinstance(param, dict):
+        key = param["key"]
+        if key not in input_keys:
+            type_str = param.get("type", "any")
+            desc = param.get("description", "")
+            line = f"- `{key}: {type_str}`"
+            if desc:
+                line += f" - {desc}"
+            return line
+    else:
+        if param not in input_keys:
+            return f"- `{param}`"
+    return None
+
+
+def _format_template_variables(inputs: list, lines: list[str]) -> None:
+    """Format template variable usage section."""
+    template_vars = []
+    for inp in inputs:
+        if isinstance(inp, dict):
+            key = inp["key"]
+            template_vars.append(f'{key}: "${key}"')
+
+    if template_vars:
+        lines.append("**Template Variables**: Use $variables in params field for inputs:")
+        for var in template_vars[:3]:  # Limit to first 3 to avoid bloat
+            lines.append(f"- {var}")
+        if len(template_vars) > 3:
+            lines.append(f"- ... and {len(template_vars) - 3} more")
+    else:
+        lines.append("**Template Variables**: Use $variables in params field for any input")
+
+
 def _format_exclusive_parameters(node_data: dict, inputs: list, lines: list[str]) -> None:
     """Format parameters that are not in inputs (exclusive params).
 
@@ -633,34 +679,20 @@ def _format_exclusive_parameters(node_data: dict, inputs: list, lines: list[str]
         lines: List to append formatted lines to
     """
     params = node_data["params"]
-    input_keys = set()
-    for inp in inputs:
-        if isinstance(inp, dict):
-            input_keys.add(inp["key"])
-        else:
-            input_keys.add(inp)
+    input_keys = _extract_input_keys(inputs)
 
     exclusive_params = []
     for param in params:
-        if isinstance(param, dict):
-            key = param["key"]
-            if key not in input_keys:
-                type_str = param.get("type", "any")
-                desc = param.get("description", "")
-
-                line = f"- `{key}: {type_str}`"
-                if desc:
-                    line += f" - {desc}"
-                exclusive_params.append(line)
-        else:
-            if param not in input_keys:
-                exclusive_params.append(f"- `{param}`")
+        formatted_line = _format_param_line(param, input_keys)
+        if formatted_line:
+            exclusive_params.append(formatted_line)
 
     if exclusive_params:
         lines.append("**Parameters**:")
         lines.extend(exclusive_params)
     else:
-        lines.append("**Parameters**: none")
+        # Show template variable usage instead of misleading "none"
+        _format_template_variables(inputs, lines)
 
 
 def _format_interface_item(item: dict | str, item_type: str, lines: list[str]) -> None:

@@ -72,7 +72,7 @@ Fix Mock Structures in Integration Tests
       mock_instance = Mock()
       mock_instance.load.return_value = {
           'llm': {
-              'interface': {'inputs': [], 'outputs': []},  # ✅ Required 
+              'interface': {'inputs': [], 'outputs': []},  # ✅ Required
   field
               'description': 'LLM node'
           }
@@ -86,7 +86,7 @@ Fix Mock Structures in Integration Tests
    field
 
   CORRECT:
-  assert output["workflow_ir"]["start_node"] == "fetch"  # ✅ Check IR 
+  assert output["workflow_ir"]["start_node"] == "fetch"  # ✅ Check IR
   structure
   assert len(output["workflow_ir"]["nodes"]) == 3
 

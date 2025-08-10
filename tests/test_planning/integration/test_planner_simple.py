@@ -1,10 +1,7 @@
 """Simple integration tests for the planner flow with correct mocking.
 
-⚠️ VALIDATION REDESIGN NOTE:
-These tests work around the validation-before-extraction issue by:
-1. Using workflows with no required inputs (empty "inputs": {})
-2. Providing multiple generation mocks for retry attempts
-See scratchpads/task-17-validation-fix/planner-validation-redesign.md for details.
+The validation flow has been redesigned to extract parameters BEFORE validation,
+allowing workflows with required inputs to pass validation correctly.
 """
 
 from unittest.mock import Mock, patch
@@ -202,6 +199,7 @@ class TestPlannerSimpleIntegration:
                 "llm": {"interface": {"inputs": [], "outputs": [], "params": []}, "description": "Process with LLM"},
                 "write-file": {"interface": {"inputs": [], "outputs": [], "params": []}, "description": "Write files"},
             }
+
             # get_nodes_metadata now takes node_types as argument
             def get_nodes_metadata_mock(node_types):
                 metadata = {
@@ -210,6 +208,7 @@ class TestPlannerSimpleIntegration:
                     "write-file": {},
                 }
                 return {nt: metadata.get(nt, {}) for nt in node_types if nt in metadata}
+
             mock_registry.get_nodes_metadata.side_effect = get_nodes_metadata_mock
             MockRegistry.return_value = mock_registry
 
@@ -217,44 +216,7 @@ class TestPlannerSimpleIntegration:
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
 
-                # Response sequence for Path B
-                # Create generation response factory for reuse
-                def create_generation_response():
-                    return Mock(
-                        json=lambda: {
-                            "content": [
-                                {
-                                    "input": {
-                                        "ir_version": "0.1.0",
-                                        "nodes": [
-                                            {"id": "read", "type": "read-file", "params": {"file_path": "$input_file"}},
-                                            {"id": "analyze", "type": "llm", "params": {"prompt": "Analyze CSV data from $input_file"}},
-                                            {"id": "write", "type": "write-file", "params": {"file_path": "$output_file", "content": "Analysis complete"}},
-                                        ],
-                                        "edges": [
-                                            {"from": "read", "to": "analyze"},
-                                            {"from": "analyze", "to": "write"},
-                                        ],
-                                        "start_node": "read",
-                                        "inputs": {
-                                            "input_file": {
-                                                "description": "CSV file to analyze",
-                                                "type": "string",
-                                                "required": True,
-                                            },
-                                            "output_file": {
-                                                "description": "Output report file",
-                                                "type": "string",
-                                                "required": True,
-                                            },
-                                        },
-                                        "outputs": {},
-                                    }
-                                }
-                            ]
-                        }
-                    )
-
+                # Response sequence for Path B with new flow order
                 responses = [
                     # 1. Discovery - no workflow found
                     Mock(
@@ -299,31 +261,50 @@ class TestPlannerSimpleIntegration:
                             ]
                         }
                     ),
-                    # 4. Workflow generation (attempt 1)
-                    create_generation_response(),
-                    # 5. Workflow generation (attempt 2 if validation fails)
-                    create_generation_response(),
-                    # 6. Workflow generation (attempt 3 if validation fails again)
-                    create_generation_response(),
-                    # 7. Metadata generation (if validation eventually passes)
+                    # 4. Workflow generation (only 1 needed now!)
                     Mock(
                         json=lambda: {
                             "content": [
                                 {
                                     "input": {
-                                        "suggested_name": "csv-analyzer",
-                                        "description": "Analyze CSV files and generate reports",
-                                        "search_keywords": ["csv", "analyze", "report"],
-                                        "capabilities": ["Read CSV", "Analyze data", "Generate reports"],
-                                        "typical_use_cases": ["Data analysis"],
-                                        "declared_inputs": ["input_file", "output_file"],
-                                        "declared_outputs": [],
+                                        "ir_version": "0.1.0",
+                                        "nodes": [
+                                            {"id": "read", "type": "read-file", "params": {"file_path": "$input_file"}},
+                                            {
+                                                "id": "analyze",
+                                                "type": "llm",
+                                                "params": {"prompt": "Analyze CSV data from $input_file"},
+                                            },
+                                            {
+                                                "id": "write",
+                                                "type": "write-file",
+                                                "params": {"file_path": "$output_file", "content": "Analysis complete"},
+                                            },
+                                        ],
+                                        "edges": [
+                                            {"from": "read", "to": "analyze"},
+                                            {"from": "analyze", "to": "write"},
+                                        ],
+                                        "start_node": "read",
+                                        "inputs": {
+                                            "input_file": {
+                                                "description": "CSV file to analyze",
+                                                "type": "string",
+                                                "required": True,
+                                            },
+                                            "output_file": {
+                                                "description": "Output report file",
+                                                "type": "string",
+                                                "required": True,
+                                            },
+                                        },
+                                        "outputs": {},
                                     }
                                 }
                             ]
                         }
                     ),
-                    # 8. Parameter mapping
+                    # 5. Parameter mapping (BEFORE validation now)
                     Mock(
                         json=lambda: {
                             "content": [
@@ -338,6 +319,8 @@ class TestPlannerSimpleIntegration:
                             ]
                         }
                     ),
+                    # Validation would happen here but param mapping detected missing params
+                    # so flow goes to ResultPreparation with error
                 ]
 
                 mock_model.prompt.side_effect = responses
@@ -350,20 +333,11 @@ class TestPlannerSimpleIntegration:
                 assert "planner_output" in shared
                 output = shared["planner_output"]
 
-                # Path B generates workflow but fails on validation
+                # Path B generates workflow but fails due to missing required parameters
                 assert output["success"] is False
-                # The error is about validation, not missing parameters at execution time
-                assert "Validation errors" in output["error"] or "Missing required parameters" in output["error"]
-                
-                # When validation fails after 3 attempts, we don't get to parameter mapping
-                # So there won't be missing_params populated
-                if "validation_errors" in shared:
-                    # Validation failed, so we didn't reach parameter mapping
-                    assert "generated_workflow" in shared
-                    assert "found_workflow" not in shared
-                else:
-                    # If we somehow passed validation, check missing params
-                    assert output["missing_params"] == ["input_file", "output_file"]
-                    # Verify metadata was generated
-                    assert "workflow_metadata" in shared
-                    assert shared["workflow_metadata"]["suggested_name"] == "csv-analyzer"
+                assert "Missing required parameters" in output["error"]
+                assert set(output["missing_params"]) == {"input_file", "output_file"}
+
+                # Verify Path B was taken
+                assert "generated_workflow" in shared
+                assert "found_workflow" not in shared

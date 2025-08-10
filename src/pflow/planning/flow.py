@@ -65,6 +65,9 @@ def create_planner_flow() -> Flow:
     # Discovery finds existing workflow → directly to parameter mapping
     discovery_node - "found_existing" >> parameter_mapping
 
+    # Path A: Parameters complete → skip validation, go to preparation
+    parameter_mapping - "params_complete" >> parameter_preparation
+
     # ============================================================
     # Path B: Workflow Generation (no existing workflow found)
     # ============================================================
@@ -79,15 +82,30 @@ def create_planner_flow() -> Flow:
     # ParameterDiscoveryNode returns "" (empty string) so we use default
     parameter_discovery >> workflow_generator
 
-    # Generate workflow → validate
-    # WorkflowGeneratorNode returns "validate" so we wire that action
-    workflow_generator - "validate" >> validator
+    # Generate workflow → extract parameters FIRST (VALIDATION REDESIGN FIX)
+    # WorkflowGeneratorNode returns "validate" but we route to parameter mapping first
+    # This ensures template validation happens WITH extracted parameter values
+    workflow_generator - "validate" >> parameter_mapping
+
+    # ============================================================
+    # Parameter Extraction Before Validation (FIXED FLOW)
+    # ============================================================
+    # Extract parameters from user input BEFORE validating templates
+    # This fixes the critical flaw where validation failed with empty {}
+
+    # Path B now converges at ParameterMappingNode BEFORE validation
+    # If parameters complete → validate with actual values
+    parameter_mapping - "params_complete_validate" >> validator
+
+    # If parameters incomplete → skip validation, go to result
+    parameter_mapping - "params_incomplete" >> result_preparation
 
     # ============================================================
     # Validation and Retry Loop (Path B only)
     # ============================================================
     # CRITICAL: This retry loop works correctly with 3-attempt limit
     # ValidatorNode tracks generation_attempts and prevents infinite loops
+    # NOW validates with extracted parameters instead of empty {}
 
     # Validation succeeds → generate metadata
     validator - "metadata_generation" >> metadata_generation
@@ -99,21 +117,22 @@ def create_planner_flow() -> Flow:
     # Validation fails after max attempts (attempts >= 3) → end with failure
     validator - "failed" >> result_preparation
 
-    # Metadata generation complete → converge at parameter mapping
+    # Metadata generation complete → continue to preparation
     # MetadataGenerationNode returns "" (empty string) so we use default
-    metadata_generation >> parameter_mapping
+    # (Path B now goes directly to preparation since params already extracted)
+    metadata_generation >> parameter_preparation
 
     # ============================================================
-    # Convergence Point: Both paths meet at ParameterMappingNode
+    # Both Paths Converge at ParameterMappingNode
     # ============================================================
-    # This is the critical verification gate that ensures all required
-    # parameters are available before execution
-
-    # All parameters available → prepare for execution
-    parameter_mapping - "params_complete" >> parameter_preparation
-
-    # Missing required parameters → end with incomplete params
-    parameter_mapping - "params_incomplete" >> result_preparation
+    # This is the critical verification gate that extracts parameters from user input
+    #
+    # Path routing from ParameterMappingNode:
+    # - Path A (found_workflow): "params_complete" → ParameterPreparation
+    # - Path B (generated_workflow): "params_complete_validate" → Validator
+    # - Both paths: "params_incomplete" → ResultPreparation
+    #
+    # All connections are already wired above
 
     # ============================================================
     # Final Preparation and Result

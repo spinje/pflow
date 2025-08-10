@@ -75,30 +75,30 @@ WorkflowDiscoveryNode
        # Create all nodes
        discovery_node = WorkflowDiscoveryNode()
        # ... create all 9 nodes
-       
+
        # Create flow with start node
        flow = Flow(start=discovery_node)
-       
+
        # Wire Path A edges
        discovery_node - "found_existing" >> parameter_mapping
        parameter_mapping - "params_complete" >> parameter_preparation
        parameter_mapping - "params_incomplete" >> result_preparation
        parameter_preparation >> result_preparation  # "" action
-       
+
        # Wire Path B edges
        discovery_node - "not_found" >> component_browsing
        component_browsing >> parameter_discovery  # "generate" -> default
        parameter_discovery >> workflow_generator  # "" -> default
        workflow_generator >> validator  # "validate" -> default
-       
+
        # Wire retry loop
        validator - "retry" >> workflow_generator
        validator - "failed" >> result_preparation
        validator - "metadata_generation" >> metadata_generation
-       
+
        # Wire convergence
        metadata_generation >> parameter_mapping  # "" -> default
-       
+
        return flow
    ```
 4. Export function in __init__.py
@@ -111,14 +111,14 @@ WorkflowDiscoveryNode
    def test_path_a_complete():
        test_manager = WorkflowManager(tmp_path / "workflows")
        test_manager.save("test-workflow", test_workflow, metadata)
-       
+
        flow = create_planner_flow()
        shared = {
            "user_input": "generate changelog",
            "workflow_manager": test_manager
        }
        flow.run(shared)
-       
+
        assert shared["planner_output"]["success"]
        assert shared["planner_output"]["workflow_ir"] is not None
    ```
@@ -171,7 +171,7 @@ flow.run(shared)
 
 ## Key Validation Points
 
-1. **Action strings are EXACT**: 
+1. **Action strings are EXACT**:
    - "metadata_generation" NOT "valid"
    - "retry" NOT "invalid"
    - "" (empty) NOT "default" or "continue"

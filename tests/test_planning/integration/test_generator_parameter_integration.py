@@ -152,7 +152,7 @@ class TestGeneratorParameterConvergence:
             map_exec = mapper.exec(map_prep)
             map_action = mapper.post(shared, map_prep, map_exec)
 
-            assert map_action == "params_complete"
+            assert map_action == "params_complete_validate"  # Path B goes to validation
             assert "extracted_params" in shared
             assert shared["extracted_params"]["repo"] == "pflow"
             assert shared["extracted_params"]["since_date"] == "2024-01-01"
@@ -419,7 +419,7 @@ class TestGeneratorParameterConvergence:
             map_exec = mapper.exec(map_prep)
             action = mapper.post(shared, map_prep, map_exec)
 
-            assert action == "params_complete"
+            assert action == "params_complete_validate"  # Path B goes to validation
             assert "extracted_params" in shared
             assert shared["extracted_params"]["version"] == "v1.2.0"
             assert shared["extracted_params"]["repo"] == "pflow"
@@ -537,7 +537,7 @@ class TestCompletePathBFlow:
             map_exec = mapper.exec(map_prep)
             map_action = mapper.post(shared, map_prep, map_exec)
 
-            assert map_action == "params_complete"
+            assert map_action == "params_complete_validate"  # Path B goes to validation
             assert shared["extracted_params"]["repo"] == "pflow"
             assert shared["extracted_params"]["since_date"] == "2024-01-01"
 
@@ -769,7 +769,7 @@ class TestEdgeCases:
             action = mapper.post(shared, prep_res, exec_res)
 
             # Should handle gracefully
-            assert action == "params_complete"
+            assert action == "params_complete_validate"  # Path B goes to validation
             assert "extracted_params" in shared
             assert shared["extracted_params"] == {}
 

@@ -4,7 +4,7 @@
 
 This guide contains ESSENTIAL information for fixing/writing planner integration tests. Tests in this folder include:
 - **Full flow tests** (`test_planner_*.py`): Complete planner execution
-- **Partial flow tests** (`test_*_integration.py`): Specific node sequences  
+- **Partial flow tests** (`test_*_integration.py`): Specific node sequences
 - **Discovery tests** (`test_*discovery*.py`, `test_happy_path*.py`): Path A/B routing
 - **Structure tests** (`test_flow_structure.py`): Flow wiring without execution
 
@@ -132,7 +132,7 @@ ResultPreparationNode:    None  # Terminates flow
 with patch("pflow.planning.nodes.Registry") as MockRegistry:
     mock_registry = Mock()
     mock_registry.load.return_value = {
-        'llm': {'interface': {'inputs': [], 'outputs': [], 'params': []}, 
+        'llm': {'interface': {'inputs': [], 'outputs': [], 'params': []},
                 'description': 'LLM node'}
     }
     # MUST handle node_types parameter:

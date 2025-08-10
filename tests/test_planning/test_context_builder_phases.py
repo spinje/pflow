@@ -546,8 +546,8 @@ class TestPlanningContext:
 
         # Should have some interface information (behavior test, not exact format)
         assert len(input_lines) > 0, "Should show input information"
-        # Parameters section exists (may be empty or contain exclusive params)
-        assert "**Parameters**" in result
+        # Parameters section exists (may be exclusive params or template variables)
+        assert "**Parameters**" in result or "**Template Variables**" in result
 
     def test_planning_context_includes_workflow_details(self, sample_workflows):
         """Test planning context provides detailed workflow information for planning."""

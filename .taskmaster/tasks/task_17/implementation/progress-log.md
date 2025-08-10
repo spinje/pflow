@@ -1554,3 +1554,165 @@ Based on discoveries, a redesign is needed (documented in scratchpads/task-17-va
 3. **Separate validation types**: Structural vs execution validation
 
 The current implementation works but requires workarounds (no required inputs in generated workflows). The redesign will fix the fundamental issue where template validation happens before parameter extraction.
+
+## [2024-12-10 16:00] - Validation Redesign Implementation Complete
+Successfully fixed the critical design flaw where template validation occurred before parameter extraction.
+
+### Problem Solved
+The planner was validating template variables (like `$input_file`) against an empty {} dictionary because validation happened BEFORE extracting parameter values from user input. This caused all workflows with required inputs to fail validation.
+
+### Solution Implemented
+Reordered the flow to extract parameters BEFORE validation:
+- **Old flow**: Generate → Validate (❌ with {}) → Metadata → ParameterMapping
+- **New flow**: Generate → ParameterMapping → Validate (✅ with params) → Metadata
+
+### Core Changes Made
+1. **flow.py**: Rewired Path B to route from generator to parameter mapping first
+2. **ParameterMappingNode**: Added path-aware routing with new action strings
+   - `"params_complete"` for Path A (skip validation)
+   - `"params_complete_validate"` for Path B (proceed to validation)
+3. **ValidatorNode**: Now uses extracted_params for template validation
+4. **Test Suite**: Updated all 69 integration tests to match new flow
+
+### Key Code Changes
+```python
+# flow.py - New routing
+workflow_generator - "validate" >> parameter_mapping
+parameter_mapping - "params_complete_validate" >> validator
+
+# ValidatorNode - Now validates with actual params
+extracted_params = prep_res.get("extracted_params", {})
+template_errors = TemplateValidator.validate_workflow_templates(
+    workflow,
+    extracted_params,  # Actual values instead of {}!
+    self.registry,
+)
+```
+
+### Test Improvements
+- ✅ Removed triple generation mocks (only 1 needed now)
+- ✅ Workflows can have required inputs with template variables
+- ✅ All 69 integration tests passing
+- ✅ Removed all "⚠️ VALIDATION REDESIGN" workarounds
+- 💡 Tests are now simpler and more realistic
+
+### Impact
+This redesign fixes the fundamental flaw that prevented workflows with required inputs from working:
+1. **Template validation works correctly** - Templates validated with real values
+2. **No futile retries** - Retry only for actual generation errors
+3. **Logical flow** - Extract first, then validate
+4. **Better UX** - System can handle real workflows with parameters
+
+The Natural Language Planner can now properly generate and validate workflows with template variables like `$input_file`, `$output_file`, etc., making it actually useful for real-world scenarios.
+
+## [2024-12-10 16:00] - Subtask 6 - Validation Redesign Implementation
+Successfully implemented the validation redesign to fix the critical flaw where template validation happened before parameter extraction.
+
+Problem:
+- Template validation was checking variables like `$input_file` against empty {} dictionary
+- This caused ALL workflows with required inputs to fail validation
+- Retry mechanism was futile - regenerating didn't provide parameter values
+- Tests required triple generation mocks and empty inputs workarounds
+
+Solution Implemented:
+- Reordered flow: Generate → ParameterMapping → Validate → Metadata
+- ParameterMappingNode now runs BEFORE ValidatorNode
+- ValidatorNode now receives and uses extracted_params for template validation
+- ParameterMappingNode detects Path A vs Path B and routes accordingly
+
+Files Modified:
+```python
+# src/pflow/planning/flow.py
+workflow_generator - "validate" >> parameter_mapping  # Changed from >> validator
+parameter_mapping - "params_complete_validate" >> validator  # New for Path B
+parameter_mapping - "params_complete" >> parameter_preparation  # Path A
+metadata_generation >> parameter_preparation  # Changed from >> parameter_mapping
+
+# src/pflow/planning/nodes.py - ParameterMappingNode
+def post():
+    if shared.get("generated_workflow"):
+        return "params_complete_validate"  # Path B → Validator
+    else:
+        return "params_complete"  # Path A → ParameterPreparation
+
+# src/pflow/planning/nodes.py - ValidatorNode
+def prep():
+    "extracted_params": shared.get("extracted_params", {})  # NEW
+
+def _validate_templates(workflow, prep_res):
+    extracted_params = prep_res.get("extracted_params", {})
+    TemplateValidator.validate_workflow_templates(
+        workflow,
+        extracted_params,  # Now validates with actual values!
+        self.registry,
+    )
+```
+
+Verification:
+- ✅ Created comprehensive test: scratchpads/task-17-validation-fix/test-validation-redesign.py
+- ✅ Path B can handle workflows with required inputs and template variables
+- ✅ Template validation passes with extracted parameters: {'input_file': 'data.csv'}
+- ✅ Retry mechanism still works correctly
+- ✅ Path detection (A vs B) works correctly
+- ✅ All 10 flow structure tests passing
+
+Impact:
+- 🎯 Workflows with required inputs now pass validation
+- 🎯 Template variables validated with actual values from user input
+- 🎯 No more triple generation mocks needed in tests
+- 🎯 Can use realistic workflows with `"required": True` inputs
+- 💡 Key insight: Extract parameters BEFORE validation, not after
+
+Next Steps:
+- Update all integration tests to remove workarounds
+- Remove triple generation mocks
+- Use realistic workflows with required inputs
+- Document the fix for future reference
+
+## [2024-12-10 17:00] - Fixed LLM Integration Test Failures (Context Builder Issue)
+Successfully identified and fixed the real root cause of LLM integration test failures.
+
+### Problem Discovered
+The context builder was misleading the LLM by showing "Parameters: none" for nodes that actually accept template variables through the params field. This created a contradiction:
+- Context showed: "Parameters: none"
+- Prompt said: "You CAN use params with template variables"
+- Reality: Nodes accept `params: {"file_path": "$input_file"}` as fallback
+
+### Root Cause Analysis
+- NOT an LLM comprehension issue as initially suspected
+- The `_format_exclusive_parameters()` function only showed parameters NOT in inputs
+- For nodes like read-file with no exclusive params, it showed "none"
+- This confused the LLM into using hardcoded values instead of template variables
+- Investigation revealed ALL nodes use fallback pattern: `shared.get("key") or self.params.get("key")`
+
+### Solution Implemented
+Updated `src/pflow/planning/context_builder.py` (lines 627-664):
+- When no exclusive parameters, now shows template variable guidance
+- Instead of "Parameters: none", shows "Template Variables: Use $variables in params field"
+- Provides concrete examples like `file_path: "$file_path"`
+- Lists available template variable fields (up to 3 to avoid bloat)
+
+### Before vs After
+```markdown
+# Before (misleading):
+**Parameters**: none
+
+# After (clear):
+**Template Variables**: Use $variables in params field for inputs:
+- file_path: "$file_path"
+- encoding: "$encoding"
+```
+
+### Test Updates
+- Fixed context builder test to accept either "**Parameters**" or "**Template Variables**"
+- Updated generator test to match new validation error format
+- All 1135 tests now passing
+
+### Impact
+- ✅ LLM receives clear, non-contradictory information
+- ✅ Template variable usage properly communicated
+- ✅ Path B (workflow generation) should now work correctly with real LLMs
+- ✅ No more confusion about which fields accept template variables
+- 💡 Key insight: Context must match reality - all inputs can be template variables
+
+This fix resolves the fundamental communication issue that was causing LLMs to generate workflows with declared inputs but no template variable usage. The system now properly supports the "Exclusive Params" pattern where ANY input can be provided as a template variable in the params field

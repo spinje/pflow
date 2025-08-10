@@ -3,10 +3,8 @@
 These tests verify basic execution of the planner flow without full integration.
 They use heavy mocking to ensure fast, deterministic tests.
 
-⚠️ VALIDATION REDESIGN NOTE:
-Path A tests work because existing workflows already have their inputs defined.
-Path B would fail with required inputs due to validation-before-extraction.
-See scratchpads/task-17-validation-fix/planner-validation-redesign.md for the fix.
+The validation flow has been redesigned to extract parameters BEFORE validation,
+allowing workflows with required inputs to pass validation correctly.
 """
 
 from unittest.mock import Mock, patch

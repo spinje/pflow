@@ -179,7 +179,7 @@ class TestParameterManagementIntegration:
 
             # Verify mapping did NOT use discovered_params
             assert "discovered_params" not in prep2
-            assert action2 == "params_complete"
+            assert action2 == "params_complete_validate"  # Path B goes to validation
 
             # Run parameter preparation
             prep_node = ParameterPreparationNode()

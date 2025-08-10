@@ -387,8 +387,8 @@ class TestPathBDiscoveryToParameter:
                 exec_res = mapping_node.exec(prep_res)
                 action = mapping_node.post(shared, prep_res, exec_res)
 
-                # With our mock, should have complete params
-                assert action == "params_complete"
+                # Path B with generated_workflow should go to validation
+                assert action == "params_complete_validate"
                 assert "extracted_params" in shared
                 assert shared["extracted_params"]["input_file"] == "data.txt"
                 assert shared["extracted_params"]["output_file"] == "result.json"
@@ -564,9 +564,9 @@ class TestConvergencePoint:
             exec_res_b = mapping_node.exec(prep_res_b)
             action_b = mapping_node.post(shared_b, prep_res_b, exec_res_b)
 
-            # Both should complete successfully
+            # Path A goes directly to preparation, Path B goes to validation first
             assert action_a == "params_complete"
-            assert action_b == "params_complete"
+            assert action_b == "params_complete_validate"  # Path B needs validation
             assert "extracted_params" in shared_a
             assert "extracted_params" in shared_b
 

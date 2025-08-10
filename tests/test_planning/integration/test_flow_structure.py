@@ -115,21 +115,25 @@ class TestFlowStructure:
         generator = param_disc.successors["default"]
         assert isinstance(generator, WorkflowGeneratorNode)
 
-        # Check generator leads to validator (validate)
+        # VALIDATION REDESIGN: Generator now leads to ParameterMapping first
+        # Check generator leads to parameter mapping (validate action but goes to mapping)
         assert "validate" in generator.successors
-        validator = generator.successors["validate"]
-        assert isinstance(validator, ValidatorNode)
+        param_mapping = generator.successors["validate"]
+        assert isinstance(param_mapping, ParameterMappingNode)
 
     def test_retry_loop_edges(self):
         """Test the retry loop: Validator → Generator."""
         flow = create_planner_flow()
 
-        # Navigate to validator
+        # Navigate to validator (VALIDATION REDESIGN: new path through ParameterMapping)
         discovery = flow.start_node
         browsing = discovery.successors["not_found"]
         param_disc = browsing.successors["generate"]
         generator = param_disc.successors["default"]
-        validator = generator.successors["validate"]
+        # Generator now goes to ParameterMapping first
+        param_mapping = generator.successors["validate"]
+        # From ParameterMapping, if params complete for generated workflow → Validator
+        validator = param_mapping.successors["params_complete_validate"]
 
         # Check validator has all three edges
         assert "retry" in validator.successors
@@ -148,34 +152,32 @@ class TestFlowStructure:
         assert isinstance(result, ResultPreparationNode)
 
     def test_convergence_at_parameter_mapping(self):
-        """Test that both paths converge at ParameterMappingNode."""
+        """Test that both paths use ParameterMappingNode (VALIDATION REDESIGN)."""
         flow = create_planner_flow()
 
         # Get nodes from Path A
         discovery = flow.start_node
         param_mapping_a = discovery.successors["found_existing"]
 
-        # Get nodes from Path B
+        # Get nodes from Path B (VALIDATION REDESIGN: convergence happens earlier)
         browsing = discovery.successors["not_found"]
         param_disc = browsing.successors["generate"]
         generator = param_disc.successors["default"]
-        validator = generator.successors["validate"]
-        metadata = validator.successors["metadata_generation"]
+        # Path B now goes to ParameterMapping immediately after generation
+        param_mapping_b = generator.successors["validate"]
 
-        # Check metadata leads to parameter mapping (default)
-        assert "default" in metadata.successors
-        param_mapping_b = metadata.successors["default"]
-
-        # Verify it's the same node (convergence)
+        # Verify it's the same node (both paths use the same ParameterMappingNode)
         assert param_mapping_a is param_mapping_b
         assert isinstance(param_mapping_a, ParameterMappingNode)
+
+        # Verify ParameterMappingNode routes differently for each path
+        assert "params_complete" in param_mapping_a.successors  # Path A
+        assert "params_complete_validate" in param_mapping_a.successors  # Path B
+        assert "params_incomplete" in param_mapping_a.successors  # Both paths
 
     def test_result_node_has_three_entry_points(self):
         """Test that ResultPreparationNode has three entry points."""
         flow = create_planner_flow()
-
-        # Collect all nodes that lead to ResultPreparationNode
-        result_predecessors = []
 
         # Helper to find all predecessors
         def find_predecessors(target_node, all_nodes):
@@ -227,7 +229,11 @@ class TestFlowStructure:
             WorkflowDiscoveryNode: ["found_existing", "not_found"],
             ComponentBrowsingNode: ["generate"],  # Returns "generate"
             ParameterDiscoveryNode: ["default"],  # Returns "" so uses default
-            ParameterMappingNode: ["params_complete", "params_incomplete"],
+            ParameterMappingNode: [
+                "params_complete",
+                "params_complete_validate",
+                "params_incomplete",
+            ],  # VALIDATION REDESIGN
             ParameterPreparationNode: ["default"],  # Returns "" so uses default
             WorkflowGeneratorNode: ["validate"],  # Returns "validate"
             ValidatorNode: ["retry", "metadata_generation", "failed"],
@@ -291,7 +297,7 @@ class TestFlowStructure:
         flow2 = create_planner_flow()
 
         # Both should start with discovery
-        assert type(flow1.start_node) == type(flow2.start_node)
+        assert isinstance(flow1.start_node, type(flow2.start_node))
         assert flow1.start_node.name == flow2.start_node.name
 
         # Count nodes in both flows

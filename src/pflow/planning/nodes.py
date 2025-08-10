@@ -794,7 +794,7 @@ Important:
         return result
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
-        """Store extraction results and route based on completeness.
+        """Store extraction results and route based on completeness and path.
 
         Args:
             shared: PocketFlow shared store
@@ -802,7 +802,9 @@ Important:
             exec_res: Execution result (ParameterExtraction)
 
         Returns:
-            "params_complete" if all required found, "params_incomplete" otherwise
+            - "params_complete" for Path A (found workflow, skip validation)
+            - "params_complete_validate" for Path B (generated workflow, needs validation)
+            - "params_incomplete" if required parameters are missing (both paths)
         """
         # Store extraction results
         shared["extracted_params"] = exec_res["extracted"]
@@ -816,11 +818,25 @@ Important:
             )
             return "params_incomplete"
 
-        logger.info(
-            "ParameterMappingNode: All required parameters found - proceeding to preparation",
-            extra={"phase": "post", "action": "params_complete", "params": list(exec_res["extracted"].keys())},
-        )
-        return "params_complete"
+        # VALIDATION REDESIGN FIX: Route differently based on path
+        # Path B (generated workflow) needs validation with extracted params
+        # Path A (found workflow) skips validation, goes directly to preparation
+        if shared.get("generated_workflow"):
+            logger.info(
+                "ParameterMappingNode: Parameters complete for generated workflow - proceeding to validation",
+                extra={
+                    "phase": "post",
+                    "action": "params_complete_validate",
+                    "params": list(exec_res["extracted"].keys()),
+                },
+            )
+            return "params_complete_validate"  # Path B → Validator
+        else:
+            logger.info(
+                "ParameterMappingNode: Parameters complete for found workflow - proceeding to preparation",
+                extra={"phase": "post", "action": "params_complete", "params": list(exec_res["extracted"].keys())},
+            )
+            return "params_complete"  # Path A → ParameterPreparation
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
         """Handle LLM failures gracefully.
@@ -1055,7 +1071,7 @@ class WorkflowGeneratorNode(Node):
 
         # Return minimal valid workflow structure that post() can process
         # ValidatorNode will detect this is empty and route to "failed"
-        fallback_workflow = {
+        fallback_workflow: dict[str, Any] = {
             "ir_version": "0.1.0",
             "nodes": [],  # Empty nodes will fail validation
             "edges": [],
@@ -1080,8 +1096,12 @@ class WorkflowGeneratorNode(Node):
         """
         prompt = f"""Generate a workflow for: {prep_res["user_input"]}
 
-Available components:
+Use the available nodes to create the workflows intermediate representation (IR) in json format.
+
+Available nodes:
+<available_nodes>
 {prep_res["planning_context"]}
+</available_nodes>
 
 CRITICAL Requirements:
 1. Use template variables ($variable) for ALL dynamic values
@@ -1091,6 +1111,51 @@ CRITICAL Requirements:
 5. Each template variable MUST have a corresponding key in the inputs field
 6. Create descriptive node IDs (e.g., "fetch_issues", not "n1")
 7. Avoid multiple nodes of the same type (causes shared store collision)
+8. IMPORTANT: Nodes can accept template variables for ANY of their input keys!
+   - If a node has "Reads: shared['file_path']", you CAN use params with template vars
+   - This is the "Exclusive Params" pattern - node inputs/reads are automatically parameter fallbacks
+
+EXAMPLE showing proper template variable usage:
+{{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {{
+      "id": "read_input_file",
+      "type": "read-file",
+      "params": {{
+        "file_path": "$input_file"  // ← USE template variable even though read-file shows "Parameters: none"!
+      }}
+    }},
+    {{
+      "id": "process_data",
+      "type": "llm",
+      "params": {{
+        "prompt": "Process this data: $data",
+        "model": "$model_name"  // ← Multiple template variables OK
+      }}
+    }}
+  ],
+  "edges": [{{"from": "read_input_file", "to": "process_data"}}],
+  "start_node": "read_input_file",
+  "inputs": {{ // ← These are the inputs to the workflow, you need to assign all workflow inputs to the approrate node params
+    "input_file": {{  // ← MUST match the $input_file used above
+      "description": "File to read",
+      "type": "string",
+      "required": true
+    }},
+    "model_name": {{  // ← MUST match the $model_name used above
+      "description": "LLM model to use",
+      "type": "string",
+      "required": false,
+      "default": "gpt-4o-mini"
+    }}
+  }},
+  "outputs": {{
+    "result": {{
+      "description": "Processed data result"
+    }}
+  }}
+}}
 
 Workflow Structure Requirements:
 - Must include "ir_version": "0.1.0"
@@ -1098,6 +1163,7 @@ Workflow Structure Requirements:
 - Each input should have: description, required, type, and optional default
 - Use universal defaults only (e.g., 100, not request-specific like 20)
 - Rename parameters for clarity (e.g., "filename" -> "input_file")
+- IMPORTANT: Every declared workflow input MUST be used as a template variable in node params
 """
 
         # Add discovered parameters as hints
@@ -1107,12 +1173,20 @@ Workflow Structure Requirements:
                 prompt += f"  - {param}: {value}\n"
             prompt += "Remember: These are hints. You control the inputs specification.\n"
 
-        # Add validation errors for retry
+        # Add validation errors for retry with specific guidance
         if prep_res["generation_attempts"] > 0 and prep_res["validation_errors"]:
-            prompt += "\n\nFix ONLY these specific issues from the previous attempt:\n"
+            prompt += "\n\n⚠️ FIX THESE VALIDATION ERRORS from the previous attempt:\n"
             for error in prep_res["validation_errors"][:3]:  # Max 3 errors
                 prompt += f"- {error}\n"
-            prompt += "Keep the rest of the workflow unchanged."
+                # Add specific guidance for common errors
+                if "never used as template variable" in error:
+                    param_name = error.split(":")[-1].strip()
+                    prompt += f"  → FIX: Use ${param_name} in the appropriate node's params field\n"
+                    prompt += f'  → Example: If read-file node, use: "params": {{"file_path": "${param_name}"}}\n'
+                elif "is not of type 'object'" in error and "outputs" in error:
+                    prompt += "  → FIX: Outputs must be objects with 'description' field, not strings\n"
+                    prompt += '  → Example: "outputs": {"result": {"description": "Result description"}}\n'
+            prompt += "\nKeep the rest of the workflow unchanged but FIX the template variable usage!"
 
         return prompt
 
@@ -1130,17 +1204,18 @@ class ValidatorNode(Node):
         self.registry = Registry()  # Direct instantiation per PocketFlow pattern
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Extract workflow and attempt count from shared store.
+        """Extract workflow, attempt count, and extracted params from shared store.
 
         Args:
             shared: PocketFlow shared store
 
         Returns:
-            Dict with workflow and generation_attempts
+            Dict with workflow, generation_attempts, and extracted_params
         """
         return {
             "workflow": shared.get("generated_workflow"),
             "generation_attempts": shared.get("generation_attempts", 0),
+            "extracted_params": shared.get("extracted_params", {}),  # VALIDATION REDESIGN FIX
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -1168,7 +1243,7 @@ class ValidatorNode(Node):
         structural_errors = self._validate_structure(workflow)
         errors.extend(structural_errors)
 
-        template_errors = self._validate_templates(workflow)
+        template_errors = self._validate_templates(workflow, prep_res)  # Pass prep_res for extracted_params
         errors.extend(template_errors)
 
         node_type_errors = self._validate_node_types(workflow)
@@ -1210,11 +1285,12 @@ class ValidatorNode(Node):
 
         return errors
 
-    def _validate_templates(self, workflow: dict[str, Any]) -> list[str]:
+    def _validate_templates(self, workflow: dict[str, Any], prep_res: dict[str, Any]) -> list[str]:
         """Validate template variables and unused inputs.
 
         Args:
             workflow: Workflow IR to validate
+            prep_res: Prepared data containing extracted_params
 
         Returns:
             List of template validation errors
@@ -1223,16 +1299,20 @@ class ValidatorNode(Node):
         try:
             from pflow.runtime.template_validator import TemplateValidator
 
+            # VALIDATION REDESIGN FIX: Use extracted parameters instead of empty dict
+            # This allows template validation to work with actual parameter values
+            extracted_params = prep_res.get("extracted_params", {})
+
             template_errors = TemplateValidator.validate_workflow_templates(
                 workflow,
-                {},  # Empty dict - no initial_params at generation time
+                extracted_params,  # Now validates with actual extracted values!
                 self.registry,
             )
             errors.extend(template_errors)
             if template_errors:
                 logger.warning(f"Template validation found {len(template_errors)} errors")
             else:
-                logger.debug("Template validation passed")
+                logger.debug(f"Template validation passed with params: {list(extracted_params.keys())}")
         except Exception as e:
             errors.append(f"Template validation error: {e}")
             logger.exception("Template validation failed")

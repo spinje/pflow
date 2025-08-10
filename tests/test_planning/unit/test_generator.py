@@ -300,7 +300,7 @@ class TestValidationErrorHandling:
 
         prompt = node._build_prompt(prep_res)
 
-        assert "Fix ONLY these specific issues" in prompt
+        assert "⚠️ FIX THESE VALIDATION ERRORS from the previous attempt:" in prompt
         assert "Missing required parameter: repo" in prompt
         assert "Invalid node type: unknown" in prompt
 
