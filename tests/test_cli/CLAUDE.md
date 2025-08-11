@@ -2,27 +2,34 @@
 
 ## Critical: Planner is Mocked
 
-**conftest.py mocks the planner** to prevent LLM calls during tests:
-- All tests get `mock_planner_for_tests` fixture automatically (`autouse=True`)
+**Shared mock from tests/shared/mocks.py** prevents LLM calls during tests:
+- Applied via `conftest.py` to all CLI tests automatically (`autouse=True`)
 - Makes `from pflow.planning import create_planner_flow` raise ImportError
 - This triggers fallback to old behavior: `"Collected workflow from args: ..."`
 - **DO NOT** remove or modify this mock without understanding the implications
+- Same mock is used by test_integration tests for consistency
 
 ## Test Expectations
 
-CLI tests expect **pre-planner behavior**:
-- Natural language input → Shows "Collected workflow from args: ..."
+CLI tests expect **mocked planner behavior**:
+- Natural language from args → Shows "Collected workflow from args: ..."
+- Natural language from file → Shows "Collected workflow from file: ..."
 - CLI syntax input → Shows "Collected workflow from args: ..."
 - NOT planner execution, NOT workflow generation, NOT LLM calls
 
-## Workflow Name Detection
+## Direct Workflow Execution
 
-The CLI tries to detect workflow names vs natural language:
-- `my-workflow param=value` → Direct execution attempt
-- `node1 => node2` → NOT detected as workflow (has `=>`)
-- `analyze data` → NOT detected as workflow (has spaces)
+The CLI now supports **direct execution** bypassing the planner:
+- `my-workflow param=value` → Tries to load and execute directly (100ms)
+- `pflow --file workflow.json param=value` → Direct execution with params
+- If workflow not found → Falls back to planner
 
-Detection logic in `src/pflow/cli/main.py::is_likely_workflow_name()`
+Detection logic in `src/pflow/cli/main.py::is_likely_workflow_name()`:
+- `my-workflow param=value` → Detected as workflow (has params)
+- `my-analyzer` → Detected as workflow (kebab-case)
+- `node1 => node2` → NOT workflow (has `=>` operator)
+- `analyze data` → NOT workflow (has spaces)
+- `analyze` → NOT workflow (common natural language word)
 
 ## Writing New CLI Tests
 

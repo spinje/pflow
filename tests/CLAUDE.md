@@ -8,6 +8,10 @@ The test suite follows a hierarchical structure that mirrors the source code org
 
 ```
 tests/
+├── shared/                # Shared test utilities and mocks
+│   ├── __init__.py       # Package marker
+│   ├── mocks.py          # Reusable mock fixtures (planner mock)
+│   └── README.md         # Documentation for shared utilities
 ├── test_cli/              # CLI command tests
 ├── test_core/             # Core functionality (IR, schemas)
 ├── test_docs/             # Documentation validation
@@ -204,7 +208,21 @@ Is it testing a CLI command?
 - Match source file names: `read_file.py` → `test_read_file.py`
 - Use descriptive names for integration tests
 
-### 2. Test Class Structure
+### 2. Using Shared Test Utilities
+If your tests need to:
+- **Mock the planner to avoid LLM calls**: Your test's conftest.py should import and use the shared planner mock from `tests/shared/mocks.py`
+- **Add new shared utilities**: Place them in `tests/shared/` and document in the README there
+
+Example for a new test directory that needs planner mocking:
+```python
+# tests/test_new_feature/conftest.py
+from tests.shared.mocks import create_mock_planner_fixture
+
+# Apply the mock to all tests in this directory
+mock_planner_for_tests = create_mock_planner_fixture(autouse=True)
+```
+
+### 3. Test Class Structure
 ```python
 class TestNodeName:
     """Test NodeName functionality."""
@@ -223,7 +241,7 @@ class TestNodeName:
         assert "output" in shared
 ```
 
-### 3. Common Test Patterns
+### 4. Common Test Patterns
 
 #### Testing Node Lifecycle
 ```python
@@ -266,12 +284,39 @@ with tempfile.TemporaryDirectory() as tmpdir:
     # test code - cleanup is automatic
 ```
 
-### 4. Fixtures and Utilities
+### 5. Fixtures and Utilities
 
 #### Common Fixtures (in conftest.py files)
 - `tests/conftest.py`: Root-level fixtures for all tests
+- `tests/shared/mocks.py`: Shared mock fixtures (planner mock)
+- `tests/test_cli/conftest.py`: CLI-specific fixtures (uses shared planner mock)
+- `tests/test_integration/conftest.py`: Integration test fixtures (uses shared planner mock)
 - `tests/test_nodes/conftest.py`: Node-specific fixtures (currently empty)
 - `tests/test_nodes/test_file/conftest.py`: File node fixtures (currently empty)
+
+#### Shared Test Utilities (tests/shared/)
+
+The `tests/shared/` directory contains reusable test utilities to avoid code duplication:
+
+**Planner Mock (`tests/shared/mocks.py`)**:
+- Prevents actual LLM API calls during tests
+- Automatically applied to CLI and integration tests via their conftest.py files
+- Selectively blocks only LLM-triggering imports while allowing other planning utilities to work
+- Triggers fallback behavior that shows "Collected workflow from..." messages
+
+Example usage in a conftest.py:
+```python
+from tests.shared.mocks import create_mock_planner_fixture
+
+# Create and apply the mock as an autouse fixture
+mock_planner_for_tests = create_mock_planner_fixture(autouse=True)
+```
+
+**Why Shared Utilities?**
+- Avoids code duplication between test suites
+- Ensures consistent mocking behavior across all tests
+- Makes it easy to update mock behavior in one place
+- Allows tests to run without making expensive LLM API calls
 
 #### Current Fixture Locations
 The project currently defines fixtures inline within test files. Future refactoring could move common fixtures to the appropriate conftest.py files:

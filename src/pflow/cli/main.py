@@ -410,8 +410,13 @@ def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | 
         execute_json_workflow(ctx, ir_data, stdin_data, ctx.obj.get("output_key"), execution_params)
 
     except json.JSONDecodeError:
-        # Not JSON - treat as plain text (for future natural language processing)
-        click.echo(f"Collected workflow from file: {raw_input}")
+        # Not JSON - treat as natural language and send to planner
+        if ctx.obj.get("verbose"):
+            click.echo("cli: File contains natural language, using planner")
+
+        _execute_with_planner(
+            ctx, raw_input, stdin_data, ctx.obj.get("output_key"), ctx.obj.get("verbose"), ctx.obj.get("input_source")
+        )
 
     except ValidationError as e:
         click.echo(f"cli: Invalid workflow - {e.message}", err=True)

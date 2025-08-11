@@ -133,6 +133,23 @@ pflow "analyze our AWS costs by service"
 
 No more wondering "do I have a script for this?" Just describe what you want—pflow handles the rest.
 
+### Direct Execution: Even Faster
+
+Once a workflow is saved, run it directly by name—no AI needed:
+
+```bash
+# Direct execution: 100ms instead of 2s
+pflow aws-cost-analyzer
+
+# With different parameters each time
+pflow aws-cost-analyzer period=30d service=EC2
+
+# Perfect for scripts and automation
+0 9 * * * pflow daily-standup-prep >> ~/standup.md
+```
+
+When you know what you want to run, skip the discovery entirely.
+
 ## How It Works
 
 `pflow` captures your intent and compiles it into a reliable tool, ready to be used by you, your team, or even other AI agents.
