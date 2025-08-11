@@ -8,6 +8,8 @@ We just fixed a fundamental design flaw. The old flow validated templates BEFORE
 - **Old**: Generate → Validate (with {}) → Metadata → ParameterMapping
 - **New**: Generate → ParameterMapping → Validate (with params) → Metadata
 
+**CRITICAL**: The `execution_params` from planner MUST be passed to `execute_json_workflow` for template resolution. Without this, workflows with template variables ($input_file, etc.) will fail at runtime.
+
 **New action string you must know about:**
 - ParameterMappingNode now returns `"params_complete_validate"` for Path B (generated workflows)
 - This is different from `"params_complete"` for Path A (found workflows)
@@ -58,9 +60,14 @@ planner_flow.run(shared)
 # Check result
 planner_output = shared.get("planner_output", {})
 if planner_output.get("success"):
-    # Execute the workflow
-    workflow_json = json.dumps(planner_output["workflow_ir"])
-    execute_json_workflow(workflow_json, verbose, output_key)
+    # Execute the workflow WITH execution_params for template resolution
+    execute_json_workflow(
+        ctx,
+        planner_output["workflow_ir"],
+        stdin_data,
+        output_key,
+        planner_output.get("execution_params")  # CRITICAL: Pass params for templates!
+    )
 else:
     click.echo(f"Planning failed: {planner_output.get('error')}", err=True)
 ```

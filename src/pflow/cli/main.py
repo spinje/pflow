@@ -293,6 +293,7 @@ def execute_json_workflow(
     ir_data: dict[str, Any],
     stdin_data: str | StdinData | None = None,
     output_key: str | None = None,
+    execution_params: dict[str, Any] | None = None,
 ) -> None:
     """Execute a JSON workflow if it's valid.
 
@@ -300,6 +301,8 @@ def execute_json_workflow(
         ctx: Click context
         ir_data: Parsed workflow IR data
         stdin_data: Optional stdin data (string or StdinData) to inject into shared storage
+        output_key: Optional key to output from shared storage after execution
+        execution_params: Optional parameters from planner for template resolution
     """
     # Check if it's valid JSON with workflow structure
     if not (isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data):
@@ -318,8 +321,8 @@ def execute_json_workflow(
     # Validate IR
     validate_ir(ir_data)
 
-    # Compile to Flow
-    flow = compile_ir_to_flow(ir_data, registry)
+    # Compile to Flow (with execution_params for template resolution)
+    flow = compile_ir_to_flow(ir_data, registry, initial_params=execution_params)
 
     # Show verbose execution info if requested
     verbose = ctx.obj.get("verbose", False)
@@ -378,7 +381,7 @@ def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | 
     try:
         # Try to parse as JSON
         ir_data = json.loads(raw_input)
-        execute_json_workflow(ctx, ir_data, stdin_data, ctx.obj.get("output_key"))
+        execute_json_workflow(ctx, ir_data, stdin_data, ctx.obj.get("output_key"), None)
 
     except json.JSONDecodeError:
         # Not JSON - treat as plain text (for future natural language processing)
