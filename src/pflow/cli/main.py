@@ -12,7 +12,7 @@ from typing import Any
 import click
 
 from pflow.core import StdinData, ValidationError, validate_ir
-from pflow.core.exceptions import WorkflowExistsError, WorkflowValidationError
+from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.shell_integration import (
     determine_stdin_mode,
     read_stdin_enhanced,
@@ -370,6 +370,28 @@ def execute_json_workflow(
         _cleanup_temp_files(stdin_data, verbose)
 
 
+def _get_file_execution_params(ctx: click.Context) -> dict[str, Any] | None:
+    """Get execution parameters from workflow arguments when using --file."""
+    if ctx.obj.get("input_source") != "file":
+        return None
+
+    # Get the workflow tuple from parent context
+    parent = ctx.parent
+    if not parent or not hasattr(parent, "params"):
+        return None
+
+    workflow_args = parent.params.get("workflow", ())
+    if not workflow_args:
+        return None
+
+    # Parse parameters from workflow arguments
+    execution_params = parse_workflow_params(workflow_args)
+    if execution_params and ctx.obj.get("verbose"):
+        click.echo(f"cli: With parameters: {execution_params}")
+
+    return execution_params
+
+
 def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | StdinData | None = None) -> None:
     """Process file-based workflow, handling JSON and errors.
 
@@ -381,7 +403,11 @@ def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | 
     try:
         # Try to parse as JSON
         ir_data = json.loads(raw_input)
-        execute_json_workflow(ctx, ir_data, stdin_data, ctx.obj.get("output_key"), None)
+
+        # Parse parameters from remaining workflow arguments if using --file
+        execution_params = _get_file_execution_params(ctx)
+
+        execute_json_workflow(ctx, ir_data, stdin_data, ctx.obj.get("output_key"), execution_params)
 
     except json.JSONDecodeError:
         # Not JSON - treat as plain text (for future natural language processing)
@@ -423,6 +449,229 @@ def _display_stdin_data(stdin_data: str | StdinData | None) -> None:
             click.echo(f"Also collected binary stdin data: {len(stdin_data.binary_data)} bytes")
         elif stdin_data.is_temp_file and stdin_data.temp_path is not None:
             click.echo(f"Also collected stdin data (temp file): {stdin_data.temp_path}")
+
+
+def infer_type(value: str) -> Any:
+    """Infer type from string value.
+
+    Supports:
+    - Booleans: 'true', 'false' (case-insensitive)
+    - Numbers: integers and floats
+    - JSON: arrays and objects starting with '[' or '{'
+    - Strings: everything else (default)
+
+    Args:
+        value: String value to infer type from
+
+    Returns:
+        Inferred Python value with appropriate type
+    """
+    # Boolean detection
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+
+    # Number detection
+    try:
+        # Try integer first (more restrictive)
+        if "." not in value and "e" not in value.lower():
+            return int(value)
+        # Then try float
+        return float(value)
+    except ValueError:
+        pass
+
+    # JSON detection for arrays and objects
+    if value.startswith(("[", "{")):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            pass
+
+    # Default to string
+    return value
+
+
+def parse_workflow_params(args: tuple[str, ...]) -> dict[str, Any]:
+    """Parse key=value parameters from command arguments.
+
+    Args:
+        args: Tuple of command line arguments
+
+    Returns:
+        Dictionary of parsed parameters with inferred types
+    """
+    params = {}
+    for arg in args:
+        # Only process arguments with '='
+        if "=" in arg:
+            key, value = arg.split("=", 1)
+            # Use type inference for the value
+            params[key] = infer_type(value)
+    return params
+
+
+def _execute_with_planner(
+    ctx: click.Context,
+    raw_input: str,
+    stdin_data: str | StdinData | None,
+    output_key: str | None,
+    verbose: bool,
+    source: str,
+) -> None:
+    """Execute workflow using the natural language planner.
+
+    Falls back to old behavior if planner is not available.
+    """
+    try:
+        # Import planner (delayed import to avoid circular dependencies)
+        from pflow.planning import create_planner_flow
+
+        # Show what we're doing if verbose
+        if verbose:
+            click.echo("cli: Using natural language planner to process input")
+
+        # Create planner flow
+        planner_flow = create_planner_flow()
+        shared = {
+            "user_input": raw_input,
+            "workflow_manager": WorkflowManager(),  # Uses default ~/.pflow/workflows
+            "stdin_data": stdin_data if stdin_data else None,
+        }
+
+        # Run the planner
+        planner_flow.run(shared)
+
+        # Check result
+        planner_output = shared.get("planner_output", {})
+        if not isinstance(planner_output, dict):
+            planner_output = {}
+        if planner_output.get("success"):
+            # Execute the workflow WITH execution_params for template resolution
+            if verbose:
+                click.echo("cli: Executing generated/discovered workflow")
+
+            execute_json_workflow(
+                ctx,
+                planner_output["workflow_ir"],
+                stdin_data,
+                output_key,
+                planner_output.get("execution_params"),  # CRITICAL: Pass params for templates!
+            )
+        else:
+            # Handle planning failure
+            error_msg = planner_output.get("error", "Unknown planning error")
+            click.echo(f"cli: Planning failed - {error_msg}", err=True)
+
+            # Show missing parameters if that's the issue
+            missing_params = planner_output.get("missing_params")
+            if missing_params:
+                click.echo("cli: Missing required parameters:", err=True)
+                for param in missing_params:
+                    click.echo(f"  - {param}", err=True)
+
+            ctx.exit(1)
+
+    except ImportError:
+        # Planner not available (likely in test environment or not fully installed)
+        # Fall back to old behavior for compatibility
+        click.echo(f"Collected workflow from {source}: {raw_input}")
+        _display_stdin_data(stdin_data)
+
+    except Exception as e:
+        # Other errors in planner execution
+        click.echo(f"cli: Planning failed - {e}", err=True)
+        ctx.exit(1)
+
+
+def _try_direct_workflow_execution(
+    ctx: click.Context,
+    workflow: tuple[str, ...],
+    stdin_data: str | StdinData | None,
+    output_key: str | None,
+    verbose: bool,
+) -> bool:
+    """Try to execute workflow directly by name if it looks like one.
+
+    Returns True if executed, False if should fall back to planner.
+    """
+    if not workflow:
+        return False
+
+    first_arg = workflow[0]
+    remaining_args = workflow[1:] if len(workflow) > 1 else ()
+
+    # Check if likely a workflow name
+    if not is_likely_workflow_name(first_arg, remaining_args):
+        return False
+
+    wm = WorkflowManager()
+    try:
+        # Try to load the workflow
+        if wm.exists(first_arg):
+            # Load workflow IR
+            workflow_ir = wm.load_ir(first_arg)
+
+            # Parse parameters from remaining arguments
+            execution_params = parse_workflow_params(remaining_args)
+
+            # Show what we're doing if verbose
+            if verbose:
+                click.echo(f"cli: Loading workflow '{first_arg}' from registry")
+                if execution_params:
+                    click.echo(f"cli: With parameters: {execution_params}")
+
+            # Execute directly (bypass planner)
+            execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, execution_params)
+            return True
+    except WorkflowNotFoundError:
+        # Fall through to planner
+        return False
+    except Exception as e:
+        # Other errors should be reported
+        click.echo(f"cli: Error loading workflow '{first_arg}': {e}", err=True)
+        ctx.exit(1)
+
+    return False
+
+
+def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
+    """Determine if text is likely a workflow name vs natural language.
+
+    Uses heuristics to guess if the input is a workflow name that should
+    be loaded directly, rather than sent to the planner.
+
+    Args:
+        text: The first argument from command line
+        remaining_args: Any remaining arguments
+
+    Returns:
+        True if likely a workflow name, False otherwise
+    """
+    # Empty string is never a workflow name
+    if not text:
+        return False
+
+    # Text with spaces is never a workflow name (even with params)
+    # Workflow names are single words or kebab-case
+    if " " in text:
+        return False
+
+    # If there are parameter-like arguments following (key=value), likely a workflow name
+    # But check that it's not CLI syntax (=> or --)
+    if remaining_args and any("=" in arg for arg in remaining_args) and "=>" not in remaining_args:
+        return True
+
+    # Single kebab-case word is likely a workflow name
+    # But exclude if followed by CLI operators or flags
+    if "-" in text and not text.startswith("--"):
+        # Check if followed by CLI syntax
+        return not (
+            remaining_args and ("=>" in remaining_args or any(arg.startswith("--") for arg in remaining_args[:2]))
+        )
+
+    # Don't treat single words as workflow names unless they have params
+    # This prevents false positives with CLI node names like "node1", "read-file", etc.
+    return False
 
 
 @click.command(context_settings={"allow_interspersed_args": False})
@@ -513,14 +762,9 @@ def main(
         # Process file or stdin workflows
         process_file_workflow(ctx, raw_input, stdin_data)
     else:
-        # Temporary output for non-file inputs
-        click.echo(f"Collected workflow from {source}: {raw_input}")
-        _display_stdin_data(stdin_data)
+        # Check for direct workflow execution first (before planner)
+        if _try_direct_workflow_execution(ctx, workflow, stdin_data, output_key, verbose):
+            return
 
-        # TODO: Task 17 - Natural Language Planner Integration
-        # When the planner is implemented, it will:
-        # 1. Process the natural language input into a workflow IR
-        # 2. Display the generated workflow
-        # 3. Execute it using execute_json_workflow()
-        # The save prompt will automatically be triggered after execution
-        # since execute_json_workflow now includes _prompt_workflow_save()
+        # If we get here, either not a workflow name or not found - use planner
+        _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, source)

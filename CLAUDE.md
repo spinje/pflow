@@ -286,8 +286,11 @@ Is this what you're expecting?
 - Document decisions and tradeoffs
 - Create `CLAUDE.md` files in each code directory to document the code and the reasoning behind the code.
 - Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/<conversation-subject>/` directory. Always create them in a subdirectory relevant to the current conversation.
-- *Always use subagents* when gathering information, context, do research and verifying assumptions. This is important, it is the only way to avoid running out of context window when working on complex tasks.
+
+**Utilizing subagents**:
+- Always use `pflow-codebase-searcher` when gathering information, context, do research and verifying assumptions if the check is not a trivial check. This is important, it is the only way to avoid running out of context window when working on complex tasks.
 - Always use the `test-writer-fixer` subagent to write or fix broken tests. Remember to give it small tasks, never more than fixes for one file at a time. Provide the subagent with a comprehensive context and instructions and ask it to make a plan first, before it starts implementing.
+- Consider using the `code-implementer` subagent when implementing new features or fixing bugs. This agent should only be used for tasks that require no special knowledge of the codebase and specific implementation details, and only for tasks that are small and isolated.
 
 ### Documentation Navigation
 
@@ -338,7 +341,7 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 
 *All documentation follows a single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
 
-> Remember: Always use subagents when reading documentation, examples and code. If you need specific information, ask a subagent to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
+> Remember: Proactively use subagents when reading documentation, examples and codeexcept for small lookups. If you need specific information, ask a subagent to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
 
 ### Current State of the Project
 
@@ -373,8 +376,8 @@ Next up:
    - Task 17 Subtask 3: Parameter Management System ✅ Completed
    - Task 17 Subtask 4: Generation System ✅ Completed
    - Task 17 Subtask 5: Validation & Refinement System ✅ Completed
-   - 🎯 Task 17 Subtask 6: Flow Orchestration (Currently implementing)
-   - Task 17 Subtask 7: Integration & Polish
+   - Task 17 Subtask 6: Flow Orchestration ✅ Completed
+   - 🎯 Task 17 Subtask 7: Integration & Polish (Currently implementing)
 - ⏳ Task 9: Implement shared store collision detection and proxy mapping
 
 *Update this list as you complete tasks.*

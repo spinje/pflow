@@ -23,17 +23,17 @@ Are there any critical contradictions or ambiguities between any of these docume
 
 ---
 
-Subtasks 1, 2, 3, 4 and 5 have been completed. We are now ready to continue with Subtask 6.
+Subtasks 1, 2, 3, 4, 5 and 6 have been completed. We are now ready to continue with Subtask 7.
 
 Before beginning implementation:
 
-1. Read the handoff document from Subtask 4: `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-6.md`
+1. Read the handoff document from Subtask 6: `.taskmaster/tasks/task_17/handoffs/handoff-to-subtask-7.md`
 
 2. Read the shared progress log for all subtasks: `.taskmaster/tasks/task_17/implementation/progress-log.md` to understand the current state of the implementation
 
-3. Think through what Subtask 6 (Flow Orchestration) needs to implement
+3. Think through what Subtask 7 (Integration & Polish) needs to implement
 
-4. Confirm you understand the scope of Subtask 6
+4. Confirm you understand the scope of Subtask 7
 
 **Important**:
 - Do NOT create a TODO list yet
@@ -43,7 +43,7 @@ Before beginning implementation:
 Let me know when you have:
 - Read the handoff document
 - Read the progress log
-- Understood what Subtask 6 involves
+- Understood what Subtask 7 involves
 - Are ready to discuss the ins and outs of how it works and create a spec for it
 
 ---
