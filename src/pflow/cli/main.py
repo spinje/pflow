@@ -213,24 +213,193 @@ def _inject_stdin_data(shared_storage: dict[str, Any], stdin_data: str | StdinDa
         _inject_stdin_object(shared_storage, stdin_data, verbose)
 
 
-def _handle_workflow_output(shared_storage: dict[str, Any], output_key: str | None) -> bool:
+def _handle_workflow_output(
+    shared_storage: dict[str, Any],
+    output_key: str | None,
+    workflow_ir: dict[str, Any] | None = None,
+    verbose: bool = False,
+    output_format: str = "text",
+) -> bool:
     """Handle output from workflow execution.
 
-    Returns True if output was produced, False otherwise.
+    Args:
+        shared_storage: The shared store after execution
+        output_key: User-specified output key (--output-key flag)
+        workflow_ir: The workflow IR (to check declared outputs)
+        verbose: Whether to show verbose output
+        output_format: Output format - "text" or "json"
+
+    Returns:
+        True if output was produced, False otherwise.
     """
+    if output_format == "json":
+        return _handle_json_output(shared_storage, output_key, workflow_ir, verbose)
+    else:  # text format (default)
+        return _handle_text_output(shared_storage, output_key, workflow_ir, verbose)
+
+
+def _handle_text_output(
+    shared_storage: dict[str, Any],
+    output_key: str | None,
+    workflow_ir: dict[str, Any] | None,
+    verbose: bool,
+) -> bool:
+    """Handle text formatted output (current behavior).
+
+    Returns the first matching output as plain text.
+    """
+    # User-specified key takes priority
     if output_key:
-        # User specified a key to output
         if output_key in shared_storage:
             return safe_output(shared_storage[output_key])
-        else:
+        click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
+        return False
+
+    # Check workflow-declared outputs
+    if _try_declared_outputs(shared_storage, workflow_ir, verbose):
+        return True
+
+    # Fall back to auto-detect from common keys (backward compatibility)
+    for key in ["response", "output", "result", "text"]:
+        if key in shared_storage:
+            return safe_output(shared_storage[key])
+
+    return False
+
+
+def _try_declared_outputs(
+    shared_storage: dict[str, Any],
+    workflow_ir: dict[str, Any] | None,
+    verbose: bool,
+) -> bool:
+    """Try to output from workflow-declared outputs.
+
+    Args:
+        shared_storage: The shared storage dictionary
+        workflow_ir: The workflow IR specification
+        verbose: Whether to show verbose output
+
+    Returns:
+        True if a declared output was found and printed, False otherwise
+    """
+    if not (workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]):
+        return False
+
+    declared_outputs = workflow_ir["outputs"]
+
+    # Try each declared output in order
+    for output_name in declared_outputs:
+        if output_name in shared_storage:
+            # Found a declared output! Print it
+            value = shared_storage[output_name]
+
+            # Optional: Add context about what we're outputting
+            if verbose:
+                output_desc = declared_outputs[output_name].get("description", "")
+                if output_desc:
+                    click.echo(f"cli: Output '{output_name}': {output_desc}", err=True)
+
+            return safe_output(value)
+
+    # If workflow declares outputs but none are in shared store, warn in verbose mode
+    if verbose:
+        expected = ", ".join(declared_outputs.keys())
+        click.echo(f"cli: Warning - workflow declares outputs [{expected}] but none found in shared store", err=True)
+
+    return False
+
+
+def _handle_json_output(
+    shared_storage: dict[str, Any],
+    output_key: str | None,
+    workflow_ir: dict[str, Any] | None,
+    verbose: bool,
+) -> bool:
+    """Handle JSON formatted output.
+
+    Returns all declared outputs or specified key as JSON.
+    """
+    result = _collect_json_outputs(shared_storage, output_key, workflow_ir, verbose)
+    return _serialize_json_result(result, verbose)
+
+
+def _collect_json_outputs(
+    shared_storage: dict[str, Any],
+    output_key: str | None,
+    workflow_ir: dict[str, Any] | None,
+    verbose: bool,
+) -> dict[str, Any]:
+    """Collect outputs for JSON formatting.
+
+    Args:
+        shared_storage: The shared storage dictionary
+        output_key: Optional specific key to output
+        workflow_ir: The workflow IR specification
+        verbose: Whether to show verbose output
+
+    Returns:
+        Dictionary of outputs to serialize as JSON
+    """
+    result = {}
+
+    if output_key:
+        # Specific key requested
+        if output_key in shared_storage:
+            result[output_key] = shared_storage[output_key]
+        elif verbose:
+            # Still output empty JSON, but warn
             click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
-            return False
+
+    elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
+        # Collect ALL declared outputs
+        declared = workflow_ir["outputs"]
+        found_any = False
+
+        for output_name in declared:
+            if output_name in shared_storage:
+                result[output_name] = shared_storage[output_name]
+                found_any = True
+
+        if not found_any and verbose:
+            expected = list(declared.keys())
+            click.echo(f"cli: Warning - no declared outputs found {expected}", err=True)
+
     else:
-        # Auto-detect output from common keys
+        # Fallback: Use first matching hardcoded key for consistency
         for key in ["response", "output", "result", "text"]:
             if key in shared_storage:
-                return safe_output(shared_storage[key])
-        return False
+                result[key] = shared_storage[key]
+                break  # Only first for consistency with text format
+
+    return result
+
+
+def _serialize_json_result(result: dict[str, Any], verbose: bool) -> bool:
+    """Serialize result dictionary to JSON and output it.
+
+    Args:
+        result: Dictionary to serialize
+        verbose: Whether to show verbose output
+
+    Returns:
+        True if output was successful, False otherwise
+    """
+    try:
+        # Handle special types
+        def json_serializer(obj: Any) -> Any:
+            """Custom JSON serializer for non-standard types."""
+            if isinstance(obj, bytes):
+                return {"_type": "binary", "size": len(obj), "note": "Binary data not included in JSON output"}
+            return str(obj)
+
+        output = json.dumps(result, indent=2, ensure_ascii=False, default=json_serializer)
+        return safe_output(output)
+    except (TypeError, ValueError) as e:
+        if verbose:
+            click.echo(f"cli: Warning - JSON encoding error: {e}", err=True)
+        # Fallback to error message
+        error_output = json.dumps({"error": "JSON encoding failed", "message": str(e)})
+        return safe_output(error_output)
 
 
 def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> None:
@@ -294,6 +463,7 @@ def execute_json_workflow(
     stdin_data: str | StdinData | None = None,
     output_key: str | None = None,
     execution_params: dict[str, Any] | None = None,
+    output_format: str = "text",
 ) -> None:
     """Execute a JSON workflow if it's valid.
 
@@ -303,6 +473,7 @@ def execute_json_workflow(
         stdin_data: Optional stdin data (string or StdinData) to inject into shared storage
         output_key: Optional key to output from shared storage after execution
         execution_params: Optional parameters from planner for template resolution
+        output_format: Output format - "text" (default) or "json"
     """
     # Check if it's valid JSON with workflow structure
     if not (isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data):
@@ -349,7 +520,7 @@ def execute_json_workflow(
                 click.echo("cli: Workflow execution completed")
 
             # Check for output from shared store
-            output_produced = _handle_workflow_output(shared_storage, output_key)
+            output_produced = _handle_workflow_output(shared_storage, output_key, ir_data, verbose, output_format)
 
             # Only show success message if we didn't produce output
             if not output_produced:
@@ -392,33 +563,120 @@ def _get_file_execution_params(ctx: click.Context) -> dict[str, Any] | None:
     return execution_params
 
 
-def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | StdinData | None = None) -> None:
-    """Process file-based workflow, handling JSON and errors.
+def _looks_like_json_attempt(content: str) -> bool:
+    """Check if content appears to be an attempt at JSON (vs natural language).
 
     Args:
-        ctx: Click context
-        raw_input: Raw workflow content
-        stdin_data: Optional stdin data to pass to workflow
+        content: The content to check
+
+    Returns:
+        True if content looks like attempted JSON, False otherwise
+    """
+    # Strip whitespace
+    trimmed = content.strip()
+
+    # Check for JSON-like start characters
+    if trimmed.startswith("{") or trimmed.startswith("["):
+        return True
+
+    # Check if it contains JSON structure patterns (but not at the start)
+    # This catches cases where there might be whitespace or comments before the JSON
+    return '"ir_version"' in trimmed or '"nodes"' in trimmed
+
+
+def _format_json_syntax_error(raw_input: str, error: json.JSONDecodeError, ctx: click.Context) -> None:
+    """Format and display a helpful JSON syntax error message.
+
+    Args:
+        raw_input: The raw input string that failed to parse
+        error: The JSON decode error
+        ctx: Click context for exiting
+    """
+    click.echo("cli: Invalid JSON syntax in file", err=True)
+    click.echo(f"cli: Error at line {error.lineno}, column {error.colno}: {error.msg}", err=True)
+
+    # Show the problematic line with a pointer to the error location
+    lines = raw_input.split("\n")
+    if 0 < error.lineno <= len(lines):
+        problem_line = lines[error.lineno - 1]
+        # Truncate long lines for display
+        if len(problem_line) > 80:
+            if error.colno and error.colno <= 80:
+                problem_line = problem_line[:80] + "..."
+            else:
+                # Try to show context around the error
+                start = max(0, error.colno - 40) if error.colno else 0
+                problem_line = "..." + problem_line[start : start + 77] + "..."
+
+        click.echo(f"cli: Line {error.lineno}: {problem_line}", err=True)
+
+        # Show pointer to error column if available
+        if error.colno:
+            # Adjust pointer position if line was truncated
+            pointer_pos = error.colno - 1
+            if len(lines[error.lineno - 1]) > 80 and error.colno > 80:
+                pointer_pos = min(40, error.colno - 1)  # Adjusted for truncation
+            spaces = " " * (len(f"cli: Line {error.lineno}: ") + pointer_pos)
+            click.echo(f"{spaces}^", err=True)
+
+    click.echo("cli: Fix the JSON syntax error and try again.", err=True)
+    ctx.exit(1)
+
+
+def _parse_and_validate_json_workflow(raw_input: str) -> tuple[bool, dict[str, Any] | None]:
+    """Try to parse JSON and check if it's a valid workflow structure.
+
+    Args:
+        raw_input: The raw input string to parse
+
+    Returns:
+        Tuple of (is_valid_json_workflow, parsed_data)
+        - (True, data) if valid JSON workflow
+        - (False, data) if valid JSON but not a workflow
+        - (False, None) if not valid JSON
     """
     try:
         # Try to parse as JSON
         ir_data = json.loads(raw_input)
 
+        # Check if it's actually a workflow JSON
+        if isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data:
+            return True, ir_data
+        else:
+            # Valid JSON but not a workflow
+            return False, ir_data
+
+    except json.JSONDecodeError:
+        # Not valid JSON
+        return False, None
+
+
+def _execute_json_workflow_from_file(
+    ctx: click.Context, ir_data: dict[str, Any], stdin_data: str | StdinData | None
+) -> None:
+    """Execute a JSON workflow from file input, handling all exceptions.
+
+    Args:
+        ctx: Click context
+        ir_data: Parsed workflow IR data
+        stdin_data: Optional stdin data
+    """
+    try:
         # Parse parameters from remaining workflow arguments if using --file
         execution_params = _get_file_execution_params(ctx)
 
-        execute_json_workflow(ctx, ir_data, stdin_data, ctx.obj.get("output_key"), execution_params)
-
-    except json.JSONDecodeError:
-        # Not JSON - treat as natural language and send to planner
-        if ctx.obj.get("verbose"):
-            click.echo("cli: File contains natural language, using planner")
-
-        _execute_with_planner(
-            ctx, raw_input, stdin_data, ctx.obj.get("output_key"), ctx.obj.get("verbose"), ctx.obj.get("input_source")
+        execute_json_workflow(
+            ctx,
+            ir_data,
+            stdin_data,
+            ctx.obj.get("output_key"),
+            execution_params,
+            ctx.obj.get("output_format", "text"),
         )
+        return  # Success - exit normally
 
     except ValidationError as e:
+        # Workflow validation failed - show error and exit
         click.echo(f"cli: Invalid workflow - {e.message}", err=True)
         if hasattr(e, "path") and e.path:
             click.echo(f"cli: Error at: {e.path}", err=True)
@@ -427,15 +685,61 @@ def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | 
         ctx.exit(1)
 
     except CompilationError as e:
+        # Compilation failed - show error and exit
         click.echo(f"cli: Compilation failed - {e}", err=True)
         ctx.exit(1)
 
     except (click.ClickException, SystemExit):
         # Let Click exceptions and exits propagate normally
         raise
+
     except Exception as e:
-        click.echo(f"cli: Unexpected error - {e}", err=True)
+        # Execution error - DO NOT fall back to planner for valid JSON
+        click.echo(f"cli: Workflow execution error - {e}", err=True)
+        click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
         ctx.exit(1)
+
+
+def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | StdinData | None = None) -> None:
+    """Process file-based workflow, handling JSON and errors.
+
+    Args:
+        ctx: Click context
+        raw_input: Raw workflow content
+        stdin_data: Optional stdin data to pass to workflow
+    """
+    # Try to parse as JSON workflow
+    is_json_workflow, ir_data = _parse_and_validate_json_workflow(raw_input)
+
+    if is_json_workflow and ir_data:
+        # Execute JSON workflow
+        _execute_json_workflow_from_file(ctx, ir_data, stdin_data)
+    else:
+        # Not a valid workflow JSON - determine how to handle it
+        if _looks_like_json_attempt(raw_input) and ir_data is None:
+            # Looks like JSON but failed to parse - show syntax error
+            try:
+                json.loads(raw_input)
+            except json.JSONDecodeError as e:
+                _format_json_syntax_error(raw_input, e, ctx)
+                # _format_json_syntax_error calls ctx.exit(1), so we won't reach here
+
+        # If we get here, it's either:
+        # 1. Valid JSON but not a workflow (ir_data is not None)
+        # 2. Natural language (doesn't look like JSON)
+        # In both cases, use the planner
+
+        if ir_data is not None and ctx.obj.get("verbose"):
+            # Valid JSON but not a workflow
+            click.echo("cli: File contains valid JSON but not a workflow structure, using planner")
+        elif ctx.obj.get("verbose"):
+            # Not JSON at all
+            click.echo("cli: File contains natural language (not JSON), using planner")
+
+        # Use planner for natural language or non-workflow JSON
+        # input_source should be set by main function before calling process_file_workflow
+        source = ctx.obj.get("input_source", "file")  # Default to "file" as fallback
+        _execute_with_planner(ctx, raw_input, stdin_data, ctx.obj.get("output_key"), ctx.obj.get("verbose"), source)
 
 
 def _display_stdin_data(stdin_data: str | StdinData | None) -> None:
@@ -515,6 +819,108 @@ def parse_workflow_params(args: tuple[str, ...]) -> dict[str, Any]:
     return params
 
 
+def _check_llm_configuration(verbose: bool) -> None:
+    """Check if LLM is properly configured.
+
+    Raises:
+        ImportError: If llm module is not available
+        ValueError: If LLM model is not configured properly
+    """
+    import llm
+
+    # Quick check to see if API key is configured
+    # We don't actually call the API here, just check configuration
+    model_name = "anthropic/claude-sonnet-4-0"
+    try:
+        model = llm.get_model(model_name)
+        # Check if key is available (won't make API call)
+        if hasattr(model, "key") and not model.key:
+            raise ValueError("API key not configured")
+    except Exception as model_error:
+        # If we can't get the model, API is likely not configured
+        if verbose:
+            click.echo(f"cli: LLM model check failed: {model_error}", err=True)
+        raise ValueError(f"LLM model {model_name} not available") from model_error
+
+
+def _handle_llm_configuration_error(
+    ctx: click.Context,
+    llm_error: Exception,
+    verbose: bool,
+) -> None:
+    """Handle LLM configuration errors with helpful messages."""
+    click.echo("cli: Natural language planner requires LLM configuration", err=True)
+    click.echo("cli: To use the planner, configure the Anthropic API:", err=True)
+    click.echo("cli:   1. Run: llm keys set anthropic", err=True)
+    click.echo("cli:   2. Enter your API key from https://console.anthropic.com/", err=True)
+    if verbose:
+        click.echo(f"cli: Error details: {llm_error}", err=True)
+    ctx.exit(1)
+
+
+def _execute_planner_and_workflow(
+    ctx: click.Context,
+    raw_input: str,
+    stdin_data: str | StdinData | None,
+    output_key: str | None,
+    verbose: bool,
+    create_planner_flow: Any,
+) -> None:
+    """Execute the planner flow and resulting workflow."""
+    # Show what we're doing if verbose
+    if verbose:
+        click.echo("cli: Using natural language planner to process input")
+        click.echo("cli: Note: This may take 10-30 seconds for complex requests")
+
+    # Create planner flow
+    planner_flow = create_planner_flow()
+    shared = {
+        "user_input": raw_input,
+        "workflow_manager": WorkflowManager(),  # Uses default ~/.pflow/workflows
+        "stdin_data": stdin_data if stdin_data else None,
+    }
+
+    # Run the planner
+    planner_flow.run(shared)
+
+    # Check result
+    planner_output = shared.get("planner_output", {})
+    if not isinstance(planner_output, dict):
+        planner_output = {}
+
+    if planner_output.get("success"):
+        # Execute the workflow WITH execution_params for template resolution
+        if verbose:
+            click.echo("cli: Executing generated/discovered workflow")
+
+        execute_json_workflow(
+            ctx,
+            planner_output["workflow_ir"],
+            stdin_data,
+            output_key,
+            planner_output.get("execution_params"),  # CRITICAL: Pass params for templates!
+            ctx.obj.get("output_format", "text"),
+        )
+    else:
+        # Handle planning failure
+        _handle_planning_failure(ctx, planner_output)
+
+
+def _handle_planning_failure(ctx: click.Context, planner_output: dict) -> None:
+    """Handle planning failure with helpful error messages."""
+    error_msg = planner_output.get("error", "Unknown planning error")
+    click.echo(f"cli: Planning failed - {error_msg}", err=True)
+
+    # Show missing parameters if that's the issue
+    missing_params = planner_output.get("missing_params")
+    if missing_params:
+        click.echo("cli: Missing required parameters:", err=True)
+        for param in missing_params:
+            click.echo(f"  - {param}", err=True)
+
+    ctx.exit(1)
+
+
 def _execute_with_planner(
     ctx: click.Context,
     raw_input: str,
@@ -528,53 +934,22 @@ def _execute_with_planner(
     Falls back to old behavior if planner is not available.
     """
     try:
-        # Import planner (delayed import to avoid circular dependencies)
+        # Try to import planner first - this will raise ImportError if not available
         from pflow.planning import create_planner_flow
 
-        # Show what we're doing if verbose
-        if verbose:
-            click.echo("cli: Using natural language planner to process input")
-
-        # Create planner flow
-        planner_flow = create_planner_flow()
-        shared = {
-            "user_input": raw_input,
-            "workflow_manager": WorkflowManager(),  # Uses default ~/.pflow/workflows
-            "stdin_data": stdin_data if stdin_data else None,
-        }
-
-        # Run the planner
-        planner_flow.run(shared)
-
-        # Check result
-        planner_output = shared.get("planner_output", {})
-        if not isinstance(planner_output, dict):
-            planner_output = {}
-        if planner_output.get("success"):
-            # Execute the workflow WITH execution_params for template resolution
+        # Check if LLM is configured before attempting to use planner
+        try:
+            _check_llm_configuration(verbose)
+        except (ImportError, ValueError) as llm_error:
+            # LLM not configured - fall back to old behavior
             if verbose:
-                click.echo("cli: Executing generated/discovered workflow")
+                click.echo(f"cli: LLM not configured, falling back to simple echo: {llm_error}", err=True)
+            click.echo(f"Collected workflow from {source}: {raw_input}")
+            _display_stdin_data(stdin_data)
+            return
 
-            execute_json_workflow(
-                ctx,
-                planner_output["workflow_ir"],
-                stdin_data,
-                output_key,
-                planner_output.get("execution_params"),  # CRITICAL: Pass params for templates!
-            )
-        else:
-            # Handle planning failure
-            error_msg = planner_output.get("error", "Unknown planning error")
-            click.echo(f"cli: Planning failed - {error_msg}", err=True)
-
-            # Show missing parameters if that's the issue
-            missing_params = planner_output.get("missing_params")
-            if missing_params:
-                click.echo("cli: Missing required parameters:", err=True)
-                for param in missing_params:
-                    click.echo(f"  - {param}", err=True)
-
-            ctx.exit(1)
+        # Execute planner and workflow
+        _execute_planner_and_workflow(ctx, raw_input, stdin_data, output_key, verbose, create_planner_flow)
 
     except ImportError:
         # Planner not available (likely in test environment or not fully installed)
@@ -626,7 +1001,9 @@ def _try_direct_workflow_execution(
                     click.echo(f"cli: With parameters: {execution_params}")
 
             # Execute directly (bypass planner)
-            execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, execution_params)
+            execute_json_workflow(
+                ctx, workflow_ir, stdin_data, output_key, execution_params, ctx.obj.get("output_format", "text")
+            )
             return True
     except WorkflowNotFoundError:
         # Fall through to planner
@@ -685,6 +1062,12 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed execution output")
 @click.option("--file", "-f", type=str, help="Read workflow from file")
 @click.option("--output-key", "-o", "output_key", help="Shared store key to output to stdout (default: auto-detect)")
+@click.option(
+    "--output-format",
+    type=click.Choice(["text", "json"], case_sensitive=False),
+    default="text",
+    help="Output format: text (default) or json",
+)
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def main(
     ctx: click.Context,
@@ -692,6 +1075,7 @@ def main(
     verbose: bool,
     file: str | None,
     output_key: str | None,
+    output_format: str,
     workflow: tuple[str, ...],
 ) -> None:
     """pflow - Plan Once, Run Forever
@@ -761,6 +1145,7 @@ def main(
     ctx.obj["stdin_data"] = stdin_data
     ctx.obj["verbose"] = verbose
     ctx.obj["output_key"] = output_key
+    ctx.obj["output_format"] = output_format
 
     # Process workflow based on input type
     if source in ("file", "stdin"):

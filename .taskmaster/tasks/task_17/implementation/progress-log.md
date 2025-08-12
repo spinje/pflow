@@ -1848,3 +1848,25 @@ Updated `src/pflow/planning/context_builder.py` (lines 627-664):
 - 💡 Key insight: Context must match reality - all inputs can be template variables
 
 This fix resolves the fundamental communication issue that was causing LLMs to generate workflows with declared inputs but no template variable usage. The system now properly supports the "Exclusive Params" pattern where ANY input can be provided as a template variable in the params field
+
+## [2024-12-12] - Enhanced Workflow Output Handling
+Implemented workflow-driven output handling to respect workflow-declared outputs.
+
+### Changes Made
+- Enhanced `_handle_workflow_output()` to check workflow-declared outputs first
+- Added `--output-format` flag supporting "text" (default) and "json" formats
+- JSON format returns ALL declared outputs as structured data
+- Maintains 100% backward compatibility with fallback to hardcoded keys
+
+### Key Features
+- **Text format**: Returns first matching output (unchanged behavior)
+- **JSON format**: Returns all declared outputs as JSON object
+- **User override**: `--output-key` still works with both formats
+- **Empty results**: JSON returns `{}`, text shows success message
+
+### Implementation Details
+- Split into `_handle_text_output()` and `_handle_json_output()` functions
+- Special handling for binary data and non-serializable types in JSON
+- Comprehensive test coverage (24 tests) for all scenarios
+
+This enhancement makes workflows truly self-contained with proper interface control over their outputs
