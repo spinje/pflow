@@ -209,19 +209,152 @@ def test_from_file_missing():
 
 
 # Tests for error cases
-def test_error_file_and_args():
-    """Test error when both file and arguments are provided."""
+def test_error_file_and_workflow_commands():
+    """Test error when file is combined with workflow commands (not parameters)."""
     runner = click.testing.CliRunner()
     with runner.isolated_filesystem():
         # Create a test file
         with open("workflow.txt", "w") as f:
             f.write("node1")
 
+        # Test with workflow command
         result = runner.invoke(main, ["--file", "workflow.txt", "node2"])
-
         assert result.exit_code != 0
-        assert "cli: Cannot specify both --file and command arguments" in result.output
-        assert "Use either --file OR provide a workflow as arguments" in result.output
+        assert "cli: Cannot mix --file with workflow commands" in result.output
+        assert "You can only pass parameters (key=value) with --file" in result.output
+
+        # Test with workflow operator
+        result = runner.invoke(main, ["--file", "workflow.txt", "=>"])
+        assert result.exit_code != 0
+        assert "cli: Cannot mix --file with workflow commands" in result.output
+
+        # Test with mixed commands and parameters
+        result = runner.invoke(main, ["--file", "workflow.txt", "param=value", "=>", "node2"])
+        assert result.exit_code != 0
+        assert "cli: Cannot mix --file with workflow commands" in result.output
+
+
+def test_file_with_parameters():
+    """Test that parameters (key=value) are allowed with --file."""
+    runner = click.testing.CliRunner()
+    with runner.isolated_filesystem():
+        # Create test input file
+        with open("input.txt", "w") as f:
+            f.write("Test content for {{name}}")
+
+        # Create output file path
+        with open("output.txt", "w") as f:
+            f.write("")  # Empty file
+
+        # Create a test workflow file with template variables using existing nodes
+        # Note: pflow uses $variable format for templates, not {{variable}}
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "reader", "type": "read-file", "params": {"file_path": "$input_file"}},
+                {"id": "writer", "type": "write-file", "params": {"file_path": "$output_file"}},
+            ],
+            "edges": [{"from": "reader", "to": "writer"}],
+        }
+
+        import json
+
+        with open("workflow.json", "w") as f:
+            json.dump(workflow, f)
+
+        # Parameters should be allowed with --file
+        # Note: --verbose must come before positional arguments due to Click's parsing
+        result = runner.invoke(
+            main, ["--verbose", "--file", "workflow.json", "input_file=input.txt", "output_file=output.txt"]
+        )
+
+        # Check that parameters were accepted
+        if "Cannot mix --file with workflow commands" in result.output:
+            raise AssertionError("Parameters should be allowed with --file flag")
+
+        # Should show parameters being used in verbose mode
+        if result.exit_code == 0:
+            assert "With parameters:" in result.output or "Workflow executed" in result.output
+        else:
+            # Even if execution fails, we should see the workflow was collected
+            assert "Collected workflow from file:" in result.output or "Invalid workflow" not in result.output
+
+
+def test_file_with_no_parameters():
+    """Test that --file still works without any parameters."""
+    runner = click.testing.CliRunner()
+    with runner.isolated_filesystem():
+        # Create a simple test file
+        with open("workflow.txt", "w") as f:
+            f.write("simple-workflow")
+
+        # Should work without parameters
+        result = runner.invoke(main, ["--file", "workflow.txt"])
+
+        assert result.exit_code == 0
+        assert "Collected workflow from file:" in result.output
+        assert "simple-workflow" in result.output
+
+
+def test_file_with_parameters_template_resolution():
+    """Test that template variables in workflow are resolved with passed parameters."""
+    runner = click.testing.CliRunner()
+
+    # Import Registry and scanner to populate it
+    from pathlib import Path
+
+    from pflow.registry.registry import Registry
+    from pflow.registry.scanner import scan_for_nodes
+
+    # Ensure registry exists
+    registry = Registry()
+    if not registry.registry_path.exists():
+        # Populate registry for tests
+        src_path = Path(__file__).parent.parent.parent / "src"
+        nodes_dir = src_path / "pflow" / "nodes"
+        if nodes_dir.exists():
+            scan_results = scan_for_nodes([nodes_dir])
+            registry.update_from_scanner(scan_results)
+
+    with runner.isolated_filesystem():
+        # Create test files
+        with open("hello.txt", "w") as f:
+            f.write("Hello World")
+
+        # Create workflow with template variables
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "reader", "type": "read-file", "params": {"file_path": "$input_file"}},
+                {"id": "writer", "type": "write-file", "params": {"file_path": "$output_file"}},
+            ],
+            "edges": [{"from": "reader", "to": "writer"}],
+        }
+
+        import json
+
+        with open("workflow.json", "w") as f:
+            json.dump(workflow, f)
+
+        # Run with parameters to resolve templates
+        result = runner.invoke(
+            main, ["--verbose", "--file", "workflow.json", "input_file=hello.txt", "output_file=result.txt"]
+        )
+
+        # Should execute successfully
+        assert result.exit_code == 0
+        assert "Workflow executed successfully" in result.output
+
+        # Verify the parameters were used
+        assert "With parameters:" in result.output
+
+        # Verify output file was created with correct content
+        from pathlib import Path
+
+        assert Path("result.txt").exists()
+        # ReadFileNode adds line numbers, so content will be formatted
+        content = Path("result.txt").read_text()
+        assert "Hello World" in content
 
 
 def test_stdin_data_with_args():

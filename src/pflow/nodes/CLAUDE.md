@@ -135,6 +135,7 @@ See `docs/reference/enhanced-interface-format.md` for more details of the docstr
 5. **Exclusive params pattern**: Only list params that are NOT in Reads
    - Every value in Reads is automatically a parameter fallback
    - Don't list `file_path` in Params if it's already in Reads!
+6. **Parameter Fallback**: Every value in Reads is automatically a parameter fallback
 
 ### Example with Exclusive Params:
 
@@ -145,6 +146,26 @@ Interface:
 - Writes: shared["written"]: bool  # True if succeeded
 - Params: append: bool  # Append instead of overwrite (default: false)
 # Note: content and file_path are NOT in Params - they're automatic fallbacks!
+```
+
+Do not define params that are already in Reads:
+```python
+- Reads: shared["content"]: str  # Content to write
+- Params: content: str  # Do not define this param, it is already in Reads
+```
+
+### Parameter Fallback
+
+This pattern should be universally used for ALL nodes.This means that for all values read from shared, they are automatically a parameter fallback.
+
+Do NOT do:
+```python
+file_path = shared.get("file_path"); # This breaks the parameter fallback pattern
+```
+
+Do:
+```python
+file_path = shared.get("file_path") or self.params.get("file_path") # Always do this
 ```
 
 ## Creating New Nodes

@@ -147,6 +147,22 @@ def _determine_stdin_data(
     return enhanced_stdin
 
 
+def _are_all_params(workflow_args: tuple[str, ...]) -> bool:
+    """Check if all workflow arguments are key=value parameters.
+
+    Args:
+        workflow_args: Tuple of command line arguments
+
+    Returns:
+        True if all args are parameters, False otherwise
+    """
+    if not workflow_args:
+        return True
+
+    # Parameters must contain '=' but not be CLI operators
+    return all("=" in arg and not arg.startswith("--") and arg != "=>" for arg in workflow_args)
+
+
 def get_input_source(file: str | None, workflow: tuple[str, ...]) -> tuple[str, str, str | StdinData | None]:
     """Determine input source and read workflow input.
 
@@ -154,10 +170,14 @@ def get_input_source(file: str | None, workflow: tuple[str, ...]) -> tuple[str, 
         Tuple of (workflow_content, source, stdin_data)
         stdin_data can be a string (backward compat), StdinData object, or None
     """
-    if file and workflow:
+    # Check if all workflow args are parameters (key=value) when both file and workflow are provided
+    if file and workflow and not _are_all_params(workflow):
+        # Has non-parameter args - this is an error
         raise click.ClickException(
-            "cli: Cannot specify both --file and command arguments. Use either --file OR provide a workflow as arguments."
+            "cli: Cannot mix --file with workflow commands. You can only pass parameters (key=value) with --file."
         )
+    # If we get here with both file and workflow, workflow contains only parameters,
+    # which is allowed. The parameters will be extracted later by _get_file_execution_params
 
     # Read stdin data
     stdin_content, enhanced_stdin = _read_stdin_data()
@@ -546,12 +566,13 @@ def _get_file_execution_params(ctx: click.Context) -> dict[str, Any] | None:
     if ctx.obj.get("input_source") != "file":
         return None
 
-    # Get the workflow tuple from parent context
-    parent = ctx.parent
-    if not parent or not hasattr(parent, "params"):
-        return None
+    # Get the workflow tuple from the context (it's in the same context, not parent)
+    workflow_args = ctx.params.get("workflow", ())
 
-    workflow_args = parent.params.get("workflow", ())
+    # If not in current context, try parent (for compatibility)
+    if not workflow_args and ctx.parent and hasattr(ctx.parent, "params"):
+        workflow_args = ctx.parent.params.get("workflow", ())
+
     if not workflow_args:
         return None
 
