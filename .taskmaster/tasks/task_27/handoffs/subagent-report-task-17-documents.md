@@ -54,28 +54,26 @@ WorkflowDiscoveryNode → ComponentBrowsingNode → ParameterDiscoveryNode → G
 ```
 Path B: ParameterDiscoveryNode discovers {"state": "closed", "limit": "20"}
 Path A & B: ParameterMappingNode independently extracts values for workflow's inputs
-Result: Either "params_complete" (proceed) or "params_incomplete" (prompt user)
+Result for Path A: "params_complete" → ParameterPreparationNode
+Result for Path B: "params_complete_validate" → ValidatorNode (validates with extracted params)
+Result if missing: "params_incomplete" → prompt user for missing parameters
 ```
 
 ## 4. The 7 Subtasks and Current Status
 
-Based on the documentation, here are the 7 subtasks:
+All 7 subtasks are now COMPLETE:
 
-### ✅ Subtasks 1-4: COMPLETED
+### ✅ All Subtasks: COMPLETED
 - **Subtask 1**: Foundation & Infrastructure ✅
 - **Subtask 2**: Discovery System ✅
 - **Subtask 3**: Parameter Management System ✅
 - **Subtask 4**: Generation System ✅
+- **Subtask 5**: Validation & Refinement System ✅
+- **Subtask 6**: Flow Orchestration ✅
+- **Subtask 7**: Integration & Polish ✅
 
-### 🎯 Subtask 5: IN PROGRESS
-- **Subtask 5**: Validation & Refinement System (Currently implementing)
-  - **Scope**: ValidatorNode with dual validation + MetadataGenerationNode
-  - **Key**: Structure validation + template validation using registry's Node IR
-  - **Status**: Implementation phase
-
-### ⏳ Subtasks 6-7: PENDING
-- **Subtask 6**: Flow Orchestration (Wire complete meta-workflow)
-- **Subtask 7**: Integration & Polish (CLI integration + comprehensive testing)
+### Critical Validation Fix (Subtask 6)
+A fundamental design flaw was fixed: parameters are now extracted BEFORE validation, not after. This ensures workflows with required inputs can actually be validated with real values instead of empty `{}`.
 
 ## 5. Key Architectural Decisions and Patterns
 
@@ -140,14 +138,21 @@ shared = {
 
 ### CLI Integration
 ```python
-# CLI invokes planner
+# CLI invokes planner (with LLM configuration check first)
 planner_flow = create_planner_flow()
-shared = {"user_input": raw_input, "current_date": datetime.now().isoformat()}
+shared = {
+    "user_input": raw_input,
+    "workflow_manager": WorkflowManager(),  # Uses default ~/.pflow/workflows
+    "stdin_data": stdin_data if stdin_data else None,
+}
 planner_flow.run(shared)
 
 # CLI handles results
-planner_output = shared["planner_output"]
-# Show approval → Save workflow → Execute with parameter substitution
+planner_output = shared.get("planner_output", {})
+if planner_output.get("success"):
+    execute_json_workflow(ctx, planner_output["workflow_ir"],
+                         stdin_data, output_key,
+                         planner_output.get("execution_params"))  # Critical for templates!
 ```
 
 ### Context Builder Integration
@@ -167,5 +172,6 @@ planner_output = shared["planner_output"]
 3. **Use Existing Infrastructure**: Don't reinvent validation, compilation, or registry access
 4. **Test Complete Paths**: Both Path A and Path B must work end-to-end
 5. **Follow PocketFlow Patterns**: Use proven patterns from production applications
+6. **Parameter Extraction Patterns**: Missing parameters are COMMON in Path A (reuse) but RARE in Path B (generation) because the same user input is used for both generation and extraction
 
 The Natural Language Planner is a sophisticated system that transforms pflow from a simple CLI tool into an intelligent workflow creation platform, enabling users to describe their intent in natural language and get reusable, parameterized workflows.
