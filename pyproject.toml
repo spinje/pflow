@@ -20,7 +20,7 @@ classifiers = [
 dependencies = [
     "click",          # CLI framework (more flexible than Typer)
     "jsonschema>=4.20.0",  # JSON Schema validation for workflow IR
-    "llm>=0.19.0",    # Simon Willison's LLM library for text processing
+    "llm>=0.27.1",    # Simon Willison's LLM library for text processing
     "pydantic",       # IR/metadata validation (used in planning/ir_models.py)
 ]
 

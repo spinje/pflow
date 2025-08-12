@@ -484,7 +484,7 @@ wheels = [
 
 [[package]]
 name = "llm"
-version = "0.26"
+version = "0.27.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -502,9 +502,9 @@ dependencies = [
     { name = "sqlite-migrate" },
     { name = "sqlite-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4e/88/1acdae8cc6122d3ab2d3d30477d3273608f92177a6bb17ab98881af65627/llm-0.26.tar.gz", hash = "sha256:c2e9ddbc582da10c61112c0f983383fa0dc7bee3ca7d6f2ade1a2d003771eb1b", size = 82037, upload-time = "2025-05-27T20:36:22.891Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/7f/f2fe103b8fa6c5a96ba117fef46af15c766d4c28640893c2c7feb79c0df3/llm-0.27.1.tar.gz", hash = "sha256:02b0b393e31cf0e0ee1f2a6006c451c74ec18c7ec3973218de56e76fd72baa80", size = 85109, upload-time = "2025-08-12T05:17:46.797Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/5f/ed9d5c47c46632f2c3a844c14412f434bc1263faa4890306b5f911cd3aaf/llm-0.26-py3-none-any.whl", hash = "sha256:93dc331facbfb909f946df8812fb1d627ec9ce764aab2ebd29f9011ed647339c", size = 79376, upload-time = "2025-05-27T20:36:21.341Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/67/47585c961ff2299749e519891681025c2685b75801e3f784ee232853c5b0/llm-0.27.1-py3-none-any.whl", hash = "sha256:a884a575062fbea8c2b129708a80e146fa9682bd1c444d8d7b028196107de727", size = 82500, upload-time = "2025-08-12T05:17:45.104Z" },
 ]
 
 [[package]]
@@ -856,7 +856,7 @@ dev = [
 requires-dist = [
     { name = "click" },
     { name = "jsonschema", specifier = ">=4.20.0" },
-    { name = "llm", specifier = ">=0.19.0" },
+    { name = "llm", specifier = ">=0.27.1" },
     { name = "llm-anthropic", marker = "extra == 'all-llms'", specifier = ">=0.17" },
     { name = "llm-anthropic", marker = "extra == 'anthropic'", specifier = ">=0.17" },
     { name = "pydantic" },
