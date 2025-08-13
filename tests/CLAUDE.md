@@ -10,7 +10,8 @@ The test suite follows a hierarchical structure that mirrors the source code org
 tests/
 ├── shared/                # Shared test utilities and mocks
 │   ├── __init__.py       # Package marker
-│   ├── mocks.py          # Reusable mock fixtures (planner mock)
+│   ├── llm_mock.py       # LLM-level mock (prevents API calls)
+│   ├── planner_block.py  # Planner blocker for CLI tests
 │   └── README.md         # Documentation for shared utilities
 ├── test_cli/              # CLI command tests
 ├── test_core/             # Core functionality (IR, schemas)
@@ -210,16 +211,17 @@ Is it testing a CLI command?
 
 ### 2. Using Shared Test Utilities
 If your tests need to:
-- **Mock the planner to avoid LLM calls**: Your test's conftest.py should import and use the shared planner mock from `tests/shared/mocks.py`
+- **Prevent LLM API calls**: Already handled by global mock in `tests/conftest.py`
+- **Block planner for CLI tests**: Use the planner blocker from `tests/shared/planner_block.py`
 - **Add new shared utilities**: Place them in `tests/shared/` and document in the README there
 
-Example for a new test directory that needs planner mocking:
+Example for CLI/integration tests that need planner blocked:
 ```python
 # tests/test_new_feature/conftest.py
-from tests.shared.mocks import create_mock_planner_fixture
+from tests.shared.planner_block import create_planner_block_fixture
 
-# Apply the mock to all tests in this directory
-mock_planner_for_tests = create_mock_planner_fixture(autouse=True)
+# Block planner to test fallback behavior
+block_planner = create_planner_block_fixture()
 ```
 
 ### 3. Test Class Structure
@@ -287,10 +289,11 @@ with tempfile.TemporaryDirectory() as tmpdir:
 ### 5. Fixtures and Utilities
 
 #### Common Fixtures (in conftest.py files)
-- `tests/conftest.py`: Root-level fixtures for all tests
-- `tests/shared/mocks.py`: Shared mock fixtures (planner mock)
-- `tests/test_cli/conftest.py`: CLI-specific fixtures (uses shared planner mock)
-- `tests/test_integration/conftest.py`: Integration test fixtures (uses shared planner mock)
+- `tests/conftest.py`: Root-level fixtures with auto-applied LLM mock
+- `tests/shared/llm_mock.py`: LLM-level mock (prevents API calls)
+- `tests/shared/planner_block.py`: Planner blocker for CLI fallback testing
+- `tests/test_cli/conftest.py`: CLI-specific fixtures (uses planner blocker)
+- `tests/test_integration/conftest.py`: Integration test fixtures (uses planner blocker)
 - `tests/test_nodes/conftest.py`: Node-specific fixtures (currently empty)
 - `tests/test_nodes/test_file/conftest.py`: File node fixtures (currently empty)
 
@@ -298,18 +301,25 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
 The `tests/shared/` directory contains reusable test utilities to avoid code duplication:
 
-**Planner Mock (`tests/shared/mocks.py`)**:
+**LLM Mock (`tests/shared/llm_mock.py`)**:
 - Prevents actual LLM API calls during tests
-- Automatically applied to CLI and integration tests via their conftest.py files
-- Selectively blocks only LLM-triggering imports while allowing other planning utilities to work
+- Automatically applied globally via `tests/conftest.py`
+- Mocks at the LLM API level (`llm.get_model`)
+- Configurable responses for different test scenarios
+
+**Planner Blocker (`tests/shared/planner_block.py`)**:
+- Blocks planner import to trigger CLI fallback behavior
+- Used by CLI and integration tests via their conftest.py files
 - Triggers fallback behavior that shows "Collected workflow from..." messages
 
-Example usage in a conftest.py:
+Example usage for configuring LLM responses:
 ```python
-from tests.shared.mocks import create_mock_planner_fixture
-
-# Create and apply the mock as an autouse fixture
-mock_planner_for_tests = create_mock_planner_fixture(autouse=True)
+def test_something(mock_llm_responses):
+    mock_llm_responses.set_response(
+        "anthropic/claude-sonnet-4-0",
+        WorkflowDecision,
+        {"found": True, "workflow_name": "test"}
+    )
 ```
 
 **Why Shared Utilities?**

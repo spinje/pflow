@@ -1,59 +1,104 @@
 # Shared Test Utilities
 
-This directory contains reusable test utilities and fixtures that are shared across multiple test suites to avoid code duplication.
+This directory contains reusable test utilities and mock fixtures that can be shared across different test suites.
 
-## Available Modules
+## Available Utilities
 
-### mocks.py
+### llm_mock.py
 
-Provides mock fixtures for testing, including:
+Provides a clean LLM-level mock that prevents actual API calls while allowing the planning module to function normally.
 
-- **Planner Mock**: Prevents actual LLM calls during tests by mocking the `pflow.planning` module
+#### Key Components:
 
-## Usage
+- `MockLLMModel`: Simulates the `llm` library's Model interface
+- `MockGetModel`: Mock for `llm.get_model()` function
+- `create_mock_get_model()`: Factory function to create mock instances
 
-### Using the Planner Mock
+#### Purpose:
 
-The planner mock is designed to prevent tests from making actual LLM calls while preserving the ability to test other planning-related functionality.
+The LLM mock:
+1. Prevents expensive LLM API calls during tests
+2. Provides configurable responses for different test scenarios
+3. Tracks call history for verification
+4. Ensures test isolation with automatic cleanup
 
-#### In test suite conftest.py:
+#### Usage:
+
+The mock is automatically applied to all tests via `tests/conftest.py`. Tests can configure responses:
 
 ```python
-from tests.shared.mocks import get_autouse_planner_mock
+def test_something(mock_llm_responses):
+    # Configure what the LLM will return
+    mock_llm_responses.set_response(
+        "anthropic/claude-sonnet-4-0",
+        WorkflowDecision,
+        {"found": True, "workflow_name": "test-workflow"}
+    )
 
-# Apply to all tests in the directory automatically
-mock_planner_for_tests = get_autouse_planner_mock()
+    # Run code that uses LLM
+    result = some_planner_function()
+
+    # LLM is mocked, no actual API calls made
+    assert result.workflow_name == "test-workflow"
 ```
 
-#### For manual control:
+### planner_block.py
+
+Provides a clean way to block the planner import for CLI and integration tests that need to test fallback behavior.
+
+#### Key Functions:
+
+- `create_planner_block_fixture()`: Creates a fixture that blocks planner imports
+
+#### Purpose:
+
+The planner blocker:
+1. Makes `from pflow.planning import create_planner_flow` raise ImportError
+2. Triggers CLI fallback behavior (shows "Collected workflow from..." messages)
+3. Allows testing of non-planner functionality
+4. Uses monkeypatch for clean, scoped patching
+
+#### Usage:
+
+In your test's `conftest.py`:
 
 ```python
-from tests.shared.mocks import get_manual_planner_mock
+from tests.shared.planner_block import create_planner_block_fixture
 
-mock_planner = get_manual_planner_mock()
-
-def test_something(mock_planner):
-    # Test with planner mocked
-    pass
+# Block planner to test fallback behavior
+block_planner = create_planner_block_fixture()
 ```
 
-## Implementation Details
+## Mock Architecture
 
-### Planner Mock
+The testing infrastructure uses two complementary mocking strategies:
 
-The planner mock selectively blocks imports that would trigger LLM calls:
-- `create_planner_flow` - Main entry point
-- `PlannerNode`, `DiscoveryNode`, `GeneratorNode` - LLM-using nodes
-- `ParameterMappingNode`, `ValidationNode` - Nodes that might use LLM
+1. **LLM Mock** (llm_mock.py): Applied globally to prevent API calls
+   - Mocks at the LLM API level (`llm.get_model`)
+   - Allows planning module to work normally
+   - Used by all tests except those in `llm/` directories
+   - Configured in `tests/conftest.py`
 
-Other planning module functionality (like `context_builder`) remains accessible, allowing tests that need these utilities to work normally.
+2. **Planner Blocker** (planner_block.py): Applied to CLI/integration tests
+   - Blocks planner import to test fallback behavior
+   - Uses clean monkeypatch approach
+   - Scoped to specific test directories
+   - Used in `tests/test_cli/conftest.py` and `tests/test_integration/conftest.py`
+
+## Test Organization
+
+- **All tests**: Protected from real LLM calls by the global LLM mock
+- **CLI tests**: Use planner blocker to test fallback messages
+- **Integration tests**: Use planner blocker to focus on workflow execution
+- **Planning tests**: Use LLM mock with configured responses
+- **LLM tests** (in `llm/` dirs): Skip mocking when `RUN_LLM_TESTS=1` is set
 
 ## Adding New Shared Utilities
 
-When adding new shared test utilities:
-
-1. Create them in this directory
-2. Document them in this README
-3. Ensure they're well-tested and maintainable
-4. Consider making them configurable (like the `autouse` parameter)
-5. Provide clear usage examples
+When adding new utilities:
+1. Create a new Python file in this directory
+2. Document the utility's purpose and usage in this README
+3. Ensure the utility is well-tested
+4. Use clear naming conventions
+5. Prefer monkeypatch over sys.modules manipulation
+6. Consider making utilities configurable for different use cases

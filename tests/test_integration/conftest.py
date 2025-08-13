@@ -1,8 +1,8 @@
 """Shared fixtures and utilities for integration tests."""
 
-from tests.shared.mocks import get_autouse_planner_mock
+from tests.shared.planner_block import create_planner_block_fixture
 
-# Apply the planner mock to all integration tests automatically
-# This prevents actual LLM calls during tests and ensures predictable behavior
-# Integration tests should test workflow execution, not LLM planning
-mock_planner_for_tests = get_autouse_planner_mock()
+# Block the planner import to test integration without planner
+# This ensures integration tests focus on workflow execution,
+# not LLM-based planning
+block_planner = create_planner_block_fixture()
