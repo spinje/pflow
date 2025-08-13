@@ -4,11 +4,18 @@
 
 Write comprehensive tests for the planner debugging capabilities. Tests should verify that debugging doesn't break existing functionality while adding visibility.
 
+**IMPORTANT**: The test infrastructure has been refactored. Tests now mock at the LLM level, not the module level. This means:
+- You can import from `pflow.planning.debug` normally
+- You can patch specific functions without issues
+- The `mock_llm_responses` fixture handles LLM mocking automatically
+- No need to worry about module state pollution
+
 ## Test Files to Create
 
 1. `tests/test_planning/test_debug.py` - Unit tests for debug module
 2. `tests/test_planning/test_debug_integration.py` - Integration tests with planner
 3. `tests/test_cli/test_debug_flags.py` - CLI flag tests
+4. `tests/test_planning/test_debug_utils.py` - Utility function tests
 
 ## 1. Unit Tests (`tests/test_planning/test_debug.py`)
 
@@ -21,6 +28,13 @@ def test_debug_wrapper_delegates_attributes():
     # Wrap it with DebugWrapper
     # Verify accessing custom attributes works
     # Verify successors is preserved
+
+def test_debug_wrapper_handles_special_methods():
+    """Wrapper should handle __copy__ and __deepcopy__ without recursion"""
+    # Create wrapper
+    # Test copy.copy(wrapper) doesn't cause recursion
+    # Test copy.deepcopy(wrapper) doesn't cause recursion
+    # Verify copied wrapper still works
 
 def test_debug_wrapper_preserves_node_lifecycle():
     """Wrapper should call prep, exec, post correctly"""
@@ -43,9 +57,9 @@ def test_debug_wrapper_handles_exceptions():
     # Verify exception recorded in trace
     # Verify exception re-raised
 
-def test_debug_wrapper_intercepts_llm_calls():
+def test_debug_wrapper_intercepts_llm_calls(mock_llm_responses):
     """Wrapper should intercept LLM calls when model_name in prep_res"""
-    # Mock llm.get_model
+    # Use mock_llm_responses fixture to configure LLM response
     # Create node that uses LLM (model_name in prep_res)
     # Execute wrapped node
     # Verify LLM prompt/response recorded
@@ -108,8 +122,9 @@ def test_planner_progress_shows_duration():
 ### Test with Real Planner Flow
 
 ```python
-def test_wrapped_planner_executes_successfully():
+def test_wrapped_planner_executes_successfully(mock_llm_responses):
     """Wrapped planner should still execute correctly"""
+    # Configure mock_llm_responses for planner nodes
     # Create planner flow with debug wrapping
     # Execute with simple input
     # Verify planner_output is successful
@@ -123,10 +138,14 @@ def test_progress_output_during_execution(capsys):
     # Verify format is correct
 
 def test_timeout_detection():
-    """Should detect timeout after specified duration"""
+    """Should detect timeout after specified duration
+
+    NOTE: Python limitation - timeout is detected AFTER completion, not during.
+    """
     # Mock a node to sleep for long time
     # Execute with 1 second timeout
-    # Verify timeout detected
+    # Run planner (will complete despite timeout)
+    # Verify timeout detected AFTER completion
     # Verify trace saved
     # Verify timeout message shown
 
@@ -280,12 +299,15 @@ def mock_node():
             return self.post(shared, p, e)
     return MockNode()
 
-@pytest.fixture
-def mock_llm(monkeypatch):
-    """Mock the llm module"""
-    # Create mock that records calls
-    # Monkeypatch llm.get_model
-    # Return mock model with prompt method
+# NOTE: The mock_llm_responses fixture is already provided globally
+# No need to create your own LLM mock - use the existing one:
+def test_example(mock_llm_responses):
+    """Example of using the global LLM mock"""
+    mock_llm_responses.set_response(
+        "anthropic/claude-sonnet-4-0",
+        SomeSchema,
+        {"key": "value"}
+    )
 ```
 
 ## Success Criteria

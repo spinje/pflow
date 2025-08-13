@@ -10,6 +10,10 @@ Both paths converge at ParameterMappingNode - the critical verification gate.
 """
 
 import logging
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from pflow.planning.debug import DebugContext
 
 from pflow.planning.nodes import (
     ComponentBrowsingNode,
@@ -27,7 +31,7 @@ from pocketflow import Flow
 logger = logging.getLogger(__name__)
 
 
-def create_planner_flow() -> Flow:
+def create_planner_flow(debug_context: Optional["DebugContext"] = None):
     """Create the complete planner meta-workflow.
 
     This flow implements the sophisticated two-path architecture:
@@ -39,6 +43,9 @@ def create_planner_flow() -> Flow:
     - Retry mechanism with 3-attempt limit for generation
     - Three entry points to ResultPreparationNode
     - Template variable preservation for workflow reusability
+
+    Args:
+        debug_context: Optional DebugContext for debugging capabilities
 
     Returns:
         The complete planner flow ready for execution
@@ -55,6 +62,21 @@ def create_planner_flow() -> Flow:
     validator = ValidatorNode()
     metadata_generation = MetadataGenerationNode()
     result_preparation = ResultPreparationNode()
+
+    # If debugging context provided, wrap all nodes
+    if debug_context:
+        from pflow.planning.debug import DebugWrapper
+
+        # Wrap all nodes with debugging
+        discovery_node = DebugWrapper(discovery_node, debug_context)
+        component_browsing = DebugWrapper(component_browsing, debug_context)
+        parameter_discovery = DebugWrapper(parameter_discovery, debug_context)
+        parameter_mapping = DebugWrapper(parameter_mapping, debug_context)
+        parameter_preparation = DebugWrapper(parameter_preparation, debug_context)
+        workflow_generator = DebugWrapper(workflow_generator, debug_context)
+        validator = DebugWrapper(validator, debug_context)
+        metadata_generation = DebugWrapper(metadata_generation, debug_context)
+        result_preparation = DebugWrapper(result_preparation, debug_context)
 
     # Create flow with start node
     flow = Flow(start=discovery_node)

@@ -24,8 +24,10 @@ import logging
 from pflow.planning.flow import create_planner_flow
 
 # Configure logging at module level
-logging.basicConfig(level=logging.DEBUG)
+# DO NOT use basicConfig - it affects ALL libraries globally!
 logger = logging.getLogger(__name__)
+# Only set level for our logger if needed for debugging
+# logger.setLevel(logging.DEBUG)
 
 # Export the main planner flow factory
 

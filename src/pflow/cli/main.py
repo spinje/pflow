@@ -760,7 +760,16 @@ def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | 
         # Use planner for natural language or non-workflow JSON
         # input_source should be set by main function before calling process_file_workflow
         source = ctx.obj.get("input_source", "file")  # Default to "file" as fallback
-        _execute_with_planner(ctx, raw_input, stdin_data, ctx.obj.get("output_key"), ctx.obj.get("verbose"), source)
+        _execute_with_planner(
+            ctx,
+            raw_input,
+            stdin_data,
+            ctx.obj.get("output_key"),
+            ctx.obj.get("verbose"),
+            source,
+            ctx.obj.get("trace", False),
+            ctx.obj.get("planner_timeout", 60),
+        )
 
 
 def _display_stdin_data(stdin_data: str | StdinData | None) -> None:
@@ -854,9 +863,8 @@ def _check_llm_configuration(verbose: bool) -> None:
     model_name = "anthropic/claude-sonnet-4-0"
     try:
         model = llm.get_model(model_name)
-        # Check if key is available (won't make API call)
-        if hasattr(model, "key") and not model.key:
-            raise ValueError("API key not configured")
+        # The model loaded successfully - LLM is configured
+        # Note: model.key may be None when using environment variables, which is fine
     except Exception as model_error:
         # If we can't get the model, API is likely not configured
         if verbose:
@@ -886,28 +894,84 @@ def _execute_planner_and_workflow(
     output_key: str | None,
     verbose: bool,
     create_planner_flow: Any,
+    trace: bool,
+    planner_timeout: int,
 ) -> None:
-    """Execute the planner flow and resulting workflow."""
+    """Execute the planner flow and resulting workflow with optional debugging."""
+    import threading
+
     # Show what we're doing if verbose
     if verbose:
         click.echo("cli: Using natural language planner to process input")
         click.echo("cli: Note: This may take 10-30 seconds for complex requests")
 
-    # Create planner flow
-    planner_flow = create_planner_flow()
+    # Create debugging context (always enabled for progress indicators)
+    from pflow.planning.debug import DebugContext, PlannerProgress, TraceCollector
+
+    trace_collector = TraceCollector(raw_input)
+    progress = PlannerProgress()
+    debug_context = DebugContext(trace_collector=trace_collector, progress=progress)
+
+    # Create planner flow with debugging context
+    planner_flow = create_planner_flow(debug_context=debug_context)
+
     shared = {
         "user_input": raw_input,
         "workflow_manager": WorkflowManager(),  # Uses default ~/.pflow/workflows
         "stdin_data": stdin_data if stdin_data else None,
     }
 
-    # Run the planner
-    planner_flow.run(shared)
+    # Set up timeout detection (can only detect after completion due to Python limitations)
+    timed_out = threading.Event()
+    timer = threading.Timer(planner_timeout, lambda: timed_out.set())
+    timer.start()
+
+    try:
+        # Run the planner (BLOCKING - cannot be interrupted)
+        planner_flow.run(shared)
+
+        # Check timeout AFTER completion
+        if timed_out.is_set():
+            click.echo(f"\n⏰ Operation exceeded {planner_timeout}s timeout", err=True)
+            if trace_collector:
+                trace_collector.set_final_status("timeout", shared)
+                trace_file = trace_collector.save_to_file()
+                click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+            ctx.exit(1)
+
+    except Exception as e:
+        # Handle execution errors
+        if trace_collector:
+            trace_collector.set_final_status("error", shared, {"message": str(e)})
+            trace_file = trace_collector.save_to_file()
+            click.echo(f"❌ Planner failed: {e}", err=True)
+            click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+        else:
+            click.echo(f"cli: Planning failed - {e}", err=True)
+        ctx.exit(1)
+
+    finally:
+        timer.cancel()
 
     # Check result
     planner_output = shared.get("planner_output", {})
     if not isinstance(planner_output, dict):
         planner_output = {}
+
+    # Set final status in trace
+    if trace_collector:
+        if planner_output.get("success"):
+            trace_collector.set_final_status("success", shared)
+        else:
+            trace_collector.set_final_status("failed", shared, planner_output.get("error"))
+
+        # Save trace if needed
+        if trace or not planner_output.get("success"):
+            trace_file = trace_collector.save_to_file()
+            if not planner_output.get("success"):
+                click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+            elif trace:
+                click.echo(f"📝 Trace saved: {trace_file}")
 
     if planner_output.get("success"):
         # Execute the workflow WITH execution_params for template resolution
@@ -949,6 +1013,8 @@ def _execute_with_planner(
     output_key: str | None,
     verbose: bool,
     source: str,
+    trace: bool,
+    planner_timeout: int,
 ) -> None:
     """Execute workflow using the natural language planner.
 
@@ -970,7 +1036,9 @@ def _execute_with_planner(
             return
 
         # Execute planner and workflow
-        _execute_planner_and_workflow(ctx, raw_input, stdin_data, output_key, verbose, create_planner_flow)
+        _execute_planner_and_workflow(
+            ctx, raw_input, stdin_data, output_key, verbose, create_planner_flow, trace, planner_timeout
+        )
 
     except ImportError:
         # Planner not available (likely in test environment or not fully installed)
@@ -1089,6 +1157,8 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     default="text",
     help="Output format: text (default) or json",
 )
+@click.option("--trace", is_flag=True, help="Save debug trace even on success")
+@click.option("--planner-timeout", type=int, default=60, help="Timeout for planner execution (seconds)")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def main(
     ctx: click.Context,
@@ -1097,6 +1167,8 @@ def main(
     file: str | None,
     output_key: str | None,
     output_format: str,
+    trace: bool,
+    planner_timeout: int,
     workflow: tuple[str, ...],
 ) -> None:
     """pflow - Plan Once, Run Forever
@@ -1167,6 +1239,8 @@ def main(
     ctx.obj["verbose"] = verbose
     ctx.obj["output_key"] = output_key
     ctx.obj["output_format"] = output_format
+    ctx.obj["trace"] = trace
+    ctx.obj["planner_timeout"] = planner_timeout
 
     # Process workflow based on input type
     if source in ("file", "stdin"):
@@ -1178,4 +1252,4 @@ def main(
             return
 
         # If we get here, either not a workflow name or not found - use planner
-        _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, source)
+        _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, source, trace, planner_timeout)

@@ -29,20 +29,21 @@ Implement comprehensive debugging capabilities for the planner that provide real
 **Why read second**: This gives you the big picture before diving into detailed specifications and implementation guides.
 
 ### 3. Read Handoff Document
-**Files to read:** `.taskmaster/tasks/task_27/task_27_handover.md` - Critical tacit knowledge from design phase
+**Files to read:**
+1. `.taskmaster/tasks/task_27/task_27_handover.md` - Critical tacit knowledge from design phase
+2. `.taskmaster/tasks/task_27/handoffs/test-infrastructure-refactoring-insights.md` - Insights about why the planner hangs, what we discovered during investigation
 
-**Purpose**: These contain hard-won insights about why the planner hangs, what we discovered during investigation
+**Purpose**: These contain hard-won insights about why the planner hangs, what we discovered during investigation.
 
 ### 4. Read ALL Starting Context Files
 **Directory**: `.taskmaster/tasks/task_27/starting-context/`
 
 **Files to read (in this order):**
 1. `task-27-spec.md` - The specification (FOLLOW THIS PRECISELY - source of truth for requirements)
-2. `main-agent-implementation-guide.md` - Core implementation guide with critical code
+2. `main-agent-implementation-guide.md` - Core implementation guide with critical code AND utility functions
 3. `agent-responsibilities.md` - Who does what and execution timeline
 4. `integration-overview.md` - Architecture and component interaction
-5. `code-implementer-tasks.md` - Isolated utility functions (can be assigned to multiple instances of code-implementer subagent, one subagent = one task)
-6. `test-writer-fixer-plan.md` - Comprehensive test plan (for test-writer-fixer subagent)
+5. `test-writer-fixer-plan.md` - Comprehensive test plan (for test-writer-fixer subagent)
 
 **Instructions**: Read EACH file listed above in order. The specification (`task-27-spec.md`) contains all requirements and test criteria that MUST be met. The implementation guides contain working code that has been verified against the codebase. After reading each file, pause to understand how it relates to the others.
 
@@ -106,11 +107,12 @@ Complete debugging data in JSON format, automatically saved on failure.
 3. Set up LLM interception via monkey-patching
 4. Implement trace file saving to ~/.pflow/debug/
 
-### Phase 2: Utility Functions (1 hour - parallel with Phase 1)
-Deploy code-implementer subagent for isolated utilities:
+### Phase 2: Utility Functions (1 hour)
+Create utility functions in `src/pflow/planning/debug_utils.py`:
 - `save_trace_to_file()` - JSON file saving with error handling
 - `format_progress_message()` - Progress formatting with emojis
 - `create_llm_interceptor()` - Helper for LLM call interception
+(These are included in main-agent-implementation-guide.md)
 
 ### Phase 3: Flow Integration (1 hour)
 1. Modify `src/pflow/planning/flow.py` to create wrapped nodes
@@ -128,6 +130,8 @@ Deploy test-writer-fixer subagent for comprehensive testing:
 - Integration tests with real planner
 - CLI flag tests
 - Edge case coverage
+
+**NOTE**: The test infrastructure has been refactored. Tests now mock at the LLM level, not module level. You can import from `pflow.planning.debug` normally and patch specific functions without issues.
 
 ### Use Parallel Execution
 
@@ -149,9 +153,16 @@ class DebugWrapper:
 
     def __getattr__(self, name):
         """CRITICAL: Delegate ALL unknown attributes"""
+        if name.startswith('__') and name.endswith('__'):
+            raise AttributeError(name)
         return getattr(self._wrapped, name)
+
+    def __copy__(self):
+        """CRITICAL: Flow uses copy.copy() on nodes - MUST implement!"""
+        import copy
+        return DebugWrapper(copy.copy(self._wrapped), self.trace, self.progress)
 ```
-If this delegation fails, the entire planner breaks because Flow can't access node attributes.
+If this delegation fails or __copy__ is missing, the entire planner breaks because Flow uses copy.copy() on nodes.
 
 ### LLM Interception Pattern
 Monkey-patch at the model level after `llm.get_model()`:
@@ -225,12 +236,13 @@ Your implementation is complete when:
 ## Common Pitfalls to Avoid
 
 1. **Forgetting to delegate attributes** - The DebugWrapper MUST use __getattr__ or nodes break
-2. **Not restoring LLM methods** - Always use try/finally when monkey-patching
-3. **Trying to interrupt threads** - Python limitation, can only detect timeout
-4. **Using /tmp for traces** - Use ~/.pflow/debug/ to match project patterns
-5. **Modifying original nodes** - Use wrapper pattern, never modify nodes directly
-6. **Saving sensitive data in traces** - Filter out keys starting with _ and large objects
-7. **Forgetting err=True in click.echo** - Will interfere with stdout piping
+2. **Forgetting __copy__ method** - Flow uses copy.copy() on nodes, MUST implement __copy__
+3. **Not restoring LLM methods** - Always use try/finally when monkey-patching
+4. **Trying to interrupt threads** - Python limitation, can only detect timeout
+5. **Using /tmp for traces** - Use ~/.pflow/debug/ to match project patterns
+6. **Modifying original nodes** - Use wrapper pattern, never modify nodes directly
+7. **Saving sensitive data in traces** - Filter out keys starting with _ and large objects
+8. **Forgetting err=True in click.echo** - Will interfere with stdout piping
 
 ## 📋 Create Your Implementation Plan FIRST
 

@@ -38,7 +38,7 @@ class LLMNode(Node):
         - total_tokens: int  # Total tokens (input + output)
         - cache_creation_input_tokens: int  # Tokens used for cache creation
         - cache_read_input_tokens: int  # Tokens read from cache
-    - Params: model: str  # Model to use (default: gpt-4o-mini)
+    - Params: model: str  # Model to use (default: gpt-5-nano)
     - Params: temperature: float  # Sampling temperature (default: 0.7)
     - Params: max_tokens: int  # Max response tokens (optional)
     - Actions: default (always)
@@ -71,7 +71,7 @@ class LLMNode(Node):
 
         return {
             "prompt": prompt,
-            "model": self.params.get("model", "gpt-4o-mini"),  # Default to OpenAI's default model
+            "model": self.params.get("model", "gpt-5-nano"),  # Default to OpenAI's cheapest model
             "temperature": temperature,
             "system": system,
             "max_tokens": self.params.get("max_tokens"),

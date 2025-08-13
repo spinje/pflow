@@ -96,8 +96,10 @@ Side effects:
 - Timeout must be between 10 and 600 seconds
 - Trace directory must be writable
 - Node wrapper must preserve all original node attributes
-- Progress output must use click.echo for consistency
+- Node wrapper must handle special methods (__copy__, __deepcopy__)
+- Progress output must use click.echo with err=True
 - LLM interception must restore original methods after execution
+- LLM interception at prompt method level, not module level
 
 ## Rules
 
@@ -108,7 +110,7 @@ Side effects:
 5. Save trace file when --trace flag is provided
 6. Save trace file when timeout detected
 7. Wrap all planner nodes with DebugWrapper
-8. Intercept llm.get_model() calls in wrapped nodes
+8. Intercept llm.get_model() calls at prompt method level
 9. Record prompt before LLM call execution
 10. Record response after LLM call completion
 11. Use node.__class__.__name__ when node.name is absent
@@ -121,6 +123,7 @@ Side effects:
 18. Check timeout flag after flow.run() completes
 19. Delegate unknown attributes via __getattr__
 20. Use click.echo with err=True for progress output
+21. Implement __copy__ method in DebugWrapper for Flow compatibility
 
 ## Edge Cases
 
@@ -132,6 +135,7 @@ Side effects:
 - Multiple planner calls → each gets own timeout
 - Flow raises during prep phase → save trace with prep data only
 - JSON serialization fails → use str() for non-serializable objects
+- Flow calls copy.copy() on wrapper → __copy__ must return valid wrapper
 
 ## Error Handling
 
@@ -142,10 +146,11 @@ Side effects:
 
 ## Non-Functional Criteria
 
-- Wrapper delegation adds minimal overhead
-- Trace file writes asynchronously where possible
+- Wrapper delegation adds minimal overhead (~5%)
+- Wrapper must observe only, not recreate Flow logic
+- Trace file writes synchronously (single-threaded)
 - Progress shown once per node execution
-- Timeout detection occurs after flow completion
+- Timeout detection occurs after flow completion only
 - Single-threaded execution maintained
 
 ## Examples
@@ -201,6 +206,7 @@ $ pflow "analyze data" --trace
 26. Multiple planner calls get separate timeouts
 27. Prep phase error saves partial trace
 28. JSON serialization uses str() for objects
+29. DebugWrapper implements __copy__ method correctly
 
 ## Notes (Why)
 
@@ -235,6 +241,7 @@ $ pflow "analyze data" --trace
 | 18     | 19                         |
 | 19     | 10                         |
 | 20     | 20                         |
+| 21     | 29                         |
 
 ## Versioning & Evolution
 
@@ -265,21 +272,25 @@ $ pflow "analyze data" --trace
 - Chose threading.Timer for timeout detection (cannot interrupt, only detect)
 - Chose 60s default timeout as balance between patience and hang detection
 - Chose ~/.pflow/debug/ to match existing directory patterns
+- Chose LLM interception at prompt level over module level for cleaner boundary
+- Main agent implements all code (no code-implementer subagent needed)
 
 ### Ripple Effects / Impact Map
 
 - Affects planner execution performance (~5% overhead)
 - Touches create_planner_flow() function
-- Creates new debug.py module
+- Creates new debug.py and debug_utils.py modules
 - Adds CLI flags to main command
 - May affect test timeout expectations
+- Test infrastructure uses LLM-level mocking (clean imports)
 
 ### Residual Risks & Confidence
 
 - Risk: Cannot interrupt hung LLM calls; Mitigation: Detect timeout after completion; Confidence: High (Python limitation)
 - Risk: Large traces exhaust disk space; Mitigation: Truncation at 100MB; Confidence: High
 - Risk: Progress output interferes with piped output; Mitigation: Use stderr via err=True; Confidence: High
-- Risk: Wrapper breaks Flow compatibility; Mitigation: Delegate all attributes; Confidence: High
+- Risk: Wrapper breaks Flow compatibility; Mitigation: Delegate all attributes + implement __copy__; Confidence: High
+- Risk: Logging interference; Mitigation: Don't use logging.basicConfig(); Confidence: High
 
 ### Epistemic Audit (Checklist Answers)
 

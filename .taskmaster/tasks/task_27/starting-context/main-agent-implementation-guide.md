@@ -15,7 +15,9 @@ You are implementing the core debugging infrastructure for the planner. The plan
 ### Critical Requirements
 - The DebugWrapper MUST delegate ALL unknown attributes to the wrapped node
 - The wrapper MUST preserve `successors` attribute for Flow compatibility
+- The wrapper MUST handle special methods (__copy__, __deepcopy__) to prevent recursion
 - The wrapper MUST NOT break the node lifecycle (prep, exec, post)
+- The wrapper MUST observe only, never recreate Flow logic
 
 ### DebugWrapper Class (MOST CRITICAL)
 
@@ -41,7 +43,23 @@ class DebugWrapper:
 
     def __getattr__(self, name):
         """CRITICAL: Delegate ALL unknown attributes to wrapped node"""
+        # Handle special methods to prevent recursion
+        if name.startswith('__') and name.endswith('__'):
+            raise AttributeError(name)
         return getattr(self._wrapped, name)
+
+    def __copy__(self):
+        """CRITICAL: Flow uses copy.copy() on nodes (lines 99, 107 of pocketflow/__init__.py)
+        This MUST be implemented or Flow will break when it copies nodes!
+        """
+        import copy
+        # Create new wrapper with copied inner node, but SAME trace/progress (shared)
+        return DebugWrapper(copy.copy(self._wrapped), self.trace, self.progress)
+
+    def __deepcopy__(self, memo):
+        """Prevent recursion when deep copying"""
+        import copy
+        return DebugWrapper(copy.deepcopy(self._wrapped, memo), self.trace, self.progress)
 
     def set_params(self, params):
         """Flow calls this to set parameters"""
@@ -289,55 +307,155 @@ class PlannerProgress:
         click.echo(f" ✓ {duration:.1f}s", err=True)
 ```
 
-## Part 2: Flow Integration (`src/pflow/planning/flow.py`)
+## Part 2: Utility Functions (`src/pflow/planning/debug_utils.py`)
 
-### Modify create_planner_flow()
-
-Find the `create_planner_flow()` function and modify it:
+Create this file with helper functions for debugging support:
 
 ```python
-def create_planner_flow(debug_mode: bool = False):
-    """Create the planner flow with optional debugging"""
+import json
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any, Callable
 
-    # Create all nodes (existing code)
-    discovery_node = WorkflowDiscoveryNode()
-    component_browsing = ComponentBrowsingNode()
-    parameter_discovery = ParameterDiscoveryNode()
-    parameter_mapping = ParameterMappingNode()
-    parameter_preparation = ParameterPreparationNode()
-    workflow_generator = WorkflowGeneratorNode()
-    validator = ValidatorNode()
-    metadata_generation = MetadataGenerationNode()
-    result_preparation = ResultPreparationNode()
+def save_trace_to_file(trace_data: Dict[str, Any], directory: Path = None) -> str:
+    """
+    Save trace data to a JSON file with timestamp.
 
-    # Wrap nodes if debug mode enabled
-    if debug_mode:
-        from pflow.planning.debug import DebugWrapper, TraceCollector, PlannerProgress
+    Args:
+        trace_data: Dictionary containing trace information
+        directory: Directory to save file (default: ~/.pflow/debug)
 
-        # These will be set from shared store
-        # We need to create them in the CLI and pass via shared
-        # For now, we just wrap the nodes
-        nodes_to_wrap = [
-            discovery_node,
-            component_browsing,
-            parameter_discovery,
-            parameter_mapping,
-            parameter_preparation,
-            workflow_generator,
-            validator,
-            metadata_generation,
-            result_preparation
-        ]
+    Returns:
+        str: Full path to saved file
 
-        # Note: The actual TraceCollector and PlannerProgress instances
-        # will be created in CLI and passed via shared store
-        # This is just to enable the wrapping
+    Raises:
+        PermissionError: If directory is not writable
+    """
+    if directory is None:
+        directory = Path.home() / ".pflow" / "debug"
 
-    # Rest of existing flow wiring code...
-    # (Keep all the existing node connections)
+    # Create directory if it doesn't exist
+    directory.mkdir(parents=True, exist_ok=True)
+
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"pflow-trace-{timestamp}.json"
+    filepath = directory / filename
+
+    # Save with proper error handling
+    try:
+        with open(filepath, 'w') as f:
+            json.dump(trace_data, f, indent=2, default=str)
+    except PermissionError as e:
+        raise PermissionError(f"Cannot write to {directory}: {e}")
+
+    return str(filepath)
+
+def format_progress_message(
+    node_name: str,
+    duration: float = None,
+    status: str = "running"
+) -> str:
+    """
+    Format a progress message with emoji and optional duration.
+
+    Args:
+        node_name: Name of the node (e.g., "WorkflowDiscoveryNode")
+        duration: Execution time in seconds (None if still running)
+        status: One of "running", "complete", "failed"
+
+    Returns:
+        str: Formatted message like "🔍 Discovery... ✓ 2.1s"
+    """
+    # Node to display name mapping
+    NODE_DISPLAY = {
+        "WorkflowDiscoveryNode": ("🔍", "Discovery"),
+        "ComponentBrowsingNode": ("📦", "Browsing"),
+        "ParameterDiscoveryNode": ("🔎", "Parameters Discovery"),
+        "ParameterMappingNode": ("📝", "Parameters"),
+        "ParameterPreparationNode": ("📋", "Preparation"),
+        "WorkflowGeneratorNode": ("🤖", "Generating"),
+        "ValidatorNode": ("✅", "Validation"),
+        "MetadataGenerationNode": ("💾", "Metadata"),
+        "ResultPreparationNode": ("📤", "Finalizing")
+    }
+
+    # Get emoji and display name
+    emoji, display = NODE_DISPLAY.get(node_name, ("⚙️", node_name))
+
+    # Format based on status
+    if status == "running":
+        return f"{emoji} {display}..."
+    elif status == "complete" and duration is not None:
+        return f"{emoji} {display}... ✓ {duration:.1f}s"
+    elif status == "failed":
+        return f"{emoji} {display}... ✗"
+    else:
+        return f"{emoji} {display}"
+
+def create_llm_interceptor(
+    on_request: Callable[[str, dict], None],
+    on_response: Callable[[Any, float], None],
+    on_error: Callable[[str], None]
+) -> Callable:
+    """
+    Create a function that intercepts llm.get_model() calls.
+
+    Args:
+        on_request: Called with (prompt, kwargs) before LLM call
+        on_response: Called with (response, duration) after LLM call
+        on_error: Called with error message if LLM fails
+
+    Returns:
+        A function that replaces llm.get_model() and intercepts model.prompt()
+    """
+    def create_wrapper(original_get_model):
+        """Returns a wrapper for llm.get_model"""
+
+        def wrapped_get_model(*args, **kwargs):
+            # Get the model instance
+            model = original_get_model(*args, **kwargs)
+
+            # Save original prompt method
+            original_prompt = model.prompt
+
+            # Create intercepted prompt method
+            def intercepted_prompt(prompt_text, **prompt_kwargs):
+                import time
+                start_time = time.time()
+
+                # Call on_request callback
+                on_request(prompt_text, prompt_kwargs)
+
+                try:
+                    # Call original prompt
+                    response = original_prompt(prompt_text, **prompt_kwargs)
+
+                    # Call on_response callback
+                    duration = time.time() - start_time
+                    on_response(response, duration)
+
+                    return response
+
+                except Exception as e:
+                    # Call on_error callback
+                    on_error(str(e))
+                    raise
+
+            # Replace prompt method
+            model.prompt = intercepted_prompt
+            return model
+
+        return wrapped_get_model
+
+    return create_wrapper
 ```
 
-Actually, we need a better approach. Create a wrapper function:
+## Part 3: Flow Integration (`src/pflow/planning/flow.py`)
+
+### Add a new function to create debug-wrapped flow
+
+Add this function to the flow.py file:
 
 ```python
 def create_planner_flow_with_debug(user_input: str, trace_enabled: bool = False):
@@ -380,7 +498,7 @@ def create_planner_flow_with_debug(user_input: str, trace_enabled: bool = False)
     return flow, trace
 ```
 
-## Part 3: CLI Integration (`src/pflow/cli/main.py`)
+## Part 4: CLI Integration (`src/pflow/cli/main.py`)
 
 ### Add CLI flags
 
@@ -409,8 +527,11 @@ import threading
 from pflow.planning.flow import create_planner_flow_with_debug
 
 def execute_with_planner_debug(user_input: str, timeout: int = 60, trace: bool = False):
-    """Execute planner with debugging"""
+    """Execute planner with debugging
 
+    IMPORTANT: Threading in Python cannot be interrupted. Timeout detection
+    happens AFTER the planner completes, not during execution.
+    """
     # Create flow with debugging
     flow, trace_collector = create_planner_flow_with_debug(user_input, trace)
 
@@ -421,22 +542,18 @@ def execute_with_planner_debug(user_input: str, timeout: int = 60, trace: bool =
         "_trace_enabled": trace
     }
 
-    # Set up timeout detection
+    # Set up timeout detection (can only detect after completion)
     timed_out = threading.Event()
-
-    def timeout_handler():
-        timed_out.set()
-
-    timer = threading.Timer(timeout, timeout_handler)
+    timer = threading.Timer(timeout, lambda: timed_out.set())
     timer.start()
 
     try:
-        # Run planner
+        # Run planner (BLOCKING - cannot be interrupted)
         flow.run(shared)
 
-        # Check timeout
+        # Check timeout AFTER completion
         if timed_out.is_set():
-            click.echo(f"\n❌ Planner timeout detected after {timeout}s", err=True)
+            click.echo(f"\n⏰ Operation exceeded {timeout}s timeout", err=True)
             trace_collector.set_final_status("timeout", shared)
             trace_file = trace_collector.save_to_file()
             click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
@@ -475,25 +592,55 @@ def execute_with_planner_debug(user_input: str, timeout: int = 60, trace: bool =
 ## Critical Integration Points
 
 1. **Node Wrapping**: The DebugWrapper MUST preserve all node attributes that Flow expects
-2. **LLM Interception**: Must restore original methods in finally block
-3. **Shared Store**: Don't save internal keys (starting with _) or large objects in trace
-4. **Progress Output**: Use click.echo with err=True to avoid interfering with stdout
-5. **Timeout**: Can only detect after completion, cannot interrupt
+2. **Special Methods**: MUST implement __copy__ and __deepcopy__ to prevent recursion
+3. **LLM Interception**: Intercept at prompt method level, not module level
+4. **Shared Store**: Don't save internal keys (starting with _) or large objects in trace
+5. **Progress Output**: Use click.echo with err=True to avoid interfering with stdout
+6. **Timeout**: Can only detect after completion, cannot interrupt (Python limitation)
+7. **Logging**: Don't use logging.basicConfig() - it affects all libraries globally
 
-## Testing Checklist
+## Implementation Checklist
 
+### Pre-Implementation
+- [ ] Understand Flow's _run() lifecycle
+- [ ] Review existing planner nodes
+- [ ] Check current test infrastructure status
+
+### During Implementation
+- [ ] Create DebugWrapper with special method handling
+- [ ] Test delegation works for all attributes
+- [ ] Verify copy operations don't cause recursion
+- [ ] Implement LLM interception at prompt level
+- [ ] Add progress indicators with clean output
+- [ ] Create utility functions in debug_utils.py
+- [ ] Integrate with flow.py
+- [ ] Add CLI flags and timeout handling
+
+### Testing
 - [ ] Wrapped nodes still execute correctly
 - [ ] Progress shows for each node
 - [ ] LLM calls are captured in trace
-- [ ] Timeout is detected after 60s
+- [ ] Timeout is detected after completion
 - [ ] Trace files are saved to ~/.pflow/debug/
 - [ ] --trace flag works
 - [ ] Failures auto-save traces
+- [ ] No recursion errors with copy operations
 
 ## Common Pitfalls to Avoid
 
-1. **DO NOT** modify the original nodes
-2. **DO NOT** forget to delegate unknown attributes in wrapper
-3. **DO NOT** forget to restore LLM methods after interception
-4. **DO NOT** save sensitive data in traces
-5. **DO NOT** try to interrupt threads (Python limitation)
+1. **DO NOT** modify the original nodes - wrap only
+2. **DO NOT** forget special method handling in __getattr__
+3. **DO NOT** forget to implement __copy__ and __deepcopy__
+4. **DO NOT** intercept at module level - use prompt method level
+5. **DO NOT** forget to restore LLM methods in finally block
+6. **DO NOT** save sensitive data in traces
+7. **DO NOT** try to interrupt threads (Python limitation)
+8. **DO NOT** use logging.basicConfig() - it's global state
+9. **DO NOT** recreate Flow logic - observe only
+
+## Known Python Gotchas
+
+1. **Threading**: Cannot interrupt running threads - timeout is detection only
+2. **__getattr__**: Can cause recursion with copy.copy() if not handled
+3. **Logging**: Global state affects all libraries when using basicConfig
+4. **Wrapper Pattern**: Must preserve successors and params attributes for Flow

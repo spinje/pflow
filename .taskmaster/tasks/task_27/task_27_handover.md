@@ -39,7 +39,15 @@ class DebugWrapper:
         self.params = getattr(node, 'params', {})  # ✅ MUST copy this
 
     def __getattr__(self, name):
+        # Handle special methods to prevent issues
+        if name.startswith('__') and name.endswith('__'):
+            raise AttributeError(name)
         return getattr(self._wrapped, name)  # ✅ Delegate everything else
+
+    def __copy__(self):
+        """✅ CRITICAL: Flow uses copy.copy() on nodes - MUST implement!"""
+        import copy
+        return DebugWrapper(copy.copy(self._wrapped), self.trace, self.progress)
 ```
 
 The Flow class (`pocketflow/__init__.py:65-73`) calls `curr.successors.get()` directly. If `successors` isn't a direct attribute, boom - AttributeError.
@@ -75,19 +83,19 @@ We verified this in 7 different nodes. The interception point is `model.prompt()
 
 **DO NOT WRITE FROM SCRATCH** - We already have verified, working code:
 
-1. **`main-agent-implementation-guide.md`** - Contains the COMPLETE DebugWrapper, TraceCollector, and PlannerProgress classes. This code has been verified against PocketFlow's actual behavior.
+1. **`main-agent-implementation-guide.md`** - Contains the COMPLETE DebugWrapper, TraceCollector, PlannerProgress classes, AND all utility functions. This code has been verified against PocketFlow's actual behavior.
 
-2. **`code-implementer-tasks.md`** - Has exact specifications for the 4 utility functions. These are isolated and can be parallelized.
-
-3. **`test-writer-fixer-plan.md`** - Lists 30+ specific test cases that must pass.
+2. **`test-writer-fixer-plan.md`** - Lists 30+ specific test cases that must pass. The test infrastructure now mocks at the LLM level, not module level.
 
 ## Subtle Bugs We Already Found and Fixed
 
 1. **hasattr() bypasses __getattr__**: We discovered `hasattr(obj, 'successors')` returns False even with `__getattr__`. That's why we explicitly copy `successors`.
 
-2. **Node names are inconsistent**: Only ResultPreparationNode has `self.name`. All others need `node.__class__.__name__`.
+2. **copy.copy() is REQUIRED**: PocketFlow's Flow class uses `copy.copy()` on nodes (lines 99, 107 of pocketflow/__init__.py). The DebugWrapper MUST implement `__copy__` or Flow will break when it tries to copy nodes.
 
-3. **The planner creates WorkflowManager singleton**: If not passed in shared, some nodes create their own. Always pass it explicitly.
+3. **Node names are inconsistent**: Only ResultPreparationNode has `self.name`. All others need `node.__class__.__name__`.
+
+4. **The planner creates WorkflowManager singleton**: If not passed in shared, some nodes create their own. Always pass it explicitly.
 
 ## Path Detection Logic
 

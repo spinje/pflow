@@ -30,13 +30,15 @@ timer = threading.Timer(timeout, lambda: timed_out.set())
 timer.start()
 
 try:
-    flow.run(shared)  # Synchronous, blocking
+    flow.run(shared)  # Synchronous, blocking - CANNOT BE INTERRUPTED
 
-    # After completion, check timeout
+    # IMPORTANT: Timeout can only be detected AFTER completion
+    # Python limitation: threads cannot be interrupted
     if timed_out.is_set():
+        # Operation took too long (but completed)
         # Save trace, show timeout message
     else:
-        # Normal completion
+        # Normal completion within timeout
 finally:
     timer.cancel()
 ```
@@ -50,15 +52,30 @@ finally:
   - Records in TraceCollector
   - Shows completion: `✓ 2.1s`
 
-### 5. LLM Interception
+### 5. LLM Interception (at prompt level, not module level)
 ```python
 # When node has model_name in prep_res:
-original = llm.get_model
-llm.get_model = interceptor  # Our wrapper
+original_get_model = llm.get_model
+
+def intercept_get_model(*args, **kwargs):
+    model = original_get_model(*args, **kwargs)
+    original_prompt = model.prompt
+
+    def intercept_prompt(prompt_text, **kwargs):
+        # Record before/after at prompt level
+        trace.record_llm_request(node_name, prompt_text, kwargs)
+        response = original_prompt(prompt_text, **kwargs)
+        trace.record_llm_response(node_name, response, duration)
+        return response
+
+    model.prompt = intercept_prompt  # Intercept at prompt method
+    return model
+
+llm.get_model = intercept_get_model
 try:
     node.exec(prep_res)  # Makes LLM calls
 finally:
-    llm.get_model = original  # Always restore
+    llm.get_model = original_get_model  # Always restore
 ```
 
 ### 6. Trace Collection
@@ -71,8 +88,8 @@ finally:
 
 ```
 src/pflow/planning/
-├── debug.py              # Main: DebugWrapper, TraceCollector, PlannerProgress
-├── debug_utils.py        # Code-Implementer: Utility functions
+├── debug.py              # DebugWrapper, TraceCollector, PlannerProgress
+├── debug_utils.py        # Utility functions (save_trace, format_progress, etc.)
 └── flow.py              # Modified: create_planner_flow_with_debug()
 
 src/pflow/cli/
@@ -119,30 +136,35 @@ tests/test_cli/
 
 ### 1. Node Compatibility
 - DebugWrapper MUST preserve all node attributes
-- MUST delegate unknown attributes
+- MUST delegate unknown attributes via __getattr__
+- MUST handle special methods (__copy__, __deepcopy__)
 - MUST NOT break node lifecycle
+- MUST NOT recreate Flow logic (wrap only)
 
 ### 2. LLM Interception
+- MUST intercept at prompt method level (not module level)
 - MUST capture before call (prompt)
 - MUST capture after call (response)
-- MUST restore original methods
+- MUST restore original methods in finally block
 
 ### 3. Performance
 - Progress output should be immediate
-- Wrapper overhead should be minimal
+- Wrapper overhead should be minimal (~5%)
 - Trace save should be fast
+- Timeout detection after completion only
 
 ### 4. Error Handling
 - Failures MUST save trace
-- Timeout MUST be detected
+- Timeout MUST be detected (after completion)
 - Errors MUST be logged
+- Non-serializable objects use default=str
 
 ## Implementation Order
 
-1. **Phase 1**: Main agent creates debug.py
-2. **Phase 2**: Code-implementer creates utilities (parallel)
+1. **Phase 1**: Main agent creates debug.py with all classes
+2. **Phase 2**: Main agent creates debug_utils.py with utilities
 3. **Phase 3**: Main agent integrates into flow.py and cli/main.py
-4. **Phase 4**: Test-writer creates all tests
+4. **Phase 4**: Test-writer creates all tests using new mock infrastructure
 5. **Phase 5**: Manual testing and refinement
 
 ## Integration Points
@@ -215,16 +237,22 @@ Before considering complete:
 ## Common Issues and Solutions
 
 ### Issue: Nodes don't execute
-**Solution**: Check DebugWrapper delegates all attributes
+**Solution**: Check DebugWrapper delegates all attributes and handles special methods
+
+### Issue: RecursionError with copy.copy()
+**Solution**: Implement __copy__ and __deepcopy__ methods in wrapper
 
 ### Issue: No progress shown
-**Solution**: Verify click.echo uses err=True
+**Solution**: Verify click.echo uses err=True, check logging not interfering
 
 ### Issue: LLM calls not captured
-**Solution**: Check model_name in prep_res detection
+**Solution**: Check model_name in prep_res detection, verify prompt interception
 
-### Issue: Timeout doesn't work
-**Solution**: Verify Timer started before flow.run()
+### Issue: Timeout doesn't interrupt
+**Solution**: Expected - Python limitation, can only detect after completion
 
 ### Issue: Trace file invalid JSON
 **Solution**: Use default=str in json.dump()
+
+### Issue: Tests fail with mock errors
+**Solution**: Use new LLM-level mock infrastructure, not module-level

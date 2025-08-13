@@ -160,7 +160,14 @@ class DebugWrapper:
 
     def __getattr__(self, name):
         """Delegate unknown attributes to wrapped node"""
+        if name.startswith('__') and name.endswith('__'):
+            raise AttributeError(name)
         return getattr(self._wrapped, name)
+
+    def __copy__(self):
+        """CRITICAL: Flow uses copy.copy() on nodes - MUST implement!"""
+        import copy
+        return DebugWrapper(copy.copy(self._wrapped), self.trace, self.progress)
 
     def set_params(self, params):
         """Flow calls this to set parameters"""
@@ -377,10 +384,12 @@ This gives us names like "WorkflowDiscoveryNode", "ComponentBrowsingNode", etc.
 
 ## Testing Strategy
 
+**NOTE**: The test infrastructure now mocks at the LLM level, not module level. This means you can import from `pflow.planning.debug` normally and patch specific functions without issues. The `mock_llm_responses` fixture is provided globally.
+
 ### Unit Tests
 - Progress display formatting
 - Trace collection accuracy
-- Node wrapper compatibility
+- Node wrapper compatibility (including __copy__ handling)
 - Timeout detection
 
 ### Integration Tests

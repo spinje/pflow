@@ -770,16 +770,28 @@ Important:
         response = model.prompt(prompt, schema=ParameterExtraction, temperature=prep_res["temperature"])
         result = parse_structured_response(response, ParameterExtraction)
 
-        # Validate all required parameters are present
-        missing_required = []
+        # Validate all required parameters are present and apply defaults
+        final_missing = []
+        
         for param_name, param_spec in inputs_spec.items():
-            if param_spec.get("required", True) and param_name not in result["extracted"]:
-                missing_required.append(param_name)
+            # Check if parameter is missing from extraction
+            if param_name not in result["extracted"]:
+                # If it has a default value, use it
+                if "default" in param_spec:
+                    logger.info(f"ParameterMappingNode: Using default value for {param_name}: {param_spec['default']}")
+                    result["extracted"][param_name] = param_spec["default"]
+                # Only mark as missing if it's required AND has no default
+                elif param_spec.get("required", True):
+                    final_missing.append(param_name)
 
-        # Update missing list with any we found
-        if missing_required:
-            result["missing"] = list(set(result.get("missing", []) + missing_required))
+        # Replace the missing list entirely with our validated list
+        # This ensures parameters with defaults are NOT in the missing list
+        result["missing"] = final_missing
+        if final_missing:
             result["confidence"] = 0.0  # No confidence if missing required params
+        else:
+            # All required params are present (either extracted or defaulted)
+            result["confidence"] = max(result.get("confidence", 0.5), 0.5)
 
         logger.info(
             f"ParameterMappingNode: Extracted {len(result['extracted'])} parameters, {len(result['missing'])} missing",
@@ -853,16 +865,26 @@ Important:
             extra={"phase": "fallback", "error": str(exc)},
         )
 
-        # On failure, mark all parameters as missing
+        # On failure, apply defaults and only mark truly missing parameters
         workflow_ir = prep_res.get("workflow_ir", {})
         inputs_spec = workflow_ir.get("inputs", {})
-        missing = [name for name, spec in inputs_spec.items() if spec.get("required", True)]
+        
+        extracted = {}
+        missing = []
+        
+        for name, spec in inputs_spec.items():
+            # If parameter has a default, use it
+            if "default" in spec:
+                extracted[name] = spec["default"]
+            # Only mark as missing if required AND no default
+            elif spec.get("required", True):
+                missing.append(name)
 
         return {
-            "extracted": {},
+            "extracted": extracted,
             "missing": missing,
             "confidence": 0.0,
-            "reasoning": f"Parameter extraction failed: {exc!s}",
+            "reasoning": f"Parameter extraction failed: {exc!s}. Using defaults where available.",
         }
 
 

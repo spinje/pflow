@@ -263,8 +263,8 @@ class TestParameterMappingNode:
 
             exec_res = node.exec(prep_res)
 
-            # Should extract independently
-            assert exec_res["extracted"] == {"input_file": "data.csv", "limit": "50"}
+            # Should extract independently, with default for output_format
+            assert exec_res["extracted"] == {"input_file": "data.csv", "limit": "50", "output_format": "json"}
             assert exec_res["confidence"] == 0.85  # Confidence preserved when all required found
 
             # Verify the prompt was called (indicating extraction happened)
@@ -357,7 +357,8 @@ class TestParameterMappingNode:
                 action = node.post(shared, prep_res, exec_res)
 
             assert action == "params_incomplete"
-            assert shared["extracted_params"] == {"input_file": "test.csv"}
+            # Default value for output_format should be applied even when limit is missing
+            assert shared["extracted_params"] == {"input_file": "test.csv", "output_format": "json"}
             assert shared["missing_params"] == ["limit"]
             assert "Missing required parameters" in caplog.text
 
@@ -446,11 +447,12 @@ class TestParameterMappingNode:
         with caplog.at_level(logging.ERROR):
             result = node.exec_fallback(prep_res, exc)
 
-        # Should mark all required params as missing
-        assert result["extracted"] == {}
-        assert set(result["missing"]) == {"input_file", "limit"}  # Required params only
+        # Should apply defaults even on failure, mark truly missing params
+        assert result["extracted"] == {"output_format": "json"}  # Default applied
+        assert set(result["missing"]) == {"input_file", "limit"}  # Required params without defaults
         assert result["confidence"] == 0.0
         assert "LLM timeout" in result["reasoning"]
+        assert "Using defaults where available" in result["reasoning"]
         assert "Parameter mapping failed" in caplog.text
 
     def test_validates_required_params_after_llm_extraction(self, mock_llm_param_extraction, workflow_with_inputs):
