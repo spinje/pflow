@@ -1,21 +1,19 @@
 # Task 31: Refactor Test Infrastructure - Mock at LLM Level
 
-## Product Requirements Document (PRD)
-
-### Executive Summary
+## Executive Summary
 
 The current test infrastructure uses a complex mock system at the `pflow.planning` module level, causing severe test failures and performance degradation. This task refactors the test mocking strategy to mock at the LLM API level - the actual external dependency - eliminating module state pollution and test interference issues.
 
-### Problem Statement
+## Problem Statement
 
-#### Current State
+### Current State
 - **30+ tests failing** when run together (but pass in isolation)
 - **Test execution time increased from 6s to 4+ minutes** (40x slowdown)
 - **Individual tests hanging** from 0.1ms to 1m+ (60,000x slowdown)
 - **Module state pollution** between tests due to `sys.modules` manipulation
 - **Complex mock maintenance** with special cases for submodules
 
-#### Root Cause Analysis
+### Root Cause Analysis
 
 The fundamental issue is **architectural mismatch**:
 1. The mock tries to be a **partial mock** - blocking some parts of `pflow.planning` while allowing others
@@ -25,13 +23,13 @@ The fundamental issue is **architectural mismatch**:
    - Reference cycles between real and mocked modules
    - State pollution when tests import from `pflow.planning.nodes`
 
-#### Impact
+### Impact
 - **Development velocity**: Developers cannot trust test results
 - **CI/CD reliability**: Flaky tests cause false failures
 - **Debugging difficulty**: Tests behave differently in isolation vs. together
 - **Task 27 blocked**: Debugging features work but tests fail
 
-### Solution Overview
+## Solution Overview
 
 **Mock at the correct boundary**: The LLM API level, not the planning module level.
 
@@ -45,9 +43,12 @@ def mock_llm(monkeypatch):
     monkeypatch.setattr("llm.get_model", mock_get_model)
 ```
 
-### Requirements
+## Status
+done
 
-#### Functional Requirements
+## Requirements
+
+### Functional Requirements
 
 **FR1: LLM Mock Fixture**
 - MUST mock `llm.get_model()` to prevent actual API calls
@@ -73,7 +74,7 @@ def mock_llm(monkeypatch):
 - MUST have zero import-time overhead
 - MUST NOT trigger heavy import chains
 
-#### Non-Functional Requirements
+### Non-Functional Requirements
 
 **NFR1: Simplicity**
 - Mock implementation MUST be under 100 lines of code
@@ -95,7 +96,7 @@ def mock_llm(monkeypatch):
 - MUST provide examples of common test patterns
 - MUST explain migration from old mock
 
-### Success Criteria
+## Success Criteria
 
 1. **All tests pass**: 100% of existing tests pass without modification
 2. **Fast execution**: Full test suite runs in <10 seconds
@@ -104,14 +105,14 @@ def mock_llm(monkeypatch):
 5. **Simple code**: Mock implementation is <100 LOC
 6. **No state pollution**: Tests pass in any execution order
 
-### Out of Scope
+## Out of Scope
 
 - Modifying production code to support testing
 - Changing test assertions or logic
 - Implementing new test features
 - Mocking other external dependencies (just LLM)
 
-### Risks and Mitigations
+## Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
@@ -119,7 +120,7 @@ def mock_llm(monkeypatch):
 | Some tests need real LLM | Medium | Support opt-out via marker/fixture |
 | Hidden LLM usage discovered | Low | Add to mock as discovered |
 
-### Timeline
+## Timeline
 
 - **Phase 1** (2 hours): Implement new LLM mock
 - **Phase 2** (1 hour): Remove old planning mock
@@ -128,20 +129,20 @@ def mock_llm(monkeypatch):
 
 **Total: 6 hours**
 
-### Stakeholders
+## Stakeholders
 
 - **Primary**: Development team (need reliable tests)
 - **Secondary**: CI/CD pipeline (need fast tests)
 - **Tertiary**: Future contributors (need maintainable tests)
 
-### Success Metrics
+## Success Metrics
 
 - Test execution time: <10 seconds (from 4+ minutes)
 - Test pass rate: 100% (from ~96%)
 - Mock code size: <100 LOC (from 200+ LOC)
 - Test isolation: 100% (from ~0%)
 
-### Decision Log
+## Decision Log
 
 **Why mock at LLM level?**
 - It's the actual external dependency

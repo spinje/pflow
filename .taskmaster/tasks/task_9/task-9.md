@@ -177,13 +177,6 @@ Accepted that with namespacing, all inter-node communication goes through params
 - Clear error messages when connections missing
 - Simplified mental model (despite more configuration)
 
-## Future Considerations
-- Visualization tools could show namespace structure
-- Migration tools for old workflows (if needed)
-- Performance optimizations for large namespaces
-- Namespace-aware debugging output
-- Potential for namespace inheritance in nested workflows
-
 ## Lessons Learned
 1. **Simple solutions often win**: Namespacing was simpler than proxy mappings
 2. **Explicit is better than implicit**: For LLM generation especially
