@@ -15,6 +15,7 @@ from pflow.core.ir_schema import ValidationError
 from pflow.registry import Registry
 from pocketflow import BaseNode, Flow
 
+from .namespaced_wrapper import NamespacedNodeWrapper
 from .node_wrapper import TemplateAwareNodeWrapper
 from .template_resolver import TemplateResolver
 from .template_validator import TemplateValidator
@@ -211,15 +212,16 @@ def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
 
 def _instantiate_nodes(
     ir_dict: dict[str, Any], registry: Registry, initial_params: Optional[dict[str, Any]] = None
-) -> dict[str, Union[BaseNode, TemplateAwareNodeWrapper]]:
-    """Instantiate node objects from IR node definitions with template support.
+) -> dict[str, Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]]:
+    """Instantiate node objects from IR node definitions with template and namespace support.
 
     This function creates pocketflow node instances for each node in the IR,
     using the registry to look up node classes and setting any provided parameters.
     Nodes with template parameters are wrapped for runtime resolution.
+    If namespacing is enabled, nodes are additionally wrapped to isolate their outputs.
 
     Args:
-        ir_dict: The IR dictionary containing nodes array
+        ir_dict: The IR dictionary containing nodes array and optional enable_namespacing flag
         registry: Registry instance for node class lookup
         initial_params: Parameters extracted by planner (for template resolution)
 
@@ -230,8 +232,13 @@ def _instantiate_nodes(
         CompilationError: If node instantiation fails
     """
     logger.debug("Starting node instantiation", extra={"phase": "node_instantiation"})
-    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper]] = {}
+    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]] = {}
     initial_params = initial_params or {}
+
+    # Check if namespacing is enabled in the workflow (default: True for MVP)
+    enable_namespacing = ir_dict.get("enable_namespacing", True)
+    if enable_namespacing:
+        logger.debug("Automatic namespacing enabled for workflow", extra={"phase": "node_instantiation"})
 
     for node_data in ir_dict["nodes"]:
         node_id = node_data["id"]
@@ -262,6 +269,14 @@ def _instantiate_nodes(
                     extra={"phase": "node_instantiation", "node_id": node_id},
                 )
                 node_instance = TemplateAwareNodeWrapper(node_instance, node_id, initial_params)
+
+            # Apply namespace wrapping if enabled
+            if enable_namespacing:
+                logger.debug(
+                    f"Wrapping node '{node_id}' for namespace isolation",
+                    extra={"phase": "node_instantiation", "node_id": node_id},
+                )
+                node_instance = NamespacedNodeWrapper(node_instance, node_id)
 
             # For workflow type, inject registry as special parameter
             if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
@@ -296,7 +311,9 @@ def _instantiate_nodes(
     return nodes
 
 
-def _wire_nodes(nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper]], edges: list[dict[str, Any]]) -> None:
+def _wire_nodes(
+    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]], edges: list[dict[str, Any]]
+) -> None:
     """Wire nodes together based on edge definitions.
 
     This function connects nodes using PocketFlow's >> operator for default
@@ -364,8 +381,8 @@ def _wire_nodes(nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper]], edg
 
 
 def _get_start_node(
-    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper]], ir_dict: dict[str, Any]
-) -> Union[BaseNode, TemplateAwareNodeWrapper]:
+    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]], ir_dict: dict[str, Any]
+) -> Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]:
     """Identify the start node for the flow.
 
     This function determines which node should be the entry point for the flow.

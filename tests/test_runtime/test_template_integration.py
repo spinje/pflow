@@ -24,6 +24,9 @@ class MockNode(Node):
         return f"Executed with: {prep_res}"
 
     def post(self, shared, prep_res, exec_res):
+        # When nodes are run through flow with namespacing, the shared store
+        # passed here is actually a NamespacedSharedStore proxy, so we write
+        # normally and the proxy handles namespacing
         shared["result"] = exec_res
         return "default"
 
@@ -72,8 +75,10 @@ class TestCompilerIntegration:
         shared = {}
         flow.run(shared)
 
-        # Node should have received static params unchanged
-        assert "Executed with: {'static': 'value', 'number': 42}" in shared["result"]
+        # Node should have received static params unchanged (with namespacing)
+        assert "node1" in shared
+        assert "result" in shared["node1"]
+        assert "Executed with: {'static': 'value', 'number': 42}" in shared["node1"]["result"]
 
     def test_compile_with_templates(self, mock_registry):
         """Test compilation of workflow with template variables."""
@@ -95,10 +100,13 @@ class TestCompilerIntegration:
         shared = {}
         flow.run(shared)
 
-        # Check that templates were resolved
-        assert "'url': 'https://api.example.com'" in shared["result"]
-        assert "'message': 'Processing 10 items'" in shared["result"]
-        assert "'static': 'unchanged'" in shared["result"]
+        # Check that templates were resolved (with namespacing)
+        assert "node1" in shared
+        assert "result" in shared["node1"]
+        result = shared["node1"]["result"]
+        assert "'url': 'https://api.example.com'" in result
+        assert "'message': 'Processing 10 items'" in result
+        assert "'static': 'unchanged'" in result
 
     def test_validation_fails_missing_params(self, mock_registry):
         """Test that validation catches missing parameters."""
@@ -118,10 +126,12 @@ class TestCompilerIntegration:
         # Should not raise with validate=False
         flow = compile_ir_to_flow(ir, mock_registry, initial_params={}, validate=False)
 
-        # Execute and verify template remains unresolved
+        # Execute and verify template remains unresolved (with namespacing)
         shared = {}
         flow.run(shared)
-        assert "'url': '$missing'" in shared["result"]
+        assert "node1" in shared
+        assert "result" in shared["node1"]
+        assert "'url': '$missing'" in shared["node1"]["result"]
 
     def test_shared_store_templates_not_validated(self, mock_registry):
         """Test that variables from node outputs are properly validated."""
@@ -167,8 +177,10 @@ class TestCompilerIntegration:
         shared = {}
         flow.run(shared)
 
-        # The result should have the template resolved
-        assert "result" in shared
+        # The result should have the template resolved (with namespacing)
+        # Consumer node should have a result
+        assert "consumer" in shared
+        assert "result" in shared["consumer"]
 
 
 class TestMultiNodeWorkflow:
@@ -185,6 +197,8 @@ class TestMultiNodeWorkflow:
             }
 
         def post(self, shared, prep_res, exec_res):
+            # When nodes are run through flow with namespacing, the shared store
+            # passed here is actually a NamespacedSharedStore proxy
             shared["video_data"] = exec_res
             return "default"
 
@@ -203,6 +217,8 @@ class TestMultiNodeWorkflow:
             return f"Processed: {prep_res}"
 
         def post(self, shared, prep_res, exec_res):
+            # When nodes are run through flow with namespacing, the shared store
+            # passed here is actually a NamespacedSharedStore proxy
             shared["consumer_result"] = exec_res
             return "default"
 
@@ -452,8 +468,10 @@ class TestEdgeCases:
         shared = {"circular": "from_shared"}
         flow.run(shared)
 
-        # Initial params should win (higher priority)
-        assert "'value': 'from_params'" in shared["result"]
+        # Initial params should win (higher priority) - with namespacing
+        assert "node1" in shared
+        assert "result" in shared["node1"]
+        assert "'value': 'from_params'" in shared["node1"]["result"]
 
     def test_deeply_nested_paths(self, mock_registry):
         """Test resolution of deeply nested paths."""
@@ -464,7 +482,10 @@ class TestEdgeCases:
         shared = {"a": {"b": {"c": {"d": {"e": {"f": {"g": "deeply_nested_value"}}}}}}}
 
         flow.run(shared)
-        assert "'deep': 'deeply_nested_value'" in shared["result"]
+        # With namespacing
+        assert "node1" in shared
+        assert "result" in shared["node1"]
+        assert "'deep': 'deeply_nested_value'" in shared["node1"]["result"]
 
     def test_malformed_ir_structure(self, mock_registry):
         """Test handling of malformed IR structure."""

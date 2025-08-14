@@ -252,7 +252,10 @@ def test_file_with_parameters():
             "ir_version": "0.1.0",
             "nodes": [
                 {"id": "reader", "type": "read-file", "params": {"file_path": "$input_file"}},
-                {"id": "writer", "type": "write-file", "params": {"file_path": "$output_file"}},
+                {"id": "writer", "type": "write-file", "params": {
+                    "file_path": "$output_file",
+                    "content": "$reader.content"  # Explicit connection required with namespacing
+                }},
             ],
             "edges": [{"from": "reader", "to": "writer"}],
         }
@@ -326,7 +329,10 @@ def test_file_with_parameters_template_resolution():
             "ir_version": "0.1.0",
             "nodes": [
                 {"id": "reader", "type": "read-file", "params": {"file_path": "$input_file"}},
-                {"id": "writer", "type": "write-file", "params": {"file_path": "$output_file"}},
+                {"id": "writer", "type": "write-file", "params": {
+                    "file_path": "$output_file",
+                    "content": "$reader.content"  # Explicit connection required with namespacing
+                }},
             ],
             "edges": [{"from": "reader", "to": "writer"}],
         }

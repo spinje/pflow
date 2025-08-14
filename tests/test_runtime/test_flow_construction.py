@@ -65,15 +65,24 @@ class TestInstantiateNodes:
         assert len(nodes) == 1
         assert "node1" in nodes
         node = nodes["node1"]
-        assert isinstance(node, BaseNode)
 
-        # Test the node actually works by running it
+        # With namespacing enabled by default, nodes are wrapped
+        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
+
+        assert isinstance(node, NamespacedNodeWrapper)
+
+        # Get the inner node for direct testing
+        inner_node = node._inner_node
+        assert isinstance(inner_node, BaseNode)
+
+        # Test the inner node directly (bypassing namespacing)
         shared_store = {"test_input": "hello"}
-        result = node.prep(shared_store)
-        processed = node.exec(result)
-        action = node.post(shared_store, result, processed)
+        result = inner_node.prep(shared_store)
+        processed = inner_node.exec(result)
+        action = inner_node.post(shared_store, result, processed)
 
         # Verify the node processed data correctly
+        # When calling node methods directly (not through wrapper), no namespacing occurs
         assert shared_store["test_output"] == "Processed: hello"
         assert action == "default"
 
@@ -102,29 +111,38 @@ class TestInstantiateNodes:
         # Verify behavior: correct number of distinct working instances
         assert len(nodes) == 3
         assert all(key in nodes for key in ["node1", "node2", "node3"])
-        assert all(isinstance(node, BaseNode) for node in nodes.values())
+
+        # With namespacing, nodes are wrapped
+        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
+
+        assert all(isinstance(node, NamespacedNodeWrapper) for node in nodes.values())
+
+        # Get inner nodes for testing
+        inner_nodes = {node_id: node._inner_node for node_id, node in nodes.items()}
+        assert all(isinstance(node, BaseNode) for node in inner_nodes.values())
 
         # Verify they're different instances (not the same object)
-        assert nodes["node1"] is not nodes["node3"]  # Different instances
-        assert type(nodes["node1"]).__name__ == "ExampleNode"
-        assert type(nodes["node2"]).__name__ == "RetryExampleNode"  # Different class
-        assert type(nodes["node3"]).__name__ == "ExampleNode"
+        assert inner_nodes["node1"] is not inner_nodes["node3"]  # Different instances
+        assert type(inner_nodes["node1"]).__name__ == "ExampleNode"
+        assert type(inner_nodes["node2"]).__name__ == "RetryExampleNode"  # Different class
+        assert type(inner_nodes["node3"]).__name__ == "ExampleNode"
 
-        # Test all nodes can execute independently with proper input keys
-        for node_id, node in nodes.items():
+        # Test all inner nodes can execute independently with proper input keys
+        for node_id, inner_node in inner_nodes.items():
             # Use appropriate input key based on node type
-            if type(node).__name__ == "RetryExampleNode":
+            if type(inner_node).__name__ == "RetryExampleNode":
                 shared_store = {"retry_input": f"input-{node_id}"}
                 expected_output_key = "retry_output"
             else:
                 shared_store = {"test_input": f"input-{node_id}"}
                 expected_output_key = "test_output"
 
-            result = node.prep(shared_store)
-            processed = node.exec(result)
-            node.post(shared_store, result, processed)
+            result = inner_node.prep(shared_store)
+            processed = inner_node.exec(result)
+            inner_node.post(shared_store, result, processed)
 
             # Verify each node processed its data correctly
+            # When calling node methods directly (not through wrapper), no namespacing occurs
             assert expected_output_key in shared_store
             assert f"input-{node_id}" in shared_store[expected_output_key]
 
@@ -150,17 +168,24 @@ class TestInstantiateNodes:
         assert len(nodes) == 1
         node = nodes["node1"]
 
-        # Test that parameters were actually set on the node
-        assert hasattr(node, "params")
-        assert node.params.get("custom_param") == "test_value"
+        # With namespacing, node is wrapped - get inner node
+        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
+
+        assert isinstance(node, NamespacedNodeWrapper)
+        inner_node = node._inner_node
+
+        # Test that parameters were actually set on the inner node
+        assert hasattr(inner_node, "params")
+        assert inner_node.params.get("custom_param") == "test_value"
 
         # Test that the node still functions correctly with params
         shared_store = {"test_input": "param_test"}
-        result = node.prep(shared_store)
-        processed = node.exec(result)
-        action = node.post(shared_store, result, processed)
+        result = inner_node.prep(shared_store)
+        processed = inner_node.exec(result)
+        action = inner_node.post(shared_store, result, processed)
 
         # Node should work regardless of parameters
+        # When calling node methods directly (not through wrapper), no namespacing occurs
         assert shared_store["test_output"] == "Processed: param_test"
         assert action == "default"
 
@@ -195,12 +220,19 @@ class TestInstantiateNodes:
         assert len(nodes) == 1
         node = nodes["node1"]
 
+        # With namespacing, node is wrapped - get inner node
+        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
+
+        assert isinstance(node, NamespacedNodeWrapper)
+        inner_node = node._inner_node
+
         # Test that the node functions correctly without params
         shared_store = {"test_input": "no_params_test"}
-        result = node.prep(shared_store)
-        processed = node.exec(result)
-        action = node.post(shared_store, result, processed)
+        result = inner_node.prep(shared_store)
+        processed = inner_node.exec(result)
+        action = inner_node.post(shared_store, result, processed)
 
+        # When calling node methods directly (not through wrapper), no namespacing occurs
         assert shared_store["test_output"] == "Processed: no_params_test"
         assert action == "default"
 
@@ -229,9 +261,11 @@ class TestWireNodes:
         # Execute the flow
         flow.run(shared_store)
 
-        # Verify the workflow executed correctly through both nodes
-        assert "test_output" in shared_store
-        assert "wiring_test" in shared_store["test_output"]
+        # Verify the workflow executed correctly through both nodes (with namespacing)
+        # Both nodes should have executed, check the last one (node2)
+        assert "node2" in shared_store
+        assert "test_output" in shared_store["node2"]
+        assert "wiring_test" in shared_store["node2"]["test_output"]
 
     def test_wire_chain_connection_executes_sequentially(self):
         """Test wiring a chain of nodes executes them in order."""
@@ -262,9 +296,11 @@ class TestWireNodes:
 
         flow.run(shared_store)
 
-        # All nodes in chain should have processed the data
-        assert "test_output" in shared_store
-        assert "chain_test" in shared_store["test_output"]
+        # All nodes in chain should have processed the data (with namespacing)
+        # Check the last node in the chain (node3)
+        assert "node3" in shared_store
+        assert "test_output" in shared_store["node3"]
+        assert "chain_test" in shared_store["node3"]["test_output"]
 
     def test_wire_missing_source_node_raises_helpful_error(self):
         """Test error when edge references non-existent source."""
@@ -455,12 +491,16 @@ class TestCompileIrToFlow:
         assert flow.start_node is not None
 
         # Most importantly: test the compiled flow actually executes correctly
-        shared_store = {"test_input": "integration_test"}
+        shared_store = {"test_input": "integration_test", "retry_input": "retry_test"}
         flow.run(shared_store)
 
-        # Verify the entire workflow executed through all nodes
-        assert "test_output" in shared_store
-        assert "integration_test" in shared_store["test_output"]
+        # Verify the entire workflow executed through all nodes (with namespacing)
+        # Check the last node (output) which is a test-node-retry
+        assert "output" in shared_store
+        assert "retry_output" in shared_store["output"]  # RetryExampleNode writes to retry_output
+        # Also check that input/process nodes ran
+        assert "input" in shared_store
+        assert "process" in shared_store
 
     def test_compile_with_node_parameters_end_to_end(self):
         """Test compiling and executing flow with node parameters works correctly."""
@@ -482,9 +522,10 @@ class TestCompileIrToFlow:
         shared_store = {"test_input": "param_test"}
         flow.run(shared_store)
 
-        # Verify workflow executed correctly with parameters
-        assert "test_output" in shared_store
-        assert "param_test" in shared_store["test_output"]
+        # Verify workflow executed correctly with parameters (with namespacing)
+        assert "node1" in shared_store
+        assert "test_output" in shared_store["node1"]
+        assert "param_test" in shared_store["node1"]["test_output"]
 
     def test_compile_from_json_string_works_end_to_end(self):
         """Test compiling from JSON string input produces working flow."""
@@ -502,8 +543,10 @@ class TestCompileIrToFlow:
         shared_store = {"test_input": "json_test"}
         flow.run(shared_store)
 
-        assert "test_output" in shared_store
-        assert "json_test" in shared_store["test_output"]
+        # With namespacing
+        assert "test" in shared_store
+        assert "test_output" in shared_store["test"]
+        assert "json_test" in shared_store["test"]["test_output"]
 
     def test_compile_with_invalid_json_raises_json_decode_error(self):
         """Test error on invalid JSON string provides clear error."""

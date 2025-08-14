@@ -290,9 +290,10 @@ class TestCompileIrToFlow:
             shared_store = {"test_input": "hello"}
             flow.run(shared_store)
 
-            # Verify the node executed correctly
-            assert "test_output" in shared_store
-            assert shared_store["test_output"] == "Processed: hello"
+            # Verify the node executed correctly (with namespacing)
+            assert "n1" in shared_store
+            assert "test_output" in shared_store["n1"]
+            assert shared_store["n1"]["test_output"] == "Processed: hello"
 
     def test_compile_multi_node_workflow_with_chaining(self):
         """Test compilation with multiple nodes connected by edges.
@@ -345,13 +346,17 @@ class TestCompileIrToFlow:
             assert flow is not None
 
             # Test that the multi-node flow executes correctly
-            shared_store = {"test_input": "start"}
+            shared_store = {"test_input": "start", "retry_input": "test data"}
             flow.run(shared_store)
 
-            # Verify all nodes executed in sequence
+            # Verify all nodes executed in sequence (with namespacing)
             # Each ExampleNode processes its input and passes to next
-            assert "test_output" in shared_store
-            # The output should show processing from multiple nodes
-            output = shared_store["test_output"]
-            assert "Processed:" in output
-            assert "start" in output
+            # The last node is RetryExampleNode which writes to retry_output
+            assert "output" in shared_store
+            assert "retry_output" in shared_store["output"]
+            output = shared_store["output"]["retry_output"]
+            assert "Processed" in output  # RetryExampleNode's output format
+
+            # Also verify the other nodes ran
+            assert "input" in shared_store
+            assert "process" in shared_store

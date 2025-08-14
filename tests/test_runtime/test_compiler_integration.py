@@ -185,11 +185,16 @@ class TestEndToEndCompilation:
         shared_storage = {"test_input": "hello world", "user_id": "test-user"}
         result = flow.run(shared_storage)
 
-        # Verify execution results based on real test node behavior
-        assert "test_output" in shared_storage
-        assert "Processed: hello world" in shared_storage["test_output"]
-        assert "user_data" in shared_storage  # From test-node-structured
-        assert shared_storage["user_data"]["id"] == "test-user"
+        # Verify execution results based on real test node behavior (with namespacing)
+        # The "input" node writes test_output
+        assert "input" in shared_storage
+        assert "test_output" in shared_storage["input"]
+        assert "Processed: hello world" in shared_storage["input"]["test_output"]
+
+        # The "transform" node writes user_data
+        assert "transform" in shared_storage
+        assert "user_data" in shared_storage["transform"]
+        assert shared_storage["transform"]["user_data"]["id"] == "test-user"
         assert result == "default"  # Default action from final node
 
     def test_branching_flow_with_success_path(self, branching_ir, test_registry):
@@ -232,13 +237,20 @@ class TestEndToEndCompilation:
 
         # Get the node and check it's wrapped
         node = flow.start_node
-        # With templates, the node should be wrapped
+
+        # With namespacing enabled by default, the outermost wrapper is NamespacedNodeWrapper
+        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
         from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
 
-        assert isinstance(node, TemplateAwareNodeWrapper)
+        assert isinstance(node, NamespacedNodeWrapper)
+
+        # The inner node should be the TemplateAwareNodeWrapper
+        template_wrapper = node._inner_node
+        assert isinstance(template_wrapper, TemplateAwareNodeWrapper)
+
         # The wrapper should have the template params stored
-        assert node.template_params["template"] == "$user_input"
-        assert node.template_params["number"] == "$count"
+        assert template_wrapper.template_params["template"] == "$user_input"
+        assert template_wrapper.template_params["number"] == "$count"
 
     def test_compilation_with_json_string_input(self, simple_ir, test_registry):
         """Test compilation accepts JSON string input."""
@@ -248,8 +260,11 @@ class TestEndToEndCompilation:
         assert flow is not None
         shared_storage = {"test_input": "hello world", "user_id": "test-user"}
         flow.run(shared_storage)
-        assert "test_output" in shared_storage
-        assert "user_data" in shared_storage
+        # With namespacing, outputs are at shared[node_id][key]
+        assert "input" in shared_storage
+        assert "test_output" in shared_storage["input"]
+        assert "transform" in shared_storage
+        assert "user_data" in shared_storage["transform"]
 
 
 # =============================================================================
@@ -469,9 +484,28 @@ class TestPerformanceBenchmarks:
         flow.run(shared_store)
 
         # Verify the workflow executed through all nodes - check for any output from the test nodes
+        # With namespacing, outputs are at shared[node_id][key]
         # ExampleNode writes to test_output, StructuredExampleNode writes user_data, RetryExampleNode writes retry_output
-        has_output = "test_output" in shared_store or "user_data" in shared_store or "retry_output" in shared_store
-        assert has_output, f"No expected outputs found in shared_store: {shared_store.keys()}"
+
+        # Check if any node wrote outputs (they'll be in namespaced locations)
+        node_outputs = []
+        for node_id in [f"node{i}" for i in range(10)]:
+            if node_id in shared_store:
+                node_outputs.append(node_id)
+
+        assert len(node_outputs) > 0, (
+            f"No node outputs found. Expected namespaced outputs but got: {shared_store.keys()}"
+        )
+
+        # Verify at least one expected output exists in the namespaced locations
+        has_expected_output = False
+        for node_id in node_outputs:
+            node_data = shared_store.get(node_id, {})
+            if "test_output" in node_data or "user_data" in node_data or "retry_output" in node_data:
+                has_expected_output = True
+                break
+
+        assert has_expected_output, f"No expected outputs found in namespaced locations: {shared_store}"
 
     def test_complex_workflow_compilation_performance(self, test_registry):
         """Test compilation performance with complex node graphs."""

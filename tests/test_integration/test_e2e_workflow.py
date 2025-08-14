@@ -32,12 +32,20 @@ def test_hello_workflow_execution(tmp_path):
         with open("input.txt", "w") as f:
             f.write("Hello\nWorld")
 
-        # Create workflow JSON
+        # Create workflow JSON with namespacing support
+        # With namespacing enabled by default, we need to explicitly connect nodes
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
                 {"id": "read", "type": "read-file", "params": {"file_path": "input.txt"}},
-                {"id": "write", "type": "write-file", "params": {"file_path": "output.txt"}},
+                {
+                    "id": "write",
+                    "type": "write-file",
+                    "params": {
+                        "file_path": "output.txt",
+                        "content": "$read.content",  # Explicitly reference read node's output
+                    },
+                },
             ],
             "edges": [{"from": "read", "to": "write"}],
         }
@@ -47,6 +55,11 @@ def test_hello_workflow_execution(tmp_path):
 
         # Run CLI
         result = runner.invoke(main, ["--file", "workflow.json"])
+
+        # Print output for debugging
+        if result.exit_code != 0:
+            print(f"CLI Output:\n{result.output}")
+            print(f"Exception:\n{result.exception}")
 
         # Verify success
         assert result.exit_code == 0
@@ -221,12 +234,19 @@ def test_verbose_execution_output(tmp_path):
         with open("input.txt", "w") as f:
             f.write("Test content")
 
-        # Create simple workflow
+        # Create simple workflow with explicit template variable connection
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
                 {"id": "read", "type": "read-file", "params": {"file_path": "input.txt"}},
-                {"id": "write", "type": "write-file", "params": {"file_path": "output.txt"}},
+                {
+                    "id": "write",
+                    "type": "write-file",
+                    "params": {
+                        "file_path": "output.txt",
+                        "content": "$read.content",  # Explicit connection required with namespacing
+                    },
+                },
             ],
             "edges": [{"from": "read", "to": "write"}],
         }
@@ -262,12 +282,19 @@ def test_shared_store_verification(tmp_path):
     with open("input.txt", "w") as f:
         f.write("Test content\nSecond line")
 
-    # Create workflow IR
+    # Create workflow IR with explicit template variable connection
     workflow = {
         "ir_version": "0.1.0",
         "nodes": [
             {"id": "read", "type": "read-file", "params": {"file_path": "input.txt"}},
-            {"id": "write", "type": "write-file", "params": {"file_path": "output.txt"}},
+            {
+                "id": "write",
+                "type": "write-file",
+                "params": {
+                    "file_path": "output.txt",
+                    "content": "$read.content",  # Explicit connection required with namespacing
+                },
+            },
         ],
         "edges": [{"from": "read", "to": "write"}],
     }
@@ -277,12 +304,15 @@ def test_shared_store_verification(tmp_path):
     shared_storage = {}
     result = flow.run(shared_storage)
 
-    # Verify shared store contents
-    assert "content" in shared_storage, "ReadFileNode should put content in shared store"
-    assert "1: Test content" in shared_storage["content"], "Content should have line numbers"
-    assert "2: Second line" in shared_storage["content"], "All lines should be numbered"
-    assert "written" in shared_storage, "WriteFileNode should mark success in shared store"
-    assert "Successfully wrote to" in shared_storage["written"], "Written message should indicate success"
+    # Verify shared store contents with namespacing
+    # With namespacing enabled, outputs are stored under node IDs
+    assert "read" in shared_storage, "Read node should have its namespace in shared store"
+    assert "content" in shared_storage["read"], "ReadFileNode should put content in its namespace"
+    assert "1: Test content" in shared_storage["read"]["content"], "Content should have line numbers"
+    assert "2: Second line" in shared_storage["read"]["content"], "All lines should be numbered"
+    assert "write" in shared_storage, "Write node should have its namespace in shared store"
+    assert "written" in shared_storage["write"], "WriteFileNode should mark success in its namespace"
+    assert "Successfully wrote to" in shared_storage["write"]["written"], "Written message should indicate success"
 
     # Verify the flow succeeded
     assert result == "default", "Flow should return default action on success"

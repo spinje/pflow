@@ -266,8 +266,10 @@ class TestWorkflowExecutorIntegration:
             result = flow.run(shared)
 
             assert result == "workflow_error"
-            assert "error" in shared
-            assert "Child failed" in shared["error"]
+            # With namespacing, error is at shared[node_id]["error"]
+            assert "sub" in shared
+            assert "error" in shared["sub"]
+            assert "Child failed" in shared["sub"]["error"]
 
     def test_storage_isolation(self, simple_workflow_ir, mock_registry):
         """Test that storage isolation works correctly."""

@@ -24,7 +24,7 @@ def test_template_system_with_file_nodes():
                 {
                     "id": "writer",
                     "type": "write-file",
-                    "params": {"file_path": "$output_file", "content": "$content", "encoding": "utf-8"},
+                    "params": {"file_path": "$output_file", "content": "$reader.content", "encoding": "utf-8"},
                 },
             ],
             "edges": [{"from": "reader", "to": "writer"}],

@@ -215,6 +215,11 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
             },
             "default": {},
         },
+        "enable_namespacing": {
+            "type": "boolean",
+            "description": "Enable automatic namespacing to prevent output collisions between nodes",
+            "default": True,
+        },
     },
     "required": ["ir_version", "nodes"],
     "additionalProperties": False,

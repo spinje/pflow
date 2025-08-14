@@ -186,7 +186,8 @@ class TestWorkflowLifecycleIntegration:
 
             # Verify execution - TestEchoNode uses params["message"] when available
             # The template $text will be resolved to "World"
-            assert shared.get("result") == "Hello World"
+            # With namespacing enabled, outputs are stored under node IDs
+            assert shared.get("echo1", {}).get("result") == "Hello World"
         finally:
             # Clean up global namespace
             if hasattr(current_module, "TestEchoNode"):
@@ -530,9 +531,11 @@ def test_real_workflow_execution_with_errors(tmp_path):
     _ = flow.run(shared)
 
     # Verify the error was set in shared store
-    assert "error" in shared
-    assert "nonexistent.txt" in shared["error"]
-    assert "does not exist" in shared["error"]
+    # With namespacing enabled, error is stored under node ID
+    assert "read_missing" in shared
+    assert "error" in shared["read_missing"]
+    assert "nonexistent.txt" in shared["read_missing"]["error"]
+    assert "does not exist" in shared["read_missing"]["error"]
 
 
 def test_concurrent_workflow_operations(tmp_path):

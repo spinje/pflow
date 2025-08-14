@@ -362,6 +362,52 @@ A chronological record of significant architectural and design decisions made du
 
 ---
 
+## Decision: Automatic Namespacing Instead of Manual Proxy Mappings
+- **Date**: 2025-08-14
+- **Made during**: Task 9 (Shared Store Collision Detection and Proxy Mapping)
+- **Status**: Accepted
+- **Context**: Multiple nodes of the same type writing to the same shared store keys caused data collisions. The original plan was to implement manual proxy mappings where users/LLMs would explicitly configure input/output remappings. However, analysis revealed this added significant complexity for both users and the planner LLM.
+- **Alternatives considered**:
+  1. **Manual Proxy Mappings** - Explicit configuration of input/output remappings per node
+     - Pros: Maximum flexibility, explicit control, can handle complex transformations
+     - Cons: Complex configuration, verbose workflows, steep learning curve, error-prone
+  2. **Automatic Proxy Mapping** - System detects collisions and generates mappings transparently
+     - Pros: No user configuration, LLM never sees mappings, transparent handling
+     - Cons: Hidden magic, complex edge cases, debugging challenges
+  3. **Automatic Namespacing** - All node outputs automatically wrapped under node ID
+     - Pros: Simple rule, no collisions possible, natural template syntax, minimal code
+     - Cons: Changes shared store structure, requires explicit routing, breaks implicit connections
+  4. **Force Unique Output Names** - Make every node output unique keys
+     - Pros: No architectural changes needed
+     - Cons: Breaks node abstraction, makes reuse harder, requires rewriting all nodes
+- **Decision**: Implement automatic namespacing - all node outputs go to `shared[node_id][key]`
+- **Rationale**:
+  - Simplest solution that completely solves the collision problem (~200 lines vs ~500)
+  - One consistent pattern for LLMs: always use `$node_id.output_key` references
+  - Eliminates entire class of collision bugs without configuration
+  - Template resolver already supports path syntax (`$node.key`)
+  - Makes data lineage explicit and debuggable
+  - Easier for LLMs to generate correct workflows (no collision avoidance puzzle)
+  - Worth trading implicit connections for explicit, collision-free routing
+- **Consequences**:
+  - All inter-node communication now requires explicit template variables in params
+  - Shared store becomes a "workflow state registry" rather than shared blackboard
+  - Workflows must use `$node_id.output` pattern for all data references
+  - Node reads from shared store (`shared.get("key")`) always miss, forcing param usage
+  - CLI inputs remain at root level and are still accessible
+  - Enabled by default for MVP (no backward compatibility concerns)
+  - Tests updated to expect namespaced outputs
+  - Planner generates workflows with explicit connections
+- **Implementation Details**:
+  - NamespacedSharedStore proxy redirects writes to `shared[node_id][key]`
+  - NamespacedNodeWrapper wraps nodes transparently during compilation
+  - Wrapper order: Node → TemplateAwareNodeWrapper → NamespacedNodeWrapper
+  - Full dict protocol implemented for template resolution compatibility
+  - `enable_namespacing` field in IR schema (default: true)
+- **Review date**: After MVP completion
+
+---
+
 <!-- New decisions are appended below this line -->
 
 
