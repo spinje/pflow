@@ -101,6 +101,13 @@ class TemplateAwareNodeWrapper:
         context = dict(shared)  # Start with shared store data
         context.update(self.initial_params)  # Planner parameters override
 
+        # Debug: Log context keys when we have template params
+        if self.template_params and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"Template resolution context for node '{self.node_id}' has keys: {list(context.keys())[:20]}",
+                extra={"node_id": self.node_id, "initial_params_keys": list(self.initial_params.keys())},
+            )
+
         # Resolve all template parameters
         resolved_params = {}
         for key, template in self.template_params.items():
@@ -113,10 +120,18 @@ class TemplateAwareNodeWrapper:
                     extra={"node_id": self.node_id, "param": key},
                 )
             else:
-                logger.warning(
-                    f"Template in param '{key}' could not be fully resolved: '{template}'",
-                    extra={"node_id": self.node_id, "param": key},
-                )
+                # Check if it's actually an error or just no template variables
+                if "$" in template:
+                    logger.warning(
+                        f"Template in param '{key}' could not be fully resolved: '{template}'",
+                        extra={"node_id": self.node_id, "param": key},
+                    )
+                else:
+                    # No template variables, this is fine
+                    logger.debug(
+                        f"Param '{key}' has no template variables: '{template}'",
+                        extra={"node_id": self.node_id, "param": key},
+                    )
 
         # Temporarily update inner node params with resolved values
         original_params = self.inner_node.params

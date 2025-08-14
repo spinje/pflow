@@ -958,6 +958,10 @@ def _execute_planner_and_workflow(
     if not isinstance(planner_output, dict):
         planner_output = {}
 
+    # Clean up LLM interception BEFORE workflow execution
+    if trace_collector:
+        trace_collector.cleanup_llm_interception()
+
     # Set final status in trace
     if trace_collector:
         if planner_output.get("success"):
@@ -971,7 +975,8 @@ def _execute_planner_and_workflow(
             if not planner_output.get("success"):
                 click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
             elif trace:
-                click.echo(f"📝 Trace saved: {trace_file}")
+                # Use err=True to ensure message is visible even with workflow output
+                click.echo(f"📝 Trace saved: {trace_file}", err=True)
 
     if planner_output.get("success"):
         # Execute the workflow WITH execution_params for template resolution
@@ -1241,6 +1246,21 @@ def main(
     ctx.obj["output_format"] = output_format
     ctx.obj["trace"] = trace
     ctx.obj["planner_timeout"] = planner_timeout
+
+    # Check for misplaced CLI flags in workflow arguments
+    misplaced_flags = [
+        arg
+        for arg in workflow
+        if arg in ("--trace", "--verbose", "-v", "--planner-timeout", "--output-key", "-o", "--output-format")
+    ]
+    if misplaced_flags:
+        click.echo("cli: Error - CLI flags must come BEFORE the workflow text", err=True)
+        click.echo(f"cli: Found misplaced flags: {', '.join(misplaced_flags)}", err=True)
+        click.echo("cli: Correct usage examples:", err=True)
+        click.echo('cli:   pflow --trace "create a story about llamas"', err=True)
+        click.echo('cli:   pflow --verbose --trace "analyze this data"', err=True)
+        click.echo('cli: NOT: pflow "create a story" --trace', err=True)
+        ctx.exit(1)
 
     # Process workflow based on input type
     if source in ("file", "stdin"):

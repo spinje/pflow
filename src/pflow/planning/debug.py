@@ -40,6 +40,11 @@ class DebugWrapper:
     def __init__(self, node, debug_context: DebugContext):
         self._wrapped = node
         self.debug_context = debug_context
+
+        # Defensive check for debug_context type
+        if not hasattr(debug_context, "trace_collector") or not hasattr(debug_context, "progress"):
+            raise TypeError(f"Expected DebugContext, got {type(debug_context)}: {debug_context}")
+
         self.trace = debug_context.trace_collector
         self.progress = debug_context.progress
         # CRITICAL: Copy Flow-required attributes
@@ -72,9 +77,10 @@ class DebugWrapper:
         """Support the - operator for flow connections."""
         # Import here to avoid circular dependency
         from pocketflow import _ConditionalTransition
+
         # Create a conditional transition with the wrapper as source
         return _ConditionalTransition(self, action)
-    
+
     def __rshift__(self, other):
         """Support the >> operator for flow connections."""
         # Add other as default successor
@@ -98,14 +104,22 @@ class DebugWrapper:
         shared["_trace_collector"] = self.trace
 
         try:
-            result = self._wrapped._run(shared)
+            # Call our own prep/exec/post to intercept LLM calls
+            prep_res = self.prep(shared)
+            exec_res = self.exec(prep_res)
+            result = self.post(shared, prep_res, exec_res)
+
             duration = time.time() - start_time
             self.progress.on_node_complete(node_name, duration)
             self.trace.record_node_execution(node_name, duration, "success")
             return result
         except Exception as e:
+            import traceback
+
             duration = time.time() - start_time
-            self.trace.record_node_execution(node_name, duration, "failed", str(e))
+            # Include full traceback for debugging
+            error_msg = f"{e!s}\n{traceback.format_exc()}"
+            self.trace.record_node_execution(node_name, duration, "failed", error_msg)
             raise
 
     def prep(self, shared):
@@ -124,37 +138,50 @@ class DebugWrapper:
         import llm
 
         original_get_model = None
+
         if "model_name" in prep_res:  # Node uses LLM
-            original_get_model = llm.get_model
+            # Store current node name in trace collector for LLM interception
+            self.trace.current_node = node_name
 
-            def intercept_get_model(*args, **kwargs):
-                model = original_get_model(*args, **kwargs)
-                original_prompt = model.prompt
+            # Install interceptor only once (first node that uses LLM)
+            if not hasattr(self.trace, "_llm_interceptor_installed"):
+                original_get_model = llm.get_model
+                trace = self.trace  # Capture trace in closure
 
-                def intercept_prompt(prompt_text, **prompt_kwargs):
-                    prompt_start = time.time()
-                    # Record the prompt BEFORE calling
-                    self.trace.record_llm_request(node_name, prompt_text, prompt_kwargs)
+                def intercept_get_model(*args, **kwargs):
+                    model = original_get_model(*args, **kwargs)
+                    original_prompt = model.prompt
 
-                    try:
-                        response = original_prompt(prompt_text, **prompt_kwargs)
-                        # Record the response AFTER calling
-                        self.trace.record_llm_response(node_name, response, time.time() - prompt_start)
-                        return response
-                    except Exception as e:
-                        self.trace.record_llm_error(node_name, str(e))
-                        raise
+                    def intercept_prompt(prompt_text, **prompt_kwargs):
+                        prompt_start = time.time()
+                        # Use current_node from trace collector
+                        current_node = getattr(trace, "current_node", "Unknown")
 
-                model.prompt = intercept_prompt
-                return model
+                        # Record the prompt BEFORE calling
+                        trace.record_llm_request(current_node, prompt_text, prompt_kwargs)
 
-            llm.get_model = intercept_get_model
+                        try:
+                            response = original_prompt(prompt_text, **prompt_kwargs)
+                            # Record the response AFTER calling
+                            trace.record_llm_response(current_node, response, time.time() - prompt_start)
+                            return response
+                        except Exception as e:
+                            trace.record_llm_error(current_node, str(e))
+                            raise
+
+                    model.prompt = intercept_prompt
+                    return model
+
+                llm.get_model = intercept_get_model
+                self.trace._llm_interceptor_installed = True
+                self.trace._original_get_model = original_get_model
 
         try:
             result = self._wrapped.exec(prep_res)
         finally:
-            if original_get_model:
-                llm.get_model = original_get_model
+            # Clear current node name
+            if hasattr(self.trace, "current_node"):
+                delattr(self.trace, "current_node")
 
         self.trace.record_phase(node_name, "exec", time.time() - start)
         return result
@@ -233,10 +260,13 @@ class TraceCollector:
 
             # Try to get token counts if available
             if hasattr(response, "usage"):
-                self.current_llm_call["tokens"] = {
-                    "input": response.usage.get("input_tokens", 0),
-                    "output": response.usage.get("output_tokens", 0),
-                }
+                # Check if usage is a method or a property
+                usage_data = response.usage() if callable(response.usage) else response.usage
+                if isinstance(usage_data, dict):
+                    self.current_llm_call["tokens"] = {
+                        "input": usage_data.get("input_tokens", 0),
+                        "output": usage_data.get("output_tokens", 0),
+                    }
 
             self.llm_calls.append(self.current_llm_call)
             delattr(self, "current_llm_call")
@@ -293,6 +323,16 @@ class TraceCollector:
             json.dump(trace_data, f, indent=2, default=str)
 
         return str(filepath)
+
+    def cleanup_llm_interception(self):
+        """Restore original LLM get_model function if it was intercepted."""
+        if hasattr(self, "_original_get_model"):
+            import llm
+
+            llm.get_model = self._original_get_model
+            delattr(self, "_original_get_model")
+            if hasattr(self, "_llm_interceptor_installed"):
+                delattr(self, "_llm_interceptor_installed")
 
 
 class PlannerProgress:

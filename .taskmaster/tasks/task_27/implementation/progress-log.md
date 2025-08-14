@@ -95,3 +95,59 @@ Linting issues to fix:
 - Optional type hint issue in flow.py
 
 Next: Fix linting issues and test the implementation.
+
+## [2025-01-13 11:00] - Fixed Critical LLM Interception Issues
+
+### Issue 1: DebugWrapper not intercepting exec phase
+❌ Problem: DebugWrapper's `_run()` was calling `self._wrapped._run()` directly
+- This bypassed our own prep/exec/post methods where LLM interception happens
+✅ Solution: Modified `_run()` to call our own prep/exec/post methods
+
+### Issue 2: LLM interceptor closure not capturing trace
+❌ Problem: Interceptor functions referenced `self.trace` but `self` wasn't in scope
+✅ Solution: Capture `trace` reference in closure before defining nested functions
+
+### Issue 3: response.usage is a method not property
+❌ Problem: Code tried `response.usage.get()` but `usage` is a callable method
+✅ Solution: Check if callable and call it: `response.usage() if callable(response.usage)`
+
+### Results
+✅ LLM calls are now being captured in trace files
+✅ Trace files contain prompts, responses, and timing data
+✅ Progress indicators display correctly during execution
+✅ Trace saved message appears on stderr (when execution completes)
+✅ Automatic trace saving on failure works
+
+## Critical Insights and Lessons Learned
+
+### Architecture Insights
+1. **PocketFlow's _run() lifecycle is sacred** - Must understand that Flow calls `_run()` which internally calls prep/exec/post. Our wrapper must intercept at the right level.
+2. **Python closures need explicit capture** - When creating nested functions for monkey-patching, must explicitly capture references (like `trace = self.trace`) or they won't be accessible.
+3. **LLM library's response.usage is a method** - Not documented well, but `response.usage()` must be called as a function, not accessed as a property.
+
+### Debugging Patterns That Work
+1. **Single global interceptor with node tracking** - Instead of multiple interceptors, use one global LLM interceptor and track current node via shared state.
+2. **Progress to stderr, always** - Use `click.echo(err=True)` to avoid interfering with stdout piping.
+3. **Defensive programming for API variations** - Check `callable(response.usage)` before calling - APIs change between versions.
+
+### What Didn't Work
+1. **Trying to interrupt Python threads** - Impossible due to GIL. Can only detect timeout after completion.
+2. **Module-level LLM mocking** - Too fragile. Prompt-level interception is more reliable.
+3. **Assuming all nodes have 'name' attribute** - Must use `getattr(node, 'name', node.__class__.__name__)`.
+
+### Critical Implementation Details
+- **Must implement __copy__** - PocketFlow uses `copy.copy()` on nodes (lines 99, 107 of pocketflow/__init__.py)
+- **Must copy successors directly** - Flow accesses `node.successors` directly, can't delegate via __getattr__
+- **Must clean up LLM interception** - After planner runs, restore original `llm.get_model` before workflow execution
+- **Check "model_name" in prep_res** - This is the correct way to detect if a node uses LLM
+
+## Summary
+
+Task 27 is now complete! The debugging infrastructure provides:
+- Real-time progress indicators during planner execution
+- Comprehensive trace files with all LLM interactions (prompts, responses, tokens)
+- Timeout detection for hung operations (detection only, not interruption)
+- Clean architecture without modifying existing nodes
+- Automatic trace saving on failure, optional saving with --trace flag
+
+The implementation successfully captures all debugging data needed to diagnose planner issues. Most importantly, it revealed that the planner wasn't actually hanging - it was completing but subsequent workflow execution had issues, which the traces now help diagnose.
