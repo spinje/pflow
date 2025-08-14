@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import ClassVar, Optional
+from typing import Any, Callable, ClassVar, Optional
 
 import click
 
@@ -37,7 +37,7 @@ class DebugWrapper:
     and handles special methods to prevent recursion issues.
     """
 
-    def __init__(self, node, debug_context: DebugContext):
+    def __init__(self, node: Any, debug_context: DebugContext) -> None:
         self._wrapped = node
         self.debug_context = debug_context
 
@@ -51,14 +51,14 @@ class DebugWrapper:
         self.successors = node.successors
         self.params = getattr(node, "params", {})
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         """CRITICAL: Delegate ALL unknown attributes to wrapped node."""
         # Handle special methods to prevent recursion
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
         return getattr(self._wrapped, name)
 
-    def __copy__(self):
+    def __copy__(self) -> "DebugWrapper":
         """CRITICAL: Flow uses copy.copy() on nodes (lines 99, 107 of pocketflow/__init__.py)
         This MUST be implemented or Flow will break when it copies nodes!
         """
@@ -67,13 +67,13 @@ class DebugWrapper:
         # Create new wrapper with copied inner node, but SAME debug context (shared)
         return DebugWrapper(copy.copy(self._wrapped), self.debug_context)
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, memo: dict[int, Any]) -> "DebugWrapper":
         """Prevent recursion when deep copying."""
         import copy
 
         return DebugWrapper(copy.deepcopy(self._wrapped, memo), self.debug_context)
 
-    def __sub__(self, action):
+    def __sub__(self, action: str) -> Any:
         """Support the - operator for flow connections."""
         # Import here to avoid circular dependency
         from pocketflow import _ConditionalTransition
@@ -81,20 +81,20 @@ class DebugWrapper:
         # Create a conditional transition with the wrapper as source
         return _ConditionalTransition(self, action)
 
-    def __rshift__(self, other):
+    def __rshift__(self, other: Any) -> Any:
         """Support the >> operator for flow connections."""
         # Add other as default successor
         self.successors["default"] = other
         # Return other to allow chaining
         return other
 
-    def set_params(self, params):
+    def set_params(self, params: dict[str, Any]) -> None:
         """Flow calls this to set parameters."""
         self.params = params
         if hasattr(self._wrapped, "set_params"):
             self._wrapped.set_params(params)
 
-    def _run(self, shared):
+    def _run(self, shared: dict[str, Any]) -> Any:
         """Main execution - Flow calls this."""
         node_name = getattr(self._wrapped, "name", self._wrapped.__class__.__name__)
         self.progress.on_node_start(node_name)
@@ -122,14 +122,14 @@ class DebugWrapper:
             self.trace.record_node_execution(node_name, duration, "failed", error_msg)
             raise
 
-    def prep(self, shared):
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Wrap prep phase."""
         start = time.time()
         result = self._wrapped.prep(shared)
         self.trace.record_phase(self._wrapped.__class__.__name__, "prep", time.time() - start)
-        return result
+        return result  # type: ignore[no-any-return]
 
-    def exec(self, prep_res):
+    def exec(self, prep_res: dict[str, Any]) -> Any:
         """Wrap exec phase with LLM interception."""
         start = time.time()
         node_name = self._wrapped.__class__.__name__
@@ -144,15 +144,15 @@ class DebugWrapper:
             self.trace.current_node = node_name
 
             # Install interceptor only once (first node that uses LLM)
-            if not hasattr(self.trace, "_llm_interceptor_installed"):
+            if not self.trace._llm_interceptor_installed:
                 original_get_model = llm.get_model
                 trace = self.trace  # Capture trace in closure
 
-                def intercept_get_model(*args, **kwargs):
+                def intercept_get_model(*args: Any, **kwargs: Any) -> Any:
                     model = original_get_model(*args, **kwargs)
                     original_prompt = model.prompt
 
-                    def intercept_prompt(prompt_text, **prompt_kwargs):
+                    def intercept_prompt(prompt_text: str, **prompt_kwargs: Any) -> Any:
                         prompt_start = time.time()
                         # Use current_node from trace collector
                         current_node = getattr(trace, "current_node", "Unknown")
@@ -169,7 +169,7 @@ class DebugWrapper:
                             trace.record_llm_error(current_node, str(e))
                             raise
 
-                    model.prompt = intercept_prompt
+                    model.prompt = intercept_prompt  # type: ignore[assignment]
                     return model
 
                 llm.get_model = intercept_get_model
@@ -186,7 +186,7 @@ class DebugWrapper:
         self.trace.record_phase(node_name, "exec", time.time() - start)
         return result
 
-    def post(self, shared, prep_res, exec_res):
+    def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: Any) -> Any:
         """Wrap post phase."""
         start = time.time()
         result = self._wrapped.post(shared, prep_res, exec_res)
@@ -197,17 +197,21 @@ class DebugWrapper:
 class TraceCollector:
     """Collects execution trace data for debugging."""
 
-    def __init__(self, user_input: str):
-        self.execution_id = str(uuid.uuid4())
-        self.start_time = datetime.utcnow()
-        self.user_input = user_input
-        self.events = []
-        self.llm_calls = []
-        self.node_executions = []
-        self.final_status = "running"
-        self.path_taken = None  # Will be "A" or "B"
+    def __init__(self, user_input: str) -> None:
+        self.execution_id: str = str(uuid.uuid4())
+        self.start_time: datetime = datetime.utcnow()
+        self.user_input: str = user_input
+        self.events: list[dict[str, Any]] = []
+        self.llm_calls: list[dict[str, Any]] = []
+        self.node_executions: list[dict[str, Any]] = []
+        self.final_status: str = "running"
+        self.path_taken: Optional[str] = None  # Will be "A" or "B"
+        # Dynamic attributes for LLM interception
+        self.current_node: Optional[str] = None
+        self._llm_interceptor_installed: bool = False
+        self._original_get_model: Optional[Callable[..., Any]] = None
 
-    def record_node_execution(self, node: str, duration: float, status: str, error: Optional[str] = None):
+    def record_node_execution(self, node: str, duration: float, status: str, error: Optional[str] = None) -> None:
         """Record node execution with timing and status."""
         self.node_executions.append({
             "node": node,
@@ -222,7 +226,7 @@ class TraceCollector:
         elif node == "ParameterMappingNode" and self.path_taken is None:
             self.path_taken = "A"
 
-    def record_phase(self, node: str, phase: str, duration: float, extra: Optional[dict] = None):
+    def record_phase(self, node: str, phase: str, duration: float, extra: Optional[dict[str, Any]] = None) -> None:
         """Record execution phase details."""
         self.events.append({
             "timestamp": datetime.utcnow().isoformat(),
@@ -232,7 +236,7 @@ class TraceCollector:
             "extra": extra,
         })
 
-    def record_llm_request(self, node: str, prompt: str, kwargs: dict):
+    def record_llm_request(self, node: str, prompt: str, kwargs: dict[str, Any]) -> None:
         """Record LLM request before execution."""
         # Store the pending request
         self.current_llm_call = {
@@ -243,7 +247,7 @@ class TraceCollector:
             "prompt_kwargs": {k: v for k, v in kwargs.items() if k != "schema"},
         }
 
-    def record_llm_response(self, node: str, response, duration: float):
+    def record_llm_response(self, node: str, response: Any, duration: float) -> None:
         """Record LLM response after execution."""
         if hasattr(self, "current_llm_call"):
             self.current_llm_call["duration_ms"] = int(duration * 1000)
@@ -271,14 +275,16 @@ class TraceCollector:
             self.llm_calls.append(self.current_llm_call)
             delattr(self, "current_llm_call")
 
-    def record_llm_error(self, node: str, error: str):
+    def record_llm_error(self, node: str, error: str) -> None:
         """Record LLM error if call fails."""
         if hasattr(self, "current_llm_call"):
             self.current_llm_call["error"] = error
             self.llm_calls.append(self.current_llm_call)
             delattr(self, "current_llm_call")
 
-    def set_final_status(self, status: str, shared_store: Optional[dict] = None, error: Optional[dict] = None):
+    def set_final_status(
+        self, status: str, shared_store: Optional[dict[str, Any]] = None, error: Optional[dict[str, Any]] = None
+    ) -> None:
         """Set final execution status and save important data."""
         self.final_status = status
         if shared_store:
@@ -324,12 +330,12 @@ class TraceCollector:
 
         return str(filepath)
 
-    def cleanup_llm_interception(self):
+    def cleanup_llm_interception(self) -> None:
         """Restore original LLM get_model function if it was intercepted."""
         if hasattr(self, "_original_get_model"):
             import llm
 
-            llm.get_model = self._original_get_model
+            llm.get_model = self._original_get_model  # type: ignore[assignment]
             delattr(self, "_original_get_model")
             if hasattr(self, "_llm_interceptor_installed"):
                 delattr(self, "_llm_interceptor_installed")
@@ -351,11 +357,11 @@ class PlannerProgress:
         "ResultPreparationNode": "📤 Finalizing",
     }
 
-    def on_node_start(self, node_name: str):
+    def on_node_start(self, node_name: str) -> None:
         """Display node start with emoji and name."""
         display_name = self.NODE_ICONS.get(node_name, node_name)
         click.echo(f"{display_name}...", err=True, nl=False)
 
-    def on_node_complete(self, node_name: str, duration: float):
+    def on_node_complete(self, node_name: str, duration: float) -> None:
         """Display node completion with duration."""
         click.echo(f" ✓ {duration:.1f}s", err=True)

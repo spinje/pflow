@@ -862,7 +862,7 @@ def _check_llm_configuration(verbose: bool) -> None:
     # We don't actually call the API here, just check configuration
     model_name = "anthropic/claude-sonnet-4-0"
     try:
-        model = llm.get_model(model_name)
+        _ = llm.get_model(model_name)
         # The model loaded successfully - LLM is configured
         # Note: model.key may be None when using environment variables, which is fine
     except Exception as model_error:
@@ -885,6 +885,20 @@ def _handle_llm_configuration_error(
     if verbose:
         click.echo(f"cli: Error details: {llm_error}", err=True)
     ctx.exit(1)
+
+
+def _save_trace_if_needed(trace_collector: Any, trace: bool, success: bool) -> None:
+    """Save trace file if needed based on conditions."""
+    should_save = trace or not success
+    if not should_save:
+        return
+
+    trace_file = trace_collector.save_to_file()
+    if not success:
+        click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+    else:  # trace is True and success is True
+        # Use err=True to ensure message is visible even with workflow output
+        click.echo(f"📝 Trace saved: {trace_file}", err=True)
 
 
 def _execute_planner_and_workflow(
@@ -933,21 +947,17 @@ def _execute_planner_and_workflow(
         # Check timeout AFTER completion
         if timed_out.is_set():
             click.echo(f"\n⏰ Operation exceeded {planner_timeout}s timeout", err=True)
-            if trace_collector:
-                trace_collector.set_final_status("timeout", shared)
-                trace_file = trace_collector.save_to_file()
-                click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+            trace_collector.set_final_status("timeout", shared)
+            trace_file = trace_collector.save_to_file()
+            click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
             ctx.exit(1)
 
     except Exception as e:
         # Handle execution errors
-        if trace_collector:
-            trace_collector.set_final_status("error", shared, {"message": str(e)})
-            trace_file = trace_collector.save_to_file()
-            click.echo(f"❌ Planner failed: {e}", err=True)
-            click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
-        else:
-            click.echo(f"cli: Planning failed - {e}", err=True)
+        trace_collector.set_final_status("error", shared, {"message": str(e)})
+        trace_file = trace_collector.save_to_file()
+        click.echo(f"❌ Planner failed: {e}", err=True)
+        click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
         ctx.exit(1)
 
     finally:
@@ -959,26 +969,20 @@ def _execute_planner_and_workflow(
         planner_output = {}
 
     # Clean up LLM interception BEFORE workflow execution
-    if trace_collector:
-        trace_collector.cleanup_llm_interception()
+    trace_collector.cleanup_llm_interception()
 
     # Set final status in trace
-    if trace_collector:
-        if planner_output.get("success"):
-            trace_collector.set_final_status("success", shared)
-        else:
-            trace_collector.set_final_status("failed", shared, planner_output.get("error"))
+    success = planner_output.get("success", False)
+    if success:
+        trace_collector.set_final_status("success", shared)
+    else:
+        trace_collector.set_final_status("failed", shared, planner_output.get("error"))
 
-        # Save trace if needed
-        if trace or not planner_output.get("success"):
-            trace_file = trace_collector.save_to_file()
-            if not planner_output.get("success"):
-                click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
-            elif trace:
-                # Use err=True to ensure message is visible even with workflow output
-                click.echo(f"📝 Trace saved: {trace_file}", err=True)
+    # Save trace if needed
+    _save_trace_if_needed(trace_collector, trace, success)
 
-    if planner_output.get("success"):
+    # Execute workflow or handle failure
+    if success:
         # Execute the workflow WITH execution_params for template resolution
         if verbose:
             click.echo("cli: Executing generated/discovered workflow")

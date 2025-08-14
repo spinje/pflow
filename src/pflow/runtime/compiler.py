@@ -255,7 +255,7 @@ def _instantiate_nodes(
             node_class = import_node_class(node_type, registry)
 
             # Instantiate the node (no parameters to constructor)
-            node_instance: Union[BaseNode, TemplateAwareNodeWrapper] = node_class()
+            node_instance: Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper] = node_class()
 
             # Check if any parameters contain templates
             has_templates = any(

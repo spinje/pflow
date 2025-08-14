@@ -26,12 +26,12 @@ from pflow.planning.nodes import (
     WorkflowDiscoveryNode,
     WorkflowGeneratorNode,
 )
-from pocketflow import Flow
+from pocketflow import Flow, Node
 
 logger = logging.getLogger(__name__)
 
 
-def create_planner_flow(debug_context: Optional["DebugContext"] = None):
+def create_planner_flow(debug_context: Optional["DebugContext"] = None) -> "Flow":
     """Create the complete planner meta-workflow.
 
     This flow implements the sophisticated two-path architecture:
@@ -52,31 +52,32 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None):
     """
     logger.debug("Creating planner flow with 9 nodes")
 
-    # Create all nodes
-    discovery_node = WorkflowDiscoveryNode()
-    component_browsing = ComponentBrowsingNode()
-    parameter_discovery = ParameterDiscoveryNode()
-    parameter_mapping = ParameterMappingNode()
-    parameter_preparation = ParameterPreparationNode()
-    workflow_generator = WorkflowGeneratorNode()
-    validator = ValidatorNode()
-    metadata_generation = MetadataGenerationNode()
-    result_preparation = ResultPreparationNode()
+    # Create all nodes (type as Node since DebugWrapper also acts as Node)
+    discovery_node: Node = WorkflowDiscoveryNode()
+    component_browsing: Node = ComponentBrowsingNode()
+    parameter_discovery: Node = ParameterDiscoveryNode()
+    parameter_mapping: Node = ParameterMappingNode()
+    parameter_preparation: Node = ParameterPreparationNode()
+    workflow_generator: Node = WorkflowGeneratorNode()
+    validator: Node = ValidatorNode()
+    metadata_generation: Node = MetadataGenerationNode()
+    result_preparation: Node = ResultPreparationNode()
 
     # If debugging context provided, wrap all nodes
     if debug_context:
         from pflow.planning.debug import DebugWrapper
 
         # Wrap all nodes with debugging
-        discovery_node = DebugWrapper(discovery_node, debug_context)
-        component_browsing = DebugWrapper(component_browsing, debug_context)
-        parameter_discovery = DebugWrapper(parameter_discovery, debug_context)
-        parameter_mapping = DebugWrapper(parameter_mapping, debug_context)
-        parameter_preparation = DebugWrapper(parameter_preparation, debug_context)
-        workflow_generator = DebugWrapper(workflow_generator, debug_context)
-        validator = DebugWrapper(validator, debug_context)
-        metadata_generation = DebugWrapper(metadata_generation, debug_context)
-        result_preparation = DebugWrapper(result_preparation, debug_context)
+        # Note: This changes the type but DebugWrapper delegates all Node methods
+        discovery_node = DebugWrapper(discovery_node, debug_context)  # type: ignore[assignment]
+        component_browsing = DebugWrapper(component_browsing, debug_context)  # type: ignore[assignment]
+        parameter_discovery = DebugWrapper(parameter_discovery, debug_context)  # type: ignore[assignment]
+        parameter_mapping = DebugWrapper(parameter_mapping, debug_context)  # type: ignore[assignment]
+        parameter_preparation = DebugWrapper(parameter_preparation, debug_context)  # type: ignore[assignment]
+        workflow_generator = DebugWrapper(workflow_generator, debug_context)  # type: ignore[assignment]
+        validator = DebugWrapper(validator, debug_context)  # type: ignore[assignment]
+        metadata_generation = DebugWrapper(metadata_generation, debug_context)  # type: ignore[assignment]
+        result_preparation = DebugWrapper(result_preparation, debug_context)  # type: ignore[assignment]
 
     # Create flow with start node
     flow = Flow(start=discovery_node)

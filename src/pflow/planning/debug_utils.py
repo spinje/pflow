@@ -86,8 +86,10 @@ def format_progress_message(node_name: str, duration: Optional[float] = None, st
 
 
 def create_llm_interceptor(
-    on_request: Callable[[str, dict], None], on_response: Callable[[Any, float], None], on_error: Callable[[str], None]
-) -> Callable:
+    on_request: Callable[[str, dict[str, Any]], None],
+    on_response: Callable[[Any, float], None],
+    on_error: Callable[[str], None],
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Create a function that intercepts llm.get_model() calls.
 
@@ -100,10 +102,10 @@ def create_llm_interceptor(
         A function that replaces llm.get_model() and intercepts model.prompt()
     """
 
-    def create_wrapper(original_get_model):
+    def create_wrapper(original_get_model: Callable[..., Any]) -> Callable[..., Any]:
         """Returns a wrapper for llm.get_model"""
 
-        def wrapped_get_model(*args, **kwargs):
+        def wrapped_get_model(*args: Any, **kwargs: Any) -> Any:
             # Get the model instance
             model = original_get_model(*args, **kwargs)
 
@@ -111,7 +113,7 @@ def create_llm_interceptor(
             original_prompt = model.prompt
 
             # Create intercepted prompt method
-            def intercepted_prompt(prompt_text, **prompt_kwargs):
+            def intercepted_prompt(prompt_text: str, **prompt_kwargs: Any) -> Any:
                 import time
 
                 start_time = time.time()

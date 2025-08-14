@@ -5,7 +5,7 @@ under their node ID, preventing collisions when multiple nodes of the same
 type write to the same keys.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 
 class NamespacedSharedStore:
@@ -25,7 +25,7 @@ class NamespacedSharedStore:
         'data'
     """
 
-    def __init__(self, parent_store: Dict[str, Any], namespace: str) -> None:
+    def __init__(self, parent_store: dict[str, Any], namespace: str) -> None:
         """Initialize the namespaced proxy.
 
         Args:
@@ -100,27 +100,27 @@ class NamespacedSharedStore:
         self[key] = default
         return default
 
-    def keys(self):
+    def keys(self) -> set[str]:
         """Return combined keys from namespace and root."""
         namespace_keys = set(self._parent[self._namespace].keys())
         root_keys = set(self._parent.keys()) - {self._namespace}  # Exclude namespace key itself
         return namespace_keys | root_keys
 
-    def values(self):
+    def values(self):  # type: ignore[no-untyped-def]
         """Return values for all keys."""
         for key in self.keys():
             yield self[key]
 
-    def items(self):
+    def items(self):  # type: ignore[no-untyped-def]
         """Return key-value pairs."""
         for key in self.keys():
             yield (key, self[key])
 
-    def __iter__(self):
+    def __iter__(self):  # type: ignore[no-untyped-def]
         """Iterate over keys."""
         return iter(self.keys())
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return number of accessible keys."""
         return len(self.keys())
 

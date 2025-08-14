@@ -395,6 +395,30 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
+### [debugging.md](./features/debugging.md)
+**Purpose**: Comprehensive guide to planner debugging capabilities including progress indicators, trace files, and troubleshooting.
+
+**Key Contents**:
+- Real-time progress indicators
+- Trace file structure and analysis
+- CLI flags (--trace, --planner-timeout)
+- LLM call capture and inspection
+- Common debugging scenarios
+- Troubleshooting guide
+
+**Critical Insights**:
+- Progress indicators always displayed during planning
+- Traces automatically saved on failure
+- All LLM prompts/responses captured
+- Path A (reuse) vs Path B (generate) tracking
+- Timeout detection with automatic trace saving
+
+**When to Use**: Debugging failed workflow generation, optimizing prompts, performance analysis, understanding planner decisions
+
+**Status**: ✅ MVP
+
+---
+
 ### [autocomplete.md](./features/autocomplete.md)
 **Purpose**: CLI autocomplete specification for enhanced usability (deferred feature).
 

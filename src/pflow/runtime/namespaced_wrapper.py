@@ -4,7 +4,7 @@ This module provides a transparent wrapper that intercepts a node's
 shared store access and redirects it through a namespaced proxy.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from .namespaced_store import NamespacedSharedStore
 
@@ -31,7 +31,7 @@ class NamespacedNodeWrapper:
         self._inner_node = inner_node
         self._node_id = node_id
 
-    def _run(self, shared: Dict[str, Any]) -> Any:
+    def _run(self, shared: dict[str, Any]) -> Any:
         """Execute the node with a namespaced shared store.
 
         This intercepts the _run method to provide a namespaced proxy

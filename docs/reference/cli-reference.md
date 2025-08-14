@@ -96,9 +96,10 @@ pflow uses a **"Type flags; engine decides"** philosophy:
    - Available to all nodes in the flow
    - Dynamic data for the run
 
-3. **System Flags** (`--debug`, `--trace`)
+3. **System Flags** (`--verbose`, `--trace`, `--planner-timeout`)
    - Control execution behavior
    - Not passed to nodes
+   - Apply to entire execution
    - Affect logging and diagnostics
 
 ### Resolution Algorithm
@@ -320,19 +321,55 @@ pflow analyze --path=doc.txt => publish
 
 ## Advanced Usage
 
-### Debug Mode
+### Debugging and Diagnostics
+
+#### Verbose Mode (`--verbose`)
+
+Enable detailed logging for troubleshooting:
 
 ```bash
-pflow --debug read-file --path=test.txt => llm
-# Verbose logging, step-by-step execution
+pflow --verbose "analyze data.csv and create a report"
+# Shows planner decisions, node execution, and data flow
 ```
 
-### Trace Mode
+#### Trace Mode (`--trace`)
+
+Save detailed execution trace to JSON file:
 
 ```bash
 pflow --trace "complex natural language task"
-# Full execution trace with timings
+# Saves to ~/.pflow/debug/pflow-trace-TIMESTAMP.json
 ```
+
+Trace files capture:
+- All LLM prompts and responses
+- Node execution times
+- Planner path taken (reuse vs generate)
+- Complete error information
+
+#### Planner Timeout (`--planner-timeout`)
+
+Set maximum time for planner execution (default: 60 seconds):
+
+```bash
+pflow --planner-timeout 120 "very complex multi-step workflow"
+# Allows up to 2 minutes for planning
+```
+
+Automatic trace saving on timeout:
+```
+⏰ Operation exceeded 120s timeout
+📝 Debug trace saved: ~/.pflow/debug/pflow-trace-20250114-104500.json
+```
+
+#### Combining Debug Flags
+
+```bash
+# Maximum debugging information
+pflow --verbose --trace --planner-timeout 90 "debug this workflow"
+```
+
+See [Debugging Guide](../features/debugging.md) for detailed trace file analysis.
 
 ### Dry Run
 

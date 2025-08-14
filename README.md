@@ -219,6 +219,48 @@ pflow "analyze last week's API usage, calculate costs, compare to budget, create
 # Scheduled in cron, runs in seconds
 ```
 
+## Debugging and Troubleshooting
+
+pflow provides comprehensive debugging capabilities to help you understand and troubleshoot workflow generation:
+
+### Real-Time Progress Indicators
+See exactly what the planner is doing:
+```bash
+$ pflow "analyze code quality metrics"
+🔍 Discovery... ✓ 2.1s
+📦 Browsing... ✓ 1.8s
+🤖 Generating... ✓ 3.2s
+✅ Validation... ✓ 0.1s
+```
+
+### Trace Files for Deep Debugging
+Capture complete execution details with `--trace`:
+```bash
+# Save detailed trace even on success
+pflow --trace "complex workflow request"
+📝 Trace saved: ~/.pflow/debug/pflow-trace-20250114-103000.json
+
+# Automatic trace on failures
+pflow "ambiguous request"
+❌ Planner failed: Validation error
+📝 Debug trace saved: ~/.pflow/debug/pflow-trace-20250114-104500.json
+```
+
+Trace files include:
+- All LLM prompts and responses
+- Node execution times
+- Decision paths taken
+- Complete error information
+
+### Configurable Timeouts
+Prevent hanging with `--planner-timeout`:
+```bash
+pflow --planner-timeout 120 "very complex analysis"
+# Allows up to 2 minutes for planning (default: 60s)
+```
+
+See the [Debugging Guide](docs/features/debugging.md) for detailed trace analysis and troubleshooting tips.
+
 ## Ecosystem: Plays Well With Others
 
 `pflow` doesn't replace your favorite tools—it orchestrates them.

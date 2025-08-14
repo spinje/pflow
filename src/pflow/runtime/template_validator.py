@@ -159,6 +159,145 @@ class TemplateValidator:
         return errors
 
     @staticmethod
+    def _get_node_outputs_description(node: dict[str, Any], output_key: str, registry: Registry) -> str:
+        """Get error message for missing node output.
+
+        Args:
+            node: Node dictionary from workflow IR
+            output_key: The output key being accessed
+            registry: Registry instance for metadata lookup
+
+        Returns:
+            Error message describing what outputs are available
+        """
+        node_type = node.get("type", "unknown")
+        base_var = node.get("id")
+
+        try:
+            nodes_metadata = registry.get_nodes_metadata([node_type])
+            if node_type in nodes_metadata:
+                interface = nodes_metadata[node_type]["interface"]
+                available_outputs = []
+                for output in interface["outputs"]:
+                    if isinstance(output, str):
+                        available_outputs.append(output)
+                    else:
+                        available_outputs.append(output["key"])
+
+                if available_outputs:
+                    return (
+                        f"Node '{base_var}' (type: {node_type}) does not output '{output_key}'. "
+                        f"Available outputs: {', '.join(available_outputs)}"
+                    )
+                else:
+                    return f"Node '{base_var}' (type: {node_type}) does not produce any outputs"
+        except Exception as e:
+            # Registry lookup failed, skip detailed error message
+            logger.debug(f"Failed to get node metadata for validation: {e}")
+
+        return f"Node '{base_var}' does not output '{output_key}'"
+
+    @staticmethod
+    def _create_node_reference_error(
+        base_var: str, parts: list[str], template: str, workflow_ir: dict[str, Any], registry: Registry
+    ) -> str:
+        """Create error for node output references.
+
+        Args:
+            base_var: The base variable (node ID)
+            parts: Template parts split by dot
+            template: Full template string
+            workflow_ir: Workflow IR
+            registry: Registry instance
+
+        Returns:
+            Error message for node reference issues
+        """
+        # Missing output key
+        if len(parts) == 1:
+            return f"Invalid template ${template} - node ID '{base_var}' requires an output key (e.g., ${base_var}.output_key)"
+
+        output_key = parts[1]
+
+        # Find the node to get better error message
+        node = next((n for n in workflow_ir.get("nodes", []) if n.get("id") == base_var), None)
+        if node:
+            return TemplateValidator._get_node_outputs_description(node, output_key, registry)
+
+        return f"Node '{base_var}' does not output '{output_key}'"
+
+    @staticmethod
+    def _create_path_template_error(
+        template: str, base_var: str, available_params: dict[str, Any], workflow_ir: dict[str, Any]
+    ) -> str:
+        """Create error for path templates (with dots) that aren't node references.
+
+        Args:
+            template: Full template string
+            base_var: Base variable name
+            available_params: Available parameters
+            workflow_ir: Workflow IR
+
+        Returns:
+            Error message for path template issues
+        """
+        if base_var in available_params:
+            return f"Template path ${template} cannot be validated - initial_params values are runtime-dependent"
+
+        # Check if base variable is a declared input
+        input_desc = TemplateValidator._get_input_description(base_var, workflow_ir)
+        path_component = template[len(base_var) + 1 :]
+
+        if input_desc:
+            return (
+                f"Required input '${base_var}' not provided{input_desc} - attempted to access path '{path_component}'"
+            )
+
+        enable_namespacing = workflow_ir.get("enable_namespacing", True)
+        if enable_namespacing:
+            return (
+                f"Template variable ${template} has no valid source - "
+                f"'${base_var}' is neither a workflow input nor a node ID in this workflow"
+            )
+        else:
+            return (
+                f"Template variable ${template} has no valid source - "
+                f"not provided in initial_params and path '{path_component}' "
+                f"not found in outputs from any node in the workflow"
+            )
+
+    @staticmethod
+    def _create_simple_template_error(template: str, workflow_ir: dict[str, Any]) -> str:
+        """Create error for simple templates without dots.
+
+        Args:
+            template: Template variable name
+            workflow_ir: Workflow IR
+
+        Returns:
+            Error message for simple template issues
+        """
+        input_desc = TemplateValidator._get_input_description(template, workflow_ir)
+
+        if input_desc:
+            return f"Required input '${template}' not provided{input_desc}"
+
+        # Check if it might be a node ID used incorrectly
+        enable_namespacing = workflow_ir.get("enable_namespacing", True)
+        if enable_namespacing:
+            node_ids = TemplateValidator._get_node_ids(workflow_ir)
+            if template in node_ids:
+                return (
+                    f"Invalid template ${template} - this is a node ID. "
+                    f"To reference node outputs, use ${template}.output_key format"
+                )
+
+        return (
+            f"Template variable ${template} has no valid source - "
+            f"not provided in initial_params and not written by any node"
+        )
+
+    @staticmethod
     def _create_template_error(
         template: str,
         available_params: dict[str, Any],
@@ -185,90 +324,15 @@ class TemplateValidator:
         # Check if this is a node ID reference when namespacing is enabled
         if enable_namespacing and "." in template:
             node_ids = TemplateValidator._get_node_ids(workflow_ir)
-
             if base_var in node_ids:
-                # This should be a namespaced node output reference
-                if len(parts) == 1:
-                    return f"Invalid template ${template} - node ID '{base_var}' requires an output key (e.g., ${base_var}.output_key)"
+                return TemplateValidator._create_node_reference_error(base_var, parts, template, workflow_ir, registry)
 
-                output_key = parts[1]
-
-                # Get the node type to provide better error message
-                node = next((n for n in workflow_ir.get("nodes", []) if n.get("id") == base_var), None)
-                if node:
-                    node_type = node.get("type", "unknown")
-
-                    # Check what outputs this node type actually has
-                    try:
-                        nodes_metadata = registry.get_nodes_metadata([node_type])
-                        if node_type in nodes_metadata:
-                            interface = nodes_metadata[node_type]["interface"]
-                            available_outputs = []
-                            for output in interface["outputs"]:
-                                if isinstance(output, str):
-                                    available_outputs.append(output)
-                                else:
-                                    available_outputs.append(output["key"])
-
-                            if available_outputs:
-                                return (
-                                    f"Node '{base_var}' (type: {node_type}) does not output '{output_key}'. "
-                                    f"Available outputs: {', '.join(available_outputs)}"
-                                )
-                            else:
-                                return f"Node '{base_var}' (type: {node_type}) does not produce any outputs"
-                    except:
-                        pass
-
-                return f"Node '{base_var}' does not output '{output_key}'"
-
-        # Not a node reference, treat as root-level variable
+        # Handle path templates (with dots)
         if "." in template:
-            if base_var in available_params:
-                return f"Template path ${template} cannot be validated - initial_params values are runtime-dependent"
+            return TemplateValidator._create_path_template_error(template, base_var, available_params, workflow_ir)
 
-            # Check if base variable is a declared input
-            input_desc = TemplateValidator._get_input_description(base_var, workflow_ir)
-            path_component = template[len(base_var) + 1 :]
-
-            if input_desc:
-                return (
-                    f"Required input '${base_var}' not provided{input_desc} - "
-                    f"attempted to access path '{path_component}'"
-                )
-            else:
-                # For namespacing mode, be clearer about what's wrong
-                if enable_namespacing:
-                    return (
-                        f"Template variable ${template} has no valid source - "
-                        f"'${base_var}' is neither a workflow input nor a node ID in this workflow"
-                    )
-                else:
-                    return (
-                        f"Template variable ${template} has no valid source - "
-                        f"not provided in initial_params and path '{path_component}' "
-                        f"not found in outputs from any node in the workflow"
-                    )
-        else:
-            # Simple variable not found
-            input_desc = TemplateValidator._get_input_description(template, workflow_ir)
-
-            if input_desc:
-                return f"Required input '${template}' not provided{input_desc}"
-            else:
-                # Check if it might be a node ID used incorrectly
-                if enable_namespacing:
-                    node_ids = TemplateValidator._get_node_ids(workflow_ir)
-                    if template in node_ids:
-                        return (
-                            f"Invalid template ${template} - this is a node ID. "
-                            f"To reference node outputs, use ${template}.output_key format"
-                        )
-
-                return (
-                    f"Template variable ${template} has no valid source - "
-                    f"not provided in initial_params and not written by any node"
-                )
+        # Handle simple templates
+        return TemplateValidator._create_simple_template_error(template, workflow_ir)
 
     # More permissive pattern to catch malformed templates for validation
     _PERMISSIVE_PATTERN = re.compile(r"\$([a-zA-Z_]\w*(?:\.\w*)*)")
