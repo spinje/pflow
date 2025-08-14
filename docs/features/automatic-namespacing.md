@@ -124,7 +124,7 @@ To migrate existing workflows to use namespacing:
 
 1. Add `"enable_namespacing": true` to the workflow IR
 2. Update template variables to use node ID prefixes:
-   - Change: `$issue_data` 
+   - Change: `$issue_data`
    - To: `$node_id.issue_data`
 3. Test the workflow to ensure correct data flow
 
