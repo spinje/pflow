@@ -368,17 +368,16 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
 - ✅ Task 12: Implement LLM Node - Create a general-purpose LLM node - infinitely reusable building block by combining prompts with template variables
 - ✅ Task 26: Implement GitHub and Git Operation Nodes - 6 nodes for GitHub/Git automation
+- ✅ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
+- ✅ Task 30: Refactor Validation Functions from compiler.py
+- ✅ Task 31: Refactor Test Infrastructure - Mock at LLM Level
+- ✅ Task 27: Implement intuitive debugging capabilities and tracing system for the planner
+- ✅ Task 9: Implement shared store collision detection using automatic namespacing
 
 Next up:
-- ⏳ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
-   - Task 17 Subtask 1: Foundation & Infrastructure ✅ Completed
-   - Task 17 Subtask 2: Discovery System ✅ Completed
-   - Task 17 Subtask 3: Parameter Management System ✅ Completed
-   - Task 17 Subtask 4: Generation System ✅ Completed
-   - Task 17 Subtask 5: Validation & Refinement System ✅ Completed
-   - Task 17 Subtask 6: Flow Orchestration ✅ Completed
-   - 🎯 Task 17 Subtask 7: Integration & Polish (Currently implementing)
-- ⏳ Task 9: Implement shared store collision detection and proxy mapping
+- ⏳ Task 28: Improve performance of planner by modifying prompts
+- ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
+- ⏳ Task 10
 
 *Update this list as you complete tasks.*
 

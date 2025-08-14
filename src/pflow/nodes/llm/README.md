@@ -48,8 +48,8 @@ pflow llm --prompt="Hello, world!"
 
 ### With a specific model:
 ```bash
-pflow llm --prompt="Hello" --model="anthropic/claude-sonnet-4-0"
-pflow llm --prompt="Hello" --model="gpt-4"
+pflow llm --prompt="Hello" --model="claude-4-sonnet"
+pflow llm --prompt="Hello" --model="gpt-5-nano"
 pflow llm --prompt="Hello" --model="llama2:latest"  # Ollama
 ```
 
