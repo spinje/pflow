@@ -118,6 +118,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 ### Technology Stack
 
 **Core Dependencies** (discuss before adding others):
+- `Python 3.9+` - Modern Python
 - `click` - CLI framework (more flexible than Typer)
 - `pydantic` - IR/metadata validation
 - `llm` - Simon Willison's LLM CLI integration and inspiration
@@ -129,6 +130,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - `ruff` - Linting and formatting
 - `pre-commit` - Git hooks
 - `mkdocs` - Documentation
+- `make` - Development automation
 
 ### Architecture Components
 
@@ -375,6 +377,7 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 9: Implement shared store collision detection using automatic namespacing
 
 Next up:
+- ⏳ Task 33: Extract planner prompts to markdown files in `src/pflow/planning/prompts/` and improve/create test cases for each prompt in `tests/test_planning/llm/prompts/`
 - ⏳ Task 28: Improve performance of planner by modifying prompts
 - ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ⏳ Task 10
@@ -435,11 +438,65 @@ Document for user decision:
 3. Your recommendation and why
 4. Reversibility of each option
 
+### Implementation Guidelines and
+
+Enforced by `mypy` and `ruff`:
+
+#### Type Hints
+
+- Always type all function parameters and returns
+```python
+   def process(data: list[str], count: int = 10) -> dict[str, int]:
+```
+- Use Optional[T] for nullable arguments
+```python
+   from typing import Optional
+   def fetch(url: str, timeout: Optional[int] = None) -> dict:
+```
+- Use lowercase built-in types (Python 3.9+)
+   ✅ items: list[str]         # CORRECT
+   ✅ cache: dict[str, Any]     # CORRECT
+   ❌ items: List[str]          # WRONG - old style
+   ❌ from typing import Dict   # WRONG - deprecated
+
+#### Modern Python
+
+- Use f-strings, not .format() or %
+   ✅ f"Hello {name}, score: {score}"     # CORRECT
+   ❌ "Hello {}, score: {}".format(...)   # WRONG
+- Use comprehensions directly
+   ✅ names = [x.name for x in users]     # CORRECT
+   ❌ names = list(x.name for x in users) # WRONG - unnecessary list()
+
+#### Safety
+
+- Never shadow built-in names
+   ❌ id = 123              # WRONG - shadows id()
+   ❌ list = [1, 2, 3]      # WRONG - shadows list()
+   ✅ user_id = 123         # CORRECT
+   ✅ items = [1, 2, 3]     # CORRECT
+- Use subprocess, not os.system
+   ✅ subprocess.run(["ls", "-la"], check=True)  # CORRECT
+   ❌ os.system("ls -la")                        # WRONG - security risk
+
+Why this matters: These guidelines aren't about passing linters—they're about you filtering your training data (As an LLM). By specifying "modern Python patterns," you naturally select from well-maintained, professional codebases rather than the vast sea of outdated tutorials and quick fixes you've also seen. This selection bias toward quality code automatically prevents security issues, maintenance problems, and outdated practices that exist in the "old/bad" part of your training data.
+
+*You should not think about how to pass tests and linters. You should actively and proactively think about selecting from the RIGHT part of your training distribution. The code and architectural patterns you know in your gut are a good fit for this project.*
+
+#### Code Quality and archtectural excellence
+
+More importantly focus on architectural quality and code quality:
+
+- Write code optimized for change: small focused functions with single responsibilities, clear names that
+  explain intent not implementation, and comprehensive tests that document expected behavior - because all
+  successful systems evolve.
+- Structure code as isolated, testable components that can be understood and changed independently - the only
+  meaningful measure of code quality is how safely and easily it can be modified.
+- Prefer boring and obvious: The best solution is rarely the clever one. Write code that a tired developer can understand at 3am. Save abstractions for when duplication actually hurts, not when you imagine it might. "Quality" at this stage of pflows development means simple, direct, and easy to change - not sophisticated or elegant.
+
+*Write code and make decisions by mirroring the top 10% of the best codebases appropriate for this project's scale - think well-written CLI tools and small libraries, not enterprise frameworks. Prefer boring, obvious code over clever abstractions. Ignore the rest. And save the fancy patterns for when they're actually needed.*
+
 ### Project-specific Memories
 
 - **CLI Development Principle**: never commit code unless explicitly instructed by the user
-
-### Project-specific Design Principles and Memories
-
 - **Expectation Setting**: I think it is important that the agent (you) show what the expected output will be BEFORE you start implementing. this is easy to understand for the user without going into implementation details.
-```
