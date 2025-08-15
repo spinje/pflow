@@ -137,7 +137,7 @@ def mock_llm_model(mock_llm_response):
                     confidence=0.2,
                     reasoning="No matching workflow found",
                 )
-        elif "browsing" in prompt_lower or "select" in prompt_lower:
+        elif "component browsing system" in prompt_lower or "select all nodes" in prompt_lower:
             # ComponentBrowsingNode response
             return mock_llm_response(
                 node_ids=["read-file", "write-file"],

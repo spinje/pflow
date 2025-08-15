@@ -124,23 +124,15 @@ class WorkflowDiscoveryNode(Node):
         """
         logger.debug(f"WorkflowDiscoveryNode: Matching request: {prep_res['user_input'][:100]}...")
 
-        prompt = f"""You are a workflow discovery system that determines if an existing workflow completely satisfies a user request.
+        # Load prompt from markdown file
+        from pflow.planning.prompts.loader import format_prompt, load_prompt
 
-Available workflows and nodes:
-{prep_res["discovery_context"]}
+        prompt_template = load_prompt("discovery")
 
-User request: {prep_res["user_input"]}
-
-Analyze whether any existing workflow COMPLETELY satisfies this request. A complete match means the workflow does everything the user wants without modification.
-
-Return found=true ONLY if:
-1. An existing workflow handles ALL aspects of the request
-2. No additional nodes or modifications would be needed
-3. The workflow's purpose directly aligns with the user's intent
-
-If any part of the request isn't covered, return found=false to trigger workflow generation.
-
-Be strict - partial matches should return found=false."""
+        # Format with our variables - validation happens automatically
+        prompt = format_prompt(
+            prompt_template, {"discovery_context": prep_res["discovery_context"], "user_input": prep_res["user_input"]}
+        )
 
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
@@ -322,25 +314,15 @@ class ComponentBrowsingNode(Node):
         """
         logger.debug(f"ComponentBrowsingNode: Browsing components for: {prep_res['user_input'][:100]}...")
 
-        # S608: False positive - this is an LLM prompt, not SQL
-        prompt = f"""You are a component browsing system that selects building blocks for workflow generation.
+        # Load prompt from markdown file
+        from pflow.planning.prompts.loader import format_prompt, load_prompt
 
-Available components:
-{prep_res["discovery_context"]}
+        prompt_template = load_prompt("component_browsing")
 
-User request: {prep_res["user_input"]}
-
-Select ALL nodes and workflows that could potentially help build this request.
-
-BE OVER-INCLUSIVE:
-- Include anything that might be useful (even 20% relevance)
-- Include supporting nodes (logging, error handling, etc.)
-- Include workflows that could be used as building blocks
-- Better to include too many than miss critical components
-
-The generator will decide what to actually use from your selection.
-
-Return lists of node IDs and workflow names that could be helpful."""  # noqa: S608
+        # Format with our variables - validation happens automatically
+        prompt = format_prompt(
+            prompt_template, {"discovery_context": prep_res["discovery_context"], "user_input": prep_res["user_input"]}
+        )
 
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
@@ -468,7 +450,7 @@ class ParameterDiscoveryNode(Node):
     """Extract named parameters from natural language (Path B only).
 
     Analyzes user input to discover parameter hints BEFORE generation.
-    These hints provide context to help the generator create appropriate template variables.
+    These hints provide context to help the generator create appropriate final inputs for the workflow.
 
     Interface:
     - Reads: user_input (str), stdin (optional), planning_context (str or empty), browsed_components (dict)
@@ -544,37 +526,36 @@ class ParameterDiscoveryNode(Node):
         logger.debug(f"ParameterDiscoveryNode: Discovering parameters from: {prep_res['user_input'][:100]}...")
 
         # Build context about available components (if any)
-        context_section = ""
-        if prep_res["planning_context"]:
-            context_section = f"\n\nAvailable components context:\n{prep_res['planning_context'][:2000]}"
-        elif prep_res["browsed_components"]:
+        # Load prompt from markdown file
+        from pflow.planning.prompts.loader import format_prompt, load_prompt
+
+        prompt_template = load_prompt("parameter_discovery")
+
+        # Prepare all values - use "None" when empty for clarity
+        planning_context = prep_res.get("planning_context", "")[:2000] if prep_res.get("planning_context") else "None"
+
+        # Extract component lists if available
+        selected_nodes = "None"
+        selected_workflows = "None"
+        if prep_res.get("browsed_components"):
             nodes = prep_res["browsed_components"].get("node_ids", [])
             workflows = prep_res["browsed_components"].get("workflow_names", [])
-            context_section = (
-                f"\n\nSelected components:\n- Nodes: {', '.join(nodes[:10])}\n- Workflows: {', '.join(workflows[:5])}"
-            )
+            selected_nodes = ", ".join(nodes[:10]) if nodes else "None"
+            selected_workflows = ", ".join(workflows[:5]) if workflows else "None"
 
-        stdin_section = ""
-        if prep_res["stdin_info"]:
-            stdin_section = f"\n\nStdin data available: {prep_res['stdin_info']}"
+        stdin_info = prep_res.get("stdin_info", "None") or "None"
 
-        prompt = f"""You are a parameter discovery system that extracts named parameters from natural language requests.
-
-User request: {prep_res["user_input"]}{context_section}{stdin_section}
-
-Extract parameters with their likely names and values. Focus on:
-1. File paths and names (e.g., "report.csv" → filename: "report.csv")
-2. Numeric values (e.g., "last 20" → limit: "20")
-3. States/filters (e.g., "closed issues" → state: "closed")
-4. Formats (e.g., "as JSON" → output_format: "json")
-5. Identifiers (e.g., "repo pflow" → repo: "pflow")
-
-Return parameters as a simple name:value mapping. If stdin is present, note its type.
-
-Examples:
-- "process data.csv and convert to json" → {{"filename": "data.csv", "output_format": "json"}}
-- "last 20 closed issues from repo" → {{"limit": "20", "state": "closed"}}
-- "analyze the piped data" → {{}} (parameters will come from stdin)"""
+        # Format with all variables - structure is fully in markdown
+        prompt = format_prompt(
+            prompt_template,
+            {
+                "user_input": prep_res["user_input"],
+                "planning_context": planning_context,
+                "selected_nodes": selected_nodes,
+                "selected_workflows": selected_workflows,
+                "stdin_info": stdin_info,
+            },
+        )
 
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
@@ -744,26 +725,26 @@ class ParameterMappingNode(Node):
             status = "required" if required else f"optional (default: {default})"
             inputs_description.append(f"- {param_name} ({param_type}, {status}): {description}")
 
-        stdin_section = ""
-        if prep_res["stdin_data"]:
-            stdin_section = f"\n\nStdin data available:\n{prep_res['stdin_data'][:500]}"
+        # Load prompt from markdown file
+        from pflow.planning.prompts.loader import format_prompt, load_prompt
 
-        prompt = f"""You are a parameter extraction system that maps user input to workflow parameters.
+        prompt_template = load_prompt("parameter_mapping")
 
-The workflow expects these input parameters:
-{chr(10).join(inputs_description)}
+        # Format the inputs description as a multiline string
+        inputs_description_text = "\n".join(inputs_description) if inputs_description else "None"
 
-User request: {prep_res["user_input"]}{stdin_section}
+        # Prepare stdin data - truncate if too long, use "None" if empty
+        stdin_data = prep_res.get("stdin_data", "")[:500] if prep_res.get("stdin_data") else "None"
 
-Extract values for each parameter from the user input or stdin data.
-Focus on exact parameter names listed above.
-If a required parameter is missing, include it in the missing list.
-
-Important:
-- Preserve exact parameter names (case-sensitive)
-- Extract actual values, not template variables
-- Check stdin if parameters not found in user input
-- Required parameters without values should be listed as missing"""
+        # Format with all variables - structure is fully in markdown
+        prompt = format_prompt(
+            prompt_template,
+            {
+                "inputs_description": inputs_description_text,
+                "user_input": prep_res["user_input"],
+                "stdin_data": stdin_data,
+            },
+        )
 
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
@@ -1116,124 +1097,49 @@ class WorkflowGeneratorNode(Node):
         Returns:
             Formatted prompt string
         """
-        prompt = f"""Generate a workflow for: {prep_res["user_input"]}
+        # Load prompt from markdown file
+        from pflow.planning.prompts.loader import format_prompt, load_prompt
 
-Use the available nodes to create the workflows intermediate representation (IR) in json format.
+        prompt_template = load_prompt("workflow_generator")
 
-Available nodes:
-<available_nodes>
-{prep_res["planning_context"]}
-</available_nodes>
-
-CRITICAL Requirements:
-1. Use template variables ($variable) for ALL dynamic values
-2. NEVER hardcode values like "1234" - use $issue_number instead
-3. Generate LINEAR workflow only - no branching
-4. Template variables can reference TWO types of data:
-   a) USER INPUTS: $variable_name (MUST be declared in "inputs" section)
-   b) NODE OUTPUTS: $node_id.output_key (from previous nodes, NOT declared in "inputs")
-5. CRITICAL DISTINCTION - DO NOT CONFUSE THESE:
-   - USER INPUTS: Data the user provides to START the workflow (e.g., file path, topic)
-     → These go in the "inputs" section with required/default/description
-     → Referenced as $variable_name in node params
-   - NODE OUTPUTS: Data GENERATED by nodes during execution (e.g., LLM response, API data)
-     → These are NOT user inputs - do NOT put in "inputs" section
-     → Referenced as $node_id.output_key (e.g., $generate_joke.response)
-     → Example: If LLM generates content, write-file should use $llm_node.response NOT $content
-6. Create descriptive node IDs (e.g., "fetch_issues", not "n1")
-7. Avoid multiple nodes of the same type (causes shared store collision)
-8. Every variable in "inputs" MUST be something the USER provides, not generated data!
-
-EXAMPLE showing proper template variable usage:
-{{
-  "ir_version": "0.1.0",
-  "nodes": [
-    {{
-      "id": "generate_content",
-      "type": "llm",
-      "params": {{
-        "prompt": "Create a joke about $topic",  // ← $topic is USER INPUT
-        "model": "$model_name"  // ← $model_name is USER INPUT with default
-      }}
-    }},
-    {{
-      "id": "save_to_file",
-      "type": "write-file",
-      "params": {{
-        "content": "$generate_content.response",  // ← NODE OUTPUT from previous node!
-        "file_path": "$output_file"  // ← $output_file is USER INPUT
-      }}
-    }}
-  ],
-  "edges": [{{"from": "generate_content", "to": "save_to_file"}}],
-  "start_node": "generate_content",
-  "inputs": {{ // ← ONLY user-provided values go here, NOT generated content!
-    "topic": {{  // ← User provides this
-      "description": "Topic for the joke",
-      "type": "string",
-      "required": false,
-      "default": "cats"
-    }},
-    "model_name": {{  // ← User can override this
-      "description": "LLM model to use",
-      "type": "string",
-      "required": false,
-      "default": "gpt-4o-mini"
-    }},
-    "output_file": {{  // ← User specifies where to save
-      "description": "Path to save the joke",
-      "type": "string",
-      "required": false,
-      "default": "joke.txt"
-    }}
-    // NOTE: No "content" here! Content is GENERATED by generate_content node
-  }},
-  "outputs": {{
-    "saved_file": {{
-      "description": "Path where joke was saved"
-    }}
-  }}
-}}
-
-Workflow Structure Requirements:
-- Must include "ir_version": "0.1.0"
-- Must include "inputs" field with parameter specifications
-- Each input should have: description, required, type, and optional default
-- Use universal defaults only (e.g., 100, not request-specific like 20)
-- Rename parameters for clarity (e.g., "filename" -> "input_file")
-- IMPORTANT: Every declared workflow input MUST be used as a template variable in node params
-
-COMMON MISTAKE TO AVOID:
-DON'T declare intermediate data as user inputs! For example:
-- WRONG: Declaring "content" as a user input when it's generated by an LLM node
-- RIGHT: Reference the LLM output directly as $llm_node.response
-- WRONG: Asking user to provide data that your workflow generates
-- RIGHT: Only ask for starting parameters (file paths, topics, config)
-"""
-
-        # Add discovered parameters as hints
-        if prep_res["discovered_params"]:
-            prompt += "\nDiscovered parameters (use as hints, rename for clarity):\n"
+        # Build discovered parameters section
+        discovered_params_section = "None"
+        if prep_res.get("discovered_params"):
+            params_lines = ["Discovered parameters (use as hints, rename for clarity):"]
             for param, value in prep_res["discovered_params"].items():
-                prompt += f"  - {param}: {value}\n"
-            prompt += "Remember: These are hints. You control the inputs specification.\n"
+                params_lines.append(f"  - {param}: {value}")
+            params_lines.append("Remember: These are hints. You control the inputs specification.")
+            discovered_params_section = "\n".join(params_lines)
 
-        # Add validation errors for retry with specific guidance
-        if prep_res["generation_attempts"] > 0 and prep_res["validation_errors"]:
-            prompt += "\n\n⚠️ FIX THESE VALIDATION ERRORS from the previous attempt:\n"
+        # Build validation errors section
+        validation_errors_section = "None"
+        if prep_res.get("generation_attempts", 0) > 0 and prep_res.get("validation_errors"):
+            error_lines = ["⚠️ FIX THESE VALIDATION ERRORS from the previous attempt:"]
             for error in prep_res["validation_errors"][:3]:  # Max 3 errors
-                prompt += f"- {error}\n"
+                error_lines.append(f"- {error}")
                 # Add specific guidance for common errors
                 if "never used as template variable" in error:
                     param_name = error.split(":")[-1].strip()
-                    prompt += f"  → FIX: Use ${param_name} in the appropriate node's params field\n"
-                    prompt += f'  → Example: If read-file node, use: "params": {{"file_path": "${param_name}"}}\n'
+                    error_lines.append(f"  → FIX: Use ${param_name} in the appropriate node's params field")
+                    error_lines.append(
+                        f'  → Example: If read-file node, use: "params": {{"file_path": "${param_name}"}}'
+                    )
                 elif "is not of type 'object'" in error and "outputs" in error:
-                    prompt += "  → FIX: Outputs must be objects with 'description' field, not strings\n"
-                    prompt += '  → Example: "outputs": {"result": {"description": "Result description"}}\n'
-            prompt += "\nKeep the rest of the workflow unchanged but FIX the template variable usage!"
+                    error_lines.append("  → FIX: Outputs must be objects with 'description' field, not strings")
+                    error_lines.append('  → Example: "outputs": {"result": {"description": "Result description"}}')
+            error_lines.append("Keep the rest of the workflow unchanged but FIX the template variable usage!")
+            validation_errors_section = "\n".join(error_lines)
 
-        return prompt
+        # Format with all variables - structure is fully in markdown
+        return format_prompt(
+            prompt_template,
+            {
+                "user_input": prep_res["user_input"],
+                "planning_context": prep_res["planning_context"],
+                "discovered_params_section": discovered_params_section,
+                "validation_errors_section": validation_errors_section,
+            },
+        )
 
 
 class ValidatorNode(Node):
@@ -1576,63 +1482,28 @@ class MetadataGenerationNode(Node):
         Returns:
             Detailed prompt for LLM metadata generation
         """
+        # Load prompt from markdown file
+        from pflow.planning.prompts.loader import format_prompt, load_prompt
+
+        prompt_template = load_prompt("metadata_generation")
 
         # Analyze workflow to understand what it does
         nodes_summary = self._summarize_nodes(workflow.get("nodes", []))
 
-        return f"""Analyze this workflow and generate high-quality metadata for future discovery.
+        # Format workflow inputs and discovered params
+        workflow_inputs = ", ".join(workflow.get("inputs", {}).keys()) or "none"
+        discovered_params_text = ", ".join(discovered_params.keys()) if discovered_params else "none"
 
-ORIGINAL USER REQUEST:
-{user_input}
-
-WORKFLOW STRUCTURE:
-Nodes: {nodes_summary}
-Inputs: {", ".join(workflow.get("inputs", {}).keys()) or "none"}
-Parameters discovered: {", ".join(discovered_params.keys()) if discovered_params else "none"}
-
-CRITICAL REQUIREMENT: Generate metadata that enables this workflow to be found with various search queries.
-
-CRITICAL RULES for description and keywords:
-- NEVER include specific parameter values (like "30 issues" or "pflow repo")
-- NEVER mention specific file names or paths from the user's request
-- DO describe capabilities generically ("fetches closed issues", not "fetches 30 issues")
-- DO focus on what the workflow CAN do, not what it WAS configured to do
-- Example BAD: "Fetches the last 30 closed issues from pflow repo"
-- Example GOOD: "Fetches closed issues from any GitHub repository"
-
-The workflow is REUSABLE with different parameters - the metadata must reflect this!
-
-Generate the following metadata:
-
-1. suggested_name (kebab-case, max 50 chars):
-   - Concise, memorable, searchable
-   - Indicates primary function
-   - Examples: "github-changelog-generator", "issue-triage-analyzer"
-
-2. description (100-500 chars):
-   - Explain WHAT it does, WHY it's useful, WHEN to use it
-   - Include key technologies (GitHub, LLM, etc.)
-   - Make it searchable - think about different phrasings
-   - Focus on value, not implementation
-
-3. search_keywords (3-10 terms):
-   - Alternative ways users might search for this
-   - Include synonyms and related concepts
-   - Think: What would someone type when looking for this?
-   - Example: "changelog" → also include "release notes", "version history"
-
-4. capabilities (2-6 bullet points):
-   - What this workflow can do
-   - User-focused benefits
-   - Example: "Fetches GitHub issues", "Categorizes changes automatically"
-
-5. typical_use_cases (1-3 scenarios):
-   - Real-world problems it solves
-   - When someone would use this
-   - Example: "Preparing release documentation"
-
-REMEMBER: The metadata determines whether this workflow will be discovered and reused.
-Poor metadata means duplicate workflows will be created instead of reusing this one."""
+        # Format with all variables - structure is fully in markdown
+        return format_prompt(
+            prompt_template,
+            {
+                "user_input": user_input,
+                "nodes_summary": nodes_summary,
+                "workflow_inputs": workflow_inputs,
+                "discovered_params": discovered_params_text,
+            },
+        )
 
     def _summarize_nodes(self, nodes: list) -> str:
         """Summarize the types of nodes used in the workflow.
