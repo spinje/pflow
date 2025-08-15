@@ -5,6 +5,7 @@ under their node ID, preventing collisions when multiple nodes of the same
 type write to the same keys.
 """
 
+from collections.abc import Iterator
 from typing import Any, Optional
 
 
@@ -101,27 +102,50 @@ class NamespacedSharedStore:
         return default
 
     def keys(self) -> set[str]:
-        """Return combined keys from namespace and root."""
+        """Return combined keys from namespace and root.
+
+        This is needed for dict() conversion and iteration.
+        """
+        # Combine keys from both namespace and root
         namespace_keys = set(self._parent[self._namespace].keys())
-        root_keys = set(self._parent.keys()) - {self._namespace}  # Exclude namespace key itself
+        root_keys = set(self._parent.keys())
+
+        # Don't include our own namespace as a key (would cause recursion)
+        root_keys.discard(self._namespace)
+
         return namespace_keys | root_keys
 
-    def values(self):  # type: ignore[no-untyped-def]
-        """Return values for all keys."""
-        for key in self.keys():
-            yield self[key]
+    def items(self) -> list[tuple[str, Any]]:
+        """Return combined items from namespace and root.
 
-    def items(self):  # type: ignore[no-untyped-def]
-        """Return key-value pairs."""
-        for key in self.keys():
-            yield (key, self[key])
+        Namespace items take priority over root items.
+        """
+        result = []
+        seen = set()
 
-    def __iter__(self):  # type: ignore[no-untyped-def]
-        """Iterate over keys."""
+        # First add namespace items
+        for key, value in self._parent[self._namespace].items():
+            result.append((key, value))
+            seen.add(key)
+
+        # Then add root items (except our own namespace to avoid recursion)
+        for key, value in self._parent.items():
+            if key not in seen and key != self._namespace:
+                result.append((key, value))
+                seen.add(key)
+
+        return result
+
+    def values(self) -> list[Any]:
+        """Return combined values from namespace and root."""
+        return [value for _, value in self.items()]
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over combined keys."""
         return iter(self.keys())
 
     def __len__(self) -> int:
-        """Return number of accessible keys."""
+        """Return count of combined unique keys."""
         return len(self.keys())
 
     def __repr__(self) -> str:

@@ -52,7 +52,8 @@ class TestVariableExtraction:
         """Test that malformed templates are not extracted."""
         # These malformed patterns should not match
         assert TemplateResolver.extract_variables("$.var") == set()
-        assert TemplateResolver.extract_variables("$var.") == set()
+        # Note: $var. is now valid (variable followed by period punctuation)
+        assert TemplateResolver.extract_variables("$var.") == {"var"}
         assert TemplateResolver.extract_variables("$$var") == set()
         assert TemplateResolver.extract_variables("$") == set()
         assert TemplateResolver.extract_variables("$123") == set()  # Can't start with digit
@@ -168,13 +169,14 @@ class TestEdgeCases:
     """Test edge cases and error conditions."""
 
     def test_malformed_template_syntax(self):
-        """Test that malformed templates are left unchanged."""
+        """Test that malformed templates are left unchanged (except $var. which is now valid)."""
         context = {"var": "value", "data": {"field": "test"}}
 
         # These malformed templates should remain as-is
         assert TemplateResolver.resolve_string("$.var", context) == "$.var"
-        assert TemplateResolver.resolve_string("$var.", context) == "$var."
-        assert TemplateResolver.resolve_string("$var..field", context) == "$var..field"
+        # Note: $var. is now valid (variable followed by period punctuation)
+        assert TemplateResolver.resolve_string("$var.", context) == "value."
+        assert TemplateResolver.resolve_string("$var..field", context) == "value..field"
         assert TemplateResolver.resolve_string("$$var", context) == "$$var"
         assert TemplateResolver.resolve_string("$", context) == "$"
 

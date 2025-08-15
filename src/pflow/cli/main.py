@@ -477,6 +477,35 @@ def _prompt_workflow_save(ir_data: dict[str, Any]) -> None:
             break  # Other error, don't retry
 
 
+def _prepare_shared_storage(
+    execution_params: dict[str, Any] | None,
+    stdin_data: str | StdinData | None,
+    verbose: bool,
+) -> dict[str, Any]:
+    """Prepare shared storage with execution params and stdin data.
+
+    Args:
+        execution_params: Optional parameters from planner for template resolution
+        stdin_data: Optional stdin data to inject
+        verbose: Whether to show verbose output
+
+    Returns:
+        Prepared shared storage dictionary
+    """
+    shared_storage: dict[str, Any] = {}
+
+    # Inject execution parameters from planner (for template resolution)
+    if execution_params:
+        shared_storage.update(execution_params)
+        if verbose:
+            click.echo(f"cli: Injected {len(execution_params)} execution parameters into shared storage")
+
+    # Inject stdin data if present (may override execution params)
+    _inject_stdin_data(shared_storage, stdin_data, verbose)
+
+    return shared_storage
+
+
 def execute_json_workflow(
     ctx: click.Context,
     ir_data: dict[str, Any],
@@ -521,11 +550,8 @@ def execute_json_workflow(
         node_count = len(ir_data.get("nodes", []))
         click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
 
-    # Execute with shared storage
-    shared_storage: dict[str, Any] = {}
-
-    # Inject stdin data if present
-    _inject_stdin_data(shared_storage, stdin_data, verbose)
+    # Prepare shared storage with params and stdin
+    shared_storage = _prepare_shared_storage(execution_params, stdin_data, verbose)
 
     try:
         result = flow.run(shared_storage)

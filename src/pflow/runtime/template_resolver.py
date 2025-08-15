@@ -18,9 +18,10 @@ class TemplateResolver:
     # Pattern supports $var format with paths
     # Matches: $identifier or $identifier.field.subfield
     # Groups: (identifier.field.subfield)
-    # Must not be preceded by $ and not end with a dot
+    # Must not be preceded by $ (to avoid $$)
     # Identifiers must start with letter or underscore
-    TEMPLATE_PATTERN = re.compile(r"(?<!\$)\$([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)(?=\s|$|[^\w.])")
+    # Variable can be followed by whitespace, punctuation, or end of string
+    TEMPLATE_PATTERN = re.compile(r"(?<!\$)\$([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)(?=\s|$|[^\w])")
 
     @staticmethod
     def has_templates(value: Any) -> bool:

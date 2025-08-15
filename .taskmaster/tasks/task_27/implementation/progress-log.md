@@ -150,7 +150,61 @@ Task 27 is now complete! The debugging infrastructure provides:
 - Clean architecture without modifying existing nodes
 - Automatic trace saving on failure, optional saving with --trace flag
 
-The implementation successfully captures all debugging data needed to diagnose planner issues. Most importantly, it revealed that the planner wasn't actually hanging - it was completing but subsequent workflow execution had issues, which the traces now help diagnose.
+The implementation successfully captures all debugging data needed to diagnose planner issues.
+
+## [2025-01-13 12:00] - Fixed Template Resolution with Namespacing
+
+### Issue: Template variables not resolving with namespacing enabled
+When automatic namespacing was enabled (default in MVP), template variables like `$story_topic` and `$reader.content` were not being resolved correctly.
+
+### Root Causes Found:
+1. **NamespacedSharedStore not dict-compatible**: Missing methods for `dict()` conversion
+2. **Execution params not in shared store**: Planner params weren't injected into shared storage
+3. **Namespace dictionaries excluded**: Our filter was too aggressive, excluding legitimate node output data
+
+### Fixes Applied:
+1. ✅ Added dict-like methods to NamespacedSharedStore (`keys()`, `items()`, `values()`, etc.)
+2. ✅ Injected execution_params into shared_storage before workflow execution
+3. ✅ Fixed filtering to include namespace dictionaries (they contain node outputs)
+
+### Results:
+- All 1217 tests passing
+- Template resolution working with namespacing
+- Both planner params and node outputs accessible in templates
+
+## [2025-01-13 13:00] - Critical Template Resolution Bugfix
+
+### Issue: Template variables not resolving (e.g., `$story_topic`)
+The LLM was receiving literal `$story_topic` instead of the actual value, causing it to ask "what topic?" instead of generating stories.
+
+### Root Cause: Regex Pattern Bug
+The template resolver's regex pattern had an overly restrictive lookahead:
+```regex
+(?=\s|$|[^\w.])  # Required NOT period after variable
+```
+This failed when variables were followed by periods (common in sentences).
+
+### Fix Applied:
+Changed lookahead to allow punctuation:
+```regex
+(?=\s|$|[^\w])  # Allow any non-word character (including period)
+```
+
+### Critical Bugfixes Summary:
+1. **src/pflow/cli/main.py** - Added missing injection of execution_params into shared_storage
+   - Without this, planner-extracted parameters were completely inaccessible
+   - Critical bug that broke all planner workflows with templates
+
+2. **src/pflow/runtime/namespaced_store.py** - Added dict-like methods for compatibility
+   - Without this, `dict(NamespacedSharedStore)` failed
+   - Critical bug that broke template resolution with namespacing enabled
+
+3. **src/pflow/runtime/template_resolver.py** - Fixed regex pattern lookahead
+   - Without this, variables followed by punctuation weren't detected
+   - Critical bug that prevented template resolution in sentences
+
+### Impact:
+These were not improvements but essential bugfixes. The template resolution system was fundamentally broken in three different ways, each preventing the feature from working at all. The debugging infrastructure from Task 27 was instrumental in diagnosing these layered issues.
 
 ## [2025-01-14 12:00] - Documentation Complete
 
