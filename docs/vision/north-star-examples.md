@@ -16,7 +16,7 @@ llm --prompt="Generate a CHANGELOG.md entry from these issues: $issues" >>
 write-file --path=versions/$version/CHANGELOG.md >>
 git-checkout --branch="$branch-name" >>
 git-commit --message="Create changelog for version: $version" >>
-github-create-pr --title="Create CHANGELOG.md for version: $version" --base=main --head="$branch-name$"
+github-create-pr --title="Create CHANGELOG.md for version: $version" --base=main --head="$branch-name"
 ```
 
 Which with template variables from workflow INPUTS resolved would look like this:
