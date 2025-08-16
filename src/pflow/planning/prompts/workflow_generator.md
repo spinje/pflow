@@ -1,3 +1,17 @@
+---
+name: workflow_generator
+test_path: tests/test_planning/llm/prompts/test_generator_prompts.py::TestGeneratorPromptEffectiveness
+test_command: uv run python tools/test_prompt_accuracy.py workflow_generator
+version: 1.0
+latest_accuracy: 0.0
+test_runs: []
+average_accuracy: 0.0
+test_count: 0
+previous_version_accuracy: 0.0
+last_tested: 2025-01-01
+prompt_hash: ""
+---
+
 # Workflow Generator Prompt
 
 Generate a workflow for: {{user_input}}

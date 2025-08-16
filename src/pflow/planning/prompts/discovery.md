@@ -1,3 +1,17 @@
+---
+name: discovery
+test_path: tests/test_planning/llm/prompts/test_discovery_prompt.py::TestDiscoveryPromptSensitive
+test_command: uv run python tools/test_prompt_accuracy.py discovery
+version: 1.0
+latest_accuracy: 100.0
+test_runs: [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 20.0, 20.0, 100.0]
+average_accuracy: 82.2
+test_count: 3
+previous_version_accuracy: 0.0
+last_tested: '2025-08-16'
+prompt_hash: bfb270fe
+---
+
 # Discovery Prompt
 
 You are a workflow discovery system that determines if an existing workflow completely satisfies a user request.

@@ -827,15 +827,8 @@ dependencies = [
     { name = "click" },
     { name = "jsonschema" },
     { name = "llm" },
+    { name = "llm-anthropic" },
     { name = "pydantic" },
-]
-
-[package.optional-dependencies]
-all-llms = [
-    { name = "llm-anthropic" },
-]
-anthropic = [
-    { name = "llm-anthropic" },
 ]
 
 [package.dev-dependencies]
@@ -847,9 +840,11 @@ dev = [
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "tox-uv" },
     { name = "types-jsonschema" },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
@@ -857,11 +852,9 @@ requires-dist = [
     { name = "click" },
     { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "llm", specifier = ">=0.27.1" },
-    { name = "llm-anthropic", marker = "extra == 'all-llms'", specifier = ">=0.17" },
-    { name = "llm-anthropic", marker = "extra == 'anthropic'", specifier = ">=0.17" },
+    { name = "llm-anthropic", specifier = ">=0.17" },
     { name = "pydantic" },
 ]
-provides-extras = ["anthropic", "all-llms"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -872,9 +865,11 @@ dev = [
     { name = "mypy", specifier = ">=0.991" },
     { name = "pre-commit", specifier = ">=2.20.0" },
     { name = "pytest", specifier = ">=7.2.0" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", specifier = ">=0.11.5" },
     { name = "tox-uv", specifier = ">=1.11.3" },
     { name = "types-jsonschema", specifier = ">=4.25.0.20250809" },
+    { name = "types-pyyaml", specifier = ">=6.0.0" },
 ]
 
 [[package]]
@@ -1506,6 +1501,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e2/78/0b2102e988c221851f4bb98f3b008b52e52b56ef01379e10f640e033d31a/types_jsonschema-4.25.0.20250809.tar.gz", hash = "sha256:83c2a0ed5365c731a68d6e815e2063ea22ccf4547a74b1d5ed0ac234dd3de86e", size = 15423, upload-time = "2025-08-09T03:17:07.207Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/db/f0/6b0d5d48e9e8c8515055ed69808abea557e66cadf6d3c638a1c3cd9f908c/types_jsonschema-4.25.0.20250809-py3-none-any.whl", hash = "sha256:dcd0fee69feb0f0763555c0307f0c5d58cc0c1a55984e66a04f4ef4ae1efb507", size = 15722, upload-time = "2025-08-09T03:17:06.41Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20250809"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/21/52ffdbddea3c826bc2758d811ccd7f766912de009c5cf096bd5ebba44680/types_pyyaml-6.0.12.20250809.tar.gz", hash = "sha256:af4a1aca028f18e75297da2ee0da465f799627370d74073e96fee876524f61b5", size = 17385, upload-time = "2025-08-09T03:14:34.867Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/35/3e/0346d09d6e338401ebf406f12eaf9d0b54b315b86f1ec29e34f1a0aedae9/types_pyyaml-6.0.12.20250809-py3-none-any.whl", hash = "sha256:032b6003b798e7de1a1ddfeefee32fac6486bdfe4845e0ae0e7fb3ee4512b52f", size = 20277, upload-time = "2025-08-09T03:14:34.055Z" },
 ]
 
 [[package]]

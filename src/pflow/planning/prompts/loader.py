@@ -26,6 +26,14 @@ def load_prompt(prompt_name: str) -> str:
     # Read the entire file
     content = prompt_file.read_text()
 
+    # Skip YAML frontmatter if present
+    if content.startswith("---\n"):
+        # Find the closing --- and skip everything before it
+        parts = content.split("\n---\n", 1)
+        if len(parts) == 2:
+            # Take everything after the frontmatter
+            content = parts[1]
+
     # Skip the header line if it starts with #
     lines = content.split("\n")
     if lines and lines[0].startswith("#"):

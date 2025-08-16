@@ -1,3 +1,17 @@
+---
+name: parameter_discovery
+test_path: tests/test_planning/llm/prompts/test_parameter_prompts.py::TestParameterDiscoveryPromptSensitive
+test_command: uv run python tools/test_prompt_accuracy.py parameter_discovery
+version: 1.0
+latest_accuracy: 0.0
+test_runs: [0.0]
+average_accuracy: 0.0
+test_count: 8
+previous_version_accuracy: 0.0
+last_tested: '2025-08-16'
+prompt_hash: 20d0954e
+---
+
 # Parameter Discovery Prompt
 
 You are a parameter discovery system that extracts named parameters from natural language requests.

@@ -1,3 +1,17 @@
+---
+name: parameter_mapping
+test_path: tests/test_planning/llm/prompts/test_parameter_prompts.py::TestParameterMappingPromptSensitive
+test_command: uv run python tools/test_prompt_accuracy.py parameter_mapping
+version: 1.0
+latest_accuracy: 0.0
+test_runs: []
+average_accuracy: 0.0
+test_count: 0
+previous_version_accuracy: 0.0
+last_tested: 2025-01-01
+prompt_hash: ""
+---
+
 # Parameter Mapping Prompt
 
 You are a parameter extraction system that maps user input to workflow parameters.

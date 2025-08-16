@@ -1,3 +1,17 @@
+---
+name: metadata_generation
+test_path: none
+test_command: uv run python tools/test_prompt_accuracy.py metadata_generation
+version: 1.0
+latest_accuracy: 0.0
+test_runs: []
+average_accuracy: 0.0
+test_count: 0
+previous_version_accuracy: 0.0
+last_tested: 2025-01-01
+prompt_hash: ""
+---
+
 # Metadata Generation Prompt
 
 Analyze this workflow and generate high-quality metadata for future discovery.

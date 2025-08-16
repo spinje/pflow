@@ -21,12 +21,13 @@ dependencies = [
     "click",          # CLI framework (more flexible than Typer)
     "jsonschema>=4.20.0",  # JSON Schema validation for workflow IR
     "llm>=0.27.1",    # Simon Willison's LLM library for text processing
+    "llm-anthropic>=0.17",  # Anthropic Claude models for planner
     "pydantic",       # IR/metadata validation (used in planning/ir_models.py)
 ]
 
-[project.optional-dependencies]
-anthropic = ["llm-anthropic>=0.17"]
-all-llms = ["llm-anthropic>=0.17"]  # Can add more plugins here
+# Optional dependencies can be added here for future LLM providers
+# [project.optional-dependencies]
+# openai = ["llm-openai>=0.1"]
 
 [project.scripts]
 pflow = "pflow.cli:main"
@@ -48,6 +49,8 @@ dev = [
     "mkdocs>=1.4.2",
     "mkdocs-material>=8.5.10",
     "mkdocstrings[python]>=0.26.1",
+    "PyYAML>=6.0.0",
+    "types-PyYAML>=6.0.0",
     "types-jsonschema>=4.25.0.20250809",
 ]
 
@@ -137,5 +140,5 @@ preview = true
 
 [tool.deptry.per_rule_ignores]
 DEP001 = ["pocketflow"]
-DEP002 = ["llm-anthropic"]  # Plugin for llm library, not directly imported
+DEP002 = ["llm-anthropic"]  # Plugin for llm library, loaded dynamically not imported (used by planner)
 DEP003 = ["pocketflow"]
