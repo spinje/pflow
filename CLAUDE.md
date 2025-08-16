@@ -159,83 +159,71 @@ pflow/
 │   ├── cookbook/          # Extensive examples (40+ patterns)
 │   └── tests/             # Framework test suite
 ├── src/pflow/             # Main pflow CLI implementation
-│   ├── __init__.py       # Package initialization
 │   ├── cli/              # CLI module
 │   │   └── main.py       # CLI implementation with click
 │   ├── core/             # Core utilities and schemas
 │   │   ├── ir_schema.py  # Pydantic models for JSON IR validation
-│   │   └── shell_integration.py  # Shell pipe and stdin/stdout handling
+│   │   ├── shell_integration.py  # Shell pipe and stdin/stdout handling
+│   │   ├── workflow_manager.py  # Centralized workflow lifecycle management
+│   │   └── exceptions.py # Core exception definitions
 │   ├── nodes/            # Platform node implementations
-│   │   └── file/         # File operation nodes (read, write, copy, move, delete)
+│   │   ├── file/         # File operation nodes
+│   │   ├── git/          # Git operation nodes
+│   │   ├── github/       # GitHub API nodes
+│   │   ├── llm/          # LLM interaction node
+│   │   ├── test/         # Test nodes for development
+│   │   └── test_node*.py # Various test node implementations
 │   ├── planning/         # Natural language planning system
-│   │   └── context_builder.py  # Build context for LLM planning
+│   │   ├── context_builder.py  # Build context for LLM planning
+│   │   ├── flow.py       # Flow planning logic
+│   │   ├── nodes.py      # Node planning logic
+│   │   ├── ir_models.py  # IR models for planning
+│   │   ├── debug.py      # Debugging utilities
+│   │   ├── debug_utils.py # Additional debug helpers
+│   │   ├── prompts/      # Extracted prompts as markdown files
+│   │   └── utils/        # Planning utilities
+│   │       ├── llm_helpers.py      # LLM interaction helpers
+│   │       ├── registry_helper.py  # Registry access helpers
+│   │       └── workflow_loader.py  # Workflow loading utilities
 │   ├── registry/         # Node discovery and management
 │   │   ├── registry.py   # Central registry for nodes and metadata
 │   │   ├── scanner.py    # Dynamic node discovery from modules
 │   │   └── metadata_extractor.py  # Extract metadata from node docstrings
 │   └── runtime/          # Workflow execution components
-│       └── compiler.py   # IR to PocketFlow object compilation
+│       ├── compiler.py   # IR to PocketFlow object compilation
+│       ├── workflow_executor.py  # Workflow execution orchestration
+│       ├── workflow_validator.py # Workflow validation logic
+│       ├── template_resolver.py  # Template variable resolution
+│       ├── template_validator.py # Template validation logic
+│       ├── namespaced_store.py   # Namespaced shared store implementation
+│       ├── namespaced_wrapper.py # Node wrapper for namespacing
+│       └── node_wrapper.py       # General node wrapper utilities
 ├── tests/                 # Comprehensive test suite
+│   ├── shared/           # Shared test utilities and fixtures
 │   ├── test_cli/         # CLI interface tests
 │   ├── test_core/        # Core functionality tests
 │   ├── test_docs/        # Documentation validation
 │   ├── test_integration/ # End-to-end integration tests
 │   ├── test_nodes/       # Node implementation tests
-│   │   └── test_file/    # File node operation tests
+│   │   ├── test_file/    # File node tests
+│   │   ├── test_git/     # Git node tests
+│   │   ├── test_github/  # GitHub node tests
+│   │   └── test_llm/     # LLM node tests
 │   ├── test_planning/    # Planning system tests
+│   │   ├── fixtures/     # Test fixtures for planning
+│   │   ├── integration/  # Planning integration tests
+│   │   ├── llm/          # LLM-specific planning tests
+│   │   │   ├── behavior/ # LLM behavior tests
+│   │   │   ├── integration/ # LLM integration tests
+│   │   │   └── prompts/  # Prompt testing
+│   │   └── unit/         # Unit tests for planning
 │   ├── test_registry/    # Registry and scanner tests
-│   └── test_runtime/     # Runtime and compiler tests
+│   ├── test_runtime/     # Runtime and compiler tests
+│   │   └── test_workflow_executor/ # Workflow executor tests
+│   └── test_shared/      # Tests for shared components
 ├── examples/              # Example workflows and usage patterns
-│   ├── README.md         # Examples overview and guide
-│   ├── core/             # Core workflow examples
-│   ├── advanced/         # Advanced workflow patterns
-│   └── invalid/          # Invalid examples for validation testing
 ├── docs/                  # Comprehensive project specifications
-│   ├── CLAUDE.md                  # Documentation navigation guide for AI
-│   ├── index.md                   # Documentation inventory and overview
-│   ├── prd.md                     # **CORE: Product requirements document**
-│   ├── architecture/                  # System architecture documentation
-│   │   ├── architecture.md        # **CORE: Complete system architecture**
-│   │   ├── components.md              # Complete MVP vs v2.0 breakdown
-│   │   └── pflow-pocketflow-integration-guide.md  # Integration patterns
-│   ├── core-concepts/                 # Core system concepts
-│   │   ├── registry.md                # Node discovery, namespacing, versioning
-│   │   ├── runtime.md                 # Execution engine, caching, safety
-│   │   ├── schemas.md                 # JSON IR and metadata schemas
-│   │   └── shared-store.md            # Shared store + proxy pattern
-│   ├── features/                      # Feature specifications
-│   │   ├── mvp-implementation-guide.md  # Comprehensive MVP guide (scope + roadmap)
-│   │   ├── simple-nodes.md            # Simple node design pattern
-│   │   ├── cli-runtime.md             # CLI integration and shared store runtime
-│   │   ├── planner.md                 # Dual-mode planner (CLI + natural language)
-│   │   ├── shell-pipes.md             # Unix pipe support and stdin handling
-│   │   ├── autocomplete.md            # CLI autocomplete specification (v2.0)
-│   │   ├── mcp-integration.md         # MCP server integration (v2.0)
-│   │   └── workflow-analysis.md       # Technical analysis of AI workflow inefficiencies
-│   ├── reference/                     # Reference documentation
-│   │   ├── cli-reference.md           # CLI commands and syntax
-│   │   ├── execution-reference.md     # Execution model and flow control
-│   │   ├── enhanced-interface-format.md # Docstring format for pflow nodes
-│   │   └── node-reference.md          # Node types and configurations
-│   ├── core-node-packages/            # Platform node package specifications
-│   ├── implementation-details/        # Implementation specifics
-│   │   ├── metadata-extraction.md
-│   │   └── autocomplete-impl.md
-│   └── future-version/               # Post-MVP features
-│       ├── llm-node-gen.md
-│       └── json-extraction.md
 ├── .taskmaster/           # Task management and planning
-│   ├── tasks/            # Task tracking
-│   │   ├── task_1/
-│   │   │   └── task-review.md # Read this file to understand what has been implemented in previously completed tasks
-│   │   └── task_2/
-│   │   │   └── (same structure)
-│   ├── docs/             # Planning documentation
-│   ├── knowledge/        # Consolidated learning repository
-│   │   ├── CLAUDE.md    # Knowledge maintenance guide
-│   │   ├── patterns.md  # Successful implementation patterns
-│   │   ├── pitfalls.md  # Common mistakes to avoid
-│   │   └── decisions.md # Architectural decisions
 ├── Makefile              # Development automation
 ├── pyproject.toml        # Project configuration and dependencies
 └── CLAUDE.md            # This file

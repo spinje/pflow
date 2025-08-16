@@ -217,6 +217,295 @@ CONFLICT DETECTED:
 - Action needed: Update documentation to reflect Node vs BaseNode distinction
 ```
 
+## Project Structure Overview
+
+### **High-Level Directory Map**
+```
+pflow/
+├── docs/                  # Comprehensive specifications and documentation
+├── examples/              # JSON IR workflow examples (valid and invalid)
+├── src/pflow/            # Main implementation (CLI, nodes, planning, runtime)
+├── pocketflow/           # Foundation framework (100-line core + extensive cookbook)
+├── tests/                # Mirror structure test suite with comprehensive coverage
+├── tools/                # Developer tools (prompt accuracy testing)
+├── .taskmaster/          # Task management and knowledge base
+├── .claude/              # AI agent configurations
+├── CLAUDE.md             # Root AI guidance document
+├── README.md             # Project overview for users
+├── Makefile              # Development automation
+└── pyproject.toml        # Dependencies and configuration
+```
+
+### **1. docs/ - Documentation Hub**
+
+**Purpose**: Single source of truth for all specifications, architecture, and design decisions.
+
+**Critical Files**:
+- `index.md` - **START HERE**: Complete file-by-file inventory of all documentation
+- `CLAUDE.md` - Navigation guide for AI (when/how to use docs)
+- `prd.md` - Product requirements and vision
+
+**Key Subdirectories**:
+- `architecture/` - System design (architecture.md, components.md, integration guides)
+- `core-concepts/` - Fundamental concepts (registry, runtime, schemas, shared-store)
+- `features/` - Feature specs (mvp-implementation-guide.md, planner.md, shell-pipes.md)
+- `reference/` - API references (cli-reference.md, node-reference.md, enhanced-interface-format.md)
+- `core-node-packages/` - Platform node specifications
+- `implementation-details/` - Deep implementation guides
+- `future-version/` - Post-MVP features
+
+### **2. examples/ - Workflow Patterns**
+
+**Purpose**: Real JSON IR examples demonstrating workflow patterns and anti-patterns.
+
+**Structure**:
+- `README.md` - Examples overview and usage guide
+- `core/` - Essential patterns (minimal.json, template-variables.json, error-handling.json)
+- `advanced/` - Complex workflows (file-migration.json, github-workflow.json)
+- `invalid/` - What NOT to do (validation test cases)
+- `nested/` - Workflow composition examples
+- `interfaces/` - Input/output declarations
+
+### **3. src/pflow/ - Core Implementation**
+
+**Purpose**: Main pflow system implementation following modular architecture.
+
+**Key Modules**:
+```
+src/pflow/
+├── cli/                          # Command-line interface
+│   └── main.py                   # Click-based CLI entry point
+├── core/                         # Foundation components
+│   ├── ir_schema.py              # Pydantic models for JSON IR validation
+│   ├── shell_integration.py      # Shell pipe and stdin/stdout handling
+│   ├── workflow_manager.py       # Centralized workflow lifecycle management
+│   └── exceptions.py             # Core exception definitions
+├── nodes/                        # Platform node implementations
+│   ├── file/                     # File operations (read, write, copy, move, delete)
+│   ├── git/                      # Git operations (status, commit, checkout, push)
+│   ├── github/                   # GitHub API (list_issues, get_issue, create_pr)
+│   ├── llm/                      # General-purpose LLM with template variables
+│   ├── test/                     # Test nodes (echo, etc.)
+│   └── test_node*.py             # Various test node implementations
+├── planning/                     # Natural language to workflow system
+│   ├── context_builder.py        # Build context for LLM planning
+│   ├── flow.py                   # Main planner orchestration
+│   ├── nodes.py                  # Planning-specific nodes
+│   ├── ir_models.py              # IR models for planning
+│   ├── debug.py                  # Debugging utilities
+│   ├── debug_utils.py            # Additional debug helpers
+│   ├── prompts/                  # Externalized prompts as markdown
+│   │   ├── loader.py             # Prompt loading utility
+│   │   ├── discovery.md          # Node discovery prompt
+│   │   ├── workflow_generator.md # Workflow generation prompt
+│   │   └── ...                   # Other planning prompts
+│   └── utils/                    # Planning utilities
+│       ├── llm_helpers.py        # LLM interaction helpers
+│       ├── registry_helper.py    # Registry access helpers
+│       └── workflow_loader.py    # Workflow loading utilities
+├── registry/                     # Node discovery and management
+│   ├── registry.py               # Central registry for nodes
+│   ├── scanner.py                # Dynamic node discovery
+│   └── metadata_extractor.py     # Extract Enhanced Interface Format
+└── runtime/                      # Workflow execution engine
+    ├── compiler.py               # IR → PocketFlow compilation
+    ├── workflow_executor.py      # Workflow execution orchestration
+    ├── workflow_validator.py     # Workflow validation logic
+    ├── template_resolver.py      # ${variable} resolution
+    ├── template_validator.py     # Template validation
+    ├── namespaced_store.py       # Namespaced shared store
+    ├── namespaced_wrapper.py     # Node wrapper for namespacing
+    └── node_wrapper.py           # General node wrapper utilities
+```
+
+### **4. pocketflow/ - Foundation Framework**
+
+**Purpose**: 100-line Python framework providing Node, Flow, and Shared Store abstractions.
+
+**Critical Files**:
+- `__init__.py` - **CORE**: The entire framework (Node, Flow, Shared Store classes)
+- `CLAUDE.md` - Complete repository map and navigation guide
+- `PFLOW_MODIFICATIONS.md` - pflow-specific changes to framework
+
+**Documentation** (`pocketflow/docs/`):
+- `guide.md` - Framework usage guide
+- `core_abstraction/` - Node lifecycle, Flow orchestration, communication patterns
+- `design_pattern/` - Workflow, agent, RAG patterns
+
+**Cookbook** (`pocketflow/cookbook/`):
+40+ examples from simple to complex:
+- Basic: `pocketflow-hello-world`, `pocketflow-chat`, `pocketflow-node`
+- Patterns: `pocketflow-workflow`, `pocketflow-agent`, `pocketflow-rag`
+- Advanced: `pocketflow-multi-agent`, `pocketflow-parallel-batch`
+- Tutorials: Complete applications with submodules
+
+### **5. tests/ - Comprehensive Test Suite**
+
+**Purpose**: Mirror structure of source with extensive coverage, organized by component.
+
+**Complete Structure**:
+```
+tests/
+├── CLAUDE.md                            # Test suite navigation guide
+├── conftest.py                          # Root pytest configuration and fixtures
+├── shared/                              # Shared test utilities
+│   ├── README.md                        # Utility documentation
+│   ├── llm_mock.py                      # Mock LLM (prevents API calls)
+│   └── planner_block.py                 # Planner testing utilities
+├── test_cli/                            # CLI interface tests
+│   ├── CLAUDE.md                        # CLI test guide
+│   ├── conftest.py                      # CLI-specific fixtures
+│   ├── test_cli.py                      # Main CLI tests
+│   ├── test_dual_mode_stdin.py          # Stdin handling tests
+│   ├── test_json_error_handling.py      # JSON error tests
+│   ├── test_workflow_output_handling.py # Output handling
+│   └── test_workflow_save*.py           # Workflow save tests
+├── test_core/                           # Core functionality
+│   ├── test_ir_schema.py                # IR validation
+│   ├── test_ir_examples.py              # Example validation
+│   ├── test_workflow_interfaces.py      # Interface tests
+│   └── test_workflow_manager.py         # Manager tests
+├── test_nodes/                          # Node implementations
+│   ├── conftest.py                      # Node test fixtures
+│   ├── test_file/                       # File operation nodes
+│   │   ├── conftest.py                  # File-specific fixtures
+│   │   ├── test_read_file.py            # Read operations
+│   │   ├── test_write_file.py           # Write operations
+│   │   ├── test_copy_file.py            # Copy operations
+│   │   ├── test_move_file.py            # Move operations
+│   │   ├── test_delete_file.py          # Delete operations
+│   │   └── test_file_integration.py     # File integration
+│   ├── test_git/                        # Git operations
+│   │   ├── test_status.py               # Git status
+│   │   ├── test_commit.py               # Git commit
+│   │   ├── test_checkout.py             # Git checkout
+│   │   └── test_push.py                 # Git push
+│   ├── test_github/                     # GitHub API
+│   │   ├── test_list_issues.py          # Issue listing
+│   │   ├── test_get_issue.py            # Issue retrieval
+│   │   └── test_create_pr.py            # PR creation
+│   └── test_llm/                        # LLM node
+│       ├── TESTING.md                   # LLM test guide
+│       ├── test_llm.py                  # Basic LLM tests
+│       └── test_llm_integration.py      # LLM integration
+├── test_planning/                       # Planning system
+│   ├── CLAUDE.md                        # Planning test guide
+│   ├── conftest.py                      # Planning fixtures
+│   ├── fixtures/                        # Test data
+│   │   └── workflows/                   # Workflow JSONs
+│   ├── unit/                            # Unit tests
+│   │   ├── test_discovery_routing.py    # Discovery logic
+│   │   ├── test_generator.py            # Generator tests
+│   │   ├── test_parameter_management.py # Parameter handling
+│   │   ├── test_prompt_loader.py        # Prompt loading
+│   │   └── test_validation.py           # Validation logic
+│   ├── integration/                     # Integration tests
+│   │   ├── CLAUDE.md                    # Integration guide
+│   │   ├── test_planner_simple.py       # Simple planning
+│   │   ├── test_planner_integration.py  # Full integration
+│   │   └── test_flow_structure.py       # Flow validation
+│   └── llm/                             # LLM-specific tests
+│       ├── behavior/                    # Behavior verification
+│       │   ├── test_confidence_thresholds.py
+│       │   ├── test_generator_core.py
+│       │   └── test_metadata_generation_quality.py
+│       ├── integration/                 # LLM integration
+│       │   ├── test_planner_e2e_real_llm.py
+│       │   └── test_generator_north_star.py
+│       └── prompts/                     # Prompt testing
+│           ├── test_discovery_prompt.py
+│           ├── test_generator_prompts.py
+│           └── test_parameter_prompts.py
+├── test_registry/                       # Registry system
+│   ├── test_registry.py                 # Registry core
+│   ├── test_scanner.py                  # Node scanning
+│   └── test_metadata_extractor.py       # Metadata extraction
+├── test_runtime/                        # Runtime engine
+│   ├── test_compiler_basic.py           # Basic compilation
+│   ├── test_compiler_integration.py     # Compiler integration
+│   ├── test_template_resolver.py        # Template resolution
+│   ├── test_template_validator.py       # Template validation
+│   ├── test_namespacing*.py            # Namespacing tests
+│   └── test_workflow_executor/          # Executor tests
+│       ├── test_workflow_executor.py    # Basic execution
+│       └── test_integration.py          # Executor integration
+├── test_integration/                    # End-to-end tests
+│   ├── conftest.py                      # Integration fixtures
+│   ├── test_e2e_workflow.py            # Full workflow E2E
+│   ├── test_template_system_e2e.py     # Template system E2E
+│   └── test_workflow_manager_integration.py
+└── test_docs/                           # Documentation tests
+    └── test_links.py                    # Link validation
+```
+
+**Key Testing Patterns**:
+- **Mirror Structure**: Each `src/pflow/` module has corresponding tests
+- **Fixture Hierarchy**: conftest.py files provide layered fixtures
+- **Mock Strategy**: LLM mocking at API level prevents real calls
+- **Test Categories**: unit/ → integration/ → llm/ progression
+- **Real LLM Tests**: Controlled by RUN_LLM_TESTS environment variable
+
+### **6. .taskmaster/ - Task Management & Knowledge Base**
+
+**Purpose**: Task tracking, planning documentation, and consolidated learning repository.
+
+**Structure**:
+```
+.taskmaster/
+├── tasks/                        # Completed and current task tracking
+│   ├── task_1/                 # Each task has its own directory
+│   │   ├── task-review.md      # **IMPORTANT**: Summary of what was implemented
+│   │   └── implementation/      # Implementation details
+│   │       └── progress-log.md         # **Progress tracking**
+│   └── ...                     # Tasks 1-35+ documented
+├── docs/                       # Planning and task documentation
+└── knowledge/                  # **CRITICAL**: Consolidated learning repository
+    ├── CLAUDE.md              # Knowledge maintenance guide
+    ├── patterns.md            # Proven implementation patterns
+    ├── pitfalls.md            # Common mistakes and anti-patterns
+    ├── decisions.md           # Architectural decisions with rationale
+    └── decision-deep-dives/   # Detailed architectural investigations
+```
+
+> Read `task-review.md` files to understand what has been implemented in each completed task or `progress-log.md` files to understand the progress of each task when task-review.md is not available or not containing enough information. Note that this was the source of truth at the time the task was implemented, it may be outdated or wrong. Use the information cotained in these files with extreme care and consideration.
+
+**Key Resources**:
+- **task-review.md files**: Summary of what was implemented in each completed task
+- **progress-log.md files**: Real-time progress tracking during implementation
+- **knowledge/patterns.md**: Successful patterns specific to pflow (not general programming)
+- **knowledge/pitfalls.md**: Failed approaches with root cause analysis
+- **knowledge/decisions.md**: Why certain architectural choices were made, alternatives considered
+
+### **Quick Navigation Patterns**
+
+**To find a specific feature implementation**:
+1. Start at entry point: `src/pflow/cli/main.py`
+2. Follow imports to feature module
+3. Check corresponding test in `tests/test_*`
+4. Look for examples in `examples/` or `pocketflow/cookbook/`
+
+**To understand a concept**:
+1. Check `docs/core-concepts/` for theory
+2. Find implementation in `src/pflow/`
+3. Look at tests for usage patterns
+4. Check `pocketflow/docs/` for framework concepts
+
+**To trace execution flow**:
+```
+CLI (cli/main.py)
+  → Planning (planning/flow.py) [if natural language]
+  → Validation (core/ir_schema.py)
+  → Compilation (runtime/compiler.py)
+  → Execution (runtime/workflow_executor.py)
+  → Nodes (nodes/*/*.py)
+```
+
+**To find node patterns**:
+- Implementation: `src/pflow/nodes/{type}/{name}.py`
+- Tests: `tests/test_nodes/test_{type}/test_{name}.py`
+- Framework base: `pocketflow/__init__.py` (Node class)
+- Examples: `pocketflow/cookbook/pocketflow-node/`
+
 ## Special Knowledge Areas
 
 Only relevant when needing to answer questions about the codebase and how it works and why it was implemented a certain way.
