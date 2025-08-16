@@ -105,6 +105,19 @@ def test_node_retries_on_failure():
 - **data/** - Data processing and transformation
 - **network/** - HTTP requests and API calls
 - **system/** - System operations
+- **test/** - Test utilities (echo node for workflow testing)
+
+## Registry Inclusion Rules
+
+**User-visible nodes** (in subdirectories):
+- Nodes in `file/`, `llm/`, `test/`, etc. subdirectories → **Included in registry**
+- Example: `test/echo.py` → Available to users via CLI
+
+**Internal test fixtures** (in root directory):
+- `test_node*.py` files in root `nodes/` directory → **NOT in registry**
+- Example: `test_node_retry.py` → Internal framework testing only
+
+The scanner only processes subdirectories, keeping internal test fixtures hidden from users.
 
 ## Interface Documentation Format
 
