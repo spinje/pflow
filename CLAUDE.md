@@ -379,6 +379,7 @@ The codebase is in early development with these tasks completed:
 
 Next up:
 - ⏳ Task 34: Prompt Accuracy Tracking System for planner prompts
+- ⏳ Task 35: Migrate Template Syntax from $variable to ${variable}
 - ⏳ Task 28: Improve performance of planner by modifying prompts
 - ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ⏳ Task 10: Create registry CLI commands
