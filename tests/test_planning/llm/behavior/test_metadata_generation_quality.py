@@ -42,13 +42,17 @@ class TestMetadataGenerationQuality:
                     "since": {"type": "string", "required": False, "description": "Date filter"},
                 },
                 "nodes": [
-                    {"id": "fetch", "type": "github-list-issues", "params": {"repo": "$repo", "state": "closed"}},
+                    {"id": "fetch", "type": "github-list-issues", "params": {"repo": "${repo}", "state": "closed"}},
                     {
                         "id": "analyze",
                         "type": "llm",
                         "params": {"prompt": "Categorize these issues into features, fixes, and breaking changes"},
                     },
-                    {"id": "write", "type": "write-file", "params": {"path": "CHANGELOG.md", "content": "$changelog"}},
+                    {
+                        "id": "write",
+                        "type": "write-file",
+                        "params": {"path": "CHANGELOG.md", "content": "${changelog}"},
+                    },
                 ],
                 "edges": [{"from": "fetch", "to": "analyze"}, {"from": "analyze", "to": "write"}],
             },
@@ -117,7 +121,7 @@ class TestMetadataGenerationQuality:
                     {
                         "id": "fetch",
                         "type": "github-list-issues",
-                        "params": {"repo": "$repository", "labels": "$labels"},
+                        "params": {"repo": "${repository}", "labels": "${labels}"},
                     },
                     {"id": "categorize", "type": "llm", "params": {"prompt": "Categorize by priority and type"}},
                     {"id": "report", "type": "write-file", "params": {"path": "triage.md"}},
@@ -155,7 +159,7 @@ class TestMetadataGenerationQuality:
                 "ir_version": "0.1.0",
                 "inputs": {"csv_file": {"type": "string", "required": True}},
                 "nodes": [
-                    {"id": "read", "type": "read-file", "params": {"path": "$csv_file"}},
+                    {"id": "read", "type": "read-file", "params": {"path": "${csv_file}"}},
                     {"id": "analyze", "type": "llm", "params": {"prompt": "Analyze CSV data and summarize"}},
                     {"id": "save", "type": "write-file", "params": {"path": "analysis.json"}},
                 ],
@@ -197,7 +201,7 @@ class TestMetadataGenerationQuality:
                 "ir_version": "0.1.0",
                 "inputs": {"url": {"type": "string", "required": True}},
                 "nodes": [
-                    {"id": "fetch", "type": "http-get", "params": {"url": "$url"}},
+                    {"id": "fetch", "type": "http-get", "params": {"url": "${url}"}},
                     {"id": "process", "type": "llm", "params": {"prompt": "Extract key information"}},
                 ],
                 "edges": [{"from": "fetch", "to": "process"}],
@@ -238,12 +242,12 @@ class TestMetadataGenerationQuality:
                     "output_format": {"type": "string", "required": False},
                 },
                 "nodes": [
-                    {"id": "issues", "type": "github-list-issues", "params": {"repo": "$repo"}},
-                    {"id": "commits", "type": "git-log", "params": {"since": "$since_date"}},
+                    {"id": "issues", "type": "github-list-issues", "params": {"repo": "${repo}"}},
+                    {"id": "commits", "type": "git-log", "params": {"since": "${since_date}"}},
                     {"id": "analyze_issues", "type": "llm", "params": {"prompt": "Analyze issues"}},
                     {"id": "analyze_commits", "type": "llm", "params": {"prompt": "Analyze commits"}},
                     {"id": "combine", "type": "llm", "params": {"prompt": "Create comprehensive report"}},
-                    {"id": "format", "type": "llm", "params": {"prompt": "Format as $output_format"}},
+                    {"id": "format", "type": "llm", "params": {"prompt": "Format as ${output_format}"}},
                     {"id": "save", "type": "write-file", "params": {"path": "report.md"}},
                 ],
                 "edges": [
@@ -281,7 +285,7 @@ class TestMetadataGenerationQuality:
                 "ir_version": "0.1.0",
                 "inputs": {"directory": {"type": "string", "required": True}},
                 "nodes": [
-                    {"id": "list", "type": "list-files", "params": {"path": "$directory"}},
+                    {"id": "list", "type": "list-files", "params": {"path": "${directory}"}},
                     {"id": "analyze", "type": "llm", "params": {"prompt": "Analyze codebase structure"}},
                     {"id": "report", "type": "write-file", "params": {"path": "structure.md"}},
                 ],

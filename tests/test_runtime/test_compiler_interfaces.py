@@ -106,7 +106,7 @@ class TestCompilerInterfaces:
         ir = {
             "ir_version": "0.1.0",
             "inputs": {"file_path": {"description": "Path to the input file", "required": True, "type": "string"}},
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "$file_path"}}],
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "${file_path}"}}],
             "edges": [],
         }
 
@@ -121,7 +121,7 @@ class TestCompilerInterfaces:
         ir = {
             "ir_version": "0.1.0",
             "inputs": {"file_path": {"description": "Path to the input file", "required": True, "type": "string"}},
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "$file_path"}}],
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "${file_path}"}}],
             "edges": [],
         }
 
@@ -149,7 +149,7 @@ class TestCompilerInterfaces:
                     "default": "json",
                 }
             },
-            "nodes": [{"id": "formatter", "type": "transform", "params": {"format": "$output_format"}}],
+            "nodes": [{"id": "formatter", "type": "transform", "params": {"format": "${output_format}"}}],
             "edges": [],
         }
 
@@ -180,7 +180,9 @@ class TestCompilerInterfaces:
                 "source_file": {"description": "Source file path", "required": True, "type": "string"},
                 "target_file": {"description": "Target file path", "required": True, "type": "string"},
             },
-            "nodes": [{"id": "copy", "type": "transform", "params": {"from": "$source_file", "to": "$target_file"}}],
+            "nodes": [
+                {"id": "copy", "type": "transform", "params": {"from": "${source_file}", "to": "${target_file}"}}
+            ],
             "edges": [],
         }
 
@@ -220,7 +222,7 @@ class TestCompilerInterfaces:
         ir = {
             "ir_version": "0.1.0",
             "inputs": {"api_key": {"description": "API key for authentication", "required": True, "type": "string"}},
-            "nodes": [{"id": "api_call", "type": "transform", "params": {"key": "$api_key"}}],
+            "nodes": [{"id": "api_call", "type": "transform", "params": {"key": "${api_key}"}}],
             "edges": [],
         }
 
@@ -385,9 +387,9 @@ class TestCompilerInterfaces:
                 "result": {"description": "Transform result", "type": "any"},
             },
             "nodes": [
-                {"id": "reader", "type": "read-file", "params": {"path": "$input_file"}},
+                {"id": "reader", "type": "read-file", "params": {"path": "${input_file}"}},
                 {"id": "processor", "type": "transform", "params": {"data": "{{content}}"}},
-                {"id": "writer", "type": "write-file", "params": {"path": "$output_file", "content": "{{result}}"}},
+                {"id": "writer", "type": "write-file", "params": {"path": "${output_file}", "content": "{{result}}"}},
             ],
             "edges": [{"from": "reader", "to": "processor"}, {"from": "processor", "to": "writer"}],
         }
@@ -407,7 +409,7 @@ class TestCompilerInterfaces:
             "inputs": {
                 "mode": {"description": "Processing mode", "required": False, "type": "string", "default": "fast"}
             },
-            "nodes": [{"id": "processor", "type": "transform", "params": {"mode": "$mode"}}],
+            "nodes": [{"id": "processor", "type": "transform", "params": {"mode": "${mode}"}}],
             "edges": [],
         }
 
@@ -432,7 +434,7 @@ class TestCompilerInterfaces:
                 {
                     "id": "reader",
                     "type": "read-file",
-                    "params": {"path": "$prefix$suffix"},  # Concatenated template
+                    "params": {"path": "${prefix}${suffix}"},  # Concatenated template
                 }
             ],
             "edges": [],
@@ -458,7 +460,7 @@ class TestCompilerInterfaces:
                     "type": "string",
                 }
             },
-            "nodes": [{"id": "api", "type": "transform", "params": {"token": "$github_token"}}],
+            "nodes": [{"id": "api", "type": "transform", "params": {"token": "${github_token}"}}],
             "edges": [],
         }
 
@@ -473,7 +475,7 @@ class TestCompilerInterfaces:
         ir = {
             "ir_version": "0.1.0",
             "inputs": {"issue_number": {"description": "GitHub issue number", "required": True, "type": "number"}},
-            "nodes": [{"id": "fetch", "type": "transform", "params": {"issue": "$issue_number"}}],
+            "nodes": [{"id": "fetch", "type": "transform", "params": {"issue": "${issue_number}"}}],
             "edges": [],
         }
 
@@ -490,7 +492,7 @@ class TestCompilerInterfaces:
             "inputs": {
                 "config_path": {"description": "Path to configuration file", "required": True, "type": "string"}
             },
-            "nodes": [{"id": "loader", "type": "read-file", "params": {"path": "$config_path"}}],
+            "nodes": [{"id": "loader", "type": "read-file", "params": {"path": "${config_path}"}}],
             "edges": [],
         }
 

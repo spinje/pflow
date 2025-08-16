@@ -31,14 +31,18 @@ class TestPlannerWorking:
                     {
                         "id": "fetch",
                         "type": "github-list-issues",
-                        "params": {"repo": "$repo", "state": "closed", "since": "$since_date", "limit": "$limit"},
+                        "params": {"repo": "${repo}", "state": "closed", "since": "${since_date}", "limit": "${limit}"},
                     },
                     {
                         "id": "generate",
                         "type": "llm",
-                        "params": {"prompt": "Generate a changelog from these issues:\n$issues", "model": "gpt-4"},
+                        "params": {"prompt": "Generate a changelog from these issues:\n${issues}", "model": "gpt-4"},
                     },
-                    {"id": "save", "type": "write-file", "params": {"path": "$output_path", "content": "$changelog"}},
+                    {
+                        "id": "save",
+                        "type": "write-file",
+                        "params": {"path": "${output_path}", "content": "${changelog}"},
+                    },
                 ],
                 "edges": [
                     {"from": "fetch", "to": "generate", "action": "default"},

@@ -8,23 +8,24 @@ class TestTemplateDetection:
 
     def test_detects_templates_in_strings(self):
         """Test that templates are detected in string values."""
-        assert TemplateResolver.has_templates("Hello $name")
-        assert TemplateResolver.has_templates("$url")
-        assert TemplateResolver.has_templates("Path: $data.field")
+        assert TemplateResolver.has_templates("Hello ${name}")
+        assert TemplateResolver.has_templates("${url}")
+        assert TemplateResolver.has_templates("Path: ${data.field}")
 
     def test_ignores_non_string_values(self):
         """Test that non-string values are ignored."""
         assert not TemplateResolver.has_templates(42)
         assert not TemplateResolver.has_templates(True)
         assert not TemplateResolver.has_templates(None)
-        assert not TemplateResolver.has_templates(["$item"])
-        assert not TemplateResolver.has_templates({"key": "$value"})
+        assert not TemplateResolver.has_templates(["${item}"])
+        assert not TemplateResolver.has_templates({"key": "${value}"})
 
     def test_detects_absence_of_templates(self):
-        """Test that strings without $ are not flagged as templates."""
+        """Test that strings without templates are not flagged."""
         assert not TemplateResolver.has_templates("Hello world")
         assert not TemplateResolver.has_templates("")
         assert not TemplateResolver.has_templates("price: 100")
+        assert not TemplateResolver.has_templates("$oldstyle")  # Old $var syntax not detected
 
 
 class TestVariableExtraction:
@@ -32,31 +33,33 @@ class TestVariableExtraction:
 
     def test_extracts_simple_variables(self):
         """Test extraction of simple variable names."""
-        assert TemplateResolver.extract_variables("$url") == {"url"}
-        assert TemplateResolver.extract_variables("Hello $name") == {"name"}
-        assert TemplateResolver.extract_variables("$var1 and $var2") == {"var1", "var2"}
+        assert TemplateResolver.extract_variables("${url}") == {"url"}
+        assert TemplateResolver.extract_variables("Hello ${name}") == {"name"}
+        assert TemplateResolver.extract_variables("${var1} and ${var2}") == {"var1", "var2"}
 
     def test_extracts_path_variables(self):
         """Test extraction of variables with paths."""
-        assert TemplateResolver.extract_variables("$data.field") == {"data.field"}
-        assert TemplateResolver.extract_variables("$a.b.c.d") == {"a.b.c.d"}
-        assert TemplateResolver.extract_variables("$user.info.name") == {"user.info.name"}
+        assert TemplateResolver.extract_variables("${data.field}") == {"data.field"}
+        assert TemplateResolver.extract_variables("${a.b.c.d}") == {"a.b.c.d"}
+        assert TemplateResolver.extract_variables("${user.info.name}") == {"user.info.name"}
 
     def test_extracts_multiple_variables(self):
         """Test extraction of multiple variables from one string."""
-        template = "User $user.name from $user.company at $location"
+        template = "User ${user.name} from ${user.company} at ${location}"
         expected = {"user.name", "user.company", "location"}
         assert TemplateResolver.extract_variables(template) == expected
 
     def test_handles_malformed_templates(self):
         """Test that malformed templates are not extracted."""
+        # Valid template should be extracted
+        assert TemplateResolver.extract_variables("${var}") == {"var"}  # Valid new syntax
         # These malformed patterns should not match
-        assert TemplateResolver.extract_variables("$.var") == set()
-        # Note: $var. is now valid (variable followed by period punctuation)
-        assert TemplateResolver.extract_variables("$var.") == {"var"}
-        assert TemplateResolver.extract_variables("$$var") == set()
-        assert TemplateResolver.extract_variables("$") == set()
-        assert TemplateResolver.extract_variables("$123") == set()  # Can't start with digit
+        assert TemplateResolver.extract_variables("${var") == set()  # Unclosed
+        assert TemplateResolver.extract_variables("$${var}") == set()  # Escaped
+        assert TemplateResolver.extract_variables("${}") == set()  # Empty
+        assert TemplateResolver.extract_variables("${123}") == set()  # Can't start with digit
+        # Variables with hyphens are now valid
+        assert TemplateResolver.extract_variables("${user-id}") == {"user-id"}
 
 
 class TestValueResolution:
@@ -132,83 +135,84 @@ class TestStringResolution:
     def test_resolves_single_template(self):
         """Test resolution of single template in string."""
         context = {"url": "https://example.com"}
-        assert TemplateResolver.resolve_string("Visit $url", context) == "Visit https://example.com"
-        assert TemplateResolver.resolve_string("$url", context) == "https://example.com"
+        assert TemplateResolver.resolve_string("Visit ${url}", context) == "Visit https://example.com"
+        assert TemplateResolver.resolve_string("${url}", context) == "https://example.com"
 
     def test_resolves_multiple_templates(self):
         """Test resolution of multiple templates."""
         context = {"name": "Alice", "age": 30}
-        template = "$name is $age years old"
+        template = "${name} is ${age} years old"
         assert TemplateResolver.resolve_string(template, context) == "Alice is 30 years old"
 
     def test_resolves_path_templates(self):
         """Test resolution of templates with paths."""
         context = {"user": {"name": "Bob", "email": "bob@example.com"}, "status": "active"}
-        template = "User $user.name ($user.email) - Status: $status"
+        template = "User ${user.name} (${user.email}) - Status: ${status}"
         expected = "User Bob (bob@example.com) - Status: active"
         assert TemplateResolver.resolve_string(template, context) == expected
 
     def test_preserves_unresolved_templates(self):
         """Test that unresolved templates remain unchanged."""
         context = {"found": "yes"}
-        template = "Found: $found, Missing: $missing"
-        assert TemplateResolver.resolve_string(template, context) == "Found: yes, Missing: $missing"
+        template = "Found: ${found}, Missing: ${missing}"
+        assert TemplateResolver.resolve_string(template, context) == "Found: yes, Missing: ${missing}"
 
     def test_handles_type_conversions(self):
         """Test type conversions in resolution."""
         context = {"none_val": None, "zero": 0, "false": False, "empty_list": [], "data": {"count": 42}}
         # None converts to empty string
-        assert TemplateResolver.resolve_string("[$none_val]", context) == "[]"
-        assert TemplateResolver.resolve_string("Count: $zero", context) == "Count: 0"
-        assert TemplateResolver.resolve_string("Flag: $false", context) == "Flag: False"
-        assert TemplateResolver.resolve_string("Items: $empty_list", context) == "Items: []"
-        assert TemplateResolver.resolve_string("Total: $data.count", context) == "Total: 42"
+        assert TemplateResolver.resolve_string("[${none_val}]", context) == "[]"
+        assert TemplateResolver.resolve_string("Count: ${zero}", context) == "Count: 0"
+        assert TemplateResolver.resolve_string("Flag: ${false}", context) == "Flag: False"
+        assert TemplateResolver.resolve_string("Items: ${empty_list}", context) == "Items: []"
+        assert TemplateResolver.resolve_string("Total: ${data.count}", context) == "Total: 42"
 
 
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
     def test_malformed_template_syntax(self):
-        """Test that malformed templates are left unchanged (except $var. which is now valid)."""
+        """Test that malformed templates are left unchanged."""
         context = {"var": "value", "data": {"field": "test"}}
 
-        # These malformed templates should remain as-is
-        assert TemplateResolver.resolve_string("$.var", context) == "$.var"
-        # Note: $var. is now valid (variable followed by period punctuation)
-        assert TemplateResolver.resolve_string("$var.", context) == "value."
-        assert TemplateResolver.resolve_string("$var..field", context) == "value..field"
-        assert TemplateResolver.resolve_string("$$var", context) == "$$var"
-        assert TemplateResolver.resolve_string("$", context) == "$"
+        # Valid template should work
+        assert TemplateResolver.resolve_string("${var}", context) == "value"  # Valid new syntax
 
-        # Valid template should still work
-        assert TemplateResolver.resolve_string("$var", context) == "value"
+        # These malformed templates should remain as-is
+        assert TemplateResolver.resolve_string("${var", context) == "${var"  # Unclosed
+        assert TemplateResolver.resolve_string("$${var}", context) == "$${var}"  # Escaped
+        assert TemplateResolver.resolve_string("${}", context) == "${}"  # Empty
+
+        # Variables with hyphens now work
+        context["user-id"] = "123"
+        assert TemplateResolver.resolve_string("${user-id}", context) == "123"
 
     def test_path_traversal_with_null(self):
         """Test path traversal when encountering null/None."""
         context = {"parent": {"child": None}}
         # Should not be able to traverse through None
-        assert TemplateResolver.resolve_string("$parent.child.field", context) == "$parent.child.field"
+        assert TemplateResolver.resolve_string("${parent.child.field}", context) == "${parent.child.field}"
 
     def test_adjacent_templates(self):
         """Test templates with no spacing between them."""
         context = {"a": "A", "b": "B", "c": "C"}
-        assert TemplateResolver.resolve_string("$a$b$c", context) == "ABC"
-        assert TemplateResolver.resolve_string("$a-$b-$c", context) == "A-B-C"
+        assert TemplateResolver.resolve_string("${a}${b}${c}", context) == "ABC"
+        assert TemplateResolver.resolve_string("${a}-${b}-${c}", context) == "A-B-C"
 
     def test_template_in_larger_text(self):
         """Test templates embedded in larger text blocks."""
         context = {"repo": "pflow", "issue": "123", "user": {"name": "Alice"}}
         template = """
-        Working on repository $repo
-        Fixing issue #$issue
-        Assigned to: $user.name
-        Missing: $undefined.field
+        Working on repository ${repo}
+        Fixing issue #${issue}
+        Assigned to: ${user.name}
+        Missing: ${undefined.field}
         """
         expected = """
         Working on repository pflow
         Fixing issue #123
         Assigned to: Alice
-        Missing: $undefined.field
+        Missing: ${undefined.field}
         """
         assert TemplateResolver.resolve_string(template, context) == expected
 
@@ -221,7 +225,7 @@ class TestRealWorldScenarios:
         # Simulating planner extraction from "fix github issue 1234"
         planner_params = {"issue_number": "1234", "repo": "pflow"}
 
-        template = "Working on issue $issue_number in $repo"
+        template = "Working on issue ${issue_number} in ${repo}"
         result = TemplateResolver.resolve_string(template, planner_params)
         assert result == "Working on issue 1234 in pflow"
 
@@ -237,7 +241,7 @@ class TestRealWorldScenarios:
             "summary": "Python is a versatile language...",
         }
 
-        template = "Video: $transcript_data.title by $transcript_data.metadata.author"
+        template = "Video: ${transcript_data.title} by ${transcript_data.metadata.author}"
         result = TemplateResolver.resolve_string(template, context)
         assert result == "Video: Learning Python by CodeTeacher"
 
@@ -255,6 +259,6 @@ class TestRealWorldScenarios:
         }
 
         # Template from example workflow
-        template = "Summary of '$transcript_data.title' by $transcript_data.metadata.author"
+        template = "Summary of '${transcript_data.title}' by ${transcript_data.metadata.author}"
         result = TemplateResolver.resolve_string(template, context)
         assert result == "Summary of 'How to Learn Programming' by TechChannel"

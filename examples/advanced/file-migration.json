@@ -5,15 +5,15 @@
       "id": "read_manifest",
       "type": "read-file",
       "params": {
-        "file_path": "$migration_dir/manifest.json"
+        "file_path": "${migration_dir}/manifest.json"
       }
     },
     {
       "id": "backup_destination",
       "type": "copy-file",
       "params": {
-        "source": "$destination_dir",
-        "destination": "$backup_dir/$timestamp_destination"
+        "source": "${destination_dir}",
+        "destination": "${backup_dir}/${timestamp_destination}"
       }
     },
     {
@@ -25,39 +25,39 @@
       "id": "copy_new_files",
       "type": "copy-file",
       "params": {
-        "source": "$source_dir/$current_file",
-        "destination": "$destination_dir/$current_file"
+        "source": "${source_dir}/${current_file}",
+        "destination": "${destination_dir}/${current_file}"
       }
     },
     {
       "id": "move_old_files",
       "type": "move-file",
       "params": {
-        "source": "$destination_dir/$old_file",
-        "destination": "$archive_dir/$old_file"
+        "source": "${destination_dir}/${old_file}",
+        "destination": "${archive_dir}/${old_file}"
       }
     },
     {
       "id": "write_report",
       "type": "write-file",
       "params": {
-        "file_path": "$reports_dir/migration_$timestamp.log",
-        "content": "Migration completed at $timestamp\nFiles copied: $copied_count\nFiles moved: $moved_count\nErrors: $error_count"
+        "file_path": "${reports_dir}/migration_${timestamp.log}",
+        "content": "Migration completed at ${timestamp}\nFiles copied: ${copied_count}\nFiles moved: ${moved_count}\nErrors: ${error_count}"
       }
     },
     {
       "id": "cleanup_temp",
       "type": "delete-file",
       "params": {
-        "file_path": "$temp_dir/$temp_file"
+        "file_path": "${temp_dir}/${temp_file}"
       }
     },
     {
       "id": "handle_error",
       "type": "write-file",
       "params": {
-        "file_path": "$logs_dir/error_$timestamp.log",
-        "content": "Error during migration: $error_message\nTimestamp: $timestamp\nCurrent operation: $current_operation",
+        "file_path": "${logs_dir}/error_${timestamp.log}",
+        "content": "Error during migration: ${error_message}\nTimestamp: ${timestamp}\nCurrent operation: ${current_operation}",
         "append": true
       }
     }

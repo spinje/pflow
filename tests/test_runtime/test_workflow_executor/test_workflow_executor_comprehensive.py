@@ -155,7 +155,7 @@ class TestWorkflowExecutorComprehensive:
         node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
-            "param_mapping": {"simple": "$value", "nested": "$obj.field", "static": "literal"},
+            "param_mapping": {"simple": "${value}", "nested": "${obj.field}", "static": "literal"},
         })
 
         shared = {"value": "resolved", "obj": {"field": "nested_value"}}
@@ -171,7 +171,7 @@ class TestWorkflowExecutorComprehensive:
         node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
-            "param_mapping": {"allowed": "$value"},
+            "param_mapping": {"allowed": "${value}"},
             "storage_mode": "mapped",
         })
 
@@ -363,14 +363,14 @@ class TestWorkflowExecutorComprehensive:
         node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
-            "param_mapping": {"exists": "$present", "missing": "$not_there"},
+            "param_mapping": {"exists": "${present}", "missing": "${not_there}"},
         })
 
         shared = {"present": "value"}
         prep_res = node.prep(shared)
 
         assert prep_res["child_params"]["exists"] == "value"
-        assert prep_res["child_params"]["missing"] == "$not_there"  # Templates preserve unresolved variables
+        assert prep_res["child_params"]["missing"] == "${not_there}"  # Templates preserve unresolved variables
 
     # Test Criteria 21: missing output key → skips mapping
     def test_missing_output_key(self, simple_workflow_ir):

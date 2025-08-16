@@ -66,7 +66,7 @@ class TestWorkflowExecutor:
 
         node.set_params({
             "workflow_ir": {"nodes": []},
-            "param_mapping": {"data": "$input_data", "key": "$config.api_key", "static": "fixed_value"},
+            "param_mapping": {"data": "${input_data}", "key": "${config.api_key}", "static": "fixed_value"},
         })
 
         prep_res = node.prep(shared)

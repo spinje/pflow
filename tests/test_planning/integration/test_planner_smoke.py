@@ -27,7 +27,7 @@ class TestPlannerSmoke:
             "version": "1.0.0",
             "ir": {
                 "ir_version": "0.1.0",
-                "nodes": [{"id": "node1", "type": "test-node", "params": {"param": "$input"}}],
+                "nodes": [{"id": "node1", "type": "test-node", "params": {"param": "${input}"}}],
                 "edges": [],
                 "start_node": "node1",
                 "inputs": {"input": {"description": "Test input", "type": "string", "required": True}},

@@ -2,7 +2,7 @@
 
 This module provides the core functionality for detecting and resolving
 template variables in node parameters. Template variables use the format
-$identifier with optional path traversal ($data.field.subfield).
+${identifier} with optional path traversal (${data.field.subfield}).
 """
 
 import logging
@@ -15,13 +15,13 @@ logger = logging.getLogger(__name__)
 class TemplateResolver:
     """Handles template variable detection and resolution with path support."""
 
-    # Pattern supports $var format with paths
-    # Matches: $identifier or $identifier.field.subfield
+    # Pattern supports ${var} format with paths
+    # Matches: ${identifier} or ${identifier.field.subfield}
     # Groups: (identifier.field.subfield)
-    # Must not be preceded by $ (to avoid $$)
+    # Must not be preceded by $ (to avoid $${var} escapes)
     # Identifiers must start with letter or underscore
-    # Variable can be followed by whitespace, punctuation, or end of string
-    TEMPLATE_PATTERN = re.compile(r"(?<!\$)\$([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)(?=\s|$|[^\w])")
+    # Supports hyphens in variable names
+    TEMPLATE_PATTERN = re.compile(r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:\.[a-zA-Z_][\w-]*)*)\}")
 
     @staticmethod
     def has_templates(value: Any) -> bool:
@@ -31,9 +31,9 @@ class TemplateResolver:
             value: The value to check for templates
 
         Returns:
-            True if value is a string containing '$', False otherwise
+            True if value is a string containing '${', False otherwise
         """
-        return isinstance(value, str) and "$" in value
+        return isinstance(value, str) and "${" in value
 
     @staticmethod
     def extract_variables(value: str) -> set[str]:
@@ -134,18 +134,18 @@ class TemplateResolver:
 
         Examples:
             >>> context = {"url": "https://example.com", "data": {"title": "Test"}}
-            >>> TemplateResolver.resolve_string("Visit $url", context)
+            >>> TemplateResolver.resolve_string("Visit ${url}", context)
             'Visit https://example.com'
-            >>> TemplateResolver.resolve_string("Title: $data.title", context)
+            >>> TemplateResolver.resolve_string("Title: ${data.title}", context)
             'Title: Test'
-            >>> TemplateResolver.resolve_string("Missing: $undefined", context)
-            'Missing: $undefined'
+            >>> TemplateResolver.resolve_string("Missing: ${undefined}", context)
+            'Missing: ${undefined}'
         """
         result = template
 
         # Find all template variables in the string
         for match in TemplateResolver.TEMPLATE_PATTERN.finditer(template):
-            var_name = match.group(1)  # Get the variable name without $
+            var_name = match.group(1)  # Get the variable name without ${}
             resolved_value = TemplateResolver.resolve_value(var_name, context)
 
             # Note: We need to distinguish between:
@@ -178,9 +178,9 @@ class TemplateResolver:
                     if path_valid:
                         # Path fully resolved (even if final value is None)
                         value_str = TemplateResolver._convert_to_string(resolved_value)
-                        result = result.replace(f"${var_name}", value_str)
+                        result = result.replace(f"${{{var_name}}}", value_str)
                         logger.debug(
-                            f"Resolved template variable '${var_name}' -> '{value_str}'",
+                            f"Resolved template variable '${{{var_name}}}' -> '{value_str}'",
                             extra={"var_name": var_name, "value_type": type(resolved_value).__name__},
                         )
                         continue
@@ -189,14 +189,14 @@ class TemplateResolver:
                 if var_name in context:
                     # Variable exists, convert whatever value it has (including None)
                     value_str = TemplateResolver._convert_to_string(resolved_value)
-                    result = result.replace(f"${var_name}", value_str)
+                    result = result.replace(f"${{{var_name}}}", value_str)
                     logger.debug(
-                        f"Resolved template variable '${var_name}' -> '{value_str}'",
+                        f"Resolved template variable '${{{var_name}}}' -> '{value_str}'",
                         extra={"var_name": var_name, "value_type": type(resolved_value).__name__},
                     )
                     continue
 
             # Variable doesn't exist - leave template as-is for debugging
-            logger.debug(f"Template variable '${var_name}' could not be resolved", extra={"var_name": var_name})
+            logger.debug(f"Template variable '${{{var_name}}}' could not be resolved", extra={"var_name": var_name})
 
         return result

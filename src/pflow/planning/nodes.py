@@ -1120,9 +1120,9 @@ class WorkflowGeneratorNode(Node):
                 # Add specific guidance for common errors
                 if "never used as template variable" in error:
                     param_name = error.split(":")[-1].strip()
-                    error_lines.append(f"  → FIX: Use ${param_name} in the appropriate node's params field")
+                    error_lines.append(f"  → FIX: Use ${{{param_name}}} in the appropriate node's params field")
                     error_lines.append(
-                        f'  → Example: If read-file node, use: "params": {{"file_path": "${param_name}"}}'
+                        f'  → Example: If read-file node, use: "params": {{"file_path": "${{{param_name}}}"}}'
                     )
                 elif "is not of type 'object'" in error and "outputs" in error:
                     error_lines.append("  → FIX: Outputs must be objects with 'description' field, not strings")

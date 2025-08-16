@@ -5,15 +5,15 @@
       "id": "read_source",
       "type": "read-file",
       "params": {
-        "file_path": "$source_dir/$source_file"
+        "file_path": "${source_dir}/${source_file}"
       }
     },
     {
       "id": "backup_original",
       "type": "copy-file",
       "params": {
-        "source": "$source_dir/$source_file",
-        "destination": "backups/$timestamp_$source_file"
+        "source": "${source_dir}/${source_file}",
+        "destination": "backups/${timestamp_}${source_file}"
       }
     },
     {
@@ -30,14 +30,14 @@
       "id": "save_processed",
       "type": "write-file",
       "params": {
-        "file_path": "processed/$output_file"
+        "file_path": "processed/${output_file}"
       }
     },
     {
       "id": "save_validation_report",
       "type": "write-file",
       "params": {
-        "file_path": "reports/validation_$timestamp.txt"
+        "file_path": "reports/validation_${timestamp.txt}"
       }
     },
     {
@@ -49,8 +49,8 @@
       "id": "archive_results",
       "type": "move-file",
       "params": {
-        "source": "processed/$output_file",
-        "destination": "archive/$date/$output_file"
+        "source": "processed/${output_file}",
+        "destination": "archive/${date}/${output_file}"
       }
     }
   ],

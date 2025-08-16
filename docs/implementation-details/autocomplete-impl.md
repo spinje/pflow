@@ -63,7 +63,7 @@ _pflow_completions() {
     local current_word="${COMP_WORDS[COMP_CWORD]}"
     # Invoke pflow to get completions
     # Note: Proper quoting and argument passing is crucial here.
-    COMPREPLY=( $(pflow --_pf-autocomplete-generate --line "$COMP_LINE" --word "$current_word" --cword-idx "$COMP_CWORD" --point "$COMP_POINT" 2>/dev/null) )
+    COMPREPLY=( $(pflow --_pf-autocomplete-generate --line "${COMP_LINE}" --word "${current_word}" --cword-idx "${COMP_CWORD}" --point "${COMP_POINT}" 2>/dev/null) )
     return 0
 }
 

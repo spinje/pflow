@@ -193,7 +193,7 @@ This consistency provides significant advantages:
 ```bash
 # The key names make the data flow obvious
 github-get-issue --issue=123 >>         # Writes: shared["issue"]
-llm --prompt="Analyze $issue" >>        # Reads: shared["issue"], Writes: shared["response"]
+llm --prompt="Analyze ${issue}" >>        # Reads: shared["issue"], Writes: shared["response"]
 write-file analysis.md                  # Reads: shared["response"] as content
 ```
 

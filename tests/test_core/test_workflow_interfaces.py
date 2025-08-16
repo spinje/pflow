@@ -114,7 +114,7 @@ class TestWorkflowInterfaces:
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [
-                    {"id": "analyzer", "type": "text-analyzer", "params": {"text": "$text", "lang": "$language"}}
+                    {"id": "analyzer", "type": "text-analyzer", "params": {"text": "${text}", "lang": "${language}"}}
                 ],
                 "inputs": {
                     "text": {"description": "Text to analyze", "required": True, "type": "string"},
@@ -328,7 +328,7 @@ class TestWorkflowInterfaces:
             """Test workflow without inputs field is valid."""
             ir = {
                 "ir_version": "0.1.0",
-                "nodes": [{"id": "n1", "type": "test", "params": {"value": "$input"}}],
+                "nodes": [{"id": "n1", "type": "test", "params": {"value": "${input}"}}],
                 "outputs": {"result": {"type": "string"}},
             }
             # Should work - inputs field is optional
@@ -346,7 +346,7 @@ class TestWorkflowInterfaces:
 
         def test_workflow_with_neither_field(self):
             """Test workflow without inputs or outputs is valid."""
-            ir = {"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test", "params": {"value": "$dynamic"}}]}
+            ir = {"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test", "params": {"value": "${dynamic}"}}]}
             # Should work - both fields are optional
             validate_ir(ir)
 
@@ -359,8 +359,8 @@ class TestWorkflowInterfaces:
                         "id": "n1",
                         "type": "test",
                         "params": {
-                            "declared": "$text",  # Declared input
-                            "undeclared": "$dynamic",  # Not declared
+                            "declared": "${text}",  # Declared input
+                            "undeclared": "${dynamic}",  # Not declared
                         },
                     }
                 ],

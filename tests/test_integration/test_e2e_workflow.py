@@ -43,7 +43,7 @@ def test_hello_workflow_execution(tmp_path):
                     "type": "write-file",
                     "params": {
                         "file_path": "output.txt",
-                        "content": "$read.content",  # Explicitly reference read node's output
+                        "content": "${read.content}",  # Explicitly reference read node's output
                     },
                 },
             ],
@@ -244,7 +244,7 @@ def test_verbose_execution_output(tmp_path):
                     "type": "write-file",
                     "params": {
                         "file_path": "output.txt",
-                        "content": "$read.content",  # Explicit connection required with namespacing
+                        "content": "${read.content}",  # Explicit connection required with namespacing
                     },
                 },
             ],
@@ -292,7 +292,7 @@ def test_shared_store_verification(tmp_path):
                 "type": "write-file",
                 "params": {
                     "file_path": "output.txt",
-                    "content": "$read.content",  # Explicit connection required with namespacing
+                    "content": "${read.content}",  # Explicit connection required with namespacing
                 },
             },
         ],

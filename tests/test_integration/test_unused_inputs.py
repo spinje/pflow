@@ -88,14 +88,14 @@ def test_unused_inputs_detected_before_execution(tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "$input_file"},  # Uses input_file
+                "params": {"path": "${input_file}"},  # Uses input_file
             },
             {
                 "id": "writer",
                 "type": "write-file",
                 "params": {
-                    "path": "$output_file",  # Uses output_file
-                    "content": "$content",  # Uses node output
+                    "path": "${output_file}",  # Uses output_file
+                    "content": "${content}",  # Uses node output
                 },
             },
         ],
@@ -150,17 +150,17 @@ def test_workflow_with_all_inputs_used(tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "$source_file"},
+                "params": {"path": "${source_file}"},
             },
             {
                 "id": "writer",
                 "type": "write-file",
-                "params": {"path": "$dest_file", "content": "$content"},
+                "params": {"path": "${dest_file}", "content": "${content}"},
             },
             {
                 "id": "backup",
                 "type": "write-file",
-                "params": {"path": "$backup_file", "content": "$content"},
+                "params": {"path": "${backup_file}", "content": "${content}"},
             },
         ],
         "edges": [
@@ -206,14 +206,14 @@ def test_unused_inputs_with_nested_workflows(tmp_path):
             {
                 "id": "read_config",
                 "type": "read-file",
-                "params": {"path": "$config_path"},
+                "params": {"path": "${config_path}"},
             },
             {
                 "id": "nested_workflow",
                 "type": "workflow",
                 "params": {
                     "workflow_name": "child-workflow",
-                    "params": {"data": "$content"},
+                    "params": {"data": "${content}"},
                 },
             },
         ],

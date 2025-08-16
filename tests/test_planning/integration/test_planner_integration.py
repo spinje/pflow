@@ -54,8 +54,8 @@ class TestPlannerFlowIntegration:
                     "ir": {
                         "ir_version": "0.1.0",
                         "nodes": [
-                            {"id": "read", "type": "read-file", "params": {"file_path": "$input_file"}},
-                            {"id": "analyze", "type": "llm", "params": {"prompt": "Analyze: $content"}},
+                            {"id": "read", "type": "read-file", "params": {"file_path": "${input_file}"}},
+                            {"id": "analyze", "type": "llm", "params": {"prompt": "Analyze: ${content}"}},
                         ],
                         "edges": [{"from": "read", "to": "analyze"}],
                         "start_node": "read",
@@ -72,8 +72,8 @@ class TestPlannerFlowIntegration:
                     "ir": {
                         "ir_version": "0.1.0",
                         "nodes": [
-                            {"id": "list", "type": "github-list-issues", "params": {"limit": "$limit"}},
-                            {"id": "generate", "type": "llm", "params": {"prompt": "Generate changelog: $issues"}},
+                            {"id": "list", "type": "github-list-issues", "params": {"limit": "${limit}"}},
+                            {"id": "generate", "type": "llm", "params": {"prompt": "Generate changelog: ${issues}"}},
                             {"id": "write", "type": "write-file", "params": {"file_path": "CHANGELOG.md"}},
                         ],
                         "edges": [
@@ -295,9 +295,9 @@ class TestPlannerFlowIntegration:
                         "input": {
                             "ir_version": "0.1.0",
                             "nodes": [
-                                {"id": "read", "type": "read-file", "params": {"file_path": "$input_file"}},
-                                {"id": "process", "type": "llm", "params": {"prompt": "Analyze: $content"}},
-                                {"id": "write", "type": "write-file", "params": {"file_path": "$output_file"}},
+                                {"id": "read", "type": "read-file", "params": {"file_path": "${input_file}"}},
+                                {"id": "process", "type": "llm", "params": {"prompt": "Analyze: ${content}"}},
+                                {"id": "write", "type": "write-file", "params": {"file_path": "${output_file}"}},
                             ],
                             "edges": [
                                 {"from": "read", "to": "process"},
@@ -691,7 +691,7 @@ class TestPlannerFlowIntegration:
             # Now that params are extracted BEFORE validation, this will work!
             workflow_with_inputs = {
                 "ir_version": "0.1.0",
-                "nodes": [{"id": "n1", "type": "read-file", "params": {"file_path": "$input_file"}}],
+                "nodes": [{"id": "n1", "type": "read-file", "params": {"file_path": "${input_file}"}}],
                 "edges": [],
                 "start_node": "n1",
                 "inputs": {
@@ -1216,7 +1216,7 @@ class TestPlannerFlowIntegration:
                                     "input": {
                                         "ir_version": "0.1.0",
                                         "nodes": [
-                                            {"id": "n1", "type": "llm", "params": {"prompt": "Process: $input_data"}}
+                                            {"id": "n1", "type": "llm", "params": {"prompt": "Process: ${input_data}"}}
                                         ],
                                         "edges": [],
                                         "start_node": "n1",

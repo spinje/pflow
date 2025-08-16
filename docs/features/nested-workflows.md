@@ -37,8 +37,8 @@ The most common pattern is loading a workflow from a JSON file:
       "params": {
         "workflow_ref": "common/validation.json",
         "param_mapping": {
-          "data": "$input_data",
-          "rules": "$validation_rules"
+          "data": "${input_data}",
+          "rules": "${validation_rules}"
         },
         "output_mapping": {
           "is_valid": "validation_result",
@@ -70,7 +70,7 @@ For simple cases, define the workflow inline:
       ]
     },
     "param_mapping": {
-      "text": "$input_text"
+      "text": "${input_text}"
     }
   }
 }
@@ -85,15 +85,15 @@ Map parent workflow values to child workflow parameters:
 ```json
 {
   "param_mapping": {
-    "child_param1": "$parent_value",
-    "child_param2": "$parent.nested.value",
+    "child_param1": "${parent_value}",
+    "child_param2": "${parent.nested.value}",
     "child_param3": "static_value"
   }
 }
 ```
 
 Features:
-- Template resolution with `$variable` syntax
+- Template resolution with `${variable}` syntax
 - Nested path access with dot notation
 - Static values without templates
 - Missing values resolve to empty strings
@@ -123,7 +123,7 @@ Child only sees explicitly mapped parameters:
 {
   "storage_mode": "mapped",
   "param_mapping": {
-    "allowed_data": "$sensitive_data"
+    "allowed_data": "${sensitive_data}"
   }
   // Child cannot access other parent data
 }
@@ -260,14 +260,14 @@ Select workflow based on runtime data:
       "id": "select_analyzer",
       "type": "template_eval",
       "params": {
-        "template": "analyzers/$language_analyzer.json"
+        "template": "analyzers/${language_analyzer.json}"
       }
     },
     {
       "id": "analyze",
       "type": "workflow",
       "params": {
-        "workflow_ref": "$analyzer_path"
+        "workflow_ref": "${analyzer_path}"
       }
     }
   ]
@@ -399,7 +399,7 @@ Include version metadata for compatibility:
       "params": {
         "workflow_ref": "validators/api_response.json",
         "param_mapping": {
-          "response": "$api_data"
+          "response": "${api_data}"
         },
         "error_action": "invalid_data"
       }
@@ -410,7 +410,7 @@ Include version metadata for compatibility:
       "params": {
         "workflow_ref": "transformers/normalize.json",
         "param_mapping": {
-          "raw_data": "$api_data"
+          "raw_data": "${api_data}"
         },
         "output_mapping": {
           "normalized": "processed_data"
@@ -438,7 +438,7 @@ Include version metadata for compatibility:
         "workflow_ref": "deploy/environment.json",
         "param_mapping": {
           "env": "development",
-          "config": "$dev_config"
+          "config": "${dev_config}"
         },
         "storage_mode": "isolated"
       }
@@ -450,7 +450,7 @@ Include version metadata for compatibility:
         "workflow_ref": "deploy/environment.json",
         "param_mapping": {
           "env": "staging",
-          "config": "$staging_config"
+          "config": "${staging_config}"
         },
         "storage_mode": "isolated"
       }

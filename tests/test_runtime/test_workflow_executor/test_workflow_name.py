@@ -112,7 +112,7 @@ class TestWorkflowNameParameter:
                 "workflow_name": "test-workflow",
                 "param_mapping": {
                     "input_value": "static_value",  # Test static value
-                    "dynamic_value": "$parent_value",  # Test template
+                    "dynamic_value": "${parent_value}",  # Test template
                 },
             })
 

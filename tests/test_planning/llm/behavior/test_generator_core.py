@@ -7,7 +7,7 @@ template variables and input specifications.
 Run with: RUN_LLM_TESTS=1 pytest tests/test_planning/llm/behavior/test_generator_core.py -v
 
 CRITICAL: The most important test verifies that discovered parameters are used as
-template variables ($limit) NOT hardcoded values (20).
+template variables (${limit}) NOT hardcoded values (20).
 """
 
 import json
@@ -105,7 +105,7 @@ class TestWorkflowGeneratorCoreBehavior:
         """CRITICAL TEST: Verify that discovered values become template variables.
 
         When discovered_params contains {"limit": "20"}, the generated workflow
-        MUST use "$limit" NOT "20" in the node configuration.
+        MUST use "${limit}" NOT "20" in the node configuration.
         """
         node = WorkflowGeneratorNode()
 
@@ -322,7 +322,7 @@ class TestWorkflowGeneratorCoreBehavior:
                 raise
 
     def test_template_variable_paths_supported(self):
-        """Test that template variables can use paths like $data.field.subfield."""
+        """Test that template variables can use paths like ${data.field.subfield}."""
         node = WorkflowGeneratorNode()
 
         shared = {
@@ -358,10 +358,10 @@ class TestWorkflowGeneratorCoreBehavior:
             workflow_str = json.dumps(workflow)
 
             # Check if any node uses path-based template variables
-            # Common patterns: $issue.author, $data.field, {{issue.author.name}}
+            # Common patterns: ${issue.author}, ${data.field}, {{issue.author.name}}
             has_path_template = (
-                "$issue." in workflow_str
-                or "$data." in workflow_str
+                "${issue}." in workflow_str
+                or "${data}." in workflow_str
                 or "{{issue." in workflow_str
                 or ("." in workflow_str and ("$" in workflow_str or "{{" in workflow_str))
             )

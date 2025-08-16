@@ -24,8 +24,8 @@
       "id": "writer",
       "type": "write-file",
       "params": {
-        "file_path": "$filename",
-        "content": "$message"
+        "file_path": "${filename}",
+        "content": "${message}"
       }
     }
   ],

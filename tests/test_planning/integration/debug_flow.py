@@ -21,7 +21,7 @@ def debug_path_a():
         "version": "1.0.0",
         "ir": {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "node1", "type": "test-node", "params": {"param": "$input_file"}}],
+            "nodes": [{"id": "node1", "type": "test-node", "params": {"param": "${input_file}"}}],
             "edges": [],
             "start_node": "node1",
             "inputs": {"input_file": {"description": "Input file path", "type": "string", "required": True}},

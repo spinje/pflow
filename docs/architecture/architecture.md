@@ -276,16 +276,16 @@ The CLI supports **$ variable substitution** for dynamic content access, enablin
 > For complete template variable syntax, resolution rules, and examples, see [Template Variable Resolution](../core-concepts/shared-store.md#template-variable-resolution)
 
 **Quick Reference:**
-- Template syntax: `$variable` → `shared["variable"]` at runtime
-- Enables dynamic prompts: `--prompt="Analyze: $issue"`
+- Template syntax: `${variable}` → `shared["variable"]` at runtime
+- Enables dynamic prompts: `--prompt="Analyze: ${issue}"`
 - Missing variables detected and prompt user for input
 - Full resolution process documented in the shared store pattern
 
 **Example:**
 ```bash
 pflow github-get-issue --issue=1234 => \
-  claude-code --prompt="Fix this issue: $issue" => \
-  git-commit --message="$commit_message"
+  claude-code --prompt="Fix this issue: ${issue}" => \
+  git-commit --message="${commit_message}"
 ```
 
 #### 5.1.3 CLI Command Structure
@@ -296,8 +296,8 @@ pflow <node> [--flags] => <node> [--flags]
 
 # Template-driven examples
 pflow github-get-issue --issue=1234 => \
-  claude-code --prompt="$comprehensive_fix_instructions" => \
-  git-commit --message="$commit_message"
+  claude-code --prompt="${comprehensive_fix_instructions}" => \
+  git-commit --message="${commit_message}"
 
 # Traditional examples (still supported)
 pflow yt-transcript --url=VIDEO => llm --prompt="Summarize this transcript"

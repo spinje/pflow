@@ -247,17 +247,17 @@ def test_file_with_parameters():
             f.write("")  # Empty file
 
         # Create a test workflow file with template variables using existing nodes
-        # Note: pflow uses $variable format for templates, not {{variable}}
+        # Note: pflow uses ${variable} format for templates, not {{variable}}
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "reader", "type": "read-file", "params": {"file_path": "$input_file"}},
+                {"id": "reader", "type": "read-file", "params": {"file_path": "${input_file}"}},
                 {
                     "id": "writer",
                     "type": "write-file",
                     "params": {
-                        "file_path": "$output_file",
-                        "content": "$reader.content",  # Explicit connection required with namespacing
+                        "file_path": "${output_file}",
+                        "content": "${reader.content}",  # Explicit connection required with namespacing
                     },
                 },
             ],
@@ -332,13 +332,13 @@ def test_file_with_parameters_template_resolution():
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "reader", "type": "read-file", "params": {"file_path": "$input_file"}},
+                {"id": "reader", "type": "read-file", "params": {"file_path": "${input_file}"}},
                 {
                     "id": "writer",
                     "type": "write-file",
                     "params": {
-                        "file_path": "$output_file",
-                        "content": "$reader.content",  # Explicit connection required with namespacing
+                        "file_path": "${output_file}",
+                        "content": "${reader.content}",  # Explicit connection required with namespacing
                     },
                 },
             ],

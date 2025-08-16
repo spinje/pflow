@@ -39,9 +39,9 @@
       "type": "test",
       "params": {
         "data": {
-          "text": "$text",
-          "lang": "$language",
-          "limit": "$max_length"
+          "text": "${text}",
+          "lang": "${language}",
+          "limit": "${max_length}"
         }
       }
     }

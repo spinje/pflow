@@ -130,12 +130,12 @@ pflow read-file --path=input.txt --encoding=utf-8 => \
 
 ## Template Variables
 
-Template variables enable dynamic content resolution using `$variable` syntax:
+Template variables enable dynamic content resolution using `${variable}` syntax:
 
 ### Basic Usage
 
 ```bash
-pflow llm --prompt="Summarize this: $content"
+pflow llm --prompt="Summarize this: ${content}"
 ```
 
 ### Resolution Order
@@ -149,15 +149,15 @@ pflow llm --prompt="Summarize this: $content"
 ```bash
 # From shared store
 pflow read-file --path=doc.txt => \
-      llm --prompt="Summary of $content"
+      llm --prompt="Summary of ${content}"
 
 # From environment
 export API_KEY=sk-123
-pflow api-call --token=$API_KEY
+pflow api-call --token=${API_KEY}
 
 # In complex prompts
 pflow github-get-issue --issue=123 >> \
-      llm --prompt="Fix this issue: $issue_title\n\n$issue_body"
+      llm --prompt="Fix this issue: ${issue_title}\n\n${issue_body}"
 ```
 
 ## Shell Pipe Integration
@@ -261,8 +261,8 @@ pflow read-file --path=input.txt >> \
 ```bash
 # GitHub workflow
 pflow github-get-issue --issue=123 >> \
-      llm --prompt="Generate fix for: $issue_body" >> \
-      github-create-pr --title="Fix: $issue_title"
+      llm --prompt="Generate fix for: ${issue_body}" >> \
+      github-create-pr --title="Fix: ${issue_title}"
 ```
 
 ### Multi-Stage Processing

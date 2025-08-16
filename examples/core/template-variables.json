@@ -5,40 +5,40 @@
       "id": "reader",
       "type": "read-file",
       "params": {
-        "file_path": "$input_file",
-        "encoding": "$file_encoding"
+        "file_path": "${input_file}",
+        "encoding": "${file_encoding}"
       }
     },
     {
       "id": "api_caller",
       "type": "test",
       "params": {
-        "endpoint": "$api_endpoint",
-        "auth_token": "$api_token"
+        "endpoint": "${api_endpoint}",
+        "auth_token": "${api_token}"
       }
     },
     {
       "id": "copier",
       "type": "copy-file",
       "params": {
-        "source": "$input_file",
-        "destination": "$backup_dir/$backup_name"
+        "source": "${input_file}",
+        "destination": "${backup_dir}/${backup_name}"
       }
     },
     {
       "id": "writer",
       "type": "write-file",
       "params": {
-        "file_path": "$output_dir/$output_file",
-        "content": "Processed on: $timestamp\nOriginal file: $input_file\n\n$file_content"
+        "file_path": "${output_dir}/${output_file}",
+        "content": "Processed on: ${timestamp}\nOriginal file: ${input_file}\n\n${file_content}"
       }
     },
     {
       "id": "notifier",
       "type": "test",
       "params": {
-        "recipient": "$recipient_email",
-        "subject": "Process completed for $input_file"
+        "recipient": "${recipient_email}",
+        "subject": "Process completed for ${input_file}"
       }
     }
   ],

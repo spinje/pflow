@@ -38,18 +38,18 @@ Before diving into the autonomy principle, it's crucial to understand when to us
 
 > **MVP Note**: Template variables are preserved in the JSON IR by the planner and resolved at runtime. This enables the "Plan Once, Run Forever" philosophy where workflows can be reused with different parameters.
 
-Template variables (`$variable`) provide dynamic content substitution in node inputs, enabling sophisticated data flow between nodes. The CLI supports **$ variable substitution** for dynamic content access:
+Template variables (`${variable}`) provide dynamic content substitution in node inputs, enabling sophisticated data flow between nodes. The CLI supports **$ variable substitution** for dynamic content access:
 
 ```bash
 # Template variables → shared store lookup
-$code_report → shared["code_report"]
-$commit_message → shared["commit_message"]
-$issue_title → shared["issue_title"]
+${code_report} → shared["code_report"]
+${commit_message} → shared["commit_message"]
+${issue_title} → shared["issue_title"]
 ```
 
 ### Template String Pattern
 ```bash
-# Template string with $variable in CLI
+# Template string with ${variable} in CLI
 claude-code --prompt="<instructions>
                         1. Understand the problem described in the issue
                         2. Search the codebase for relevant files
@@ -57,29 +57,29 @@ claude-code --prompt="<instructions>
                         4. Write and run tests to verify the fix
                         5. Return a report of what you have done as output
                       </instructions>
-                      This is the issue: $issue"
+                      This is the issue: ${issue}"
 
-# Planner generates workflow where $issue will map to shared["issue"] (from github-get-issue node output)
+# Planner generates workflow where ${issue} will map to shared["issue"] (from github-get-issue node output)
 # The generated workflow will contain the actual prompt with template already planned
-claude-code --prompt="<instructions>...This is the issue: $issue"
+claude-code --prompt="<instructions>...This is the issue: ${issue}"
 ```
 
 ### Template-Driven Workflow Examples
 ```bash
 # Template variables in workflow
 pflow github-get-issue --issue=1234 => \
-  claude-code --prompt="$comprehensive_fix_instructions" => \
-  llm --prompt="Write commit message for: $code_report" => \
-  git-commit --message="$commit_message"
+  claude-code --prompt="${comprehensive_fix_instructions}" => \
+  llm --prompt="Write commit message for: ${code_report}" => \
+  git-commit --message="${commit_message}"
 
 # Template variables in the generated workflow will map to:
-# $comprehensive_fix_instructions → planner-generated instructions
-# $code_report → output from claude-code node
-# $commit_message → output from llm node
+# ${comprehensive_fix_instructions} → planner-generated instructions
+# ${code_report} → output from claude-code node
+# ${commit_message} → output from llm node
 ```
 
 ### Template Resolution Process
-1. **Variable Detection**: Planner identifies $variable patterns when generating workflows
+1. **Variable Detection**: Planner identifies ${variable} patterns when generating workflows
 2. **Planner Validation**: Planner ensures all variables will map to shared store values
 3. **IR Generation**: Planner creates workflows where template variables reference future shared store values
 4. **Error Handling**: Missing variables trigger planner replanning (internal to planner)
@@ -90,18 +90,18 @@ The CLI intelligently routes different types of flags:
 
 - **Data flags** (workflow data) → shared store: `--issue=1234` → `shared["issue_number"] = "1234"`
 - **Behavior flags** (node configuration) → node parameters: `--temperature=0.3` → `node.set_params({"temperature": 0.3})`
-- **Template variables** (dynamic references) → planner maps to shared store: `$code_report` → `shared["code_report"]`
+- **Template variables** (dynamic references) → planner maps to shared store: `${code_report}` → `shared["code_report"]`
 
 ### Variable Dependency Flow
 
 Template variables create dependencies between nodes:
 
 ```bash
-# $issue depends on github-get-issue output
+# ${issue} depends on github-get-issue output
 github-get-issue --issue=1234 =>  # Outputs: shared["issue"], shared["issue_title"]
-claude-code --prompt="...This is the issue: $issue" =>  # Depends on: shared["issue"]
-llm --prompt="Write commit message for: $code_report" =>  # Depends on: shared["commit_message"]
-git-commit --message="$commit_message"  # Depends on: shared["commit_message"]
+claude-code --prompt="...This is the issue: ${issue}" =>  # Depends on: shared["issue"]
+llm --prompt="Write commit message for: ${code_report}" =>  # Depends on: shared["commit_message"]
+git-commit --message="${commit_message}"  # Depends on: shared["commit_message"]
 ```
 
 ### Missing Input Handling

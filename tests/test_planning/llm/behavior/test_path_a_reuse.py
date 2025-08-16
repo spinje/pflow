@@ -53,8 +53,8 @@ class TestPathAWorkflowReuse:
                         "ir": {
                             "ir_version": "0.1.0",
                             "nodes": [
-                                {"id": "read", "type": "read-file", "params": {"file_path": "$file_path"}},
-                                {"id": "analyze", "type": "llm", "params": {"prompt": "$prompt"}},
+                                {"id": "read", "type": "read-file", "params": {"file_path": "${file_path}"}},
+                                {"id": "analyze", "type": "llm", "params": {"prompt": "${prompt}"}},
                             ],
                             "edges": [{"from": "read", "to": "analyze", "action": "default"}],
                             "start_node": "read",
@@ -75,9 +75,9 @@ class TestPathAWorkflowReuse:
                         "ir": {
                             "ir_version": "0.1.0",
                             "nodes": [
-                                {"id": "read", "type": "read-file", "params": {"file_path": "$csv_file"}},
+                                {"id": "read", "type": "read-file", "params": {"file_path": "${csv_file}"}},
                                 {"id": "process", "type": "llm", "params": {"prompt": "Process this CSV data"}},
-                                {"id": "write", "type": "write-file", "params": {"file_path": "$output_file"}},
+                                {"id": "write", "type": "write-file", "params": {"file_path": "${output_file}"}},
                             ],
                             "edges": [
                                 {"from": "read", "to": "process", "action": "default"},
@@ -101,7 +101,7 @@ class TestPathAWorkflowReuse:
                         "ir": {
                             "ir_version": "0.1.0",
                             "nodes": [
-                                {"id": "list", "type": "github-list-issues", "params": {"repo": "$repo"}},
+                                {"id": "list", "type": "github-list-issues", "params": {"repo": "${repo}"}},
                                 {"id": "summarize", "type": "llm", "params": {"prompt": "Summarize these issues"}},
                             ],
                             "edges": [{"from": "list", "to": "summarize", "action": "default"}],

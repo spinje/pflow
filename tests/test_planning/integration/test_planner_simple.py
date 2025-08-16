@@ -18,7 +18,7 @@ class TestPlannerSimpleIntegration:
         # Create test workflow with proper structure
         test_workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "read", "type": "read-file", "params": {"file_path": "$input_file"}}],
+            "nodes": [{"id": "read", "type": "read-file", "params": {"file_path": "${input_file}"}}],
             "edges": [],
             "start_node": "read",
             "inputs": {"input_file": {"description": "File to read", "type": "string", "required": True}},
@@ -102,7 +102,11 @@ class TestPlannerSimpleIntegration:
         test_workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "process", "type": "process-data", "params": {"input": "$data_file", "output": "$output_file"}}
+                {
+                    "id": "process",
+                    "type": "process-data",
+                    "params": {"input": "${data_file}", "output": "${output_file}"},
+                }
             ],
             "edges": [],
             "start_node": "process",
@@ -269,16 +273,23 @@ class TestPlannerSimpleIntegration:
                                     "input": {
                                         "ir_version": "0.1.0",
                                         "nodes": [
-                                            {"id": "read", "type": "read-file", "params": {"file_path": "$input_file"}},
+                                            {
+                                                "id": "read",
+                                                "type": "read-file",
+                                                "params": {"file_path": "${input_file}"},
+                                            },
                                             {
                                                 "id": "analyze",
                                                 "type": "llm",
-                                                "params": {"prompt": "Analyze CSV data from $input_file"},
+                                                "params": {"prompt": "Analyze CSV data from ${input_file}"},
                                             },
                                             {
                                                 "id": "write",
                                                 "type": "write-file",
-                                                "params": {"file_path": "$output_file", "content": "Analysis complete"},
+                                                "params": {
+                                                    "file_path": "${output_file}",
+                                                    "content": "Analysis complete",
+                                                },
                                             },
                                         ],
                                         "edges": [

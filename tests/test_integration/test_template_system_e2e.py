@@ -20,11 +20,15 @@ def test_template_system_with_file_nodes():
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "reader", "type": "read-file", "params": {"file_path": "$input_file", "encoding": "$encoding"}},
+                {
+                    "id": "reader",
+                    "type": "read-file",
+                    "params": {"file_path": "${input_file}", "encoding": "${encoding}"},
+                },
                 {
                     "id": "writer",
                     "type": "write-file",
-                    "params": {"file_path": "$output_file", "content": "$reader.content", "encoding": "utf-8"},
+                    "params": {"file_path": "${output_file}", "content": "${reader.content}", "encoding": "utf-8"},
                 },
             ],
             "edges": [{"from": "reader", "to": "writer"}],
@@ -64,9 +68,9 @@ def test_template_with_path_traversal():
                     "id": "writer",
                     "type": "write-file",
                     "params": {
-                        "file_path": "$paths.output",
-                        "content": "$data.message",
-                        "encoding": "$config.encoding",
+                        "file_path": "${paths.output}",
+                        "content": "${data.message}",
+                        "encoding": "${config.encoding}",
                     },
                 }
             ],
@@ -105,8 +109,8 @@ def test_template_fallback_to_shared_store():
                     "id": "writer",
                     "type": "write-file",
                     "params": {
-                        "file_path": "$output_path",
-                        "content": "$dynamic_content",  # This will come from shared store
+                        "file_path": "${output_path}",
+                        "content": "${dynamic_content}",  # This will come from shared store
                     },
                 }
             ],
@@ -140,7 +144,7 @@ def test_template_priority_initial_params_over_shared():
                 {
                     "id": "writer",
                     "type": "write-file",
-                    "params": {"file_path": os.path.join(tmpdir, "priority.txt"), "content": "$message"},
+                    "params": {"file_path": os.path.join(tmpdir, "priority.txt"), "content": "${message}"},
                 }
             ],
             "edges": [],
@@ -172,7 +176,7 @@ def test_workflow_reusability():
                 {
                     "id": "writer",
                     "type": "write-file",
-                    "params": {"file_path": "$output_file", "content": "User: $user_name, Task: $task_id"},
+                    "params": {"file_path": "${output_file}", "content": "User: ${user_name}, Task: ${task_id}"},
                 }
             ],
             "edges": [],

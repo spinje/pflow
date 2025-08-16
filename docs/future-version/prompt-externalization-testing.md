@@ -255,18 +255,18 @@ class WorkflowDiscoveryNode(Node):
 # Detect changed prompt files
 CHANGED_PROMPTS=$(git diff --name-only HEAD | grep "prompts/.*\.txt$")
 
-if [ -z "$CHANGED_PROMPTS" ]; then
+if [ -z "${CHANGED_PROMPTS}" ]; then
     echo "No prompt files changed"
     exit 0
 fi
 
 echo "Changed prompts detected:"
-echo "$CHANGED_PROMPTS"
+echo "${CHANGED_PROMPTS}"
 
 # Extract test commands from CLAUDE.md based on changed files
-for prompt in $CHANGED_PROMPTS; do
-    prompt_name=$(basename "$prompt")
-    echo "Running tests for $prompt_name..."
+for prompt in ${CHANGED_PROMPTS}; do
+    prompt_name=$(basename "${prompt}")
+    echo "Running tests for ${prompt_name}..."
 
     # Parse CLAUDE.md to find tests for this prompt
     # (Implementation would extract and run the appropriate test commands)

@@ -48,7 +48,7 @@ class TestConfidenceThresholds:
                     "updated_at": datetime.now().isoformat(),
                     "ir": {
                         "ir_version": "0.1.0",
-                        "nodes": [{"id": "read", "type": "read-file", "params": {"file_path": "$file_path"}}],
+                        "nodes": [{"id": "read", "type": "read-file", "params": {"file_path": "${file_path}"}}],
                         "edges": [],
                         "start_node": "read",
                         "inputs": {"file_path": "Path to file"},
@@ -64,8 +64,8 @@ class TestConfidenceThresholds:
                     "ir": {
                         "ir_version": "0.1.0",
                         "nodes": [
-                            {"id": "read", "type": "read-file", "params": {"file_path": "$file_path"}},
-                            {"id": "analyze", "type": "llm", "params": {"prompt": "$prompt"}},
+                            {"id": "read", "type": "read-file", "params": {"file_path": "${file_path}"}},
+                            {"id": "analyze", "type": "llm", "params": {"prompt": "${prompt}"}},
                         ],
                         "edges": [{"from": "read", "to": "analyze", "action": "default"}],
                         "start_node": "read",

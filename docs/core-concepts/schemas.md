@@ -627,7 +627,7 @@ The pflow project includes a comprehensive set of examples demonstrating various
 Basic patterns every user should understand:
 - **[minimal.json](../../examples/core/minimal.json)** - Simplest valid IR with a single node
 - **[simple-pipeline.json](../../examples/core/simple-pipeline.json)** - Basic 3-node sequential pipeline
-- **[template-variables.json](../../examples/core/template-variables.json)** - Using `$variable` syntax for dynamic values
+- **[template-variables.json](../../examples/core/template-variables.json)** - Using `${variable}` syntax for dynamic values
 - **[error-handling.json](../../examples/core/error-handling.json)** - Action-based routing for error recovery
 - **[proxy-mappings.json](../../examples/core/proxy-mappings.json)** - Interface adaptation with mappings
 

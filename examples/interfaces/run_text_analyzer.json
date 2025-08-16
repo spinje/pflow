@@ -17,8 +17,8 @@
       "params": {
         "workflow_ref": "examples/interfaces/text_analyzer.json",
         "param_mapping": {
-          "text": "$text_to_analyze",
-          "language": "$language_code",
+          "text": "${text_to_analyze}",
+          "language": "${language_code}",
           "max_length": 50
         }
       }

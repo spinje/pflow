@@ -31,7 +31,7 @@
         },
         "storage_mode": "isolated",
         "param_mapping": {
-          "safe_input": "$public_data"
+          "safe_input": "${public_data}"
         },
         "output_mapping": {
           "result": "isolated_result"
@@ -46,7 +46,7 @@
         "storage_mode": "scoped",
         "scope_prefix": "child_",
         "param_mapping": {
-          "text": "$child_data"
+          "text": "${child_data}"
         },
         "error_action": "handle_error"
       }

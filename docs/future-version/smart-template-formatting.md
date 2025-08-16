@@ -10,7 +10,7 @@ Currently, when template variables containing complex data structures are used i
 
 ```bash
 # Current behavior:
-github-list-issues >> llm --prompt="Summarize: $issues"
+github-list-issues >> llm --prompt="Summarize: ${issues}"
 # LLM receives: "Summarize: [{"number":123,"title":"Bug in login","author":{"login":"john"}},...]"
 ```
 
@@ -31,15 +31,15 @@ Automatically format complex data types (dict/list) into readable text **only at
 shared["issues"] = [{"number": 123, "title": "Bug in login", ...}]
 
 # Template resolution becomes smart:
-"Summarize: $issues"  # Auto-formats to readable text
-"First: $issues[0].title"  # Still evaluates to "Bug in login"
+"Summarize: ${issues}"  # Auto-formats to readable text
+"First: ${issues}[0].title"  # Still evaluates to "Bug in login"
 ```
 
 ### Key Principles
 
 1. **Non-invasive**: Shared store data remains untouched
 2. **Context-aware**: Only format when inserting into strings
-3. **Property preservation**: `$data.field` access continues working
+3. **Property preservation**: `${data.field}` access continues working
 4. **Backward compatible**: Existing workflows unchanged
 
 ## Implementation Options
@@ -82,17 +82,17 @@ author:
 
 **Escape hatch for raw JSON:**
 ```bash
-llm --prompt="Parse this JSON: $$api_response"  # Double $$ = raw
+llm --prompt="Parse this JSON: $${api_response}"  # Double $$ = raw
 ```
 
 ### Option 2: Explicit Formatting Functions (Alternative)
 
 **Template functions syntax:**
 ```bash
-llm --prompt="Summarize: ${markdown($issues)}"
-llm --prompt="Schema for: ${json($issues)}"
-llm --prompt="Report: ${yaml($issues)}"
-llm --prompt="Table: ${table($issues)}"
+llm --prompt="Summarize: ${markdown(${issues})}"
+llm --prompt="Schema for: ${json(${issues})}"
+llm --prompt="Report: ${yaml(${issues})}"
+llm --prompt="Table: ${table(${issues})}"
 ```
 
 **Pros:**
@@ -112,7 +112,7 @@ llm --prompt="Table: ${table($issues)}"
 # New node: format-json
 github-list-issues >>
 format-json --format=markdown >>
-llm --prompt="Summarize: $formatted_data"
+llm --prompt="Summarize: ${formatted_data}"
 ```
 
 **Implementation:**
@@ -133,7 +133,7 @@ class FormatJsonNode(Node):
 
 **Add formatting parameter to LLM node:**
 ```bash
-llm --prompt="Summarize: $issues" --input-format=markdown
+llm --prompt="Summarize: ${issues}" --input-format=markdown
 ```
 
 The LLM node internally formats template variables before sending to API.
@@ -144,11 +144,11 @@ The LLM node internally formats template variables before sending to API.
 
 **Scenario:** Teaching LLM about JSON structure
 ```bash
-llm --prompt="Generate TypeScript interface for: $api_response"
+llm --prompt="Generate TypeScript interface for: ${api_response}"
 ```
 
 **Solutions:**
-- Escape syntax: `$$api_response` for raw
+- Escape syntax: `$${api_response}` for raw
 - Context detection: File extensions (.json keeps raw)
 - Explicit control: Format functions
 
@@ -156,8 +156,8 @@ llm --prompt="Generate TypeScript interface for: $api_response"
 
 **Scenario:** Writing data to different file types
 ```bash
-write-file --path=data.json --content="$issues"  # Want JSON
-write-file --path=report.md --content="$issues"  # Want markdown
+write-file --path=data.json --content="${issues}"  # Want JSON
+write-file --path=report.md --content="${issues}"  # Want markdown
 ```
 
 **Solution:** Detect file extension to determine format
@@ -225,7 +225,7 @@ write-file --path=report.md --content="$issues"  # Want markdown
 ```bash
 # Verbose and token-heavy:
 github-list-issues >>
-llm --prompt="Generate changelog from: $issues"
+llm --prompt="Generate changelog from: ${issues}"
 # LLM receives: [{"number":123,"title":"Bug in...},{...}]
 ```
 
@@ -233,7 +233,7 @@ llm --prompt="Generate changelog from: $issues"
 ```bash
 # Clean and efficient:
 github-list-issues >>
-llm --prompt="Generate changelog from: $issues"
+llm --prompt="Generate changelog from: ${issues}"
 # LLM receives formatted list:
 # - number: 123
 #   title: Bug in login
@@ -268,7 +268,7 @@ createdAt: 2024-01-15T10:30:00Z
 When implementing, ensure:
 
 - [ ] Shared store remains unmodified
-- [ ] Property access (`$data.field`) still works
+- [ ] Property access (`${data.field}`) still works
 - [ ] Performance acceptable for large datasets
 - [ ] Format is deterministic and consistent
 - [ ] Escape mechanism provided for raw JSON

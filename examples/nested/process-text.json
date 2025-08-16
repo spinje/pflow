@@ -15,7 +15,7 @@
       "id": "normalize",
       "type": "test",
       "params": {
-        "operation": "$mode"
+        "operation": "${mode}"
       }
     }
   ],

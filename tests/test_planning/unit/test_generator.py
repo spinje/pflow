@@ -46,11 +46,11 @@ def mock_llm_generator():
                     },
                 },
                 "nodes": [
-                    {"id": "fetch_commits", "type": "git-log", "params": {"repo": "$repo", "since": "$since_date"}},
+                    {"id": "fetch_commits", "type": "git-log", "params": {"repo": "${repo}", "since": "${since_date}"}},
                     {
                         "id": "format_changelog",
                         "type": "llm",
-                        "params": {"prompt": "Format commits from $commits.data"},
+                        "params": {"prompt": "Format commits from ${commits.data}"},
                     },
                 ],
                 "edges": [{"from": "fetch_commits", "to": "format_changelog"}],
@@ -152,7 +152,7 @@ class TestPromptBuilding:
 
     @patch("llm.get_model")
     def test_prompt_emphasizes_template_variables(self, mock_get_model, mock_llm_generator):
-        """Test prompt emphasizes template variables (contains 'use template variables ($var)')."""
+        """Test prompt emphasizes template variables (contains 'use template variables (${var})')."""
         mock_model = Mock()
         mock_model.prompt.return_value = mock_llm_generator()
         mock_get_model.return_value = mock_model
@@ -171,7 +171,7 @@ class TestPromptBuilding:
 
         prompt = node._build_prompt(prep_res)
 
-        assert "Use template variables ($variable)" in prompt
+        assert "Use template variables (${variable})" in prompt
         assert "template variables" in prompt.lower()
 
     @patch("llm.get_model")
@@ -471,7 +471,7 @@ class TestTemplateVariables:
                 {
                     "id": "fetch",
                     "type": "github-issue",
-                    "params": {"repository": "$repo", "issue_number": "$issue", "static_value": "constant"},
+                    "params": {"repository": "${repo}", "issue_number": "${issue}", "static_value": "constant"},
                 }
             ],
             "edges": [],
@@ -498,13 +498,13 @@ class TestTemplateVariables:
 
         # Check that dynamic values use $ prefix
         params = result["workflow"]["nodes"][0]["params"]
-        assert params["repository"] == "$repo"
-        assert params["issue_number"] == "$issue"
+        assert params["repository"] == "${repo}"
+        assert params["issue_number"] == "${issue}"
         assert params["static_value"] == "constant"  # Static values don't use $
 
     @patch("llm.get_model")
     def test_template_paths_supported(self, mock_get_model):
-        """Test template paths supported ($var.field.subfield in params)."""
+        """Test template paths supported (${var.field.subfield} in params)."""
         mock_model = Mock()
 
         workflow = {
@@ -515,7 +515,7 @@ class TestTemplateVariables:
                 {
                     "id": "process",
                     "type": "llm",
-                    "params": {"prompt": "Process user $data.user.name from $data.user.email"},
+                    "params": {"prompt": "Process user ${data.user.name} from ${data.user.email}"},
                 }
             ],
             "edges": [],
@@ -542,12 +542,12 @@ class TestTemplateVariables:
 
         # Check that path syntax is preserved
         prompt = result["workflow"]["nodes"][0]["params"]["prompt"]
-        assert "$data.user.name" in prompt
-        assert "$data.user.email" in prompt
+        assert "${data.user.name}" in prompt
+        assert "${data.user.email}" in prompt
 
     @patch("llm.get_model")
     def test_template_variables_match_inputs_keys(self, mock_get_model):
-        """Test template variables match inputs keys (each $var has corresponding inputs key)."""
+        """Test template variables match inputs keys (each ${var} has corresponding inputs key)."""
         mock_model = Mock()
 
         workflow = {
@@ -563,7 +563,12 @@ class TestTemplateVariables:
                 {
                     "id": "fetch_issues",
                     "type": "github-issues",
-                    "params": {"repository": "$repo", "labels": "$labels", "state": "$state", "limit": "$limit"},
+                    "params": {
+                        "repository": "${repo}",
+                        "labels": "${labels}",
+                        "state": "${state}",
+                        "limit": "${limit}",
+                    },
                 }
             ],
             "edges": [],
@@ -592,10 +597,10 @@ class TestTemplateVariables:
         inputs = result["workflow"]["inputs"]
         params = result["workflow"]["nodes"][0]["params"]
 
-        assert "$repo" in params["repository"] and "repo" in inputs
-        assert "$labels" in params["labels"] and "labels" in inputs
-        assert "$state" in params["state"] and "state" in inputs
-        assert "$limit" in str(params["limit"]) and "limit" in inputs
+        assert "${repo}" in params["repository"] and "repo" in inputs
+        assert "${labels}" in params["labels"] and "labels" in inputs
+        assert "${state}" in params["state"] and "state" in inputs
+        assert "${limit}" in str(params["limit"]) and "limit" in inputs
 
 
 class TestErrorHandling:
@@ -733,11 +738,15 @@ class TestNorthStarExamples:
                 },
             },
             "nodes": [
-                {"id": "fetch_commits", "type": "git-log", "params": {"repository": "$repo", "since": "$since_date"}},
+                {
+                    "id": "fetch_commits",
+                    "type": "git-log",
+                    "params": {"repository": "${repo}", "since": "${since_date}"},
+                },
                 {
                     "id": "generate_changelog",
                     "type": "llm",
-                    "params": {"prompt": "Generate changelog from commits: $commits"},
+                    "params": {"prompt": "Generate changelog from commits: ${commits}"},
                 },
             ],
             "edges": [{"from": "fetch_commits", "to": "generate_changelog"}],
@@ -797,12 +806,17 @@ class TestNorthStarExamples:
                 {
                     "id": "fetch_issues",
                     "type": "github-issues",
-                    "params": {"repository": "$repo", "labels": "$labels", "state": "$state", "per_page": "$limit"},
+                    "params": {
+                        "repository": "${repo}",
+                        "labels": "${labels}",
+                        "state": "${state}",
+                        "per_page": "${limit}",
+                    },
                 },
                 {
                     "id": "generate_report",
                     "type": "llm",
-                    "params": {"prompt": "Create triage report from issues: $issues"},
+                    "params": {"prompt": "Create triage report from issues: ${issues}"},
                 },
             ],
             "edges": [{"from": "fetch_issues", "to": "generate_report"}],

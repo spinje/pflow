@@ -10,7 +10,7 @@
       "params": {
         "workflow_ref": "./process-text.json",
         "param_mapping": {
-          "text": "$document_title",
+          "text": "${document_title}",
           "mode": "title"
         },
         "output_mapping": {
@@ -24,7 +24,7 @@
       "params": {
         "workflow_ref": "./process-text.json",
         "param_mapping": {
-          "text": "$document_body",
+          "text": "${document_body}",
           "mode": "lower"
         },
         "output_mapping": {

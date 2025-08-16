@@ -8,14 +8,14 @@ Enhancement to template validation error messages to include which specific node
 
 When template validation fails for a variable not found in node outputs, the current error message is:
 ```
-Template variable $api_config.endpoint has no valid source - not provided in initial_params and path 'endpoint' not found in outputs from any node in the workflow
+Template variable ${api_config.endpoint} has no valid source - not provided in initial_params and path 'endpoint' not found in outputs from any node in the workflow
 ```
 
 ## Proposed Enhancement
 
 The original Task 19 specification called for more specific error messages that attribute the missing variable to specific node types:
 ```
-Template variable $api_config.endpoint has no valid source - not in initial_params and path 'endpoint' not found in outputs of node type 'config-loader'
+Template variable ${api_config.endpoint} has no valid source - not in initial_params and path 'endpoint' not found in outputs of node type 'config-loader'
 ```
 
 ## Context and Discovery

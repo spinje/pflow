@@ -87,7 +87,7 @@ class TestCompilerIntegration:
                 {
                     "id": "node1",
                     "type": "mock-node",
-                    "params": {"url": "$endpoint", "message": "Processing $count items", "static": "unchanged"},
+                    "params": {"url": "${endpoint}", "message": "Processing ${count} items", "static": "unchanged"},
                 }
             ],
             "edges": [],
@@ -110,18 +110,18 @@ class TestCompilerIntegration:
 
     def test_validation_fails_missing_params(self, mock_registry):
         """Test that validation catches missing parameters."""
-        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "$required_param"}}], "edges": []}
+        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${required_param}"}}], "edges": []}
 
         # Try to compile without providing required parameter
         with pytest.raises(ValueError) as exc_info:
             compile_ir_to_flow(ir, mock_registry, initial_params={})
 
         assert "Template validation failed" in str(exc_info.value)
-        assert "$required_param" in str(exc_info.value)
+        assert "${required_param}" in str(exc_info.value)
 
     def test_validation_can_be_skipped(self, mock_registry):
         """Test that validation can be skipped for testing."""
-        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "$missing"}}], "edges": []}
+        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${missing}"}}], "edges": []}
 
         # Should not raise with validate=False
         flow = compile_ir_to_flow(ir, mock_registry, initial_params={}, validate=False)
@@ -131,7 +131,7 @@ class TestCompilerIntegration:
         flow.run(shared)
         assert "node1" in shared
         assert "result" in shared["node1"]
-        assert "'url': '$missing'" in shared["node1"]["result"]
+        assert "'url': '${missing}'" in shared["node1"]["result"]
 
     def test_shared_store_templates_not_validated(self, mock_registry):
         """Test that variables from node outputs are properly validated."""
@@ -161,7 +161,7 @@ class TestCompilerIntegration:
                 {
                     "id": "consumer",
                     "type": "mock-node",
-                    "params": {"url": "$provided_param", "data": "$shared_store_var.field"},
+                    "params": {"url": "${provided_param}", "data": "${shared_store_var.field}"},
                 },
             ],
             "edges": [{"from": "producer", "to": "consumer"}],
@@ -290,9 +290,9 @@ class TestMultiNodeWorkflow:
                     "id": "consumer",
                     "type": "consumer",
                     "params": {
-                        "title": "$video_data.title",
-                        "author": "$video_data.metadata.author",
-                        "url": "$initial_url",  # From initial params
+                        "title": "${video_data.title}",
+                        "author": "${video_data.metadata.author}",
+                        "url": "${initial_url}",  # From initial params
                     },
                 },
             ],
@@ -389,18 +389,18 @@ class TestRealWorldWorkflows:
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "$url"}},
+                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "${url}"}},
                 {
                     "id": "summarize",
                     "type": "llm",
                     "params": {
-                        "prompt": "Create a bullet-point summary of this video:\n\nTitle: $transcript_data.title\nAuthor: $transcript_data.metadata.author\n\nTranscript:\n$transcript_data.text"
+                        "prompt": "Create a bullet-point summary of this video:\n\nTitle: ${transcript_data.title}\nAuthor: ${transcript_data.metadata.author}\n\nTranscript:\n${transcript_data.text}"
                     },
                 },
                 {
                     "id": "save",
                     "type": "write-file",
-                    "params": {"file_path": "video_summary.md", "content": "# $transcript_data.title\n\n$summary"},
+                    "params": {"file_path": "video_summary.md", "content": "# ${transcript_data.title}\n\n${summary}"},
                 },
             ],
             "edges": [{"from": "fetch", "to": "summarize"}, {"from": "summarize", "to": "save"}],
@@ -459,7 +459,7 @@ class TestEdgeCases:
 
     def test_circular_references(self, mock_registry):
         """Test handling of circular references (last write wins)."""
-        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"value": "$circular"}}], "edges": []}
+        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"value": "${circular}"}}], "edges": []}
 
         # Initial params and shared store both have 'circular'
         initial_params = {"circular": "from_params"}
@@ -475,7 +475,7 @@ class TestEdgeCases:
 
     def test_deeply_nested_paths(self, mock_registry):
         """Test resolution of deeply nested paths."""
-        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"deep": "$a.b.c.d.e.f.g"}}], "edges": []}
+        ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"deep": "${a.b.c.d.e.f.g}"}}], "edges": []}
 
         flow = compile_ir_to_flow(ir, mock_registry, initial_params={}, validate=False)
 

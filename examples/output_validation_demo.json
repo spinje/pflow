@@ -12,7 +12,7 @@
       "id": "process",
       "type": "llm",
       "params": {
-        "prompt": "Summarize this text: $content"
+        "prompt": "Summarize this text: ${content}"
       }
     }
   ],

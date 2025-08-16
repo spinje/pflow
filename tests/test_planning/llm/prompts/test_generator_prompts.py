@@ -206,7 +206,7 @@ class TestGeneratorPromptEffectiveness:
             "browsed_components": {"github_list_commits": {"type": "node", "parameters": ["repo", "since"]}},
             "validation_errors": [
                 "Missing required parameter 'repo' in node 'list_commits'",
-                "Template variable $repository not defined in inputs",
+                "Template variable ${repository} not defined in inputs",
                 "Invalid node type 'github_commits' - did you mean 'github_list_commits'?",
             ],
             "generation_attempts": 1,  # This is a retry
@@ -281,7 +281,7 @@ class TestGeneratorPromptEffectiveness:
                     if isinstance(param_value, str):
                         # Extract template variable names
                         if "$" in param_value:
-                            # Simple $var syntax
+                            # Simple ${var} syntax
                             import re
 
                             matches = re.findall(r"\$(\w+)", param_value)

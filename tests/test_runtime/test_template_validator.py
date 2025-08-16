@@ -99,7 +99,7 @@ class TestTemplateExtraction:
                     "id": "fetch",
                     "type": "youtube-transcript",
                     "params": {
-                        "url": "$url",
+                        "url": "${url}",
                         "format": "text",  # Static param
                     },
                 }
@@ -114,8 +114,8 @@ class TestTemplateExtraction:
         """Test extraction from multiple nodes."""
         workflow_ir = {
             "nodes": [
-                {"id": "n1", "type": "t1", "params": {"a": "$var1"}},
-                {"id": "n2", "type": "t2", "params": {"b": "$var2", "c": "$var3"}},
+                {"id": "n1", "type": "t1", "params": {"a": "${var1}"}},
+                {"id": "n2", "type": "t2", "params": {"b": "${var2}", "c": "${var3}"}},
                 {"id": "n3", "type": "t3", "params": {"d": "static"}},
             ],
             "edges": [],
@@ -128,7 +128,11 @@ class TestTemplateExtraction:
         """Test extraction of templates with paths."""
         workflow_ir = {
             "nodes": [
-                {"id": "summarize", "type": "llm", "params": {"prompt": "Title: $data.title by $data.metadata.author"}}
+                {
+                    "id": "summarize",
+                    "type": "llm",
+                    "params": {"prompt": "Title: ${data.title} by ${data.metadata.author}"},
+                }
             ],
             "edges": [],
         }
@@ -153,8 +157,8 @@ class TestTemplateExtraction:
         """Test that duplicate templates are deduplicated."""
         workflow_ir = {
             "nodes": [
-                {"id": "n1", "type": "t1", "params": {"a": "$url", "b": "$url"}},
-                {"id": "n2", "type": "t2", "params": {"c": "$url"}},
+                {"id": "n1", "type": "t1", "params": {"a": "${url}", "b": "${url}"}},
+                {"id": "n2", "type": "t2", "params": {"c": "${url}"}},
             ],
             "edges": [],
         }
@@ -213,14 +217,14 @@ class TestWorkflowValidation:
         """Test validation passes when all params provided."""
         workflow_ir = {
             "nodes": [
-                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "$url"}},
-                {"id": "summarize", "type": "llm", "params": {"prompt": "Summarize: $transcript_data.text"}},
+                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "${url}"}},
+                {"id": "summarize", "type": "llm", "params": {"prompt": "Summarize: ${transcript_data.text}"}},
                 {
                     "id": "save",
                     "type": "write-file",
                     "params": {
                         "file_path": "summary.txt",
-                        "content": "$summary",  # From llm node
+                        "content": "${summary}",  # From llm node
                     },
                 },
             ],
@@ -238,8 +242,8 @@ class TestWorkflowValidation:
         """Test validation catches missing CLI parameters."""
         workflow_ir = {
             "nodes": [
-                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "$url"}},
-                {"id": "analyze", "type": "llm", "params": {"prompt": "Analyze $url"}},
+                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "${url}"}},
+                {"id": "analyze", "type": "llm", "params": {"prompt": "Analyze ${url}"}},
             ],
             "edges": [],
         }
@@ -250,14 +254,14 @@ class TestWorkflowValidation:
         registry = create_mock_registry()
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 1
-        assert "Template variable $url has no valid source" in errors[0]
+        assert "Template variable ${url} has no valid source" in errors[0]
 
     def test_multiple_missing_parameters(self):
         """Test validation reports multiple missing params."""
         workflow_ir = {
             "nodes": [
-                {"id": "n1", "type": "t1", "params": {"a": "$param1", "b": "$param2"}},
-                {"id": "n2", "type": "t2", "params": {"c": "$param3"}},
+                {"id": "n1", "type": "t1", "params": {"a": "${param1}", "b": "${param2}"}},
+                {"id": "n2", "type": "t2", "params": {"c": "${param3}"}},
             ],
             "edges": [],
         }
@@ -268,20 +272,20 @@ class TestWorkflowValidation:
         registry = create_mock_registry()
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 3
-        assert any("$param1" in e for e in errors)
-        assert any("$param2" in e for e in errors)
-        assert any("$param3" in e for e in errors)
+        assert any("${param1}" in e for e in errors)
+        assert any("${param2}" in e for e in errors)
+        assert any("${param3}" in e for e in errors)
 
     def test_distinguishes_cli_from_shared_store(self):
         """Test validation correctly identifies CLI params vs shared store."""
         workflow_ir = {
             "nodes": [
-                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "$url"}},
+                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "${url}"}},
                 {
                     "id": "analyze",
                     "type": "llm",
                     "params": {
-                        "prompt": "Summarize: $transcript_data.title"  # From shared store
+                        "prompt": "Summarize: ${transcript_data.title}"  # From shared store
                     },
                 },
             ],
@@ -299,7 +303,7 @@ class TestWorkflowValidation:
         """Test validation catches invalid syntax in shared store variables."""
         workflow_ir = {
             "nodes": [
-                {"id": "n1", "type": "t1", "params": {"a": "$data..field"}}  # Invalid syntax
+                {"id": "n1", "type": "t1", "params": {"a": "${data..field}"}}  # Invalid syntax
             ],
             "edges": [],
         }
@@ -308,7 +312,7 @@ class TestWorkflowValidation:
         registry = create_mock_registry()
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 1
-        assert "Template variable $data..field has no valid source" in errors[0]
+        assert "Template variable ${data..field} has no valid source" in errors[0]
 
     def test_partial_parameter_match(self):
         """Test base variable matching for CLI params."""
@@ -318,8 +322,8 @@ class TestWorkflowValidation:
                     "id": "n1",
                     "type": "t1",
                     "params": {
-                        "a": "$config.setting",  # Base var 'config' needs to be provided
-                        "b": "$config.other",
+                        "a": "${config.setting}",  # Base var 'config' needs to be provided
+                        "b": "${config.other}",
                     },
                 }
             ],
@@ -356,16 +360,16 @@ class TestRealWorldScenarios:
         """Test validation of youtube summarization workflow."""
         workflow_ir = {
             "nodes": [
-                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "$url"}},
+                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "${url}"}},
                 {
                     "id": "summarize",
                     "type": "llm",
-                    "params": {"prompt": "Summarize: $transcript_data.title\n\n$transcript_data.text"},
+                    "params": {"prompt": "Summarize: ${transcript_data.title}\n\n${transcript_data.text}"},
                 },
                 {
                     "id": "save",
                     "type": "write-file",
-                    "params": {"file_path": "summary.md", "content": "# $transcript_data.title\n\n$summary"},
+                    "params": {"file_path": "summary.md", "content": "# ${transcript_data.title}\n\n${summary}"},
                 },
             ],
             "edges": [{"from": "fetch", "to": "summarize"}, {"from": "summarize", "to": "save"}],
@@ -375,7 +379,7 @@ class TestRealWorldScenarios:
         registry = create_mock_registry()
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
         assert len(errors) == 1
-        assert "Template variable $url has no valid source" in errors[0]
+        assert "Template variable ${url} has no valid source" in errors[0]
 
         # Test with URL provided
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {"url": "https://youtube.com"}, registry)
@@ -388,12 +392,12 @@ class TestRealWorldScenarios:
                 {
                     "id": "fetch_issue",
                     "type": "github-issue",
-                    "params": {"repo": "$repo", "issue_number": "$issue_number"},
+                    "params": {"repo": "${repo}", "issue_number": "${issue_number}"},
                 },
                 {
                     "id": "analyze",
                     "type": "llm",
-                    "params": {"prompt": "Analyze issue: $issue_data.title\n\n$issue_data.body"},
+                    "params": {"prompt": "Analyze issue: ${issue_data.title}\n\n${issue_data.body}"},
                 },
             ],
             "edges": [{"from": "fetch_issue", "to": "analyze"}],
@@ -403,13 +407,13 @@ class TestRealWorldScenarios:
         registry = create_mock_registry()
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
         assert len(errors) == 2
-        assert any("$repo" in e for e in errors)
-        assert any("$issue_number" in e for e in errors)
+        assert any("${repo}" in e for e in errors)
+        assert any("${issue_number}" in e for e in errors)
 
         # Test with partial params
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {"repo": "pflow"}, registry)
         assert len(errors) == 1
-        assert "$issue_number" in errors[0]
+        assert "${issue_number}" in errors[0]
 
         # Test with all params
         params = {"repo": "pflow", "issue_number": "123"}

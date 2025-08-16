@@ -34,7 +34,7 @@
       "id": "generate",
       "type": "llm",
       "params": {
-        "prompt": "Write a $style explanation about $topic in exactly $max_words words. Be concise and clear.",
+        "prompt": "Write a ${style} explanation about ${topic} in exactly ${max_words} words. Be concise and clear.",
         "model": "claude-3.5-haiku",
         "temperature": 0.7,
         "max_tokens": 200

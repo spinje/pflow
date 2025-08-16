@@ -227,7 +227,7 @@ class TestEndToEndCompilation:
                 {
                     "id": "node1",
                     "type": "basic-node",
-                    "params": {"template": "$user_input", "number": "$count"},
+                    "params": {"template": "${user_input}", "number": "${count}"},
                 }
             ],
             "edges": [],
@@ -249,8 +249,8 @@ class TestEndToEndCompilation:
         assert isinstance(template_wrapper, TemplateAwareNodeWrapper)
 
         # The wrapper should have the template params stored
-        assert template_wrapper.template_params["template"] == "$user_input"
-        assert template_wrapper.template_params["number"] == "$count"
+        assert template_wrapper.template_params["template"] == "${user_input}"
+        assert template_wrapper.template_params["number"] == "${count}"
 
     def test_compilation_with_json_string_input(self, simple_ir, test_registry):
         """Test compilation accepts JSON string input."""

@@ -215,7 +215,7 @@ class TemplateValidator:
         """
         # Missing output key
         if len(parts) == 1:
-            return f"Invalid template ${template} - node ID '{base_var}' requires an output key (e.g., ${base_var}.output_key)"
+            return f"Invalid template ${{{template}}} - node ID '{base_var}' requires an output key (e.g., ${{{base_var}}}.output_key)"
 
         output_key = parts[1]
 
@@ -242,26 +242,24 @@ class TemplateValidator:
             Error message for path template issues
         """
         if base_var in available_params:
-            return f"Template path ${template} cannot be validated - initial_params values are runtime-dependent"
+            return f"Template path ${{{template}}} cannot be validated - initial_params values are runtime-dependent"
 
         # Check if base variable is a declared input
         input_desc = TemplateValidator._get_input_description(base_var, workflow_ir)
         path_component = template[len(base_var) + 1 :]
 
         if input_desc:
-            return (
-                f"Required input '${base_var}' not provided{input_desc} - attempted to access path '{path_component}'"
-            )
+            return f"Required input '${{{base_var}}}' not provided{input_desc} - attempted to access path '{path_component}'"
 
         enable_namespacing = workflow_ir.get("enable_namespacing", True)
         if enable_namespacing:
             return (
-                f"Template variable ${template} has no valid source - "
-                f"'${base_var}' is neither a workflow input nor a node ID in this workflow"
+                f"Template variable ${{{template}}} has no valid source - "
+                f"'${{{base_var}}}' is neither a workflow input nor a node ID in this workflow"
             )
         else:
             return (
-                f"Template variable ${template} has no valid source - "
+                f"Template variable ${{{template}}} has no valid source - "
                 f"not provided in initial_params and path '{path_component}' "
                 f"not found in outputs from any node in the workflow"
             )
@@ -280,7 +278,7 @@ class TemplateValidator:
         input_desc = TemplateValidator._get_input_description(template, workflow_ir)
 
         if input_desc:
-            return f"Required input '${template}' not provided{input_desc}"
+            return f"Required input '${{{template}}}' not provided{input_desc}"
 
         # Check if it might be a node ID used incorrectly
         enable_namespacing = workflow_ir.get("enable_namespacing", True)
@@ -288,12 +286,12 @@ class TemplateValidator:
             node_ids = TemplateValidator._get_node_ids(workflow_ir)
             if template in node_ids:
                 return (
-                    f"Invalid template ${template} - this is a node ID. "
-                    f"To reference node outputs, use ${template}.output_key format"
+                    f"Invalid template ${{{template}}} - this is a node ID. "
+                    f"To reference node outputs, use ${{{template}}}.output_key format"
                 )
 
         return (
-            f"Template variable ${template} has no valid source - "
+            f"Template variable ${{{template}}} has no valid source - "
             f"not provided in initial_params and not written by any node"
         )
 
@@ -335,7 +333,7 @@ class TemplateValidator:
         return TemplateValidator._create_simple_template_error(template, workflow_ir)
 
     # More permissive pattern to catch malformed templates for validation
-    _PERMISSIVE_PATTERN = re.compile(r"\$([a-zA-Z_]\w*(?:\.\w*)*)")
+    _PERMISSIVE_PATTERN = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:\.[\w-]*)*)\}")
 
     @staticmethod
     def _extract_node_outputs(workflow_ir: dict[str, Any], registry: Registry) -> dict[str, Any]:
@@ -408,8 +406,8 @@ class TemplateValidator:
         """Validate a template path exists in available sources.
 
         With namespacing enabled, we need to distinguish between:
-        1. Node output references (e.g., $node_id.output_key)
-        2. Root-level references (e.g., $input_file or $config.nested.path)
+        1. Node output references (e.g., ${node_id.output_key})
+        2. Root-level references (e.g., ${input_file} or ${config.nested.path})
 
         Args:
             template: Template string like "var" or "var.field.subfield"

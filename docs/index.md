@@ -82,7 +82,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 - Avoid wrapper classes around pocketflow - use directly
 - "Type flags; engine decides" principle for CLI resolution
 - General-purpose LLM node is "smart exception" to prevent proliferation
-- Template resolution enables sophisticated $variable workflows
+- Template resolution enables sophisticated ${variable} workflows
 
 **When to Use**: Starting implementation, designing components, MVP feature decisions, understanding system flow
 
@@ -144,7 +144,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 **Key Contents**:
 - Shared store vs params usage guidelines
-- Template variable resolution (`$variable` syntax)
+- Template variable resolution (`${variable}` syntax)
 - Node autonomy principle and isolation rules
 - NodeAwareSharedStore proxy pattern
 - Progressive complexity examples
@@ -315,7 +315,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 - Integration with shared store and proxy
 
 **Critical Insights**:
-- Template-driven approach: LLM generates `$variable` placeholders
+- Template-driven approach: LLM generates `${variable}` placeholders
 - Planner is normal pocketflow flow, not hard-coded
 - Both paths use same infrastructure
 - Critical stages: Intent → Template → Selection → Validation

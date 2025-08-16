@@ -111,9 +111,9 @@ This document provides a comprehensive inventory of all components and subsystem
 
 - **Purpose**: Support both CLI and natural language input with template string composition
 - **Components**:
-  - CLI syntax parser with $variable detection (build first)
+  - CLI syntax parser with ${variable} detection (build first)
   - Template string composition system for populating all node inputs
-  - Variable dependency tracking ($variable → shared store mapping)
+  - Variable dependency tracking (${variable} → shared store mapping)
   - Missing input detection and user prompting (for first nodes expecting user input)
   - Natural language processing (build after CLI + registry + metadata)
   - Node existence validation
@@ -130,7 +130,7 @@ This document provides a comprehensive inventory of all components and subsystem
 - **Components**:
   - JSON schema validation
   - Node interface compatibility
-  - Template variable dependency validation ($variable resolution checking)
+  - Template variable dependency validation (${variable} resolution checking)
   - DAG structure validation (no cycles)
   - Parameter type checking
   - Execution config validation
@@ -151,10 +151,10 @@ This document provides a comprehensive inventory of all components and subsystem
 
 #### 4.4 Template Resolution System
 
-- **Purpose**: Resolve $variable references to shared store values at runtime
+- **Purpose**: Resolve ${variable} references to shared store values at runtime
 - **Components**:
-  - Template string parser for $variable detection
-  - Variable dependency tracker ($variable → shared store key mapping)
+  - Template string parser for ${variable} detection
+  - Variable dependency tracker (${variable} → shared store key mapping)
   - Runtime variable substitution engine
   - Missing variable detection and user prompting (for first nodes)
   - Template validation and error reporting

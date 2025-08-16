@@ -28,7 +28,7 @@
       "id": "read",
       "type": "read-file",
       "params": {
-        "file_path": "$file_path"
+        "file_path": "${file_path}"
       }
     },
     {
@@ -37,7 +37,7 @@
       "params": {
         "workflow_ref": "./text_analyzer.json",
         "param_mapping": {
-          "text": "$content"
+          "text": "${content}"
         },
         "output_mapping": {
           "summary": "text_summary",
@@ -49,8 +49,8 @@
       "id": "save",
       "type": "write-file",
       "params": {
-        "file_path": "$output_file",
-        "content": "Analysis Results:\n\nSummary: $text_summary\nWord Count: $words"
+        "file_path": "${output_file}",
+        "content": "Analysis Results:\n\nSummary: ${text_summary}\nWord Count: ${words}"
       }
     }
   ],

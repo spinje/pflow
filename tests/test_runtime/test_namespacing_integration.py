@@ -15,12 +15,12 @@ def test_namespacing_with_workflow_inputs(tmp_path):
         "ir_version": "0.1.0",
         # namespacing is now enabled by default
         "nodes": [
-            {"id": "process1", "type": "echo", "params": {"data": "$input_data"}},
+            {"id": "process1", "type": "echo", "params": {"data": "${input_data}"}},
             {
                 "id": "process2",
                 "type": "echo",
                 "params": {
-                    "data": "$process1.data"  # Reference first node's output
+                    "data": "${process1.data}"  # Reference first node's output
                 },
             },
         ],
@@ -98,9 +98,9 @@ def test_namespacing_prevents_collisions_with_templates(tmp_path):
     workflow = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "api1", "type": "api-call", "params": {"url": "$url1"}},
-            {"id": "api2", "type": "api-call", "params": {"url": "$url2"}},
-            {"id": "combine", "type": "combine", "params": {"data1": "$api1.response", "data2": "$api2.response"}},
+            {"id": "api1", "type": "api-call", "params": {"url": "${url1}"}},
+            {"id": "api2", "type": "api-call", "params": {"url": "${url2}"}},
+            {"id": "combine", "type": "combine", "params": {"data1": "${api1.response}", "data2": "${api2.response}"}},
         ],
         "edges": [{"from": "api1", "to": "api2"}, {"from": "api2", "to": "combine"}],
         "inputs": {

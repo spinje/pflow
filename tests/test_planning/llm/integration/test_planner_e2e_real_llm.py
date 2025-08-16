@@ -44,11 +44,11 @@ class TestPlannerE2ERealLLM:
             "ir": {
                 "ir_version": "0.1.0",
                 "nodes": [
-                    {"id": "reader", "type": "read-file", "params": {"file_path": "$input_file"}},
+                    {"id": "reader", "type": "read-file", "params": {"file_path": "${input_file}"}},
                     {
                         "id": "analyzer",
                         "type": "llm",
-                        "params": {"prompt": "Analyze this content: $content", "model": "anthropic/claude-3-haiku"},
+                        "params": {"prompt": "Analyze this content: ${content}", "model": "anthropic/claude-3-haiku"},
                     },
                 ],
                 "edges": [{"from": "reader", "to": "analyzer", "action": "default"}],
@@ -189,7 +189,7 @@ class TestPlannerE2ERealLLM:
                     {
                         "id": "processor",
                         "type": "data-processor",
-                        "params": {"input": "$data_source", "output": "$result_file"},
+                        "params": {"input": "${data_source}", "output": "${result_file}"},
                     }
                 ],
                 "edges": [],

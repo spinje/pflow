@@ -39,7 +39,7 @@ Add `"enable_namespacing": true` to your workflow IR:
     {"id": "fetch1", "type": "github-get-issue", "params": {"issue": "123"}},
     {"id": "fetch2", "type": "github-get-issue", "params": {"issue": "456"}},
     {"id": "compare", "type": "llm", "params": {
-      "prompt": "Compare:\n1: $fetch1.issue_data.title\n2: $fetch2.issue_data.title"
+      "prompt": "Compare:\n1: ${fetch1.issue_data.title}\n2: ${fetch2.issue_data.title}"
     }}
   ],
   "edges": [
@@ -51,10 +51,10 @@ Add `"enable_namespacing": true` to your workflow IR:
 
 ## Template Variable Syntax
 
-With namespacing, reference node outputs using the pattern `$node_id.output_key`:
-- `$fetch1.issue_data` - Access fetch1's issue_data
-- `$fetch1.issue_data.title` - Access nested fields
-- `$fetch2.issue_data.user.login` - Deep path access
+With namespacing, reference node outputs using the pattern `${node_id.output_key}`:
+- `${fetch1.issue_data}` - Access fetch1's issue_data
+- `${fetch1.issue_data.title}` - Access nested fields
+- `${fetch2.issue_data.user.login}` - Deep path access
 
 ## How It Works
 
@@ -87,7 +87,7 @@ With namespacing, reference node outputs using the pattern `$node_id.output_key`
     {"id": "github", "type": "api-call", "params": {"url": "https://api.github.com/..."}},
     {"id": "gitlab", "type": "api-call", "params": {"url": "https://gitlab.com/api/..."}},
     {"id": "analyze", "type": "llm", "params": {
-      "prompt": "Compare GitHub ($github.response) vs GitLab ($gitlab.response)"
+      "prompt": "Compare GitHub (${github.response}) vs GitLab (${gitlab.response})"
     }}
   ]
 }
@@ -124,8 +124,8 @@ To migrate existing workflows to use namespacing:
 
 1. Add `"enable_namespacing": true` to the workflow IR
 2. Update template variables to use node ID prefixes:
-   - Change: `$issue_data`
-   - To: `$node_id.issue_data`
+   - Change: `${issue_data}`
+   - To: `${node_id.issue_data}`
 3. Test the workflow to ensure correct data flow
 
 ## Technical Implementation
@@ -134,7 +134,7 @@ The feature is implemented through:
 - `NamespacedSharedStore`: A proxy that redirects writes to namespaced locations
 - `NamespacedNodeWrapper`: Wraps nodes to provide namespaced store access
 - Compiler integration: Automatically applies wrapping when enabled
-- Template resolver: Already supports path-based access (`$node.key`)
+- Template resolver: Already supports path-based access (`${node.key}`)
 
 ## When to Use Namespacing
 

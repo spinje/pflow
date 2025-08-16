@@ -166,14 +166,14 @@ class TestExampleContent:
         return Path("examples")
 
     def test_template_variables_contains_dollar_syntax(self, examples_dir):
-        """Verify template variables example actually uses $variable syntax."""
+        """Verify template variables example actually uses ${variable} syntax."""
         with open(examples_dir / "core/template-variables.json") as f:
             content = f.read()
 
         # Check for multiple template variables
-        assert "$api_endpoint" in content
-        assert "$api_token" in content
-        assert "$recipient_email" in content
+        assert "${api_endpoint}" in content
+        assert "${api_token}" in content
+        assert "${recipient_email}" in content
 
     def test_error_handling_has_action_edges(self, examples_dir):
         """Verify error handling example uses action-based routing."""

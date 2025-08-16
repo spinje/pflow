@@ -70,7 +70,7 @@ AI-assisted development workflows suffer from:
 ```markdown
 /project:fix-github-issue 1234
 
-Please analyze and fix the GitHub issue: $ARGUMENTS.
+Please analyze and fix the GitHub issue: ${ARGUMENTS}.
 
 Follow these steps:
 1. Use `gh issue view` to get the issue details
@@ -97,11 +97,11 @@ claude-code --prompt="<instructions>
   4. Write and run tests to verify the fix
   5. Return a report of what you have done as output
 </instructions>
-This is the issue: $issue" >> \
-llm --prompt="Write a descriptive commit message for these changes: $code_report" >> \
-git-commit --message="$commit_message" >> \
+This is the issue: ${issue}" >> \
+llm --prompt="Write a descriptive commit message for these changes: ${code_report}" >> \
+git-commit --message="${commit_message}" >> \
 git-push >> \
-github-create-pr --title="Fix: $issue_title" --body="$code_report"
+github-create-pr --title="Fix: ${issue_title}" --body="${code_report}"
 
 # Saved as 'fix-issue' for instant reuse:
 pflow fix-issue --issue=5678  # 20-50s vs 50-90s, minimal tokens
@@ -254,7 +254,7 @@ pflow read-file --path=data.txt => analyze => write report
 - **Shared Store Validation** (Task 6): Simple validation functions for the dict pattern
 - **Metadata Extraction** (Task 9): Parse docstrings to understand node interfaces
 - **NodeAwareSharedStore Proxy** (Task 10): Transparent key mapping with validation
-- **Template Substitution** (Task 5): Planner-internal `$variable` replacement utility
+- **Template Substitution** (Task 5): Planner-internal `${variable}` replacement utility
 
 **Success Criteria**:
 ```bash
@@ -405,7 +405,7 @@ pflow "analyze server.log and create analysis"
 **Phase 2: Node Ecosystem & CLI Polish**
 - [x] All platform nodes implemented with test coverage
 - [x] Two-tier AI approach works (Claude Code + general LLM)
-- [x] Template variables resolve in planner (`$variable` → `shared["variable"]`)
+- [x] Template variables resolve in planner (`${variable}` → `shared["variable"]`)
 - [x] Registry commands provide rich node details
 - [x] Node proxy pattern handles basic key mapping
 

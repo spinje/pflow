@@ -64,8 +64,8 @@ def test_workflow():
         "ir": {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "n1", "type": "read-file", "params": {"file_path": "$input_file"}},
-                {"id": "n2", "type": "llm", "params": {"prompt": "Process: $content"}},
+                {"id": "n1", "type": "read-file", "params": {"file_path": "${input_file}"}},
+                {"id": "n2", "type": "llm", "params": {"prompt": "Process: ${content}"}},
             ],
             "edges": [{"from": "n1", "to": "n2"}],
         },

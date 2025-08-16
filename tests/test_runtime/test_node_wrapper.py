@@ -62,11 +62,11 @@ class TestParameterSeparation:
         node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
-        params = {"url": "$endpoint", "format": "json", "message": "Processing $count items"}
+        params = {"url": "${endpoint}", "format": "json", "message": "Processing ${count} items"}
 
         wrapper.set_params(params)
 
-        assert wrapper.template_params == {"url": "$endpoint", "message": "Processing $count items"}
+        assert wrapper.template_params == {"url": "${endpoint}", "message": "Processing ${count} items"}
         assert wrapper.static_params == {"format": "json"}
 
         # Inner node should only have static params initially
@@ -89,7 +89,7 @@ class TestParameterSeparation:
         node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
-        params = {"url": "$endpoint", "token": "$auth_token", "id": "$item_id"}
+        params = {"url": "${endpoint}", "token": "${auth_token}", "id": "${item_id}"}
         wrapper.set_params(params)
 
         assert wrapper.template_params == params
@@ -102,13 +102,13 @@ class TestParameterSeparation:
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         # First set
-        wrapper.set_params({"a": "$var1", "b": "static1"})
-        assert wrapper.template_params == {"a": "$var1"}
+        wrapper.set_params({"a": "${var1}", "b": "static1"})
+        assert wrapper.template_params == {"a": "${var1}"}
         assert wrapper.static_params == {"b": "static1"}
 
         # Second set (should replace)
-        wrapper.set_params({"c": "$var2", "d": "static2"})
-        assert wrapper.template_params == {"c": "$var2"}
+        wrapper.set_params({"c": "${var2}", "d": "static2"})
+        assert wrapper.template_params == {"c": "${var2}"}
         assert wrapper.static_params == {"d": "static2"}
 
 
@@ -138,7 +138,7 @@ class TestTemplateResolution:
         initial_params = {"endpoint": "https://api.example.com"}
         wrapper = TemplateAwareNodeWrapper(node, "test_node", initial_params)
 
-        wrapper.set_params({"url": "$endpoint", "format": "json"})
+        wrapper.set_params({"url": "${endpoint}", "format": "json"})
 
         shared = {}
         result = wrapper._run(shared)
@@ -153,7 +153,7 @@ class TestTemplateResolution:
         node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
-        wrapper.set_params({"message": "Processing $item_name"})
+        wrapper.set_params({"message": "Processing ${item_name}"})
 
         shared = {"item_name": "Document.pdf"}
         result = wrapper._run(shared)
@@ -167,7 +167,7 @@ class TestTemplateResolution:
         initial_params = {"count": "100"}  # From planner
         wrapper = TemplateAwareNodeWrapper(node, "test_node", initial_params)
 
-        wrapper.set_params({"message": "Count: $count"})
+        wrapper.set_params({"message": "Count: ${count}"})
 
         shared = {"count": "50"}  # Different value in shared
         result = wrapper._run(shared)
@@ -181,7 +181,7 @@ class TestTemplateResolution:
         node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
-        wrapper.set_params({"title": "$video.title", "author": "$video.metadata.author"})
+        wrapper.set_params({"title": "${video.title}", "author": "${video.metadata.author}"})
 
         shared = {"video": {"title": "Python Tutorial", "metadata": {"author": "TechTeacher", "duration": 3600}}}
 
@@ -196,21 +196,21 @@ class TestTemplateResolution:
         node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
-        wrapper.set_params({"found": "$existing", "missing": "$undefined"})
+        wrapper.set_params({"found": "${existing}", "missing": "${undefined}"})
 
         shared = {"existing": "value"}
         result = wrapper._run(shared)
 
         assert result == "default"
         assert "'found': 'value'" in shared["result"]
-        assert "'missing': '$undefined'" in shared["result"]
+        assert "'missing': '${undefined}'" in shared["result"]
 
     def test_params_restored_after_execution(self):
         """Test that original params are restored after execution."""
         node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node", {"var": "resolved"})
 
-        wrapper.set_params({"param": "$var"})
+        wrapper.set_params({"param": "${var}"})
 
         # Check initial state
         assert node.params == {}
@@ -281,8 +281,8 @@ class TestComplexScenarios:
         wrapper = TemplateAwareNodeWrapper(node, "github_node", initial_params)
 
         wrapper.set_params({
-            "message": "Working on $repo issue #$issue",
-            "url": "https://github.com/$repo/issues/$issue",
+            "message": "Working on ${repo} issue #${issue}",
+            "url": "https://github.com/${repo}/issues/${issue}",
         })
 
         shared = {"status": "in_progress"}  # Additional shared data
@@ -298,8 +298,8 @@ class TestComplexScenarios:
         wrapper = TemplateAwareNodeWrapper(node, "test", {"video_id": "xyz123"})
 
         wrapper.set_params({
-            "id": "$video_id",  # Complete value
-            "message": "Processing video $video_id",  # Embedded in string
+            "id": "${video_id}",  # Complete value
+            "message": "Processing video ${video_id}",  # Embedded in string
         })
 
         shared = {}
@@ -315,7 +315,7 @@ class TestComplexScenarios:
         node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test")
 
-        wrapper.set_params({"none_val": "Value: $none", "zero_val": "Count: $zero", "bool_val": "Flag: $flag"})
+        wrapper.set_params({"none_val": "Value: ${none}", "zero_val": "Count: ${zero}", "bool_val": "Flag: ${flag}"})
 
         shared = {"none": None, "zero": 0, "flag": False}
 
@@ -353,10 +353,10 @@ class TestErrorHandling:
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         # Mix of types including non-strings
-        params = {"string": "$var", "number": 42, "boolean": True, "list": [1, 2, 3], "dict": {"key": "value"}}
+        params = {"string": "${var}", "number": 42, "boolean": True, "list": [1, 2, 3], "dict": {"key": "value"}}
 
         wrapper.set_params(params)
 
         # Only string should be in template_params
-        assert wrapper.template_params == {"string": "$var"}
+        assert wrapper.template_params == {"string": "${var}"}
         assert len(wrapper.static_params) == 4

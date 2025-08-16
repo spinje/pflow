@@ -7,7 +7,7 @@
       "params": {
         "workflow_ref": "examples/interfaces/text_analyzer.json",
         "param_mapping": {
-          "text": "$stdin",
+          "text": "${stdin}",
           "language": "en",
           "max_length": 100
         }

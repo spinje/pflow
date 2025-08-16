@@ -87,7 +87,7 @@ The planner operates through a **validation-first approach**, performing linting
 |---|---|---|
 | **A. Node/Flow Discovery** | Extract metadata JSON from available Python classes. | Registry of nodes/flows with natural language descriptions. |
 | **B. Intent Analysis & Template Design** | **Analyze user intent and design template-driven workflow structure.** | **Template variables and workflow architecture design.** |
-| **C. Template String Composition** | **Generate template strings that populate all node inputs with static text and $variable references.** | **Complete input templates with proper variable dependencies.** |
+| **C. Template String Composition** | **Generate template strings that populate all node inputs with static text and ${variable} references.** | **Complete input templates with proper variable dependencies.** |
 | **D. Parameter Value Creation** | **Generate appropriate parameter values based on workflow context.** | **Context-specific parameter assignments and defaults.** |
 | **E. LLM Selection & Template Mapping** | Use Claude Sonnet 4 to choose nodes and **create template variable mappings**. | Selected building blocks with **template integration**. |
 | **F. Flow Structure Generation** | Create node graph with **template-driven sequencing**. | Structural IR with **template variables and data flow**. |
@@ -106,7 +106,7 @@ The planner operates through a **validation-first approach**, performing linting
 | **A. Syntax Parsing** | Parse CLI pipe syntax and **detect template variables**. | Node sequence + parameter extraction + **template analysis**. |
 | **B. Template Variable Analysis** | **Identify and validate template variable patterns and dependencies.** See [Template Variables](../core-concepts/shared-store.md#template-variable-resolution). | **Template variable dependency graph and resolution order.** |
 | **C. Node Validation** | Verify all referenced nodes exist in registry. | Pass → continue, Fail → abort with suggestions. |
-| **D. Template String Resolution** | **Resolve template strings for all node inputs, ensuring $variables map to available shared store values.** See [Template Variable Resolution](../core-concepts/shared-store.md#template-variable-resolution). | **Fully populated node input templates with validated dependencies.** |
+| **D. Template String Resolution** | **Resolve template strings for all node inputs, ensuring ${variables} map to available shared store values.** See [Template Variable Resolution](../core-concepts/shared-store.md#template-variable-resolution). | **Fully populated node input templates with validated dependencies.** |
 | **E. Structural Validation** | Lint action paths, reachability, parameter compatibility, **template resolution order**. | Pass → continue, Fail → abort with diagnostics. |
 | **F. Shared Store Modeling** | Analyze node interfaces, create shared store schema, **template variable tracking**. | Compatible shared store interface with **template support**. |
 | **G. Mapping Generation** | Detect interface mismatches, generate mappings, **template variable mappings**. | Optional mappings for node compatibility + **template resolution**. |
@@ -306,8 +306,8 @@ The planner leverages LLM capabilities for **template string composition, shared
 
 **Core Planning Process:**
 1. **Node Input Analysis**: Examine each node's metadata to identify all required shared store inputs
-2. **Template String Generation**: Create strings that populate node inputs, incorporating both static text and dynamic $variables
-3. **Variable Dependency Tracking**: Map $variable references to their source nodes' outputs in the shared store
+2. **Template String Generation**: Create strings that populate node inputs, incorporating both static text and dynamic ${variables}
+3. **Variable Dependency Tracking**: Map ${variable} references to their source nodes' outputs in the shared store
 4. **Parameter Value Assignment**: Generate context-appropriate parameter values for node behavior
 5. **Flow Validation**: Ensure all template variables can be resolved through the workflow execution order
 
@@ -321,20 +321,20 @@ The planner leverages LLM capabilities for **template string composition, shared
 4. Write and run tests to verify the fix
 5. Return a report of what you have done as output
 </instructions>
-This is the issue: $issue"
+This is the issue: ${issue}"
 
 # For llm node expecting shared["prompt"]:
-"Write a descriptive commit message for these changes: $code_report"
+"Write a descriptive commit message for these changes: ${code_report}"
 
 # For git-commit node expecting shared["message"]:
-"$commit_message"
+"${commit_message}"
 ```
 
 **Variable Flow Management:**
-- **Dependency Resolution**: `$issue` → `shared["issue"]` from github-get-issue output
-- **Multi-Consumer Variables**: `$code_report` used by both llm and github-create-pr nodes
+- **Dependency Resolution**: `${issue}` → `shared["issue"]` from github-get-issue output
+- **Multi-Consumer Variables**: `${code_report}` used by both llm and github-create-pr nodes
 - **Runtime Substitution**: Template strings resolved to actual values during execution. See [Template Variable Resolution](../core-concepts/shared-store.md#template-variable-resolution)
-- **Validation**: Ensure all $variables have corresponding sources in the workflow
+- **Validation**: Ensure all ${variables} have corresponding sources in the workflow
 
 **Discovery Enhancement:**
 - LLM receives flow descriptions as context during node/flow selection
@@ -370,20 +370,20 @@ When generation is required, the planner uses **Claude Sonnet 4** (claude-sonnet
   "workflow_type": "template_string_composition",
   "node_input_templates": {
     "claude-code": {
-      "prompt": "<instructions>\n1. Understand the problem described in the issue\n2. Search the codebase for relevant files\n3. Implement the necessary changes to fix the issue\n4. Write and run tests to verify the fix\n5. Return a report of what you have done as output\n</instructions>\nThis is the issue: $issue",
+      "prompt": "<instructions>\n1. Understand the problem described in the issue\n2. Search the codebase for relevant files\n3. Implement the necessary changes to fix the issue\n4. Write and run tests to verify the fix\n5. Return a report of what you have done as output\n</instructions>\nThis is the issue: ${issue}",
       "dependencies": ["issue"]
     },
     "llm": {
-      "prompt": "Write a descriptive commit message for these changes: $code_report",
+      "prompt": "Write a descriptive commit message for these changes: ${code_report}",
       "dependencies": ["code_report"]
     },
     "git-commit": {
-      "message": "$commit_message",
+      "message": "${commit_message}",
       "dependencies": ["commit_message"]
     },
     "github-create-pr": {
-      "title": "Fix: $issue_title",
-      "body": "$code_report",
+      "title": "Fix: ${issue_title}",
+      "body": "${code_report}",
       "dependencies": ["issue_title", "code_report"]
     }
   },
@@ -412,10 +412,10 @@ When generation is required, the planner uses **Claude Sonnet 4** (claude-sonnet
 
 #### Enabling "Plan Once, Run Forever"
 
-Template variables (like `$issue_number`, `$file_content`) are preserved in the JSON IR to enable workflow reusability. They are resolved at runtime when the workflow executes, allowing the same workflow to run with different parameters.
+Template variables (like `${issue_number}`, `${file_content}`) are preserved in the JSON IR to enable workflow reusability. They are resolved at runtime when the workflow executes, allowing the same workflow to run with different parameters.
 
 **How it works**:
-1. Planner generates workflows with template variables preserved: `$issue_data`
+1. Planner generates workflows with template variables preserved: `${issue_data}`
 2. Template variables remain in the saved JSON IR
 3. Runtime resolves variables from CLI parameters or shared store values
 4. Same workflow can execute with different values each time
@@ -426,13 +426,13 @@ Template variables (like `$issue_number`, `$file_content`) are preserved in the 
 nodes:
   - id: analyze
     params:
-      prompt: "Analyze this issue: $issue_data"
+      prompt: "Analyze this issue: ${issue_data}"
 
 # Runtime execution 1:
-pflow fix-issue --issue=1234  # $issue_data → "1234"
+pflow fix-issue --issue=1234  # ${issue_data} → "1234"
 
 # Runtime execution 2:
-pflow fix-issue --issue=5678  # $issue_data → "5678"
+pflow fix-issue --issue=5678  # ${issue_data} → "5678"
 ```
 
 This enables the core value proposition where workflows are planned once and reused with different parameters indefinitely.
@@ -653,7 +653,7 @@ elif user_intent == "technical_summary":
 The planner generates JSON IR with template variable support. For complete IR schema definition and validation rules, see [Schemas](../core-concepts/schemas.md#document-envelope-flow-ir).
 
 **Template-Specific Features**:
-- `input_templates`: Node inputs with `$variable` placeholders
+- `input_templates`: Node inputs with `${variable}` placeholders
 - `template_dependencies`: Variables required for resolution
 - `variable_resolution`: Maps variables to node outputs
 
@@ -776,7 +776,7 @@ The planner's transparent generation process serves as an **educational scaffold
 pflow "summarize this youtube video"
 
 # Generated Output (Structure Revealed)
-yt-transcript --url $VIDEO => llm --prompt="Summarize this transcript" --temperature=0.7
+yt-transcript --url ${VIDEO} => llm --prompt="Summarize this transcript" --temperature=0.7
 
 # User Learning Opportunity
 # ✓ Sees video → transcript → summary decomposition

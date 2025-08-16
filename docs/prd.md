@@ -596,12 +596,12 @@ CLI flags use **natural, intuitive names** that match human expectations:
 
 ```bash
 # Multi-stage pipeline
-pflow yt-transcript --url=$VIDEO => \
+pflow yt-transcript --url=${VIDEO} => \
       llm --prompt="Summarize this transcript" --temperature=0.7 => \
       write-file --path=summary.md
 
 # Simple sequential processing
-pflow read-file --path=$FILE --max-retries=3 => \
+pflow read-file --path=${FILE} --max-retries=3 => \
       llm --prompt="Extract key points" => \
       write-file --path=summary.txt
 ```
@@ -610,7 +610,7 @@ pflow read-file --path=$FILE --max-retries=3 => \
 
 ```bash
 # Reference pre-built flows by name
-pflow video-summary-pipeline --url=$VIDEO => format-report
+pflow video-summary-pipeline --url=${VIDEO} => format-report
 
 # Flow composition
 pflow my-data-pipeline => analysis-flow => reporting-flow
@@ -679,7 +679,7 @@ pflow summarize-text --temperature=0.9 --max-tokens=150
 - **Examples**: `--max-retries`, `--wait`, `--timeout`, `--use-cache`
 
 ```bash
-pflow fetch-url --url=$URL --max-retries=3 --wait=1.0 --use-cache
+pflow fetch-url --url=${URL} --max-retries=3 --wait=1.0 --use-cache
 # node.execution = {"max_retries": 3, "wait": 1.0, "use_cache": true}
 # Only valid for @flow_safe nodes (cache/retry eligibility enforced)
 ```
@@ -1409,7 +1409,7 @@ pflow mcp-weather-get --location="Stockholm" --units=metric => \
 echo "This is some text to be summarized." | pflow summarize-text --temperature=0.6
 
 # Parameter experimentation
-pflow yt-transcript --url=$VIDEO --language=es => \
+pflow yt-transcript --url=${VIDEO} --language=es => \
       translate-text --target=en => \
       summarize-text --temperature=0.9
 ```
@@ -1518,7 +1518,7 @@ pflow analyze-content => \
       merge-results
 
 # Parallel execution for independent operations
-pflow parallel-fetch --urls=$URL_LIST => merge-data => analyze-trends
+pflow parallel-fetch --urls=${URL_LIST} => merge-data => analyze-trends
 ```
 
 **Flow Marketplace Integration (Future):**

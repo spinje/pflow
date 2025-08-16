@@ -83,7 +83,7 @@ def test_namespacing_prevents_collisions(tmp_path):
             "nodes": [
                 {"id": "node1", "type": "test-output", "params": {"value": "first"}},
                 {"id": "node2", "type": "test-output", "params": {"value": "second"}},
-                {"id": "reader", "type": "test-reader", "params": {"output": "$node1.output"}},
+                {"id": "reader", "type": "test-reader", "params": {"output": "${node1.output}"}},
             ],
             "edges": [
                 {"from": "node1", "to": "node2"},

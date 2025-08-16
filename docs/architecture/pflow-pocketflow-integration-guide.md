@@ -114,7 +114,7 @@ validate_shared_store(shared)
 
 ```python
 def resolve_template(text, shared):
-    """Replace $variables with shared store values."""
+    """Replace ${variables} with shared store values."""
     import re
     def replacer(match):
         key = match.group(1)
@@ -123,7 +123,7 @@ def resolve_template(text, shared):
     return re.sub(r'\$(\w+)', replacer, text)
 
 # Usage:
-prompt = "Analyze this file: $content"
+prompt = "Analyze this file: ${content}"
 resolved = resolve_template(prompt, {"content": "file data"})
 # Result: "Analyze this file: file data"
 ```
@@ -228,8 +228,8 @@ def scan_for_nodes(directory):
 # LLM output (JSON IR):
 {
     "nodes": [
-        {"id": "n1", "type": "read-file", "params": {"file_path": "$input_file"}},
-        {"id": "n2", "type": "llm", "params": {"prompt": "Summarize: $content"}}
+        {"id": "n1", "type": "read-file", "params": {"file_path": "${input_file}"}},
+        {"id": "n2", "type": "llm", "params": {"prompt": "Summarize: ${content}"}}
     ],
     "edges": [{"from": "n1", "to": "n2"}],
     "start_node": "n1"

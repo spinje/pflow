@@ -51,12 +51,12 @@ class TestNorthStarWorkflowDiscovery:
                         {
                             "id": "list-issues",
                             "type": "github-list-issues",
-                            "params": {"state": "closed", "limit": "$limit"},
+                            "params": {"state": "closed", "limit": "${limit}"},
                         },
                         {
                             "id": "generate",
                             "type": "llm",
-                            "params": {"prompt": "Generate a CHANGELOG.md entry from these issues: $issues"},
+                            "params": {"prompt": "Generate a CHANGELOG.md entry from these issues: ${issues}"},
                         },
                         {"id": "write", "type": "write-file", "params": {"file_path": "CHANGELOG.md"}},
                         {"id": "commit", "type": "git-commit", "params": {"message": "Update changelog for release"}},
@@ -92,7 +92,7 @@ class TestNorthStarWorkflowDiscovery:
                         {
                             "id": "analyze",
                             "type": "llm",
-                            "params": {"prompt": "Categorize these issues by priority and type: $issues"},
+                            "params": {"prompt": "Categorize these issues by priority and type: ${issues}"},
                         },
                         {"id": "write", "type": "write-file", "params": {"file_path": "triage-report.md"}},
                         {
@@ -127,7 +127,7 @@ class TestNorthStarWorkflowDiscovery:
                             "id": "generate",
                             "type": "llm",
                             "params": {
-                                "prompt": "Create release notes in markdown. Group by type (bug/feature/enhancement): $issues"
+                                "prompt": "Create release notes in markdown. Group by type (bug/feature/enhancement): ${issues}"
                             },
                         },
                         {"id": "write", "type": "write-file", "params": {"file_path": "RELEASE_NOTES.md"}},
@@ -164,8 +164,12 @@ class TestNorthStarWorkflowDiscovery:
                 "ir": {
                     "ir_version": "0.1.0",
                     "nodes": [
-                        {"id": "get", "type": "github-get-issue", "params": {"issue": "$issue_number"}},
-                        {"id": "summarize", "type": "llm", "params": {"prompt": "Summarize in 3 bullets: $issue_data"}},
+                        {"id": "get", "type": "github-get-issue", "params": {"issue": "${issue_number}"}},
+                        {
+                            "id": "summarize",
+                            "type": "llm",
+                            "params": {"prompt": "Summarize in 3 bullets: ${issue_data}"},
+                        },
                         {"id": "write", "type": "write-file", "params": {"file_path": "summary.md"}},
                     ],
                     "edges": [
@@ -634,8 +638,8 @@ class TestWorkflowDiscoveryHappyPath:
                         "ir": {
                             "ir_version": "0.1.0",
                             "nodes": [
-                                {"id": "read", "type": "read-file", "params": {"file_path": "$file_path"}},
-                                {"id": "analyze", "type": "llm", "params": {"prompt": "$prompt"}},
+                                {"id": "read", "type": "read-file", "params": {"file_path": "${file_path}"}},
+                                {"id": "analyze", "type": "llm", "params": {"prompt": "${prompt}"}},
                             ],
                             "edges": [{"from": "read", "to": "analyze", "action": "default"}],
                             "start_node": "read",
@@ -656,9 +660,9 @@ class TestWorkflowDiscoveryHappyPath:
                         "ir": {
                             "ir_version": "0.1.0",
                             "nodes": [
-                                {"id": "read", "type": "read-file", "params": {"file_path": "$csv_file"}},
+                                {"id": "read", "type": "read-file", "params": {"file_path": "${csv_file}"}},
                                 {"id": "process", "type": "llm", "params": {"prompt": "Process this CSV data"}},
-                                {"id": "write", "type": "write-file", "params": {"file_path": "$output_file"}},
+                                {"id": "write", "type": "write-file", "params": {"file_path": "${output_file}"}},
                             ],
                             "edges": [
                                 {"from": "read", "to": "process", "action": "default"},
@@ -682,7 +686,7 @@ class TestWorkflowDiscoveryHappyPath:
                         "ir": {
                             "ir_version": "0.1.0",
                             "nodes": [
-                                {"id": "list", "type": "github-list-issues", "params": {"repo": "$repo"}},
+                                {"id": "list", "type": "github-list-issues", "params": {"repo": "${repo}"}},
                                 {"id": "summarize", "type": "llm", "params": {"prompt": "Summarize these issues"}},
                             ],
                             "edges": [{"from": "list", "to": "summarize", "action": "default"}],

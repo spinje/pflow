@@ -71,7 +71,7 @@ class TestEnhancedTemplateErrors:
                 {
                     "id": "fetch",
                     "type": "github-issue",
-                    "params": {"repo": "pflow", "issue_number": "$issue_number"},
+                    "params": {"repo": "pflow", "issue_number": "${issue_number}"},
                 }
             ],
         }
@@ -80,7 +80,7 @@ class TestEnhancedTemplateErrors:
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert errors[0] == "Required input '$issue_number' not provided - GitHub issue number to fix (required)"
+        assert errors[0] == "Required input '${issue_number}' not provided - GitHub issue number to fix (required)"
 
     def test_optional_input_with_default_error(self):
         """Test error message for optional input with default."""
@@ -97,7 +97,7 @@ class TestEnhancedTemplateErrors:
                 {
                     "id": "generate",
                     "type": "llm",
-                    "params": {"prompt": "Generate using $model"},
+                    "params": {"prompt": "Generate using ${model}"},
                 }
             ],
         }
@@ -106,7 +106,9 @@ class TestEnhancedTemplateErrors:
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert errors[0] == "Required input '$model' not provided - LLM model to use (optional, default: gpt-3.5-turbo)"
+        assert (
+            errors[0] == "Required input '${model}' not provided - LLM model to use (optional, default: gpt-3.5-turbo)"
+        )
 
     def test_path_access_on_declared_input_error(self):
         """Test error message when accessing path on declared input."""
@@ -122,7 +124,7 @@ class TestEnhancedTemplateErrors:
                 {
                     "id": "use_config",
                     "type": "llm",
-                    "params": {"prompt": "Using endpoint: $config.endpoint"},
+                    "params": {"prompt": "Using endpoint: ${config.endpoint}"},
                 }
             ],
         }
@@ -131,7 +133,7 @@ class TestEnhancedTemplateErrors:
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert "Required input '$config' not provided - API configuration object (required)" in errors[0]
+        assert "Required input '${config}' not provided - API configuration object (required)" in errors[0]
         assert "attempted to access path 'endpoint'" in errors[0]
 
     def test_undeclared_variable_keeps_original_error(self):
@@ -149,7 +151,7 @@ class TestEnhancedTemplateErrors:
                     "id": "node1",
                     "type": "llm",
                     "params": {
-                        "prompt": "Using $declared_var and $undeclared_var"
+                        "prompt": "Using ${declared_var} and ${undeclared_var}"
                     },  # Use both to avoid unused input error
                 }
             ],
@@ -164,7 +166,7 @@ class TestEnhancedTemplateErrors:
         # Find the error about the undeclared variable
         undeclared_error = next((e for e in errors if "undeclared_var" in e), None)
         assert undeclared_error is not None
-        assert "Template variable $undeclared_var has no valid source" in undeclared_error
+        assert "Template variable ${undeclared_var} has no valid source" in undeclared_error
         assert "not provided in initial_params and not written by any node" in undeclared_error
 
     def test_workflow_without_inputs_field(self):
@@ -175,7 +177,7 @@ class TestEnhancedTemplateErrors:
                 {
                     "id": "node1",
                     "type": "llm",
-                    "params": {"prompt": "Using $some_var"},
+                    "params": {"prompt": "Using ${some_var}"},
                 }
             ],
         }
@@ -184,7 +186,7 @@ class TestEnhancedTemplateErrors:
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert "Template variable $some_var has no valid source" in errors[0]
+        assert "Template variable ${some_var} has no valid source" in errors[0]
 
     def test_multiple_missing_inputs_with_descriptions(self):
         """Test multiple missing inputs with descriptions."""
@@ -205,8 +207,8 @@ class TestEnhancedTemplateErrors:
                     "id": "fetch",
                     "type": "github-issue",
                     "params": {
-                        "repo": "$repo",
-                        "issue_number": "$issue_number",
+                        "repo": "${repo}",
+                        "issue_number": "${issue_number}",
                     },
                 }
             ],
@@ -218,8 +220,8 @@ class TestEnhancedTemplateErrors:
         assert len(errors) == 2
         # Check both errors are present (order not guaranteed)
         error_messages = set(errors)
-        assert "Required input '$repo' not provided - GitHub repository name (required)" in error_messages
-        assert "Required input '$issue_number' not provided - Issue number to process (required)" in error_messages
+        assert "Required input '${repo}' not provided - GitHub repository name (required)" in error_messages
+        assert "Required input '${issue_number}' not provided - Issue number to process (required)" in error_messages
 
     def test_no_description_still_shows_required_status(self):
         """Test that inputs without descriptions still show required status."""
@@ -235,7 +237,7 @@ class TestEnhancedTemplateErrors:
                 {
                     "id": "node1",
                     "type": "llm",
-                    "params": {"prompt": "Using $my_input"},
+                    "params": {"prompt": "Using ${my_input}"},
                 }
             ],
         }
@@ -244,7 +246,7 @@ class TestEnhancedTemplateErrors:
         errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert errors[0] == "Required input '$my_input' not provided - (required)"
+        assert errors[0] == "Required input '${my_input}' not provided - (required)"
 
     def test_provided_inputs_no_error(self):
         """Test that provided inputs don't generate errors."""
@@ -260,7 +262,7 @@ class TestEnhancedTemplateErrors:
                 {
                     "id": "fetch",
                     "type": "github-issue",
-                    "params": {"repo": "pflow", "issue_number": "$issue_number"},
+                    "params": {"repo": "pflow", "issue_number": "${issue_number}"},
                 }
             ],
         }

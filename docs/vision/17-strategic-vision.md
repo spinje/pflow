@@ -80,7 +80,7 @@ Example of planner-generated sophistication:
 ```yaml
 claude-code:
   prompt: "<instructions>
-           1. Analyze issue #$issue_number for root cause
+           1. Analyze issue #${issue_number} for root cause
            2. Search codebase for all affected areas
            3. Consider edge cases and error handling
            4. Implement complete fix with tests
@@ -88,7 +88,7 @@ claude-code:
            6. Document any API changes
            7. Return detailed report of changes
            </instructions>
-           Context: $issue_data"
+           Context: ${issue_data}"
 ```
 
 The planner doesn't just connect nodes - it generates comprehensive instructions that capture years of engineering best practices.
@@ -106,7 +106,7 @@ Good planning enables responses like:
 ### The Business Case That Writes Itself
 
 Traditional AI assistance has a linear cost model:
-- 1 task = $X
+- 1 task = ${X}
 - 1000 tasks = $1000X
 - No economies of scale
 

@@ -42,7 +42,7 @@ The `WorkflowExecutor` is a prime example of a runtime component:
   "params": {
     "workflow_ref": "path/to/workflow.json",
     "param_mapping": {
-      "input": "$data"
+      "input": "${data}"
     }
   }
 }

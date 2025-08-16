@@ -11,19 +11,19 @@ pflow "generate a changelog for version 1.3 from the last 20 closed issues from 
 
 **Generated Workflow**
 ```bash
-github-list-issues --state=$issue-state --limit=$issue-limit >>
-llm --prompt="Generate a CHANGELOG.md entry from these issues: $issues" >>
-write-file --path=versions/$version/CHANGELOG.md >>
-git-checkout --branch="$branch-name" >>
-git-commit --message="Create changelog for version: $version" >>
-github-create-pr --title="Create CHANGELOG.md for version: $version" --base=main --head="$branch-name"
+github-list-issues --state=${issue}-state --limit=${issue}-limit >>
+llm --prompt="Generate a CHANGELOG.md entry from these issues: ${issues}" >>
+write-file --path=versions/${version}/CHANGELOG.md >>
+git-checkout --branch="${branch}-name" >>
+git-commit --message="Create changelog for version: ${version}" >>
+github-create-pr --title="Create CHANGELOG.md for version: ${version}" --base=main --head="${branch}-name"
 ```
 
 Which with template variables from workflow INPUTS resolved would look like this:
 
 ```bash
 github-list-issues --state=closed --limit=20 >>
-llm --prompt="Generate a CHANGELOG.md entry from these issues: $issues" >>
+llm --prompt="Generate a CHANGELOG.md entry from these issues: ${issues}" >>
 write-file --path=versions/1.3/CHANGELOG.md >>
 git-checkout --branch="create-changelog-version-1.3" >>
 git-commit --message="Create changelog for version: 1.3" >>
@@ -40,7 +40,7 @@ pflow "generate a changelog for version 1.4"
 1. **Real Developer Pain Point** - Every project needs changelogs, often done manually
 2. **Complex Enough** - Multiple nodes, data transformation, file I/O, git operations
 3. **Simple Enough** - Linear flow, no branching, clear data pipeline
-4. **Showcases Templates** - `$issues` array, nested access like `$issues[0].title`
+4. **Showcases Templates** - `${issues}` array, nested access like `${issues}[0].title`
 5. **Reusable Value** - Save once, run before every release
 6. **Testable** - Clear input/output, easy to verify success
 
@@ -49,7 +49,7 @@ Can be improved in the future by:
 To further integrate the changelog (not part of the MVP, no current nodes for this):
 
 - `github-get-latest-tag` → Get the latest tag from GitHub to indicate the last version
-- `github-list-issues --since=$latest-tag-date` → List issues since the latest tag
+- `github-list-issues --since=${latest}-tag-date` → List issues since the latest tag
 - `slack-send-message` → Notify #release channel
 - `github-release-create` → Attach changelog to a GitHub Release
 - `create-release-post` → Pipe changelog into a blog template
@@ -61,16 +61,16 @@ To further integrate the changelog (not part of the MVP, no current nodes for th
 First time use:
 
 ```bash
-pflow "get the last 50 merged PRs and closed issues from github and combine the result into a weekly summary of them. THen write the result to reports/week_$week-number_report.md and commit the changes."
+pflow "get the last 50 merged PRs and closed issues from github and combine the result into a weekly summary of them. THen write the result to reports/week_${week}-number_report.md and commit the changes."
 ```
 
 **Generated workflow:**
 ```bash
-github-list-issues --state=closed --limit=50 --since=$since-date >> # Would need --since input
+github-list-issues --state=closed --limit=50 --since=${since}-date >> # Would need --since input
 github-list-prs --state=merged --limit=50 >>  # Would need this node
-llm --prompt="Create weekly summary for week $week-number, Issues: $issues, PRs: $prs" >>
-write-file --path=reports/week_$week-number_report.md >>
-git-commit --message="Add weekly summary for week $week-number"
+llm --prompt="Create weekly summary for week ${week}-number, Issues: ${issues}, PRs: ${prs}" >>
+write-file --path=reports/week_${week}-number_report.md >>
+git-commit --message="Add weekly summary for week ${week}-number"
 ```
 
 Reuse:
@@ -92,9 +92,9 @@ pflow "create a triage report for all open issues by fetching the the last 50 op
 **Generated workflow:**
 ```bash
 github-list-issues --state=open --limit=50 >>
-llm --prompt="Categorize these issues by priority and type: $issues" >>
-write-file --path="$date-triage-report.md" >>
-git-commit --message="Update triage report $date"
+llm --prompt="Categorize these issues by priority and type: ${issues}" >>
+write-file --path="${date}-triage-report.md" >>
+git-commit --message="Update triage report ${date}"
 ```
 
 Reuse:
@@ -117,10 +117,10 @@ pflow "generate release notes from the last 30 closed issues on github, group th
 **Generated workflow:**
 ```bash
 github-list-issues --state=closed --limit=30 >>
-llm --prompt="Create release notes in markdown. Group by type (bug/feature/enhancement): $issues" >>
+llm --prompt="Create release notes in markdown. Group by type (bug/feature/enhancement): ${issues}" >>
 write-file --path=RELEASE_NOTES.md >>
 git-commit --message="Add release notes for upcoming release" >>
-github-create-pr --title="Release notes for version-$date"
+github-create-pr --title="Release notes for version-${date}"
 ```
 
 Reuse:
@@ -150,7 +150,7 @@ pflow "summarize github issue 1234"
 **Generated workflow:**
 ```bash
 github-get-issue --issue=1234 >>
-llm --prompt="Summarize in 3 bullets: $issue_data" >>
+llm --prompt="Summarize in 3 bullets: ${issue_data}" >>
 write-file --path=summary.md
 ```
 

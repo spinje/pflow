@@ -114,7 +114,11 @@ class TestValidIR:
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "writer", "type": "write-file", "params": {"path": "$output_path", "content": "Result: $result"}}
+                {
+                    "id": "writer",
+                    "type": "write-file",
+                    "params": {"path": "${output_path}", "content": "Result: ${result}"},
+                }
             ],
         }
         # Template variables should pass through as regular strings

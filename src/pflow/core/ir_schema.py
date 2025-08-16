@@ -8,7 +8,7 @@ The IR format is designed to be:
 - Human-readable and editable
 - Validated before execution
 - Extensible for future features
-- Compatible with template variables ($variable syntax)
+- Compatible with template variables (${variable} syntax)
 
 Design Decisions:
 - **'type' vs 'registry_id'**: We use 'type' for node identification to keep
@@ -36,9 +36,9 @@ Example usage:
     >>> pipeline = {
     ...     "ir_version": "0.1.0",
     ...     "nodes": [
-    ...         {"id": "read", "type": "read-file", "params": {"path": "$input_file"}},
+    ...         {"id": "read", "type": "read-file", "params": {"path": "${input_file}"}},
     ...         {"id": "proc", "type": "transform", "params": {"format": "json"}},
-    ...         {"id": "save", "type": "write-file", "params": {"path": "$output_file"}}
+    ...         {"id": "save", "type": "write-file", "params": {"path": "${output_file}"}}
     ...     ],
     ...     "edges": [
     ...         {"from": "read", "to": "proc"},

@@ -4,25 +4,25 @@
 
 The current template variable system has a fundamental ambiguity when dots appear in parameter values, particularly in filenames. The parser cannot reliably distinguish between:
 
-1. **Path traversal dots**: `$config.data` accessing a nested field
-2. **Literal dots**: `$filename.json` where `.json` is a file extension
+1. **Path traversal dots**: `${config.data}` accessing a nested field
+2. **Literal dots**: `${filename.json}` where `.json` is a file extension
 
 ### Examples of Ambiguity
 
 ```bash
 # Ambiguous case 1
---path=$config.data.json
+--path=${config.data.json}
 # Is this:
-#   - Variable: $config.data.json (treating 'json' as a nested field)?
-#   - Variable: $config.data with literal '.json' extension?
-#   - Variable: $config with literal '.data.json'?
+#   - Variable: ${config.data.json} (treating 'json' as a nested field)?
+#   - Variable: ${config.data} with literal '.json' extension?
+#   - Variable: ${config} with literal '.data.json'?
 
 # Ambiguous case 2
---path=$api.response.data.xml
+--path=${api.response.data.xml}
 # Multiple valid interpretations possible
 
 # Ambiguous case 3
---path=report-$date.csv
+--path=report-${date.csv}
 # This works only because 'csv' starts with 'c' (valid identifier)
 # But conceptually '.csv' should be literal
 ```
@@ -31,9 +31,9 @@ The current template variable system has a fundamental ambiguity when dots appea
 
 The regex pattern `\$([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)` greedily matches valid identifiers after dots:
 
-- `$config.data.json` → Entire string treated as variable path (incorrect for file extension)
-- `$config.data.123` → Treated as `$config.data` (stops at invalid identifier)
-- `$report.csv` → Entire string treated as variable path (incorrect)
+- `${config.data.json}` → Entire string treated as variable path (incorrect for file extension)
+- `${config.data}.123` → Treated as `${config.data}` (stops at invalid identifier)
+- `${report.csv}` → Entire string treated as variable path (incorrect)
 
 This causes problems when users expect `.json`, `.csv`, `.md` etc. to be literal file extensions.
 
@@ -43,7 +43,7 @@ This causes problems when users expect `.json`, `.csv`, `.md` etc. to be literal
 Developers universally expect file extensions to be literal:
 ```bash
 # Users expect this to work:
-write-file --path=report-$date.pdf
+write-file --path=report-${date.pdf}
 # They expect: report-2024-01-31.pdf
 # They get: Error - no variable named "date.pdf"
 ```
@@ -52,19 +52,19 @@ write-file --path=report-$date.pdf
 The MVP workaround requires using complete paths as single variables:
 ```json
 // Forced to do this:
-{"path": "$output_file"}  // where output_file = "report-2024.pdf"
+{"path": "${output_file}"}  // where output_file = "report-2024.pdf"
 
 // Instead of natural composition:
-{"path": "report-$date.pdf"}
+{"path": "report-${date.pdf}"}
 ```
 
 ### 3. Limits Template Expressiveness
 Cannot naturally combine variables with extensions:
 ```bash
 # These patterns should work but don't:
---output=$build_dir/app-$version.jar
---report=analysis-$timestamp.html
---config=$env.settings.yaml
+--output=${build_dir}/app-${version.jar}
+--report=analysis-${timestamp.html}
+--config=${env.settings.yaml}
 ```
 
 ### 4. Inconsistent with Shell Conventions
@@ -94,7 +94,7 @@ KNOWN_EXTENSIONS = ['.json', '.xml', '.pdf', '.md', '.txt', ...]
 ### Option 3: Escape Sequences
 Allow escaping to force literal interpretation:
 ```bash
---path=$config.data\.json  # \. forces literal dot
+--path=${config.data}\.json  # \. forces literal dot
 ```
 
 ## Implementation Priority
@@ -118,25 +118,25 @@ Until fixed, users should:
 
 1. **Use complete paths as variables**:
    ```json
-   {"path": "$output_file"}  // output_file includes extension
+   {"path": "${output_file}"}  // output_file includes extension
    ```
 
 2. **Use simple variables without dots**:
    ```json
-   {"path": "report-$date.md"}  // Works if 'date' has no dots
+   {"path": "report-${date.md}"}  // Works if 'date' has no dots
    ```
 
 3. **Avoid path variables in filenames**:
    ```json
-   // Don't: "data-$config.version.json"
-   // Do: "$output_path"
+   // Don't: "data-${config.version.json}"
+   // Do: "${output_path}"
    ```
 
 ## Related Issues
 
-- Template array indexing (`$items[0]`) - not supported
+- Template array indexing (`${items}[0]`) - not supported
 - Template string interpolation (`prefix_${var}_suffix`) - not supported
-- Template expressions (`$count + 1`) - not supported
+- Template expressions (`${count} + 1`) - not supported
 
 All of these could be addressed with a comprehensive template syntax redesign in v2.0.
 

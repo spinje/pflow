@@ -138,7 +138,7 @@ pflow github-get-issue --issue=1234 => llm      # Still natural language!
 - This is only for the MVP. In v2.0 we will parse the CLI directly.
 
 **FACT**: Template variables are planner-internal
-- `$variable` syntax is for planner use
+- `${variable}` syntax is for planner use
 - NOT resolved at runtime
 - Planner ensures variables map to shared store values
 

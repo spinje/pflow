@@ -199,7 +199,7 @@ class TestFlowIR:
     def test_to_dict_method(self):
         """Test to_dict conversion for validation."""
         nodes = [
-            NodeIR(id="read", type="read-file", params={"path": "$input"}),
+            NodeIR(id="read", type="read-file", params={"path": "${input}"}),
             NodeIR(id="write", type="write-file"),
         ]
         edges = [EdgeIR(**{"from": "read", "to": "write", "action": "success"})]

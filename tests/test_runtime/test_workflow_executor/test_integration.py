@@ -81,7 +81,7 @@ class TestWorkflowExecutorIntegration:
                 {
                     "id": "write",
                     "type": "pflow.nodes.file.write_file",
-                    "params": {"file_path": "$output_file", "content": "$content"},
+                    "params": {"file_path": "${output_file}", "content": "${content}"},
                 }
             ],
             "edges": [],
@@ -102,7 +102,7 @@ class TestWorkflowExecutorIntegration:
                             "nodes": [{"id": "inner", "type": "pflow.nodes.test_node", "params": {}}],
                             "edges": [],
                         },
-                        "param_mapping": {"test_input": "$outer_input"},
+                        "param_mapping": {"test_input": "${outer_input}"},
                         "output_mapping": {"test_output": "inner_result"},
                     },
                 }
@@ -173,7 +173,7 @@ class TestWorkflowExecutorIntegration:
                     "type": "pflow.runtime.workflow_executor",
                     "params": {
                         "workflow_ir": simple_workflow_ir,
-                        "param_mapping": {"test_input": "$message"},
+                        "param_mapping": {"test_input": "${message}"},
                         "output_mapping": {"test_output": "result"},
                     },
                 }
@@ -322,7 +322,7 @@ class TestWorkflowExecutorIntegration:
                     "type": "pflow.runtime.workflow_executor",
                     "params": {
                         "workflow_ir": file_workflow_ir,
-                        "param_mapping": {"output_file": str(output_file), "content": "$message"},
+                        "param_mapping": {"output_file": str(output_file), "content": "${message}"},
                     },
                 }
             ],
