@@ -63,7 +63,9 @@ class TestWorkflowSaveIntegration:
 
             # Mock only user input, not the WorkflowManager
             with patch("click.prompt") as mock_prompt:
-                mock_prompt.side_effect = ["y", "test-workflow", "Test description"]
+                # Only two prompts now: save (y/n) and workflow name
+                # Description is no longer prompted for
+                mock_prompt.side_effect = ["y", "test-workflow"]
 
                 # Use real WorkflowManager with temporary directory
                 with patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
@@ -80,7 +82,8 @@ class TestWorkflowSaveIntegration:
                 saved_data = json.load(f)
 
             assert saved_data["name"] == "test-workflow"
-            assert saved_data["description"] == "Test description"
+            # Description should be empty when no metadata is provided
+            assert saved_data["description"] == ""
             assert saved_data["ir"] == sample_workflow
             assert "created_at" in saved_data
             assert "updated_at" in saved_data
@@ -121,7 +124,8 @@ class TestWorkflowSaveIntegration:
             wm = WorkflowManager(workflows_dir)
 
             with patch("click.prompt") as mock_prompt:
-                mock_prompt.side_effect = ["y", "invalid/name", "Description"]
+                # Only two prompts now: save (y/n) and workflow name
+                mock_prompt.side_effect = ["y", "invalid/name"]
 
                 with patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
                     mock_wm_class.return_value = wm
@@ -178,8 +182,8 @@ class TestWorkflowSaveIntegration:
             wm = WorkflowManager(workflows_dir)
             mock_wm_class.return_value = wm
 
-            # Mock save prompts: yes to save, name, description
-            mock_prompt.side_effect = ["y", "integration-test", "End-to-end test workflow"]
+            # Mock save prompts: yes to save, name (no description prompt anymore)
+            mock_prompt.side_effect = ["y", "integration-test"]
 
             # Call the save function directly (same as CLI would call)
             _prompt_workflow_save(workflow)
@@ -188,7 +192,8 @@ class TestWorkflowSaveIntegration:
         assert wm.exists("integration-test")
         saved_workflow = wm.load("integration-test")
         assert saved_workflow["name"] == "integration-test"
-        assert saved_workflow["description"] == "End-to-end test workflow"
+        # Description should be empty when no metadata is provided
+        assert saved_workflow["description"] == ""
         assert saved_workflow["ir"] == workflow
 
         # Verify actual file exists on filesystem
@@ -212,7 +217,8 @@ class TestWorkflowSaveIntegration:
                 wm = WorkflowManager(workflows_dir)
 
                 with patch("click.prompt") as mock_prompt:
-                    mock_prompt.side_effect = ["y", "test-workflow", "Description"]
+                    # Only two prompts now: save (y/n) and workflow name
+                    mock_prompt.side_effect = ["y", "test-workflow"]
 
                     with patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
                         mock_wm_class.return_value = wm
@@ -279,14 +285,13 @@ class TestWorkflowSaveUIBehavior:
         with patch("click.prompt") as mock_prompt, patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
             mock_wm_class.return_value = wm
 
-            # Simulate: save -> existing name -> description -> retry -> new name -> new description
+            # Simulate: save -> existing name -> retry -> new name
+            # No description prompts anymore
             mock_prompt.side_effect = [
                 "y",  # Yes to save
                 "existing",  # Try existing name (will fail)
-                "Desc1",  # Description for failed attempt
                 "y",  # Yes to retry
                 "new-name",  # New unique name
-                "Desc2",  # Description for successful attempt
             ]
 
             _prompt_workflow_save(sample_workflow)
@@ -300,5 +305,6 @@ class TestWorkflowSaveUIBehavior:
         new_workflow = wm.load("new-name")
 
         assert original["description"] == "Original"
-        assert new_workflow["description"] == "Desc2"
+        # New workflow has empty description when no metadata provided
+        assert new_workflow["description"] == ""
         assert new_workflow["ir"] == sample_workflow

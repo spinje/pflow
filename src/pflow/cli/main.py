@@ -437,11 +437,12 @@ def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> No
                 click.echo(f"cli: Warning - could not clean up temp file: {stdin_data.temp_path}", err=True)
 
 
-def _prompt_workflow_save(ir_data: dict[str, Any]) -> None:
+def _prompt_workflow_save(ir_data: dict[str, Any], metadata: dict[str, Any] | None = None) -> None:
     """Prompt user to save workflow after execution.
 
     Args:
         ir_data: The workflow IR data to save
+        metadata: Optional metadata with suggested_name and description from planner
     """
     save_response = click.prompt("\nSave this workflow? (y/n)", type=str, default="n").lower()
     if save_response != "y":
@@ -449,18 +450,26 @@ def _prompt_workflow_save(ir_data: dict[str, Any]) -> None:
 
     workflow_manager = WorkflowManager()
 
+    # Extract defaults from metadata if available
+    default_name = metadata.get("suggested_name", "") if metadata else ""
+    default_description = metadata.get("description", "") if metadata else ""
+
     # Loop until successful save or user cancels
     while True:
-        # Get workflow name
-        workflow_name = click.prompt("Workflow name", type=str)
+        # Get workflow name with intelligent default
+        if default_name:
+            workflow_name = click.prompt("Workflow name", default=default_name, type=str)
+        else:
+            workflow_name = click.prompt("Workflow name", type=str)
 
-        # Get optional description
-        description = click.prompt("Description (optional)", default="", type=str)
+        # Use the AI-generated description automatically (don't prompt)
+        # This reduces friction and the AI descriptions are high quality
+        description = default_description
 
         try:
             # Save the workflow
             saved_path = workflow_manager.save(workflow_name, ir_data, description)
-            click.echo(f"\n✅ Workflow saved to: {saved_path}")
+            click.echo(f"\n✅ Workflow saved as '{workflow_name}'")
             break  # Success, exit loop
         except WorkflowExistsError:
             click.echo(f"\n❌ Error: A workflow named '{workflow_name}' already exists.")
@@ -571,10 +580,6 @@ def execute_json_workflow(
             # Only show success message if we didn't produce output
             if not output_produced:
                 click.echo("Workflow executed successfully")
-
-            # Offer to save the workflow (only if not from a file and in interactive mode)
-            if ctx.obj.get("input_source") != "file" and sys.stdin.isatty():
-                _prompt_workflow_save(ir_data)
     except (click.ClickException, SystemExit):
         # Let Click exceptions and exits propagate normally
         raise
@@ -1021,6 +1026,11 @@ def _execute_planner_and_workflow(
             planner_output.get("execution_params"),  # CRITICAL: Pass params for templates!
             ctx.obj.get("output_format", "text"),
         )
+
+        # Offer to save the workflow after successful execution
+        # We have the metadata here from the planner!
+        if sys.stdin.isatty():  # Only in interactive mode
+            _prompt_workflow_save(planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata"))
     else:
         # Handle planning failure
         _handle_planning_failure(ctx, planner_output)
