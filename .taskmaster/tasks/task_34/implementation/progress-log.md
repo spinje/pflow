@@ -78,6 +78,106 @@ Verified the implementation works correctly:
 
 The enhanced version with averaging and version tracking provides more accurate feedback than single test runs.
 
+## 2025-08-16 11:00 - Enhanced Implementation Complete
+Major improvements based on user feedback:
+
+### 1. Reversed Update Behavior
+- Default is now to UPDATE (save test results)
+- Added `--dry-run` flag to test without updating
+- Better aligns with developer workflow
+
+### 2. Compact YAML Arrays
+- `test_runs` now displays as single-line: `[100.0, 100.0, 100.0]`
+- Cleaner frontmatter, less visual noise
+- Custom formatting logic in format_frontmatter()
+
+### 3. Test Command Field Correction
+- Changed from raw pytest command to test runner command
+- Now shows: `uv run python tools/test_prompt_accuracy.py discovery`
+- More useful for developers
+
+### 4. Added test_count Field
+- Automatically tracks number of test cases
+- Provides context for accuracy (100% on 3 tests vs 30 tests)
+- Updates every run, even when accuracy doesn't change
+- Helps identify under-tested prompts
+
+## 2025-08-16 11:30 - Moved Outside Package
+Critical architectural change for proper packaging:
+
+### Problem Identified
+- test_runner.py was in src/pflow/planning/prompts/
+- Would be included in package distribution
+- Users would get developer tool they don't need
+- PyYAML dependency confusion
+
+### Solution Implemented
+- Moved to `tools/test_prompt_accuracy.py`
+- Updated all paths and references
+- Created tools/README.md documentation
+- Tool no longer packaged with pflow
+
+### Dependency Management
+- PyYAML and types-PyYAML as dev dependencies
+- Added DEP004 ignore for yaml (dev tool only)
+- Clean separation of runtime vs dev dependencies
+
+### Critical Discovery
+- llm-anthropic MUST be installed for tests to work
+- Tests use Claude models (anthropic/claude-3-sonnet)
+- Without it: 20% accuracy (tests fail)
+- With it: 100% accuracy (tests pass)
+- Should add to dev dependencies or document requirement
+
+## Key Implementation Details
+
+### Frontmatter Structure (Final)
+```yaml
+name: discovery
+test_path: tests/test_planning/llm/prompts/test_discovery_prompt.py::TestDiscoveryPromptSensitive
+test_command: uv run python tools/test_prompt_accuracy.py discovery
+version: 1.0
+latest_accuracy: 100.0
+test_runs: [100.0, 100.0, 100.0]  # Compact format
+average_accuracy: 100.0
+test_count: 3  # Number of test cases
+previous_version_accuracy: 0.0
+last_tested: 2025-08-16
+prompt_hash: bfb270fe
+```
+
+### Package Structure (Final)
+```
+pflow/
+├── src/pflow/              # ✅ Packaged
+│   └── planning/prompts/
+│       ├── *.md            # Prompts (runtime)
+│       └── loader.py       # Loader (runtime)
+├── tools/                  # ❌ NOT packaged
+│   ├── test_prompt_accuracy.py
+│   └── README.md
+└── tests/                  # ❌ NOT packaged
+```
+
+### Developer Workflow
+```bash
+# Install with dev dependencies
+uv sync --extra anthropic  # REQUIRED for Claude models
+
+# Test and update (default)
+uv run python tools/test_prompt_accuracy.py discovery
+
+# Test without updating
+uv run python tools/test_prompt_accuracy.py discovery --dry-run
+```
+
+## Lessons Learned
+1. Developer tools should live outside the package
+2. Optional dependencies need explicit installation
+3. Compact YAML formatting improves readability
+4. Test count provides crucial context for accuracy
+5. Default behaviors should match common usage patterns
+
 ## 2025-08-16 11:30 - Final Improvements and Fixes
 
 ### Moved test_runner.py Outside Package
