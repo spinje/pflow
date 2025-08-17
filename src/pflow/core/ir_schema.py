@@ -210,6 +210,10 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "enum": ["string", "number", "boolean", "object", "array"],
                         "description": "Data type hint",
                     },
+                    "source": {
+                        "type": "string",
+                        "description": "Template expression specifying where to get the output value from (e.g., '${node_id.output_key}')",
+                    },
                 },
                 "additionalProperties": False,
             },

@@ -291,3 +291,70 @@ Minimal overhead:
 Automatic namespacing successfully solves the collision problem with minimal complexity. By enabling it by default, we've made pflow more powerful and easier for LLMs to work with, at the cost of requiring explicit data routing. This trade-off is worth it for the MVP, as it eliminates an entire class of bugs and makes workflows more maintainable.
 
 The implementation is clean, well-tested, and documented. Total implementation was ~200 lines of production code plus tests and documentation.
+
+## Critical Gap Fix: Workflow Outputs with Namespacing (Post-Implementation)
+
+### Problem Discovered
+After implementing automatic namespacing, a critical design gap was discovered: **workflow outputs couldn't access namespaced node outputs**. With namespacing enabled (the default), nodes write to `shared[node_id][key]`, but workflow outputs expected root-level keys. There was no mechanism to map namespaced values to declared outputs.
+
+This manifested as:
+- LLM planner attempting to add invalid `value` field to outputs
+- Validation warnings: "Declared output 'X' cannot be traced to any node"
+- JSON output format (`--output-format json`) returning empty objects
+- Text output failing to find declared outputs
+
+### Root Cause
+The original namespacing implementation didn't consider how workflow outputs would access namespaced values. The output system was designed for flat shared stores, not namespaced ones. This created a fundamental incompatibility between two core features.
+
+### Solution Implemented
+
+#### 1. Schema Enhancement (`src/pflow/core/ir_schema.py`)
+Added optional `source` field to outputs schema:
+```json
+"outputs": {
+  "result": {
+    "description": "The result",
+    "source": "${node_id.output_key}"  // Template expression to resolve
+  }
+}
+```
+
+#### 2. Output Population (`src/pflow/cli/main.py`)
+- Added `_populate_declared_outputs()` function that resolves source expressions after workflow execution
+- Added `_resolve_output_source()` helper to handle template resolution
+- Integrated into execution flow: Execute → Populate Outputs → Handle Output
+- Writes resolved values to root level of shared store for access
+
+#### 3. Validation Fix (`src/pflow/runtime/compiler.py`)
+- Modified `_validate_output_availability()` to skip validation for outputs with `source` field
+- Eliminates misleading warnings about outputs not being traceable to nodes
+
+#### 4. Planner Integration (`src/pflow/planning/prompts/workflow_generator.md`)
+- Updated prompt to require `source` field for outputs when namespacing is enabled
+- Added clear examples of correct usage
+
+### Impact
+This fix completes the automatic namespacing implementation by:
+- Enabling workflows to declare and access outputs from namespaced nodes
+- Making JSON output format work correctly with namespacing
+- Eliminating confusing validation warnings
+- Allowing the LLM planner to generate valid workflows with outputs
+
+### Why This Matters
+Without this fix, automatic namespacing was only partially functional. Workflows couldn't declare outputs, which is essential for:
+- Workflow composition (parent workflows accessing child outputs)
+- API responses (returning specific values from workflows)
+- Documentation (declaring what a workflow produces)
+- Type safety and validation
+
+### Lessons Learned
+1. **Feature Interactions**: When implementing system-wide changes like namespacing, must consider ALL features that interact with the changed system
+2. **LLM Intelligence**: The planner's attempt to add `value` field was actually identifying and trying to solve a real design problem
+3. **Testing Gaps**: Need integration tests that verify feature combinations (namespacing + outputs)
+4. **Design Documentation**: Critical to document how features interact, not just how they work in isolation
+
+Total additional implementation: ~100 lines of production code to complete the namespacing feature.
+
+### Questions
+
+For any questions about the Post-Implementation fixes, you can ask Claude Code with Session ID: `50e07bfc-1fd7-4014-93fb-207d40e8d46e`

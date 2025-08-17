@@ -566,7 +566,15 @@ def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
     )
 
     # Validate each declared output can be produced
-    for output_name, _output_spec in outputs.items():
+    for output_name, output_spec in outputs.items():
+        # If output has a 'source' field, it will be resolved from that expression
+        if isinstance(output_spec, dict) and "source" in output_spec:
+            logger.debug(
+                f"Output '{output_name}' uses source expression: {output_spec['source']}",
+                extra={"phase": "output_validation", "output": output_name},
+            )
+            continue  # Skip validation for outputs with source field
+
         # Check if output can be traced to any node
         if output_name not in all_node_outputs:
             # Issue warning, not error, since nodes may write dynamic keys

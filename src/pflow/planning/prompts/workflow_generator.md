@@ -87,7 +87,8 @@ EXAMPLE showing proper template variable usage:
   },
   "outputs": {
     "saved_file": {
-      "description": "Path where joke was saved"
+      "description": "Path where joke was saved",
+      "source": "${save_to_file.written}"  // REQUIRED: Maps namespaced value to output
     }
   }
 }
@@ -99,6 +100,27 @@ Workflow Structure Requirements:
 - Use universal defaults only (e.g., 100, not request-specific like 20)
 - Rename parameters for clarity (e.g., "filename" -> "input_file")
 - IMPORTANT: Every declared workflow input MUST be used as a template variable in node params
+
+CRITICAL - Workflow Outputs with Namespacing:
+When declaring workflow outputs, you MUST specify the "source" field to map namespaced node outputs:
+- Each output needs: "description" AND "source"
+- The "source" field uses template syntax: "${node_id.output_key}"
+- This is REQUIRED because nodes write to namespaced locations (not root level)
+- Example: If node "generate_story" outputs "response", reference it as "${generate_story.response}"
+
+Output Examples:
+{
+  "outputs": {
+    "story_content": {
+      "description": "The generated story",
+      "source": "${generate_story.response}"  // Maps from namespaced node output
+    },
+    "file_path": {
+      "description": "Where the file was saved",
+      "source": "${save_story.written}"  // Maps from another node's output
+    }
+  }
+}
 
 COMMON MISTAKE TO AVOID:
 DON'T declare intermediate data as user inputs! For example:

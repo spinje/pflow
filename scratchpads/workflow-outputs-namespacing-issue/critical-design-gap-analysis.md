@@ -144,23 +144,23 @@ The LLM consistently tries to add `value` fields because it's trying to solve a 
 }
 ```
 
-**Pros**: 
+**Pros**:
 - Explicit and clear
 - Solves the namespacing problem
 - Allows workflows to define their public interface
 
-**Cons**: 
+**Cons**:
 - Requires schema change
 - Adds complexity
 
 ### Solution 2: Auto-Promote Node Outputs
 If a workflow declares output `story_content`, automatically check all nodes for an output with that name and promote it to top-level.
 
-**Pros**: 
+**Pros**:
 - No schema change needed
 - Works with existing workflows
 
-**Cons**: 
+**Cons**:
 - Implicit and magical
 - What if multiple nodes have the same output name?
 - Doesn't work if output name differs from node output name
@@ -168,11 +168,11 @@ If a workflow declares output `story_content`, automatically check all nodes for
 ### Solution 3: Remove Outputs from Workflows
 Just don't declare outputs - they're optional anyway.
 
-**Pros**: 
+**Pros**:
 - Simplest solution
 - No schema changes
 
-**Cons**: 
+**Cons**:
 - Loses documentation value
 - Parent workflows can't know what child workflows produce
 - Reduces type safety and validation
@@ -180,11 +180,11 @@ Just don't declare outputs - they're optional anyway.
 ### Solution 4: Disable Namespacing by Default
 Make `enable_namespacing: false` the default.
 
-**Pros**: 
+**Pros**:
 - Outputs work as originally designed
 - Simpler mental model
 
-**Cons**: 
+**Cons**:
 - Brings back collision problems
 - Major breaking change
 - Loses benefits of namespacing

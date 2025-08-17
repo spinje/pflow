@@ -263,7 +263,7 @@ class TestWorkflowOutputHandling:
             assert result.exit_code == 0
             # Should warn about missing declared outputs
             assert "expected_output, another_output" in result.output
-            assert "but none found in shared store" in result.output
+            assert "but none could be resolved" in result.output
             # Should show success message since no output was produced
             assert "Workflow executed successfully" in result.output
         finally:
