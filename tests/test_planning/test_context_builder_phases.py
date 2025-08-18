@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from pflow.planning.context_builder import (
-    _format_all_parameters,
     _format_node_section_enhanced,
     _format_structure_combined,
     _group_nodes_by_category,
@@ -152,6 +151,35 @@ def sample_workflows():
     ]
 
 
+def _parse_node_name(line: str) -> str | None:
+    """Parse node name from a markdown header line."""
+    if not (line.startswith("### ") and not line.endswith("(workflow)") and not line.endswith("Operations")):
+        return None
+
+    node_name = line[4:].strip()
+    # Skip category headers
+    if any(word in node_name for word in ["Operations", "Category"]):
+        return None
+
+    return node_name
+
+
+def _parse_section_name(line: str) -> str | None:
+    """Parse section name from a markdown bold header."""
+    if not (line.startswith("**") and ":" in line):
+        return None
+
+    parts = line.split("**")
+    if len(parts) < 2:
+        return None
+
+    section_text = parts[1]
+    section = section_text.split(" ")[0].lower()
+
+    # Map parameters to inputs for backward compatibility
+    return "inputs" if section == "parameters" else section
+
+
 def parse_context_nodes(context: str) -> dict[str, dict[str, str]]:
     """Parse context string to extract node information for behavioral validation.
 
@@ -167,26 +195,30 @@ def parse_context_nodes(context: str) -> dict[str, dict[str, str]]:
 
     for line in context.split("\n"):
         line = line.strip()
-        if line.startswith("### ") and not line.endswith("(workflow)") and not line.endswith("Operations"):
-            # Node name (excluding workflows and category headers)
-            node_name = line[4:].strip()
-            # Skip category headers like "File Operations", "AI/LLM Operations", etc.
-            if not any(word in node_name for word in ["Operations", "Category"]):
-                nodes[node_name] = {"description": "", "inputs": [], "outputs": [], "params": []}
-                current_node = node_name
-                current_section = "description"
-        elif current_node and line.startswith("**") and line.endswith("**:"):
-            # Section header
-            section = line[2:-3].lower()
-            current_section = section
-        elif current_node and current_section == "description" and line and not line.startswith("**"):
-            # Description text
-            if not nodes[current_node]["description"]:
-                nodes[current_node]["description"] = line
-        elif current_node and current_section in ["inputs", "outputs", "parameters"] and line.startswith("- `"):
-            # Interface item
-            section_key = "params" if current_section == "parameters" else current_section
-            nodes[current_node][section_key].append(line)
+
+        # Check for node name
+        node_name = _parse_node_name(line)
+        if node_name:
+            nodes[node_name] = {"description": "", "inputs": [], "outputs": [], "params": []}
+            current_node = node_name
+            current_section = "description"
+            continue
+
+        # Check for section header
+        if current_node:
+            section = _parse_section_name(line)
+            if section:
+                current_section = section
+                continue
+
+        # Process content based on current section
+        if current_node and current_section:
+            if current_section == "description" and line and not line.startswith("**"):
+                if not nodes[current_node]["description"]:
+                    nodes[current_node]["description"] = line
+            elif current_section in ["inputs", "outputs", "parameters"] and line.startswith("- `"):
+                section_key = "params" if current_section == "parameters" else current_section
+                nodes[current_node][section_key].append(line)
 
     return nodes
 
@@ -490,8 +522,8 @@ class TestPlanningContext:
         # Should contain main section headers
         assert "## Selected Components" in result
         assert "### read-file" in result
-        assert "**Inputs**:" in result
-        assert "**Outputs**:" in result
+        assert "**Parameters** (all go in params field):" in result
+        assert "**Outputs** (access as" in result
 
     def test_planning_context_handles_structured_data_appropriately(self, sample_registry_metadata):
         """Test planning context can handle nodes with structured data outputs."""
@@ -511,8 +543,8 @@ class TestPlanningContext:
         assert "read-file" in result
 
         # Should contain interface information for planning
-        assert "**Inputs**:" in result
-        assert "**Outputs**:" in result
+        assert "**Parameters** (all go in params field):" in result
+        assert "**Outputs** (access as" in result
 
         # Should show detailed interface information
         assert "file_path" in result
@@ -568,7 +600,7 @@ class TestPlanningContext:
         assert "### text-processor (workflow)" in result
         assert "Process text files with LLM analysis" in result
 
-        # Should show workflow interface information for planning
+        # Workflows still use Inputs/Outputs format (not nodes)
         assert "**Inputs**:" in result
         assert "**Outputs**:" in result
         assert "input_file" in result  # From workflow IR inputs
@@ -885,33 +917,30 @@ class TestCategoryGrouping:
         assert "gitlab-merge" in git_ops
 
     def test_all_parameter_formatting_shows_all_params_with_annotations(self):
-        """Test parameter formatting shows all parameters with input annotations."""
+        """Test parameter formatting shows all parameters with new format."""
+        # Import the new function
+        from pflow.planning.context_builder import _format_all_parameters_new
 
         node_data = {
-            "params": [
+            "inputs": [
                 {"key": "file_path", "type": "str", "description": "File to read"},
                 {"key": "encoding", "type": "str", "description": "Text encoding"},
-                {"key": "validate", "type": "bool", "description": "Validate file format"},
-            ]
+            ],
+            "params": ["file_path", "encoding", "validate"],
         }
 
-        inputs = [
-            {"key": "file_path", "type": "str"},
-            {"key": "encoding", "type": "str"},
-        ]
-
         lines = []
-        _format_all_parameters(node_data, inputs, lines)
+        _format_all_parameters_new(node_data, lines)
 
         # Should show ALL parameters now
         result = "\n".join(lines)
         assert "validate" in result  # Should appear (exclusive param)
-        assert "file_path" in result  # Should appear (marked as input param)
-        assert "encoding" in result  # Should appear (marked as input param)
+        assert "file_path" in result  # Should appear
+        assert "encoding" in result  # Should appear
 
-        # Should indicate which params are for inputs
-        assert "required for input" in result
-        assert "Template Variable Usage" in result
+        # Should use new format
+        assert "**Parameters** (all go in params field):" in result
+        assert "Configuration parameter" in result  # validate should be marked as config
 
 
 class TestNodeFormatting:
@@ -939,9 +968,8 @@ class TestNodeFormatting:
         # Should format as planning context with all sections
         assert "### read-file" in result
         assert "Reads a file from disk" in result
-        assert "**Inputs**:" in result
-        assert "**Outputs**:" in result
-        assert "**Parameters**:" in result
+        assert "**Parameters** (all go in params field):" in result
+        assert "**Outputs** (access as" in result
 
         # Should include interface details for planning
         assert "file_path" in result
@@ -1013,8 +1041,8 @@ class TestNodeFormatting:
         # Should indicate empty sections appropriately
         assert "simple-node" in result
         assert "Does something simple" in result
-        # Should have interface sections even if empty
-        assert "Inputs" in result
+        # Should have interface sections even if empty (using new format)
+        assert "Parameters" in result  # Changed from Inputs
         assert "Outputs" in result
 
     def test_node_formatting_displays_multiple_outputs_clearly(self):

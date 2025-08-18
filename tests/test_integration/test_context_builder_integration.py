@@ -47,8 +47,8 @@ class TestDiscoveryPlanningFlow:
 
         # Verify planning content structure
         assert "## Selected Components" in planning
-        assert "**Inputs**:" in planning
-        assert "**Outputs**:" in planning
+        assert "**Parameters** (all go in params field):" in planning
+        assert "**Outputs** (access as" in planning
 
         # Should contain node details for selected nodes
         for node in selected_nodes:
@@ -345,8 +345,8 @@ class TestRealWorldScenarios:
 
             # Should show file-specific interface details
             assert "file_path" in planning  # Common to most file operations
-            assert "**Inputs**:" in planning
-            assert "**Outputs**:" in planning
+            assert "**Parameters** (all go in params field):" in planning
+            assert "**Outputs** (access as" in planning
 
             # File nodes shouldn't have complex structures
             assert "Structure (JSON format):" not in planning  # File nodes have simple outputs

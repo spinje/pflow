@@ -145,12 +145,11 @@ class TestMetadataFlow:
 
         formatted = _format_node_section_enhanced("write-file", node_data)
 
-        # Verify exclusive params shown correctly
-        assert "**Parameters**:" in formatted
+        # Verify params shown correctly with new format
+        assert "**Parameters** (all go in params field):" in formatted
         assert "- `append: bool`" in formatted
         assert "Append mode" in formatted
-        # file_path and content should NOT be in parameters (they're in inputs)
-        assert "**Inputs**:" in formatted
+        # With new format, ALL params (including former inputs) are in Parameters section
         assert "`file_path: str`" in formatted
         assert "`content: str`" in formatted
 
