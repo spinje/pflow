@@ -364,10 +364,11 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 27: Implement intuitive debugging capabilities and tracing system for the planner
 - ✅ Task 9: Implement shared store collision detection using automatic namespacing
 - ✅ Task 33: Extract planner prompts to markdown files in `src/pflow/planning/prompts/` and improve/create test cases for each prompt in `tests/test_planning/llm/prompts/`
+- ✅ Task 34: Prompt Accuracy Tracking System for planner prompts
+- ✅ Task 35: Migrate Template Syntax from $variable to ${variable}
 
 Next up:
-- ⏳ Task 34: Prompt Accuracy Tracking System for planner prompts
-- ⏳ Task 35: Migrate Template Syntax from $variable to ${variable}
+- ⏳ Task 36: Update Context Builder for Namespacing Clarity
 - ⏳ Task 28: Improve performance of planner by modifying prompts
 - ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ⏳ Task 10: Create registry CLI commands
