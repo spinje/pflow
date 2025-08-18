@@ -339,21 +339,21 @@ The codebase is in early development with these tasks completed:
 - ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `docs/`
 - ✅ Development tooling and testing setup
-- ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
-- ✅ Task 2 complete: Basic CLI run command with stdio/stdin support
-- ✅ Task 3 complete: Execute a Hardcoded 'Hello World' Workflow
-- ✅ Task 4 complete: Implement IR-to-PocketFlow Object Converter
-- ✅ Task 5 complete: Node discovery and registry implementation
-- ✅ Task 6 complete: Define JSON IR schema
-- ✅ Task 7 complete: Extract node metadata from docstrings
-- ✅ Task 8 complete: Build comprehensive shell pipe integration with stdin/stdout
-- ✅ Task 11 complete: Implement read-file and write-file nodes
-- ✅ Task 16 complete: Create planning context builder
-- ✅ Task 14 complete: Implement type, structure, description and semantic documentation for all Interface components
-- ✅ Task 15 complete: Extend context builder for two-phase discovery and structure documentation support (modify and extend the context builder implemented in Task 16)
-- ✅ Task 18 complete: Template Variable System
-- ✅ Task 19 complete: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
-- ✅ Task 20 complete: Implement Nested Workflow Execution
+- ✅ Task 1: Package setup and CLI entry point with `pflow` command and version subcommand
+- ✅ Task 2: Basic CLI run command with stdio/stdin support
+- ✅ Task 3: Execute a Hardcoded 'Hello World' Workflow
+- ✅ Task 4: Implement IR-to-PocketFlow Object Converter
+- ✅ Task 5: Node discovery and registry implementation
+- ✅ Task 6: Define JSON IR schema
+- ✅ Task 7: Extract node metadata from docstrings
+- ✅ Task 8: Build comprehensive shell pipe integration with stdin/stdout
+- ✅ Task 11: Implement read-file and write-file nodes
+- ✅ Task 16: Create planning context builder
+- ✅ Task 14: Implement type, structure, description and semantic documentation for all Interface components
+- ✅ Task 15: Extend context builder for two-phase discovery and structure documentation support (modify and extend the context builder implemented in Task 16)
+- ✅ Task 18: Template Variable System
+- ✅ Task 19: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
+- ✅ Task 20: Implement Nested Workflow Execution
 - ✅ Task 21: Implement Workflow Input Declaration - workflows to declare their expected input and output parameters in the IR schema
 - ✅ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
 - ✅ Task 12: Implement LLM Node - Create a general-purpose LLM node - infinitely reusable building block by combining prompts with template variables
@@ -366,9 +366,10 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 33: Extract planner prompts to markdown files in `src/pflow/planning/prompts/` and improve/create test cases for each prompt in `tests/test_planning/llm/prompts/`
 - ✅ Task 34: Prompt Accuracy Tracking System for planner prompts
 - ✅ Task 35: Migrate Template Syntax from $variable to ${variable}
+- ✅ Task 36: Update Context Builder for Namespacing Clarity
 
 Next up:
-- ⏳ Task 36: Update Context Builder for Namespacing Clarity
+- ⏳ Bugfix
 - ⏳ Task 28: Improve performance of planner by modifying prompts
 - ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ⏳ Task 10: Create registry CLI commands
