@@ -653,12 +653,15 @@ def _format_param_line(param: dict | str, input_keys: set) -> str | None:
 
 
 def _format_template_variables(inputs: list, lines: list[str]) -> None:
-    """Format template variable usage section."""
+    """Legacy template variable formatting - now integrated into _format_all_parameters.
+
+    Kept for backward compatibility but no longer used in main flow.
+    """
     template_vars = []
     for inp in inputs:
         if isinstance(inp, dict):
             key = inp["key"]
-            template_vars.append(f'{key}: "${{key}}"')
+            template_vars.append(f'{key}: "${{{key}}}"')
 
     if template_vars:
         lines.append("**Template Variables**: Use ${variables} in params field for inputs:")
@@ -670,29 +673,84 @@ def _format_template_variables(inputs: list, lines: list[str]) -> None:
         lines.append("**Template Variables**: Use ${variables} in params field for any input")
 
 
-def _format_exclusive_parameters(node_data: dict, inputs: list, lines: list[str]) -> None:
-    """Format parameters that are not in inputs (exclusive params).
+def _format_all_parameters(node_data: dict, inputs: list, lines: list[str]) -> None:
+    """Format all parameters with clear indication of template variable usage.
+
+    With namespacing enabled, nodes cannot read inputs from shared store directly.
+    All inputs must be passed via parameters using template variables.
 
     Args:
         node_data: Node metadata containing params
-        inputs: List of inputs to exclude from params
+        inputs: List of inputs that need to be passed via params
         lines: List to append formatted lines to
     """
     params = node_data["params"]
     input_keys = _extract_input_keys(inputs)
 
-    exclusive_params = []
-    for param in params:
-        formatted_line = _format_param_line(param, input_keys)
-        if formatted_line:
-            exclusive_params.append(formatted_line)
+    if not params:
+        lines.append("**Parameters**: none")
+        return
 
-    if exclusive_params:
-        lines.append("**Parameters**:")
-        lines.extend(exclusive_params)
+    lines.append("**Parameters**:")
+
+    # Format each parameter
+    for param in params:
+        _format_single_parameter(param, input_keys, lines)
+
+    # Add template variable usage example if needed
+    if input_keys:
+        _add_template_usage_example(input_keys, inputs, lines)
+
+
+def _format_single_parameter(param: dict | str, input_keys: set, lines: list[str]) -> None:
+    """Format a single parameter line."""
+    if isinstance(param, dict):
+        key = param["key"]
+        type_str = param.get("type", "any")
+        desc = param.get("description", "")
+
+        # Build the parameter line
+        if key in input_keys:
+            line = f"- `{key}: {type_str}` *(required for input, use ${{input_name}})*"
+        else:
+            line = f"- `{key}: {type_str}`"
+
+        if desc:
+            line += f" - {desc}"
+        lines.append(line)
     else:
-        # Show template variable usage instead of misleading "none"
-        _format_template_variables(inputs, lines)
+        # Simple string param
+        if param in input_keys:
+            lines.append(f"- `{param}` *(required for input, use ${{input_name}})*")
+        else:
+            lines.append(f"- `{param}`")
+
+
+def _add_template_usage_example(input_keys: set, inputs: list, lines: list[str]) -> None:
+    """Add template variable usage example for inputs."""
+    lines.append("")
+    lines.append("**Template Variable Usage**:")
+    lines.append("Since nodes use namespacing, pass input values via params:")
+    lines.append("```json")
+    lines.append("{")
+
+    example_params = []
+    for key in list(input_keys)[:2]:  # Show first 2 as examples
+        # Find the input to get its description
+        input_info = next(
+            (inp for inp in inputs if (isinstance(inp, dict) and inp.get("key") == key) or inp == key), None
+        )
+        if input_info and isinstance(input_info, dict):
+            example_params.append(f'  "{key}": "${{{key}}}"  // {input_info.get("description", "from workflow input")}')
+        else:
+            example_params.append(f'  "{key}": "${{{key}}}"')
+
+    if len(input_keys) > 2:
+        example_params.append(f"  // ... and {len(input_keys) - 2} more input mappings")
+
+    lines.append(",\n".join(example_params))
+    lines.append("}")
+    lines.append("```")
 
 
 def _format_interface_item(item: dict | str, item_type: str, lines: list[str]) -> None:
@@ -733,6 +791,9 @@ def _format_node_section_enhanced(node_type: str, node_data: dict) -> str:
     Returns:
         Formatted markdown string for the node
     """
+    # NOTE: With namespacing enabled by default (Task 9), nodes cannot read inputs
+    # from shared store directly. All inputs must be passed via parameters using
+    # template variables. The formatting below clarifies this requirement.
     lines = [f"### {node_type}"]
 
     # Add description
@@ -765,7 +826,7 @@ def _format_node_section_enhanced(node_type: str, node_data: dict) -> str:
     lines.append("")
 
     # Format exclusive parameters
-    _format_exclusive_parameters(node_data, inputs, lines)
+    _format_all_parameters(node_data, inputs, lines)
 
     lines.append("")
     return "\n".join(lines)

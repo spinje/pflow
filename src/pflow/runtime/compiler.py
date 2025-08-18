@@ -679,6 +679,22 @@ def compile_ir_to_flow(
     logger.debug("Creating Flow object", extra={"phase": "flow_creation"})
     flow = Flow(start=start_node)
 
+    # Step 11: Wrap flow.run to populate outputs if declared
+    if ir_dict.get("outputs"):
+        from pflow.runtime.output_resolver import populate_declared_outputs
+
+        original_run = flow.run
+
+        def run_with_outputs(shared_storage: dict[str, Any]) -> str:
+            """Run flow and populate declared outputs."""
+            result = original_run(shared_storage)
+            # Only populate outputs on successful execution
+            if not (result and isinstance(result, str) and result.startswith("error")):
+                populate_declared_outputs(shared_storage, ir_dict)
+            return str(result)
+
+        flow.run = run_with_outputs  # type: ignore[method-assign]
+
     logger.info(
         "Compilation successful",
         extra={

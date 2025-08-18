@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from pflow.planning.context_builder import (
-    _format_exclusive_parameters,
+    _format_all_parameters,
     _format_node_section_enhanced,
     _format_structure_combined,
     _group_nodes_by_category,
@@ -884,8 +884,8 @@ class TestCategoryGrouping:
         assert "github-issue" in git_ops
         assert "gitlab-merge" in git_ops
 
-    def test_exclusive_parameter_formatting_excludes_input_duplicates(self):
-        """Test parameter formatting excludes parameters that are also inputs."""
+    def test_all_parameter_formatting_shows_all_params_with_annotations(self):
+        """Test parameter formatting shows all parameters with input annotations."""
 
         node_data = {
             "params": [
@@ -901,13 +901,17 @@ class TestCategoryGrouping:
         ]
 
         lines = []
-        _format_exclusive_parameters(node_data, inputs, lines)
+        _format_all_parameters(node_data, inputs, lines)
 
-        # Should only show parameters not already in inputs
+        # Should show ALL parameters now
         result = "\n".join(lines)
         assert "validate" in result  # Should appear (exclusive param)
-        assert "file_path" not in result  # Should not appear (in inputs)
-        assert "encoding" not in result  # Should not appear (in inputs)
+        assert "file_path" in result  # Should appear (marked as input param)
+        assert "encoding" in result  # Should appear (marked as input param)
+
+        # Should indicate which params are for inputs
+        assert "required for input" in result
+        assert "Template Variable Usage" in result
 
 
 class TestNodeFormatting:

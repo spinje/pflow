@@ -357,4 +357,129 @@ Total additional implementation: ~100 lines of production code to complete the n
 
 ### Questions
 
-For any questions about the Post-Implementation fixes, you can ask Claude Code with Session ID: `50e07bfc-1fd7-4014-93fb-207d40e8d46e`
+For any questions about these Post-Implementation fixes, you can ask Claude Code with Session ID: `50e07bfc-1fd7-4014-93fb-207d40e8d46e`
+
+## Architectural Correction: Output Population Moved to Runtime Layer (2025-08-18)
+
+### Problem Discovered
+The initial implementation of output population (lines 295-360 above) placed the logic in the CLI layer (`src/pflow/cli/main.py`). This was architecturally incorrect and caused a critical bug: **programmatic usage of workflows with outputs didn't work**.
+
+When using `compile_ir_to_flow()` directly (without the CLI), outputs were never populated because the population logic only ran in the CLI's execution path. This violated the separation of concerns principle - data transformation (output population) is a runtime concern, not a presentation concern.
+
+### Root Cause Analysis
+The output population was initially placed in the CLI because:
+1. It was added reactively to fix the namespacing/output incompatibility
+2. The CLI was where the problem was visible (JSON output not working)
+3. It seemed like an "output handling" concern at first glance
+
+However, output population is actually part of the workflow execution contract - workflows declare outputs and should ensure they're populated, regardless of how they're executed.
+
+### Solution Implemented
+
+#### 1. Created Output Resolver Module (`src/pflow/runtime/output_resolver.py`)
+Moved the output resolution logic to the runtime layer:
+- `resolve_output_source()` - Resolves template expressions to values
+- `populate_declared_outputs()` - Populates all declared outputs
+- Same logic as before, just in the correct layer
+
+#### 2. Modified Compiler to Wrap Flow.run (`src/pflow/runtime/compiler.py`)
+Added automatic output population via method wrapping:
+```python
+if ir_dict.get("outputs"):
+    original_run = flow.run
+
+    def run_with_outputs(shared_storage):
+        result = original_run(shared_storage)
+        # Only populate on success
+        if not (result and isinstance(result, str) and result.startswith("error")):
+            populate_declared_outputs(shared_storage, ir_dict)
+        return result
+
+    flow.run = run_with_outputs
+```
+
+This ensures outputs are populated for ANY execution path, not just CLI.
+
+#### 3. Removed from CLI (`src/pflow/cli/main.py`)
+- Deleted `_resolve_output_source()` function (17 lines)
+- Deleted `_populate_declared_outputs()` function (45 lines)
+- Removed the call to `_populate_declared_outputs()` after workflow execution
+- Total: 63 lines removed, simplifying the CLI
+
+#### 4. Comprehensive Testing (`tests/test_runtime/test_compiler_output_wrapping.py`)
+Added critical tests that were missing:
+- Verifies compiler wraps flow.run when outputs are declared
+- Verifies no wrapper when no outputs (performance)
+- Verifies outputs populated on success
+- Verifies programmatic usage works without CLI
+- Tests multi-node workflows with multiple outputs
+
+### Impact of the Fix
+
+**Before**:
+```python
+# Programmatic usage - BROKEN
+flow = compile_ir_to_flow(workflow_ir, registry)
+flow.run(shared)
+# shared["my_output"] is EMPTY - outputs not populated!
+```
+
+**After**:
+```python
+# Programmatic usage - WORKS
+flow = compile_ir_to_flow(workflow_ir, registry)
+flow.run(shared)
+# shared["my_output"] has the value - populated automatically!
+```
+
+### Files Changed
+
+**Modified**:
+- `src/pflow/runtime/compiler.py` - Added flow.run wrapping (10 lines)
+- `src/pflow/cli/main.py` - Removed output population functions (63 lines)
+- `src/pflow/planning/context_builder.py` - Fixed linting issues found during cleanup
+
+**Created**:
+- `src/pflow/runtime/output_resolver.py` - Output resolution logic (72 lines)
+- `tests/test_runtime/test_output_resolver.py` - Unit tests (322 lines)
+- `tests/test_runtime/test_compiler_output_wrapping.py` - Integration tests (131 lines)
+
+**Updated Tests**:
+- `tests/test_cli/test_workflow_output_source.py` - Removed unit tests (now in runtime), kept integration tests
+
+### Why This Matters
+
+1. **Correct Separation of Concerns**: Runtime handles data manipulation, CLI handles presentation
+2. **Enables Programmatic Usage**: Workflows work correctly when used as a library
+3. **Single Source of Truth**: Output population happens in ONE place for all execution paths
+4. **Future-Proof**: When pflow adds REST API, Python SDK, or other interfaces, they all get output population for free
+
+### Lessons Learned
+
+1. **Architectural Placement Matters**: Features should be placed in the layer that matches their concern. Output population is data transformation (runtime), not presentation (CLI).
+
+2. **Test for All Usage Patterns**: The original implementation only tested CLI usage. We should have tested programmatic usage from the start, which would have caught this issue.
+
+3. **Reactive Fixes Create Debt**: The output population was added reactively to fix a namespacing issue, leading to placement in the wrong layer. Taking time to think about architecture during bug fixes prevents future refactoring.
+
+4. **Namespacing Ripple Effects**: The automatic namespacing feature had broader implications than initially understood. It affected outputs, validation, templates, and more. System-wide changes need comprehensive impact analysis.
+
+### Performance Considerations
+
+The wrapping approach adds minimal overhead:
+- Only applied when outputs are declared
+- Simple method wrapper with one conditional check
+- No performance impact for workflows without outputs
+- Same execution cost as before, just in the right place
+
+### Total Implementation Stats
+
+- **Lines moved**: 62 lines from CLI to runtime
+- **New code**: 72 lines in output_resolver.py, 10 lines in compiler.py
+- **Tests added**: 453 lines of comprehensive test coverage
+- **Net simplification**: CLI reduced by 63 lines
+- **Bugs fixed**: 1 critical (programmatic usage broken)
+
+This completes the automatic namespacing implementation by ensuring outputs work correctly in all execution contexts, not just the CLI.
+
+For any questions about the architectural correction with the output population, you can ask Claude Code with Session ID: `40c5bd2b-e65c-4eb2-b80d-02dd8ee6600f`

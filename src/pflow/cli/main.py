@@ -23,7 +23,6 @@ from pflow.core.shell_integration import (
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, compile_ir_to_flow
-from pflow.runtime.template_resolver import TemplateResolver
 
 
 def handle_sigint(signum: int, frame: object) -> None:
@@ -286,72 +285,6 @@ def _handle_text_output(
             return safe_output(shared_storage[key])
 
     return False
-
-
-def _resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Any | None:
-    """Resolve a source expression to get output value.
-
-    Args:
-        source_expr: The source expression (e.g., "${node.output}" or "node.output")
-        shared_storage: The shared storage dictionary
-
-    Returns:
-        The resolved value or None if not found
-    """
-    # Remove ${ and } wrapper if present
-    if source_expr.startswith("${") and source_expr.endswith("}"):
-        source_expr = source_expr[2:-1]
-    elif source_expr.startswith("$"):
-        source_expr = source_expr[1:]
-
-    return TemplateResolver.resolve_value(source_expr, shared_storage)
-
-
-def _populate_declared_outputs(
-    shared_storage: dict[str, Any],
-    workflow_ir: dict[str, Any] | None,
-    verbose: bool,
-) -> None:
-    """Populate declared outputs in shared storage using their source expressions.
-
-    This resolves source expressions and writes values to root level of shared storage,
-    making them available for both text and JSON output formats.
-
-    Args:
-        shared_storage: The shared storage dictionary (modified in place)
-        workflow_ir: The workflow IR specification
-        verbose: Whether to show verbose output
-    """
-    if not (workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]):
-        return
-
-    declared_outputs = workflow_ir["outputs"]
-
-    for output_name, output_config in declared_outputs.items():
-        # Check for source field (for namespaced outputs)
-        if not isinstance(output_config, dict) or "source" not in output_config:
-            continue
-
-        source_expr = output_config["source"]
-
-        # Resolve using TemplateResolver
-        try:
-            value = _resolve_output_source(source_expr, shared_storage)
-            if value is not None:
-                # Write resolved value to root level for output access
-                shared_storage[output_name] = value
-                if verbose:
-                    click.echo(f"cli: Populated output '{output_name}' from source '{source_expr}'", err=True)
-            elif verbose:
-                click.echo(
-                    f"cli: Warning - Could not resolve source '{source_expr}' for output '{output_name}'", err=True
-                )
-        except Exception as e:
-            if verbose:
-                click.echo(
-                    f"cli: Warning - Error resolving source '{source_expr}' for output '{output_name}': {e}",
-                    err=True,
-                )
 
 
 def _try_declared_outputs(
@@ -639,9 +572,6 @@ def execute_json_workflow(
         else:
             if verbose:
                 click.echo("cli: Workflow execution completed")
-
-            # Populate declared outputs from their sources (for namespacing support)
-            _populate_declared_outputs(shared_storage, ir_data, verbose)
 
             # Check for output from shared store
             output_produced = _handle_workflow_output(shared_storage, output_key, ir_data, verbose, output_format)
