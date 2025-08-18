@@ -1320,6 +1320,7 @@ class ValidatorNode(Node):
             # All validations passed
             logger.info("Workflow validated successfully, proceeding to metadata generation")
             shared["workflow_metadata"] = {}  # Prepare for metadata node
+            shared.pop("validation_errors", None)  # Clear any previous validation errors
             return "metadata_generation"
 
         # Check retry limit

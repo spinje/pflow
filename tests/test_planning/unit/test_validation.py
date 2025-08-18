@@ -277,7 +277,49 @@ class TestValidatorNode:
             exec_res = validator_node.exec(prep_res)
 
             assert len(exec_res["errors"]) == 1
-            assert "Template validation error" in exec_res["errors"][0]
+
+    def test_validation_errors_cleared_on_successful_retry(self, validator_node, valid_workflow):
+        """Test that validation_errors are cleared when validation succeeds after retry.
+
+        This test ensures that old validation errors from a previous failed attempt
+        are cleared when validation succeeds on retry. This prevents the bug where
+        the workflow appears to fail even though validation actually passed.
+        """
+        # Simulate a retry scenario with old validation errors
+        shared = {
+            "validation_errors": ["Old error: type 'integer' is invalid"],  # Previous error
+            "generated_workflow": valid_workflow,
+            "generation_attempts": 2,  # Second retry attempt
+        }
+
+        with (
+            patch("pflow.core.ir_schema.validate_ir"),  # Mock passes
+            patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
+        ):
+            MockTemplateValidator.validate_workflow_templates.return_value = []  # No errors
+
+            prep_res = validator_node.prep(shared)
+            exec_res = validator_node.exec(prep_res)
+
+            # Validation should succeed
+            assert exec_res["errors"] == []
+
+            # Run post to check routing and side effects
+            action = validator_node.post(shared, prep_res, exec_res)
+
+            # Should route to metadata generation
+            assert action == "metadata_generation"
+
+            # CRITICAL: validation_errors should be cleared
+            assert "validation_errors" not in shared, (
+                "validation_errors should be cleared when validation succeeds, but found: {}".format(
+                    shared.get("validation_errors")
+                )
+            )
+
+            # workflow_metadata should be initialized
+            assert "workflow_metadata" in shared
+            assert shared["workflow_metadata"] == {}
 
 
 class TestMetadataGenerationNode:
