@@ -1870,3 +1870,118 @@ Implemented workflow-driven output handling to respect workflow-declared outputs
 - Comprehensive test coverage (24 tests) for all scenarios
 
 This enhancement makes workflows truly self-contained with proper interface control over their outputs
+
+## [2025-01-18] - Post-Implementation Enhancements: Workflow Save Improvements
+
+After Task 17 was marked complete, two significant UX improvements were implemented to the workflow saving system.
+
+### Enhancement 1: Metadata Flow Fix
+
+**Problem:**
+- The planner generated excellent metadata (`suggested_name` and `description`) for new workflows
+- This metadata was being discarded and not reaching the save prompt
+- Users had to manually type everything from scratch, losing the AI-generated intelligence
+
+**Solution:**
+- Removed save prompt from `execute_json_workflow` (proper separation of concerns)
+- Moved save prompt to `_execute_planner_and_workflow` where metadata is available
+- Updated `_prompt_workflow_save` to accept and use metadata for defaults
+- Removed the description prompt entirely - uses AI-generated description automatically
+
+**Impact:**
+```bash
+# Before:
+Save this workflow? (y/n) [n]: y
+Workflow name: <user must type everything>
+Description (optional) []: <usually left blank>
+
+# After:
+Save this workflow? (y/n) [n]: y
+Workflow name [llama-story-generator]: <press Enter to accept or type new>
+✅ Workflow saved as 'llama-story-generator'
+```
+
+### Enhancement 2: Reuse vs Generation Distinction
+
+**Problem:**
+- When the planner reused an existing workflow (Path A), it still asked "Save this workflow?"
+- This was confusing - the workflow was already saved!
+- No indication to the user that an existing workflow was being reused
+
+**Solution:**
+- Added `workflow_source` field to `planner_output` (passes through `discovery_result`)
+- CLI now checks `workflow_source.found` to determine if workflow was reused
+- Shows different messages based on source:
+  - If reused: Shows "✅ Reused existing workflow: 'name'" (no save prompt)
+  - If generated: Shows save prompt with metadata defaults
+
+**Implementation Details:**
+```python
+# Added to ResultPreparationNode.exec():
+planner_output = {
+    # ... existing fields ...
+    "workflow_source": prep_res.get("discovery_result"),  # Pass through discovery info
+}
+
+# Updated CLI logic in _execute_planner_and_workflow:
+if sys.stdin.isatty():
+    workflow_source = planner_output.get("workflow_source")
+
+    if workflow_source and workflow_source.get("found"):
+        # Existing workflow was reused
+        workflow_name = workflow_source.get("workflow_name", "unknown")
+        click.echo(f"\n✅ Reused existing workflow: '{workflow_name}'")
+    else:
+        # New workflow was generated
+        _prompt_workflow_save(
+            planner_output["workflow_ir"],
+            metadata=planner_output.get("workflow_metadata")
+        )
+```
+
+**Impact:**
+```bash
+# Path A (Reused Workflow):
+Workflow executed successfully
+✅ Reused existing workflow: 'github-changelog-generator'
+# NO save prompt - clear indication that existing workflow was used
+
+# Path B (Generated Workflow):
+Workflow executed successfully
+Save this workflow? (y/n) [n]: y
+Workflow name [new-analysis-workflow]: <press Enter or type new>
+✅ Workflow saved as 'new-analysis-workflow'
+```
+
+### Key Architecture Benefits
+
+1. **Clean Separation of Concerns**
+   - Execution functions only execute
+   - Saving happens at the right layer with all needed context
+   - No mixing of responsibilities
+
+2. **No Data Loss**
+   - AI-generated metadata is preserved and used
+   - Discovery information flows through to the CLI
+   - User gets full benefit of the planner's intelligence
+
+3. **Better UX**
+   - Users see intelligent defaults for new workflows
+   - No confusing prompts for already-saved workflows
+   - Clear indication of what happened (reused vs generated)
+   - Much faster workflow saving process
+
+4. **Zero Data Duplication**
+   - Just passing existing data through
+   - No redundant storage or transformation
+   - Clean data flow from planner to CLI
+
+### Tests Added
+- 4 new tests for `workflow_source` field in ResultPreparationNode
+- Updated 11 workflow save integration tests for new behavior
+- All existing tests maintained for backward compatibility
+- Total: 15 test modifications/additions
+
+These enhancements significantly improve the user experience of the Natural Language Planner, making it clearer when workflows are being reused vs generated, and preserving the valuable metadata that the AI generates
+
+For more information about the post-implementation fixes, you can ask Claude Code with Session ID: `992520df-fc59-4c00-93d5-c28dce6b6a88`

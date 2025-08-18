@@ -1628,6 +1628,7 @@ class ResultPreparationNode(Node):
             "missing_params": prep_res["missing_params"] if prep_res["missing_params"] else None,
             "error": error,
             "workflow_metadata": prep_res["workflow_metadata"] if prep_res["workflow_metadata"] else None,
+            "workflow_source": prep_res.get("discovery_result"),  # Pass through discovery result
         }
 
         return planner_output
@@ -1649,8 +1650,10 @@ class ResultPreparationNode(Node):
         # Log the outcome for debugging
         if exec_res["success"]:
             logger.info("Planner completed successfully")
-            if prep_res["discovery_result"] and prep_res["discovery_result"].get("found"):
-                logger.info(f"Reused existing workflow: {prep_res['discovery_result'].get('workflow_name')}")
+            # Use workflow_source from exec_res for consistency
+            workflow_source = exec_res.get("workflow_source")
+            if workflow_source and workflow_source.get("found"):
+                logger.info(f"Reused existing workflow: {workflow_source.get('workflow_name')}")
             else:
                 logger.info("Generated new workflow")
         else:

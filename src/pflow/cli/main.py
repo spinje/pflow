@@ -1096,10 +1096,17 @@ def _execute_planner_and_workflow(
             ctx.obj.get("output_format", "text"),
         )
 
-        # Offer to save the workflow after successful execution
-        # We have the metadata here from the planner!
+        # Handle post-execution based on workflow source
         if sys.stdin.isatty():  # Only in interactive mode
-            _prompt_workflow_save(planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata"))
+            workflow_source = planner_output.get("workflow_source")
+
+            if workflow_source and workflow_source.get("found"):
+                # Existing workflow was reused - just show which one
+                workflow_name = workflow_source.get("workflow_name", "unknown")
+                click.echo(f"\n✅ Reused existing workflow: '{workflow_name}'")
+            else:
+                # New workflow was generated - offer to save
+                _prompt_workflow_save(planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata"))
     else:
         # Handle planning failure
         _handle_planning_failure(ctx, planner_output)

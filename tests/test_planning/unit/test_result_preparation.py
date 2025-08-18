@@ -489,3 +489,89 @@ class TestResultPreparationNode:
         assert prep_res["generation_attempts"] == 0
         assert prep_res["workflow_metadata"] == {}
         assert prep_res["discovery_result"] is None
+
+    # Tests for workflow_source field
+
+    def test_workflow_source_included_for_reused_workflow(self, result_node, valid_workflow_ir, execution_params):
+        """Test that workflow_source is included when workflow was reused (Path A)."""
+        discovery_result = {
+            "found": True,
+            "workflow_name": "github-analyzer",
+            "confidence": 0.95,
+            "reasoning": "Perfect match for GitHub analysis workflow",
+        }
+
+        shared = {
+            "found_workflow": {"ir": valid_workflow_ir},
+            "execution_params": execution_params,
+            "discovery_result": discovery_result,
+        }
+
+        prep_res = result_node.prep(shared)
+        exec_res = result_node.exec(prep_res)
+
+        # Verify workflow_source is included and correct
+        assert "workflow_source" in exec_res
+        assert exec_res["workflow_source"] == discovery_result
+        assert exec_res["workflow_source"]["found"] is True
+        assert exec_res["workflow_source"]["workflow_name"] == "github-analyzer"
+
+    def test_workflow_source_included_for_generated_workflow(
+        self, result_node, valid_workflow_ir, execution_params, workflow_metadata
+    ):
+        """Test that workflow_source is included when workflow was generated (Path B)."""
+        discovery_result = {
+            "found": False,
+            "workflow_name": None,
+            "confidence": 0.2,
+            "reasoning": "No existing workflow matches this request",
+        }
+
+        shared = {
+            "generated_workflow": valid_workflow_ir,
+            "execution_params": execution_params,
+            "workflow_metadata": workflow_metadata,
+            "discovery_result": discovery_result,
+        }
+
+        prep_res = result_node.prep(shared)
+        exec_res = result_node.exec(prep_res)
+
+        # Verify workflow_source is included and correct
+        assert "workflow_source" in exec_res
+        assert exec_res["workflow_source"] == discovery_result
+        assert exec_res["workflow_source"]["found"] is False
+        assert exec_res["workflow_source"]["workflow_name"] is None
+
+    def test_workflow_source_none_when_discovery_missing(self, result_node, valid_workflow_ir, execution_params):
+        """Test that workflow_source is None when discovery_result is missing."""
+        shared = {
+            "generated_workflow": valid_workflow_ir,
+            "execution_params": execution_params,
+            # No discovery_result in shared
+        }
+
+        prep_res = result_node.prep(shared)
+        exec_res = result_node.exec(prep_res)
+
+        # Verify workflow_source is None
+        assert "workflow_source" in exec_res
+        assert exec_res["workflow_source"] is None
+
+    def test_workflow_source_preserved_on_failure(self, result_node):
+        """Test that workflow_source is included even when planning fails."""
+        discovery_result = {"found": False, "workflow_name": None, "confidence": 0.1, "reasoning": "No match found"}
+
+        shared = {
+            "generation_attempts": 3,  # Max attempts reached
+            "discovery_result": discovery_result,
+            # No workflow_ir - generation failed
+        }
+
+        prep_res = result_node.prep(shared)
+        exec_res = result_node.exec(prep_res)
+
+        # Verify failure but workflow_source still included
+        assert exec_res["success"] is False
+        assert "workflow_source" in exec_res
+        assert exec_res["workflow_source"] == discovery_result
