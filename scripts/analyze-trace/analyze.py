@@ -176,12 +176,13 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
     return "\n".join(md), metadata
 
 
-def create_index_markdown(trace: dict, node_files: list) -> str:
+def create_index_markdown(trace: dict, node_files: list, trace_file: Path) -> str:
     """Create an index markdown file that links to all node files."""
     md = []
 
     # Header
     md.append("# Planner Trace Analysis\n")
+    md.append(f"**Source File:** `{trace_file.name}`  ")
     md.append(f"**Trace ID:** `{trace.get('execution_id', 'unknown')}`  ")
     md.append(f"**Timestamp:** {trace.get('timestamp', 'unknown')}  ")
     md.append(f"**Status:** {trace.get('status', 'unknown')}  ")
@@ -304,7 +305,7 @@ def analyze_trace(trace_file: Path, output_dir: Path) -> None:
         print(f"  ✅ Created: {filename}")
 
     # Create index file
-    index_content = create_index_markdown(trace, node_files)
+    index_content = create_index_markdown(trace, node_files, trace_file)
     index_path = output_dir / "README.md"
     index_path.write_text(index_content)
     print("  ✅ Created: README.md (index)")

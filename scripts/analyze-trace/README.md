@@ -20,12 +20,14 @@ scripts/analyze-trace/
 ├── analyze.py         # Main analyzer - splits traces into individual files
 ├── compare.py         # Compare two traces to see differences
 ├── latest.sh          # Quick script to analyze the most recent trace
+├── compare-latest.sh  # Quick script to compare the two most recent traces
 └── output/            # Generated analysis files go here
-    └── pflow-trace-*/  # One directory per analyzed trace
-        ├── README.md                      # Index with summary statistics
-        ├── 01-WorkflowDiscoveryNode.md   # Individual node analysis
-        ├── 02-ComponentBrowsingNode.md   # Each LLM call gets its own file
-        └── ...
+    ├── pflow-trace-*/  # One directory per analyzed trace
+    │   ├── README.md                      # Index with summary statistics
+    │   ├── 01-WorkflowDiscoveryNode.md   # Individual node analysis
+    │   ├── 02-ComponentBrowsingNode.md   # Each LLM call gets its own file
+    │   └── ...
+    └── comparison-*.md  # Comparison reports between traces
 ```
 
 ## Usage
@@ -86,15 +88,43 @@ output/pflow-trace-20250815-120310/
 
 Compare traces to see what changed between runs:
 
+#### Option A: Compare the Two Most Recent Traces
+
 ```bash
-# Compare two trace files
+# Quick way - compares the two latest traces automatically
+./scripts/analyze-trace/compare-latest.sh
+```
+
+#### Option B: Compare Specific Traces
+
+```bash
+# Compare two specific trace files
 uv run python scripts/analyze-trace/compare.py trace1.json trace2.json
 
-# This shows:
-# - Prompt differences (with diffs)
-# - Response changes
-# - Performance metrics comparison
-# - Success/failure status changes
+# Example with full paths
+uv run python scripts/analyze-trace/compare.py \
+  ~/.pflow/debug/pflow-trace-20250815-120310.json \
+  ~/.pflow/debug/pflow-trace-20250815-130415.json
+```
+
+The comparison report is saved to `output/comparison-{timestamp1}-vs-{timestamp2}.md` and includes:
+- Prompt differences (with unified diffs)
+- Response changes (side-by-side JSON)
+- Performance metrics comparison (duration, tokens, status)
+- Success/failure status changes
+
+The report is automatically opened in your editor (Cursor or VS Code) if available.
+
+### 5. Quick Comparison Commands
+
+```bash
+# Compare the two most recent traces
+./scripts/analyze-trace/compare-latest.sh
+
+# Or manually with:
+TRACE1=$(ls -t ~/.pflow/debug/pflow-trace-*.json | sed -n '2p')
+TRACE2=$(ls -t ~/.pflow/debug/pflow-trace-*.json | sed -n '1p')
+uv run python scripts/analyze-trace/compare.py "$TRACE1" "$TRACE2"
 ```
 
 ## Understanding the Output

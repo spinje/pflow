@@ -12,8 +12,6 @@ if [ -z "$LATEST_TRACE" ]; then
     exit 1
 fi
 
-echo "📋 Analyzing latest trace: $(basename $LATEST_TRACE)"
-
 # Run the analyzer
 uv run python "$SCRIPT_DIR/analyze.py" "$LATEST_TRACE"
 
