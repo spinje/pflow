@@ -233,3 +233,52 @@ Task 27 is **COMPLETE**! All objectives achieved:
 6. ✅ All tests passing - 1205 tests pass with no regressions
 
 The planner debugging infrastructure is production-ready and provides the visibility needed to diagnose and fix planner issues effectively.
+
+## [2025-08-18] - Post-Implementation Bug Fix: LLM Duration Tracking
+
+### Critical Bug Discovered
+After Task 27 was marked complete, discovered that `duration_ms` in trace files was **always 0ms**, making performance analysis impossible.
+
+### Root Cause Analysis
+The `llm` library (Simon Willison's LLM CLI) returns **lazy Response objects**:
+- `model.prompt()` returns immediately with a Response object (no API call yet)
+- The actual API call happens when `response.json()` or `response.text()` is called
+- Our timing was measuring Response object creation (instant) not API execution (2-8 seconds)
+
+### Why This Wasn't Caught Initially
+1. **Trace files appeared functional** - They contained duration_ms fields with values (all zeros)
+2. **No validation of data accuracy** - Tests checked that traces were generated, not that timing was meaningful
+3. **Assumption about API behavior** - Assumed `prompt()` was synchronous and blocking
+4. **Mock timing masked the issue** - Mocked calls were also instant, so 0ms seemed plausible
+
+### The Fix
+Modified `src/pflow/planning/debug.py` to wrap Response objects:
+```python
+class TimedResponse:
+    def json(self):
+        # Start timing HERE when actual API call happens
+        start = time.perf_counter()
+        result = self._response.json()
+        duration = time.perf_counter() - start
+        trace.record_llm_response(node, response, duration)
+        return result
+```
+
+### Additional Improvements
+1. **Switched to `time.perf_counter()`** - More accurate than `time.time()` for sub-second measurements
+2. **Added minimum 1ms for mocked calls** - Prevents 0ms even for instant operations
+3. **Response caching** - Wrapped response only times first evaluation
+
+### Critical Lessons Learned
+1. **Understand third-party library internals** - Can't instrument what you don't understand
+2. **Lazy evaluation is common** - Many APIs defer expensive operations
+3. **Validate observability data accuracy** - A metric that's always 0 is worse than no metric
+4. **Test the actual values, not just presence** - "duration_ms exists" ≠ "duration_ms is accurate"
+5. **Performance instrumentation requires deep integration** - Surface-level wrapping often misses the real work
+
+### Impact
+- **Before fix**: All LLM calls showed 0ms (useless for performance analysis)
+- **After fix**: Real calls show 2000-8000ms, mocked calls show 1ms minimum
+- **Enables**: Actual performance optimization, cost analysis, slow prompt identification
+
+This bug fix was essential for Task 27's debugging infrastructure to provide real value. Without accurate timing, the trace system couldn't fulfill its purpose of identifying performance bottlenecks in the planner.

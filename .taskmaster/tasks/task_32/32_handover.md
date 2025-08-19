@@ -6,7 +6,7 @@
 
 I just completed Task 27 (planner debugging), and you'll be extending that infrastructure. Here's what you MUST know:
 
-### The Three Critical Bugs That Almost Killed Me
+### The Four Critical Bugs That Almost Killed Me
 
 1. **The `_run()` bypass bug** (`src/pflow/planning/debug.py:91-113`)
    - Initially, DebugWrapper's `_run()` called `self._wrapped._run()` directly
@@ -24,6 +24,13 @@ I just completed Task 27 (planner debugging), and you'll be extending that infra
    - Some have `response.usage` as property, others as `response.usage()` method
    - **Fix**: Check `callable(response.usage)` and handle both cases
    - This caused AttributeError: 'function' object has no attribute 'get'
+
+4. **The lazy Response evaluation bug** (DISCOVERED POST-IMPLEMENTATION)
+   - The `llm` library returns LAZY Response objects - `prompt()` returns instantly
+   - Actual API call happens when `response.json()` or `response.text()` is called
+   - **Initial bug**: Duration was always 0ms because we timed the wrong operation
+   - **Fix**: Wrap Response object to time when `.json()`/`.text()` triggers actual API call
+   - **Critical for Task 32**: Your metrics MUST capture timing at evaluation, not at prompt() call
 
 ### How LLM Interception Actually Works
 
@@ -43,6 +50,8 @@ def intercept_get_model(*args, **kwargs):
 ```
 
 **Critical insight**: We only install the interceptor ONCE (first LLM-using node), but we update `trace.current_node` for each node to track which node is making the call.
+
+**⚠️ LAZY EVALUATION WARNING**: The `prompt()` method returns a Response object immediately. The actual API call happens when the code calls `response.json()` or `response.text()`. Our interceptor returns a wrapped `TimedResponse` object that captures timing at evaluation time, not at prompt() time.
 
 ### ⚠️ CRITICAL: The LLM Cleanup Requirement
 
@@ -170,12 +179,11 @@ shared = {
 
 Model pricing changes frequently. I suggested `~/.pflow/pricing.json` config file with defaults. Key models to support:
 
-- `anthropic/claude-3-opus-20240229` (what planner uses)
+- `anthropic/claude-sonnet-4-0` (default for planner nodes - see `src/pflow/planning/nodes.py:91`)
+- `anthropic/claude-3-haiku-20240307` (metadata generation uses faster model - see line 1376)
 - `anthropic/claude-3-5-sonnet-20240620`
 - `gpt-4`, `gpt-4o`, `gpt-4o-mini`
 - `gpt-3.5-turbo`
-
-Note: The planner uses specific model IDs like `anthropic/claude-sonnet-4-0` (see `src/pflow/planning/nodes.py:86`)
 
 ## Testing Considerations
 
@@ -188,10 +196,11 @@ To test metrics:
 
 ## Performance Warning
 
-The planner takes 10-30 seconds typically. Workflow execution varies wildly. Your metrics collection CANNOT add significant overhead. Consider:
-- Lazy evaluation
+The planner takes 10-30 seconds typically (6 LLM calls at 2-8 seconds each). Workflow execution varies wildly. Your metrics collection CANNOT add significant overhead. Consider:
+- Lazy evaluation (remember: LLM Response objects are lazy!)
 - Incremental aggregation
 - Avoiding shared store snapshots for large data
+- Using `time.perf_counter()` not `time.time()` for sub-second precision
 
 ## The Output Format Challenge
 

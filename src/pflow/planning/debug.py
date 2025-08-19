@@ -29,6 +29,41 @@ class DebugContext:
     progress: "PlannerProgress"
 
 
+class TimedResponse:
+    """Wrapper for LLM Response objects that captures timing when evaluated."""
+
+    def __init__(self, wrapped_response: Any, trace: "TraceCollector", current_node: str):
+        self._response = wrapped_response
+        self._json_cache: Optional[Any] = None
+        self._text_cache: Optional[str] = None
+        self._trace = trace
+        self._current_node = current_node
+
+    def json(self) -> Any:
+        if self._json_cache is None:
+            # Time the actual API call
+            start = time.perf_counter()
+            self._json_cache = self._response.json()
+            duration = time.perf_counter() - start
+            # Record the response with actual duration
+            self._trace.record_llm_response(self._current_node, self._response, duration)
+        return self._json_cache
+
+    def text(self) -> str:
+        if self._text_cache is None:
+            # Time the actual API call
+            start = time.perf_counter()
+            self._text_cache = self._response.text()
+            duration = time.perf_counter() - start
+            # Record the response with actual duration
+            self._trace.record_llm_response(self._current_node, self._response, duration)
+        return self._text_cache
+
+    def __getattr__(self, name: str) -> Any:
+        # Forward other attributes to the wrapped response
+        return getattr(self._response, name)
+
+
 class DebugWrapper:
     """Wraps PocketFlow nodes to capture debugging data.
 
@@ -129,52 +164,62 @@ class DebugWrapper:
         self.trace.record_phase(self._wrapped.__class__.__name__, "prep", time.time() - start)
         return result  # type: ignore[no-any-return]
 
+    def _create_prompt_interceptor(self, original_prompt: Any, trace: "TraceCollector") -> Any:
+        """Create an interceptor for the LLM prompt method."""
+
+        def intercept_prompt(prompt_text: str, **prompt_kwargs: Any) -> Any:
+            # Use current_node from trace collector
+            current_node = getattr(trace, "current_node", "Unknown")
+
+            # Record the prompt BEFORE calling
+            trace.record_llm_request(current_node, prompt_text, prompt_kwargs)
+
+            try:
+                # Get the response object (lazy - no API call yet)
+                response = original_prompt(prompt_text, **prompt_kwargs)
+                # Return the wrapped response
+                return TimedResponse(response, trace, current_node)
+            except Exception as e:
+                trace.record_llm_error(current_node, str(e))
+                raise
+
+        return intercept_prompt
+
+    def _create_model_interceptor(self, original_get_model: Any, trace: "TraceCollector") -> Any:
+        """Create an interceptor for llm.get_model."""
+
+        def intercept_get_model(*args: Any, **kwargs: Any) -> Any:
+            model = original_get_model(*args, **kwargs)
+            original_prompt = model.prompt
+            model.prompt = self._create_prompt_interceptor(original_prompt, trace)
+            return model
+
+        return intercept_get_model
+
+    def _setup_llm_interception(self, node_name: str) -> None:
+        """Set up LLM interception if not already installed."""
+        import llm
+
+        # Store current node name in trace collector for LLM interception
+        self.trace.current_node = node_name
+
+        # Install interceptor only once (first node that uses LLM)
+        if not self.trace._llm_interceptor_installed:
+            original_get_model = llm.get_model
+            trace = self.trace  # Capture trace in closure
+
+            llm.get_model = self._create_model_interceptor(original_get_model, trace)
+            self.trace._llm_interceptor_installed = True
+            self.trace._original_get_model = original_get_model
+
     def exec(self, prep_res: dict[str, Any]) -> Any:
         """Wrap exec phase with LLM interception."""
         start = time.time()
         node_name = self._wrapped.__class__.__name__
 
         # Set up LLM interception if this node uses LLM
-        import llm
-
-        original_get_model = None
-
         if "model_name" in prep_res:  # Node uses LLM
-            # Store current node name in trace collector for LLM interception
-            self.trace.current_node = node_name
-
-            # Install interceptor only once (first node that uses LLM)
-            if not self.trace._llm_interceptor_installed:
-                original_get_model = llm.get_model
-                trace = self.trace  # Capture trace in closure
-
-                def intercept_get_model(*args: Any, **kwargs: Any) -> Any:
-                    model = original_get_model(*args, **kwargs)
-                    original_prompt = model.prompt
-
-                    def intercept_prompt(prompt_text: str, **prompt_kwargs: Any) -> Any:
-                        prompt_start = time.time()
-                        # Use current_node from trace collector
-                        current_node = getattr(trace, "current_node", "Unknown")
-
-                        # Record the prompt BEFORE calling
-                        trace.record_llm_request(current_node, prompt_text, prompt_kwargs)
-
-                        try:
-                            response = original_prompt(prompt_text, **prompt_kwargs)
-                            # Record the response AFTER calling
-                            trace.record_llm_response(current_node, response, time.time() - prompt_start)
-                            return response
-                        except Exception as e:
-                            trace.record_llm_error(current_node, str(e))
-                            raise
-
-                    model.prompt = intercept_prompt  # type: ignore[assignment]
-                    return model
-
-                llm.get_model = intercept_get_model
-                self.trace._llm_interceptor_installed = True
-                self.trace._original_get_model = original_get_model
+            self._setup_llm_interception(node_name)
 
         try:
             result = self._wrapped.exec(prep_res)
@@ -250,7 +295,8 @@ class TraceCollector:
     def record_llm_response(self, node: str, response: Any, duration: float) -> None:
         """Record LLM response after execution."""
         if hasattr(self, "current_llm_call"):
-            self.current_llm_call["duration_ms"] = int(duration * 1000)
+            # Ensure minimum 1ms for any call (even mocked ones)
+            self.current_llm_call["duration_ms"] = max(1, int(duration * 1000))
 
             # Extract response data
             if hasattr(response, "json"):
