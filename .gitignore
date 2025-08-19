@@ -169,3 +169,6 @@ node_modules/
 
 # Scratchpads
 # scratchpads/
+
+# Claude data and logs
+.claude/data/
