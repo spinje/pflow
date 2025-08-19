@@ -122,7 +122,7 @@ class WorkflowDiscoveryNode(Node):
         Returns:
             WorkflowDecision dict with found, workflow_name, confidence, reasoning
         """
-        logger.debug(f"WorkflowDiscoveryNode: Matching request: {prep_res['user_input'][:100]}...")
+        logger.debug(f"WorkflowDiscoveryNode: Matching request: {prep_res['user_input'][:1000]}...")
 
         # Load prompt from markdown file
         from pflow.planning.prompts.loader import format_prompt, load_prompt
@@ -199,7 +199,7 @@ class WorkflowDiscoveryNode(Node):
         """
         logger.error(
             f"WorkflowDiscoveryNode: Discovery failed after retries - {exc}",
-            extra={"phase": "fallback", "error": str(exc), "user_input": prep_res.get("user_input", "")[:100]},
+            extra={"phase": "fallback", "error": str(exc), "user_input": prep_res.get("user_input", "")[:1000]},
         )
 
         # Provide specific error messages for common failure modes
@@ -312,7 +312,7 @@ class ComponentBrowsingNode(Node):
         Returns:
             ComponentSelection dict with node_ids, workflow_names, reasoning
         """
-        logger.debug(f"ComponentBrowsingNode: Browsing components for: {prep_res['user_input'][:100]}...")
+        logger.debug(f"ComponentBrowsingNode: Browsing components for: {prep_res['user_input'][:1000]}...")
 
         # Load prompt from markdown file
         from pflow.planning.prompts.loader import format_prompt, load_prompt
@@ -410,7 +410,7 @@ class ComponentBrowsingNode(Node):
         """
         logger.error(
             f"ComponentBrowsingNode: Browsing failed after retries - {exc}",
-            extra={"phase": "fallback", "error": str(exc), "user_input": prep_res.get("user_input", "")[:100]},
+            extra={"phase": "fallback", "error": str(exc), "user_input": prep_res.get("user_input", "")[:1000]},
         )
 
         # Provide specific error messages for common failure modes
@@ -495,7 +495,7 @@ class ParameterDiscoveryNode(Node):
         # Check for stdin data (fallback parameter source)
         stdin_info = None
         if shared.get("stdin"):
-            stdin_info = {"type": "text", "preview": str(shared["stdin"])[:200]}
+            stdin_info = {"type": "text", "preview": str(shared["stdin"])[:500]}
         elif shared.get("stdin_binary"):
             stdin_info = {"type": "binary", "size": str(len(shared["stdin_binary"]))}
         elif shared.get("stdin_path"):
@@ -523,7 +523,7 @@ class ParameterDiscoveryNode(Node):
         Returns:
             ParameterDiscovery dict with parameters, stdin_type, reasoning
         """
-        logger.debug(f"ParameterDiscoveryNode: Discovering parameters from: {prep_res['user_input'][:100]}...")
+        logger.debug(f"ParameterDiscoveryNode: Discovering parameters from: {prep_res['user_input'][:1000]}...")
 
         # Build context about available components (if any)
         # Load prompt from markdown file
@@ -532,7 +532,7 @@ class ParameterDiscoveryNode(Node):
         prompt_template = load_prompt("parameter_discovery")
 
         # Prepare all values - use "None" when empty for clarity
-        planning_context = prep_res.get("planning_context", "")[:2000] if prep_res.get("planning_context") else "None"
+        planning_context = prep_res.get("planning_context", "")[:5000] if prep_res.get("planning_context") else "None"
 
         # Extract component lists if available
         selected_nodes = "None"
@@ -1002,7 +1002,7 @@ class WorkflowGeneratorNode(Node):
         Raises:
             ValueError: If planning context is empty or response parsing fails
         """
-        logger.debug(f"Generating workflow for: {prep_res['user_input'][:100]}...")
+        logger.debug(f"Generating workflow for: {prep_res['user_input'][:1000]}...")
 
         # CRITICAL: Planning context must be available
         if not prep_res["planning_context"]:
@@ -1464,7 +1464,7 @@ class MetadataGenerationNode(Node):
         # Fallback to simple extraction
         return {
             "suggested_name": generate_workflow_name(user_input),
-            "description": user_input[:200] if user_input else "Generated workflow",
+            "description": user_input[:1000] if user_input else "Generated workflow",
             "search_keywords": [],  # Empty in fallback
             "capabilities": [],  # Empty in fallback
             "typical_use_cases": [],  # Empty in fallback
