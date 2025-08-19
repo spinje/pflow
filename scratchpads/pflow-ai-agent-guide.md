@@ -28,11 +28,11 @@ uv run pflow --file workflow.json --output-format json
 #### 2. Execute Saved Workflows by Name (⚠️ LIMITED)
 ```bash
 # ONLY works if workflow has NO required inputs or you provide ALL required params
-uv run pflow my-saved-workflow  # ⚠️ Will hang if workflow has required inputs!
+uv run pflow my-saved-workflow  # ⚠️ ERROR if workflow has required inputs!
 uv run pflow my-saved-workflow input_file=data.txt  # ✅ Works if input_file is the only required param
 ```
 
-**WARNING**: If the workflow has required inputs and you don't provide them, it will likely trigger the planner and hang!
+**WARNING**: If the workflow has required inputs and you don't provide them, you'll get a validation error: "Workflow requires input 'X'"
 
 #### 3. Check Registry/Available Nodes
 ```bash
@@ -84,7 +84,7 @@ uv run pflow "read file.txt"    # Natural language - AVOID
   "nodes": [{
     "id": "test",
     "type": "echo",
-    "params": {"message": "Hello $name", "uppercase": true}
+    "params": {"message": "Hello ${name}", "uppercase": true}
   }],
   "edges": []
 }
@@ -197,7 +197,7 @@ Output: `HELLO WORLD`
       "id": "generate",
       "type": "llm",
       "params": {
-        "prompt": "Write a $style explanation about $topic in exactly $max_words words. Be concise and clear.",
+        "prompt": "Write a ${style} explanation about ${topic} in exactly ${max_words} words. Be concise and clear.",
         "model": "gpt-5-nano",
         "temperature": 0.7,
         "max_tokens": 200
@@ -274,10 +274,10 @@ uv run pflow --file /tmp/test_file.json
 
 1. **Always use JSON workflows** - Never use natural language commands
 2. **Use --file flag** - Most reliable way to execute right now
-3. **Provide ALL required inputs** - Missing inputs trigger planner and hang
+3. **Provide ALL required inputs** - Missing inputs cause validation error ("Workflow requires input 'X'")
 4. **Check node registry** - Only use nodes that exist
 5. **Use --output-format json** - For structured output parsing
-6. **Template variables work** - Use $var in params, pass ALL required via CLI
+6. **Template variables work** - Use ${var} in params, pass via CLI (not hardcoded!)
 7. **Workflows can declare outputs** - CLI respects these declarations
 
 ## Available Nodes Summary
