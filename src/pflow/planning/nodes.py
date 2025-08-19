@@ -19,7 +19,11 @@ from pydantic import BaseModel, Field
 
 from pflow.core.exceptions import WorkflowNotFoundError
 from pflow.core.workflow_manager import WorkflowManager
-from pflow.planning.context_builder import build_discovery_context, build_planning_context
+from pflow.planning.context_builder import (
+    build_nodes_context,
+    build_planning_context,
+    build_workflows_context,
+)
 from pflow.planning.utils.llm_helpers import generate_workflow_name, parse_structured_response
 from pflow.registry import Registry
 from pocketflow import Node
@@ -94,12 +98,10 @@ class WorkflowDiscoveryNode(Node):
         # Get WorkflowManager from shared store if available
         workflow_manager = shared.get("workflow_manager")
 
-        # Load discovery context with all nodes and workflows
+        # Load workflows context for discovery (no nodes needed for reuse decisions)
         try:
-            discovery_context = build_discovery_context(
-                node_ids=None,  # All nodes
+            discovery_context = build_workflows_context(
                 workflow_names=None,  # All workflows
-                registry_metadata=None,  # Will load from default registry
                 workflow_manager=workflow_manager,  # Pass from shared store
             )
         except Exception as e:
@@ -122,7 +124,7 @@ class WorkflowDiscoveryNode(Node):
         Returns:
             WorkflowDecision dict with found, workflow_name, confidence, reasoning
         """
-        logger.debug(f"WorkflowDiscoveryNode: Matching request: {prep_res['user_input'][:1000]}...")
+        logger.debug(f"WorkflowDiscoveryNode: Matching request: {prep_res['user_input'][:100]}...")
 
         # Load prompt from markdown file
         from pflow.planning.prompts.loader import format_prompt, load_prompt
@@ -199,7 +201,7 @@ class WorkflowDiscoveryNode(Node):
         """
         logger.error(
             f"WorkflowDiscoveryNode: Discovery failed after retries - {exc}",
-            extra={"phase": "fallback", "error": str(exc), "user_input": prep_res.get("user_input", "")[:1000]},
+            extra={"phase": "fallback", "error": str(exc), "user_input": prep_res.get("user_input", "")[:100]},
         )
 
         # Provide specific error messages for common failure modes
@@ -283,21 +285,24 @@ class ComponentBrowsingNode(Node):
         # Get WorkflowManager from shared store if available
         workflow_manager = shared.get("workflow_manager")
 
-        # Get discovery context for browsing
+        # Build separate contexts for nodes and workflows
         try:
-            discovery_context = build_discovery_context(
-                node_ids=None,
-                workflow_names=None,
+            nodes_context = build_nodes_context(
+                node_ids=None,  # All nodes
                 registry_metadata=registry_metadata,
+            )
+            workflows_context = build_workflows_context(
+                workflow_names=None,  # All workflows
                 workflow_manager=workflow_manager,  # Pass from shared store
             )
         except Exception as e:
-            logger.exception("Failed to build discovery context", extra={"phase": "prep", "error": str(e)})
+            logger.exception("Failed to build browsing contexts", extra={"phase": "prep", "error": str(e)})
             raise ValueError(f"Context preparation failed: {e}") from e
 
         return {
             "user_input": user_input,
-            "discovery_context": discovery_context,
+            "nodes_context": nodes_context,
+            "workflows_context": workflows_context,
             "registry_metadata": registry_metadata,
             "model_name": model_name,
             "temperature": temperature,
@@ -307,7 +312,7 @@ class ComponentBrowsingNode(Node):
         """Select components with over-inclusive approach.
 
         Args:
-            prep_res: Prepared data with user_input, discovery_context, registry_metadata
+            prep_res: Prepared data with user_input, nodes_context, workflows_context, registry_metadata
 
         Returns:
             ComponentSelection dict with node_ids, workflow_names, reasoning
@@ -321,7 +326,12 @@ class ComponentBrowsingNode(Node):
 
         # Format with our variables - validation happens automatically
         prompt = format_prompt(
-            prompt_template, {"discovery_context": prep_res["discovery_context"], "user_input": prep_res["user_input"]}
+            prompt_template,
+            {
+                "nodes_context": prep_res["nodes_context"],
+                "workflows_context": prep_res["workflows_context"],
+                "user_input": prep_res["user_input"],
+            },
         )
 
         # Lazy-load model at execution time (PocketFlow best practice)

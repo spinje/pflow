@@ -429,10 +429,10 @@ class TestErrorAndEdgeCases:
 
             discovery = build_discovery_context(registry_metadata={})
 
-            # Should handle empty registry gracefully
-            assert "## Available Nodes" in discovery
-            # Should not show category headers for empty registry
-            assert "###" not in discovery
+            # Should handle empty registry gracefully - returns empty string
+            assert isinstance(discovery, str)
+            # Empty registry should produce empty or minimal output
+            assert len(discovery) == 0 or discovery == ""
 
     def test_malformed_registry_handling(self):
         """Test error handling with malformed registry data."""
@@ -448,8 +448,10 @@ class TestErrorAndEdgeCases:
 
             discovery = build_discovery_context(registry_metadata=bad_registry)
 
-            # Should handle gracefully
-            assert "## Available Nodes" in discovery
+            # Should handle gracefully and return a valid string
+            assert isinstance(discovery, str)
+            # With no valid nodes, output should be empty or show only workflows
+            assert "## Available Nodes" not in discovery  # Headers are removed
             # Should not crash
 
     def test_concurrent_context_building(self):

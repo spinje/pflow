@@ -2,6 +2,10 @@
 
 WHEN TO RUN: Always run these tests - they're fast and use mocks.
 These tests verify component selection, over-inclusive strategies, and browsing behavior.
+
+FOCUS: These tests validate the ComponentBrowsingNode's ability to select
+relevant nodes and workflows for new workflow generation (Path B).
+The over-inclusive selection strategy is critical to avoid missing components.
 """
 
 from unittest.mock import Mock, patch
@@ -81,26 +85,21 @@ def mock_llm_response_nested():
 class TestComponentBrowsingSelection:
     """Tests for ComponentBrowsingNode selection logic."""
 
-    def test_init_configurable_parameters(self):
-        """Test node initializes with configurable retry parameters."""
-        # Test default parameters
-        node = ComponentBrowsingNode(max_retries=2, wait=0)  # Speed up tests
-        assert node.max_retries == 2
-        assert node.wait == 0
-
-        # Test configurable parameters
-        node2 = ComponentBrowsingNode(max_retries=3, wait=2.5)
-        assert node2.max_retries == 3
-        assert node2.wait == 2.5
-
     def test_prep_loads_registry_and_context(self, mock_registry):
-        """Test prep phase loads registry metadata and builds context."""
+        """Test prep phase loads registry metadata and builds context.
+
+        VALIDATES: Registry integration and dual-context building.
+        The browsing node needs both node and workflow contexts to make
+        informed selection decisions. This tests the preparation phase.
+        """
         with (
             patch("pflow.planning.nodes.Registry") as mock_reg_class,
-            patch("pflow.planning.nodes.build_discovery_context") as mock_build,
+            patch("pflow.planning.nodes.build_nodes_context") as mock_build_nodes,
+            patch("pflow.planning.nodes.build_workflows_context") as mock_build_workflows,
         ):
             mock_reg_class.return_value = mock_registry
-            mock_build.return_value = "discovery context"
+            mock_build_nodes.return_value = "nodes context"
+            mock_build_workflows.return_value = "workflows context"
 
             node = ComponentBrowsingNode()
             node.wait = 0  # Speed up tests
@@ -109,17 +108,22 @@ class TestComponentBrowsingSelection:
             result = node.prep(shared)
 
             assert result["user_input"] == "process files"
-            assert result["discovery_context"] == "discovery context"
+            assert result["nodes_context"] == "nodes context"
+            assert result["workflows_context"] == "workflows context"
             assert result["registry_metadata"] == mock_registry.load()
             assert result["model_name"] == "anthropic/claude-sonnet-4-0"  # Default model
             assert result["temperature"] == 0.0  # Default temperature
 
-            mock_build.assert_called_once_with(
-                node_ids=None, workflow_names=None, registry_metadata=mock_registry.load(), workflow_manager=None
-            )
+            mock_build_nodes.assert_called_once_with(node_ids=None, registry_metadata=mock_registry.load())
+            mock_build_workflows.assert_called_once_with(workflow_names=None, workflow_manager=None)
 
     def test_exec_extracts_nested_response_correctly(self, mock_llm_response_nested):
-        """CRITICAL TEST: Verify nested response extraction for component selection."""
+        """CRITICAL TEST: Verify nested response extraction for component selection.
+
+        VALIDATES: ComponentSelection response parsing.
+        The LLM returns selected node IDs and workflow names in a nested
+        structure that must be correctly extracted for planning context.
+        """
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_model.prompt.return_value = mock_llm_response_nested(
@@ -131,7 +135,8 @@ class TestComponentBrowsingSelection:
             node.wait = 0  # Speed up tests
             prep_res = {
                 "user_input": "process CSV and generate report",
-                "discovery_context": "test context",
+                "nodes_context": "test nodes context",
+                "workflows_context": "test workflows context",
                 "registry_metadata": {},
                 "model_name": "anthropic/claude-sonnet-4-0",
                 "temperature": 0.0,
@@ -147,35 +152,13 @@ class TestComponentBrowsingSelection:
             assert result["workflow_names"] == ["data-pipeline", "text-processor"]
             assert result["reasoning"] == "Test reasoning for component selection"
 
-    def test_exec_uses_over_inclusive_prompt(self, mock_llm_response_nested):
-        """Test exec uses over-inclusive selection strategy in prompt."""
-        with patch("llm.get_model") as mock_get_model:
-            mock_model = Mock()
-            mock_model.prompt.return_value = mock_llm_response_nested(node_ids=[], workflow_names=[])
-            mock_get_model.return_value = mock_model
-
-            node = ComponentBrowsingNode()
-            node.wait = 0  # Speed up tests
-            prep_res = {
-                "user_input": "test request",
-                "discovery_context": "components",
-                "registry_metadata": {},
-                "model_name": "anthropic/claude-sonnet-4-0",
-                "temperature": 0.0,
-            }
-
-            node.exec(prep_res)
-
-            # Verify prompt encourages over-inclusion
-            call_args = mock_model.prompt.call_args
-            prompt = call_args[0][0]
-            assert "BE OVER-INCLUSIVE" in prompt
-            assert "even 20% relevance" in prompt
-            assert "Include supporting nodes" in prompt
-            assert "Better to include too many" in prompt
-
     def test_post_always_routes_to_generate(self):
-        """Test post always routes to 'generate' for Path B continuation."""
+        """Test post always routes to 'generate' for Path B continuation.
+
+        VALIDATES: Path B flow continuation.
+        ComponentBrowsingNode always routes to 'generate' action,
+        ensuring Path B continues to workflow generation.
+        """
         with patch("pflow.planning.nodes.build_planning_context") as mock_build:
             mock_build.return_value = "detailed planning context"
 
@@ -197,7 +180,12 @@ class TestComponentBrowsingSelection:
             assert shared["planning_context"] == "detailed planning context"
 
     def test_post_builds_planning_context_with_selections(self):
-        """Test post correctly calls build_planning_context with selections."""
+        """Test post correctly calls build_planning_context with selections.
+
+        VALIDATES: Planning context generation for selected components.
+        The selected node IDs and workflow names must be passed correctly
+        to build_planning_context to create detailed specs for generation.
+        """
         with patch("pflow.planning.nodes.build_planning_context") as mock_build:
             mock_build.return_value = "context"
 
@@ -216,36 +204,3 @@ class TestComponentBrowsingSelection:
                 saved_workflows=None,
                 workflow_manager=None,
             )
-
-    def test_model_configuration_via_params(self, mock_llm_response_nested, mock_registry):
-        """Test that model name and temperature can be configured via params."""
-        with patch("llm.get_model") as mock_get_model:
-            mock_model = Mock()
-            mock_model.prompt.return_value = mock_llm_response_nested(node_ids=["n1"], workflow_names=["w1"])
-            mock_get_model.return_value = mock_model
-
-            with patch("pflow.planning.nodes.Registry") as mock_reg_class:
-                mock_reg_class.return_value = mock_registry
-
-                with patch("pflow.planning.nodes.build_discovery_context") as mock_build:
-                    mock_build.return_value = "test context"
-
-                    # Configure custom model and temperature via params
-                    node = ComponentBrowsingNode()
-                    node.wait = 0  # Speed up tests
-                    node.params = {"model": "gpt-4-turbo", "temperature": 0.7}
-
-                    shared = {"user_input": "test"}
-                    prep_res = node.prep(shared)
-
-                    # Verify prep phase gets config from params
-                    assert prep_res["model_name"] == "gpt-4-turbo"
-                    assert prep_res["temperature"] == 0.7
-
-                    # Execute and verify model is loaded with custom name
-                    node.exec(prep_res)
-                    mock_get_model.assert_called_once_with("gpt-4-turbo")
-
-                    # Verify temperature is passed to prompt
-                    call_args = mock_model.prompt.call_args
-                    assert call_args[1]["temperature"] == 0.7

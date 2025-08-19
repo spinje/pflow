@@ -12,13 +12,15 @@ last_tested: 2025-01-01
 prompt_hash: ""
 ---
 
-# Component Browsing Prompt
+You are a component browsing system that selects building blocks for workflow generation. The available building blocks are listed in the <available_nodes> and <available_workflows> tags.
 
-You are a component browsing system that selects building blocks for workflow generation.
+<available_nodes>
+{{nodes_context}}
+</available_nodes>
 
-<available_components>
-{{discovery_context}}
-</available_components>
+<available_workflows>
+{{workflows_context}}
+</available_workflows>
 
 <user_request>
 {{user_input}}
@@ -27,11 +29,11 @@ You are a component browsing system that selects building blocks for workflow ge
 Select ALL nodes and workflows that could potentially help build this request.
 
 BE OVER-INCLUSIVE:
-- Include anything that might be useful (even 20% relevance)
+- Include anything that might be useful (even 50% relevance)
 - Include supporting nodes (logging, error handling, etc.)
 - Include workflows that could be used as building blocks
 - Better to include too many than miss critical components
 
-The generator will decide what to actually use from your selection.
+In the next step, the generator will decide what to actually use from your selection.
 
 Return lists of node IDs and workflow names that could be helpful.

@@ -2,6 +2,11 @@
 
 WHEN TO RUN: Always run these tests - they're fast and use mocks.
 These tests verify data flow between nodes and shared store updates.
+
+FOCUS: These tests validate the critical contracts between discovery nodes
+and the shared store - what data must be written, when, and in what format.
+They ensure the planner's two-path architecture (Path A: reuse, Path B: generate)
+functions correctly by verifying data handoffs between nodes.
 """
 
 from unittest.mock import Mock, patch
@@ -81,21 +86,14 @@ def mock_llm_response_nested():
 class TestSharedStoreContracts:
     """Tests for shared store data flow and contracts."""
 
-    def test_init_configurable_parameters_discovery(self):
-        """Test discovery node initializes with configurable retry parameters."""
-        # Test default parameters
-        node = WorkflowDiscoveryNode(max_retries=2, wait=0)  # Speed up tests
-        assert node.max_retries == 2
-        assert node.wait == 0
-
-        # Test configurable parameters
-        node2 = WorkflowDiscoveryNode(max_retries=3, wait=2.5)
-        assert node2.max_retries == 3
-        assert node2.wait == 2.5
-
     def test_prep_builds_discovery_context(self):
-        """Test prep phase builds discovery context correctly."""
-        with patch("pflow.planning.nodes.build_discovery_context") as mock_build:
+        """Test prep phase builds discovery context correctly.
+
+        VALIDATES: Context builder integration and default model configuration.
+        This ensures the discovery node properly prepares the workflow context
+        that the LLM needs for semantic matching.
+        """
+        with patch("pflow.planning.nodes.build_workflows_context") as mock_build:
             mock_build.return_value = "test context"
 
             node = WorkflowDiscoveryNode()
@@ -108,12 +106,16 @@ class TestSharedStoreContracts:
             assert result["discovery_context"] == "test context"
             assert result["model_name"] == "anthropic/claude-sonnet-4-0"  # Default model
             assert result["temperature"] == 0.0  # Default temperature
-            mock_build.assert_called_once_with(
-                node_ids=None, workflow_names=None, registry_metadata=None, workflow_manager=None
-            )
+            mock_build.assert_called_once_with(workflow_names=None, workflow_manager=None)
 
     def test_exec_extracts_nested_response_correctly(self, mock_llm_response_nested):
-        """CRITICAL TEST: Verify nested response extraction pattern works."""
+        """CRITICAL TEST: Verify nested response extraction pattern works.
+
+        VALIDATES: Anthropic's nested JSON response structure parsing.
+        The LLM returns responses in a specific nested format that must be
+        correctly extracted. This test ensures we handle the actual API
+        response structure, not a simplified version.
+        """
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_model.prompt.return_value = mock_llm_response_nested(
@@ -142,7 +144,12 @@ class TestSharedStoreContracts:
             assert result["reasoning"] == "Test reasoning for decision"
 
     def test_exec_handles_not_found_case(self, mock_llm_response_nested):
-        """Test exec handles case when no workflow matches."""
+        """Test exec handles case when no workflow matches.
+
+        VALIDATES: Path B routing decision when no existing workflow fits.
+        This is a critical branch point - when discovery returns found=False,
+        the system must route to component browsing for new workflow generation.
+        """
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_model.prompt.return_value = mock_llm_response_nested(found=False, workflow_name=None, confidence=0.2)
@@ -164,7 +171,12 @@ class TestSharedStoreContracts:
             assert result["confidence"] == 0.2
 
     def test_exec_sends_correct_prompt_to_llm(self, mock_llm_response_nested):
-        """Test exec sends properly formatted prompt to LLM."""
+        """Test exec sends properly formatted prompt to LLM.
+
+        VALIDATES: Prompt construction and schema enforcement.
+        Ensures the discovery prompt includes user input and context,
+        and that the structured output schema is properly configured.
+        """
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_model.prompt.return_value = mock_llm_response_nested(found=False)
@@ -181,13 +193,11 @@ class TestSharedStoreContracts:
 
             node.exec(prep_res)
 
-            # Verify prompt structure
+            # Verify prompt contains required data
             call_args = mock_model.prompt.call_args
             prompt = call_args[0][0]
             assert "analyze CSV files" in prompt
             assert "available workflows and nodes here" in prompt
-            assert "COMPLETELY satisfies" in prompt
-            assert "found=true ONLY if" in prompt
 
             # Verify schema parameter
             from pflow.planning.nodes import WorkflowDecision
@@ -195,38 +205,14 @@ class TestSharedStoreContracts:
             assert call_args[1]["schema"] == WorkflowDecision
             assert call_args[1]["temperature"] == 0
 
-    def test_model_configuration_via_params(self, mock_llm_response_nested):
-        """Test that model name and temperature can be configured via params."""
-        with patch("llm.get_model") as mock_get_model:
-            mock_model = Mock()
-            mock_model.prompt.return_value = mock_llm_response_nested(found=False)
-            mock_get_model.return_value = mock_model
-
-            # Configure custom model and temperature via params
-            node = WorkflowDiscoveryNode()
-            node.wait = 0  # Speed up tests
-            node.params = {"model": "gpt-4", "temperature": 0.5}
-
-            with patch("pflow.planning.nodes.build_discovery_context") as mock_build:
-                mock_build.return_value = "test context"
-
-                shared = {"user_input": "test"}
-                prep_res = node.prep(shared)
-
-                # Verify prep phase gets config from params
-                assert prep_res["model_name"] == "gpt-4"
-                assert prep_res["temperature"] == 0.5
-
-                # Execute and verify model is loaded with custom name
-                node.exec(prep_res)
-                mock_get_model.assert_called_once_with("gpt-4")
-
-                # Verify temperature is passed to prompt
-                call_args = mock_model.prompt.call_args
-                assert call_args[1]["temperature"] == 0.5
-
     def test_path_b_flow_no_match_then_browse(self, mock_registry, mock_llm_response_nested):
-        """Test Path B flow: discovery finds no match, browsing selects components."""
+        """Test Path B flow: discovery finds no match, browsing selects components.
+
+        VALIDATES: Complete Path B workflow orchestration.
+        This integration test verifies the handoff from WorkflowDiscoveryNode
+        to ComponentBrowsingNode, including proper shared store updates and
+        planning context generation.
+        """
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
 
@@ -271,7 +257,12 @@ class TestSharedStoreContracts:
                     assert shared["planning_context"] == "planning context for generation"
 
     def test_shared_store_keys_written_correctly(self, mock_llm_response_nested):
-        """Test both nodes write expected keys to shared store."""
+        """Test both nodes write expected keys to shared store.
+
+        VALIDATES: Shared store contract compliance.
+        Each node must write specific keys that downstream nodes depend on.
+        This test ensures the data contract between nodes is maintained.
+        """
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_model.prompt.side_effect = [

@@ -4,15 +4,13 @@ test_path: tests/test_planning/llm/prompts/test_discovery_prompt.py::TestDiscove
 test_command: uv run python tools/test_prompt_accuracy.py discovery
 version: 1.0
 latest_accuracy: 100.0
-test_runs: [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 20.0, 20.0, 100.0]
-average_accuracy: 82.2
-test_count: 3
+test_runs: [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+average_accuracy: 100.0
+test_count: 7
 previous_version_accuracy: 0.0
-last_tested: '2025-08-16'
+last_tested: '2025-08-19'
 prompt_hash: bfb270fe
 ---
-
-# Discovery Prompt
 
 You are a workflow discovery system that determines if an existing workflow completely satisfies a user request.
 
@@ -24,7 +22,10 @@ You are a workflow discovery system that determines if an existing workflow comp
 {{user_input}}
 </user_request>
 
-Analyze whether any existing workflow COMPLETELY satisfies this request. A complete match means the workflow does everything the user wants without modification.
+Carefully analyze the user request and the available workflows and nodes to determine if the user request is a COMPLETEmatch to any of the available workflows. A complete match means the workflow does everything the user wants without modification.
+
+Does the workflow do MORE than the user request? If so, return found=false.
+Does the workflow do LESS than the user request? If so, return found=false.
 
 Return found=true ONLY if:
 1. An existing workflow handles ALL aspects of the request
@@ -33,4 +34,4 @@ Return found=true ONLY if:
 
 If any part of the request isn't covered, return found=false to trigger workflow generation.
 
-Be strict - partial matches should return found=false.
+Be strict - partial matches should return found=false but missing to identify a match will result in a new duplicate workflow being generated.

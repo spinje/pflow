@@ -307,6 +307,10 @@ def _validate_discovery_inputs(
 
 def _format_discovery_nodes(categories: dict[str, list[str]], filtered_nodes: dict[str, dict]) -> list[str]:
     """Format nodes section for discovery context."""
+    # Return empty list if no nodes to format
+    if not categories or not filtered_nodes:
+        return []
+
     markdown_sections = ["## Available Nodes\n"]
 
     for category, nodes in sorted(categories.items()):
@@ -471,6 +475,94 @@ def build_discovery_context(
     markdown_sections.extend(_format_discovery_workflows(filtered_workflows))
 
     return "\n".join(markdown_sections).strip()
+
+
+def build_nodes_context(
+    node_ids: Optional[list[str]] = None,
+    registry_metadata: Optional[dict[str, dict[str, Any]]] = None,
+) -> str:
+    """Build context containing only node information as a numbered list.
+
+    Args:
+        node_ids: List of node IDs to include (None = all nodes)
+        registry_metadata: Optional registry metadata dict. If not provided,
+                          will attempt to load from default registry.
+
+    Returns:
+        Numbered list of nodes with descriptions
+    """
+    # Get registry metadata if not provided
+    if registry_metadata is None:
+        from pflow.registry import Registry
+
+        registry = Registry()
+        registry_metadata = registry.load()
+
+    # Process nodes to get metadata
+    processed_nodes, _ = _process_nodes(registry_metadata)
+
+    # Filter nodes if specific IDs provided
+    if node_ids is not None:
+        filtered_nodes = {nid: data for nid, data in processed_nodes.items() if nid in node_ids}
+    else:
+        filtered_nodes = processed_nodes
+
+    # Create numbered list of nodes grouped by category
+    sections = []
+    counter = 1
+    categories = _group_nodes_by_category(filtered_nodes)
+
+    for category, nodes in sorted(categories.items()):
+        # Add category as a comment for organization
+        sections.append(f"# {category}")
+        for node_id in sorted(nodes):
+            node_data = filtered_nodes[node_id]
+            description = node_data.get("description", "").strip()
+
+            if description and description != "No description":
+                sections.append(f"{counter}. {node_id} - {description}")
+            else:
+                sections.append(f"{counter}. {node_id}")
+            counter += 1
+        sections.append("")  # Empty line between categories
+
+    return "\n".join(sections).strip()
+
+
+def build_workflows_context(
+    workflow_names: Optional[list[str]] = None,
+    workflow_manager: Optional[WorkflowManager] = None,
+) -> str:
+    """Build context containing only workflow information as a numbered list.
+
+    Args:
+        workflow_names: List of workflow names to include (None = all workflows)
+        workflow_manager: Optional WorkflowManager instance.
+
+    Returns:
+        Numbered list of workflows with descriptions
+    """
+    # Use provided workflow_manager or fallback to singleton
+    manager = workflow_manager if workflow_manager else _get_workflow_manager()
+    saved_workflows = manager.list_all()
+
+    # Filter workflows if specific names provided
+    if workflow_names is not None:
+        filtered_workflows = [w for w in saved_workflows if w["name"] in workflow_names]
+    else:
+        filtered_workflows = saved_workflows
+
+    # Create numbered list of workflows
+    sections = []
+    for idx, workflow in enumerate(sorted(filtered_workflows, key=lambda w: w["name"]), 1):
+        description = _extract_workflow_description(workflow)
+
+        if description:
+            sections.append(f"{idx}. {workflow['name']} - {description}")
+        else:
+            sections.append(f"{idx}. {workflow['name']}")
+
+    return "\n".join(sections).strip()
 
 
 def _check_missing_components(
