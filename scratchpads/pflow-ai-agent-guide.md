@@ -2,9 +2,12 @@
 
 ## ⚠️ Critical Information
 
-**DO NOT use natural language commands with pflow right now** - The planner is failing and causes 60+ second timeouts. Only use JSON workflows directly if not explicitly testing or debugging the planners llm calls.
+**The planner works but costs money** - Natural language commands trigger the AI planner which makes multiple LLM calls (~$0.02-0.05 per request). Only use it when you need to:
+- Debug/test the planner itself
+- Generate new workflows from natural language
+- Understand planner behavior with --trace
 
-**ALSO AVOID**: Running workflows with missing required inputs - this also triggers the planner and hangs!
+**For regular workflow execution**: Use JSON workflows with --file to avoid LLM costs and get instant execution (<1 second vs 10-30 seconds)
 
 ## What Works Right Now
 
@@ -14,6 +17,9 @@
 ```bash
 # This is the RECOMMENDED way to use pflow
 uv run pflow --file workflow.json
+
+# Execute saved workflows from ~/.pflow/workflows/
+uv run pflow --file ~/.pflow/workflows/my-workflow.json
 
 # With parameters
 uv run pflow --file workflow.json param1=value1 param2=value2
@@ -123,7 +129,8 @@ Output: `HELLO WORLD`
   "outputs": {
     "content": {
       "description": "File contents",
-      "type": "string"
+      "type": "string",
+      "source": "${reader.content}"
     }
   },
   "nodes": [
@@ -138,6 +145,7 @@ Output: `HELLO WORLD`
   "edges": []
 }
 ```
+**IMPORTANT**: The `source` field is REQUIRED for outputs when namespacing is enabled (default). It maps the namespaced node output (`reader.content`) to the root-level output (`content`)
 
 ### 4. Git Status Check
 ```json
@@ -146,7 +154,8 @@ Output: `HELLO WORLD`
   "outputs": {
     "status": {
       "description": "Git status",
-      "type": "object"
+      "type": "object",
+      "source": "${git.status}"
     }
   },
   "nodes": [
@@ -185,11 +194,13 @@ Output: `HELLO WORLD`
   "outputs": {
     "response": {
       "description": "The LLM's response",
-      "type": "string"
+      "type": "string",
+      "source": "${generate.response}"
     },
     "llm_usage": {
       "description": "Token usage information",
-      "type": "object"
+      "type": "object",
+      "source": "${generate.llm_usage}"
     }
   },
   "nodes": [
@@ -212,6 +223,30 @@ Output: `HELLO WORLD`
 
 > Note: Always use `gpt-5-nano` when testing to save money
 
+## CLI Options Reference
+
+### Essential Flags
+```bash
+--file <path>           # Execute workflow from JSON file (REQUIRED for now)
+--verbose               # Show detailed execution info (useful for debugging!)
+--output-format json    # Return ALL outputs as JSON (default: text)
+--output-key <key>      # Return specific output key only
+--trace                 # Save debug trace (only works with planner, not --file)
+```
+
+### Parameter Passing
+```bash
+# Pass workflow inputs as key=value pairs AFTER the command
+uv run pflow --file workflow.json input1=value1 input2=42 flag=true
+```
+
+### Stdin Integration
+```bash
+# Pipe data into workflow (accessible as 'stdin' in shared store)
+echo "Hello" | uv run pflow --file workflow.json
+cat data.txt | uv run pflow --file workflow.json
+```
+
 ## Output Handling
 
 ### Text Format (Default)
@@ -229,6 +264,40 @@ Output: `HELLO WORLD`
 - **Missing nodes**: Shows "Unknown node type: X"
 - **Execution errors**: Shows actual error, doesn't trigger planner
 
+## Quick Verification
+
+```bash
+# Test that pflow is working (uses pre-installed test workflow)
+uv run pflow --file ~/.pflow/workflows/test-suite.json
+# Expected output: "Workflow executed successfully"
+
+# Test with custom parameters
+uv run pflow --file ~/.pflow/workflows/test-suite.json test_name="my-test"
+
+# See verbose execution details
+uv run pflow --verbose --file ~/.pflow/workflows/test-suite.json test_name="integration"
+# Shows node execution details and parameter injection
+```
+
+## Using the Planner (Costs Money!)
+
+```bash
+# Generate a workflow from natural language (~$0.02-0.05, takes 10-30s)
+uv run pflow "create a file called hello.txt with the content 'Hello World'"
+
+# With debugging trace to see what the planner is doing (Always use --trace as an AI agent, there is not reason to not use it)
+uv run pflow --trace "read the README file and summarize it"
+# Creates trace file in ~/.pflow/debug/pflow-trace-*.json
+
+# Simple workflow generation (takes 10-30s, costs ~$0.02-0.05)
+uv run pflow "generate a random number between 1 and 100"
+
+# Tip: After planner generates a workflow, copy it from debug traces for reuse
+# Check ~/.pflow/debug/pflow-trace-*.json for the generated workflow JSON
+```
+
+**Remember**: Each planner invocation costs money and takes 10-30 seconds. Use --file with JSON workflows for free, instant execution.
+
 ## Testing Workflows
 
 ### Best Practice: Use Echo Node for Testing
@@ -238,8 +307,8 @@ cat > /tmp/test.json << 'EOF'
 {
   "ir_version": "0.1.0",
   "outputs": {
-    "echo": {"type": "string"},
-    "metadata": {"type": "object"}
+    "echo": {"type": "string", "source": "${test.echo}"},
+    "metadata": {"type": "object", "source": "${test.metadata}"}
   },
   "nodes": [
     {"id": "test", "type": "echo", "params": {"prefix": "Test: "}}
@@ -260,7 +329,7 @@ uv run pflow --file /tmp/test.json --output-format json
 cat > /tmp/test_file.json << 'EOF'
 {
   "ir_version": "0.1.0",
-  "outputs": {"result": {"type": "string"}},
+  "outputs": {"result": {"type": "string", "source": "${w.result}"}},
   "nodes": [
     {"id": "w", "type": "write-file", "params": {"file_path": "/tmp/out.txt", "content": "test"}}
   ]
@@ -278,7 +347,14 @@ uv run pflow --file /tmp/test_file.json
 4. **Check node registry** - Only use nodes that exist
 5. **Use --output-format json** - For structured output parsing
 6. **Template variables work** - Use ${var} in params, pass via CLI (not hardcoded!)
-7. **Workflows can declare outputs** - CLI respects these declarations
+7. **Outputs NEED source field** - Must use `"source": "${node_id.key}"` to map namespaced outputs
+
+## Workflow Storage
+
+- **Saved workflows location**: `~/.pflow/workflows/`
+- **Debug traces location**: `~/.pflow/debug/` (when using --trace with planner)
+- **Pre-installed test workflow**: `~/.pflow/workflows/test-suite.json` (safe for testing)
+- **Note**: Execute saved workflows with --file for instant execution without LLM costs
 
 ## Available Nodes Summary
 
@@ -288,11 +364,19 @@ uv run pflow --file /tmp/test_file.json
 - **GitHub**: github-list-issues, github-get-issue, github-create-pr
 - **LLM**: llm
 
-## DO NOT ATTEMPT
+## When to Use vs Avoid the Planner
 
-- Natural language commands (planner is broken, that is why we need debugging capabilities)
-- Complex multi-step debugging (build simple workflows instead)
-- Workflow discovery by description (use exact names)
+### Use the Planner When:
+- Testing planner improvements or debugging with --trace
+- Generating new workflows from natural language descriptions
+- You explicitly need to test planner behavior
+- Cost is not a concern (research/development)
+
+### Avoid the Planner When:
+- Running known workflows (use --file instead)
+- Cost matters (each request costs ~$0.02-0.05)
+- Speed matters (planner takes 10-30s vs <1s for direct execution)
+- You already have the JSON workflow
 
 ## Safe Debugging Approach
 

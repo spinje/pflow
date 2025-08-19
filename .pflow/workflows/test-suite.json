@@ -1,0 +1,88 @@
+{
+  "ir_version": "0.1.0",
+  "description": "Comprehensive test workflow for verifying pflow functionality",
+  "inputs": {
+    "test_name": {
+      "description": "Name of the test being run",
+      "type": "string",
+      "required": false,
+      "default": "pflow-test"
+    },
+    "verbose": {
+      "description": "Show detailed output",
+      "type": "boolean",
+      "required": false,
+      "default": false
+    }
+  },
+  "outputs": {
+    "test_result": {
+      "description": "Test execution result",
+      "type": "string"
+    },
+    "timestamp": {
+      "description": "When the test was run",
+      "type": "string"
+    },
+    "node_count": {
+      "description": "Number of nodes executed",
+      "type": "number"
+    }
+  },
+  "nodes": [
+    {
+      "id": "start",
+      "type": "echo",
+      "params": {
+        "message": "Starting test: ${test_name}",
+        "prefix": "\u2705 ",
+        "uppercase": false
+      }
+    },
+    {
+      "id": "timestamp",
+      "type": "echo",
+      "params": {
+        "message": "Test timestamp recorded",
+        "metadata": {
+          "timestamp": "2025-01-19T00:00:00Z",
+          "test_name": "${test_name}"
+        }
+      }
+    },
+    {
+      "id": "verify_params",
+      "type": "echo",
+      "params": {
+        "message": "Parameters validated: test_name=${test_name}, verbose=${verbose}",
+        "prefix": "\ud83d\udccb "
+      }
+    },
+    {
+      "id": "complete",
+      "type": "echo",
+      "params": {
+        "message": "Test '${test_name}' completed successfully",
+        "prefix": "\ud83c\udf89 ",
+        "metadata": {
+          "test_result": "SUCCESS",
+          "node_count": 4
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "start",
+      "to": "timestamp"
+    },
+    {
+      "from": "timestamp",
+      "to": "verify_params"
+    },
+    {
+      "from": "verify_params",
+      "to": "complete"
+    }
+  ]
+}
