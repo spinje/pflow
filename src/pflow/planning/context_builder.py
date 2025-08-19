@@ -403,7 +403,9 @@ def _format_discovery_workflows(filtered_workflows: list[dict[str, Any]]) -> lis
 
     if filtered_workflows:
         markdown_sections.append("## Available Workflows\n")
-        for workflow in sorted(filtered_workflows, key=lambda w: w["name"]):
+        # Sort workflows by name
+        sorted_workflows = sorted(filtered_workflows, key=lambda w: w["name"])
+        for workflow in sorted_workflows:
             _format_single_workflow(workflow, markdown_sections)
 
     return markdown_sections
@@ -554,13 +556,17 @@ def build_workflows_context(
 
     # Create numbered list of workflows
     sections = []
-    for idx, workflow in enumerate(sorted(filtered_workflows, key=lambda w: w["name"]), 1):
+    # Sort workflows by name
+    sorted_workflows = sorted(filtered_workflows, key=lambda w: w["name"])
+
+    for idx, workflow in enumerate(sorted_workflows, 1):
+        name = workflow["name"]  # Production workflows always have names
         description = _extract_workflow_description(workflow)
 
         if description:
-            sections.append(f"{idx}. {workflow['name']} - {description}")
+            sections.append(f"{idx}. {name} - {description}")
         else:
-            sections.append(f"{idx}. {workflow['name']}")
+            sections.append(f"{idx}. {name}")
 
     return "\n".join(sections).strip()
 
@@ -649,7 +655,9 @@ def _format_planning_workflows(selected_workflows: list[dict[str, Any]]) -> list
 
     if selected_workflows:
         markdown_sections.append("## Selected Workflows\n")
-        for workflow in sorted(selected_workflows, key=lambda w: w["name"]):
+        # Sort workflows by name
+        sorted_workflows = sorted(selected_workflows, key=lambda w: w["name"])
+        for workflow in sorted_workflows:
             section = _format_workflow_section(workflow)
             markdown_sections.append(section)
 
