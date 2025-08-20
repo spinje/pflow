@@ -85,22 +85,22 @@ This caused `KeyError: 'name'` throughout the system when code assumed `workflow
 ```python
 def list_all(self) -> list[dict[str, Any]]:
     """List all valid workflows in the directory.
-    
+
     Skips invalid workflow files with warnings.
-    
+
     Returns:
         List of valid workflow metadata dicts
     """
     workflows = []
-    
+
     for file_path in self.workflows_dir.glob("*.json"):
         workflow = self._load_and_validate_file(file_path, strict=False)
         if workflow:
             workflows.append(workflow)
-    
+
     # Sort by name for consistent ordering
     workflows.sort(key=lambda w: w["name"])  # Safe - validated workflows have name
-    
+
     return workflows
 ```
 
@@ -108,27 +108,27 @@ def list_all(self) -> list[dict[str, Any]]:
 ```python
 def load(self, name: str) -> dict[str, Any]:
     """Load and validate a workflow by name.
-    
+
     Args:
         name: Workflow name
-        
+
     Returns:
         Validated workflow metadata dict
-        
+
     Raises:
         WorkflowNotFoundError: If workflow doesn't exist
         WorkflowValidationError: If workflow is invalid
     """
     file_path = self.workflows_dir / f"{name}.json"
-    
+
     if not file_path.exists():
         raise WorkflowNotFoundError(f"Workflow '{name}' not found")
-    
+
     workflow = self._load_and_validate_file(file_path, strict=True)
     if not workflow:
         # Should not happen with strict=True, but be defensive
         raise WorkflowValidationError(f"Workflow '{name}' failed validation")
-    
+
     return workflow
 ```
 
@@ -136,14 +136,14 @@ def load(self, name: str) -> dict[str, Any]:
 ```python
 def _load_and_validate_file(self, file_path: Path, strict: bool = True) -> Optional[dict[str, Any]]:
     """Load and validate a workflow file.
-    
+
     Args:
         file_path: Path to workflow JSON file
         strict: If True, raise exceptions; if False, return None on error
-        
+
     Returns:
         Validated workflow dict or None if invalid and not strict
-        
+
     Raises:
         WorkflowValidationError: If strict=True and validation fails
     """
@@ -151,21 +151,21 @@ def _load_and_validate_file(self, file_path: Path, strict: bool = True) -> Optio
         # Level 1: JSON validation
         with open(file_path, encoding="utf-8") as f:
             data = json.load(f)
-            
+
     except json.JSONDecodeError as e:
         error_msg = f"Invalid JSON in {file_path.name}: {e}"
         if strict:
             raise WorkflowValidationError(error_msg) from e
         logger.warning(error_msg)
         return None
-        
+
     except Exception as e:
         error_msg = f"Failed to read {file_path.name}: {e}"
         if strict:
             raise WorkflowValidationError(error_msg) from e
         logger.warning(error_msg)
         return None
-    
+
     # Level 2: Metadata structure validation
     validation_errors = self._validate_metadata_structure(data)
     if validation_errors:
@@ -174,7 +174,7 @@ def _load_and_validate_file(self, file_path: Path, strict: bool = True) -> Optio
             raise WorkflowValidationError(error_msg)
         logger.warning(error_msg)
         return None
-    
+
     # Level 3: IR validation (optional, controlled by setting)
     if self.validate_ir_on_load:  # New optional setting
         try:
@@ -186,42 +186,42 @@ def _load_and_validate_file(self, file_path: Path, strict: bool = True) -> Optio
                 raise WorkflowValidationError(error_msg) from e
             logger.warning(error_msg)
             return None
-    
+
     logger.debug(f"Successfully validated workflow from {file_path}")
     return data
 
 def _validate_metadata_structure(self, data: dict) -> list[str]:
     """Validate the metadata wrapper structure.
-    
+
     Args:
         data: Loaded JSON data
-        
+
     Returns:
         List of validation error messages (empty if valid)
     """
     errors = []
-    
+
     # Check required fields
     if not isinstance(data, dict):
         errors.append("Root must be an object")
         return errors  # Can't check further
-    
+
     if "name" not in data:
         errors.append("Missing required field 'name'")
     elif not isinstance(data["name"], str) or not data["name"].strip():
         errors.append("Field 'name' must be a non-empty string")
-    
+
     if "ir" not in data:
         errors.append("Missing required field 'ir'")
     elif not isinstance(data["ir"], dict):
         errors.append("Field 'ir' must be an object")
-    
+
     # Validate name doesn't contain invalid characters (for filesystem)
     if "name" in data and isinstance(data["name"], str):
         invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
         if any(char in data["name"] for char in invalid_chars):
             errors.append(f"Field 'name' contains invalid characters: {invalid_chars}")
-    
+
     return errors
 ```
 
@@ -245,7 +245,7 @@ Add to WorkflowManager initialization:
 ```python
 def __init__(self, workflows_dir: Optional[Path] = None, validate_ir_on_load: bool = False):
     """Initialize WorkflowManager.
-    
+
     Args:
         workflows_dir: Directory for workflow files
         validate_ir_on_load: If True, validate IR structure when loading workflows
@@ -284,7 +284,7 @@ def test_list_all_skips_various_invalid_workflows(workflow_manager):
         "not_object.json": [],  # Not an object
         "corrupt.json": "not valid json",  # Invalid JSON
     }
-    
+
     for filename, content in invalid_files.items():
         file_path = workflow_manager.workflows_dir / filename
         with open(file_path, "w") as f:
@@ -292,11 +292,11 @@ def test_list_all_skips_various_invalid_workflows(workflow_manager):
                 f.write(content)
             else:
                 json.dump(content, f)
-    
+
     # Should return empty list and log warnings
     with patch("logging.Logger.warning") as mock_warning:
         workflows = workflow_manager.list_all()
-    
+
     assert len(workflows) == 0
     assert mock_warning.call_count == len(invalid_files)
 ```
@@ -309,10 +309,10 @@ def test_load_validates_structure(workflow_manager):
     invalid_path = workflow_manager.workflows_dir / "invalid.json"
     with open(invalid_path, "w") as f:
         json.dump({"ir": {}}, f)  # Missing name
-    
+
     with pytest.raises(WorkflowValidationError) as exc_info:
         workflow_manager.load("invalid")
-    
+
     assert "Missing required field 'name'" in str(exc_info.value)
 ```
 
@@ -322,14 +322,14 @@ def test_list_all_returns_valid_skips_invalid(workflow_manager, sample_ir):
     """Test that list_all returns valid workflows and skips invalid ones."""
     # Save valid workflow
     workflow_manager.save("valid", sample_ir, "Valid workflow")
-    
+
     # Create invalid workflow
     invalid_path = workflow_manager.workflows_dir / "invalid.json"
     with open(invalid_path, "w") as f:
         json.dump({"no_name": True}, f)
-    
+
     workflows = workflow_manager.list_all()
-    
+
     assert len(workflows) == 1
     assert workflows[0]["name"] == "valid"
 ```

@@ -33,7 +33,7 @@ This document shows real examples of invalid workflow files that the validation 
 
 **Problem**: This is just the IR without the metadata wrapper.
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'test-suite.json': Missing required field 'name'; Missing required field 'ir'
 ```
@@ -89,7 +89,7 @@ WARNING: Skipping invalid workflow 'test-suite.json': Missing required field 'na
 }
 ```
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'unnamed.json': Missing required field 'name'
 ```
@@ -108,7 +108,7 @@ WARNING: Skipping invalid workflow 'unnamed.json': Missing required field 'name'
 }
 ```
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'empty-name.json': Field 'name' must be a non-empty string
 ```
@@ -127,7 +127,7 @@ WARNING: Skipping invalid workflow 'empty-name.json': Field 'name' must be a non
 }
 ```
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'wrong-type.json': Field 'name' must be a non-empty string
 ```
@@ -146,7 +146,7 @@ WARNING: Skipping invalid workflow 'wrong-type.json': Field 'name' must be a non
 }
 ```
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'invalid-chars.json': Field 'name' contains invalid characters: ['/']
 ```
@@ -161,7 +161,7 @@ WARNING: Skipping invalid workflow 'invalid-chars.json': Field 'name' contains i
 }
 ```
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'no-ir.json': Missing required field 'ir'
 ```
@@ -177,7 +177,7 @@ WARNING: Skipping invalid workflow 'no-ir.json': Missing required field 'ir'
 }
 ```
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'bad-ir-type.json': Field 'ir' must be an object
 ```
@@ -196,7 +196,7 @@ WARNING: Skipping invalid workflow 'bad-ir-type.json': Field 'ir' must be an obj
 ```
 Note: Missing comma after "description" line
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'corrupted.json': Invalid JSON: Expecting ',' delimiter: line 3 column 3
 ```
@@ -213,7 +213,7 @@ WARNING: Skipping invalid workflow 'corrupted.json': Invalid JSON: Expecting ','
 ]
 ```
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'array-root.json': Root must be an object
 ```
@@ -232,7 +232,7 @@ WARNING: Skipping invalid workflow 'array-root.json': Root must be an object
 }
 ```
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'null-name.json': Field 'name' must be a non-empty string
 ```
@@ -251,7 +251,7 @@ WARNING: Skipping invalid workflow 'null-name.json': Field 'name' must be a non-
 }
 ```
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'whitespace-name.json': Field 'name' must be a non-empty string
 ```
@@ -276,7 +276,7 @@ WARNING: Skipping invalid workflow 'whitespace-name.json': Field 'name' must be 
 
 Note: Missing required `ir_version` in IR
 
-**Error Message** (with IR validation enabled): 
+**Error Message** (with IR validation enabled):
 ```
 WARNING: Skipping invalid workflow 'invalid-ir.json': Invalid IR: Missing required field 'ir_version'
 ```
@@ -301,7 +301,7 @@ WARNING: Skipping invalid workflow 'invalid-ir.json': Invalid IR: Missing requir
 2. Description is wrong type (not critical, won't fail)
 3. IR structure is invalid (would fail Level 3 validation)
 
-**Error Message**: 
+**Error Message**:
 ```
 WARNING: Skipping invalid workflow 'complex-invalid.json': Field 'name' contains invalid characters: ['|', '*']
 ```
@@ -323,7 +323,7 @@ Create a test that loops through these examples:
 ```python
 def test_all_invalid_examples(workflow_manager):
     """Test validation catches all documented invalid examples."""
-    
+
     invalid_examples = {
         "no_wrapper.json": {
             "ir_version": "0.1.0",
@@ -338,17 +338,17 @@ def test_all_invalid_examples(workflow_manager):
         },
         # ... etc
     }
-    
+
     # Create all invalid files
     for filename, content in invalid_examples.items():
         file_path = workflow_manager.workflows_dir / filename
         with open(file_path, "w") as f:
             json.dump(content, f)
-    
+
     # None should be loaded
     workflows = workflow_manager.list_all()
     assert len(workflows) == 0
-    
+
     # Each should fail load() with appropriate error
     for filename in invalid_examples:
         name = filename.replace(".json", "")

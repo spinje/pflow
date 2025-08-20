@@ -154,7 +154,7 @@ This isn't just about preventing KeyErrors. It's about establishing the principl
 
 The test-suite.json incident was a perfect storm:
 1. A workflow without metadata wrapper
-2. Code that assumed all workflows have names  
+2. Code that assumed all workflows have names
 3. A discovery system that showed "workflow-1" when the name was missing
 4. A downstream system trying to load "workflow-1" which didn't exist
 
