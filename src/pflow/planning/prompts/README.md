@@ -29,7 +29,7 @@ done
 
 ### Frontmatter Structure
 
-Each prompt file contains frontmatter tracking accuracy metrics:
+Each prompt file contains frontmatter tracking accuracy metrics and costs:
 
 ```yaml
 ---
@@ -41,6 +41,8 @@ latest_accuracy: 87.0        # Most recent test run
 test_runs: [87.0, 85.0, 84.0]  # Last 10 runs for this version
 average_accuracy: 85.3       # Average of test_runs
 test_count: 20              # Total number of test cases
+last_test_cost: 0.0145      # Cost in USD for the last test run
+test_model: anthropic/claude-3-haiku-20240307  # Model used for testing (optional)
 previous_version_accuracy: 82.0  # Best average from previous version
 last_tested: 2025-01-15
 prompt_hash: a3f2b1c4       # Hash of prompt content for version detection
@@ -79,7 +81,7 @@ When you significantly modify a prompt:
 
 Open any prompt file to see its current accuracy in the frontmatter:
 ```bash
-cat discovery.md | head -15
+cat discovery.md | head -20
 ```
 
 ### 2. Improve the Prompt
@@ -88,14 +90,33 @@ Edit the prompt content to improve accuracy. The tool will detect changes and of
 
 ### 3. Test Your Changes
 
-Run tests (automatically saves results):
+Run tests (automatically saves results with parallel execution):
 ```bash
+# Default: 15 parallel workers for fast execution (~10x speedup)
 uv run python tools/test_prompt_accuracy.py discovery
+```
+
+For cost-effective and fast testing:
+```bash
+# Ultra-cheap model + parallel execution (best for development)
+uv run python tools/test_prompt_accuracy.py discovery --model gpt-5-nano --parallel 15
+
+# Maximum speed with 20 workers
+uv run python tools/test_prompt_accuracy.py discovery --parallel 20
+
+# Serial execution (if needed for debugging)
+uv run python tools/test_prompt_accuracy.py discovery --parallel 1
+```
+
+To see available models:
+```bash
+uv run llm models
 ```
 
 Output shows:
 - Latest test result
 - Running average
+- **Cost information** (tokens used and USD cost)
 - Comparison to previous version
 
 ### 4. Update Accuracy
@@ -107,7 +128,17 @@ uv run python tools/test_prompt_accuracy.py discovery --dry-run
 
 This shows what would change without updating files.
 
-### 5. Commit Progress
+### 5. Cost Optimization
+
+To minimize testing costs:
+- Use `--model gpt-5-nano` for absolute minimum cost ($0.05/$0.4 per million tokens)
+- Use `--model gpt-5-mini` for very cheap testing ($0.25/$2 per million tokens)
+- Use `--model gpt-5` for alternative to sonnet 4.0
+- Run with `--dry-run` first to verify tests work
+- Test with Sonnet only for final validation
+- Monitor `last_test_cost` in frontmatter to track spending
+
+### 6. Commit Progress
 
 Git commits show accuracy improvements:
 ```bash

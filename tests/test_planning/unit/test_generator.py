@@ -410,7 +410,7 @@ class TestLLMResponseParsing:
         with pytest.raises(ValueError) as exc_info:
             node.exec(prep_res)
 
-        assert "Invalid LLM response structure" in str(exc_info.value)
+        assert "Response parsing failed" in str(exc_info.value)
 
 
 class TestWorkflowGeneration:

@@ -1397,8 +1397,6 @@ class MetadataGenerationNode(Node):
             Dict with rich metadata fields for discovery
         """
 
-        import llm
-
         from pflow.planning.ir_models import WorkflowMetadata
         from pflow.planning.utils.llm_helpers import parse_structured_response
 

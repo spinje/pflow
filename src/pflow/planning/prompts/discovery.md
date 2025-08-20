@@ -1,15 +1,17 @@
 ---
 name: discovery
-test_path: tests/test_planning/llm/prompts/test_discovery_prompt.py::TestDiscoveryPromptSensitive
+test_path: tests/test_planning/llm/prompts/test_discovery_prompt.py::TestDiscoveryPrompt
 test_command: uv run python tools/test_prompt_accuracy.py discovery
 version: 1.0
-latest_accuracy: 100.0
-test_runs: [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
-average_accuracy: 100.0
-test_count: 7
-previous_version_accuracy: 0.0
-last_tested: '2025-08-19'
-prompt_hash: bfb270fe
+latest_accuracy: 52.6
+test_runs: [52.6, 42.1, 31.6, 26.3, 31.6, 57.9, 36.8, 47.4, 57.9, 52.6]
+average_accuracy: 43.7
+test_count: 19
+previous_version_accuracy: 100.0
+last_tested: '2025-08-20'
+prompt_hash: 26ee0f6c
+last_test_cost: 0.005239
+test_model: gpt-5-nano
 ---
 
 You are a workflow discovery system that determines if an existing workflow completely satisfies a user request.

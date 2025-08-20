@@ -158,7 +158,7 @@ class TestDiscoveryErrorHandling:
             }
 
             # Should raise ValueError for invalid structure
-            with pytest.raises(ValueError, match="Invalid LLM response structure"):
+            with pytest.raises(ValueError, match="Response parsing failed"):
                 node.exec(prep_res)
 
     def test_browsing_handles_registry_load_failure(self, caplog):
