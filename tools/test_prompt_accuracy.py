@@ -226,10 +226,8 @@ class TestResultDisplay:
 
         # Display failure reason if available (indented)
         if result.failure_reason:
-            # Truncate long reasons for cleaner display
+            # Show full error message without truncation
             reason = result.failure_reason
-            if len(reason) > 70:
-                reason = reason[:67] + "..."
             print(f"         → {reason}")
 
     def show_summary(self, passed: int, total: int, duration: float = None):
@@ -552,8 +550,6 @@ def run_tests(
                             # If this test has a pending failure reason, show it immediately
                             if result.name in pending_failures:
                                 reason = pending_failures[result.name]
-                                if len(reason) > 70:
-                                    reason = reason[:67] + "..."
                                 print(f"         └─ {reason}")
                                 displayed_failures.add(result.name)
                                 del pending_failures[result.name]
@@ -571,8 +567,6 @@ def run_tests(
                 for test_name, reason in pending_failures.items():
                     if test_name in parser.results and parser.results[test_name].failed:
                         if test_name not in displayed_failures:
-                            if len(reason) > 70:
-                                reason = reason[:67] + "..."
                             # Show as a separate line since the test result is already displayed
                             print(f"         └─ {test_name}: {reason}")
                             displayed_failures.add(test_name)
