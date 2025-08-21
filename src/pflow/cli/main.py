@@ -466,8 +466,21 @@ def _prompt_workflow_save(ir_data: dict[str, Any], metadata: dict[str, Any] | No
         description = default_description
 
         try:
-            # Save the workflow
-            workflow_manager.save(workflow_name, ir_data, description)
+            # Extract rich metadata if available (excluding suggested_name and description)
+            rich_metadata = None
+            if metadata:
+                rich_metadata = {
+                    "search_keywords": metadata.get("search_keywords", []),
+                    "capabilities": metadata.get("capabilities", []),
+                    "typical_use_cases": metadata.get("typical_use_cases", []),
+                }
+                # Filter out empty lists
+                rich_metadata = {k: v for k, v in rich_metadata.items() if v}
+                if not rich_metadata:
+                    rich_metadata = None
+
+            # Save the workflow with metadata passed directly (not embedded in IR)
+            workflow_manager.save(workflow_name, ir_data, description, metadata=rich_metadata)
             click.echo(f"\n✅ Workflow saved as '{workflow_name}'")
             break  # Success, exit loop
         except WorkflowExistsError:

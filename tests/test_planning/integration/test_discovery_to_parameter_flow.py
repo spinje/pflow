@@ -121,7 +121,11 @@ def mock_llm_model(mock_llm_response):
     def prompt_side_effect(prompt, **kwargs):
         # Determine response based on prompt content
         prompt_lower = prompt.lower()
-        if "workflow discovery" in prompt_lower or "existing workflow" in prompt_lower:
+        if (
+            "workflow router" in prompt_lower
+            or "workflow discovery" in prompt_lower
+            or "existing workflow" in prompt_lower
+        ):
             # WorkflowDiscoveryNode response
             if "csv" in prompt_lower and "json" in prompt_lower:
                 return mock_llm_response(
@@ -295,7 +299,7 @@ class TestPathBDiscoveryToParameter:
 
                 def prompt_side_effect(prompt, **kwargs):
                     # Determine which node based on prompt content
-                    if "workflow discovery" in prompt.lower():
+                    if "workflow router" in prompt.lower() or "workflow discovery" in prompt.lower():
                         return mock_llm_response(
                             found=False,
                             workflow_name=None,

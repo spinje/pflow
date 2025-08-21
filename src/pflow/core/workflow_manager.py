@@ -58,31 +58,8 @@ class WorkflowManager:
                 "Workflow name can only contain letters, numbers, dots, hyphens, and underscores"
             )
 
-    def _extract_description(
-        self, workflow_ir: dict[str, Any], description: Optional[str]
-    ) -> tuple[str, Optional[dict[str, Any]]]:
-        """Extract description and rich metadata from workflow IR.
-
-        Args:
-            workflow_ir: The workflow IR dictionary
-            description: Optional explicit description
-
-        Returns:
-            Tuple of (final description, rich metadata or None)
-        """
-        ir_description = ""
-        rich_metadata = None
-
-        if "metadata" in workflow_ir:
-            rich_metadata = workflow_ir["metadata"]
-            if not description and "description" in rich_metadata:
-                ir_description = rich_metadata["description"]
-
-        final_description = description or ir_description or ""
-        return final_description, rich_metadata
-
     def _create_metadata_wrapper(
-        self, name: str, workflow_ir: dict[str, Any], description: str, rich_metadata: Optional[dict[str, Any]]
+        self, name: str, workflow_ir: dict[str, Any], description: str, metadata: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
         """Create metadata wrapper for workflow.
 
@@ -90,14 +67,14 @@ class WorkflowManager:
             name: Workflow name
             workflow_ir: The workflow IR dictionary
             description: Workflow description
-            rich_metadata: Optional rich metadata from IR
+            metadata: Optional rich metadata (keywords, capabilities, use cases)
 
         Returns:
             Metadata wrapper dictionary
         """
         now = datetime.now(timezone.utc).isoformat()
 
-        metadata = {
+        wrapper = {
             "name": name,
             "description": description,
             "ir": workflow_ir,
@@ -107,10 +84,10 @@ class WorkflowManager:
         }
 
         # Store rich metadata for discovery if available
-        if rich_metadata:
-            metadata["rich_metadata"] = rich_metadata
+        if metadata:
+            wrapper["rich_metadata"] = metadata
 
-        return metadata
+        return wrapper
 
     def _perform_atomic_save(self, file_path: Path, temp_path: str) -> None:
         """Perform atomic file save operation.
@@ -139,13 +116,20 @@ class WorkflowManager:
             Path(temp_path).unlink(missing_ok=True)
             raise
 
-    def save(self, name: str, workflow_ir: dict[str, Any], description: Optional[str] = None) -> str:
+    def save(
+        self,
+        name: str,
+        workflow_ir: dict[str, Any],
+        description: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> str:
         """Save a workflow with metadata wrapper.
 
         Args:
             name: Workflow name (kebab-case, max 50 chars)
             workflow_ir: The workflow IR dictionary
             description: Optional workflow description
+            metadata: Optional rich metadata (keywords, capabilities, use cases)
 
         Returns:
             Absolute path of saved file
@@ -157,11 +141,11 @@ class WorkflowManager:
         # Validate name
         self._validate_workflow_name(name)
 
-        # Extract description and metadata
-        final_description, rich_metadata = self._extract_description(workflow_ir, description)
+        # Use provided description or empty string
+        final_description = description or ""
 
         # Create metadata wrapper
-        metadata = self._create_metadata_wrapper(name, workflow_ir, final_description, rich_metadata)
+        wrapper = self._create_metadata_wrapper(name, workflow_ir, final_description, metadata)
 
         # Atomic write: write to temp file first, then rename
         file_path = self.workflows_dir / f"{name}.json"
@@ -170,7 +154,7 @@ class WorkflowManager:
         try:
             # Write to temp file
             with open(temp_fd, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, indent=2)
+                json.dump(wrapper, f, indent=2)
 
             # Attempt atomic save
             self._perform_atomic_save(file_path, temp_path)

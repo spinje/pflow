@@ -531,6 +531,83 @@ def build_nodes_context(
     return "\n".join(sections).strip()
 
 
+def _find_flow_start(
+    nodes: list[dict[str, Any]], edges: list[dict[str, Any]], workflow_ir: dict[str, Any]
+) -> Optional[str]:
+    """Find the starting node for the workflow flow."""
+    # Find nodes with no incoming edges
+    has_incoming = {str(edge["to"]) for edge in edges}
+    start_nodes: list[str] = [str(node["id"]) for node in nodes if str(node["id"]) not in has_incoming]
+
+    if start_nodes:
+        return start_nodes[0]
+
+    # Use explicit start_node or first node
+    start_node = workflow_ir.get("start_node")
+    if start_node:
+        return str(start_node)
+
+    if nodes:
+        return str(nodes[0]["id"])
+    return None
+
+
+def _build_linear_flow(start_id: str, node_types: dict[str, str], graph: dict[str, list[str]]) -> list[str]:
+    """Build a linear flow from a starting node."""
+    flow: list[str] = []
+    visited: set[str] = set()
+    current: Optional[str] = start_id
+
+    while current and current not in visited and current in node_types:
+        visited.add(current)
+        flow.append(node_types[current])
+        # Follow first outgoing edge
+        next_nodes = graph.get(current, [])
+        current = next_nodes[0] if next_nodes else None
+
+    return flow
+
+
+def _build_node_flow(workflow_ir: dict[str, Any]) -> str:
+    """Build a readable flow string from workflow nodes and edges.
+
+    Args:
+        workflow_ir: The workflow IR containing nodes and edges
+
+    Returns:
+        A flow string like "read-file → llm → write-file"
+    """
+    nodes = workflow_ir.get("nodes", [])
+    edges = workflow_ir.get("edges", [])
+
+    if not nodes:
+        return ""
+
+    # Create node type map
+    node_types: dict[str, str] = {str(node["id"]): str(node["type"]) for node in nodes}
+
+    if not edges:
+        # No edges - just list nodes
+        return " + ".join(node["type"] for node in nodes)
+
+    # Build adjacency list
+    graph: dict[str, list[str]] = {str(node["id"]): [] for node in nodes}
+    for edge in edges:
+        from_id = str(edge["from"])
+        to_id = str(edge["to"])
+        if from_id in graph:
+            graph[from_id].append(to_id)
+
+    # Find starting point and build flow
+    start_id = _find_flow_start(nodes, edges, workflow_ir)
+    if not start_id:
+        return " + ".join(node["type"] for node in nodes)
+
+    flow_parts = _build_linear_flow(start_id, node_types, graph)
+
+    return " → ".join(flow_parts) if flow_parts else ""
+
+
 def build_workflows_context(
     workflow_names: Optional[list[str]] = None,
     workflow_manager: Optional[WorkflowManager] = None,
@@ -554,7 +631,7 @@ def build_workflows_context(
     else:
         filtered_workflows = saved_workflows
 
-    # Create numbered list of workflows
+    # Create numbered list of workflows with rich metadata
     sections = []
     # Sort workflows by name
     sorted_workflows = sorted(filtered_workflows, key=lambda w: w["name"])
@@ -563,12 +640,45 @@ def build_workflows_context(
         name = workflow["name"]  # Production workflows always have names
         description = _extract_workflow_description(workflow)
 
-        if description:
-            sections.append(f"{idx}. {name} - {description}")
-        else:
-            sections.append(f"{idx}. {name}")
+        # Build compact workflow entry with rich metadata
+        entry_parts = []
 
-    return "\n".join(sections).strip()
+        # Format: **1. `workflow-name`** - Full description
+        if description:
+            entry_parts.append(f"**{idx}. `{name}`** - {description}")
+        else:
+            entry_parts.append(f"**{idx}. `{name}`**")
+
+        # Add node flow to show what the workflow actually does
+        ir = workflow.get("ir", {})
+        if ir:
+            node_flow = _build_node_flow(ir)
+            if node_flow:
+                entry_parts.append(f"   **Flow:** `{node_flow}`")
+
+        # Look for rich metadata in both places:
+        # 1. At wrapper level (for workflows saved after metadata generation)
+        # 2. Inside IR (for newly generated workflows)
+        metadata = workflow.get("rich_metadata", {})
+        if not metadata and ir:
+            # Fallback to checking inside IR for backwards compatibility
+            metadata = ir.get("metadata", {})
+
+        # Add metadata in compact format if present
+        if metadata:
+            # Capabilities on one line
+            capabilities = metadata.get("capabilities", [])
+            if capabilities:
+                entry_parts.append(f"   **Can:** {', '.join(capabilities)}")
+
+            # Use cases on one line
+            use_cases = metadata.get("typical_use_cases", [])
+            if use_cases:
+                entry_parts.append(f"   **For:** {', '.join(use_cases)}")
+
+        sections.append("\n".join(entry_parts))
+
+    return "\n\n".join(sections).strip()
 
 
 def _check_missing_components(

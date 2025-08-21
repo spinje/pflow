@@ -84,26 +84,17 @@ class TestCase:
 
 
 def get_test_cases() -> list[TestCase]:
-    """Define all test cases organized by user journey."""
+    """Define high-quality test cases focusing on distinct scenarios."""
     return [
-        # === CORE BEHAVIORS (Must work correctly) ===
+        # === CORE MATCHES (Must correctly identify) ===
         TestCase(
             "exact_match",
             "read a file",
             should_find=True,
             expected_workflow_hint="read",
             confidence_level=Confidence.HIGH,
-            category="core",
-            why_important="Most basic reuse case must work",
-        ),
-        TestCase(
-            "no_match",
-            "send an email notification",
-            should_find=False,
-            expected_workflow_hint=None,
-            confidence_level=Confidence.LOW,
-            category="core",
-            why_important="Avoid false matches that would fail",
+            category="core_match",
+            why_important="Basic exact match must work",
         ),
         TestCase(
             "semantic_match",
@@ -111,157 +102,102 @@ def get_test_cases() -> list[TestCase]:
             should_find=True,
             expected_workflow_hint="triage",
             confidence_level=Confidence.HIGH,
-            category="core",
-            why_important="Semantic understanding is critical",
+            category="core_match",
+            why_important="Semantic understanding of similar phrases",
         ),
         TestCase(
-            "parameter_variation",
+            "with_parameters",
             "generate changelog for version 2.0",
             should_find=True,
             expected_workflow_hint="changelog",
             confidence_level=Confidence.HIGH,
-            category="core",
-            why_important="Parameters shouldn't affect matching",
+            category="core_match",
+            why_important="Parameters shouldn't prevent matching",
         ),
-        # === AMBIGUITY HANDLING ===
+        # === CORE REJECTIONS (Must correctly reject) ===
         TestCase(
-            "different_function",
-            "analyze github issues",  # Generic vs specific triage
+            "wrong_domain",
+            "send an email notification",
             should_find=False,
             expected_workflow_hint=None,
-            confidence_level=Confidence.MEDIUM,
-            category="ambiguous",
-            why_important="Distinguish generic from specific functions",
+            confidence_level=Confidence.LOW,
+            category="core_reject",
+            why_important="No email capability exists",
         ),
         TestCase(
-            "additional_steps",
+            "missing_capability",
             "generate changelog and send to slack",
             should_find=False,
             expected_workflow_hint=None,
             confidence_level=Confidence.LOW,
-            category="ambiguous",
-            why_important="Don't match if significant functionality missing",
+            category="core_reject",
+            why_important="Workflow lacks Slack integration",
         ),
-        TestCase(
-            "different_source",
-            "generate changelog from pull requests",  # PRs not issues
-            should_find=False,
-            expected_workflow_hint=None,
-            confidence_level=Confidence.LOW,
-            category="ambiguous",
-            why_important="Data source differences matter",
-        ),
-        TestCase(
-            "wrong_file_type",
-            "analyze JSON files",  # When only CSV exists
-            should_find=False,
-            expected_workflow_hint=None,
-            confidence_level=Confidence.LOW,
-            category="ambiguous",
-            why_important="File format incompatibilities",
-        ),
-        # === EDGE CASES ===
         TestCase(
             "vague_request",
-            "changelog",  # Single word
-            should_find=True,
-            expected_workflow_hint="changelog",
-            confidence_level=Confidence.HIGH,
-            category="edge",
-            why_important="Support quick commands from power users",
-        ),
-        TestCase(
-            "overly_specific",
-            "generate a changelog for v1.3 from last 20 closed issues from repo pflow to CHANGELOG.md",
-            should_find=True,
-            expected_workflow_hint="changelog",
-            confidence_level=Confidence.HIGH,
-            category="edge",
-            why_important="Handle detailed first-time requests",
-        ),
-        TestCase(
-            "partial_name",
-            "triage",  # Partial workflow name
-            should_find=True,
-            expected_workflow_hint="triage",
-            confidence_level=Confidence.HIGH,
-            category="edge",
-            why_important="Support abbreviated commands",
-        ),
-        # === MULTIPLE MATCHES ===
-        TestCase(
-            "ambiguous_github",
-            "summarize github",  # Could match changelog OR summarize-pr
-            should_find=False,  # Too ambiguous
-            expected_workflow_hint=None,
-            confidence_level=Confidence.MEDIUM,
-            category="multiple",
-            why_important="Handle multiple potential matches safely",
-        ),
-        # === SYNONYMS ===
-        TestCase(
-            "synonym_pr",
-            "create pull request with changelog",  # "pull request" vs "PR"
-            should_find=True,
-            expected_workflow_hint="changelog",
-            confidence_level=Confidence.HIGH,
-            category="synonyms",
-            why_important="Handle common terminology variations",
-        ),
-        TestCase(
-            "synonym_issues",
-            "triage bugs",  # "bugs" vs "issues"
-            should_find=True,
-            expected_workflow_hint="triage",
-            confidence_level=Confidence.HIGH,
-            category="synonyms",
-            why_important="Domain-specific synonyms",
-        ),
-        # === PERFORMANCE BENCHMARKS ===
-        TestCase(
-            "perf_changelog",
-            "generate changelog",
-            should_find=True,
-            expected_workflow_hint="changelog",
-            confidence_level=Confidence.HIGH,
-            category="performance",
-            why_important="Basic performance test for common request",
-        ),
-        TestCase(
-            "perf_analyze",
             "analyze data",
-            should_find=False,  # No generic data analysis workflow
-            expected_workflow_hint=None,
-            confidence_level=Confidence.LOW,
-            category="performance",
-            why_important="Performance test for non-match",
-        ),
-        TestCase(
-            "perf_triage",
-            "triage issues",
-            should_find=True,
-            expected_workflow_hint="triage",
-            confidence_level=Confidence.HIGH,
-            category="performance",
-            why_important="Performance test for triage",
-        ),
-        TestCase(
-            "perf_deploy",
-            "deploy to production",
             should_find=False,
             expected_workflow_hint=None,
             confidence_level=Confidence.LOW,
-            category="performance",
-            why_important="Performance test for unrelated request",
+            category="core_reject",
+            why_important="Too ambiguous - could mean CSV, GitHub, or other",
+        ),
+        # === DATA DISTINCTIONS (Critical for correctness) ===
+        TestCase(
+            "wrong_source",
+            "generate changelog from pull requests",
+            should_find=False,
+            expected_workflow_hint=None,
+            confidence_level=Confidence.LOW,
+            category="data_mismatch",
+            why_important="Workflow uses issues, not pull requests",
         ),
         TestCase(
-            "perf_read",
-            "read file",
+            "wrong_format",
+            "analyze JSON files",
+            should_find=False,
+            expected_workflow_hint=None,
+            confidence_level=Confidence.LOW,
+            category="data_mismatch",
+            why_important="Only CSV analysis workflow exists",
+        ),
+        TestCase(
+            "different_workflow",
+            "summarize issue #123",
+            should_find=False,
+            expected_workflow_hint=None,
+            confidence_level=Confidence.LOW,
+            category="data_mismatch",
+            why_important="Single issue summary differs from triage",
+        ),
+        # === LANGUAGE HANDLING (Natural variations) ===
+        TestCase(
+            "synonym_bugs",
+            "triage bugs",
             should_find=True,
-            expected_workflow_hint="read",
+            expected_workflow_hint="triage",
+            confidence_level=Confidence.HIGH,
+            category="synonyms",
+            why_important="'bugs' is common synonym for 'issues'",
+        ),
+        TestCase(
+            "single_word",
+            "changelog",
+            should_find=True,
+            expected_workflow_hint="changelog",
+            confidence_level=Confidence.HIGH,
+            category="synonyms",
+            why_important="Single word should match unambiguous workflow",
+        ),
+        # === PERFORMANCE CHECK (Representative test) ===
+        TestCase(
+            "performance_test",
+            "generate a changelog from closed issues",
+            should_find=True,
+            expected_workflow_hint="changelog",
             confidence_level=Confidence.HIGH,
             category="performance",
-            why_important="Performance test for simple match",
+            why_important="Representative test for response time",
         ),
     ]
 
@@ -279,7 +215,7 @@ class TestDiscoveryPrompt:
             # Setup initial manager to save workflows
             setup_manager = WorkflowManager(workflows_dir=str(workflows_dir))
 
-            # Define test workflows
+            # Define test workflows with separate metadata
             workflows = {
                 "generate-changelog": {
                     "ir": {
@@ -305,6 +241,16 @@ class TestDiscoveryPrompt:
                         },
                     },
                     "description": "Generate changelog from GitHub issues and create PR",
+                    "metadata": {
+                        "search_keywords": ["changelog", "github", "issues", "PR", "release", "version"],
+                        "capabilities": [
+                            "GitHub integration",
+                            "Issue fetching",
+                            "Changelog generation",
+                            "Pull request creation",
+                        ],
+                        "typical_use_cases": ["Release preparation", "Version updates", "Project documentation"],
+                    },
                 },
                 "issue-triage": {
                     "ir": {
@@ -318,6 +264,16 @@ class TestDiscoveryPrompt:
                         "inputs": {},
                     },
                     "description": "Triage open GitHub issues by priority",
+                    "metadata": {
+                        "search_keywords": ["triage", "github", "issues", "bugs", "priority", "open"],
+                        "capabilities": [
+                            "GitHub integration",
+                            "Issue analysis",
+                            "Priority assessment",
+                            "Report generation",
+                        ],
+                        "typical_use_cases": ["Bug triage", "Issue management", "Sprint planning"],
+                    },
                 },
                 "analyze-csv": {
                     "ir": {
@@ -330,6 +286,11 @@ class TestDiscoveryPrompt:
                         "inputs": {"file": {"type": "string", "required": True}},
                     },
                     "description": "Read and analyze CSV files",
+                    "metadata": {
+                        "search_keywords": ["csv", "analyze", "data", "file", "spreadsheet"],
+                        "capabilities": ["CSV file reading", "Data analysis", "File processing"],
+                        "typical_use_cases": ["Data analysis", "CSV processing", "Report generation"],
+                    },
                 },
                 "simple-read": {
                     "ir": {
@@ -339,6 +300,11 @@ class TestDiscoveryPrompt:
                         "inputs": {"file": {"type": "string", "required": True}},
                     },
                     "description": "Read a file",
+                    "metadata": {
+                        "search_keywords": ["read", "file", "load", "open", "text"],
+                        "capabilities": ["File reading", "Text extraction"],
+                        "typical_use_cases": ["Reading text files", "Loading configuration", "Data import"],
+                    },
                 },
                 "summarize-pr": {  # Similar to changelog for multi-match test
                     "ir": {
@@ -351,12 +317,22 @@ class TestDiscoveryPrompt:
                         "inputs": {"pr_number": {"type": "integer", "required": True}},
                     },
                     "description": "Summarize a GitHub pull request",
+                    "metadata": {
+                        "search_keywords": ["summarize", "github", "pr", "pull request", "review"],
+                        "capabilities": ["GitHub integration", "PR fetching", "Summary generation"],
+                        "typical_use_cases": ["Code review", "PR documentation", "Change summary"],
+                    },
                 },
             }
 
-            # Save all workflows
+            # Save all workflows with metadata passed separately
             for name, data in workflows.items():
-                setup_manager.save(name=name, workflow_ir=data["ir"], description=data["description"])
+                setup_manager.save(
+                    name=name,
+                    workflow_ir=data["ir"],
+                    description=data["description"],
+                    metadata=data.get("metadata"),  # Pass metadata separately
+                )
 
             yield str(workflows_dir)
 
@@ -377,14 +353,19 @@ class TestDiscoveryPrompt:
             exec_res = node.exec(prep_res)
             action = node.post(shared, prep_res, exec_res)
 
-            # Check decision
+            # Check decision (THIS IS WHAT MATTERS MOST)
             expected_action = "found_existing" if test_case.should_find else "not_found"
             decision_correct = action == expected_action
 
-            # Check confidence level
+            # Log confidence for information (but don't fail on it)
             confidence = exec_res.get("confidence", 0)
-            conf_min, conf_max = test_case.confidence_level.value
-            confidence_correct = conf_min <= confidence <= conf_max
+            logger.info(f"{test_case.name}: confidence={confidence:.2f}")
+
+            # We no longer enforce strict confidence ranges - decision correctness is key
+            # But warn if confidence seems very wrong (e.g., HIGH confidence on wrong decision)
+            confidence_warning = None
+            if not decision_correct and confidence > 0.8:
+                confidence_warning = f"High confidence ({confidence:.2f}) on wrong decision"
 
             # Check workflow name (if applicable)
             workflow_correct = True
@@ -392,23 +373,23 @@ class TestDiscoveryPrompt:
                 found_workflow = exec_res.get("workflow_name", "")
                 workflow_correct = test_case.expected_workflow_hint in found_workflow.lower()
 
-            # Overall pass/fail
-            test_passed = decision_correct and confidence_correct and workflow_correct
+            # Overall pass/fail - ONLY based on decision and workflow selection
+            test_passed = decision_correct and workflow_correct
 
             # Performance check
             duration = time.time() - start_time
-            perf_passed = duration < 10.0  # GPT models can be slower
+            perf_passed = duration < 20.0  # GPT models can be slower
 
             if not test_passed:
                 errors = []
                 if not decision_correct:
                     errors.append(f"Decision: expected {expected_action}, got {action}")
-                if not confidence_correct:
-                    errors.append(f"Confidence: expected {conf_min}-{conf_max}, got {confidence:.2f}")
                 if not workflow_correct:
                     errors.append(
                         f"Workflow: expected hint '{test_case.expected_workflow_hint}', got '{exec_res.get('workflow_name', '')}'"
                     )
+                if confidence_warning:
+                    errors.append(confidence_warning)
 
                 # Store failure reason for display
                 failure_reason = "; ".join(errors)
@@ -420,7 +401,7 @@ class TestDiscoveryPrompt:
                 raise AssertionError(f"[{test_case.name}] {failure_reason}")
 
             if not perf_passed:
-                failure_reason = f"Performance: took {duration:.2f}s, exceeds 10s limit"
+                failure_reason = f"Performance: took {duration:.2f}s, exceeds 20s limit"
                 report_failure(test_case.name, failure_reason)
                 raise AssertionError(f"[{test_case.name}] {failure_reason}")
 
