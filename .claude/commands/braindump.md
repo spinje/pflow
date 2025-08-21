@@ -2,7 +2,9 @@
 Inputs: --taskId=$ARGUMENTS
 
 Available inputs:
-- taskId: The ID of the task to write the handoff memo for
+- taskId: The ID of the task to write the handoff memo for (optional)
+
+> Note: If taskId is not present, you are writing a handoff memo for a a task without a formal number. In this case it should be obvious from the context what the task is.
 
 ---
 
@@ -67,6 +69,7 @@ Ultrathink and make a detailed plan of what to include in the document before yo
 
 Write your output in markdown format in a `.taskmaster/tasks/task_{{taskId}}/starting-context/task-{{taskId}}-handover.md` file.
 
+If no taskId is present, write the handoff memo in `scratchpads/handoffs/` folder with a fitting name.
 
 ## Notes
 
