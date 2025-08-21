@@ -221,14 +221,15 @@ class TestParameterDiscoveryNode:
         }
         exc = ValueError("LLM connection failed")
 
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.DEBUG):
             result = node.exec_fallback(prep_res, exc)
 
         # Should return empty parameters
         assert result["parameters"] == {}
         assert result["stdin_type"] == "text"
-        assert "failed" in result["reasoning"].lower()
-        assert "LLM connection failed" in caplog.text
+        assert "network connection issue" in result["reasoning"].lower()  # Classified error message
+        assert "_error" in result  # Should contain structured error info
+        assert "ParameterDiscoveryNode" in caplog.text and "network" in caplog.text
 
 
 class TestParameterMappingNode:
@@ -431,7 +432,9 @@ class TestParameterMappingNode:
             assert "piped.txt" in prompt
 
     def test_exec_fallback_marks_all_required_as_missing(self, workflow_with_inputs, caplog):
-        """Test exec_fallback marks all required params as missing on failure."""
+        """Test exec_fallback raises CriticalPlanningError for ParameterMappingNode."""
+        from pflow.core.exceptions import CriticalPlanningError
+
         node = ParameterMappingNode()
         node.wait = 0  # Speed up tests
 
@@ -444,16 +447,15 @@ class TestParameterMappingNode:
         }
         exc = RuntimeError("LLM timeout")
 
-        with caplog.at_level(logging.ERROR):
-            result = node.exec_fallback(prep_res, exc)
+        # ParameterMappingNode is critical and should raise an exception
+        with pytest.raises(CriticalPlanningError) as exc_info:
+            node.exec_fallback(prep_res, exc)
 
-        # Should apply defaults even on failure, mark truly missing params
-        assert result["extracted"] == {"output_format": "json"}  # Default applied
-        assert set(result["missing"]) == {"input_file", "limit"}  # Required params without defaults
-        assert result["confidence"] == 0.0
-        assert "LLM timeout" in result["reasoning"]
-        assert "Using defaults where available" in result["reasoning"]
-        assert "Parameter mapping failed" in caplog.text
+        # Verify the exception details
+        assert exc_info.value.node_name == "ParameterMappingNode"
+        assert "Cannot extract workflow parameters" in exc_info.value.reason
+        assert "Network connection issue" in exc_info.value.reason  # Classified error message
+        assert exc_info.value.original_error == exc
 
     def test_validates_required_params_after_llm_extraction(self, mock_llm_param_extraction, workflow_with_inputs):
         """Test node double-checks required params even if LLM says they're found."""

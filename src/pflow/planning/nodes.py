@@ -24,7 +24,8 @@ from pflow.planning.context_builder import (
     build_planning_context,
     build_workflows_context,
 )
-from pflow.planning.utils.llm_helpers import generate_workflow_name, parse_structured_response
+from pflow.planning.error_handler import create_fallback_response
+from pflow.planning.utils.llm_helpers import parse_structured_response
 from pflow.registry import Registry
 from pocketflow import Node
 
@@ -190,38 +191,28 @@ class WorkflowDiscoveryNode(Node):
         return "not_found"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
-        """Handle LLM failures gracefully.
+        """WorkflowDiscoveryNode is critical - abort on LLM failure.
 
         Args:
             prep_res: Prepared data
             exc: Exception that occurred
 
-        Returns:
-            Safe default WorkflowDecision matching exec() return type
+        Raises:
+            CriticalPlanningError: Always, as this node is critical for workflow routing
         """
-        logger.error(
-            f"WorkflowDiscoveryNode: Discovery failed after retries - {exc}",
-            extra={"phase": "fallback", "error": str(exc), "user_input": prep_res.get("user_input", "")[:100]},
+        from pflow.core.exceptions import CriticalPlanningError
+        from pflow.planning.error_handler import classify_error
+
+        # Classify the error for better user messaging
+        planner_error = classify_error(exc, context="WorkflowDiscoveryNode")
+
+        # WorkflowDiscoveryNode is critical - we cannot route between paths without
+        # determining if a workflow exists. Abort the flow with a clear error message.
+        raise CriticalPlanningError(
+            node_name="WorkflowDiscoveryNode",
+            reason=f"Cannot determine workflow routing: {planner_error.message}. {planner_error.user_action}",
+            original_error=exc,
         )
-
-        # Provide specific error messages for common failure modes
-        error_str = str(exc).lower()
-        if "api key" in error_str or "unauthorized" in error_str:
-            reasoning = f"LLM API authentication failed: {exc!s}"
-        elif "rate limit" in error_str:
-            reasoning = f"LLM rate limit exceeded, please retry later: {exc!s}"
-        elif "timeout" in error_str:
-            reasoning = f"LLM request timed out: {exc!s}"
-        else:
-            reasoning = f"Discovery failed due to error: {exc!s}"
-
-        # Return same structure as successful exec() for consistency
-        return {
-            "found": False,
-            "workflow_name": None,
-            "confidence": 0.0,
-            "reasoning": reasoning,
-        }
 
 
 class ComponentBrowsingNode(Node):
@@ -409,33 +400,28 @@ class ComponentBrowsingNode(Node):
         return "generate"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
-        """Handle LLM failures gracefully.
+        """ComponentBrowsingNode is critical - abort on LLM failure.
 
         Args:
             prep_res: Prepared data
             exc: Exception that occurred
 
-        Returns:
-            Safe default ComponentSelection matching exec() return type
+        Raises:
+            CriticalPlanningError: Always, as this node is critical for workflow generation
         """
-        logger.error(
-            f"ComponentBrowsingNode: Browsing failed after retries - {exc}",
-            extra={"phase": "fallback", "error": str(exc), "user_input": prep_res.get("user_input", "")[:1000]},
+        from pflow.core.exceptions import CriticalPlanningError
+        from pflow.planning.error_handler import classify_error
+
+        # Classify the error for better user messaging
+        planner_error = classify_error(exc, context="ComponentBrowsingNode")
+
+        # ComponentBrowsingNode is critical - we cannot generate workflows without knowing
+        # what components are available. Abort the flow with a clear error message.
+        raise CriticalPlanningError(
+            node_name="ComponentBrowsingNode",
+            reason=f"Cannot select workflow components: {planner_error.message}. {planner_error.user_action}",
+            original_error=exc,
         )
-
-        # Provide specific error messages for common failure modes
-        error_str = str(exc).lower()
-        if "api key" in error_str or "unauthorized" in error_str:
-            reasoning = f"LLM API authentication failed: {exc!s}"
-        elif "rate limit" in error_str:
-            reasoning = f"LLM rate limit exceeded, please retry later: {exc!s}"
-        elif "timeout" in error_str:
-            reasoning = f"LLM request timed out: {exc!s}"
-        else:
-            reasoning = f"Component browsing failed due to error: {exc!s}"
-
-        # Return same structure as successful exec() for consistency
-        return {"node_ids": [], "workflow_names": [], "reasoning": reasoning}
 
 
 # Pydantic models for parameter management
@@ -593,6 +579,10 @@ class ParameterDiscoveryNode(Node):
         # Store discovered parameters
         shared["discovered_params"] = exec_res["parameters"]
 
+        # Store error info separately if present (for error extraction)
+        if "_error" in exec_res:
+            shared["_discovered_params_error"] = exec_res["_error"]
+
         logger.info(
             f"ParameterDiscoveryNode: Stored {len(exec_res['parameters'])} discovered parameters",
             extra={"phase": "post", "parameters": list(exec_res["parameters"].keys())},
@@ -602,7 +592,7 @@ class ParameterDiscoveryNode(Node):
         return ""  # No action string needed for simple continuation
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
-        """Handle LLM failures gracefully.
+        """Handle LLM failures gracefully with intelligent error classification.
 
         Args:
             prep_res: Prepared data
@@ -611,17 +601,13 @@ class ParameterDiscoveryNode(Node):
         Returns:
             Safe default ParameterDiscovery matching exec() return type
         """
-        logger.error(
-            f"ParameterDiscoveryNode: Parameter discovery failed - {exc}",
-            extra={"phase": "fallback", "error": str(exc)},
-        )
+        safe_response, planner_error = create_fallback_response("ParameterDiscoveryNode", exc, prep_res)
 
-        # Return empty parameters on failure (generation will proceed without hints)
-        return {
-            "parameters": {},
-            "stdin_type": prep_res.get("stdin_info", {}).get("type"),
-            "reasoning": f"Parameter discovery failed: {exc!s}. Proceeding without parameter hints.",
-        }
+        # Note: We cannot store the error in shared store from exec_fallback
+        # as shared store is not accessible here in PocketFlow architecture.
+        # The error is embedded in the response for later processing.
+
+        return safe_response
 
 
 class ParameterMappingNode(Node):
@@ -842,41 +828,28 @@ class ParameterMappingNode(Node):
             return "params_complete"  # Path A → ParameterPreparation
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
-        """Handle LLM failures gracefully.
+        """ParameterMappingNode is critical - abort on LLM failure.
 
         Args:
             prep_res: Prepared data
             exc: Exception that occurred
 
-        Returns:
-            Safe default ParameterExtraction matching exec() return type
+        Raises:
+            CriticalPlanningError: Always, as this node is critical for parameter extraction
         """
-        logger.error(
-            f"ParameterMappingNode: Parameter mapping failed - {exc}",
-            extra={"phase": "fallback", "error": str(exc)},
+        from pflow.core.exceptions import CriticalPlanningError
+        from pflow.planning.error_handler import classify_error
+
+        # Classify the error for better user messaging
+        planner_error = classify_error(exc, context="ParameterMappingNode")
+
+        # ParameterMappingNode is critical - we cannot extract required parameters without LLM.
+        # Abort the flow with a clear error message.
+        raise CriticalPlanningError(
+            node_name="ParameterMappingNode",
+            reason=f"Cannot extract workflow parameters: {planner_error.message}. {planner_error.user_action}",
+            original_error=exc,
         )
-
-        # On failure, apply defaults and only mark truly missing parameters
-        workflow_ir = prep_res.get("workflow_ir", {})
-        inputs_spec = workflow_ir.get("inputs", {})
-
-        extracted = {}
-        missing = []
-
-        for name, spec in inputs_spec.items():
-            # If parameter has a default, use it
-            if "default" in spec:
-                extracted[name] = spec["default"]
-            # Only mark as missing if required AND no default
-            elif spec.get("required", True):
-                missing.append(name)
-
-        return {
-            "extracted": extracted,
-            "missing": missing,
-            "confidence": 0.0,
-            "reasoning": f"Parameter extraction failed: {exc!s}. Using defaults where available.",
-        }
 
 
 class ParameterPreparationNode(Node):
@@ -1068,35 +1041,28 @@ class WorkflowGeneratorNode(Node):
         return "validate"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
-        """Handle generation failure gracefully.
-
-        Returns same structure as exec() to maintain compatibility with post().
-        The empty workflow will be caught by ValidatorNode and routed appropriately.
+        """WorkflowGeneratorNode is critical - abort on LLM failure.
 
         Args:
             prep_res: Prepared data that caused the failure
             exc: Exception that occurred
 
-        Returns:
-            Dict with same structure as exec() - workflow dict and attempt count
+        Raises:
+            CriticalPlanningError: Always, as this node is critical for workflow generation
         """
-        logger.error(f"GeneratorNode failed after retries: {exc}")
+        from pflow.core.exceptions import CriticalPlanningError
+        from pflow.planning.error_handler import classify_error
 
-        # Return minimal valid workflow structure that post() can process
-        # ValidatorNode will detect this is empty and route to "failed"
-        fallback_workflow: dict[str, Any] = {
-            "ir_version": "0.1.0",
-            "nodes": [],  # Empty nodes will fail validation
-            "edges": [],
-            "start_node": None,
-            "inputs": {},
-            "outputs": {},
-            # Store error information in the workflow for debugging
-            "_error": f"Generation failed: {exc}",
-            "_fallback": True,
-        }
+        # Classify the error for better user messaging
+        planner_error = classify_error(exc, context="WorkflowGeneratorNode")
 
-        return {"workflow": fallback_workflow, "attempt": prep_res.get("generation_attempts", 0) + 1}
+        # WorkflowGeneratorNode is critical - we cannot create workflows without LLM.
+        # Abort the flow with a clear error message.
+        raise CriticalPlanningError(
+            node_name="WorkflowGeneratorNode",
+            reason=f"Cannot generate workflow: {planner_error.message}. {planner_error.user_action}",
+            original_error=exc,
+        )
 
     def _build_prompt(self, prep_res: dict[str, Any]) -> str:
         """Build generation prompt with template emphasis.
@@ -1455,7 +1421,7 @@ class MetadataGenerationNode(Node):
         return ""
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
-        """Fallback with basic metadata using simple extraction.
+        """Fallback with basic metadata using simple extraction and error classification.
 
         Args:
             prep_res: Prepared data
@@ -1464,21 +1430,13 @@ class MetadataGenerationNode(Node):
         Returns:
             Dict with basic metadata
         """
-        logger.warning(f"MetadataGenerationNode exec_fallback triggered: {exc}, using simple extraction")
+        safe_response, planner_error = create_fallback_response("MetadataGenerationNode", exc, prep_res)
 
-        workflow = prep_res.get("workflow", {})
-        user_input = prep_res.get("user_input", "")
+        # Note: We cannot store the error in shared store from exec_fallback
+        # as shared store is not accessible here in PocketFlow architecture.
+        # The error is embedded in the response for later processing.
 
-        # Fallback to simple extraction
-        return {
-            "suggested_name": generate_workflow_name(user_input),
-            "description": user_input[:1000] if user_input else "Generated workflow",
-            "search_keywords": [],  # Empty in fallback
-            "capabilities": [],  # Empty in fallback
-            "typical_use_cases": [],  # Empty in fallback
-            "declared_inputs": list(workflow.get("inputs", {}).keys()),
-            "declared_outputs": self._extract_outputs(workflow),
-        }
+        return safe_response
 
     def _build_metadata_prompt(self, workflow: dict, user_input: str, discovered_params: dict) -> str:
         """Build comprehensive prompt for metadata generation.
@@ -1589,7 +1547,45 @@ class ResultPreparationNode(Node):
             "generation_attempts": shared.get("generation_attempts", 0),
             "workflow_metadata": shared.get("workflow_metadata", {}),
             "discovery_result": shared.get("discovery_result"),
+            "planner_error": self._extract_planner_error(shared),
         }
+
+    def _extract_planner_error(self, shared: dict[str, Any]) -> dict[str, Any] | None:
+        """Extract error details from any node responses that contain them.
+
+        Args:
+            shared: The shared store
+
+        Returns:
+            Error details dict if found, None otherwise
+        """
+        # Check various sources for error information
+        # These are embedded in the responses when exec_fallback is called
+
+        # First check for directly stored error (from ParameterDiscoveryNode)
+        if "_discovered_params_error" in shared:
+            error = shared["_discovered_params_error"]
+            if isinstance(error, dict):
+                return error
+
+        # List of keys to check in the shared store for error information
+        error_sources = [
+            "discovery_result",
+            "browsed_components",
+            "generated_workflow",
+            "discovered_params",
+            "extracted_params",
+            "workflow_metadata",
+        ]
+
+        for source_key in error_sources:
+            source_data = shared.get(source_key, {})
+            if isinstance(source_data, dict) and "_error" in source_data:
+                error = source_data["_error"]
+                if isinstance(error, dict):
+                    return error
+
+        return None
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Determine success/failure and package the output.
@@ -1638,6 +1634,7 @@ class ResultPreparationNode(Node):
             "error": error,
             "workflow_metadata": prep_res["workflow_metadata"] if prep_res["workflow_metadata"] else None,
             "workflow_source": prep_res.get("discovery_result"),  # Pass through discovery result
+            "error_details": prep_res.get("planner_error"),  # Include structured error details
         }
 
         return planner_output

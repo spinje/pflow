@@ -626,6 +626,8 @@ class TestErrorHandling:
 
     def test_discovery_llm_failure_fallback(self):
         """Test that discovery node handles LLM failures gracefully."""
+        from pflow.core.exceptions import CriticalPlanningError
+
         with patch("pflow.planning.nodes.llm.get_model") as mock_get_model:
             # Configure model to raise an error
             mock_model = Mock()
@@ -640,15 +642,17 @@ class TestErrorHandling:
             # The node's retry mechanism should catch the error and use exec_fallback
             # We need to manually trigger this since exec() will raise without retries
             try:
-                exec_res = discovery_node.exec(prep_res)
+                discovery_node.exec(prep_res)
             except Exception as e:
-                # Manually call exec_fallback as the retry mechanism would
-                exec_res = discovery_node.exec_fallback(prep_res, e)
+                # exec_fallback now raises CriticalPlanningError for critical nodes
+                with pytest.raises(CriticalPlanningError) as exc_info:
+                    discovery_node.exec_fallback(prep_res, e)
 
-            # Fallback should provide safe defaults
-            assert exec_res["found"] is False
-            assert exec_res["workflow_name"] is None
-            assert "API" in exec_res["reasoning"]
+                # Verify the exception details
+                assert exc_info.value.node_name == "WorkflowDiscoveryNode"
+                assert "Cannot determine workflow routing" in exc_info.value.reason
+                assert "API key" in exc_info.value.reason
+                assert exc_info.value.original_error == e
 
     def test_parameter_mapping_missing_workflow(self):
         """Test parameter mapping when no workflow is available."""

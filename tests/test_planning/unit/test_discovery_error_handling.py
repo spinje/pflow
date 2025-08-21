@@ -60,36 +60,44 @@ class TestDiscoveryErrorHandling:
     """Tests for error handling in discovery nodes."""
 
     def test_exec_fallback_handles_llm_failure_discovery(self):
-        """Test exec_fallback provides safe defaults on LLM failure for discovery.
+        """Test exec_fallback raises CriticalPlanningError on LLM failure for discovery.
 
-        VALIDATES: Graceful degradation when LLM API fails.
-        When the LLM is unavailable, the system must return a safe default
-        (found=False) to route to Path B rather than crashing.
+        VALIDATES: Critical nodes abort the flow rather than continuing with bad data.
+        When the LLM is unavailable, the system must raise a clear error
+        rather than continuing with potentially invalid defaults.
         """
+        from pflow.core.exceptions import CriticalPlanningError
+
         node = WorkflowDiscoveryNode()
         node.wait = 0  # Speed up tests
         prep_res = {"user_input": "test", "discovery_context": "context"}
         exc = ValueError("LLM API failed")
 
-        result = node.exec_fallback(prep_res, exc)
+        with pytest.raises(CriticalPlanningError) as exc_info:
+            node.exec_fallback(prep_res, exc)
 
-        assert result["found"] is False
-        assert result["workflow_name"] is None
-        assert result["confidence"] == 0.0
-        assert "LLM API failed" in result["reasoning"]
+        # Verify the exception details
+        assert exc_info.value.node_name == "WorkflowDiscoveryNode"
+        assert "Cannot determine workflow routing" in exc_info.value.reason
+        assert exc_info.value.original_error == exc
 
     def test_exec_fallback_handles_llm_failure_browsing(self):
-        """Test exec_fallback provides safe defaults on LLM failure for browsing."""
+        """Test exec_fallback raises CriticalPlanningError on LLM failure for browsing."""
+        from pflow.core.exceptions import CriticalPlanningError
+
         node = ComponentBrowsingNode()
         node.wait = 0  # Speed up tests
         prep_res = {"user_input": "test", "discovery_context": "context", "registry_metadata": {}}
         exc = RuntimeError("API timeout")
 
-        result = node.exec_fallback(prep_res, exc)
+        with pytest.raises(CriticalPlanningError) as exc_info:
+            node.exec_fallback(prep_res, exc)
 
-        assert result["node_ids"] == []
-        assert result["workflow_names"] == []
-        assert "API timeout" in result["reasoning"]
+        # Verify the exception details
+        assert exc_info.value.node_name == "ComponentBrowsingNode"
+        assert "Cannot select workflow components" in exc_info.value.reason
+        assert "Network connection issue" in exc_info.value.reason  # Classified error message
+        assert exc_info.value.original_error == exc
 
     def test_discovery_with_empty_user_input(self):
         """Test discovery validates required user_input.

@@ -745,8 +745,8 @@ class TestMetadataGenerationNode:
         }
         exc = Exception("LLM API error")
 
-        # Mock the simple extraction helper where it's used (imported at module level)
-        with patch("pflow.planning.nodes.generate_workflow_name") as mock_gen_name:
+        # Mock the function at its source module (local import in error_handler)
+        with patch("pflow.planning.utils.llm_helpers.generate_workflow_name") as mock_gen_name:
             mock_gen_name.return_value = "process-data-files"
 
             result = metadata_node.exec_fallback(prep_res, exc)

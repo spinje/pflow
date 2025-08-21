@@ -79,7 +79,16 @@ def parse_structured_response(response: Any, expected_type: type) -> dict[str, A
         return dict(result)
 
     except Exception as e:
-        logger.exception("Failed to parse LLM response")
+        # Log at debug level to avoid showing stack traces in normal operation
+        # Stack traces are only useful for debugging, not for handled errors
+        logger.debug(f"Failed to parse LLM response: {type(e).__name__}: {e}")
+
+        # Preserve API errors for intelligent downstream handling
+        error_type_name = type(e).__name__
+        if "API" in error_type_name or "api" in error_type_name.lower():
+            raise  # Re-raise original API errors with full context
+
+        # Only wrap actual parsing errors
         raise ValueError(f"Response parsing failed: {e}") from e
 
 

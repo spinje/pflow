@@ -145,7 +145,11 @@ class DebugWrapper:
             result = self.post(shared, prep_res, exec_res)
 
             duration = time.time() - start_time
-            self.progress.on_node_complete(node_name, duration)
+            # Show completion with retry indicator if retries occurred
+            if hasattr(self, "had_retries") and self.had_retries:
+                click.echo(f" (retried) ✓ {duration:.1f}s", err=True)
+            else:
+                self.progress.on_node_complete(node_name, duration)
             self.trace.record_node_execution(node_name, duration, "success")
             return result
         except Exception as e:
@@ -222,7 +226,13 @@ class DebugWrapper:
             self._setup_llm_interception(node_name)
 
         try:
-            result = self._wrapped.exec(prep_res)
+            # CRITICAL FIX: Call _exec() to use retry mechanism, not exec() directly
+            result = self._wrapped._exec(prep_res)
+
+            # Disable retry detection for now - it's buggy and misleading
+            # The issue is complex: nodes might be reused, cur_retry tracking is unreliable
+            # Better to not show retry indicators than to show incorrect ones
+            self.had_retries = False
         finally:
             # Clear current node name
             if hasattr(self.trace, "current_node"):
@@ -390,17 +400,17 @@ class TraceCollector:
 class PlannerProgress:
     """Displays progress indicators in terminal."""
 
-    # Node name to emoji mapping
+    # Node name to user-friendly display names
     NODE_ICONS: ClassVar[dict[str, str]] = {
-        "WorkflowDiscoveryNode": "🔍 Discovery",
-        "ComponentBrowsingNode": "📦 Browsing",
-        "ParameterDiscoveryNode": "🔎 Parameters Discovery",
-        "ParameterMappingNode": "📝 Parameters",
-        "ParameterPreparationNode": "📋 Preparation",
-        "WorkflowGeneratorNode": "🤖 Generating",
+        "WorkflowDiscoveryNode": "workflow-discovery",
+        "ComponentBrowsingNode": "component-browsing",
+        "ParameterDiscoveryNode": "parameter-discovery",
+        "ParameterMappingNode": "parameter-mapping",
+        "ParameterPreparationNode": "parameter-preparation",
+        "WorkflowGeneratorNode": "generator",
         "ValidatorNode": "✅ Validation",
         "MetadataGenerationNode": "💾 Metadata",
-        "ResultPreparationNode": "📤 Finalizing",
+        "ResultPreparationNode": "result-preparation",
     }
 
     def on_node_start(self, node_name: str) -> None:

@@ -607,52 +607,48 @@ class TestErrorHandling:
     """Test error handling and fallback mechanisms."""
 
     def test_exec_fallback_returns_compatible_structure(self):
-        """Test exec_fallback returns same structure as exec() for compatibility with post()."""
+        """Test exec_fallback raises CriticalPlanningError for WorkflowGeneratorNode."""
+        from pflow.core.exceptions import CriticalPlanningError
+
         node = WorkflowGeneratorNode()
         prep_res = {"generation_attempts": 1}
         exc = ValueError("Test error")
 
-        result = node.exec_fallback(prep_res, exc)
+        # WorkflowGeneratorNode is critical and should raise an exception
+        with pytest.raises(CriticalPlanningError) as exc_info:
+            node.exec_fallback(prep_res, exc)
 
-        # Should return same structure as exec(): workflow dict and attempt count
-        assert "workflow" in result
-        assert "attempt" in result
-        assert result["attempt"] == 2  # Should increment
-
-        # Workflow should be a dict (not None) so post() doesn't crash
-        assert isinstance(result["workflow"], dict)
-        assert result["workflow"]["nodes"] == []  # Empty nodes
-        assert result["workflow"]["edges"] == []  # Empty edges
-        assert "_error" in result["workflow"]  # Error info preserved
-        assert "Test error" in result["workflow"]["_error"]
+        # Verify the exception details
+        assert exc_info.value.node_name == "WorkflowGeneratorNode"
+        assert "Cannot generate workflow" in exc_info.value.reason
+        assert exc_info.value.original_error == exc
 
     def test_post_handles_exec_fallback_result(self):
-        """Test that post() can process exec_fallback() result without crashing.
+        """Test that exec_fallback raises CriticalPlanningError and doesn't reach post().
 
-        This integration test would have caught the bug where exec_fallback
-        returned incompatible structure that caused post() to crash.
+        This test validates that WorkflowGeneratorNode properly aborts the flow
+        on critical failures rather than trying to continue with invalid data.
         """
+        from pflow.core.exceptions import CriticalPlanningError
+
         node = WorkflowGeneratorNode()
         shared = {}
         prep_res = {"generation_attempts": 1}
 
-        # Simulate exec_fallback result
+        # exec_fallback now raises an exception rather than returning a result
         exc = ValueError("LLM API failed")
-        exec_res = node.exec_fallback(prep_res, exc)
 
-        # This should NOT crash (previously would crash with None.get('nodes'))
-        action = node.post(shared, prep_res, exec_res)
+        with pytest.raises(CriticalPlanningError) as exc_info:
+            node.exec_fallback(prep_res, exc)
 
-        # Should still route to validation
-        assert action == "validate"
+        # Verify the exception prevents reaching post()
+        assert exc_info.value.node_name == "WorkflowGeneratorNode"
+        assert "Cannot generate workflow" in exc_info.value.reason
+        assert exc_info.value.original_error == exc
 
-        # Should store the fallback workflow
-        assert "generated_workflow" in shared
-        assert isinstance(shared["generated_workflow"], dict)
-        assert shared["generated_workflow"]["nodes"] == []
-
-        # Should increment attempts
-        assert shared["generation_attempts"] == 2
+        # The shared store should not be modified since post() isn't reached
+        assert "generated_workflow" not in shared
+        assert "generation_attempts" not in shared
 
 
 class TestLazyLoading:

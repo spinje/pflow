@@ -944,6 +944,55 @@ def _save_trace_if_needed(trace_collector: Any, trace: bool, success: bool) -> N
         click.echo(f"📝 Trace saved: {trace_file}", err=True)
 
 
+def _create_debug_context(raw_input: str) -> tuple[Any, Any]:
+    """Create debugging context for planner execution.
+
+    Returns:
+        Tuple of (debug_context, trace_collector)
+    """
+    from pflow.planning.debug import DebugContext, PlannerProgress, TraceCollector
+
+    trace_collector = TraceCollector(raw_input)
+    progress = PlannerProgress()
+    debug_context = DebugContext(trace_collector=trace_collector, progress=progress)
+    return debug_context, trace_collector
+
+
+def _show_timeout_help(planner_timeout: int) -> None:
+    """Display helpful message for timeout errors."""
+    click.echo(f"\n⏰ Operation exceeded {planner_timeout}s timeout", err=True)
+    click.echo("", err=True)
+    click.echo("💡 This is likely due to AI service overload causing slow responses", err=True)
+    click.echo("   Try one of these solutions:", err=True)
+    click.echo("   • Wait a few minutes and try again", err=True)
+    click.echo('   • Increase timeout: pflow --planner-timeout 120 "your request"', err=True)
+    click.echo("   • Check service status at status.anthropic.com", err=True)
+
+
+def _handle_timeout_completion(
+    ctx: click.Context, shared: dict, trace_collector: Any, planner_timeout: int, verbose: bool
+) -> None:
+    """Handle timeout cases after planner completion."""
+    planner_output = shared.get("planner_output", {})
+
+    if isinstance(planner_output, dict) and planner_output.get("success"):
+        # Workflow succeeded despite timeout
+        if verbose:
+            click.echo(f"\n⚠️  Operation took longer than {planner_timeout}s but completed successfully", err=True)
+            click.echo("💡 Consider increasing --planner-timeout if this happens often", err=True)
+        trace_collector.set_final_status("success", shared)
+    elif isinstance(planner_output, dict) and planner_output.get("error_details"):
+        # Flow completed but with API errors
+        _handle_planning_failure(ctx, planner_output)
+    else:
+        # True timeout - show help
+        _show_timeout_help(planner_timeout)
+        trace_collector.set_final_status("timeout", shared)
+        trace_file = trace_collector.save_to_file()
+        click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+        ctx.exit(1)
+
+
 def _execute_planner_and_workflow(
     ctx: click.Context,
     raw_input: str,
@@ -962,12 +1011,8 @@ def _execute_planner_and_workflow(
         click.echo("cli: Using natural language planner to process input")
         click.echo("cli: Note: This may take 10-30 seconds for complex requests")
 
-    # Create debugging context (always enabled for progress indicators)
-    from pflow.planning.debug import DebugContext, PlannerProgress, TraceCollector
-
-    trace_collector = TraceCollector(raw_input)
-    progress = PlannerProgress()
-    debug_context = DebugContext(trace_collector=trace_collector, progress=progress)
+    # Create debugging context
+    debug_context, trace_collector = _create_debug_context(raw_input)
 
     # Create planner flow with debugging context
     planner_flow = create_planner_flow(debug_context=debug_context)
@@ -989,18 +1034,29 @@ def _execute_planner_and_workflow(
 
         # Check timeout AFTER completion
         if timed_out.is_set():
-            click.echo(f"\n⏰ Operation exceeded {planner_timeout}s timeout", err=True)
-            trace_collector.set_final_status("timeout", shared)
-            trace_file = trace_collector.save_to_file()
-            click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
-            ctx.exit(1)
+            _handle_timeout_completion(ctx, shared, trace_collector, planner_timeout, verbose)
 
+    except SystemExit:
+        # Don't catch intentional exits (from timeout handler, etc.)
+        raise
     except Exception as e:
-        # Handle execution errors
-        trace_collector.set_final_status("error", shared, {"message": str(e)})
-        trace_file = trace_collector.save_to_file()
-        click.echo(f"❌ Planner failed: {e}", err=True)
-        click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+        # Import here to avoid circular dependency
+        from pflow.core.exceptions import CriticalPlanningError
+
+        # Handle critical planning failures with clear user messaging
+        if isinstance(e, CriticalPlanningError):
+            trace_collector.set_final_status("critical_failure", shared, {"message": str(e)})
+            trace_file = trace_collector.save_to_file()
+            click.echo(f"❌ Planning aborted: {e.reason}", err=True)
+            if verbose and e.original_error:
+                click.echo(f"   Original error: {e.original_error}", err=True)
+            click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+        else:
+            # Handle other execution errors
+            trace_collector.set_final_status("error", shared, {"message": str(e)})
+            trace_file = trace_collector.save_to_file()
+            click.echo(f"❌ Planner failed: {e}", err=True)
+            click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
         ctx.exit(1)
 
     finally:
@@ -1026,46 +1082,76 @@ def _execute_planner_and_workflow(
 
     # Execute workflow or handle failure
     if success:
-        # Execute the workflow WITH execution_params for template resolution
-        if verbose:
-            click.echo("cli: Executing generated/discovered workflow")
-
-        execute_json_workflow(
-            ctx,
-            planner_output["workflow_ir"],
-            stdin_data,
-            output_key,
-            planner_output.get("execution_params"),  # CRITICAL: Pass params for templates!
-            ctx.obj.get("output_format", "text"),
-        )
-
-        # Handle post-execution based on workflow source
-        if sys.stdin.isatty():  # Only in interactive mode
-            workflow_source = planner_output.get("workflow_source")
-
-            if workflow_source and workflow_source.get("found"):
-                # Existing workflow was reused - just show which one
-                workflow_name = workflow_source.get("workflow_name", "unknown")
-                click.echo(f"\n✅ Reused existing workflow: '{workflow_name}'")
-            else:
-                # New workflow was generated - offer to save
-                _prompt_workflow_save(planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata"))
+        _execute_successful_workflow(ctx, planner_output, stdin_data, output_key, verbose)
     else:
-        # Handle planning failure
         _handle_planning_failure(ctx, planner_output)
 
 
-def _handle_planning_failure(ctx: click.Context, planner_output: dict) -> None:
-    """Handle planning failure with helpful error messages."""
-    error_msg = planner_output.get("error", "Unknown planning error")
-    click.echo(f"cli: Planning failed - {error_msg}", err=True)
+def _execute_successful_workflow(
+    ctx: click.Context, planner_output: dict, stdin_data: str | StdinData | None, output_key: str | None, verbose: bool
+) -> None:
+    """Execute the successfully planned workflow."""
+    if verbose:
+        click.echo("cli: Executing generated/discovered workflow")
 
-    # Show missing parameters if that's the issue
-    missing_params = planner_output.get("missing_params")
-    if missing_params:
-        click.echo("cli: Missing required parameters:", err=True)
-        for param in missing_params:
-            click.echo(f"  - {param}", err=True)
+    execute_json_workflow(
+        ctx,
+        planner_output["workflow_ir"],
+        stdin_data,
+        output_key,
+        planner_output.get("execution_params"),  # CRITICAL: Pass params for templates!
+        ctx.obj.get("output_format", "text"),
+    )
+
+    # Handle post-execution based on workflow source
+    if sys.stdin.isatty():  # Only in interactive mode
+        workflow_source = planner_output.get("workflow_source")
+
+        if workflow_source and workflow_source.get("found"):
+            # Existing workflow was reused - just show which one
+            workflow_name = workflow_source.get("workflow_name", "unknown")
+            click.echo(f"\n✅ Reused existing workflow: '{workflow_name}'")
+        else:
+            # New workflow was generated - offer to save
+            _prompt_workflow_save(planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata"))
+
+
+def _handle_planning_failure(ctx: click.Context, planner_output: dict) -> None:
+    """Handle planning failure with intelligent error messages and user guidance."""
+    verbose = ctx.obj.get("verbose", False)
+
+    # Check for structured error details from our new error classification
+    error_details = planner_output.get("error_details")
+    if error_details:
+        # We have rich error information from PlannerError
+        from pflow.planning.error_handler import ErrorCategory, PlannerError
+
+        # Reconstruct PlannerError if we have a dict
+        if isinstance(error_details, dict):
+            planner_error = PlannerError(
+                category=ErrorCategory(error_details.get("category", "unknown")),
+                message=error_details.get("message", "Unknown error"),
+                user_action=error_details.get("user_action", "Please retry"),
+                technical_details=error_details.get("technical_details"),
+                retry_suggestion=error_details.get("retry_suggestion", False),
+            )
+        else:
+            planner_error = error_details
+
+        # Display the formatted error
+        click.echo(planner_error.format_for_cli(verbose), err=True)
+    else:
+        # Fallback to old error handling for backward compatibility
+        error_msg = planner_output.get("error", "Unknown planning error")
+        click.echo(f"❌ Planning failed: {error_msg}", err=True)
+
+        # Show missing parameters if that's the issue
+        missing_params = planner_output.get("missing_params")
+        if missing_params:
+            click.echo("👉 Missing required parameters:", err=True)
+            for param in missing_params:
+                click.echo(f"   - {param}", err=True)
+            click.echo("👉 Provide these parameters in your request", err=True)
 
     ctx.exit(1)
 
@@ -1110,6 +1196,9 @@ def _execute_with_planner(
         click.echo(f"Collected workflow from {source}: {raw_input}")
         _display_stdin_data(stdin_data)
 
+    except SystemExit:
+        # Don't catch intentional exits (from timeout handler, etc.)
+        raise
     except Exception as e:
         # Other errors in planner execution
         click.echo(f"cli: Planning failed - {e}", err=True)
