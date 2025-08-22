@@ -1,71 +1,76 @@
 ---
 name: metadata_generation
-test_path: none
+test_path: tests/test_planning/llm/prompts/test_metadata_generation_prompt.py
 test_command: uv run python tools/test_prompt_accuracy.py metadata_generation
-version: 1.0
-latest_accuracy: 0.0
-test_runs: []
-average_accuracy: 0.0
-test_count: 0
-previous_version_accuracy: 0.0
-last_tested: 2025-01-01
-prompt_hash: ""
+version: '1.5'
+latest_accuracy: 90.0
+test_runs: [100.0, 90.0]
+average_accuracy: 95.0
+test_count: 10
+previous_version_accuracy: 50.0
+last_tested: '2025-08-22'
+prompt_hash: 43623f04
+last_test_cost: 0.084984
 ---
 
 # Metadata Generation Prompt
 
-Analyze this workflow and generate high-quality metadata for future discovery.
+Analyze this workflow and generate metadata that enables accurate discovery and reuse.
+
+Notice: Values in the user input have been replaced with [parameter_name] to show what's configurable.
 
 <original_request>
 {{user_input}}
 </original_request>
 
 <workflow_structure>
-   <nodes>{{nodes_summary}}</nodes>
-   <inputs>{{workflow_inputs}}</inputs>
-   <discovered_parameters>{{discovered_params}}</discovered_parameters>
+   <flow>{{node_flow}}</flow>
+
+   <stages>
+   {{workflow_stages}}
+   </stages>
+
+   <inputs>
+   {{workflow_inputs}}
+   </inputs>
+
+   <parameter_bindings>
+   {{parameter_bindings}}
+   </parameter_bindings>
 </workflow_structure>
 
-CRITICAL REQUIREMENT: Generate metadata that enables this workflow to be found with various search queries.
+Key insight: The workflow stages show WHAT it does, the inputs show WHAT'S CONFIGURABLE.
 
-CRITICAL RULES for description and keywords:
-- NEVER include specific parameter values (like "30 issues" or "pflow repo")
-- NEVER mention specific file names or paths from the user's request
-- DO describe capabilities generically ("fetches closed issues", not "fetches 30 issues")
-- DO focus on what the workflow CAN do, not what it WAS configured to do
-- Example BAD: "Fetches the last 30 closed issues from pflow repo"
-- Example GOOD: "Fetches closed issues from any GitHub repository"
-
-The workflow is REUSABLE with different parameters - the metadata must reflect this!
+Important: Keep all metadata generic and reusable. Even though specific values have been replaced with [parameter_name] in the input, avoid introducing any specific values, time periods, or file names in your metadata.
 
 Generate the following metadata:
 
 1. suggested_name (kebab-case, max 50 chars):
-   - Concise, memorable, searchable
-   - Indicates primary function
-   - Examples: "github-changelog-generator", "issue-triage-analyzer"
+   - Make it distinctive and searchable
+   - Reflect the primary domain and action
+   - Examples: "github-changelog-generator", "csv-data-analyzer", "file-backup-creator"
 
 2. description (100-500 chars):
-   - Explain WHAT it does, WHY it's useful, WHEN to use it
-   - Include key technologies (GitHub, LLM, etc.)
-   - Make it searchable - think about different phrasings
-   - Focus on value, not implementation
+   - Explain what the workflow accomplishes end-to-end
+   - Highlight what's configurable (from optional parameters) and whats required (from required parameters)
+   - Mention key technologies if relevant (GitHub, LLM, CSV, etc.)
+   - Describe what nodes are used, what their purpose is and how the data flows between them.
+   - Focus on value to the user
+   - Make sure to mention everything the workflow does
 
-3. search_keywords (3-10 terms):
-   - Alternative ways users might search for this
-   - Include synonyms and related concepts
-   - Think: What would someone type when looking for this?
-   - Example: "changelog" → also include "release notes", "version history"
+3. search_keywords (5-20 terms):
+   - Think: What would users type when looking for this functionality?
+   - Extract core concepts from the flow and purposes
+   - Include both specific terms (from nodes) and general concepts (from actions)
+   - Cover different search angles: domain, action, purpose, technology
 
 4. capabilities (2-6 bullet points):
-   - What this workflow can do
-   - User-focused benefits
-   - Example: "Fetches GitHub issues", "Categorizes changes automatically"
+   - Focus on what users can achieve with this workflow
+   - Highlight key configurability from optional parameters
+   - Think outcomes, not technical steps
 
 5. typical_use_cases (1-3 scenarios):
-   - Real-world problems it solves
-   - When someone would use this
-   - Example: "Preparing release documentation"
+   - Concrete situations where this workflow saves time
+   - Focus on the "when" and "why" someone needs this
 
-REMEMBER: The metadata determines whether this workflow will be discovered and reused.
-Poor metadata means duplicate workflows will be created instead of reusing this one.
+Goal: Enable users to find this workflow when they need it, understand what it does, and know it fits their use case.

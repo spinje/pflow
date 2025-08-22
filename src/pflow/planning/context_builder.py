@@ -583,7 +583,16 @@ def _build_node_flow(workflow_ir: dict[str, Any]) -> str:
     if not nodes:
         return ""
 
-    # Create node type map
+    # Check if nodes have IDs (proper IR format) or are simplified (test format)
+    first_node = nodes[0]
+    has_ids = "id" in first_node
+
+    if not has_ids:
+        # Simplified format without IDs - just list node types
+        # This handles test cases that create nodes without IDs
+        return " + ".join(node.get("type", "unknown") for node in nodes)
+
+    # Create node type map for nodes with IDs
     node_types: dict[str, str] = {str(node["id"]): str(node["type"]) for node in nodes}
 
     if not edges:

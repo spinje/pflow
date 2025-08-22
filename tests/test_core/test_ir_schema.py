@@ -37,7 +37,10 @@ class TestValidIR:
 
     def test_minimal_valid_ir(self):
         """Test the simplest valid IR with single node."""
-        ir = {"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "read-file"}]}
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "read-file", "purpose": "Read file from filesystem for processing"}],
+        }
         # Should not raise
         validate_ir(ir)
 
@@ -45,7 +48,14 @@ class TestValidIR:
         """Test node with parameters."""
         ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "input.txt", "encoding": "utf-8"}}],
+            "nodes": [
+                {
+                    "id": "reader",
+                    "type": "read-file",
+                    "purpose": "Read input text file with UTF-8 encoding",
+                    "params": {"path": "input.txt", "encoding": "utf-8"},
+                }
+            ],
         }
         validate_ir(ir)
 
@@ -54,9 +64,9 @@ class TestValidIR:
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "n1", "type": "read-file"},
-                {"id": "n2", "type": "llm"},
-                {"id": "n3", "type": "write-file"},
+                {"id": "n1", "type": "read-file", "purpose": "Read input data from file"},
+                {"id": "n2", "type": "llm", "purpose": "Process text through language model"},
+                {"id": "n3", "type": "write-file", "purpose": "Save processed output to file"},
             ],
             "edges": [{"from": "n1", "to": "n2"}, {"from": "n2", "to": "n3"}],
         }
@@ -67,9 +77,9 @@ class TestValidIR:
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "check", "type": "validator"},
-                {"id": "success", "type": "logger"},
-                {"id": "error", "type": "error-handler"},
+                {"id": "check", "type": "validator", "purpose": "Validate input data format and constraints"},
+                {"id": "success", "type": "logger", "purpose": "Log successful validation results"},
+                {"id": "error", "type": "error-handler", "purpose": "Handle validation errors and log failures"},
             ],
             "edges": [
                 {"from": "check", "to": "success", "action": "valid"},
@@ -82,7 +92,10 @@ class TestValidIR:
         """Test explicit start_node specification."""
         ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "step1"}, {"id": "n2", "type": "step2"}],
+            "nodes": [
+                {"id": "n1", "type": "step1", "purpose": "Execute first processing step"},
+                {"id": "n2", "type": "step2", "purpose": "Execute second processing step"},
+            ],
             "start_node": "n2",  # Start with second node
         }
         validate_ir(ir)
@@ -91,7 +104,7 @@ class TestValidIR:
         """Test IR with proxy mappings."""
         ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "llm", "type": "llm-node"}],
+            "nodes": [{"id": "llm", "type": "llm-node", "purpose": "Process text using language model API"}],
             "mappings": {
                 "llm": {
                     "input_mappings": {"prompt": "formatted_prompt"},
@@ -105,7 +118,7 @@ class TestValidIR:
         """Test validation of JSON string input."""
         ir_json = """{
             "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test"}]
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node for validation purposes"}]
         }"""
         validate_ir(ir_json)
 
@@ -117,6 +130,7 @@ class TestValidIR:
                 {
                     "id": "writer",
                     "type": "write-file",
+                    "purpose": "Write template-based content to file",
                     "params": {"path": "${output_path}", "content": "Result: ${result}"},
                 }
             ],
@@ -130,7 +144,7 @@ class TestInvalidIR:
 
     def test_missing_ir_version(self):
         """Test error when ir_version is missing."""
-        ir = {"nodes": [{"id": "n1", "type": "test"}]}
+        ir = {"nodes": [{"id": "n1", "type": "test", "purpose": "Test node for validation check"}]}
 
         with pytest.raises(ValidationError) as exc_info:
             validate_ir(ir)
@@ -166,7 +180,7 @@ class TestInvalidIR:
         """Test error for invalid version format."""
         ir = {
             "ir_version": "1.0",  # Missing patch version
-            "nodes": [{"id": "n1", "type": "test"}],
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node for version validation"}],
         }
 
         with pytest.raises(ValidationError) as exc_info:
@@ -181,7 +195,7 @@ class TestInvalidIR:
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"type": "test"}  # Missing id
+                {"type": "test", "purpose": "Test node missing required id field"}  # Missing id
             ],
         }
 
@@ -197,7 +211,7 @@ class TestInvalidIR:
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "n1"}  # Missing type
+                {"id": "n1", "purpose": "Test node missing required type field"}  # Missing type
             ],
         }
 
@@ -210,7 +224,17 @@ class TestInvalidIR:
 
     def test_node_extra_properties(self):
         """Test error when node has unknown properties."""
-        ir = {"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test", "unknown_field": "value"}]}
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "test",
+                    "purpose": "Test node with extra unknown properties",
+                    "unknown_field": "value",
+                }
+            ],
+        }
 
         with pytest.raises(ValidationError) as exc_info:
             validate_ir(ir)
@@ -223,7 +247,10 @@ class TestInvalidIR:
         """Test error when edge is missing 'from' field."""
         ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test"}, {"id": "n2", "type": "test"}],
+            "nodes": [
+                {"id": "n1", "type": "test", "purpose": "First test node for edge validation"},
+                {"id": "n2", "type": "test", "purpose": "Second test node for edge validation"},
+            ],
             "edges": [
                 {"to": "n2"}  # Missing from
             ],
@@ -240,7 +267,7 @@ class TestInvalidIR:
         """Test error when edge references non-existent node."""
         ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test"}],
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node for edge reference validation"}],
             "edges": [
                 {"from": "n1", "to": "n2"}  # n2 doesn't exist
             ],
@@ -259,8 +286,8 @@ class TestInvalidIR:
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "n1", "type": "test1"},
-                {"id": "n1", "type": "test2"},  # Duplicate ID
+                {"id": "n1", "type": "test1", "purpose": "First node with duplicate ID test"},
+                {"id": "n1", "type": "test2", "purpose": "Second node with duplicate ID test"},  # Duplicate ID
             ],
         }
 
@@ -276,7 +303,7 @@ class TestInvalidIR:
         """Test error when nodes is not an array."""
         ir = {
             "ir_version": "0.1.0",
-            "nodes": {"n1": {"type": "test"}},  # Dict instead of array
+            "nodes": {"n1": {"type": "test", "purpose": "Test node in wrong structure"}},  # Dict instead of array
         }
 
         with pytest.raises(ValidationError) as exc_info:
@@ -303,8 +330,8 @@ class TestErrorMessages:
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "n1", "type": "test"},
-                {"id": "n2"},  # Missing type in second node
+                {"id": "n1", "type": "test", "purpose": "First node for path error testing"},
+                {"id": "n2", "purpose": "Second node missing type field"},  # Missing type in second node
             ],
         }
 
@@ -318,7 +345,10 @@ class TestErrorMessages:
     def test_error_suggestions_are_helpful(self):
         """Test that suggestions provide actionable guidance."""
         # Test version format suggestion
-        ir = {"ir_version": "bad-version", "nodes": [{"id": "n1", "type": "test"}]}
+        ir = {
+            "ir_version": "bad-version",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node for version format validation"}],
+        }
 
         with pytest.raises(ValidationError) as exc_info:
             validate_ir(ir)
@@ -341,20 +371,40 @@ class TestEdgeCases:
     def test_very_long_node_id(self):
         """Test handling of very long node IDs."""
         long_id = "n" * 1000
-        ir = {"ir_version": "0.1.0", "nodes": [{"id": long_id, "type": "test"}]}
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": long_id, "type": "test", "purpose": "Test node with extremely long identifier"}],
+        }
         # Should be valid - no length restriction
         validate_ir(ir)
 
     def test_unicode_in_params(self):
         """Test Unicode strings in parameters."""
-        ir = {"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test", "params": {"message": "Hello 世界 🌍"}}]}
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "test",
+                    "purpose": "Test node with Unicode parameter values",
+                    "params": {"message": "Hello 世界 🌍"},
+                }
+            ],
+        }
         validate_ir(ir)
 
     def test_deeply_nested_params(self):
         """Test deeply nested parameter objects."""
         ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test", "params": {"config": {"nested": {"deeply": {"value": 42}}}}}],
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "test",
+                    "purpose": "Test node with deeply nested parameters",
+                    "params": {"config": {"nested": {"deeply": {"value": 42}}}},
+                }
+            ],
         }
         validate_ir(ir)
 
@@ -362,7 +412,7 @@ class TestEdgeCases:
         """Test edge from node to itself."""
         ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "loop"}],
+            "nodes": [{"id": "n1", "type": "loop", "purpose": "Test node with self-referential edge"}],
             "edges": [
                 {"from": "n1", "to": "n1"}  # Self-loop
             ],

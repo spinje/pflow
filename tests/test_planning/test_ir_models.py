@@ -19,7 +19,12 @@ class TestNodeIR:
     def test_valid_node_creation(self, tmp_path):
         """Test creating a valid NodeIR."""
         test_file = tmp_path / "test.txt"
-        node = NodeIR(id="test-node", type="read-file", params={"path": str(test_file)})
+        node = NodeIR(
+            id="test-node",
+            type="read-file",
+            purpose="Read test file content for validation",
+            params={"path": str(test_file)},
+        )
 
         assert node.id == "test-node"
         assert node.type == "read-file"
@@ -27,7 +32,7 @@ class TestNodeIR:
 
     def test_minimal_node_creation(self):
         """Test creating node with minimal required fields."""
-        node = NodeIR(id="n1", type="test-node")
+        node = NodeIR(id="n1", type="test-node", purpose="Test node with minimal required fields")
 
         assert node.id == "n1"
         assert node.type == "test-node"
@@ -38,27 +43,32 @@ class TestNodeIR:
         # Valid IDs
         valid_ids = ["node1", "test-node", "test_node", "Node123", "a", "A-B_C"]
         for valid_id in valid_ids:
-            node = NodeIR(id=valid_id, type="test")
+            node = NodeIR(id=valid_id, type="test", purpose="Validate ID pattern matching rules")
             assert node.id == valid_id
 
         # Invalid IDs
         invalid_ids = ["test node", "test@node", "test.node", "test/node", "", "test!"]
         for invalid_id in invalid_ids:
             with pytest.raises(ValidationError) as exc_info:
-                NodeIR(id=invalid_id, type="test")
+                NodeIR(id=invalid_id, type="test", purpose="Test invalid ID pattern validation")
             assert "id" in str(exc_info.value)
 
     def test_missing_required_fields(self):
         """Test that missing required fields raise validation errors."""
         # Missing id
         with pytest.raises(ValidationError) as exc_info:
-            NodeIR(type="test-node")  # type: ignore[call-arg]
+            NodeIR(type="test-node", purpose="Test node missing id field")  # type: ignore[call-arg]
         assert "id" in str(exc_info.value)
 
         # Missing type
         with pytest.raises(ValidationError) as exc_info:
-            NodeIR(id="n1")  # type: ignore[call-arg]
+            NodeIR(id="n1", purpose="Test node missing type field")  # type: ignore[call-arg]
         assert "type" in str(exc_info.value)
+
+        # Missing purpose
+        with pytest.raises(ValidationError) as exc_info:
+            NodeIR(id="n1", type="test-node")  # type: ignore[call-arg]
+        assert "purpose" in str(exc_info.value)
 
     def test_params_can_be_complex(self):
         """Test that params can contain complex nested structures."""
@@ -73,7 +83,9 @@ class TestNodeIR:
             "mixed": [{"a": 1}, {"b": 2}],
         }
 
-        node = NodeIR(id="complex", type="test", params=complex_params)
+        node = NodeIR(
+            id="complex", type="test", purpose="Test complex nested parameter structures", params=complex_params
+        )
         assert node.params == complex_params
 
 
@@ -139,8 +151,8 @@ class TestFlowIR:
     def test_valid_flow_creation(self):
         """Test creating a valid FlowIR."""
         nodes = [
-            NodeIR(id="n1", type="read-file", params={"path": "input.txt"}),
-            NodeIR(id="n2", type="write-file", params={"path": "output.txt"}),
+            NodeIR(id="n1", type="read-file", purpose="Read input file for processing", params={"path": "input.txt"}),
+            NodeIR(id="n2", type="write-file", purpose="Write processed output to file", params={"path": "output.txt"}),
         ]
         edges = [EdgeIR(**{"from": "n1", "to": "n2"})]
 
@@ -153,7 +165,7 @@ class TestFlowIR:
 
     def test_minimal_flow_creation(self):
         """Test creating flow with minimal required fields."""
-        nodes = [NodeIR(id="single", type="test")]
+        nodes = [NodeIR(id="single", type="test", purpose="Single node for minimal flow test")]
         flow = FlowIR(nodes=nodes)
 
         assert flow.ir_version == "0.1.0"  # Default
@@ -172,14 +184,19 @@ class TestFlowIR:
         # Valid versions
         valid_versions = ["0.1.0", "1.0.0", "2.5.10", "999.999.999"]
         for version in valid_versions:
-            flow = FlowIR(ir_version=version, nodes=[NodeIR(id="n", type="t")])
+            flow = FlowIR(
+                ir_version=version, nodes=[NodeIR(id="n", type="t", purpose="Test semantic version validation")]
+            )
             assert flow.ir_version == version
 
         # Invalid versions
         invalid_versions = ["1.0", "1", "v1.0.0", "1.0.0-beta", "1.0.a"]
         for version in invalid_versions:
             with pytest.raises(ValidationError) as exc_info:
-                FlowIR(ir_version=version, nodes=[NodeIR(id="n", type="t")])
+                FlowIR(
+                    ir_version=version,
+                    nodes=[NodeIR(id="n", type="t", purpose="Test invalid version pattern rejection")],
+                )
             assert "ir_version" in str(exc_info.value)
 
     def test_task21_fields(self):
@@ -188,7 +205,7 @@ class TestFlowIR:
         outputs = {"result": {"type": "dict", "description": "Processing result"}}
 
         flow = FlowIR(
-            nodes=[NodeIR(id="n1", type="process")],
+            nodes=[NodeIR(id="n1", type="process", purpose="Process input data with specified parameters")],
             inputs=inputs,
             outputs=outputs,
         )
@@ -199,8 +216,10 @@ class TestFlowIR:
     def test_to_dict_method(self):
         """Test to_dict conversion for validation."""
         nodes = [
-            NodeIR(id="read", type="read-file", params={"path": "${input}"}),
-            NodeIR(id="write", type="write-file"),
+            NodeIR(
+                id="read", type="read-file", purpose="Read file from templated input path", params={"path": "${input}"}
+            ),
+            NodeIR(id="write", type="write-file", purpose="Write data to output destination"),
         ]
         edges = [EdgeIR(**{"from": "read", "to": "write", "action": "success"})]
 
@@ -232,7 +251,7 @@ class TestFlowIR:
 
     def test_to_dict_excludes_none_values(self):
         """Test that to_dict excludes None values."""
-        flow = FlowIR(nodes=[NodeIR(id="n", type="t")])
+        flow = FlowIR(nodes=[NodeIR(id="n", type="t", purpose="Test None value exclusion in serialization")])
         result = flow.to_dict()
 
         # Optional None fields should not be in output
@@ -253,6 +272,7 @@ class TestFlowIR:
                 NodeIR(
                     id="processor",
                     type="complex-processor",
+                    purpose="Process data with complex nested configuration",
                     params={
                         "config": {"mode": "fast", "options": ["a", "b", "c"]},
                         "templates": {"greeting": "Hello {{name}}"},
@@ -280,9 +300,9 @@ class TestModelInteraction:
         """Test creating flow with multiple edges."""
         flow = FlowIR(
             nodes=[
-                NodeIR(id="n1", type="t1"),
-                NodeIR(id="n2", type="t2"),
-                NodeIR(id="n3", type="t3"),
+                NodeIR(id="n1", type="t1", purpose="First node in multi-edge flow test"),
+                NodeIR(id="n2", type="t2", purpose="Middle node in multi-edge flow test"),
+                NodeIR(id="n3", type="t3", purpose="Final node in multi-edge flow test"),
             ],
             edges=[
                 EdgeIR(**{"from": "n1", "to": "n2"}),
@@ -303,6 +323,7 @@ class TestModelInteraction:
                 NodeIR(
                     id="complex",
                     type="test",
+                    purpose="Test preservation of all param value types",
                     params={
                         "null_value": None,
                         "empty_string": "",

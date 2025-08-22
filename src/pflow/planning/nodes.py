@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from pflow.core.exceptions import WorkflowNotFoundError
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.planning.context_builder import (
+    _build_node_flow,
     build_nodes_context,
     build_planning_context,
     build_workflows_context,
@@ -1349,7 +1350,8 @@ class MetadataGenerationNode(Node):
             "user_input": shared.get("user_input", ""),
             "planning_context": shared.get("planning_context", ""),
             "discovered_params": shared.get("discovered_params", {}),
-            "model_name": self.params.get("model", "anthropic/claude-3-haiku-20240307"),  # Faster model
+            "extracted_params": shared.get("extracted_params", {}),  # Add extracted params from ParameterMappingNode
+            "model_name": self.params.get("model", "anthropic/claude-sonnet-4-0"),
             "temperature": self.params.get("temperature", 0.3),  # Lower for consistency
         }
 
@@ -1362,17 +1364,18 @@ class MetadataGenerationNode(Node):
         Returns:
             Dict with rich metadata fields for discovery
         """
-
         from pflow.planning.ir_models import WorkflowMetadata
         from pflow.planning.utils.llm_helpers import parse_structured_response
 
         workflow = prep_res.get("workflow", {})
+        extracted_params = prep_res.get("extracted_params", {})
 
         # Build comprehensive prompt for metadata generation
         prompt = self._build_metadata_prompt(
             workflow=workflow,
             user_input=prep_res.get("user_input", ""),
             discovered_params=prep_res.get("discovered_params", {}),
+            extracted_params=extracted_params,  # Pass extracted_params directly
         )
 
         # Get LLM to analyze and generate metadata
@@ -1438,13 +1441,15 @@ class MetadataGenerationNode(Node):
 
         return safe_response
 
-    def _build_metadata_prompt(self, workflow: dict, user_input: str, discovered_params: dict) -> str:
+    def _build_metadata_prompt(
+        self, workflow: dict, user_input: str, discovered_params: dict, extracted_params: dict | None = None
+    ) -> str:
         """Build comprehensive prompt for metadata generation.
 
         Args:
             workflow: The generated workflow IR
             user_input: Original user request
-            discovered_params: Parameters discovered from user input
+            discovered_params: Parameters discovered from user input (kept for compatibility, not used)
 
         Returns:
             Detailed prompt for LLM metadata generation
@@ -1454,23 +1459,76 @@ class MetadataGenerationNode(Node):
 
         prompt_template = load_prompt("metadata_generation")
 
-        # Analyze workflow to understand what it does
-        nodes_summary = self._summarize_nodes(workflow.get("nodes", []))
+        # Transform user input to replace values with parameter placeholders
+        if extracted_params:
+            user_input = self._transform_user_input_with_parameters(user_input, extracted_params)
 
-        # Format workflow inputs and discovered params
-        workflow_inputs = ", ".join(workflow.get("inputs", {}).keys()) or "none"
-        discovered_params_text = ", ".join(discovered_params.keys()) if discovered_params else "none"
+        # Generate node flow visualization - shows execution order
+        node_flow = _build_node_flow(workflow)
+        if not node_flow:
+            # Fallback if workflow has no nodes
+            node_flow = "empty workflow"
+
+        # Format workflow inputs with full details
+        inputs = workflow.get("inputs", {})
+        formatted_inputs = self._format_workflow_inputs(inputs)
+
+        # Build workflow stages with purposes
+        workflow_stages = self._build_workflow_stages(workflow)
+
+        # Build parameter usage map
+        param_usage = self._build_parameter_usage_map(workflow)
+        param_bindings = self._format_parameter_bindings(param_usage)
 
         # Format with all variables - structure is fully in markdown
         return format_prompt(
             prompt_template,
             {
                 "user_input": user_input,
-                "nodes_summary": nodes_summary,
-                "workflow_inputs": workflow_inputs,
-                "discovered_params": discovered_params_text,
+                "node_flow": node_flow,  # Shows execution order
+                "workflow_inputs": formatted_inputs,  # Detailed input info
+                "workflow_stages": workflow_stages,  # Nodes with purposes
+                "parameter_bindings": param_bindings,  # Which params go where
             },
         )
+
+    def _transform_user_input_with_parameters(self, user_input: str, extracted_params: dict) -> str:
+        """Replace parameter values in user input with [parameter_name] placeholders.
+
+        Args:
+            user_input: Original user request
+            extracted_params: Mapped parameters from ParameterMappingNode
+
+        Returns:
+            Transformed input with values replaced by [param_name] placeholders
+        """
+        if not extracted_params:
+            return user_input
+
+        transformed = user_input
+
+        # Sort by value length (longest first) to avoid partial replacements
+        # e.g., replace "2024" before "24"
+        sorted_params = sorted(
+            extracted_params.items(), key=lambda x: len(str(x[1])) if x[1] is not None else 0, reverse=True
+        )
+
+        for param_name, param_value in sorted_params:
+            if param_value is None:
+                continue
+
+            # Convert to string for replacement
+            value_str = str(param_value)
+
+            # Skip empty strings to avoid replacing every character
+            if not value_str:
+                continue
+
+            # Replace all occurrences of the value
+            if value_str in transformed:
+                transformed = transformed.replace(value_str, f"[{param_name}]")
+
+        return transformed
 
     def _summarize_nodes(self, nodes: list) -> str:
         """Summarize the types of nodes used in the workflow.
@@ -1502,6 +1560,138 @@ class MetadataGenerationNode(Node):
 
         # Otherwise, return empty list (can be enhanced later)
         return []
+
+    def _extract_templates_from_params(self, params: dict[str, Any]) -> set[str]:
+        """Recursively extract all template variables from node parameters.
+
+        Args:
+            params: Node parameters dictionary (can have nested dicts)
+
+        Returns:
+            Set of all template variable names found
+        """
+        from pflow.runtime.template_resolver import TemplateResolver
+
+        templates = set()
+
+        def _scan_value(value: Any) -> None:
+            if isinstance(value, str):
+                # Extract templates from string
+                templates.update(TemplateResolver.extract_variables(value))
+            elif isinstance(value, dict):
+                # Recursively scan dictionary
+                for v in value.values():
+                    _scan_value(v)
+            elif isinstance(value, list):
+                # Recursively scan list
+                for item in value:
+                    _scan_value(item)
+
+        _scan_value(params)
+        return templates
+
+    def _build_parameter_usage_map(self, workflow: dict) -> dict[str, list[str]]:
+        """Build a map of which parameters are used by which nodes.
+
+        Returns:
+            Dict mapping parameter names to list of node types that use them
+        """
+        param_usage: dict[str, list[str]] = {}
+
+        for node in workflow.get("nodes", []):
+            node_type = node.get("type", "unknown")
+            params = node.get("params", {})
+
+            # Extract all templates from this node's params
+            templates = self._extract_templates_from_params(params)
+
+            for template in templates:
+                # Extract base variable name (before any dots)
+                base_var = template.split(".")[0]
+
+                # Skip if this is a node output reference (contains dot and starts with node id)
+                if "." in template:
+                    # Check if it's a node output reference
+                    possible_node_id = base_var
+                    is_node_ref = any(n.get("id") == possible_node_id for n in workflow.get("nodes", []))
+                    if is_node_ref:
+                        continue
+
+                if base_var not in param_usage:
+                    param_usage[base_var] = []
+                if node_type not in param_usage[base_var]:
+                    param_usage[base_var].append(node_type)
+
+        return param_usage
+
+    def _format_workflow_inputs(self, inputs: dict) -> str:
+        """Format workflow inputs with full details.
+
+        Args:
+            inputs: Workflow inputs dictionary
+
+        Returns:
+            Formatted string with input details
+        """
+        if not inputs:
+            return "none"
+
+        lines = []
+        for name, spec in inputs.items():
+            input_type = spec.get("type", "string")
+            required = spec.get("required", True)
+            default = spec.get("default")
+            description = spec.get("description", "")
+
+            req_text = "required" if required else "optional"
+            default_text = f", default={default}" if default is not None else ""
+
+            lines.append(f"• {name} [{input_type}, {req_text}{default_text}]")
+            if description:
+                lines.append(f"  {description}")
+            lines.append("")  # Empty line for spacing
+
+        return "\n".join(lines).strip()
+
+    def _build_workflow_stages(self, workflow: dict) -> str:
+        """Build workflow stages with purposes.
+
+        Args:
+            workflow: Workflow IR
+
+        Returns:
+            Formatted string with workflow stages and purposes
+        """
+        nodes = workflow.get("nodes", [])
+        if not nodes:
+            return "No stages defined"
+
+        lines = []
+        for i, node in enumerate(nodes, 1):
+            node_type = node.get("type", "unknown")
+            purpose = node.get("purpose", "No purpose specified")
+            lines.append(f"{i}. {node_type}: {purpose}")
+
+        return "\n".join(lines)
+
+    def _format_parameter_bindings(self, param_usage: dict[str, list[str]]) -> str:
+        """Format parameter bindings for display.
+
+        Args:
+            param_usage: Dict mapping parameters to node types
+
+        Returns:
+            Formatted string with parameter bindings
+        """
+        if not param_usage:
+            return "No parameter bindings"
+
+        lines = []
+        for param, nodes in sorted(param_usage.items()):
+            nodes_str = ", ".join(nodes)
+            lines.append(f"• {param} → {nodes_str}")
+
+        return "\n".join(lines)
 
 
 class ResultPreparationNode(Node):

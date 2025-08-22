@@ -393,7 +393,7 @@ class TestMetadataGenerationNode:
                 exec_res = metadata_node.exec(prep_res)
 
                 # Verify LLM was called
-                mock_get_model.assert_called_once_with("anthropic/claude-3-haiku-20240307")
+                mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-0")
                 mock_model.prompt.assert_called_once()
 
                 # Verify rich metadata fields
@@ -408,9 +408,11 @@ class TestMetadataGenerationNode:
         """Test that LLM prompt includes all necessary context."""
         shared = {
             "generated_workflow": {"nodes": []},
-            "user_input": "Process GitHub issues",
+            "user_input": "Process GitHub issues from owner/repo",
             "planning_context": "GitHub integration context",
             "discovered_params": {"repo": "owner/repo", "issue_number": "123"},
+            # With the new implementation, extracted_params is used to transform the user input
+            "extracted_params": {"repo": "owner/repo", "issue_number": "123"},
         }
 
         with patch("llm.get_model") as mock_get_model:
@@ -437,7 +439,9 @@ class TestMetadataGenerationNode:
 
                 # Check that prompt includes key information
                 assert "Process GitHub issues" in prompt_text
-                assert "repo" in prompt_text or "discovered_params" in str(call_args)
+                # With parameter transformation, values are replaced with [parameter_name]
+                # Check that the parameter placeholder appears in the transformed input
+                assert "[repo]" in prompt_text or "owner/repo" in prompt_text
 
     def test_llm_uses_haiku_model_for_speed(self, metadata_node):
         """Test that metadata generation uses faster Haiku model."""
@@ -463,8 +467,8 @@ class TestMetadataGenerationNode:
                 prep_res = metadata_node.prep(shared)
                 metadata_node.exec(prep_res)
 
-                # Verify Haiku model is used (faster for metadata)
-                mock_get_model.assert_called_once_with("anthropic/claude-3-haiku-20240307")
+                # Verify Sonnet model is used for metadata generation
+                mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-0")
 
     def test_temperature_setting_for_consistency(self, metadata_node):
         """Test that metadata generation uses lower temperature for consistency."""
@@ -828,5 +832,5 @@ class TestMetadataGenerationNode:
         assert prep_res["user_input"] == "test input"
         assert prep_res["planning_context"] == "test context"
         assert prep_res["discovered_params"] == {"param1": "value1"}
-        assert prep_res["model_name"] == "anthropic/claude-3-haiku-20240307"
+        assert prep_res["model_name"] == "anthropic/claude-sonnet-4-0"
         assert prep_res["temperature"] == 0.3

@@ -117,7 +117,7 @@ class TestMetadataEnablesPathA:
         mock_model.prompt.assert_called_once()
         call_args = mock_model.prompt.call_args
         prompt = call_args[0][0]
-        assert "CRITICAL REQUIREMENT: Generate metadata that enables this workflow to be found" in prompt
+        assert "Analyze this workflow and generate metadata that enables accurate discovery and reuse" in prompt
         assert "github-list-issues" in prompt  # Nodes mentioned
         assert "repo" in prompt  # Inputs mentioned
 

@@ -40,6 +40,15 @@ CRITICAL Requirements:
 6. Create descriptive node IDs (e.g., "fetch_issues", not "n1")
 7. Avoid multiple nodes of the same type (causes shared store collision)
 8. Every variable in "inputs" MUST be something the USER provides, not generated data!
+9. EVERY node MUST have a clear "purpose" field that explains what it does in THIS workflow
+
+PURPOSE FIELD REQUIREMENTS:
+- Must be specific to this workflow's context, not generic
+- Must explain WHAT the node does and WHY it's needed
+- Must be 10-200 characters
+- BAD purposes (too generic): "Process data", "Use LLM", "Write file"
+- GOOD purposes (specific): "Fetch closed issues for changelog generation", "Analyze issues to categorize by type", "Save formatted changelog to specified file"
+- Should never include information about dynamic parameters (the actual values provided by the user will change with every execution of the workflow)
 
 EXAMPLE showing proper template variable usage:
 {
@@ -48,6 +57,7 @@ EXAMPLE showing proper template variable usage:
     {
       "id": "generate_content",
       "type": "llm",
+      "purpose": "Generate a creative joke about the specified topic using AI",
       "params": {
         "prompt": "Create a joke about ${topic}",  // ← ${topic} is USER INPUT
         "model": "${model_name}"  // ← ${model_name} is USER INPUT with default
@@ -56,6 +66,7 @@ EXAMPLE showing proper template variable usage:
     {
       "id": "save_to_file",
       "type": "write-file",
+      "purpose": "Save the generated joke to a text file for later use",
       "params": {
         "content": "${generate_content.response}",  // ← NODE OUTPUT from previous node!
         "file_path": "${output_file}"  // ← ${output_file} is USER INPUT

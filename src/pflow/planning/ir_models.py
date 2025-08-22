@@ -10,6 +10,7 @@ class NodeIR(BaseModel):
 
     id: str = Field(..., pattern="^[a-zA-Z0-9_-]+$")
     type: str = Field(..., description="Node type from registry")
+    purpose: str = Field(..., min_length=10, max_length=200, description="What this node does in the workflow context")
     params: dict[str, Any] = Field(default_factory=dict)
 
 

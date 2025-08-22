@@ -40,9 +40,29 @@ Extract parameters with their likely names and values. Focus on:
 4. Formats (e.g., "as JSON" → output_format: "json")
 5. Identifiers (e.g., "repo pflow" → repo: "pflow")
 
-Return parameters as a simple name:value mapping. If stdin is present, note its type.
+Return parameters as a simple name:value mapping.
 
-Examples:
-- "process data.csv and convert to json" → {"filename": "data.csv", "output_format": "json"}
-- "last 20 closed issues from repo" → {"limit": "20", "state": "closed"}
-- "analyze the piped data" → {} (parameters will come from stdin)
+Your job is to identify and extract ALL dynamic parameters from the user input. The next step will decide which parameters are actually used in the workflow. This means you should not be too restrictive in your parameter extraction.
+
+Examples (DO):
+- ✅ "process data.csv and convert to json" → {"filename": "data.csv", "output_format": "json"}
+- ✅ "last 20 closed issues from repo" → {"limit": "20", "state": "closed"}
+- ✅ "analyze the piped data" → {} (parameters will come from stdin)
+- ✅ "generate changelog from last 30 closed issues in pflow repo" → {"issue_count": 30, "issue_state": "closed", "repo_name": "pflow"}
+- ✅"write a short story about cats and dogs then write it to a file named cat_dog_story.txt" → {"story_topic": "cats and dogs", "story_length": "short", "output_filename": "cat_dog_story.txt"}
+
+Examples (DONT):
+
+Never include any extracted parameters in the name of the parameter.
+- ❌ "write a story about llamas and write it to a file named llama_story.txt" → {"story_topic": "llamas", "llama_story_filename": "llama_story.txt"}
+
+Never include prompts as parameters. These are not parameters, they are instructions to the LLM and will be written by an LLM in the next step using the parameters you extract as dynamic values.
+- ❌ "Write a story about fishes and save it to a file named fish_story.txt" → {"prompt": "Write a very short story about fishes", "output_filename": "fish_story.txt"}
+
+
+
+
+
+
+
+

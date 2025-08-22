@@ -132,6 +132,10 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "id": {"type": "string", "description": "Unique identifier for the node"},
                     "type": {"type": "string", "description": "Node type that maps to registry"},
+                    "purpose": {
+                        "type": "string",
+                        "description": "Human-readable description of what this node does in the workflow",
+                    },
                     "params": {
                         "type": "object",
                         "description": "Parameters for node behavior",
