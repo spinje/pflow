@@ -35,6 +35,7 @@ Select and improve one planner prompt to achieve >80% accuracy by enhancing its 
 - Any documentation about prompt improvement patterns
 - Previous implementation logs or summaries
 - Test framework documentation
+- Important: READ ALL FILES YOURSELF, dont outsource this to a subagents!
 
 **Instructions**: Read EACH file if present. The task overview document is your primary guide for the improvement methodology.
 
@@ -264,7 +265,7 @@ Start by deploying parallel subagents to gather ALL necessary context:
 
 ### Step 2: Write Your Implementation Plan
 
-Create your plan at: `.taskmaster/tasks/task_28/implementation/[prompt_name]-improvement-plan.md`
+Create your plan at: `.taskmaster/tasks/task_28/implementation/improvement-plan.md`
 
 Your plan should include:
 
@@ -278,7 +279,7 @@ Your plan should include:
 
 ### 0. Create Progress Log (FIRST!)
 
-Create and continuously update: `.taskmaster/tasks/task_28/implementation/[prompt_name]-progress-log.md`
+Create and continuously update: `.taskmaster/tasks/task_28/implementation/progress-log.md`
 
 ```markdown
 # Task 28 - [Prompt Name] Improvement Progress Log
