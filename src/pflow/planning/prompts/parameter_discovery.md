@@ -1,20 +1,45 @@
 ---
 name: parameter_discovery
-test_path: tests/test_planning/llm/prompts/test_parameter_prompts.py::TestParameterDiscoveryPromptSensitive
+test_path: tests/test_planning/llm/prompts/test_parameter_discovery_prompt.py::TestParameterDiscoveryHard
 test_command: uv run python tools/test_prompt_accuracy.py parameter_discovery
-version: 1.0
-latest_accuracy: 0.0
-test_runs: [0.0]
-average_accuracy: 0.0
-test_count: 8
-previous_version_accuracy: 0.0
-last_tested: '2025-08-16'
-prompt_hash: 20d0954e
+version: '1.1'
+latest_accuracy: 100.0
+test_runs: [85.7, 100.0]
+average_accuracy: 92.8
+test_count: 7
+previous_version_accuracy: 91.8
+last_tested: '2025-08-22'
+prompt_hash: 29c213af
+last_test_cost: 0.06432
 ---
 
-# Parameter Discovery Prompt
+## Your Task
+You are a parameter discovery system that extracts configurable values from natural language requests. Your job is to identify ALL dynamic values that could be parameters, letting the next step decide which ones are actually used.
 
-You are a parameter discovery system that extracts named parameters from natural language requests.
+## Decision Process
+
+### Step 1: Identify Parameter Categories
+Look for these types of values in the user input:
+- **File paths**: Any file or directory paths mentioned
+- **Numeric values**: Counts, limits, sizes, IDs
+- **States/Filters**: Status values, conditions, filters
+- **Time periods**: Dates, months, periods, durations
+- **Identifiers**: Names, IDs, locations, repositories
+- **Formats/Types**: Output formats, data types, units
+- **Content descriptors**: Topics, subjects, descriptions
+
+### Step 2: Extract the Actual Values
+For each identified parameter:
+1. Extract the VALUE itself (not the action verb)
+2. Create a simple, descriptive parameter name
+3. Keep the exact value as specified by the user
+
+### Step 3: Apply Extraction Rules
+- **DO extract**: Actual values, paths, names, numbers, states
+- **DON'T extract**: Action verbs, commands, prompts, instructions
+- **DO recognize stdin**: When data comes from pipe, parameters may be minimal
+
+## Context Information
 
 <user_request>
 {{user_input}}
@@ -33,36 +58,71 @@ You are a parameter discovery system that extracts named parameters from natural
 {{stdin_info}}
 </stdin_info>
 
-Extract parameters with their likely names and values. Focus on:
-1. File paths and names (e.g., "report.csv" → filename: "report.csv")
-2. Numeric values (e.g., "last 20" → limit: "20")
-3. States/filters (e.g., "closed issues" → state: "closed")
-4. Formats (e.g., "as JSON" → output_format: "json")
-5. Identifiers (e.g., "repo pflow" → repo: "pflow")
+## Examples
 
-Return parameters as a simple name:value mapping.
+### File and Path Parameters
+- "Convert data.csv to JSON format and save as output.json"
+  → `{"input_file": "data.csv", "output_format": "JSON", "output_file": "output.json"}`
 
-Your job is to identify and extract ALL dynamic parameters from the user input. The next step will decide which parameters are actually used in the workflow. This means you should not be too restrictive in your parameter extraction.
+- "Create backup of Python files in src/ to backups/2024-01-15/"
+  → `{"source_dir": "src/", "file_pattern": "Python files", "backup_dir": "backups/2024-01-15/"}`
 
-Examples (DO):
-- ✅ "process data.csv and convert to json" → {"filename": "data.csv", "output_format": "json"}
-- ✅ "last 20 closed issues from repo" → {"limit": "20", "state": "closed"}
-- ✅ "analyze the piped data" → {} (parameters will come from stdin)
-- ✅ "generate changelog from last 30 closed issues in pflow repo" → {"issue_count": 30, "issue_state": "closed", "repo_name": "pflow"}
-- ✅"write a short story about cats and dogs then write it to a file named cat_dog_story.txt" → {"story_topic": "cats and dogs", "story_length": "short", "output_filename": "cat_dog_story.txt"}
+### Numeric and Filter Parameters
+- "Get last 30 closed issues from pflow repo"
+  → `{"issue_count": "30", "issue_state": "closed", "repo_name": "pflow"}`
 
-Examples (DONT):
+- "Filter dataset for status active and priority high, limit to 100"
+  → `{"status": "active", "priority": "high", "limit": "100"}`
 
-Never include any extracted parameters in the name of the parameter.
-- ❌ "write a story about llamas and write it to a file named llama_story.txt" → {"story_topic": "llamas", "llama_story_filename": "llama_story.txt"}
+- "Process last 5 items, skip first 10, use batch size of 25"
+  → `{"last_count": "5", "skip_count": "10", "batch_size": "25"}`
 
-Never include prompts as parameters. These are not parameters, they are instructions to the LLM and will be written by an LLM in the next step using the parameters you extract as dynamic values.
-- ❌ "Write a story about fishes and save it to a file named fish_story.txt" → {"prompt": "Write a very short story about fishes", "output_filename": "fish_story.txt"}
+### String and Identifier Parameters
+- "Create PR with title 'Fix bug in parser' and description from pr_desc.md"
+  → `{"title": "Fix bug in parser", "description_file": "pr_desc.md"}`
 
+- "Get issue #123 from anthropic/pflow repository"
+  → `{"issue_number": "123", "repo": "anthropic/pflow"}`
 
+- "Fetch weather data for New York City using metric units"
+  → `{"location": "New York City", "units": "metric"}`
 
+### Time and Period Parameters
+- "Generate monthly sales report for January 2024 with charts enabled"
+  → `{"report_type": "sales", "period": "monthly", "month": "January 2024", "charts": "enabled"}`
 
+### Content Parameters (without prompts)
+- "Write a short story about cats and dogs to story.txt"
+  → `{"story_topic": "cats and dogs", "story_length": "short", "output_file": "story.txt"}`
+  Note: Extract the topic and length, NOT a prompt like "Write a story..."
 
+### Edge Cases
+- "Process the piped data and extract emails"
+  → `{}` (data comes from stdin, no parameters needed)
 
+- "Show me the current status"
+  → `{}` (no configurable parameters present)
 
+## Important Rules
 
+1. **Parameter names should be descriptive but generic**
+   - Good: `output_file`, `repo_name`, `issue_count`
+   - Bad: `pflow_repo_name`, `january_report`, `csv_filename`
+
+2. **Never include the value in the parameter name**
+   - Good: `{"backup_dir": "backups/2024-01-15/"}`
+   - Bad: `{"2024_01_15_backup": "backups/2024-01-15/"}`
+
+3. **Never extract prompts or instructions as parameters**
+   - Extract: topics, lengths, styles as separate parameters
+   - Don't extract: "Write a story about..." as a prompt parameter
+
+4. **Keep values exactly as specified**
+   - If user says "30", extract "30" (not "thirty")
+   - If user says "Python files", extract "Python files" (not "*.py")
+
+5. **When stdin is present**
+   - Recognize that parameters may come from piped data
+   - Extract only parameters explicitly mentioned in the request
+
+Return parameters as a simple name:value mapping. Be comprehensive but avoid over-extraction of action verbs or commands.

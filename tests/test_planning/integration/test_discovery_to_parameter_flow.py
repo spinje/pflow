@@ -158,7 +158,11 @@ def mock_llm_model(mock_llm_response):
                 stdin_type=None,
                 reasoning="Extracted file paths from user input",
             )
-        elif "maps user input to workflow parameters" in prompt_lower or "parameter extraction system" in prompt_lower:
+        elif (
+            "parameter mapping system" in prompt_lower
+            or "maps user input to workflow parameters" in prompt_lower
+            or "extract values from user input" in prompt_lower
+        ):
             # ParameterMappingNode response - uses 'extracted' not 'parameters'
             return mock_llm_response(
                 extracted={"input_file": "data.csv"},
@@ -167,12 +171,13 @@ def mock_llm_model(mock_llm_response):
                 reasoning="All required parameters extracted",
             )
         else:
-            # Default response for ParameterDiscoveryNode if nothing else matches
-            # Since it's failing on parameters, provide a safe default
+            # Default response - since ParameterMappingNode is the one that fails,
+            # provide a default response compatible with it (uses 'extracted')
             return mock_llm_response(
-                parameters={},
-                stdin_type=None,
-                reasoning="No specific parameters found",
+                extracted={},
+                missing=[],
+                confidence=0.0,
+                reasoning="Default response",
             )
 
     model.prompt.side_effect = prompt_side_effect
