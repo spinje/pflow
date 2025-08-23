@@ -277,9 +277,9 @@ Your plan should include:
 
 ## Your Implementation Order
 
-### 0. Create Progress Log (FIRST!)
+### 0. Read full Progress Log (FIRST!)
 
-Create and continuously update: `.taskmaster/tasks/task_28/implementation/progress-log.md`
+Continuously update the shared progress log: `.taskmaster/tasks/task_28/implementation/progress-log.md`
 
 ```markdown
 # Task 28 - [Prompt Name] Improvement Progress Log

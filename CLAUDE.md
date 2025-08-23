@@ -371,6 +371,12 @@ The codebase is in early development with these tasks completed:
 
 Next up:
 - ⏳ Task 28: Improve performance of planner by modifying prompts
+   - ✅ Task 28: Discovery Prompt (COMPLETED)
+   - ✅ Task 28: Component Browsing (COMPLETED)
+   - ✅ Task 28: Metadata Generation (COMPLETED)
+   - ✅ Task 28: Parameter Prompts (COMPLETED)
+   - ⏳ Task 28: Workflow Generator <- This is what we are working on now
+
 - ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ⏳ Task 10: Create registry CLI commands
 
