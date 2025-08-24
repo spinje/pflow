@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(git status:*), Bash(git branch:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(gh pr:*), Bash(git remote:*), Bash(git rev-parse:*), Bash(gh auth:*)
+allowed-tools: Bash(git status:*), Bash(git branch:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(gh pr:*), Bash(git rev-parse:*), Bash(git merge-base:*)
 argument-hint: [pr-title-or-description]
 description: Create a GitHub pull request from current branch
 ---
@@ -8,11 +8,10 @@ description: Create a GitHub pull request from current branch
 
 !`git status --short`
 !`git branch --show-current`
-!`git log --oneline -10`
-!`git remote -v | head -1`
 !`git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo "origin/main"`
-!`git rev-list --count @{u}..HEAD 2>/dev/null || echo "Branch not tracked remotely"`
-!`gh auth status 2>&1 | head -3`
+!`git log origin/$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo "main")..HEAD --oneline 2>/dev/null | head -10`
+!`git diff --stat origin/$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo "main")...HEAD 2>/dev/null || echo "No diff available"`
+!`gh pr list --head $(git branch --show-current) --json number,title,state --jq '.[] | "PR #\(.number): \(.title) [\(.state)]"' 2>/dev/null || echo "No existing PR"`
 
 ## Task: Create PR - $ARGUMENTS
 
@@ -20,28 +19,32 @@ description: Create a GitHub pull request from current branch
 
 Create a pull request based on the current branch and recent commits:
 
-1. **Verify prerequisites:**
-   - Confirm `gh` CLI is authenticated (check auth status output above)
-   - Check if we're on a feature branch (not on the default branch)
-   - Ensure all changes are committed (no modified files in git status)
-   - Determine the default branch from git output (usually main or master)
+1. **Check for session ID (for traceability):**
+   - Check if you have access to your Claude session ID
+   - This could be in environment variables, session context, or system info
+   - If available, save it to include in the PR body for audit trail
 
-2. **Analyze commits to generate PR details:**
+2. **Verify prerequisites:**
+   - Check for existing PR (see "No existing PR" or PR details above)
+   - If existing PR found, ask user if they want to update it or create new one
+   - Ensure we're on a feature branch (not on the default branch shown above)
+   - Ensure all changes are committed (check git status above)
+   - Note the files changed (see diff stat above)
+
+3. **Analyze commits to generate PR details:**
    - Review the commit history shown above
+   - If single commit: use its message as PR title (if no user args provided)
+   - If multiple commits: synthesize a title from the changes
    - Identify the type of change (feature, fix, refactor, etc.)
-   - Extract key changes for PR description
    - Look for patterns like "feat:", "fix:", etc. in commit messages
 
-3. **Push branch if needed:**
+4. **Push branch (handles both new and existing):**
    ```bash
-   # First check if remote tracking exists
-   git branch -vv | grep $(git branch --show-current)
-   
-   # If no remote tracking, push the branch
+   # This works whether branch exists on remote or not
    git push -u origin $(git branch --show-current)
    ```
 
-4. **Create the PR with appropriate title and body:**
+5. **Create the PR with appropriate title and body:**
 
    If user provided arguments, use them as guidance for the title/description.
    
@@ -62,11 +65,19 @@ Create a pull request based on the current branch and recent commits:
      - Key change 1
      - Key change 2
      
+     <!-- Include file stats from diff output if available -->
+     
      ## Testing
-     - How to test these changes
+     Run `make test` to verify all tests pass
+     
+     ---
+     <!-- If you have access to your Claude session ID, include it -->
+     🤖 Implemented by Claude (session: <session-id-if-available>)
      ```
+     
+     **Note:** If you have access to your session ID (check environment variables or session context), always include it at the end of the PR body. This allows reviewers or other agents to reference this specific implementation session for questions or clarifications.
 
-5. **Execute the PR creation and capture the URL:**
+6. **Execute the PR creation and capture the URL:**
    ```bash
    # Create PR and capture the URL that gh outputs
    gh pr create --title "<title>" --body "<body>" --base <default-branch>
@@ -98,15 +109,21 @@ Implements a new node for listing pull requests from GitHub repositories.
 - Updated documentation
 
 ## Testing
-Run \`make test\` to verify all tests pass."
+Run \`make test\` to verify all tests pass.
+
+---
+🤖 Implemented by Claude (session: abc123-def456)"
 ```
 
 For a simple fix:
 ```bash
-gh pr create --title "fix: Resolve validation error in compiler" --body "Fixes validation bug when processing nested workflows"
+gh pr create --title "fix: Resolve validation error in compiler" --body "Fixes validation bug when processing nested workflows
+
+---
+🤖 Implemented by Claude (session: xyz789-ghi012)"
 ```
 
-6. **After PR creation:**
+7. **After PR creation:**
    - Capture the PR URL from the gh command output
    - Display a success message with the clickable PR link
    - Format: "✅ PR created successfully: [URL]"
@@ -124,8 +141,9 @@ gh pr create --title "fix: Resolve validation error in compiler" --body "Fixes v
    - Link to any related issues
    ```
 
-**Important checks:**
-- If current branch equals default branch, refuse to create PR (explain that PRs must be from feature branches)
-- If gh auth fails, provide instructions to run `gh auth login`
-- If no commits differ from default branch, explain there's nothing to PR
-- If uncommitted changes exist, ask user to commit or stash first
+**Edge cases handled automatically:**
+- Existing PR detection (shown in git context above)
+- Branch push status (push -u works for both cases)
+- Authentication (gh pr create will fail with clear message if not authenticated)
+- Uncommitted changes (visible in git status)
+- Default branch detection (shown in context)
