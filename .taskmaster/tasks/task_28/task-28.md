@@ -10,7 +10,7 @@ Improve Performance of Planner Prompts
 Systematically improve all planner node prompts for accuracy, clarity, and cost-effectiveness. Refine corresponding test suites to focus on decision correctness with parallel execution support. Integrate with the prompt accuracy tracking system (`tools/test_prompt_accuracy.py`) to measure improvements quantitatively.
 
 ## Status
-completed (5/6 prompts improved to >80% accuracy)
+completed (6/6 prompts improved to >80% accuracy)
 
 ## Dependencies
 - Task 33: Extract Planner Prompts to Markdown Files - Prompts must be in markdown format for testing
@@ -36,12 +36,12 @@ The planner's effectiveness depends on the quality of prompts used by each node.
 
 Located in `src/pflow/planning/prompts/`:
 
-1. **discovery.md** ✅ - Improved from 52.6% to 83%
+1. **discovery.md** ✅ - Improved from 52.6% to 100%
 2. **component_browsing.md** ✅ - Improved from 16.7% to 91.7%
 3. **parameter_discovery.md** ✅ - Achieved 85.7% (gpt-5-nano) / 100% (Claude) with HARD tests
 4. **parameter_mapping.md** ✅ - Achieved 80% accuracy
-5. **workflow_generator.md** - Generates workflow IR (purpose field added, not tested)
-6. **metadata_generation.md** ✅ - Achieved 100% accuracy
+5. **workflow_generator.md** ✅ - Improved from 53.8% to 100% (with test fixes)
+6. **metadata_generation.md** ✅ - Achieved 90% accuracy
 
 ### Improvement Strategy
 
@@ -50,7 +50,7 @@ Located in `src/pflow/planning/prompts/`:
 - **Solution**: Added node flows, capabilities, use cases to context
 - **Architecture Fix**: Separated metadata from IR for clean storage
 - **Test Refinement**: 19 → 12 high-quality tests, focus on decisions
-- **Result**: 52.6% → 83% accuracy
+- **Result**: 52.6% → 100% accuracy
 
 #### Phase 2: Component Browsing (COMPLETED)
 - **Problem**: Poor component selection accuracy
@@ -63,7 +63,7 @@ Located in `src/pflow/planning/prompts/`:
 - **Solution**: Parameter transformation + purpose fields + rich context
 - **Architecture**: Added purpose field to nodes, implemented parameter transformation
 - **Test Fix**: Tests now simulate full pipeline with extracted_params
-- **Result**: Achieved 100% accuracy
+- **Result**: Achieved 90% accuracy
 
 #### Phase 4: Parameter Prompts (COMPLETED)
 
@@ -76,6 +76,15 @@ Located in `src/pflow/planning/prompts/`:
 - **parameter_mapping.md**:
   - Strict parameter mapping with exact names
   - Result: 80% accuracy (both models)
+
+#### Phase 5: Workflow Generator (COMPLETED)
+
+**Key Discovery**: LLMs naturally generate parallel workflows, which revealed the need for future Tasks 38 & 39.
+
+- **workflow_generator.md**:
+  - Added explicit sequential execution requirements
+  - Fixed test design issues (ambiguous inputs, conflicting context)
+  - Result: 53.8% → 100% accuracy (after test improvements)
 
 For each prompt:
 
@@ -203,12 +212,12 @@ For each prompt:
 
 ### Implementation Order
 
-1. ✅ **discovery.md** - Workflow matching (83% accuracy)
+1. ✅ **discovery.md** - Workflow matching (100% accuracy)
 2. ✅ **component_browsing.md** - Node/workflow selection (91.7% accuracy)
 3. ✅ **parameter_discovery.md** - Parameter extraction (85.7-100% accuracy)
 4. ✅ **parameter_mapping.md** - Parameter assignment (80% accuracy)
-5. ⏳ **workflow_generator.md** - IR generation (purpose field added, not tested)
-6. ✅ **metadata_generation.md** - Metadata creation (100% accuracy)
+5. ✅ **workflow_generator.md** - IR generation (100% accuracy)
+6. ✅ **metadata_generation.md** - Metadata creation (90% accuracy)
 
 ## Patterns Established
 
@@ -228,7 +237,13 @@ For each prompt:
 1. **Parameter Transformation**: Prevents specific value leakage elegantly
 2. **Purpose + Flow + Inputs**: Complete semantic understanding
 3. **Test Fix**: Include extracted_params to simulate ParameterMappingNode output
-4. **100% Accuracy**: Perfect metadata generation achieved
+4. **90% Accuracy**: Excellent metadata generation achieved
+
+### Workflow Generator Improvements
+1. **Sequential Enforcement**: Clear visual examples of linear vs parallel
+2. **Test Philosophy Change**: Test instruction-following, not improvisation
+3. **Context Filtering**: Validation recovery tests only see browsed nodes
+4. **100% Accuracy**: Perfect workflow generation after test fixes
 
 ### Test Improvements
 1. **Quality Over Quantity**: 10-15 high-quality tests per prompt
