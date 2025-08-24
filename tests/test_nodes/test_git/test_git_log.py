@@ -22,9 +22,9 @@ class TestGitLogNode:
         """Test prep with default parameters."""
         node = GitLogNode()
         shared = {}
-        
+
         result = node.prep(shared)
-        
+
         assert result["limit"] == 20
         assert result["since"] is None
         assert result["until"] is None
@@ -35,39 +35,38 @@ class TestGitLogNode:
 
     def test_prep_with_shared_values(self):
         """Test prep extracts values from shared store."""
+        import tempfile
+
         node = GitLogNode()
-        shared = {
-            "since": "v1.0.0",
-            "until": "HEAD",
-            "limit": 50,
-            "author": "test@example.com",
-            "grep": "feat:",
-            "path": "src/",
-            "working_directory": "/tmp/test"
-        }
-        
-        result = node.prep(shared)
-        
-        assert result["since"] == "v1.0.0"
-        assert result["until"] == "HEAD"
-        assert result["limit"] == 50
-        assert result["author"] == "test@example.com"
-        assert result["grep"] == "feat:"
-        assert result["path"] == "src/"
-        assert result["working_directory"] == str(Path("/tmp/test").resolve())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shared = {
+                "since": "v1.0.0",
+                "until": "HEAD",
+                "limit": 50,
+                "author": "test@example.com",
+                "grep": "feat:",
+                "path": "src/",
+                "working_directory": tmpdir,
+            }
+
+            result = node.prep(shared)
+
+            assert result["since"] == "v1.0.0"
+            assert result["until"] == "HEAD"
+            assert result["limit"] == 50
+            assert result["author"] == "test@example.com"
+            assert result["grep"] == "feat:"
+            assert result["path"] == "src/"
+            assert result["working_directory"] == str(Path(tmpdir).resolve())
 
     def test_prep_with_params(self):
         """Test prep falls back to node parameters."""
         node = GitLogNode()
-        node.params = {
-            "since": "2024-01-01",
-            "limit": 10,
-            "author": "Jane Doe"
-        }
+        node.params = {"since": "2024-01-01", "limit": 10, "author": "Jane Doe"}
         shared = {}
-        
+
         result = node.prep(shared)
-        
+
         assert result["since"] == "2024-01-01"
         assert result["limit"] == 10
         assert result["author"] == "Jane Doe"
@@ -75,17 +74,17 @@ class TestGitLogNode:
     def test_prep_invalid_limit(self):
         """Test prep raises error for invalid limit."""
         node = GitLogNode()
-        
+
         # Test non-integer
         shared = {"limit": "invalid"}
         with pytest.raises(ValueError, match="Invalid limit"):
             node.prep(shared)
-        
+
         # Test negative
         shared = {"limit": -1}
         with pytest.raises(ValueError, match="Invalid limit"):
             node.prep(shared)
-        
+
         # Test zero
         shared = {"limit": 0}
         with pytest.raises(ValueError, match="Invalid limit"):
@@ -101,9 +100,9 @@ class TestGitLogNode:
         """Test parsing single commit."""
         node = GitLogNode()
         output = "abc123|abc|John Doe|john@example.com|2024-01-15T10:30:00+00:00|1705316400|Initial commit||ENDCOMMIT\n"
-        
+
         commits = node._parse_commits(output)
-        
+
         assert len(commits) == 1
         commit = commits[0]
         assert commit["sha"] == "abc123"
@@ -120,9 +119,9 @@ class TestGitLogNode:
         """Test parsing commit with multi-line body."""
         node = GitLogNode()
         output = "def456|def|Jane Smith|jane@example.com|2024-01-16T14:20:00+00:00|1705416000|feat: Add new feature|This adds a new feature.\n\nMore details here.|ENDCOMMIT\n"
-        
+
         commits = node._parse_commits(output)
-        
+
         assert len(commits) == 1
         commit = commits[0]
         assert commit["subject"] == "feat: Add new feature"
@@ -137,9 +136,9 @@ class TestGitLogNode:
             "def456|def|Jane Smith|jane@example.com|2024-01-16T14:20:00+00:00|1705416000|Commit 2|With body|ENDCOMMIT\n"
             "ghi789|ghi|Bob Jones|bob@example.com|2024-01-17T09:15:00+00:00|1705484100|Commit 3||ENDCOMMIT\n"
         )
-        
+
         commits = node._parse_commits(output)
-        
+
         assert len(commits) == 3
         assert commits[0]["subject"] == "Commit 1"
         assert commits[1]["subject"] == "Commit 2"
@@ -156,17 +155,19 @@ class TestGitLogNode:
             "author": None,
             "grep": None,
             "path": None,
-            "working_directory": "/test/repo"
+            "working_directory": "/test/repo",
         }
-        
+
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "abc123|abc|John Doe|john@example.com|2024-01-15T10:30:00+00:00|1705316400|Test commit||ENDCOMMIT\n"
+        mock_result.stdout = (
+            "abc123|abc|John Doe|john@example.com|2024-01-15T10:30:00+00:00|1705316400|Test commit||ENDCOMMIT\n"
+        )
         mock_result.stderr = ""
         mock_run.return_value = mock_result
-        
+
         result = node.exec(prep_res)
-        
+
         # Check subprocess called correctly
         mock_run.assert_called_once()
         call_args = mock_run.call_args
@@ -175,7 +176,7 @@ class TestGitLogNode:
         assert call_args[1]["cwd"] == "/test/repo"
         assert call_args[1]["shell"] is False
         assert call_args[1]["timeout"] == 30
-        
+
         # Check result
         assert result["status"] == "success"
         assert len(result["commits"]) == 1
@@ -192,16 +193,16 @@ class TestGitLogNode:
             "author": "john@example.com",
             "grep": "feat:",
             "path": "src/",
-            "working_directory": "/test/repo"
+            "working_directory": "/test/repo",
         }
-        
+
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = ""
         mock_run.return_value = mock_result
-        
+
         node.exec(prep_res)
-        
+
         # Check command includes all filters
         call_args = mock_run.call_args[0][0]
         assert "-n100" in call_args
@@ -225,14 +226,14 @@ class TestGitLogNode:
             "author": None,
             "grep": None,
             "path": None,
-            "working_directory": "/not/a/repo"
+            "working_directory": "/not/a/repo",
         }
-        
+
         mock_result = MagicMock()
         mock_result.returncode = 128
         mock_result.stderr = "fatal: not a git repository"
         mock_run.return_value = mock_result
-        
+
         with pytest.raises(ValueError, match="not a git repository"):
             node.exec(prep_res)
 
@@ -247,14 +248,14 @@ class TestGitLogNode:
             "author": None,
             "grep": None,
             "path": None,
-            "working_directory": "/test/repo"
+            "working_directory": "/test/repo",
         }
-        
+
         mock_result = MagicMock()
         mock_result.returncode = 128
         mock_result.stderr = "fatal: unknown revision or path not in the working tree"
         mock_run.return_value = mock_result
-        
+
         with pytest.raises(ValueError, match="Invalid revision reference"):
             node.exec(prep_res)
 
@@ -269,16 +270,16 @@ class TestGitLogNode:
             "author": None,
             "grep": None,
             "path": None,
-            "working_directory": "/test/repo"
+            "working_directory": "/test/repo",
         }
-        
+
         mock_result = MagicMock()
         mock_result.returncode = 128
         mock_result.stderr = "fatal: your current branch 'main' does not have any commits yet"
         mock_run.return_value = mock_result
-        
+
         result = node.exec(prep_res)
-        
+
         assert result["status"] == "empty_repository"
         assert result["commits"] == []
 
@@ -293,11 +294,11 @@ class TestGitLogNode:
             "author": None,
             "grep": None,
             "path": None,
-            "working_directory": "/test/repo"
+            "working_directory": "/test/repo",
         }
-        
+
         mock_run.side_effect = subprocess.TimeoutExpired("git log", 30)
-        
+
         with pytest.raises(subprocess.TimeoutExpired):
             node.exec(prep_res)
 
@@ -306,9 +307,9 @@ class TestGitLogNode:
         node = GitLogNode()
         prep_res = {"working_directory": "/not/a/repo"}
         exc = ValueError("Directory '/not/a/repo' is not a git repository")
-        
+
         result = node.exec_fallback(prep_res, exc)
-        
+
         assert result["status"] == "error"
         assert result["commits"] == []
         assert "not a git repository" in result["error"]
@@ -318,9 +319,9 @@ class TestGitLogNode:
         node = GitLogNode()
         prep_res = {"working_directory": "/test/repo"}
         exc = ValueError("Invalid revision reference: some error")
-        
+
         result = node.exec_fallback(prep_res, exc)
-        
+
         assert result["status"] == "error"
         assert result["commits"] == []
         assert "Invalid revision reference" in result["error"]
@@ -330,9 +331,9 @@ class TestGitLogNode:
         node = GitLogNode()
         prep_res = {"working_directory": "/test/repo"}
         exc = subprocess.TimeoutExpired("git log", 30)
-        
+
         result = node.exec_fallback(prep_res, exc)
-        
+
         assert result["status"] == "error"
         assert result["commits"] == []
         assert "timed out" in result["error"]
@@ -342,9 +343,9 @@ class TestGitLogNode:
         node = GitLogNode()
         prep_res = {"working_directory": "/test/repo"}
         exc = subprocess.CalledProcessError(1, "git log", stderr="Some error")
-        
+
         result = node.exec_fallback(prep_res, exc)
-        
+
         assert result["status"] == "error"
         assert result["commits"] == []
         assert "exit code 1" in result["error"]
@@ -355,13 +356,10 @@ class TestGitLogNode:
         node = GitLogNode()
         shared = {}
         prep_res = {}
-        exec_res = {
-            "commits": [{"sha": "abc123", "subject": "Test"}],
-            "status": "success"
-        }
-        
+        exec_res = {"commits": [{"sha": "abc123", "subject": "Test"}], "status": "success"}
+
         action = node.post(shared, prep_res, exec_res)
-        
+
         assert action == "default"
         assert shared["commits"] == [{"sha": "abc123", "subject": "Test"}]
 
@@ -370,14 +368,10 @@ class TestGitLogNode:
         node = GitLogNode()
         shared = {}
         prep_res = {}
-        exec_res = {
-            "commits": [],
-            "status": "error",
-            "error": "Test error"
-        }
-        
+        exec_res = {"commits": [], "status": "error", "error": "Test error"}
+
         action = node.post(shared, prep_res, exec_res)
-        
+
         assert action == "default"
         assert shared["commits"] == []
 
@@ -386,13 +380,10 @@ class TestGitLogNode:
         node = GitLogNode()
         shared = {}
         prep_res = {}
-        exec_res = {
-            "commits": [],
-            "status": "empty_repository"
-        }
-        
+        exec_res = {"commits": [], "status": "empty_repository"}
+
         action = node.post(shared, prep_res, exec_res)
-        
+
         assert action == "default"
         assert shared["commits"] == []
 
@@ -401,17 +392,17 @@ class TestGitLogNode:
         """Test that node retries on transient failures."""
         node = GitLogNode()
         shared = {}
-        
+
         # First call fails, second succeeds
         mock_results = [
             MagicMock(returncode=1, stderr="fatal: Unable to read"),  # Transient failure
-            MagicMock(returncode=0, stdout="abc123|abc|John|john@ex.com|2024-01-15T10:30:00+00:00|1705316400|Test||ENDCOMMIT\n")
+            MagicMock(
+                returncode=0,
+                stdout="abc123|abc|John|john@ex.com|2024-01-15T10:30:00+00:00|1705316400|Test||ENDCOMMIT\n",
+            ),
         ]
-        mock_run.side_effect = [
-            subprocess.CalledProcessError(1, "git", stderr=mock_results[0].stderr),
-            mock_results[1]
-        ]
-        
+        mock_run.side_effect = [subprocess.CalledProcessError(1, "git", stderr=mock_results[0].stderr), mock_results[1]]
+
         # Run the full node lifecycle
         prep_res = node.prep(shared)
         try:
@@ -420,7 +411,7 @@ class TestGitLogNode:
         except subprocess.CalledProcessError:
             # Simulate PocketFlow retry mechanism
             exec_res = node.exec(prep_res)
-        
+
         # Should succeed on retry
         assert exec_res["status"] == "success"
         assert len(exec_res["commits"]) == 1
