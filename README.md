@@ -42,6 +42,14 @@ This is not just another AI wrapper. `pflow` fundamentally changes the economics
 
 Workflows adapt to different inputs—analyze last month, this week, or any time period with the same workflow.
 
+## License
+
+pflow is licensed under the [Functional Source License (FSL) v1.1](LICENSE) with Apache-2.0 future license.
+
+- ✅ **Free for all use** except offering pflow as a managed service
+- ✅ **Becomes fully open source** (Apache-2.0) on January 1, 2028
+- ✅ **Modify, distribute, use commercially** - just don't compete directly with a hosted version
+
 ## Quick Start
 
 ### 1\. Your First Flow

@@ -1,0 +1,19 @@
+pflow includes the following third-party software:
+
+llm (https://github.com/simonw/llm)
+Copyright (c) Simon Willison
+Licensed under Apache License 2.0
+
+click (https://github.com/pallets/click)
+Copyright (c) Pallets
+Licensed under BSD-3-Clause
+
+pydantic (https://github.com/pydantic/pydantic)
+Copyright (c) Samuel Colvin
+Licensed under MIT License
+
+jsonschema (https://github.com/python-jsonschema/jsonschema)
+Copyright (c) Julian Berman
+Licensed under MIT License
+
+For full license texts, see the respective project repositories.
