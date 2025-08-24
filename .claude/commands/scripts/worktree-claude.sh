@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Enhanced worktree script that opens Claude in a new terminal
-# Usage: ./scripts/worktree-claude.sh <branch-type> <branch-name> [task-description]
+# Usage: ./scripts/worktree-claude.sh <branch-type> <branch-name> [task-description] [--bring-changes]
 
 set -e
 
@@ -15,8 +15,10 @@ NC='\033[0m' # No Color
 # Check arguments
 if [ $# -lt 2 ]; then
     echo -e "${RED}Error: Missing arguments${NC}"
-    echo "Usage: $0 <branch-type> <branch-name> [task-description]"
+    echo "Usage: $0 <branch-type> <branch-name> [task-description] [--bring-changes]"
     echo "Branch types: feat, fix, docs, refactor, test"
+    echo "Options:"
+    echo "  --bring-changes  Stash and apply uncommitted changes to new worktree"
     echo "Example: $0 feat github-list-prs \"Implement GitHub List PRs node\""
     exit 1
 fi
@@ -24,6 +26,15 @@ fi
 BRANCH_TYPE=$1
 BRANCH_NAME=$2
 TASK_DESC=${3:-"Work on $BRANCH_NAME"}
+BRING_CHANGES=false
+
+# Check for --bring-changes flag
+if [ "$4" = "--bring-changes" ] || [ "$3" = "--bring-changes" ]; then
+    BRING_CHANGES=true
+    if [ "$3" = "--bring-changes" ]; then
+        TASK_DESC="Work on $BRANCH_NAME"
+    fi
+fi
 
 # Validate branch type
 case $BRANCH_TYPE in
@@ -44,16 +55,26 @@ FULL_WORKTREE_PATH="$(cd .. && pwd)/pflow-$BRANCH_TYPE-$BRANCH_NAME"
 # Check git status
 echo -e "${BLUE}Checking git status...${NC}"
 UNCOMMITTED_CHANGES=false
+STASH_NAME=""
+
 if ! git diff --quiet || ! git diff --cached --quiet; then
     UNCOMMITTED_CHANGES=true
     echo -e "${YELLOW}⚠️  Warning: You have uncommitted changes${NC}"
     git status --short
     echo ""
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Aborted."
-        exit 1
+    
+    if [ "$BRING_CHANGES" = true ]; then
+        echo -e "${BLUE}--bring-changes flag detected. Stashing changes to bring to new worktree...${NC}"
+        STASH_NAME="worktree-auto-stash-$(date +%s)"
+        git stash push -m "$STASH_NAME" --include-untracked
+        echo -e "${GREEN}Changes stashed as: $STASH_NAME${NC}"
+    else
+        read -p "Continue anyway? (y/N): " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 1
+        fi
     fi
 fi
 
@@ -89,13 +110,40 @@ if [ ! -d "$WORKTREE_DIR" ]; then
     echo -e "${BLUE}Creating worktree...${NC}"
     git worktree add "$WORKTREE_DIR" -b "$FULL_BRANCH"
     echo -e "${GREEN}✅ Worktree created successfully!${NC}"
+    
+    # Apply stashed changes if we have them
+    if [ "$BRING_CHANGES" = true ] && [ -n "$STASH_NAME" ]; then
+        echo -e "${BLUE}Applying stashed changes to new worktree...${NC}"
+        cd "$WORKTREE_DIR"
+        git stash pop
+        cd - > /dev/null
+        echo -e "${GREEN}✅ Changes applied to new worktree${NC}"
+    fi
 fi
 
 # Detect OS and open terminal accordingly
 echo -e "${BLUE}Opening Claude in new terminal...${NC}"
 
+# Create the initial message for Claude with full context
+CHANGES_MSG=""
+if [ "$BRING_CHANGES" = true ] && [ -n "$STASH_NAME" ]; then
+    CHANGES_MSG="
+
+Note: Uncommitted changes from the main worktree have been brought over to this worktree."
+fi
+
+CLAUDE_INITIAL_MSG="You have been assigned to work in a dedicated git worktree for this task.
+
+Current worktree: $FULL_WORKTREE_PATH
+Branch: $FULL_BRANCH
+Original request: $TASK_DESC$CHANGES_MSG
+
+You are now in an isolated git worktree specifically created for this task. All changes you make here are completely separate from the main branch. 
+
+Please wait for the user to provide specific instructions on how to proceed with: $TASK_DESC"
+
 # Create a command to run in the new terminal
-CLAUDE_CMD="cd '$FULL_WORKTREE_PATH' && echo 'Worktree: $FULL_BRANCH' && echo 'Task: $TASK_DESC' && echo '' && claude '$TASK_DESC'"
+CLAUDE_CMD="cd '$FULL_WORKTREE_PATH' && claude '$CLAUDE_INITIAL_MSG'"
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS
