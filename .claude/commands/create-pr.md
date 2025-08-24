@@ -33,6 +33,7 @@ Create a pull request based on the current branch and recent commits:
    - If existing PR found, ask user if they want to update it or create new one
    - Ensure we're on a feature branch (not main/master)
    - Ensure all changes are committed (check git status above)
+   - If any commits are necessary, commit them with a good message (include the session id if available)
 
 3. **Analyze commits to generate PR details:**
    - Show commits that will be in the PR:
@@ -85,8 +86,8 @@ Create a pull request based on the current branch and recent commits:
      Run `make test` to verify all tests pass
      
      ---
-     <!-- If you have access to your Claude session ID, include it -->
-     🤖 Implemented by Claude (session: <session-id-if-available>)
+     <!-- If you have access to your Claude session ID, include it, otherwise dont mention claude at all -->
+     🤖 Implemented by Claude (Session ID: <session-id-if-available>)
      ```
      
      **Note:** If you have access to your session ID (check environment variables or session context), always include it at the end of the PR body. This allows reviewers or other agents to reference this specific implementation session for questions or clarifications.
