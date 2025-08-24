@@ -282,15 +282,19 @@ def test_real_git_operations(tmp_path):
 2. **git-commit**: Create commits
 3. **git-push**: Push to remote
 4. **git-checkout**: Switch/create branches
-5. **git-log**: Get commit history ✅ (NEW)
+5. **git-log**: Get commit history
+6. **git-get-latest-tag**: Get the most recent tag ✅ (NEW)
 
 ### High-Priority Nodes to Add
-1. **git-clone**: Clone repository (would change working directory!)
-2. **git-branch**: List/manage branches
-3. **git-pull**: Pull from remote
-4. **git-merge**: Merge branches
-5. **git-stash**: Stash changes
-6. **git-rebase**: Rebase branches
+1. **git-tag-create**: Create new tags (annotated or lightweight)
+2. **git-tag-list**: List all tags with filtering
+3. **git-tag-push**: Push tags to remote
+4. **git-clone**: Clone repository (would change working directory!)
+5. **git-branch**: List/manage branches
+6. **git-pull**: Pull from remote
+7. **git-merge**: Merge branches
+8. **git-stash**: Stash changes
+9. **git-rebase**: Rebase branches
 
 ### Future Enhancement: Working Directory Parameter
 ```python

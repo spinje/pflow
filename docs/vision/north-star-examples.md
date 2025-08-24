@@ -46,10 +46,10 @@ pflow "generate a changelog for version 1.4"
 
 Can be improved in the future by:
 
-To further integrate the changelog (not part of the MVP, no current nodes for this):
+To further integrate the changelog (partially available):
 
-- `github-get-latest-tag` → Get the latest tag from GitHub to indicate the last version
-- `github-list-issues --since=${latest}-tag-date` → List issues since the latest tag
+- `git-get-latest-tag` → Get the latest tag from the repository (✅ IMPLEMENTED)
+- `github-list-issues --since=${latest_tag.date}` → List issues since the latest tag (needs --since parameter)
 - `slack-send-message` → Notify #release channel
 - `github-release-create` → Attach changelog to a GitHub Release
 - `create-release-post` → Pipe changelog into a blog template

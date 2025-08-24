@@ -110,7 +110,10 @@ def get_test_cases() -> list[WorkflowTestCase]:
 - git-log: Get git log
   Parameters: since, until, limit, author, grep, path
   Outputs: commits
-- git-tag: Create git tag (mock)
+- git-get-latest-tag: Get the most recent tag (IMPLEMENTED)
+  Parameters: pattern, working_directory
+  Outputs: latest_tag (dict with name, sha, date, message, is_annotated)
+- git-tag: Create git tag (mock - needs implementation as git-tag-create)
   Parameters: tag_name, message
   Outputs: tag
 - slack-notify: Send Slack notification (mock)
@@ -661,8 +664,13 @@ def create_test_registry():
         # Basic nodes that should exist
         "github-list-prs": {"interface": {"inputs": ["repo_owner", "repo_name", "state", "limit"], "outputs": ["prs"]}},
         # NOTE: git-log is now a real node (GitLogNode), not a mock
-        "git-tag": {"interface": {"inputs": ["tag_name", "message"], "outputs": ["tag"]}},
-        "github-get-latest-tag": {"interface": {"inputs": ["repo_owner", "repo_name"], "outputs": ["tag", "date"]}},
+        # NOTE: git-get-latest-tag is now a real node (GitGetLatestTagNode), not a mock
+        "git-tag": {
+            "interface": {"inputs": ["tag_name", "message"], "outputs": ["tag"]}
+        },  # git-tag-create still needs implementation
+        "github-get-latest-tag": {
+            "interface": {"inputs": ["repo_owner", "repo_name"], "outputs": ["tag", "date"]}
+        },  # Different from git-get-latest-tag
         "github-create-release": {
             "interface": {
                 "inputs": ["repo_owner", "repo_name", "tag_name", "name", "body"],
