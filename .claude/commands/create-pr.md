@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(git status:*), Bash(git branch:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(gh pr:*), Bash(git rev-parse:*), Bash(git merge-base:*)
+allowed-tools: Bash(git status:*), Bash(git branch:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(gh pr:*), Bash(git rev-parse:*), Bash(sed:*)
 argument-hint: [pr-title-or-description]
 description: Create a GitHub pull request from current branch
 ---
@@ -8,9 +8,7 @@ description: Create a GitHub pull request from current branch
 
 !`git status --short`
 !`git branch --show-current`
-!`git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo "origin/main"`
-!`git log origin/main..HEAD --oneline 2>/dev/null | head -10 || git log origin/master..HEAD --oneline 2>/dev/null | head -10`
-!`git diff --stat origin/main...HEAD 2>/dev/null || git diff --stat origin/master...HEAD 2>/dev/null || echo "No diff available"`
+!`git log --oneline --max-count=10`
 
 ## Task: Create PR - $ARGUMENTS
 
@@ -24,14 +22,31 @@ Create a pull request based on the current branch and recent commits:
    - If available, save it to include in the PR body for audit trail
 
 2. **Verify prerequisites:**
-   - Use `gh pr list` to check for existing PR on this branch
+   - First, determine the default branch:
+     ```bash
+     git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo "origin/main"
+     ```
+   - Check for existing PR on current branch:
+     ```bash
+     gh pr list --head $(git branch --show-current) --limit 1
+     ```
    - If existing PR found, ask user if they want to update it or create new one
-   - Ensure we're on a feature branch (not on the default branch shown above)
+   - Ensure we're on a feature branch (not main/master)
    - Ensure all changes are committed (check git status above)
-   - Note the files changed (see diff stat above)
 
 3. **Analyze commits to generate PR details:**
-   - Review the commit history shown above
+   - Show commits that will be in the PR:
+     ```bash
+     # Get default branch first
+     DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's/origin\///' || echo "main")
+     # Show commits not in default branch
+     git log origin/$DEFAULT_BRANCH..HEAD --oneline
+     ```
+   - Show file changes:
+     ```bash
+     git diff --stat origin/$DEFAULT_BRANCH...HEAD
+     ```
+   - Review the commit history
    - If single commit: use its message as PR title (if no user args provided)
    - If multiple commits: synthesize a title from the changes
    - Identify the type of change (feature, fix, refactor, etc.)
@@ -140,9 +155,9 @@ gh pr create --title "fix: Resolve validation error in compiler" --body "Fixes v
    - Link to any related issues
    ```
 
-**Edge cases handled automatically:**
-- Existing PR detection (shown in git context above)
-- Branch push status (push -u works for both cases)
-- Authentication (gh pr create will fail with clear message if not authenticated)
-- Uncommitted changes (visible in git status)
-- Default branch detection (shown in context)
+**Important Notes:**
+- The simple git context shows recent commits and status
+- During execution, you'll determine the default branch and show relevant diffs
+- Always check for existing PRs before creating new ones
+- Include Claude session ID if available for traceability
+- The `git push -u` command works whether the branch exists remotely or not
