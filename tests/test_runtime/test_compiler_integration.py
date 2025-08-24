@@ -597,13 +597,15 @@ class TestPerformanceBenchmarks:
         assert "right_path" in start_node.successors
 
         # Test execution - the workflow should still be functional
-        # Note: In a real scenario, only one path would be taken based on
-        # the action returned by the start node's post() method
+        # Note: Test nodes return "default" but only non-default paths exist.
+        # This causes a PocketFlow warning which is expected for this test case.
         shared_store = {"test_input": "diamond_test"}
 
-        # Since test nodes return "default" action, the flow will end at start
-        # But we've verified the structure is correct
-        result = flow.run(shared_store)
+        # Suppress the expected "Flow ends" warning since test nodes return "default"
+        # but we intentionally only have non-default actions
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Flow ends: 'default' not found")
+            result = flow.run(shared_store)
 
         # The flow should execute without errors
         assert result is not None
