@@ -22,6 +22,16 @@
     "padding": 0
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run .claude/hooks/session_start.py"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "",
