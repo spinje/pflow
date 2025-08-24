@@ -4,13 +4,13 @@ test_path: tests/test_planning/llm/prompts/test_workflow_generator_prompt.py::Te
 test_command: uv run python tools/test_prompt_accuracy.py workflow_generator
 version: '1.1'
 latest_accuracy: 100.0
-test_runs: [76.9, 76.9, 100.0, 100.0, 100.0, 100.0]
-average_accuracy: 92.3
+test_runs: [76.9, 76.9, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+average_accuracy: 94.2
 test_count: 13
 previous_version_accuracy: 53.8
 last_tested: '2025-08-24'
 prompt_hash: a030c66e
-last_test_cost: 0.377001
+last_test_cost: 0.375606
 ---
 
 # Workflow Generator Prompt

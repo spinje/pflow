@@ -15,12 +15,14 @@ The `core` module is responsible for:
 
 ```
 src/pflow/core/
-├── __init__.py          # Public API exports - aggregates functionality from all modules
-├── exceptions.py        # Custom exception hierarchy for structured error handling
-├── ir_schema.py         # JSON schema definition and validation for workflow IR
-├── shell_integration.py # Unix pipe and stdin/stdout handling for CLI integration
-├── workflow_manager.py  # Workflow lifecycle management with format transformation
-└── CLAUDE.md           # This file
+├── __init__.py              # Public API exports - aggregates functionality from all modules
+├── exceptions.py            # Custom exception hierarchy for structured error handling
+├── ir_schema.py             # JSON schema definition and validation for workflow IR
+├── shell_integration.py     # Unix pipe and stdin/stdout handling for CLI integration
+├── workflow_manager.py      # Workflow lifecycle management with format transformation
+├── workflow_validator.py    # Unified workflow validation orchestrator (NEW)
+├── workflow_data_flow.py    # Data flow and execution order validation (NEW)
+└── CLAUDE.md               # This file
 ```
 
 ## Key Components
@@ -157,7 +159,51 @@ Centralizes all workflow operations and bridges the format gap between component
 }
 ```
 
-### 5. __init__.py - Public API
+### 5. workflow_validator.py - Unified Validation System (NEW)
+
+Provides a single source of truth for all workflow validation:
+
+**Key Class**:
+- **`WorkflowValidator`**: Orchestrates all validation checks
+
+**Core Method**:
+```python
+@staticmethod
+def validate(
+    workflow_ir: dict[str, Any],
+    extracted_params: Optional[dict[str, Any]] = None,
+    registry: Optional[Registry] = None,
+    skip_node_types: bool = False
+) -> list[str]
+```
+
+**Validation Types**:
+1. **Structural validation**: IR schema compliance (via `validate_ir`)
+2. **Data flow validation**: Execution order and dependencies (via `workflow_data_flow`)
+3. **Template validation**: Variable resolution (via `TemplateValidator`)
+4. **Node type validation**: Registry verification
+
+**Critical Design Decision**: This replaces scattered validation logic that existed in multiple places (ValidatorNode, tests) with a unified system. Previously, tests had data flow validation that production lacked!
+
+### 6. workflow_data_flow.py - Execution Order Validation (NEW)
+
+Ensures workflows will execute correctly at runtime:
+
+**Key Functions**:
+- **`build_execution_order(workflow_ir)`**: Creates topological sort of nodes
+- **`validate_data_flow(workflow_ir)`**: Validates all data dependencies
+
+**What It Catches**:
+- Forward references (node referencing future node's output)
+- Circular dependencies
+- References to non-existent nodes
+- Undefined input parameters
+
+**Critical Addition**: This validation was previously only in tests, not production. This could lead to workflows passing validation but failing at runtime.
+
+**Algorithm**: Uses Kahn's algorithm for topological sort to determine valid execution order.
+
+### 7. __init__.py - Public API
 
 Aggregates and exposes the module's functionality:
 
@@ -184,6 +230,14 @@ Aggregates and exposes the module's functionality:
 
 **Exported from workflow_manager.py**:
 - `WorkflowManager`
+
+**Exported from workflow_validator.py**:
+- `WorkflowValidator`
+
+**Exported from workflow_data_flow.py**:
+- `CycleError`
+- `build_execution_order`
+- `validate_data_flow`
 
 ## Connection to Examples
 
@@ -296,6 +350,8 @@ Each component has comprehensive test coverage:
 - `tests/test_core/test_ir_schema.py` - Schema validation edge cases
 - `tests/test_core/test_shell_integration.py` - Stdin handling scenarios
 - `tests/test_core/test_ir_examples.py` - Real-world example validation
+- `tests/test_core/test_workflow_validator.py` - Unified validation system tests
+- `tests/test_core/test_workflow_data_flow.py` - Execution order and dependency validation
 
 ### Running Tests
 ```bash
@@ -316,6 +372,8 @@ The core module is used throughout pflow:
 - **Compiler** (`runtime/compiler.py`): Validates IR before compilation
 - **Context Builder** (`planning/context_builder.py`): Uses WorkflowManager.list_all() for workflow discovery
 - **WorkflowExecutor** (`runtime/workflow_executor.py`): Uses WorkflowManager.load_ir() for name-based workflow loading
+- **ValidatorNode** (`planning/nodes.py`): Now uses WorkflowValidator for all validation
+- **Tests** (`tests/test_planning/llm/prompts/`): Now use WorkflowValidator for production-consistent validation
 - **Planner** (`planning/`): Will generate valid IR and use WorkflowManager to save workflows
 - **Nodes**: Use exceptions for error reporting
 
@@ -329,6 +387,8 @@ The core module is used throughout pflow:
 6. **Format Bridging**: WorkflowManager handles metadata wrapper vs raw IR transformation transparently
 7. **Atomic Operations**: WorkflowManager uses atomic file operations to prevent race conditions
 8. **Kebab-Case Names**: Workflow names use kebab-case for CLI friendliness (e.g., "fix-issue")
+9. **Unified Validation**: WorkflowValidator provides single source of truth for all validation, eliminating duplication and ensuring consistency between production and tests
+10. **Data Flow Validation**: Critical addition that ensures workflows will execute correctly at runtime by validating execution order and dependencies
 
 ## Best Practices
 

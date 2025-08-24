@@ -1,0 +1,273 @@
+"""Test the data flow validation module."""
+
+import pytest
+
+from pflow.core.workflow_data_flow import CycleError, build_execution_order, validate_data_flow
+
+
+class TestBuildExecutionOrder:
+    """Test the topological sort for execution order."""
+
+    def test_linear_workflow(self):
+        """Test simple linear workflow."""
+        workflow = {
+            "nodes": [
+                {"id": "a", "type": "test"},
+                {"id": "b", "type": "test"},
+                {"id": "c", "type": "test"},
+            ],
+            "edges": [
+                {"from": "a", "to": "b"},
+                {"from": "b", "to": "c"},
+            ],
+        }
+        order = build_execution_order(workflow)
+        assert order == ["a", "b", "c"]
+
+    def test_parallel_branches(self):
+        """Test workflow with parallel branches."""
+        workflow = {
+            "nodes": [
+                {"id": "start", "type": "test"},
+                {"id": "branch1", "type": "test"},
+                {"id": "branch2", "type": "test"},
+                {"id": "end", "type": "test"},
+            ],
+            "edges": [
+                {"from": "start", "to": "branch1"},
+                {"from": "start", "to": "branch2"},
+                {"from": "branch1", "to": "end"},
+                {"from": "branch2", "to": "end"},
+            ],
+        }
+        order = build_execution_order(workflow)
+        # Start must be first, end must be last
+        assert order[0] == "start"
+        assert order[-1] == "end"
+        # Branches can be in any order
+        assert set(order[1:3]) == {"branch1", "branch2"}
+
+    def test_disconnected_nodes(self):
+        """Test workflow with disconnected nodes."""
+        workflow = {
+            "nodes": [
+                {"id": "a", "type": "test"},
+                {"id": "b", "type": "test"},
+                {"id": "orphan", "type": "test"},
+            ],
+            "edges": [
+                {"from": "a", "to": "b"},
+            ],
+        }
+        order = build_execution_order(workflow)
+        # All nodes should be included
+        assert set(order) == {"a", "b", "orphan"}
+        # Connected nodes maintain order
+        assert order.index("a") < order.index("b")
+
+    def test_circular_dependency(self):
+        """Test detection of circular dependencies."""
+        workflow = {
+            "nodes": [
+                {"id": "a", "type": "test"},
+                {"id": "b", "type": "test"},
+                {"id": "c", "type": "test"},
+            ],
+            "edges": [
+                {"from": "a", "to": "b"},
+                {"from": "b", "to": "c"},
+                {"from": "c", "to": "a"},  # Creates cycle
+            ],
+        }
+        with pytest.raises(CycleError) as exc_info:
+            build_execution_order(workflow)
+        assert "Circular dependency" in str(exc_info.value)
+        assert "a" in str(exc_info.value)
+        assert "b" in str(exc_info.value)
+        assert "c" in str(exc_info.value)
+
+    def test_self_loop(self):
+        """Test detection of self-referencing node."""
+        workflow = {
+            "nodes": [
+                {"id": "a", "type": "test"},
+            ],
+            "edges": [
+                {"from": "a", "to": "a"},  # Self loop
+            ],
+        }
+        with pytest.raises(CycleError) as exc_info:
+            build_execution_order(workflow)
+        assert "Circular dependency" in str(exc_info.value)
+
+
+class TestValidateDataFlow:
+    """Test data flow validation logic."""
+
+    def test_valid_linear_flow(self):
+        """Test that valid linear workflow passes."""
+        workflow = {
+            "nodes": [
+                {"id": "read", "type": "read-file", "params": {"file": "${input_file}"}},
+                {"id": "process", "type": "llm", "params": {"prompt": "Process: ${read.content}"}},
+                {"id": "write", "type": "write-file", "params": {"content": "${process.response}"}},
+            ],
+            "edges": [
+                {"from": "read", "to": "process"},
+                {"from": "process", "to": "write"},
+            ],
+            "inputs": {"input_file": {"type": "string"}},
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == []
+
+    def test_forward_reference_detection(self):
+        """Test detection of forward references."""
+        workflow = {
+            "nodes": [
+                {"id": "node2", "type": "llm", "params": {"data": "${node1.output}"}},
+                {"id": "node1", "type": "read-file", "params": {"file": "test.txt"}},
+            ],
+            "edges": [
+                {"from": "node2", "to": "node1"},  # Wrong order!
+            ],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) > 0
+        assert "node2" in errors[0]
+        assert "node1" in errors[0]
+        assert "after" in errors[0]
+
+    def test_non_existent_node_reference(self):
+        """Test detection of references to non-existent nodes."""
+        workflow = {
+            "nodes": [
+                {"id": "node1", "type": "read-file", "params": {"file": "test.txt"}},
+                {"id": "node2", "type": "llm", "params": {"prompt": "Process: ${nonexistent.output}"}},
+            ],
+            "edges": [
+                {"from": "node1", "to": "node2"},
+            ],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) > 0
+        assert "non-existent node 'nonexistent'" in errors[0]
+        assert "node2" in errors[0]
+
+    def test_undefined_input_parameter(self):
+        """Test detection of undefined input parameters."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "github-list-issues",
+                    "params": {
+                        "repo_owner": "${owner}",  # Not in inputs!
+                        "repo_name": "${repo_name}",
+                    },
+                },
+            ],
+            "edges": [],
+            "inputs": {
+                "repo_name": {"type": "string"}  # Missing 'owner'
+            },
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) > 0
+        assert "undefined input '${owner}'" in errors[0]
+        assert "fetch" in errors[0]
+
+    def test_typo_suggestion(self):
+        """Test that typos in input names are suggested."""
+        workflow = {
+            "nodes": [
+                {"id": "node", "type": "test", "params": {"data": "${RepoName}"}},  # Wrong case
+            ],
+            "edges": [],
+            "inputs": {"reponame": {"type": "string"}},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) > 0
+        assert "did you mean '${reponame}'?" in errors[0]
+
+    def test_circular_dependency_detection(self):
+        """Test that circular dependencies are caught."""
+        workflow = {
+            "nodes": [
+                {"id": "a", "type": "llm", "params": {"data": "${b.output}"}},
+                {"id": "b", "type": "llm", "params": {"data": "${c.output}"}},
+                {"id": "c", "type": "llm", "params": {"data": "${a.output}"}},
+            ],
+            "edges": [
+                {"from": "a", "to": "b"},
+                {"from": "b", "to": "c"},
+                {"from": "c", "to": "a"},  # Creates cycle
+            ],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) > 0
+        assert "Circular dependency" in errors[0]
+
+    def test_parallel_execution_valid(self):
+        """Test workflows with valid parallel branches."""
+        workflow = {
+            "nodes": [
+                {"id": "input", "type": "read-file", "params": {"file": "data.txt"}},
+                {"id": "branch1", "type": "llm", "params": {"data": "${input.content}"}},
+                {"id": "branch2", "type": "llm", "params": {"data": "${input.content}"}},
+                {"id": "merge", "type": "write-file", "params": {"content": "${branch1.output} + ${branch2.output}"}},
+            ],
+            "edges": [
+                {"from": "input", "to": "branch1"},
+                {"from": "input", "to": "branch2"},
+                {"from": "branch1", "to": "merge"},
+                {"from": "branch2", "to": "merge"},
+            ],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == []
+
+    def test_complex_valid_workflow(self):
+        """Test a complex but valid workflow."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "fetch_issues",
+                    "type": "github-list-issues",
+                    "params": {
+                        "repo_owner": "${repo_owner}",
+                        "repo_name": "${repo_name}",
+                    },
+                },
+                {"id": "categorize", "type": "llm", "params": {"prompt": "Categorize: ${fetch_issues.issues}"}},
+                {
+                    "id": "generate_changelog",
+                    "type": "llm",
+                    "params": {"prompt": "Create changelog from ${categorize.response}"},
+                },
+                {
+                    "id": "write",
+                    "type": "write-file",
+                    "params": {
+                        "content": "${generate_changelog.response}",
+                        "file_path": "${output_file}",
+                    },
+                },
+            ],
+            "edges": [
+                {"from": "fetch_issues", "to": "categorize"},
+                {"from": "categorize", "to": "generate_changelog"},
+                {"from": "generate_changelog", "to": "write"},
+            ],
+            "inputs": {
+                "repo_owner": {"type": "string"},
+                "repo_name": {"type": "string"},
+                "output_file": {"type": "string"},
+            },
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == []

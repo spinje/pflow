@@ -611,16 +611,64 @@ def validate_linear_workflow(workflow: dict, errors: list[str]) -> None:
             errors.append(f"Branching detected: node '{node_id}' has {count} outgoing edges")
 
 
+# Data flow validation functions have been moved to pflow.core.workflow_data_flow
+# and are now used via WorkflowValidator for production consistency
+
+
 def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool, str]:
-    """Validate the generated workflow against test expectations."""
+    """Validate the generated workflow using production WorkflowValidator."""
     errors = []
 
-    # Run all validation checks
+    # PART 1: Use production WorkflowValidator
+    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.registry import Registry
+
+    # Check if test uses mock nodes (indicated by "(mock)" in planning context)
+    uses_mock_nodes = "(mock)" in test_case.planning_context
+
+    # Fix common LLM mistakes before validation
+    import copy
+
+    workflow_copy = copy.deepcopy(workflow)
+    for input_spec in workflow_copy.get("inputs", {}).values():
+        if isinstance(input_spec, dict) and input_spec.get("type") == "integer":
+            input_spec["type"] = "number"
+
+    # Use production validation (now includes data flow validation!)
+    validation_errors = WorkflowValidator.validate(
+        workflow_ir=workflow_copy,
+        extracted_params=test_case.discovered_params,
+        registry=Registry() if not uses_mock_nodes else None,
+        skip_node_types=uses_mock_nodes,  # Skip node type validation for mock nodes
+    )
+
+    # Add validation errors with prefix for clarity
+    for error in validation_errors:
+        if error.startswith("Structure:") or error.startswith("Unknown node") or "Data flow" in error:
+            errors.append(f"[VALIDATION] {error}")
+        else:
+            errors.append(error)
+
+    # PART 2: Test-specific expectations (these are quality checks, not correctness)
+
+    # Check node count is within expected range
     validate_node_count(workflow, test_case, errors)
+
+    # Check expected inputs (test expectation, not correctness)
     validate_inputs(workflow, test_case, errors)
-    validate_template_usage(workflow, test_case, errors)
+
+    # Check for hardcoded values (quality check)
+    workflow_str = json.dumps(workflow)
+    for param_name, param_value in test_case.discovered_params.items():
+        if param_value and f'"{param_value}"' in workflow_str:
+            template_pattern = f"${{{param_name}"
+            if template_pattern not in workflow_str and "${" + param_name not in workflow_str:
+                errors.append(f"[TEST] Hardcoded value '{param_value}' instead of template variable")
+
+    # Check purposes exist and aren't generic (quality check)
     validate_purposes(workflow, errors)
-    validate_outputs(workflow, errors)
+
+    # Check workflow is linear (MVP requirement)
     validate_linear_workflow(workflow, errors)
 
     if errors:

@@ -287,7 +287,7 @@ class TestPlannerFlowIntegration:
                 ]
             }
 
-            # Workflow generation - realistic workflow with required inputs
+            # Workflow generation - realistic workflow with valid data flow
             generation_response = Mock()
             generation_response.json.return_value = {
                 "content": [
@@ -296,8 +296,12 @@ class TestPlannerFlowIntegration:
                             "ir_version": "0.1.0",
                             "nodes": [
                                 {"id": "read", "type": "read-file", "params": {"file_path": "${input_file}"}},
-                                {"id": "process", "type": "llm", "params": {"prompt": "Analyze: ${content}"}},
-                                {"id": "write", "type": "write-file", "params": {"file_path": "${output_file}"}},
+                                {"id": "process", "type": "llm", "params": {"prompt": "Analyze: ${read.content}"}},
+                                {
+                                    "id": "write",
+                                    "type": "write-file",
+                                    "params": {"file_path": "${output_file}", "content": "${process.response}"},
+                                },
                             ],
                             "edges": [
                                 {"from": "read", "to": "process"},
@@ -308,7 +312,7 @@ class TestPlannerFlowIntegration:
                                 "input_file": {"description": "File to read", "type": "string", "required": True},
                                 "output_file": {"description": "Output file", "type": "string", "required": True},
                             },
-                            "outputs": {"result": {"description": "Processing result"}},
+                            "outputs": {"result": {"description": "Processing result", "source": "${write.success}"}},
                         }
                     }
                 ]
@@ -350,15 +354,17 @@ class TestPlannerFlowIntegration:
             }
 
             # Setup responses in correct NEW order
-            # New flow: Generate → ParameterMapping → Validate → Metadata
+            # New flow: Generate → ParameterMapping → Validate → Metadata → Final ParameterMapping
+            # Since we fixed the workflow to have valid data flow, validation should pass on first try
             mock_model.prompt.side_effect = [
-                discovery_response,  # 1. Discovery
+                discovery_response,  # 1. Discovery (not found)
                 browsing_response,  # 2. Browse components
                 param_discovery_response,  # 3. Discover parameters
-                generation_response,  # 4. Generate workflow (only 1 needed now!)
+                generation_response,  # 4. Generate workflow
                 param_mapping_response,  # 5. Parameter mapping (BEFORE validation)
                 # ValidatorNode validates internally (no LLM call)
-                metadata_response,  # 6. Generate metadata
+                metadata_response,  # 6. Generate metadata (after successful validation)
+                param_mapping_response,  # 7. Final parameter mapping
             ]
             mock_get_model.return_value = mock_model
 
@@ -407,6 +413,10 @@ class TestPlannerFlowIntegration:
 
         # Verify metadata was generated
         assert "workflow_metadata" in shared
+        print(f"workflow_metadata content: {shared['workflow_metadata']}")
+        print(f"workflow_metadata type: {type(shared['workflow_metadata'])}")
+        if shared["workflow_metadata"]:
+            print(f"workflow_metadata keys: {list(shared['workflow_metadata'].keys())}")
         assert shared["workflow_metadata"]["suggested_name"] == "new-workflow"
 
         # Verify parameter extraction happened BEFORE validation

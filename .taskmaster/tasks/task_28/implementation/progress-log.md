@@ -1471,3 +1471,86 @@ The metadata generation prompt now:
 - Tests **actual quality** not API performance
 
 This establishes the pattern for all future prompt improvements: focus on behavioral correctness, treat performance as a metric, and provide structured guidance without over-prescribing.
+
+## 2025-01-16 - CRITICAL DISCOVERY: Workflow Generator Test Quality Issues
+
+### Validation Refactoring Reveals Test Weaknesses
+
+**What Happened**: Implemented Task 40 (Validation Consolidation) which moved data flow validation from tests to production. This revealed that workflow_generator tests were achieving 100% accuracy with **simplified validation that wouldn't catch real production issues**.
+
+**Key Discoveries**:
+1. **Tests were too lenient**:
+   - Node count ranges too wide (7-12 nodes allowed 5-node variance!)
+   - No data flow validation (execution order, forward references)
+   - No actual compilation testing
+   - Weak purpose validation (only checked 5 generic phrases)
+
+2. **Real validation revealed issues**:
+   - With production ValidatorNode validation: Only 15.4% pass rate initially
+   - Mock nodes in tests don't exist in Registry
+   - Parameter name mismatches between discovery and generation
+   - LLMs consistently use "integer" type but schema requires "number"
+
+3. **Production gap closed**:
+   - Data flow validation now in production (was only in tests!)
+   - Circular dependency detection
+   - Forward reference detection
+   - Execution order validation
+
+**Architectural Improvements**:
+- Created unified `WorkflowValidator` class - single source of truth
+- Created `workflow_data_flow.py` module for topological sort validation
+- ValidatorNode now uses WorkflowValidator
+- Tests now use production validation
+
+**Impact on Workflow Generator**:
+- Tests still show 100% but with hybrid validation (real for real nodes, structural for mocks)
+- 69% of tests use mock nodes that don't exist in production
+- Only 31% of tests could potentially pass full production validation
+- **True quality of generator is masked by mock node tests**
+
+### Critical Insights
+
+1. **Test Quality > Test Quantity**: Having 100% passing tests means nothing if the tests aren't rigorous
+2. **Production Validation Must Match Test Validation**: Any gap creates false confidence
+3. **Mock Nodes Hide Reality**: Tests using non-existent nodes can't validate real-world behavior
+4. **Data Flow is Critical**: Structural validation isn't enough - execution order matters
+
+### Next Steps for Workflow Generator
+
+**Immediate Actions Needed**:
+1. Create new test suite with **only real nodes** to get true accuracy measure
+2. Test **actual workflow compilation** - can they execute?
+3. Add **harder edge cases** that would fail in production
+4. Fix **parameter name consistency** between discovery and generation
+
+**Longer Term**:
+1. Implement missing critical nodes (github-list-prs, json-transform) to enable more tests
+2. Add "quality metrics" beyond pass/fail (efficiency, node count optimization)
+3. Test with actual execution not just validation
+
+### Summary of Task 28 Progress
+
+**Completed with High Confidence** (>80% accuracy achieved):
+1. ✅ **Discovery**: 100% accuracy (was 52.6%)
+2. ✅ **Component Browsing**: 91.7% accuracy (was 16.7%)
+3. ✅ **Metadata Generation**: 90% accuracy (was 0%)
+4. ✅ **Parameter Discovery**: 85.7-100% accuracy (was 0%)
+5. ✅ **Parameter Mapping**: 80% accuracy (was 0%)
+
+**Needs Reassessment**:
+6. ⚠️ **Workflow Generator**: Shows 100% on current tests BUT:
+   - 69% of tests use non-existent mock nodes
+   - Real validation catches issues tests miss
+   - True accuracy unknown without real node tests
+
+**Key Achievement**: The validation refactoring ensures that **production now catches all issues tests catch**. No more dangerous gaps where tests have better validation than production!
+
+### Lessons Learned
+
+1. **Always use production validation in tests** - Custom test validation hides real issues
+2. **Test with real components when possible** - Mocks can create false confidence
+3. **Data flow matters as much as structure** - Valid IR can still fail at runtime
+4. **Incremental refactoring works** - Shadow mode → gradual migration → cleanup
+
+The workflow generator prompt improvement remains incomplete, but we've discovered why the tests were misleading and built the infrastructure to properly assess and improve it.

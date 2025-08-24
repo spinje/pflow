@@ -16,14 +16,19 @@ from .shell_integration import (
     read_stdin_enhanced,
     read_stdin_with_limit,
 )
+from .workflow_data_flow import CycleError, build_execution_order, validate_data_flow
+from .workflow_validator import WorkflowValidator
 
 __all__ = [
     "FLOW_IR_SCHEMA",
     "CircularWorkflowReferenceError",
+    "CycleError",
     "PflowError",
     "StdinData",
     "ValidationError",
     "WorkflowExecutionError",
+    "WorkflowValidator",
+    "build_execution_order",
     "detect_binary_content",
     "detect_stdin",
     "determine_stdin_mode",
@@ -31,5 +36,6 @@ __all__ = [
     "read_stdin",
     "read_stdin_enhanced",
     "read_stdin_with_limit",
+    "validate_data_flow",
     "validate_ir",
 ]

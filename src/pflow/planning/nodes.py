@@ -1147,35 +1147,34 @@ class ValidatorNode(Node):
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
-        """Orchestrate validation checks.
+        """Orchestrate validation checks using WorkflowValidator.
 
-        Calls:
-        1. validate_ir() for structural validation
-        2. TemplateValidator for template and unused input validation
-        3. Registry check for node type validation
+        Uses the unified WorkflowValidator which performs:
+        1. Structural validation (IR schema compliance)
+        2. Data flow validation (execution order and dependencies)
+        3. Template validation (variable resolution)
+        4. Node type validation (registry verification)
 
         Args:
-            prep_res: Contains workflow and generation_attempts
+            prep_res: Contains workflow and extracted_params
 
         Returns:
             Dict with errors list (empty if valid)
         """
+        from pflow.core.workflow_validator import WorkflowValidator
+
         workflow = prep_res.get("workflow")
         if not workflow:
             logger.error("No workflow provided for validation")
             return {"errors": ["No workflow provided for validation"]}
 
-        errors: list[str] = []
-
-        # Run all validation checks
-        structural_errors = self._validate_structure(workflow)
-        errors.extend(structural_errors)
-
-        template_errors = self._validate_templates(workflow, prep_res)  # Pass prep_res for extracted_params
-        errors.extend(template_errors)
-
-        node_type_errors = self._validate_node_types(workflow)
-        errors.extend(node_type_errors)
+        # Use unified WorkflowValidator for all validation
+        errors = WorkflowValidator.validate(
+            workflow,
+            extracted_params=prep_res.get("extracted_params", {}),
+            registry=self.registry,
+            skip_node_types=False,  # Always validate node types in production
+        )
 
         # Return top 3 most actionable errors
         if errors:
@@ -1184,100 +1183,6 @@ class ValidatorNode(Node):
             logger.info("All validation checks passed")
 
         return {"errors": errors[:3]}  # Limit to top 3 for LLM retry
-
-    def _validate_structure(self, workflow: dict[str, Any]) -> list[str]:
-        """Validate workflow structure using IR schema.
-
-        Args:
-            workflow: Workflow IR to validate
-
-        Returns:
-            List of structural validation errors
-        """
-        errors: list[str] = []
-        try:
-            from pflow.core.ir_schema import validate_ir
-
-            validate_ir(workflow)
-            logger.debug("Structural validation passed")
-        except Exception as e:
-            # Handle both ValidationError and other exceptions
-            if hasattr(e, "path") and hasattr(e, "message"):
-                # ValidationError with path
-                error_msg = f"{e.path}: {e.message}" if e.path else str(e.message)
-            else:
-                # Other exceptions or ValidationError without path
-                error_msg = str(e)
-            errors.append(f"Structure: {error_msg}")
-            logger.warning(f"Structural validation failed: {error_msg}")
-
-        return errors
-
-    def _validate_templates(self, workflow: dict[str, Any], prep_res: dict[str, Any]) -> list[str]:
-        """Validate template variables and unused inputs.
-
-        Args:
-            workflow: Workflow IR to validate
-            prep_res: Prepared data containing extracted_params
-
-        Returns:
-            List of template validation errors
-        """
-        errors: list[str] = []
-        try:
-            from pflow.runtime.template_validator import TemplateValidator
-
-            # VALIDATION REDESIGN FIX: Use extracted parameters instead of empty dict
-            # This allows template validation to work with actual parameter values
-            extracted_params = prep_res.get("extracted_params", {})
-
-            template_errors = TemplateValidator.validate_workflow_templates(
-                workflow,
-                extracted_params,  # Now validates with actual extracted values!
-                self.registry,
-            )
-            errors.extend(template_errors)
-            if template_errors:
-                logger.warning(f"Template validation found {len(template_errors)} errors")
-            else:
-                logger.debug(f"Template validation passed with params: {list(extracted_params.keys())}")
-        except Exception as e:
-            errors.append(f"Template validation error: {e}")
-            logger.exception("Template validation failed")
-
-        return errors
-
-    def _validate_node_types(self, workflow: dict[str, Any]) -> list[str]:
-        """Validate that all node types exist in registry.
-
-        Args:
-            workflow: Workflow IR to validate
-
-        Returns:
-            List of unknown node type errors
-        """
-        errors: list[str] = []
-        try:
-            # Extract all node types from the workflow
-            node_types = {node.get("type") for node in workflow.get("nodes", []) if node.get("type")}
-
-            if node_types:
-                # Get metadata for these specific node types
-                metadata = self.registry.get_nodes_metadata(node_types)
-
-                # Check if any are unknown
-                for node_type in node_types:
-                    if node_type not in metadata:
-                        errors.append(f"Unknown node type: '{node_type}'")
-                        logger.warning(f"Unknown node type: {node_type}")
-
-            if not any("Unknown node type" in e for e in errors):
-                logger.debug("Node type validation passed")
-        except Exception as e:
-            errors.append(f"Registry validation error: {e}")
-            logger.exception("Registry validation failed")
-
-        return errors
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Route based on validation results and retry count.
