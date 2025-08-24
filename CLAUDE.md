@@ -357,7 +357,7 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 21: Implement Workflow Input Declaration - workflows to declare their expected input and output parameters in the IR schema
 - ✅ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
 - ✅ Task 12: Implement LLM Node - Create a general-purpose LLM node - infinitely reusable building block by combining prompts with template variables
-- ✅ Task 26: Implement GitHub and Git Operation Nodes - 6 nodes for GitHub/Git automation
+- ✅ Task 26: Implement GitHub and Git Operation Nodes - 9 nodes for GitHub/Git automation
 - ✅ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
 - ✅ Task 30: Refactor Validation Functions from compiler.py
 - ✅ Task 31: Refactor Test Infrastructure - Mock at LLM Level
@@ -368,6 +368,7 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 35: Migrate Template Syntax from $variable to ${variable}
 - ✅ Task 36: Update Context Builder for Namespacing Clarity
 - ✅ Task 37: Implement API Error Handling with User-Friendly Messages
+- ✅ Task 40: Improve Workflow Validation and Consolidate into Unified System
 
 Next up:
 - ⏳ Task 28: Improve performance of planner by modifying prompts
