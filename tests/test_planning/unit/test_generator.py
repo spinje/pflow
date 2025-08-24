@@ -150,75 +150,18 @@ class TestPlanningContextValidation:
 class TestPromptBuilding:
     """Test prompt generation with proper requirements."""
 
-    @patch("llm.get_model")
-    def test_prompt_emphasizes_template_variables(self, mock_get_model, mock_llm_generator):
-        """Test prompt emphasizes template variables (contains 'use template variables (${var})')."""
-        mock_model = Mock()
-        mock_model.prompt.return_value = mock_llm_generator()
-        mock_get_model.return_value = mock_model
-
-        node = WorkflowGeneratorNode()
-        prep_res = {
-            "planning_context": "test context",
-            "user_input": "test",
-            "discovered_params": None,
-            "browsed_components": {},
-            "validation_errors": [],
-            "generation_attempts": 0,
-            "model_name": "test-model",
-            "temperature": 0.0,
-        }
-
-        prompt = node._build_prompt(prep_res)
-
-        assert "Use template variables (${variable})" in prompt
-        assert "template variables" in prompt.lower()
-
-    @patch("llm.get_model")
-    def test_prompt_forbids_hardcoding(self, mock_get_model, mock_llm_generator):
-        """Test prompt forbids hardcoding (contains 'NEVER hardcode values')."""
-        mock_model = Mock()
-        mock_model.prompt.return_value = mock_llm_generator()
-        mock_get_model.return_value = mock_model
-
-        node = WorkflowGeneratorNode()
-        prep_res = {
-            "planning_context": "test context",
-            "user_input": "test",
-            "discovered_params": None,
-            "browsed_components": {},
-            "validation_errors": [],
-            "generation_attempts": 0,
-            "model_name": "test-model",
-            "temperature": 0.0,
-        }
-
-        prompt = node._build_prompt(prep_res)
-
-        assert "NEVER hardcode values" in prompt
-
-    @patch("llm.get_model")
-    def test_prompt_specifies_linear(self, mock_get_model, mock_llm_generator):
-        """Test prompt specifies linear (contains 'LINEAR workflow only')."""
-        mock_model = Mock()
-        mock_model.prompt.return_value = mock_llm_generator()
-        mock_get_model.return_value = mock_model
-
-        node = WorkflowGeneratorNode()
-        prep_res = {
-            "planning_context": "test context",
-            "user_input": "test",
-            "discovered_params": None,
-            "browsed_components": {},
-            "validation_errors": [],
-            "generation_attempts": 0,
-            "model_name": "test-model",
-            "temperature": 0.0,
-        }
-
-        prompt = node._build_prompt(prep_res)
-
-        assert "LINEAR workflow only" in prompt
+    # DELETED: Tests that checked prompt content (anti-pattern)
+    # The following tests were removed because they tested implementation details
+    # (prompt content) instead of behavior. We have comprehensive behavioral tests
+    # in tests/test_planning/llm/prompts/test_workflow_generator_prompt.py that
+    # verify the system actually produces workflows with these characteristics:
+    # - Template variable usage (not hardcoding)
+    # - Linear/sequential execution
+    # - Proper data flow
+    #
+    # Testing prompt content is like testing that a sorting algorithm uses specific
+    # variable names - what matters is the OUTPUT behavior, not the implementation.
+    # See test_workflow_generator_prompt.py lines 546-596 for behavioral validation.
 
 
 class TestParameterIntegration:

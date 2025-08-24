@@ -375,10 +375,14 @@ Next up:
    - ✅ Task 28: Component Browsing (COMPLETED)
    - ✅ Task 28: Metadata Generation (COMPLETED)
    - ✅ Task 28: Parameter Prompts (COMPLETED)
-   - ⏳ Task 28: Workflow Generator <- This is what we are working on now
+   - ⏳ Task 28: Workflow Generator (61.5% on HARD tests, core behaviors working)
 
 - ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
-- ⏳ Task 10: Create registry CLI commands
+- ⏳ Task 10: Create registry CLI
+
+Next version:
+- ⏳ Task 38: Support conditional Branching in Generated Workflows
+- ⏳ Task 39: Support Parallel Execution in Workflows
 
 *Update this list as you complete tasks.*
 
