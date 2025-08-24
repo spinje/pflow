@@ -9,9 +9,8 @@ description: Create a GitHub pull request from current branch
 !`git status --short`
 !`git branch --show-current`
 !`git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo "origin/main"`
-!`git log origin/$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo "main")..HEAD --oneline 2>/dev/null | head -10`
-!`git diff --stat origin/$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo "main")...HEAD 2>/dev/null || echo "No diff available"`
-!`gh pr list --head $(git branch --show-current) --json number,title,state --jq '.[] | "PR #\(.number): \(.title) [\(.state)]"' 2>/dev/null || echo "No existing PR"`
+!`git log origin/main..HEAD --oneline 2>/dev/null | head -10 || git log origin/master..HEAD --oneline 2>/dev/null | head -10`
+!`git diff --stat origin/main...HEAD 2>/dev/null || git diff --stat origin/master...HEAD 2>/dev/null || echo "No diff available"`
 
 ## Task: Create PR - $ARGUMENTS
 
@@ -25,7 +24,7 @@ Create a pull request based on the current branch and recent commits:
    - If available, save it to include in the PR body for audit trail
 
 2. **Verify prerequisites:**
-   - Check for existing PR (see "No existing PR" or PR details above)
+   - Use `gh pr list` to check for existing PR on this branch
    - If existing PR found, ask user if they want to update it or create new one
    - Ensure we're on a feature branch (not on the default branch shown above)
    - Ensure all changes are committed (check git status above)
