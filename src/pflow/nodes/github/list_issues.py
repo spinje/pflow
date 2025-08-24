@@ -1,8 +1,10 @@
 """GitHub issues listing node implementation."""
 
 import json
+import re
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,8 @@ class ListIssuesNode(Node):
     - Reads: shared["repo"]: str  # Repository in owner/repo format (optional, default: current repo)
     - Reads: shared["state"]: str  # Issue state: open, closed, all (optional, default: open)
     - Reads: shared["limit"]: int  # Maximum issues to return (optional, default: 30)
+    - Reads: shared["since"]: str  # Filter issues created after this date (optional)
+        # Accepts: ISO date (2025-08-20), relative (7 days ago), or YYYY-MM-DD
     - Writes: shared["issues"]: list[dict]  # Array of issue objects
         - number: int  # Issue number
         - title: str  # Issue title
@@ -34,6 +38,92 @@ class ListIssuesNode(Node):
     """
 
     name = "github-list-issues"  # CRITICAL: Required for registry discovery
+
+    def _parse_relative_date(self, date_str: str) -> str:
+        """Parse relative date strings like '7 days ago' into YYYY-MM-DD format.
+
+        Args:
+            date_str: Relative date string (e.g., "7 days ago", "yesterday", "1 week ago")
+
+        Returns:
+            Date in YYYY-MM-DD format
+        """
+        date_str_lower = date_str.lower().strip()
+        today = datetime.now()
+
+        if date_str_lower == "yesterday":
+            target_date = today - timedelta(days=1)
+            return target_date.strftime("%Y-%m-%d")
+
+        if date_str_lower == "today":
+            return today.strftime("%Y-%m-%d")
+
+        # Parse patterns like "7 days ago", "1 week ago", "2 months ago"
+        match = re.match(r"^(\d+)\s+(day|days|week|weeks|month|months)\s+ago$", date_str_lower)
+        if match:
+            amount = int(match.group(1))
+            unit = match.group(2)
+
+            if unit in ["day", "days"]:
+                target_date = today - timedelta(days=amount)
+            elif unit in ["week", "weeks"]:
+                target_date = today - timedelta(weeks=amount)
+            elif unit in ["month", "months"]:
+                # Approximate: 30 days per month
+                target_date = today - timedelta(days=amount * 30)
+            else:
+                raise ValueError(f"Unsupported time unit: {unit}")
+
+            return target_date.strftime("%Y-%m-%d")
+
+        raise ValueError(f"Cannot parse relative date: {date_str}")
+
+    def _normalize_date(self, date_str: str | None) -> str | None:
+        """Convert various date formats to GitHub search format (YYYY-MM-DD).
+
+        Supports:
+        - ISO dates: 2025-08-20, 2025-08-20T10:30:00
+        - Relative: "7 days ago", "1 week ago", "yesterday"
+        - Date only: 2025-08-20
+
+        Returns:
+            String in YYYY-MM-DD format for GitHub search
+        """
+        if not date_str:
+            return None
+
+        date_str = date_str.strip()
+
+        # Check again after stripping - empty string case
+        if not date_str:
+            return None
+
+        # Already in YYYY-MM-DD format
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+            return date_str
+
+        # ISO datetime - extract date part
+        if re.match(r"^\d{4}-\d{2}-\d{2}T", date_str):
+            return date_str[:10]
+
+        # Relative dates
+        if "ago" in date_str.lower() or date_str.lower() in ["yesterday", "today"]:
+            try:
+                return self._parse_relative_date(date_str)
+            except ValueError:
+                # If we can't parse it, let GitHub handle it (will likely fail)
+                return date_str
+
+        # Try parsing as various formats
+        for fmt in ["%Y/%m/%d", "%m/%d/%Y", "%d-%m-%Y"]:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return dt.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+
+        # If we can't parse it, pass it through and let GitHub handle the error
+        return date_str
 
     def __init__(self, max_retries: int = 3, wait: float = 1.0):
         """Initialize the GitHub list issues node with retry support."""
@@ -76,7 +166,15 @@ class ListIssuesNode(Node):
         elif limit > 100:
             limit = 100
 
-        return {"repo": repo, "state": state, "limit": limit}
+        # Extract since with fallback: shared → params → None
+        since = shared.get("since") or self.params.get("since")
+
+        # Normalize date if provided
+        normalized_since = None
+        if since:
+            normalized_since = self._normalize_date(since)
+
+        return {"repo": repo, "state": state, "limit": limit, "since": normalized_since}
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Execute GitHub CLI call - NO try/except blocks! Let exceptions bubble up."""
@@ -87,8 +185,25 @@ class ListIssuesNode(Node):
         if prep_res["repo"]:
             cmd.extend(["--repo", prep_res["repo"]])
 
-        # Add state and limit
-        cmd.extend(["--state", prep_res["state"]])
+        # Handle date filtering via search query
+        if prep_res.get("since"):
+            # Build search query combining date and state
+            search_parts = []
+
+            # Add date filter
+            search_parts.append(f"created:>{prep_res['since']}")
+
+            # Add state filter if not "all"
+            if prep_res["state"] != "all":
+                search_parts.append(f"is:{prep_res['state']}")
+
+            search_query = " ".join(search_parts)
+            cmd.extend(["--search", search_query])
+        else:
+            # Use traditional state flag when no date filter
+            cmd.extend(["--state", prep_res["state"]])
+
+        # Add limit
         cmd.extend(["--limit", str(prep_res["limit"])])
 
         # Execute command - NO try/except! Let exceptions bubble for retry
@@ -139,6 +254,15 @@ class ListIssuesNode(Node):
             raise ValueError(
                 "GitHub API rate limit exceeded. "
                 "Please wait a few minutes and try again, or authenticate with 'gh auth login' for higher limits."
+            )
+        elif "Invalid query" in error_msg and prep_res.get("since"):
+            raise ValueError(
+                f"Invalid date format '{prep_res['since']}'. "
+                f"Use ISO date (2025-08-20), relative date (7 days ago), or YYYY-MM-DD format."
+            )
+        elif "could not parse" in error_msg.lower() and prep_res.get("since"):
+            raise ValueError(
+                f"GitHub couldn't parse the date '{prep_res['since']}'. Try using YYYY-MM-DD format (e.g., 2025-08-20)."
             )
         else:
             # Generic error with context
