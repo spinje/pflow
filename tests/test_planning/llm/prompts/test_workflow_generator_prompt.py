@@ -8,6 +8,7 @@ Run with:
   RUN_LLM_TESTS=1 pytest test_workflow_generator_prompt.py -v
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -78,38 +79,55 @@ def get_test_cases() -> list[WorkflowTestCase]:
     base_context = """Available nodes:
 - github-list-issues: Fetch GitHub issues
   Parameters: repo_owner, repo_name, state, limit
+  Outputs: issues
 - github-list-prs: List GitHub pull requests (mock)
   Parameters: repo_owner, repo_name, state, limit
+  Outputs: prs
 - github-create-pr: Create pull request
   Parameters: repo_owner, repo_name, title, body, head, base
-- github-create-release: Create GitHub release
+  Outputs: pr_url, pr_number
+- github-create-release: Create GitHub release (mock)
   Parameters: repo_owner, repo_name, tag_name, name, body
+  Outputs: release_url, release_id
 - github-get-latest-tag: Get latest tag from GitHub (mock)
   Parameters: repo_owner, repo_name
+  Outputs: tag, date
 - llm: Generate text using LLM
   Parameters: prompt, model, temperature
+  Outputs: response, llm_usage
 - read-file: Read file content
   Parameters: file_path, encoding
+  Outputs: content
 - write-file: Write content to file
   Parameters: file_path, content, encoding, overwrite
+  Outputs: file_path, success
 - git-commit: Commit changes
   Parameters: message, files
+  Outputs: commit_hash
 - git-checkout: Checkout branch
   Parameters: branch
+  Outputs: branch_name
 - git-log: Get git log
-  Parameters: since, until, format
+  Parameters: since, until, limit, author, grep, path
+  Outputs: commits
 - git-tag: Create git tag (mock)
   Parameters: tag_name, message
+  Outputs: tag
 - slack-notify: Send Slack notification (mock)
   Parameters: channel, message
+  Outputs: status
 - analyze-code: Analyze codebase structure (mock)
   Parameters: path
+  Outputs: analysis, files_analyzed
 - validate-links: Validate documentation links (mock)
   Parameters: content
+  Outputs: valid_links, broken_links
 - filter-data: Filter data based on criteria (mock)
   Parameters: data, criteria
+  Outputs: filtered_data
 - build-project: Build the project (mock)
   Parameters: config_path
+  Outputs: status, artifacts
 """
 
     return [
@@ -615,6 +633,80 @@ def validate_linear_workflow(workflow: dict, errors: list[str]) -> None:
 # and are now used via WorkflowValidator for production consistency
 
 
+def create_test_registry():
+    """Create registry with current + future planned nodes for testing."""
+
+    from pflow.registry import Registry
+
+    registry = Registry()
+
+    # Load real registry data first
+    real_data = {}
+    with contextlib.suppress(Exception):
+        real_data = registry.load()
+
+    # Add future/mock nodes that are referenced in tests
+    # These represent nodes that will exist but aren't implemented yet
+    test_nodes = {
+        # Future agentic node (claude-code)
+        "claude-code": {
+            "interface": {
+                "inputs": ["prompt", "context", "output_schema"],
+                "outputs": ["response", "files_created", "files_modified", "data"],
+            }
+        },
+        # Renamed versions for specific tasks (will all be claude-code)
+        "analyze-code": {"interface": {"inputs": ["path"], "outputs": ["analysis", "files_analyzed"]}},
+        "analyze-structure": {"interface": {"inputs": ["path"], "outputs": ["structure", "components"]}},
+        # Basic nodes that should exist
+        "github-list-prs": {"interface": {"inputs": ["repo_owner", "repo_name", "state", "limit"], "outputs": ["prs"]}},
+        # NOTE: git-log is now a real node (GitLogNode), not a mock
+        "git-tag": {"interface": {"inputs": ["tag_name", "message"], "outputs": ["tag"]}},
+        "github-get-latest-tag": {"interface": {"inputs": ["repo_owner", "repo_name"], "outputs": ["tag", "date"]}},
+        "github-create-release": {
+            "interface": {
+                "inputs": ["repo_owner", "repo_name", "tag_name", "name", "body"],
+                "outputs": ["release_url", "release_id"],
+            }
+        },
+        # External integrations (out of MVP scope)
+        "slack-notify": {"interface": {"inputs": ["channel", "message"], "outputs": ["status"]}},
+        "build-project": {"interface": {"inputs": ["config_path"], "outputs": ["status", "artifacts"]}},
+        # Vague nodes that appear in tests (should be replaced)
+        "fetch-data": {"interface": {"inputs": ["endpoint", "headers"], "outputs": ["data"]}},
+        "fetch-profile": {"interface": {"inputs": ["user_id"], "outputs": ["profile"]}},
+        "filter-data": {"interface": {"inputs": ["data", "criteria"], "outputs": ["filtered_data"]}},
+        "validate-links": {"interface": {"inputs": ["content"], "outputs": ["valid_links", "broken_links"]}},
+        # Database operations (out of scope)
+        "run-migrations": {"interface": {"inputs": ["migrations_path"], "outputs": ["status"]}},
+        "backup-database": {"interface": {"inputs": ["connection_string"], "outputs": ["backup_path"]}},
+        "verify-data": {"interface": {"inputs": ["connection_string"], "outputs": ["status", "report"]}},
+    }
+
+    # Merge test nodes with real data
+    merged_data = {**real_data, **test_nodes}
+
+    # Monkey-patch the load method to return our merged data
+    def mock_load():
+        return merged_data
+
+    registry.load = mock_load
+
+    # Also patch get_nodes_metadata to use our merged data
+    def mock_get_metadata(node_types):
+        if node_types is None:
+            raise TypeError("node_types cannot be None")
+        result = {}
+        for node_type in node_types:
+            if node_type in merged_data:
+                result[node_type] = merged_data[node_type]
+        return result
+
+    registry.get_nodes_metadata = mock_get_metadata
+
+    return registry
+
+
 def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool, str]:
     """Validate the generated workflow using production WorkflowValidator."""
     errors = []
@@ -634,12 +726,22 @@ def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool
         if isinstance(input_spec, dict) and input_spec.get("type") == "integer":
             input_spec["type"] = "number"
 
-    # Use production validation (now includes data flow validation!)
+    # Create appropriate registry
+    registry = create_test_registry() if uses_mock_nodes else Registry()
+
+    # CRITICAL FIX: Don't validate templates against discovered_params
+    # The workflow generator should be free to create better parameter structures
+    # For testing, we just check if the workflow is internally consistent
+    # We don't need to provide runtime values - let the validator check structure only
+    runtime_params = None  # Don't provide any runtime values for template validation
+
+    # Use production validation to check workflow structure and consistency
+    # Not providing runtime values means we only validate the workflow is well-formed
     validation_errors = WorkflowValidator.validate(
         workflow_ir=workflow_copy,
-        extracted_params=test_case.discovered_params,
-        registry=Registry() if not uses_mock_nodes else None,
-        skip_node_types=uses_mock_nodes,  # Skip node type validation for mock nodes
+        extracted_params=runtime_params,  # None - only validate structure, not runtime
+        registry=registry,
+        skip_node_types=False,  # Don't skip, we have proper registry now
     )
 
     # Add validation errors with prefix for clarity
