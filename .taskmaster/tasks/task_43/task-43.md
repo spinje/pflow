@@ -13,8 +13,8 @@ Enable pflow to connect to MCP (Model Context Protocol) servers and expose their
 not started
 
 ## Dependencies
-- Task 40: Improve Workflow Validation and Consolidate into Unified System - MCP nodes have dynamically discovered parameters with JSON schemas that must integrate with pflow's validation system
-- Task 5: Node Discovery and Registry - The registry must be enhanced to support virtual node entries where multiple registry entries point to the same implementation class with different metadata
+- Task 40: Improve Workflow Validation and Consolidate into Unified System - MCP tools have JSON schemas that must integrate with pflow's validation system
+- Task 5: Node Discovery and Registry - Registry system must be functional for storing virtual node entries
 
 ## Priority
 high
@@ -23,61 +23,55 @@ high
 MCP (Model Context Protocol) is Anthropic's open standard for AI systems to interact with external tools and services via JSON-RPC 2.0. This task implements a universal MCP integration that allows pflow to work with any protocol-compliant MCP server without writing custom code for each one.
 
 ### Architecture Overview
-The implementation creates "virtual nodes" - registry entries that represent specific MCP tools but all execute through one shared implementation:
-1. Users configure MCP servers via CLI commands
-2. pflow connects to servers and discovers their available tools
-3. Each discovered tool gets a registry entry with a namespaced name (e.g., `mcp-github-create-issue`)
-4. All these registry entries point to the same `MCPNode` class but with different metadata
-5. The planner sees specific tools, users see specific nodes, but only one class needs maintenance
+MCP tools become pflow nodes through "virtual registry entries" - multiple registry entries pointing to a single MCPNode implementation:
 
-### Key Components to Build
+1. **Configuration**: Users add MCP servers via CLI (`pflow mcp add`)
+2. **Discovery**: pflow queries servers for available tools via JSON-RPC
+3. **Registration**: Each tool becomes a registry entry (e.g., `mcp-github-create-issue`)
+4. **Execution**: All MCP registry entries use the same `MCPNode` class
+5. **Identity**: Compiler injects metadata so nodes know which server/tool they represent
 
-**MCP Configuration System**:
-- Storage location: `~/.pflow/mcp-servers.json` (following pflow's existing `~/.pflow/registry.json` pattern)
+### Key Components
+
+**1. MCP Configuration Management**
+- Store server configs in `~/.pflow/mcp-servers.json`
 - CLI commands: `pflow mcp add/list/remove/sync`
-- MVP: stdio transport only
-- Future: HTTP and SSE transports
-- Environment variable expansion using `${VAR}` syntax (matching pflow's template syntax)
-- MVP: User scope only (global configuration)
-- Future: Project and local scopes
+- Environment variable expansion (`${VAR}` syntax)
 
-**Discovery Mechanism**:
-- Connect to MCP servers using JSON-RPC 2.0 protocol
-- Send `initialize` handshake, then `tools/list` to enumerate available tools
-- Extract tool metadata: name, description, inputSchema (required), outputSchema (optional)
-- Store discovered tools in registry (persist between runs)
-- MVP: Manual sync via `pflow mcp sync` command
-- Future: Auto-discovery on startup
+**2. Tool Discovery & Registration**
+- Connect to MCP servers via JSON-RPC 2.0
+- Query available tools and their schemas
+- Create virtual registry entries for each tool
+- Use namespaced naming: `mcp-{server}-{tool}`
 
-**Registry Integration**:
-- "Virtual nodes": Registry entries created dynamically from discovered MCP tools
-- Key difference from regular nodes: Not scanned from Python files but generated at sync time
-- All virtual entries share: `module: "pflow.nodes.mcp.node"`, `class_name: "MCPNode"`
-- Each entry has unique metadata: `mcp_config: {server: "github", tool: "create-issue"}`
-- Tools use namespaced names to avoid conflicts: `mcp-{server}-{tool}`
-- Planner and users see specific tools (better discoverability than generic "mcp-node")
+**3. Universal MCPNode**
+- Single node class handles all MCP tools
+- Receives server/tool identity via compiler metadata injection
+- Manages subprocess lifecycle for stdio transport
+- Async-to-sync wrapper for MCP protocol operations
 
-**Universal MCPNode Implementation**:
-- Single `MCPNode` class in `src/pflow/nodes/mcp/node.py`
-- Reads server name and tool name from registry metadata (not from params)
-- MVP: Create new subprocess for each execution (simple but slower)
-- Future: Connection pooling for performance
-- MVP: stdio transport only via subprocess.Popen
-- MVP: Handle text content type only
-- Future: Handle image, audio, resource content types
+**4. Compiler Enhancement**
+- Inject `__mcp_server__` and `__mcp_tool__` parameters for MCP nodes
+- Follow existing `__registry__` pattern for special parameters
 
-### Implementation Approach (MVP)
-Focus on minimal working implementation:
-- stdio transport only (subprocess with stdin/stdout communication)
-- JSON-RPC 2.0 messages as newline-delimited JSON
-- Manual server configuration via CLI commands
-- Test with official Anthropic MCP servers from `@modelcontextprotocol/*` npm packages
-- No connection pooling (new subprocess per execution)
-- No OAuth/authentication support
-- Text content only (no binary data)
+### MVP Scope
 
-### Configuration Example
-Structure of `~/.pflow/mcp-servers.json`:
+**Includes:**
+- stdio transport only (simplest to implement)
+- Manual tool discovery via `pflow mcp sync`
+- Text content handling
+- Basic error handling and timeouts
+
+**Excludes:**
+- HTTP/SSE transports
+- Connection pooling
+- OAuth authentication
+- Binary content types
+- Auto-discovery on startup
+
+### Example Configuration
+
+`~/.pflow/mcp-servers.json`:
 ```json
 {
   "servers": {
@@ -85,14 +79,11 @@ Structure of `~/.pflow/mcp-servers.json`:
       "transport": "stdio",
       "command": "npx",
       "args": ["@modelcontextprotocol/github"],
-      "env": {
-        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
-      }
+      "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
     }
   }
 }
 ```
-Note: Environment variables use `${VAR}` syntax for consistency with pflow's template system
 
 ### User Experience
 ```bash
@@ -108,27 +99,63 @@ $ pflow "create github issue about the bug"
 ```
 
 ## Test Strategy
-Testing focuses on protocol compliance and registry integration:
 
-**Unit Tests**:
-- Registry metadata extraction: Verify MCPNode reads server/tool from metadata correctly
-- JSON-RPC formatting: Test message structure matches MCP specification
-- Error handling: Map JSON-RPC error codes (-32601, -32602, etc.) to user messages
-- Configuration parsing: Test environment variable expansion with `${VAR}` syntax
+**Protocol Testing:**
+- Use official MCP SDK to validate protocol understanding
+- Test against real MCP servers (`@modelcontextprotocol/server-filesystem`)
+- Verify JSON-RPC message format and handshake sequence
 
-**Integration Tests**:
-- Mock MCP server: Create a simple Python MCP server that exposes test tools
-- Discovery flow: Verify `pflow mcp sync` creates correct registry entries
-- Subprocess management: Test stdio communication with newline-delimited JSON
-- Registry virtual nodes: Confirm multiple tools from same server use same MCPNode class
+**Integration Testing:**
+- Registry correctly stores virtual node entries
+- Compiler properly injects metadata for MCP nodes
+- MCPNode successfully executes tools via subprocess
+- Environment variable expansion works correctly
 
-**End-to-End Tests**:
-- If available, test with real `@modelcontextprotocol/*` npm packages
-- Natural language: "create github issue" should select `mcp-github-create-issue` node
-- Mixed workflows: Combine ShellNode, LLMNode, and MCPNode in single workflow
+**Error Handling:**
+- Subprocess timeouts and cleanup
+- Invalid server configurations
+- Protocol errors and malformed responses
+- Missing or unavailable tools
 
-**Error Scenarios**:
-- Server not found: Clear error when configured server command doesn't exist
-- Protocol errors: Handle malformed JSON-RPC responses gracefully
-- Timeout: Kill subprocess if tool execution exceeds timeout
-- Missing tools: Handle case where `tools/list` returns empty or tool no longer exists
+## Future Enhancements (Excluded from MVP, DONT build this now)
+
+### Remote MCP Server Support
+
+After the MVP, pflow should support remote MCP servers to enable:
+- **Cloud-hosted tools**: Connect to MCP servers running on Cloudflare, AWS, Azure
+- **SaaS integrations**: Direct connections to services like Notion, Linear, Sentry
+- **Team collaboration**: Shared MCP servers accessible by multiple users
+- **Scalability**: No local resource constraints from subprocess management
+
+**Streamable HTTP Transport** (Priority)
+- New standard replacing SSE, designed for cloud deployments
+- Single endpoint for all interactions (`/mcp`)
+- Supports serverless architectures (scale to zero)
+- Session management via `Mcp-Session-Id` headers
+- Bidirectional communication on same connection
+
+**SSE Transport** (Legacy compatibility)
+- Server-Sent Events for real-time streaming
+- Required by some existing cloud MCP servers
+- Two endpoints: GET for SSE, POST for requests
+- Being phased out in favor of Streamable HTTP
+
+### Additional Improvements
+
+**Performance Optimizations:**
+- Connection pooling for frequently used servers
+- Caching of tool schemas between sessions
+- Parallel tool discovery for multiple servers
+
+**Enhanced Features:**
+- Binary content support (images, audio, files)
+- OAuth/token authentication for secure servers
+- Auto-discovery of configured servers on startup
+- Project and workspace-scoped configurations
+- MCP server health monitoring and auto-reconnect
+
+**Developer Experience:**
+- MCP server marketplace/registry
+- Workflow templates using popular MCP tools
+- Visual tool browser in pflow CLI
+- Debugging mode with message inspection
