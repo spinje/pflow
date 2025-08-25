@@ -140,7 +140,7 @@ Original request: $TASK_DESC$CHANGES_MSG
 
 You are now in an isolated git worktree specifically created for this task. All changes you make here are completely separate from the main branch. 
 
-Please wait for the user to provide specific instructions on how to proceed with: $TASK_DESC"
+Please wait for the user to provide specific instructions on how to proceed with: $TASK_DESC". Do not do anything until the user has provided specific instructions. STOP and WAIT after this message.
 
 # Create a command to run in the new terminal
 CLAUDE_CMD="cd '$FULL_WORKTREE_PATH' && claude '$CLAUDE_INITIAL_MSG'"
