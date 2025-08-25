@@ -369,21 +369,25 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 36: Update Context Builder for Namespacing Clarity
 - ✅ Task 37: Implement API Error Handling with User-Friendly Messages
 - ✅ Task 40: Improve Workflow Validation and Consolidate into Unified System
+- ✅ Task 41: Implement Shell Node
 
 Next up:
-- ⏳ Task 28: Improve performance of planner by modifying prompts
+- ⏳ Task 28: Improve performance of planner by modifying prompts (Discovery, Component Browsing, Metadata Generation, Parameter Prompts, Workflow Generator)
    - ✅ Task 28: Discovery Prompt (COMPLETED)
    - ✅ Task 28: Component Browsing (COMPLETED)
    - ✅ Task 28: Metadata Generation (COMPLETED)
    - ✅ Task 28: Parameter Prompts (COMPLETED)
-   - ⏳ Task 28: Workflow Generator (61.5% on HARD tests, core behaviors working)
+   - ⏳ Task 28: Workflow Generator (In Progress)
 
 - ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ⏳ Task 10: Create registry CLI
+- ⏳ Task 42: Claude Code Agentic Node
+- ⏳ Task 43: Named workflow execution
 
 Next version:
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
+- ⏳ Task 44: Build caching system
 
 *Update this list as you complete tasks.*
 
