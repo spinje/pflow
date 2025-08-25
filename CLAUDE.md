@@ -379,10 +379,11 @@ Next up:
    - ✅ Task 28: Parameter Prompts (COMPLETED)
    - ⏳ Task 28: Workflow Generator (In Progress)
 
+- ⏳ Task 43: MCP Server support (install mcps and use as dynamic nodes)
 - ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ⏳ Task 10: Create registry CLI
 - ⏳ Task 42: Claude Code Agentic Node
-- ⏳ Task 43: Named workflow execution
+- ⏳ Task 22: Named workflow execution
 
 Next version:
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
