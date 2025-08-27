@@ -81,6 +81,9 @@ Every node MUST have a "purpose" field (10-200 chars) that:
 - Is contextual, not generic
 - ✅ GOOD: "Fetch closed issues for changelog generation"
 - ❌ BAD: "Process data" or "Use LLM"
+- Never include the actual values of input parameters in the purpose field
+- ✅ GOOD: "Saves the response from the LLM to a file"
+- ❌ BAD: "Saves the response from the LLM to cat-story.txt"
 
 ## REAL EXAMPLE - 6-Node Changelog Workflow:
 ```json
