@@ -379,7 +379,8 @@ Next up:
 - ⏳ Task 42: Claude Code Agentic Node
 - ⏳ Task 22: Named workflow execution
 
-Next version:
+Next version (post-MVP/post-Launch):
+- ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
 - ⏳ Task 44: Build caching system
