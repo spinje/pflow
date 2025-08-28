@@ -371,9 +371,9 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 40: Improve Workflow Validation and Consolidate into Unified System
 - ✅ Task 41: Implement Shell Node
 - ✅ Task 28: Improve performance of planner by modifying prompts (Discovery, Component Browsing, Metadata Generation, Parameter Prompts, Workflow Generator)
+- ✅ Task 43: MCP Server support
 
 Next up:
-- 🤖 Task 43: MCP Server support (install mcps and use as virtual nodes) <- This is what we are building now!
 - ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ⏳ Task 10: Create registry CLI
 - ⏳ Task 42: Claude Code Agentic Node
