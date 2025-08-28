@@ -257,6 +257,33 @@ MCP tools are prefixed with `mcp__<server>__` to avoid naming conflicts. They in
 
 For detailed MCP configuration, see [docs/mcp-integration.md](docs/mcp-integration.md).
 
+## Extensibility: MCP is the Way
+
+**Every pflow extension is an MCP server. No custom node API to learn.**
+
+Instead of building pflow-specific nodes, you build standard MCP servers that work everywhere:
+
+```bash
+# Need custom functionality? Build an MCP server
+$ claude "Build an MCP server that monitors my Stripe webhooks"
+# Claude generates stripe_monitor.py
+
+# Add it to pflow
+$ pflow mcp add stripe-monitor python stripe_monitor.py
+
+# Use it immediately
+$ pflow "alert me when a payment fails"
+```
+
+### Why MCP for Extensions?
+
+- **No lock-in**: Your extensions work with Claude, ChatGPT, and any MCP-compatible tool
+- **AI can build them**: Any AI assistant can create MCP servers without knowing pflow internals
+- **Standard protocol**: Learn once, use everywhere
+- **Ecosystem leverage**: Every MCP server built for other tools works with pflow
+
+We don't have a custom node API because we don't need one. MCP is the extension mechanism.
+
 ## Real-World Examples
 
 ### Daily Standup Automation
@@ -366,11 +393,40 @@ Agent: `pflow analyze-pr --pr=123`
 
 This reduces AI costs by 90% for repetitive tasks and lets agents work in parallel. `pflow` provides the stable, structured "API" that free-running agents need.
 
+## Coming Soon
+
+### Export to Zero-Dependency Code (v0.3)
+
+Compile your workflows to standalone Python or TypeScript:
+
+```bash
+# Build workflow with pflow
+$ pflow "analyze sales data and create report"
+
+# Export to pure Python (no pflow needed!)
+$ pflow export python analyze_sales.py
+Generated: analyze_sales.py (142 lines, zero dependencies)
+
+# Run anywhere
+$ python analyze_sales.py  # No pflow required
+```
+
+The ultimate no lock-in guarantee: take your workflows and leave.
+
+### pflow Cloud (Beta)
+
+- **One-click OAuth**: Connect to GitHub, Slack, Notion without API key hassles
+- **Team sharing**: Discover and reuse workflows across your organization
+- **Cost tracking**: See exactly what your AI automation costs
+- **For non-developers**: No CLI required
+
+Join the waitlist at [getpflow.com](https://getpflow.com)
+
 ## Community
 
   * **Discord**: [Join our community](https://discord.gg/pflow)
   * **Examples**: [pflow-examples](https://github.com/pflow/examples)
-  * **Nodes**: [pflow-registry](https://github.com/pflow/registry)
+  * **Nodes**: Browse MCP servers at [github.com/modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers)
 
 ## Contributing
 
@@ -393,6 +449,6 @@ See our [CONTRIBUTING.md](https://www.google.com/search?q=CONTRIBUTING.md) for g
 
 ---
 
-**pflow** is open source (MIT licensed) and built on the simple idea that AI should help you create tools, not be the tool you run every time.
+**pflow** is open source (FSL with Apache-2.0 future license) and built on the simple idea that AI should help you create tools, not be the tool you run every time.
 
 *Don't just run prompts. Build permanent tools* and transform your expensive AI workflows into instant CLI commands. [Get started now](#quick-start).
