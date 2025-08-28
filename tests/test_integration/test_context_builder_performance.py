@@ -38,49 +38,50 @@ class TestContextBuilderPerformance:
 
     def test_discovery_context_large_registry_performance(self):
         """Test discovery context generation with large number of nodes."""
-        # Create registry with 1000 mock nodes using names that trigger categorization
+        # Create registry with 1000 nodes with proper interface fields
         large_registry = {}
-        node_types = ["file", "llm", "git", "general"]
+        # Use module paths that will be properly categorized
+        module_patterns = [
+            "pflow.nodes.file.node",  # Will be categorized as File Operations
+            "pflow.nodes.llm.node",  # Will be categorized as AI/LLM Operations
+            "pflow.nodes.git.node",  # Will be categorized as Git Operations
+            "pflow.nodes.utils.node",  # Will be categorized as Utils Operations
+        ]
+
         for i in range(1000):
-            node_type = node_types[i % len(node_types)]
+            module_idx = i % len(module_patterns)
+            module = module_patterns[module_idx]
+            node_type = module.split(".")[2]  # Extract category name
+
             large_registry[f"{node_type}-node-{i:04d}"] = {
-                "module": f"test.module.{i % 10}",  # 10 different modules
-                "class_name": f"Node{i % 20}",  # 20 different classes
+                "module": f"{module}_{i % 10}",  # Vary the module slightly
+                "class_name": f"Node{i % 20}",
+                "file_path": f"src/{module.replace('.', '/')}_{i % 10}.py",
+                "interface": {
+                    "description": f"Test {node_type} node {i} for performance testing",
+                    "inputs": [{"key": "input", "type": "str", "description": "Input data"}],
+                    "outputs": [{"key": "output", "type": "str", "description": "Output data"}],
+                    "params": [{"key": "param", "type": "bool", "description": "Test parameter"}],
+                    "actions": ["default", "error"],
+                },
             }
 
-        # Mock processed nodes to avoid actual imports
-        processed_nodes = {}
-        for i in range(1000):
-            node_type = node_types[i % len(node_types)]
-            node_name = f"{node_type}-node-{i:04d}"
-            processed_nodes[node_name] = {
-                "description": f"Test {node_type} node {i} for performance testing",
-                "inputs": [{"key": "input", "type": "str", "description": "Input data"}],
-                "outputs": [{"key": "output", "type": "str", "description": "Output data"}],
-                "params": [{"key": "param", "type": "bool", "description": "Test parameter"}],
-                "actions": ["default", "error"],
-            }
-
-        # Use context manager to ensure proper cleanup
-        with patch("pflow.planning.context_builder._process_nodes") as mock_process:
-            mock_process.return_value = (processed_nodes, 0)
-
-            # Measure discovery context generation time
-            start_time = time.time()
-            discovery = build_discovery_context(registry_metadata=large_registry)
-            discovery_time = time.time() - start_time
+        # Measure discovery context generation time
+        start_time = time.time()
+        discovery = build_discovery_context(registry_metadata=large_registry)
+        discovery_time = time.time() - start_time
 
         # Should complete in reasonable time (< 2 seconds for 1000 nodes)
         assert discovery_time < 2.0, f"Discovery took {discovery_time:.2f}s, should be < 2.0s"
 
-        # Should include all nodes in output
+        # Should include sample nodes in output
         assert "file-node-0500" in discovery
-        assert "general-node-0999" in discovery
+        assert "utils-node-0999" in discovery  # Last node is utils, not general
 
         # Should properly categorize nodes
-        assert "File Operations" in discovery
-        assert "AI/LLM Operations" in discovery
-        assert "Git Operations" in discovery
+        assert "### File Operations" in discovery
+        assert "### AI/LLM Operations" in discovery
+        assert "### Git Operations" in discovery
 
         # Context size should be reasonable (< 500KB for 1000 nodes)
         context_size = len(discovery.encode("utf-8"))

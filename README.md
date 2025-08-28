@@ -197,6 +197,66 @@ graph TD
 pip install pflow
 ```
 
+## MCP Integration
+
+pflow now supports **Model Context Protocol (MCP)** servers, letting you use any MCP-compatible tool as a workflow node. This opens up a vast ecosystem of AI tools that can be seamlessly integrated into your workflows.
+
+### What is MCP?
+
+MCP (Model Context Protocol) is Anthropic's open standard for connecting AI assistants to external tools. With pflow's MCP support, you can:
+- Use filesystem operations, database queries, web scrapers, and more
+- Access tools from the MCP ecosystem without writing custom nodes
+- Combine MCP tools with native pflow nodes in workflows
+
+### Quick Start with MCP
+
+```bash
+# 1. Add an MCP server (example: filesystem operations)
+pflow mcp add filesystem npx @modelcontextprotocol/server-filesystem /Users/me/data
+
+# 2. Sync available tools into pflow
+pflow mcp sync
+
+# 3. Use MCP tools in workflows (they appear as regular nodes!)
+pflow "read all CSV files in my data folder and summarize them"
+# → Automatically uses mcp__filesystem__read_file node
+```
+
+### Managing MCP Servers
+
+```bash
+# List configured servers
+pflow mcp list
+
+# View available tools from a server
+pflow mcp tools filesystem
+
+# Remove a server
+pflow mcp remove filesystem
+
+# Re-sync after server updates
+pflow mcp sync --force
+```
+
+### Example: GitHub + Filesystem Workflow
+
+```bash
+# Add multiple MCP servers
+pflow mcp add github npx @modelcontextprotocol/server-github
+pflow mcp add fs npx @modelcontextprotocol/server-filesystem ~/projects
+
+# Sync all tools
+pflow mcp sync
+
+# Create a workflow combining both
+pflow "find all open PRs, save summaries to local files"
+# Uses: mcp__github__search_pull_requests >> mcp__fs__write_file
+```
+
+MCP tools are prefixed with `mcp__<server>__` to avoid naming conflicts. They integrate seamlessly with pflow's planning system—just describe what you want, and pflow will find the right MCP tools.
+
+For detailed MCP configuration, see [docs/mcp-integration.md](docs/mcp-integration.md).
+
 ## Real-World Examples
 
 ### Daily Standup Automation
@@ -273,13 +333,15 @@ See the [Debugging Guide](docs/features/debugging.md) for detailed trace analysi
 
 `pflow` doesn't replace your favorite tools—it orchestrates them.
 
-### 🔌 Future MCP Integration (v2.0)
+### 🔌 MCP Integration
 
-Planned: Access MCP-compatible tools as native `pflow` nodes.
+Access any MCP-compatible tool as a native `pflow` node:
 
 ```bash
-# Coming in v2.0:
-pflow registry add-mcp github slack stripe
+# Add MCP servers for your favorite tools
+pflow mcp add github npx @modelcontextprotocol/server-github
+pflow mcp add stripe npx @modelcontextprotocol/server-stripe
+pflow mcp sync
 ```
 
 ### 🤖 Works with `llm`

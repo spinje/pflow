@@ -30,7 +30,7 @@ class TestLLMNode:
 
             assert action == "default"
             assert shared["response"] == "Test response"
-            mock_model.prompt.assert_called_with("Test prompt from shared", temperature=0.7)
+            mock_model.prompt.assert_called_with("Test prompt from shared", temperature=1.0)
 
     # Test Criteria 2: prompt not in shared but in params → prompt extracted from params
     def test_prompt_from_params_fallback(self):
@@ -52,7 +52,7 @@ class TestLLMNode:
 
             assert action == "default"
             assert shared["response"] == "Param response"
-            mock_model.prompt.assert_called_with("Test prompt from params", temperature=0.7)
+            mock_model.prompt.assert_called_with("Test prompt from params", temperature=1.0)
 
     # Test Criteria 3: prompt missing entirely → ValueError raised
     def test_missing_prompt_raises_error(self):
@@ -145,7 +145,7 @@ class TestLLMNode:
 
             node.run(shared)
 
-            mock_model.prompt.assert_called_with("Test", temperature=0.7, system="You are helpful")
+            mock_model.prompt.assert_called_with("Test", temperature=1.0, system="You are helpful")
 
     # Test Criteria 8: system parameter None → system not in kwargs
     def test_system_none_not_in_kwargs(self):
@@ -187,7 +187,7 @@ class TestLLMNode:
 
             node.run(shared)
 
-            mock_model.prompt.assert_called_with("Test", temperature=0.7, max_tokens=100)
+            mock_model.prompt.assert_called_with("Test", temperature=1.0, max_tokens=100)
 
     # Test Criteria 10: max_tokens None → max_tokens not in kwargs
     def test_max_tokens_none_not_in_kwargs(self):
@@ -470,7 +470,7 @@ class TestLLMNode:
 
             node.run(shared)
 
-            mock_model.prompt.assert_called_with("Test", temperature=0.7, system="Shared system")
+            mock_model.prompt.assert_called_with("Test", temperature=1.0, system="Shared system")
 
     # Additional test: Retry behavior
     def test_retry_behavior_on_transient_failure(self):

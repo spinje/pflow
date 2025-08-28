@@ -71,22 +71,111 @@ def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[s
     return processed_nodes, skipped_count
 
 
+# Map of known pflow node categories to friendly names
+_PFLOW_CATEGORY_NAMES = {
+    "file": "File Operations",
+    "git": "Git Operations",
+    "github": "GitHub Operations",
+    "ai": "AI/LLM Operations",  # Match module path pflow.nodes.ai.*
+    "llm": "AI/LLM Operations",
+    "shell": "System Operations",
+    "test": "Test Operations",
+}
+
+
+def _get_mcp_node_category(registry_info: dict) -> str:
+    """Determine category for MCP nodes based on server metadata.
+
+    Args:
+        registry_info: Node registry information containing MCP metadata
+
+    Returns:
+        Category string for the MCP node
+    """
+    mcp_metadata = registry_info.get("interface", {}).get("mcp_metadata", {})
+    server = mcp_metadata.get("server", "unknown")
+    # Capitalize server name and add "Tools" suffix for clarity
+    return f"{server.title()} Tools"
+
+
+def _get_pflow_node_category(module: str) -> str:
+    """Determine category for pflow nodes based on module path.
+
+    Args:
+        module: Module path string (e.g., 'pflow.nodes.file.copy_file')
+
+    Returns:
+        Category string for the pflow node
+    """
+    if module.startswith("pflow.nodes."):
+        # Extract category: pflow.nodes.file.copy_file -> "file"
+        parts = module.split(".")
+        if len(parts) >= 3:
+            namespace = parts[2]
+            # Use friendly name if known, otherwise capitalize namespace
+            return _PFLOW_CATEGORY_NAMES.get(namespace, f"{namespace.title()} Operations")
+        return "General Operations"
+
+    if module:
+        # For test modules like "test.file", extract category from module name
+        parts = module.split(".")
+        if len(parts) >= 2 and parts[1] in _PFLOW_CATEGORY_NAMES:
+            return _PFLOW_CATEGORY_NAMES[parts[1]]
+        return "General Operations"
+
+    return ""  # Empty module - will trigger fallback
+
+
+def _get_category_from_node_name(node_type: str) -> str:
+    """Infer category from node name patterns as fallback.
+
+    Args:
+        node_type: Node type/name string
+
+    Returns:
+        Category string based on name patterns
+    """
+    # Try to infer category from actual production node name patterns
+    # Only include patterns that exist in real nodes
+    if any(pattern in node_type for pattern in ["read-file", "write-file", "copy-file", "move-file", "delete-file"]):
+        return "File Operations"
+
+    if any(pattern in node_type for pattern in ["git-", "github-", "gitlab-"]):
+        # All git-related nodes go under Git Operations
+        return "Git Operations"
+
+    if node_type == "llm" or "ai-" in node_type:
+        return "AI/LLM Operations"
+
+    if any(pattern in node_type for pattern in ["shell", "bash", "cmd"]):
+        return "System Operations"
+
+    return "General Operations"
+
+
 def _group_nodes_by_category(nodes: dict[str, dict]) -> dict[str, list[str]]:
-    """Group nodes by category based on simple pattern matching."""
+    """Group nodes by category based on namespace and metadata.
+
+    For native pflow nodes: Extract category from module path (e.g., pflow.nodes.file.* -> "File Operations")
+    For MCP nodes: Use the server name as category (e.g., filesystem -> "Filesystem Tools")
+    """
     categories: dict[str, list[str]] = {}
 
-    for node_type in nodes:
-        # Simple pattern matching for categories
-        if "file" in node_type or "read" in node_type or "write" in node_type:
-            category = "File Operations"
-        elif "llm" in node_type or "ai" in node_type:
-            category = "AI/LLM Operations"
-        elif "git" in node_type or "github" in node_type or "gitlab" in node_type:
-            category = "Git Operations"
-        elif "http" in node_type or "api" in node_type:
-            category = "HTTP/API Operations"
+    for node_type, node_data in nodes.items():
+        # Get registry info if available (from processed nodes)
+        registry_info = node_data.get("registry_info", node_data)
+
+        # Check if it's an MCP node
+        if registry_info.get("file_path") == "virtual://mcp":
+            category = _get_mcp_node_category(registry_info)
         else:
-            category = "General Operations"
+            # Native pflow node - extract from module path
+            module = registry_info.get("module", "")
+            category = _get_pflow_node_category(module)
+
+            # Fallback to name pattern matching if no category determined
+            if not category:
+                category = _get_category_from_node_name(node_type)
 
         if category not in categories:
             categories[category] = []

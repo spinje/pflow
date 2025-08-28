@@ -191,7 +191,7 @@ class TestImprovedWorkingDirectory:
 
             # Should fail from different directory
             shared = {}
-            action = run_shell_node(shared, command="cat test.txt", cwd="/tmp")
+            action = run_shell_node(shared, command="cat test.txt", cwd=tempfile.gettempdir())
             assert action == "error"  # File not found
 
     def test_cwd_does_not_affect_parent_process(self):
@@ -199,7 +199,7 @@ class TestImprovedWorkingDirectory:
         original_cwd = os.getcwd()
 
         shared = {}
-        run_shell_node(shared, command="pwd", cwd="/tmp")
+        run_shell_node(shared, command="pwd", cwd=tempfile.gettempdir())
 
         # Parent process should still be in original directory
         assert os.getcwd() == original_cwd

@@ -48,7 +48,7 @@ def demo_environment_variables():
     })
     shared = {}
 
-    action = node.run(shared)
+    node.run(shared)
     print("Command with custom env vars")
     print(f"Output: {shared['stdout'].strip()}")
     print()
@@ -61,7 +61,7 @@ def demo_working_directory():
     node.set_params({"command": "pwd", "cwd": "/tmp"})
     shared = {}
 
-    action = node.run(shared)
+    node.run(shared)
     print("Command: pwd (with cwd=/tmp)")
     print(f"Working directory: {shared['stdout'].strip()}")
     print()
@@ -74,7 +74,7 @@ def demo_stdin_input():
     node.set_params({"command": "grep 'important'"})
     shared = {"stdin": "line 1: not relevant\\nline 2: important data\\nline 3: also not relevant"}
 
-    action = node.run(shared)
+    node.run(shared)
     print("Command: grep 'important' (with stdin)")
     print(f"Matched line: {shared['stdout'].strip()}")
     print()
@@ -115,7 +115,7 @@ def demo_security():
     shared = {}
 
     try:
-        action = node.run(shared)
+        node.run(shared)
     except ValueError as e:
         print(f"Dangerous command blocked: {e}")
     print()
@@ -128,7 +128,7 @@ def demo_complex_shell_script():
     node.set_params({"command": 'for i in 1 2 3; do echo "Processing item $i"; done'})
     shared = {}
 
-    action = node.run(shared)
+    node.run(shared)
     print("Command: for loop")
     print(f"Output:\\n{shared['stdout']}")
     print()

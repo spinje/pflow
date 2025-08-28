@@ -1,0 +1,30 @@
+{
+  "ir_version": "0.1.0",
+  "metadata": {
+    "name": "read-and-process-file",
+    "description": "Read a file using MCP filesystem and process it"
+  },
+  "nodes": [
+    {
+      "id": "read-config",
+      "type": "mcp-filesystem-read_text_file",
+      "params": {
+        "path": "/tmp/config.json"
+      }
+    },
+    {
+      "id": "parse-json",
+      "type": "llm",
+      "params": {
+        "prompt": "Extract the important settings from this JSON config: ${read-config.result}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "read-config",
+      "target": "parse-json",
+      "action": "default"
+    }
+  ]
+}

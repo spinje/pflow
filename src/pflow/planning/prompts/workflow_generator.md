@@ -166,7 +166,7 @@ Every node MUST have a "purpose" field (10-200 chars) that:
     },
     "issue_limit": {
       "description": "Number of issues to fetch",
-      "type": "integer",
+      "type": "number",
       "required": false,
       "default": 30
     },
@@ -208,6 +208,8 @@ Notice how:
 - Must include `"inputs"` field with user-configurable parameters
 - Each input needs: description, type, required, and optional default
 - Must include `"outputs"` field with `source` mapping to node outputs
+- `"type"` for inputs/outputs must be one of: ['string', 'number', 'boolean', 'object', 'array']
+  - ❌ **DON'T** use `"integer"` or `"float"` - use `"number"` instead
 - **SEQUENTIAL execution only** - each node has exactly ONE outgoing edge
 - **NO parallel edges** - even if operations are independent
 

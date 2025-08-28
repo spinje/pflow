@@ -2,6 +2,7 @@
 
 import logging
 import os
+import tempfile
 
 import pytest
 
@@ -86,7 +87,7 @@ class TestWarningPatterns:
 
         with caplog.at_level(logging.WARNING):
             # Only run prep to test warning - don't execute the command
-            prep_res = node.prep(shared)
+            node.prep(shared)
 
         # Check warning was logged
         assert any("Potentially dangerous command detected" in record.message for record in caplog.records)
@@ -188,12 +189,12 @@ class TestStrictMode:
 
         # In non-strict mode, prep should succeed without raising
         try:
-            prep_res = node.prep(shared)
+            node.prep(shared)
             # If prep succeeds, warning commands are allowed
             assert True
-        except ValueError:
+        except ValueError as e:
             # Should not raise in non-strict mode
-            assert False, "Command was blocked even without strict mode"
+            raise AssertionError("Command was blocked even without strict mode") from e
 
     def test_strict_mode_still_allows_safe_commands(self):
         """Test that strict mode doesn't block safe commands."""
@@ -232,7 +233,7 @@ class TestAuditLogging:
         assert "Preparing command: echo test" in audit_logs[0].message
 
         # Check audit flag in extra data
-        assert any(record.__dict__.get("audit") == True for record in caplog.records)
+        assert any(record.__dict__.get("audit") for record in caplog.records)
 
     def test_audit_log_on_completion(self, caplog):
         """Test that command completion is audit logged."""
@@ -263,11 +264,11 @@ class TestAuditLogging:
         shared = {}
 
         with caplog.at_level(logging.INFO):
-            run_shell_node(shared, command="pwd", cwd="/tmp", timeout=10)
+            run_shell_node(shared, command="pwd", cwd=tempfile.gettempdir(), timeout=10)
 
         # Check that context is included in extra fields
-        audit_records = [r for r in caplog.records if r.__dict__.get("audit") == True]
-        assert any(r.__dict__.get("cwd") == "/tmp" for r in audit_records)
+        audit_records = [r for r in caplog.records if r.__dict__.get("audit")]
+        assert any(r.__dict__.get("cwd") == tempfile.gettempdir() for r in audit_records)
         assert any(r.__dict__.get("timeout") == 10 for r in audit_records)
 
 
@@ -360,11 +361,12 @@ EOF"""
         shared = {}
 
         # Subshell changes directory but doesn't affect parent
-        run_shell_node(shared, command="(cd /tmp && pwd); pwd")
+        tmpdir = tempfile.gettempdir()
+        run_shell_node(shared, command=f"(cd {tmpdir} && pwd); pwd")
         lines = shared["stdout"].strip().split("\n")
 
         # First line should be /tmp, second should be current directory
-        assert "/tmp" in lines[0] or "/private/tmp" in lines[0]  # macOS compatibility
+        assert tmpdir in lines[0] or "/private/tmp" in lines[0]  # macOS compatibility
         assert lines[1] == os.getcwd()
 
     def test_command_grouping(self):

@@ -5,8 +5,8 @@ Interface:
 - Reads: shared["system"]: str  # System prompt (optional)
 - Writes: shared["response"]: str  # Model's text response
 - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
-- Params: model: str  # Model to use (default: claude-sonnet-4-20250514)
-- Params: temperature: float  # Sampling temperature (default: 0.7)
+- Params: model: str  # Model to use (default: gpt-5-nano)
+- Params: temperature: float  # Sampling temperature (default: 1.0)
 - Params: max_tokens: int  # Max response tokens (optional)
 - Actions: default (always)
 """
@@ -39,7 +39,7 @@ class LLMNode(Node):
         - cache_creation_input_tokens: int  # Tokens used for cache creation
         - cache_read_input_tokens: int  # Tokens read from cache
     - Params: model: str  # Model to use (default: gpt-5-nano)
-    - Params: temperature: float  # Sampling temperature (default: 0.7)
+    - Params: temperature: float  # Sampling temperature (default: 1.0)
     - Params: max_tokens: int  # Max response tokens (optional)
     - Actions: default (always)
     """
@@ -66,7 +66,7 @@ class LLMNode(Node):
         system = shared.get("system") or self.params.get("system")
 
         # Temperature with clamping
-        temperature = self.params.get("temperature", 0.7)
+        temperature = self.params.get("temperature", 1.0)
         temperature = max(0.0, min(2.0, temperature))
 
         return {
