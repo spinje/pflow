@@ -23,6 +23,7 @@ dependencies = [
     "llm>=0.27.1",    # Simon Willison's LLM library for text processing
     "llm-anthropic>=0.17",  # Anthropic Claude models for planner
     "pydantic",       # IR/metadata validation (used in planning/ir_models.py)
+    "mcp[cli]>=1.13.1",  # Model Context Protocol for MCP server support
 ]
 
 # Optional dependencies can be added here for future LLM providers
@@ -30,7 +31,7 @@ dependencies = [
 # openai = ["llm-openai>=0.1"]
 
 [project.scripts]
-pflow = "pflow.cli:main"
+pflow = "pflow.cli:cli_main"
 
 [project.urls]
 Homepage = "https://spinje.github.io/pflow/"
@@ -70,7 +71,7 @@ check_untyped_defs = true
 warn_return_any = true
 warn_unused_ignores = true
 show_error_codes = true
-exclude = ["pocketflow", "scripts/debug", ".claude"]
+exclude = ["pocketflow", "scripts/debug", ".claude", "scratchpads"]
 
 [[tool.mypy.overrides]]
 module = "pocketflow.*"
@@ -84,7 +85,7 @@ target-version = "py39"
 line-length = 120
 extend-exclude = ["tools/test_prompt_accuracy.py"]
 fix = true
-exclude = ["pocketflow/*", "scripts/debug/*", ".claude/*"]
+exclude = ["pocketflow/*", "scripts/debug/*", ".claude/*", "scratchpads/*", "examples/*"]
 
 [tool.ruff.lint]
 select = [
@@ -135,6 +136,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
 "tests/test_integration/test_git_*.py" = ["S603", "S607"]  # Allow subprocess calls for git integration tests
+"src/pflow/nodes/shell/shell.py" = ["S602"]  # shell=True is intentional for shell node
 
 [tool.ruff.format]
 preview = true

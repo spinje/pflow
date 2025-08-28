@@ -74,6 +74,22 @@ pflow read-file --path=input.txt
 pflow read-file --path=input.txt => llm --prompt="Summarize this"
 ```
 
+### Loading Workflows from JSON Files
+
+```bash
+# Execute a workflow defined in JSON
+pflow --file workflow.json
+
+# With output key to display specific node results
+pflow --file workflow.json --output-key node-id
+
+# Pipe input to workflow
+echo "data" | pflow --file processor.json
+```
+
+**Important**: JSON workflows must include `"ir_version": "0.1.0"` field.
+See [JSON Workflows Guide](../json-workflows.md) for format details.
+
 ### With Natural Language Planning
 
 ```bash

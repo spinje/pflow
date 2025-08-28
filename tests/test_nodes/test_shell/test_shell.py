@@ -283,7 +283,7 @@ class TestShellNodeConfiguration:
             # On macOS, /var may be symlinked to /private/var
             actual_path = shared["stdout"].strip()
             expected_path = os.path.realpath(tmpdir)
-            assert actual_path == expected_path or actual_path == tmpdir
+            assert actual_path in (expected_path, tmpdir)
             assert shared["exit_code"] == 0
 
     def test_cwd_with_tilde_expansion(self):

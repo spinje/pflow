@@ -353,68 +353,69 @@ class TestRealWorldScenarios:
 
     def test_mixed_node_types(self):
         """Test with different node categories."""
-        # Create mock registry with different categories
+        # Create proper registry metadata with interface fields that match real structure
         registry_metadata = {
-            "file-reader": {"module": "test.file", "class_name": "FileReader"},
-            "data-processor": {"module": "test.data", "class_name": "DataProcessor"},
-            "api-caller": {"module": "test.api", "class_name": "ApiCaller"},
+            "file-reader": {
+                "module": "pflow.nodes.file.reader",  # Use pflow.nodes.file for File Operations
+                "class_name": "FileReader",
+                "file_path": "src/pflow/nodes/file/reader.py",
+                "interface": {
+                    "description": "Reads data from files",
+                    "inputs": [{"key": "file_path", "type": "str", "description": "File path"}],
+                    "outputs": [{"key": "content", "type": "str", "description": "File content"}],
+                    "params": [],
+                    "actions": ["default", "error"],
+                },
+            },
+            "data-processor": {
+                "module": "pflow.nodes.transform.processor",  # Generic module
+                "class_name": "DataProcessor",
+                "file_path": "src/pflow/nodes/transform/processor.py",
+                "interface": {
+                    "description": "Processes and transforms data",
+                    "inputs": [{"key": "raw_data", "type": "str", "description": "Raw input data"}],
+                    "outputs": [{"key": "processed_data", "type": "dict", "description": "Processed result"}],
+                    "params": [{"key": "format", "type": "str", "description": "Output format"}],
+                    "actions": ["default"],
+                },
+            },
+            "api-caller": {
+                "module": "pflow.nodes.network.api",  # Generic module
+                "class_name": "ApiCaller",
+                "file_path": "src/pflow/nodes/network/api.py",
+                "interface": {
+                    "description": "Makes HTTP API calls",
+                    "inputs": [{"key": "url", "type": "str", "description": "API endpoint"}],
+                    "outputs": [{"key": "response", "type": "dict", "description": "API response"}],
+                    "params": [{"key": "timeout", "type": "int", "description": "Request timeout"}],
+                    "actions": ["default", "error", "retry"],
+                },
+            },
         }
 
-        with patch("pflow.planning.context_builder._process_nodes") as mock_process:
-            # Mock different node types
-            mock_process.return_value = (
-                {
-                    "file-reader": {
-                        "description": "Reads data from files",
-                        "category": "File Operations",
-                        "inputs": [{"key": "file_path", "type": "str", "description": "File path"}],
-                        "outputs": [{"key": "content", "type": "str", "description": "File content"}],
-                        "params": [],
-                        "actions": ["default", "error"],
-                    },
-                    "data-processor": {
-                        "description": "Processes and transforms data",
-                        "category": "Data Processing",
-                        "inputs": [{"key": "raw_data", "type": "str", "description": "Raw input data"}],
-                        "outputs": [{"key": "processed_data", "type": "dict", "description": "Processed result"}],
-                        "params": [{"key": "format", "type": "str", "description": "Output format"}],
-                        "actions": ["default"],
-                    },
-                    "api-caller": {
-                        "description": "Makes HTTP API calls",
-                        "category": "Network Operations",
-                        "inputs": [{"key": "url", "type": "str", "description": "API endpoint"}],
-                        "outputs": [{"key": "response", "type": "dict", "description": "API response"}],
-                        "params": [{"key": "timeout", "type": "int", "description": "Request timeout"}],
-                        "actions": ["default", "error", "retry"],
-                    },
-                },
-                0,
-            )
+        # Discovery should group by categories
+        discovery = build_discovery_context(registry_metadata=registry_metadata)
 
-            # Discovery should group by categories
-            discovery = build_discovery_context(registry_metadata=registry_metadata)
+        # Should contain category headers - verify at least one category is created
+        assert "### File Operations" in discovery  # file-reader should be categorized
 
-            # Should contain category headers
-            assert "File Operations" in discovery or "Data Processing" in discovery or "Network Operations" in discovery
+        # Should show all nodes
+        assert "file-reader" in discovery
+        assert "data-processor" in discovery
+        assert "api-caller" in discovery
 
-            # Should show all nodes
-            assert "file-reader" in discovery
-            assert "data-processor" in discovery
-            assert "api-caller" in discovery
+        # Planning with mixed selection
+        planning = build_planning_context(["file-reader", "api-caller"], [], registry_metadata)
 
-            # Planning with mixed selection
-            planning = build_planning_context(["file-reader", "api-caller"], [], registry_metadata)
+        # Should show details for both selected nodes
+        assert "file-reader" in planning
+        assert "api-caller" in planning
+        assert "Reads data from files" in planning
+        assert "Makes HTTP API calls" in planning
 
-            # Should show details for both selected nodes
-            assert "file-reader" in planning
-            assert "api-caller" in planning
-            assert "Reads data from files" in planning
-            assert "Makes HTTP API calls" in planning
-
-            # Should show different parameter types
-            assert "timeout" in planning  # From api-caller
-            assert "file_path" in planning  # From file-reader
+        # Should show different parameter types
+        assert "timeout" in planning  # From api-caller
+        assert "file_path" in planning  # From file-reader
 
 
 class TestErrorAndEdgeCases:

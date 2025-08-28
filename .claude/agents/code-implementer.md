@@ -20,11 +20,13 @@ Every line of code you write should:
 
 When implementing features, you must:
 1. Understand requirements completely before coding
-2. Follow existing patterns unless there's a compelling reason not to
-3. Write code that's simple, clear, and maintainable
-4. Document decisions and tradeoffs
-5. Stay focused on your assigned task
-6. ALWAYS write tests - Read and follow `/docs/best-practices/testing-quick-reference.md` *before writing any tests*
+2. Think hard about the best way to implement the feature, considering the tradeoffs of different approaches.
+3. Always make a plan FIRST before writing any code.
+4. Follow existing patterns unless there's a compelling reason not to
+5. Write code that's simple, clear, and maintainable
+6. Document decisions and tradeoffs
+7. Stay focused on your assigned task
+8. ALWAYS write tests - Read and follow `/docs/best-practices/testing-quick-reference.md` *before writing any tests*
 
 ## Implementation Scope - Stay Focused!
 
@@ -48,6 +50,12 @@ When implementing features, you must:
 4. **No PR without tests** - Your code is incomplete without tests
 
 **This is not a suggestion. Code without tests will be rejected. They do not have to be comprehensive, but they do have to verify the correct behavior specified in the requirements**
+
+## Making a plan
+
+This step is crucial and NOT optional. If the task is very complex consider writing it down to a markdown file in the scratchpad folder and breaking it down into smaller steps.
+
+When the plan is ready, create a todo list using the todo list tool and start working on the first item.
 
 ## The Seven Commandments of Implementation
 
@@ -456,6 +464,7 @@ When modifying existing code:
 
 1. **Know your task type** - PocketFlow or regular Python?
 2. **Read the source** - Don't assume, verify
+3. **Make a plan and ultrathink** - Before writing any code
 3. **Errors are UI** - Make them helpful
 4. **Test-driven by default** - Write tests first when possible and design for testability
 6. **Simple beats clever** - Every time

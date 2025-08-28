@@ -111,8 +111,32 @@ class TemplateAwareNodeWrapper:
         # Resolve all template parameters
         resolved_params = {}
         for key, template in self.template_params.items():
-            resolved_value = TemplateResolver.resolve_string(template, context)
-            resolved_params[key] = resolved_value
+            # Check if this is actually a template string or just a value
+            if isinstance(template, str) and "${" in template:
+                # It's a template string that needs resolution
+                # Check if it's a simple variable reference like "${limit}"
+                import re
+
+                simple_var_match = re.match(r"^\$\{([^}]+)\}$", template)
+                if simple_var_match:
+                    # It's a simple variable reference, try to preserve type
+                    var_name = simple_var_match.group(1)
+                    resolved_value = TemplateResolver.resolve_value(var_name, context)
+                    if resolved_value is not None:
+                        # Use the resolved value with its original type preserved
+                        resolved_params[key] = resolved_value
+                    else:
+                        # Variable not found, keep template as-is
+                        resolved_params[key] = template
+                        resolved_value = template
+                else:
+                    # Complex template with text around it, must be string
+                    resolved_value = TemplateResolver.resolve_string(template, context)
+                    resolved_params[key] = resolved_value
+            else:
+                # No template variables present, preserve original type!
+                resolved_params[key] = template
+                resolved_value = template
 
             if resolved_value != template:
                 logger.debug(

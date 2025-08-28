@@ -24,6 +24,8 @@ from pflow.core.workflow_manager import WorkflowManager
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, compile_ir_to_flow
 
+# Import MCP CLI commands
+
 
 def handle_sigint(signum: int, frame: object) -> None:
     """Handle Ctrl+C gracefully."""
@@ -1298,6 +1300,9 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     return False
 
 
+# NOTE: This MUST be @click.command, not @click.group with catch-all argument.
+# Click groups consume ALL positional args when using @click.argument("workflow", nargs=-1),
+# preventing subcommands from being recognized. The wrapper (main_wrapper.py) handles routing.
 @click.command(context_settings={"allow_interspersed_args": False})
 @click.pass_context
 @click.option("--version", is_flag=True, help="Show the pflow version")
@@ -1313,7 +1318,7 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
 @click.option("--trace", is_flag=True, help="Save debug trace even on success")
 @click.option("--planner-timeout", type=int, default=60, help="Timeout for planner execution (seconds)")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
-def main(
+def workflow_command(
     ctx: click.Context,
     version: bool,
     verbose: bool,
@@ -1357,6 +1362,7 @@ def main(
       - Use -- to prevent pflow from parsing node flags
       - Workflows are collected as raw input for the planner
     """
+    # Handle version flag
     if version:
         click.echo("pflow version 0.0.1")
         ctx.exit(0)
@@ -1421,3 +1427,9 @@ def main(
 
         # If we get here, either not a workflow name or not found - use planner
         _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, source, trace, planner_timeout)
+
+
+# Alias for backward compatibility with tests that import main directly
+# Tests use: from pflow.cli.main import main
+# This avoids breaking existing test infrastructure
+main = workflow_command

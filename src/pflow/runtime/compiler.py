@@ -210,6 +210,145 @@ def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
     return cast(type[BaseNode], node_class)
 
 
+def _apply_template_wrapping(
+    node_instance: Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper],
+    node_id: str,
+    params: dict[str, Any],
+    initial_params: dict[str, Any],
+) -> Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]:
+    """Apply template wrapping to a node if it has template parameters.
+
+    Args:
+        node_instance: The node instance to potentially wrap
+        node_id: The ID of the node
+        params: The node's parameters
+        initial_params: Initial parameters for template resolution
+
+    Returns:
+        The original node or a wrapped version if templates are detected
+    """
+    # Check if any parameters contain templates
+    has_templates = any(TemplateResolver.has_templates(value) for value in params.values() if isinstance(value, str))
+
+    if has_templates:
+        # Wrap node for template support (runtime proxy)
+        logger.debug(
+            f"Wrapping node '{node_id}' for template resolution",
+            extra={"phase": "node_instantiation", "node_id": node_id},
+        )
+        return TemplateAwareNodeWrapper(node_instance, node_id, initial_params)
+
+    return node_instance
+
+
+def _inject_special_parameters(
+    node_type: str,
+    node_id: str,
+    params: dict[str, Any],
+    registry: Registry,
+) -> dict[str, Any]:
+    """Inject special parameters for workflow and MCP nodes.
+
+    Args:
+        node_type: The type of the node
+        node_id: The ID of the node
+        params: Original node parameters
+        registry: Registry instance for workflow nodes
+
+    Returns:
+        Updated parameters dictionary (copy of original with injections)
+    """
+    # For workflow type, inject registry as special parameter
+    if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
+        params = params.copy()  # Don't modify original
+        params["__registry__"] = registry
+        logger.debug(
+            "Injecting registry for WorkflowExecutor",
+            extra={"phase": "node_instantiation", "node_id": node_id},
+        )
+        return params
+
+    # For MCP virtual nodes, inject server and tool metadata
+    if node_type.startswith("mcp-"):
+        params = params.copy()  # Copy to avoid modifying original
+        parts = node_type.split("-", 2)  # Split into ["mcp", "server", "tool-name"]
+        if len(parts) >= 3:
+            params["__mcp_server__"] = parts[1]
+            params["__mcp_tool__"] = "-".join(parts[2:])  # Rejoin remaining parts for tool name
+            logger.debug(
+                "Injecting MCP metadata for virtual node",
+                extra={
+                    "phase": "node_instantiation",
+                    "node_id": node_id,
+                    "mcp_server": parts[1],
+                    "mcp_tool": "-".join(parts[2:]),
+                },
+            )
+        return params
+
+    return params
+
+
+def _create_single_node(
+    node_data: dict[str, Any],
+    registry: Registry,
+    initial_params: dict[str, Any],
+    enable_namespacing: bool,
+) -> Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]:
+    """Create and configure a single node instance.
+
+    Args:
+        node_data: Node definition from IR
+        registry: Registry instance for node class lookup
+        initial_params: Parameters for template resolution
+        enable_namespacing: Whether to apply namespace wrapping
+
+    Returns:
+        Configured node instance
+
+    Raises:
+        CompilationError: If node instantiation fails
+    """
+    node_id = node_data["id"]
+    node_type = node_data["type"]
+    params = node_data.get("params", {})
+
+    logger.debug(
+        "Creating node instance",
+        extra={"phase": "node_instantiation", "node_id": node_id, "node_type": node_type},
+    )
+
+    # Get the node class using our import function
+    node_class = import_node_class(node_type, registry)
+
+    # Instantiate the node (no parameters to constructor)
+    node_instance: Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper] = node_class()
+
+    # Apply template wrapping if needed
+    node_instance = _apply_template_wrapping(node_instance, node_id, params, initial_params)
+
+    # Apply namespace wrapping if enabled
+    if enable_namespacing:
+        logger.debug(
+            f"Wrapping node '{node_id}' for namespace isolation",
+            extra={"phase": "node_instantiation", "node_id": node_id},
+        )
+        node_instance = NamespacedNodeWrapper(node_instance, node_id)
+
+    # Inject special parameters for workflow and MCP nodes
+    params = _inject_special_parameters(node_type, node_id, params, registry)
+
+    # Set parameters (wrapper will separate template vs static)
+    if params:
+        logger.debug(
+            "Setting node parameters",
+            extra={"phase": "node_instantiation", "node_id": node_id, "param_count": len(params)},
+        )
+        node_instance.set_params(params)
+
+    return node_instance
+
+
 def _instantiate_nodes(
     ir_dict: dict[str, Any], registry: Registry, initial_params: Optional[dict[str, Any]] = None
 ) -> dict[str, Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]]:
@@ -242,59 +381,9 @@ def _instantiate_nodes(
 
     for node_data in ir_dict["nodes"]:
         node_id = node_data["id"]
-        node_type = node_data["type"]
-        params = node_data.get("params", {})
-
-        logger.debug(
-            "Creating node instance",
-            extra={"phase": "node_instantiation", "node_id": node_id, "node_type": node_type},
-        )
 
         try:
-            # Get the node class using our import function
-            node_class = import_node_class(node_type, registry)
-
-            # Instantiate the node (no parameters to constructor)
-            node_instance: Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper] = node_class()
-
-            # Check if any parameters contain templates
-            has_templates = any(
-                TemplateResolver.has_templates(value) for value in params.values() if isinstance(value, str)
-            )
-
-            if has_templates:
-                # Wrap node for template support (runtime proxy)
-                logger.debug(
-                    f"Wrapping node '{node_id}' for template resolution",
-                    extra={"phase": "node_instantiation", "node_id": node_id},
-                )
-                node_instance = TemplateAwareNodeWrapper(node_instance, node_id, initial_params)
-
-            # Apply namespace wrapping if enabled
-            if enable_namespacing:
-                logger.debug(
-                    f"Wrapping node '{node_id}' for namespace isolation",
-                    extra={"phase": "node_instantiation", "node_id": node_id},
-                )
-                node_instance = NamespacedNodeWrapper(node_instance, node_id)
-
-            # For workflow type, inject registry as special parameter
-            if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
-                params = params.copy()  # Don't modify original
-                params["__registry__"] = registry
-                logger.debug(
-                    "Injecting registry for WorkflowExecutor",
-                    extra={"phase": "node_instantiation", "node_id": node_id},
-                )
-
-            # Set parameters (wrapper will separate template vs static)
-            if params:
-                logger.debug(
-                    "Setting node parameters",
-                    extra={"phase": "node_instantiation", "node_id": node_id, "param_count": len(params)},
-                )
-                node_instance.set_params(params)
-
+            node_instance = _create_single_node(node_data, registry, initial_params, enable_namespacing)
             nodes[node_id] = node_instance
 
         except CompilationError as e:

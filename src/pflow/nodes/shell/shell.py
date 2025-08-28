@@ -3,7 +3,7 @@
 import logging
 import os
 import subprocess
-from typing import Any, Dict
+from typing import Any, ClassVar
 
 from pocketflow import Node
 
@@ -38,7 +38,7 @@ class ShellNode(Node):
 
     # Basic patterns for obviously dangerous commands
     # This is NOT comprehensive security - just a basic safety net
-    DANGEROUS_PATTERNS = [
+    DANGEROUS_PATTERNS: ClassVar[list[str]] = [
         # Recursive deletions of system root
         "rm -rf /",
         "rm -rf /*",
@@ -70,7 +70,7 @@ class ShellNode(Node):
     ]
 
     # Additional warning patterns (logged but not blocked)
-    WARNING_PATTERNS = [
+    WARNING_PATTERNS: ClassVar[list[str]] = [
         "sudo ",
         "su -",
         "shutdown",
@@ -88,7 +88,7 @@ class ShellNode(Node):
         # Shell commands can be flaky, so allow retries
         super().__init__(max_retries=1, wait=0)
 
-    def prep(self, shared: dict) -> Dict[str, Any]:
+    def prep(self, shared: dict) -> dict[str, Any]:
         """Prepare the command and configuration for execution.
 
         Args:
@@ -167,7 +167,7 @@ class ShellNode(Node):
             "ignore_errors": ignore_errors,
         }
 
-    def exec(self, prep_res: Dict[str, Any]) -> Dict[str, Any]:
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Execute the shell command.
 
         Args:
@@ -192,6 +192,7 @@ class ShellNode(Node):
 
         try:
             # Execute the command with shell=True for full shell power
+            # Security: shell=True is intentional - this is a shell node that provides full shell access
             result = subprocess.run(
                 command, shell=True, capture_output=True, text=True, input=stdin, cwd=cwd, env=full_env, timeout=timeout
             )
@@ -204,7 +205,7 @@ class ShellNode(Node):
             return {"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode, "timeout": False}
 
         except subprocess.TimeoutExpired as e:
-            logger.error(f"Command timed out after {timeout} seconds", extra={"phase": "exec", "timeout": timeout})
+            logger.exception(f"Command timed out after {timeout} seconds", extra={"phase": "exec", "timeout": timeout})
 
             # Try to capture any partial output
             stdout = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
@@ -219,10 +220,10 @@ class ShellNode(Node):
             }
 
         except Exception as e:
-            logger.error(f"Command execution failed: {e!s}", extra={"phase": "exec", "error": str(e)})
+            logger.exception("Command execution failed", extra={"phase": "exec", "error": str(e)})
             raise
 
-    def post(self, shared: dict, prep_res: Dict[str, Any], exec_res: Dict[str, Any]) -> str:
+    def post(self, shared: dict, prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results in shared store and determine action.
 
         Args:
@@ -265,7 +266,7 @@ class ShellNode(Node):
         logger.warning(f"Command failed with exit code {exit_code}", extra={"phase": "post", "exit_code": exit_code})
         return "error"
 
-    def exec_fallback(self, prep_res: Dict[str, Any], exc: Exception) -> Dict[str, Any]:
+    def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
         """Handle execution failures gracefully.
 
         Args:

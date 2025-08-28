@@ -102,6 +102,13 @@ NodeClass = getattr(module, registry[node_type]["class_name"])
 - Check `class.name` attribute first
 - Fallback to kebab-case: `ReadFileNode` → `read-file`
 
+### Virtual Nodes (MCP)
+**FACT**: MCP tools use virtual registry entries
+- Multiple registry entries can point to the same class (MCPNode)
+- Virtual entries use `"file_path": "virtual://mcp"`
+- Node names follow pattern: `mcp-{server}-{tool}`
+- Example: `mcp-github-create-issue` → MCPNode class
+
 ### Node Implementation
 **FACT**: All nodes inherit from pocketflow.BaseNode (NOT pocketflow.Node)
 ```python
@@ -128,14 +135,17 @@ def prep(self, shared):
 ```
 
 ### Natural Language Planner
-**FACT**: MVP routes EVERYTHING through natural language
+**FACT**: MVP routes MOST commands through natural language
 ```bash
-# ALL of these go to the LLM planner:
+# These go to the LLM planner:
 pflow "fix issue 1234"                           # Natural language
 pflow read-file --path=data.txt => analyze      # Still natural language!
 pflow github-get-issue --issue=1234 => llm      # Still natural language!
+
+# Exception: MCP commands go directly to CLI handlers
+pflow mcp add/list/sync/remove                   # Direct CLI execution, no planner
 ```
-- This is only for the MVP. In v2.0 we will parse the CLI directly.
+- Most commands go through planner in MVP. In v2.0 we will parse more CLI directly.
 
 **FACT**: Template variables are planner-internal
 - `${variable}` syntax is for planner use
@@ -177,6 +187,23 @@ def compile_ir_to_flow(ir_json, registry):
     # 3. Connect with >> operator
     # 4. Return pocketflow.Flow
 ```
+
+**FACT**: Compiler can inject metadata for virtual nodes
+- For MCP nodes starting with "mcp-", compiler injects:
+  - `__mcp_server__`: Server name from node type
+  - `__mcp_tool__`: Tool name from node type
+- Follows same pattern as `__registry__` injection for WorkflowExecutor
+- Parameters are copied before modification to avoid side effects
+
+### JSON Workflow Requirements
+**FACT**: JSON workflows MUST include ir_version
+- Required field: `"ir_version": "0.1.0"`
+- Without this, CLI won't recognize it as a workflow
+- Common mistake: putting name/description at root instead of in metadata
+- Node outputs are namespaced under node IDs (e.g., `node-id.result`)
+- Full schema documentation: [core-concepts/schemas.md](../core-concepts/schemas.md)
+- Working examples: [examples/core/minimal.json](../../examples/core/minimal.json)
+- User guide: [docs/json-workflows.md](../json-workflows.md)
 
 ## 4. Common Pitfalls & Solutions
 
@@ -391,14 +418,21 @@ Common assumptions to verify:
 ```
 src/pflow/
 ├── cli/main.py              # CLI entry point
+├── cli/mcp.py              # MCP CLI commands
 ├── registry/scanner.py      # Node discovery (NOT planning/scanner.py!)
 ├── registry/metadata_extractor.py  # Metadata extraction
 ├── planning/                # Natural language planner
 ├── runtime/compiler.py      # IR → pocketflow.Flow
+├── mcp/                     # MCP integration
+│   ├── manager.py          # Server configuration
+│   ├── discovery.py        # Tool discovery
+│   └── registrar.py        # Registry updates
 ├── nodes/                   # Platform nodes
 │   ├── file/               # File operations
 │   ├── github/             # GitHub operations
 │   ├── git/                # Git operations
+│   ├── mcp/                # MCP node implementation
+│   │   └── node.py        # Universal MCPNode
 │   └── llm.py              # General LLM node
 └── core/                    # Core utilities
     ├── ir_schema.py        # JSON IR schema
@@ -417,11 +451,14 @@ validate_shared_store(shared: dict) -> bool
 
 ### CLI Behavior in MVP
 ```bash
-# Everything after 'pflow' goes to planner
+# Most things after 'pflow' go to planner
 pflow <anything here is natural language>
 
-# Future v2.0 will parse CLI directly
-# MVP sends it all to LLM for interpretation
+# Exception: MCP subcommands are handled directly
+pflow mcp add/list/sync/remove  # Direct CLI handler, no planner
+
+# Future v2.0 will parse more CLI directly
+# MVP sends most commands to LLM for interpretation
 ```
 
 ### Performance Targets
