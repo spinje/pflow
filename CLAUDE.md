@@ -378,8 +378,11 @@ Next up:
 - ⏳ Task 10: Create registry CLI
 - ⏳ Task 42: Claude Code Agentic Node
 - ⏳ Task 22: Named workflow execution
+- ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
+- ⏳ Task 47: Support HTTP Transport for MCP Servers
 
 Next version (post-MVP/post-Launch):
+- ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
