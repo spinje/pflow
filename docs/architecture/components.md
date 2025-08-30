@@ -2,7 +2,7 @@
 
 > **Version**: MVP
 > **MVP Status**: ✅ Included
-> For complete MVP boundaries, see [MVP Scope](../features/mvp-scope.md)
+> For complete MVP boundaries, see [MVP Implementation Guide](../features/mvp-implementation-guide.md)
 
 This document provides a comprehensive inventory of all components and subsystems required for pflow, clearly distinguishing between MVP (v0.1) requirements and v2.0 features.
 
@@ -493,10 +493,10 @@ This inventory ensures that pflow MVP delivers on its core promise of turning CL
 
 ## See Also
 
-- **Architecture**: [MVP Scope](../features/mvp-scope.md) - Detailed MVP boundaries and rationale
+- **Architecture**: [MVP Implementation Guide](../features/mvp-implementation-guide.md) - Detailed MVP boundaries and rationale
 - **Architecture**: [Architecture Document](./architecture.md) - High-level system design
 - **Components**: [Planner](../features/planner.md) - Planning system components in detail
 - **Components**: [Runtime](../core-concepts/runtime.md) - Execution engine components in detail
 - **Components**: [Registry](../core-concepts/registry.md) - Node discovery and management components
-- **Implementation**: [Implementation Roadmap](../features/implementation-roadmap.md) - Development priorities
+- **Implementation**: [MVP Implementation Guide](../features/mvp-implementation-guide.md) - Development priorities and roadmap
 - **Next Steps**: [JSON Schemas](../core-concepts/schemas.md) - Data structures used by components

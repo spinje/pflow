@@ -3,7 +3,7 @@
 ## Navigation
 
 **Related Documents:**
-- **Core Docs**: [PRD](../prd.md) | [MVP Scope](../features/mvp-scope.md)
+- **Core Docs**: [PRD](../prd.md) | [MVP Implementation Guide](../features/mvp-implementation-guide.md)
 - **Patterns**: [Shared Store](../core-concepts/shared-store.md) | [Simple Nodes](../features/simple-nodes.md) | [CLI Runtime](../features/cli-runtime.md)
 - **Components**: [Planner](../features/planner.md) | [Runtime](../core-concepts/runtime.md) | [Registry](../core-concepts/registry.md) | [Schemas](../core-concepts/schemas.md)
 - **Implementation**: [PocketFlow Integration](./pflow-pocketflow-integration-guide.md) | [Components](./components.md)

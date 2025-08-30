@@ -2,7 +2,7 @@
 
 > **Version**: v2.0
 > **MVP Status**: ❌ Deferred to v2.0
-> For complete MVP boundaries, see [MVP Scope](./mvp-scope.md)
+> For complete MVP boundaries, see [MVP Implementation Guide](./mvp-implementation-guide.md)
 
 ## 1 · Scope
 
@@ -775,7 +775,7 @@ This specification transforms MCP integration from a parallel subsystem into a n
 ## See Also
 
 - **Architecture**: [Shared Store + Proxy Pattern](../core-concepts/shared-store.md) - Foundation for MCP wrapper node interfaces
-- **Architecture**: [MVP Scope](./mvp-scope.md) - Why MCP is deferred to v2.0
+- **Architecture**: [MVP Implementation Guide](./mvp-implementation-guide.md) - Why MCP is deferred to v2.0
 - **Patterns**: [Simple Nodes](./simple-nodes.md) - How MCP tools become simple nodes
 - **Components**: [Registry](../core-concepts/registry.md) - Unified registry integration for MCP nodes
 - **Components**: [JSON Schemas](../core-concepts/schemas.md) - MCP metadata in Flow IR

@@ -3,7 +3,7 @@
 ## Navigation
 
 **Related Documents:**
-- **Architecture**: [PRD](../prd.md) | [Architecture](../architecture/architecture.md) | [MVP Scope](../features/mvp-scope.md)
+- **Architecture**: [PRD](../prd.md) | [Architecture](../architecture/architecture.md) | [MVP Implementation Guide](../features/mvp-implementation-guide.md)
 - **Components**: [Planner](../features/planner.md) | [Runtime](./runtime.md) | [CLI Runtime](../features/cli-runtime.md)
 - **Node Design**: [Simple Nodes](../features/simple-nodes.md) | [Node Packages](../core-node-packages/llm-nodes.md)
 - **Implementation**: [PocketFlow Integration](../architecture/pflow-pocketflow-integration-guide.md)

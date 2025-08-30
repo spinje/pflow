@@ -256,8 +256,8 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### [mvp-scope.md](./features/mvp-scope.md) *[MERGED]*
-> **Note**: This document has been merged into [MVP Implementation Guide](./features/mvp-implementation-guide.md). Please refer to that document for the most up-to-date information.
+### [mvp-implementation-guide.md](./features/mvp-implementation-guide.md) *[CURRENT]*
+> **Note**: This document combines the previous MVP scope and implementation roadmap into a single comprehensive guide.
 **Purpose**: Defines focused MVP scope for AI-assisted development workflow compiler with clear boundaries.
 
 **Key Contents**:
@@ -276,7 +276,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 **When to Use**: Checking feature scope, understanding core problem, implementation planning
 
-**Status**: ✅ MVP Definition *(Merged into mvp-implementation-guide.md)*
+**Status**: ✅ MVP Definition & Implementation Guide
 
 ---
 

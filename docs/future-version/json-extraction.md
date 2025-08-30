@@ -2,7 +2,7 @@
 
 > **Version**: v3.0
 > **MVP Status**: ⏳ Future (v3.0)
-> For complete MVP boundaries, see [MVP Scope](../features/mvp-scope.md)
+> For complete MVP boundaries, see [MVP Implementation Guide](../features/mvp-implementation-guide.md)
 
 *A comprehensive specification for pflow's built-in JSON field extraction capability that eliminates the need for external tools like jq while preserving natural node interfaces.*
 
@@ -671,7 +671,7 @@ This governance document ensures both Flow IR and Node Metadata schemas align wi
 ## See Also
 
 - **Architecture**: [Shared Store + Proxy Pattern](../core-concepts/shared-store.md) - Foundation for JSON path extraction
-- **Architecture**: [MVP Scope](../features/mvp-scope.md) - Why JSON extraction is deferred to v3.0
+- **Architecture**: [MVP Implementation Guide](../features/mvp-implementation-guide.md) - Why JSON extraction is deferred to v3.0
 - **Components**: [JSON Schemas](../core-concepts/schemas.md) - Enhanced mapping syntax for extraction
 - **Components**: [Planner](../features/planner.md) - Automatic JSON structure detection
 - **Patterns**: [Simple Nodes](../features/simple-nodes.md) - Maintaining simple interfaces despite complex data

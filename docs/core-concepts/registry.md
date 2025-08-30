@@ -2,7 +2,7 @@
 
 > **Version**: MVP
 > **MVP Status**: ✅ Included
-> For complete MVP boundaries, see [MVP Scope](../features/mvp-scope.md)
+> For complete MVP boundaries, see [MVP Implementation Guide](../features/mvp-implementation-guide.md)
 
 ---
 
@@ -421,7 +421,7 @@ Execution: Runs with proven version combination
 
 ## See Also
 
-- **Architecture**: [MVP Scope](../features/mvp-scope.md) - Clear boundaries for MVP registry features
+- **Architecture**: [MVP Implementation Guide](../features/mvp-implementation-guide.md) - Clear boundaries for MVP registry features
 - **Patterns**: [Simple Nodes](../features/simple-nodes.md) - Node design philosophy and naming conventions
 - **Components**: [JSON Schemas](./schemas.md) - How registry metadata integrates with IR schemas
 - **Components**: [Planner](../features/planner.md) - How planner uses registry for node discovery

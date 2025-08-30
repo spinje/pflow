@@ -2,7 +2,7 @@
 
 > **Version**: v2.0
 > **MVP Status**: ❌ Deferred to v2.0
-> For complete MVP boundaries, see [MVP Scope](../features/mvp-scope.md)
+> For complete MVP boundaries, see [MVP Implementation Guide](../features/mvp-implementation-guide.md)
 
 ## 1. Introduction
 
@@ -356,7 +356,7 @@ This implementation provides a solid foundation for a highly useful CLI autocomp
 ## See Also
 
 - **Architecture**: [CLI Runtime](../features/cli-runtime.md) - CLI parsing and resolution that autocomplete builds on
-- **Architecture**: [MVP Scope](../features/mvp-scope.md) - Why autocomplete is deferred to v2.0
+- **Architecture**: [MVP Implementation Guide](../features/mvp-implementation-guide.md) - Why autocomplete is deferred to v2.0
 - **Components**: [Registry](../core-concepts/registry.md) - Node discovery for autocomplete suggestions
 - **Components**: [JSON Schemas](../core-concepts/schemas.md) - Metadata format used for completion hints
 - **Implementation**: [Metadata Extraction](./metadata-extraction.md) - Source of node interface information

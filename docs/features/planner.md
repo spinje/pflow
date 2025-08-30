@@ -2,7 +2,7 @@
 
 > **Version**: MVP
 > **MVP Status**: ✅ Core Component
-> For complete MVP boundaries, see [MVP Scope](./mvp-scope.md)
+> For complete MVP boundaries, see [MVP Implementation Guide](./mvp-implementation-guide.md)
 
 ## Navigation
 
@@ -159,7 +159,7 @@ Read more about the [CLI Autocomplete](../features/autocomplete.md) feature.
 ### 3.2.2 Future Enhancement: Type Shadow Store (v2.0)
 
 > **Version**: v2.0
-> **Status**: ❌ Deferred - See [MVP Scope](./mvp-scope.md#explicitly-excluded-from-mvp)
+> **Status**: ❌ Deferred - See [MVP Implementation Guide](./mvp-implementation-guide.md)
 
 A future enhancement will provide real-time type compatibility feedback during CLI composition. This feature is explicitly deferred to v2.0 to maintain MVP focus on core functionality.
 

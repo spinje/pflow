@@ -19,8 +19,7 @@ nav:
     - Schemas: core-concepts/schemas.md
     - Shared Store: core-concepts/shared-store.md
   - Features:
-    - MVP Scope: features/mvp-scope.md
-    - Implementation Roadmap: features/implementation-roadmap.md
+    - MVP Implementation Guide: features/mvp-implementation-guide.md
     - CLI Runtime: features/cli-runtime.md
     - Simple Nodes: features/simple-nodes.md
     - Shell Pipes: features/shell-pipes.md

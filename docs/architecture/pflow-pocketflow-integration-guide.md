@@ -2,7 +2,7 @@
 
 > **Version**: MVP
 > **MVP Status**: ✅ Critical Implementation Guide
-> For complete MVP boundaries, see [MVP Scope](../features/mvp-scope.md)
+> For complete MVP boundaries, see [MVP Implementation Guide](../features/mvp-implementation-guide.md)
 
 ## Navigation
 

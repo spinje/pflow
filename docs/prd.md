@@ -5,7 +5,7 @@
 ## Navigation
 
 **Related Documents:**
-- **Implementation**: [Architecture](./architecture/architecture.md) | [MVP Scope](./features/mvp-scope.md)
+- **Implementation**: [Architecture](./architecture/architecture.md) | [MVP Implementation Guide](./features/mvp-implementation-guide.md)
 - **Patterns**: [Shared Store](./core-concepts/shared-store.md) | [Simple Nodes](./features/simple-nodes.md) | [CLI Runtime](./features/cli-runtime.md)
 - **Components**: [Planner](./features/planner.md) | [Runtime](./core-concepts/runtime.md) | [Registry](./core-concepts/registry.md) | [Components](./architecture/components.md)
 - **Guides**: [PocketFlow Integration](./architecture/pflow-pocketflow-integration-guide.md) | [Workflow Analysis](./features/workflow-analysis.md)
@@ -110,7 +110,7 @@ graph TD
 
 ## 2 · Out-of-Scope for MVP
 
-For complete MVP boundaries including what's included and excluded, see [MVP Scope](./features/mvp-scope.md).
+For complete MVP boundaries including what's included and excluded, see [MVP Implementation Guide](./features/mvp-implementation-guide.md).
 
 ---
 
@@ -1594,7 +1594,7 @@ These metrics define success for pflow v0.1, emphasizing reliability, performanc
 
 ### 9.1 Core Functionality Metrics
 
-For complete MVP acceptance criteria and scope, see [MVP Scope](./features/mvp-scope.md).
+For complete MVP acceptance criteria and scope, see [MVP Implementation Guide](./features/mvp-implementation-guide.md).
 
 | Metric | Target | Measurement Method |
 |--------|--------|-------------------|
