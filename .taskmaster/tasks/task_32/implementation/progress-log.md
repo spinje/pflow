@@ -649,3 +649,23 @@ elif "nodes" in trace:
 
 ### Key Architectural Learning
 **When capturing data from external libraries, intercept at the source, not at the consumption point.** The planner's approach of intercepting the LLM library directly is more robust than trying to infer data from what's visible in shared state. This pattern should be applied consistently across the codebase for any external library instrumentation.
+
+
+## [2025-08-30 21:00] - Enhanced Metrics with Token and Model Information
+
+### Feature Request
+User requested token and model information be added to the separate planner and workflow sections, not just in the total.
+
+### Implementation
+Modified `MetricsCollector.get_summary()` in `src/pflow/core/metrics.py`:
+- Added `tokens_input`, `tokens_output`, `tokens_total` to both planner and workflow sections
+- Added `models_used` array showing unique models per section (deduplicated using set)
+- Ensured empty sections show 0 tokens and empty array (not null)
+
+### Tests Added (4 valuable tests)
+1. `test_token_separation_between_sections` - Verifies correct token attribution
+2. `test_model_deduplication_in_sections` - Ensures duplicates removed
+3. `test_multiple_models_in_same_section` - Verifies all models captured
+4. `test_empty_llm_calls_shows_zero_tokens_and_empty_models` - Graceful empty handling
+
+All 19 metrics tests passing. Users now have complete token and model visibility per phase.
