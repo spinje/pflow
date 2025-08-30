@@ -186,12 +186,8 @@ class Registry:
         # Find core nodes directory
         nodes_path = Path(pflow.nodes.__file__).parent
 
-        # Scan all subdirectories (skip __pycache__ and test directories)
-        subdirs = [
-            d
-            for d in nodes_path.iterdir()
-            if d.is_dir() and not d.name.startswith("__") and not d.name.startswith("test")
-        ]
+        # Scan all subdirectories (skip __pycache__ directories)
+        subdirs = [d for d in nodes_path.iterdir() if d.is_dir() and not d.name.startswith("__")]
 
         logger.info(f"Scanning for core nodes in: {subdirs}")
 
