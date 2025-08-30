@@ -135,10 +135,25 @@ class MetricsCollector:
         if self.planner_nodes:
             planner_llm_calls = [c for c in llm_calls if c.get("is_planner", False)]
             planner_cost = self.calculate_costs(planner_llm_calls)
+
+            # Aggregate planner tokens
+            planner_input = sum(call.get("input_tokens", 0) for call in planner_llm_calls if call)
+            planner_output = sum(call.get("output_tokens", 0) for call in planner_llm_calls if call)
+            planner_total = planner_input + planner_output
+
+            # Extract unique models used in planner
+            planner_models = list({
+                call.get("model", "unknown") for call in planner_llm_calls if call and call.get("model")
+            })
+
             metrics["planner"] = {
                 "duration_ms": round(planner_duration, 2) if planner_duration else None,
                 "nodes_executed": len(self.planner_nodes),
                 "cost_usd": planner_cost,
+                "tokens_input": planner_input,
+                "tokens_output": planner_output,
+                "tokens_total": planner_total,
+                "models_used": planner_models,
                 "node_timings": self.planner_nodes,
             }
 
@@ -146,10 +161,25 @@ class MetricsCollector:
         if self.workflow_nodes:
             workflow_llm_calls = [c for c in llm_calls if not c.get("is_planner", False)]
             workflow_cost = self.calculate_costs(workflow_llm_calls)
+
+            # Aggregate workflow tokens
+            workflow_input = sum(call.get("input_tokens", 0) for call in workflow_llm_calls if call)
+            workflow_output = sum(call.get("output_tokens", 0) for call in workflow_llm_calls if call)
+            workflow_total = workflow_input + workflow_output
+
+            # Extract unique models used in workflow
+            workflow_models = list({
+                call.get("model", "unknown") for call in workflow_llm_calls if call and call.get("model")
+            })
+
             metrics["workflow"] = {
                 "duration_ms": round(workflow_duration, 2) if workflow_duration else None,
                 "nodes_executed": len(self.workflow_nodes),
                 "cost_usd": workflow_cost,
+                "tokens_input": workflow_input,
+                "tokens_output": workflow_output,
+                "tokens_total": workflow_total,
+                "models_used": workflow_models,
                 "node_timings": self.workflow_nodes,
             }
 

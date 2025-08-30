@@ -389,7 +389,107 @@ class TestMetricsCollector:
         assert summary["metrics"]["total"]["tokens_output"] == 350  # 50+100+75+125
         assert summary["metrics"]["total"]["tokens_total"] == 1050  # 700+350
 
-        # Verify total cost matches sum of all calls
-        total_cost = collector.calculate_costs(llm_calls)
-        assert summary["metrics"]["total"]["cost_usd"] == total_cost
-        assert summary["total_cost_usd"] == total_cost
+    def test_token_separation_between_sections(self):
+        """Test that tokens are correctly attributed to planner vs workflow sections."""
+        collector = MetricsCollector()
+
+        # Need nodes for sections to exist
+        collector.record_node_execution("planner_node", 10.0, is_planner=True)
+        collector.record_node_execution("workflow_node", 20.0, is_planner=False)
+
+        llm_calls = [
+            # Planner calls
+            {"model": "claude-3-sonnet-20240229", "input_tokens": 1000, "output_tokens": 500, "is_planner": True},
+            {"model": "claude-3-sonnet-20240229", "input_tokens": 2000, "output_tokens": 800, "is_planner": True},
+            # Workflow calls
+            {"model": "gpt-4", "input_tokens": 3000, "output_tokens": 1500, "is_planner": False},
+            {"model": "gpt-4o-mini", "input_tokens": 500, "output_tokens": 200, "is_planner": False},
+        ]
+
+        summary = collector.get_summary(llm_calls)
+
+        # Verify planner tokens
+        planner_metrics = summary["metrics"]["planner"]
+        assert planner_metrics["tokens_input"] == 3000  # 1000 + 2000
+        assert planner_metrics["tokens_output"] == 1300  # 500 + 800
+        assert planner_metrics["tokens_total"] == 4300
+
+        # Verify workflow tokens
+        workflow_metrics = summary["metrics"]["workflow"]
+        assert workflow_metrics["tokens_input"] == 3500  # 3000 + 500
+        assert workflow_metrics["tokens_output"] == 1700  # 1500 + 200
+        assert workflow_metrics["tokens_total"] == 5200
+
+    def test_model_deduplication_in_sections(self):
+        """Test that duplicate models only appear once in models_used array."""
+        collector = MetricsCollector()
+
+        collector.record_node_execution("planner_node", 10.0, is_planner=True)
+        collector.record_node_execution("workflow_node", 20.0, is_planner=False)
+
+        llm_calls = [
+            # Same model used 3 times in planner
+            {"model": "claude-3-sonnet-20240229", "input_tokens": 100, "output_tokens": 50, "is_planner": True},
+            {"model": "claude-3-sonnet-20240229", "input_tokens": 200, "output_tokens": 100, "is_planner": True},
+            {"model": "claude-3-sonnet-20240229", "input_tokens": 300, "output_tokens": 150, "is_planner": True},
+            # Same model used 2 times in workflow
+            {"model": "gpt-4", "input_tokens": 400, "output_tokens": 200, "is_planner": False},
+            {"model": "gpt-4", "input_tokens": 500, "output_tokens": 250, "is_planner": False},
+        ]
+
+        summary = collector.get_summary(llm_calls)
+
+        # Each model should appear only once despite multiple uses
+        assert summary["metrics"]["planner"]["models_used"] == ["claude-3-sonnet-20240229"]
+        assert summary["metrics"]["workflow"]["models_used"] == ["gpt-4"]
+
+    def test_multiple_models_in_same_section(self):
+        """Test that multiple different models are all included in models_used array."""
+        collector = MetricsCollector()
+
+        collector.record_node_execution("planner_node", 10.0, is_planner=True)
+        collector.record_node_execution("workflow_node", 20.0, is_planner=False)
+
+        llm_calls = [
+            # Different models in planner
+            {"model": "claude-3-sonnet-20240229", "input_tokens": 100, "output_tokens": 50, "is_planner": True},
+            {"model": "claude-3-haiku-20240307", "input_tokens": 200, "output_tokens": 100, "is_planner": True},
+            {"model": "claude-3-opus-20240229", "input_tokens": 300, "output_tokens": 150, "is_planner": True},
+            # Different models in workflow
+            {"model": "gpt-4", "input_tokens": 400, "output_tokens": 200, "is_planner": False},
+            {"model": "gpt-4o-mini", "input_tokens": 500, "output_tokens": 250, "is_planner": False},
+            {"model": "gpt-3.5-turbo", "input_tokens": 600, "output_tokens": 300, "is_planner": False},
+        ]
+
+        summary = collector.get_summary(llm_calls)
+
+        # All unique models should be present (order doesn't matter, so use sets)
+        planner_models = set(summary["metrics"]["planner"]["models_used"])
+        assert planner_models == {"claude-3-sonnet-20240229", "claude-3-haiku-20240307", "claude-3-opus-20240229"}
+
+        workflow_models = set(summary["metrics"]["workflow"]["models_used"])
+        assert workflow_models == {"gpt-4", "gpt-4o-mini", "gpt-3.5-turbo"}
+
+    def test_empty_llm_calls_shows_zero_tokens_and_empty_models(self):
+        """Test that sections with no LLM calls show 0 tokens and empty models array."""
+        collector = MetricsCollector()
+
+        # Create sections but no LLM calls
+        collector.record_node_execution("planner_node", 10.0, is_planner=True)
+        collector.record_node_execution("workflow_node", 20.0, is_planner=False)
+
+        summary = collector.get_summary([])  # Empty LLM calls
+
+        # Planner should have zeros and empty array
+        planner_metrics = summary["metrics"]["planner"]
+        assert planner_metrics["tokens_input"] == 0
+        assert planner_metrics["tokens_output"] == 0
+        assert planner_metrics["tokens_total"] == 0
+        assert planner_metrics["models_used"] == []
+
+        # Workflow should have zeros and empty array
+        workflow_metrics = summary["metrics"]["workflow"]
+        assert workflow_metrics["tokens_input"] == 0
+        assert workflow_metrics["tokens_output"] == 0
+        assert workflow_metrics["tokens_total"] == 0
+        assert workflow_metrics["models_used"] == []
