@@ -111,7 +111,7 @@ class TestWorkflowTraceCollector:
 
     def test_shared_store_filtering_large_strings(self, collector):
         """Test that large strings in shared store are truncated."""
-        large_string = "x" * 2000  # String longer than 1000 chars
+        large_string = "x" * 11000  # String longer than 10000 chars
         shared_before = {}
         shared_after = {"large_data": large_string}
 
@@ -126,7 +126,7 @@ class TestWorkflowTraceCollector:
 
         filtered_value = collector.events[0]["shared_after"]["large_data"]
         assert filtered_value.endswith("... [truncated]")
-        assert len(filtered_value) == 1000 + len("... [truncated]")
+        assert len(filtered_value) == 10000 + len("... [truncated]")
 
     def test_shared_store_filtering_binary_data(self, collector):
         """Test that binary data is replaced with placeholder."""
@@ -240,7 +240,7 @@ class TestWorkflowTraceCollector:
         assert event["llm_response"] == "Short LLM response"
 
         # Test long response (should be truncated)
-        long_response = "x" * 3000
+        long_response = "x" * 21000  # Longer than 20000 chars
         shared_after_long = {"response": long_response}
 
         collector.record_node_execution(
@@ -255,7 +255,7 @@ class TestWorkflowTraceCollector:
         event = collector.events[1]
         assert "llm_response_truncated" in event
         assert event["llm_response_truncated"].endswith("... [truncated]")
-        assert len(event["llm_response_truncated"]) == 2000 + len("... [truncated]")
+        assert len(event["llm_response_truncated"]) == 20000 + len("... [truncated]")
 
     def test_template_resolutions_parameter(self, collector):
         """Test that template_resolutions are stored when provided."""
@@ -543,9 +543,9 @@ class TestWorkflowTraceCollector:
         assert filtered_value == "<large dict truncated>"
 
     def test_llm_calls_list_truncation(self, collector):
-        """Test that __llm_calls__ list is truncated to 10 items."""
-        # Create a list with more than 10 items
-        llm_calls = [f"call_{i}" for i in range(20)]
+        """Test that __llm_calls__ list is truncated to 100 items."""
+        # Create a list with more than 100 items
+        llm_calls = [f"call_{i}" for i in range(150)]
 
         shared_before = {}
         shared_after = {"__llm_calls__": llm_calls}
@@ -560,8 +560,8 @@ class TestWorkflowTraceCollector:
         )
 
         filtered_calls = collector.events[0]["shared_after"]["__llm_calls__"]
-        assert len(filtered_calls) == 10
-        assert filtered_calls == [f"call_{i}" for i in range(10)]
+        assert len(filtered_calls) == 100
+        assert filtered_calls == [f"call_{i}" for i in range(100)]
 
     def test_unhashable_type_mutation_detection(self, collector):
         """Test mutation detection with unhashable types like lists."""
