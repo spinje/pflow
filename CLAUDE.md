@@ -124,7 +124,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - `llm` - Simon Willison's LLM CLI integration and inspiration
 
 **Development Tools**:
-- `uv` - Fast Python package manager (ALWAYS use `uv pip` instead of `pip`)
+- `uv` - Fast Python package manager (ALWAYS use `uv pip` instead of `pip`, `uv python -m pytest` instead of `python -m pytest` etc.)
 - `pytest` - Testing framework
 - `mypy` - Type checking
 - `ruff` - Linting and formatting
