@@ -21,7 +21,7 @@ def test_hello_workflow_execution(tmp_path):
     registry = Registry()
     if not registry.registry_path.exists():
         # Populate registry for tests
-        src_path = Path(__file__).parent.parent / "src"
+        src_path = Path(__file__).parent.parent.parent / "src"
         nodes_dir = src_path / "pflow" / "nodes"
         if nodes_dir.exists():
             scan_results = scan_for_nodes([nodes_dir])
@@ -109,7 +109,7 @@ def test_invalid_workflow_json(tmp_path):
     # Ensure registry exists
     registry = Registry()
     if not registry.registry_path.exists():
-        src_path = Path(__file__).parent.parent / "src"
+        src_path = Path(__file__).parent.parent.parent / "src"
         nodes_dir = src_path / "pflow" / "nodes"
         if nodes_dir.exists():
             scan_results = scan_for_nodes([nodes_dir])
@@ -137,7 +137,7 @@ def test_invalid_workflow_validation(tmp_path):
     # Ensure registry exists
     registry = Registry()
     if not registry.registry_path.exists():
-        src_path = Path(__file__).parent.parent / "src"
+        src_path = Path(__file__).parent.parent.parent / "src"
         nodes_dir = src_path / "pflow" / "nodes"
         if nodes_dir.exists():
             scan_results = scan_for_nodes([nodes_dir])

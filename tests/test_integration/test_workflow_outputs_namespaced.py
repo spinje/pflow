@@ -10,9 +10,38 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import main as cli
+from pflow.registry import Registry, scan_for_nodes
+
+
+@pytest.fixture(autouse=True)
+def ensure_echo_node_registered():
+    """Ensure the echo node is registered in the registry.
+
+    The echo node is in the test/ directory which is excluded from auto-discovery,
+    so we need to manually register it for these tests.
+    """
+    registry = Registry()
+
+    # Load current registry
+    nodes = registry.load()
+
+    # If echo node is not registered, add it
+    if "echo" not in nodes:
+        # Find the test nodes directory
+        src_path = Path(__file__).parent.parent.parent / "src"
+        test_nodes_dir = src_path / "pflow" / "nodes" / "test"
+
+        if test_nodes_dir.exists():
+            # Scan the test directory for nodes
+            scan_results = scan_for_nodes([test_nodes_dir])
+
+            # Update registry with test nodes
+            if scan_results:
+                registry.update_from_scanner(scan_results)
 
 
 class TestWorkflowOutputsNamespaced:

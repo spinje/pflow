@@ -7,6 +7,7 @@ compilation logic to be added in future subtasks.
 """
 
 import importlib
+import importlib.util
 import json
 import logging
 from typing import Any, Optional, Union, cast
@@ -155,16 +156,41 @@ def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
 
     # Step 2: Import the module
     logger.debug("Importing module", extra={"phase": "node_import", "module_path": module_path})
-    try:
-        module = importlib.import_module(module_path)
-    except ImportError as e:
-        raise CompilationError(
-            f"Failed to import module '{module_path}'",
-            phase="node_import",
-            node_type=node_type,
-            details={"module_path": module_path, "import_error": str(e)},
-            suggestion=f"Ensure the module '{module_path}' exists and is on the Python path",
-        ) from e
+
+    # Check if this is a user node that needs special import handling
+    node_type_info = node_metadata.get("type", "core")
+    file_path = node_metadata.get("file_path", "")
+
+    if node_type_info == "user" and file_path and file_path != "virtual://mcp":
+        # User node: Import directly from file path
+        logger.debug(f"Importing user node from file: {file_path}")
+        try:
+            spec = importlib.util.spec_from_file_location(module_path, file_path)
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+            else:
+                raise ImportError(f"Could not load spec from {file_path}")
+        except Exception as e:
+            raise CompilationError(
+                f"Failed to import user node from '{file_path}'",
+                phase="node_import",
+                node_type=node_type,
+                details={"file_path": file_path, "import_error": str(e)},
+                suggestion=f"Ensure the file '{file_path}' exists and contains valid Python code",
+            ) from e
+    else:
+        # Core/MCP node: Use standard import
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as e:
+            raise CompilationError(
+                f"Failed to import module '{module_path}'",
+                phase="node_import",
+                node_type=node_type,
+                details={"module_path": module_path, "import_error": str(e)},
+                suggestion=f"Ensure the module '{module_path}' exists and is on the Python path",
+            ) from e
 
     # Step 3: Get the class from the module
     logger.debug("Extracting class from module", extra={"phase": "node_import", "class_name": class_name})

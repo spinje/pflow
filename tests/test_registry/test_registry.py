@@ -53,14 +53,37 @@ class TestRegistryDataPersistence:
             assert "read-file" in loaded_data
 
     def test_handles_missing_registry_file(self):
-        """Test that missing registry files are handled gracefully."""
+        """Test that missing registry files trigger auto-discovery of core nodes.
+
+        FIX HISTORY:
+        - 2025-08-29: Updated test to reflect new auto-discovery behavior
+          Registry now auto-discovers core nodes when file doesn't exist
+          instead of returning empty dict
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             registry_path = Path(tmpdir) / "missing.json"
             registry = Registry(registry_path)
 
-            # Should return empty dict, not crash
+            # Should auto-discover core nodes when file doesn't exist
             result = registry.load()
-            assert result == {}
+
+            # Verify core nodes were discovered
+            assert len(result) > 0, "Should have discovered core nodes"
+
+            # Check for expected core nodes
+            expected_core_nodes = ["read-file", "write-file", "llm", "shell"]
+            for node_name in expected_core_nodes:
+                assert node_name in result, f"Core node '{node_name}' should be discovered"
+
+            # Verify nodes have required metadata
+            for node_name, node_data in result.items():
+                assert "module" in node_data, f"Node {node_name} missing 'module'"
+                assert "class_name" in node_data, f"Node {node_name} missing 'class_name'"
+                assert "type" in node_data, f"Node {node_name} missing 'type'"
+                assert node_data["type"] == "core", f"Node {node_name} should be marked as 'core'"
+
+            # Verify registry file was created
+            assert registry_path.exists(), "Registry file should be created after auto-discovery"
 
     def test_handles_empty_registry_file(self):
         """Test that empty registry files are handled gracefully."""

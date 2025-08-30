@@ -1,23 +1,24 @@
-"""Wrapper to route between workflow and MCP commands.
+"""Wrapper to route between workflow and subcommands (MCP, Registry).
 
 PROBLEM: Click groups with catch-all arguments don't work for subcommands.
 When @click.argument("workflow", nargs=-1) is on a @click.group(), it consumes
-ALL positional arguments including subcommand names like "mcp", preventing
+ALL positional arguments including subcommand names like "mcp" or "registry", preventing
 Click from recognizing them as subcommands.
 
-SOLUTION: Pre-parse sys.argv to detect "mcp" BEFORE Click processes arguments.
-If found, route directly to MCP command group. Otherwise, run workflow command.
-This allows both "pflow mcp list" and "pflow 'create a poem'" to work correctly.
+SOLUTION: Pre-parse sys.argv to detect known subcommands BEFORE Click processes arguments.
+If found, route directly to appropriate command group. Otherwise, run workflow command.
+This allows "pflow mcp list", "pflow registry list", and "pflow 'create a poem'" to all work correctly.
 """
 
 import sys
 
 
 def cli_main() -> None:
-    """Main entry point that routes between workflow execution and MCP commands."""
+    """Main entry point that routes between workflow execution and subcommands."""
     # Import here to avoid circular imports
     from .main import workflow_command
     from .mcp import mcp
+    from .registry import registry
 
     # Pre-parse to find first non-option argument before Click consumes it
     first_arg = None
@@ -37,6 +38,17 @@ def cli_main() -> None:
             mcp()
         finally:
             sys.argv = original_argv
+
+    elif first_arg == "registry":
+        # Route to Registry group
+        original_argv = sys.argv[:]
+        try:
+            registry_index = sys.argv.index("registry")
+            sys.argv = [sys.argv[0]] + sys.argv[registry_index + 1 :]
+            registry()
+        finally:
+            sys.argv = original_argv
+
     else:
         # Run the workflow command (default behavior)
         workflow_command()

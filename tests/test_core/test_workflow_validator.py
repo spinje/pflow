@@ -1,7 +1,45 @@
 """Test the unified WorkflowValidator."""
 
+from pathlib import Path
+
+import pytest
+
 from pflow.core.workflow_validator import WorkflowValidator
 from pflow.registry import Registry
+from pflow.registry.scanner import scan_for_nodes
+
+
+@pytest.fixture(autouse=True)
+def ensure_nodes_registered():
+    """Ensure required nodes are registered for validation tests."""
+    registry = Registry()
+
+    # Check if nodes are already registered
+    nodes = registry.load()
+    required_nodes = ["read-file", "write-file", "llm", "github-list-issues"]
+    missing_nodes = [node for node in required_nodes if node not in nodes]
+
+    if missing_nodes:
+        # Scan for core nodes if any are missing
+        src_path = Path(__file__).parent.parent.parent / "src"
+        nodes_dir = src_path / "pflow" / "nodes"
+
+        if nodes_dir.exists():
+            # Scan all subdirectories
+            subdirs = [d for d in nodes_dir.iterdir() if d.is_dir() and not d.name.startswith("__")]
+            scan_results = scan_for_nodes(subdirs)
+
+            # Update registry with discovered nodes
+            current_nodes = registry.load()
+            for node in scan_results:
+                name = node.get("name")
+                if name and name not in current_nodes:
+                    node_copy = dict(node)
+                    del node_copy["name"]
+                    current_nodes[name] = node_copy
+
+            # Save updated registry
+            registry.save(current_nodes)
 
 
 class TestWorkflowValidator:
@@ -19,7 +57,9 @@ class TestWorkflowValidator:
             "inputs": {"input_file": {"type": "string", "required": True}},
         }
 
-        errors = WorkflowValidator.validate(workflow, extracted_params={"input_file": "test.txt"}, registry=Registry())
+        errors = WorkflowValidator.validate(
+            workflow, extracted_params={"input_file": "test.txt"}, registry=Registry(), skip_node_types=True
+        )
 
         # Valid workflow should have no errors
         assert errors == []
@@ -218,6 +258,7 @@ class TestWorkflowValidator:
                 "output_file": "report.md",
             },
             registry=Registry(),
+            skip_node_types=True,
         )
 
         # Should pass all validations

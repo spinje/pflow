@@ -161,6 +161,73 @@ def _scan_module_for_nodes(module: Any, module_path: str, py_file: Path, BaseNod
     return nodes
 
 
+def _prepare_syspaths(directories: list[Path]) -> list[Path]:
+    """Prepare sys.path entries for scanning.
+
+    Args:
+        directories: List of directories to scan
+
+    Returns:
+        List of paths to add to sys.path
+    """
+    project_root = Path(__file__).parent.parent.parent.parent
+    pocketflow_path = project_root / "pocketflow"
+
+    syspaths = [project_root]
+    if pocketflow_path.exists():
+        syspaths.append(pocketflow_path)
+
+    # Add src directory to sys.path so Python can find the pflow package
+    src_path = project_root / "src"
+    if src_path.exists():
+        syspaths.append(src_path)
+
+    # Add user directories to sys.path for scanning user nodes
+    for directory in directories:
+        # Only add non-pflow directories (user node directories)
+        if directory.exists() and directory not in syspaths and "src/pflow" not in str(directory):
+            syspaths.append(directory)
+
+    return syspaths
+
+
+def _scan_directory_for_nodes(directory: Path, BaseNode: type) -> list[dict[str, Any]]:
+    """Scan a single directory for nodes.
+
+    Args:
+        directory: Directory to scan
+        BaseNode: The BaseNode class to check inheritance from
+
+    Returns:
+        List of discovered node metadata
+    """
+    discovered_nodes: list[dict[str, Any]] = []
+
+    if not directory.exists():
+        logger.warning(f"Directory does not exist: {directory}")
+        return discovered_nodes
+
+    # Find all Python files
+    for py_file in directory.rglob("*.py"):
+        if _should_skip_file(py_file):
+            continue
+
+        module_path = _calculate_module_path(py_file, directory)
+
+        # Try to import the module
+        try:
+            logger.debug(f"Attempting to import: {module_path}")
+            module = importlib.import_module(module_path)
+        except Exception as e:
+            logger.warning(f"Failed to import {module_path}: {e}")
+            continue
+
+        # Inspect module for BaseNode subclasses
+        discovered_nodes.extend(_scan_module_for_nodes(module, module_path, py_file, BaseNode))
+
+    return discovered_nodes
+
+
 def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
     """
     Scan directories for Python files containing BaseNode subclasses.
@@ -176,20 +243,8 @@ def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
     Returns:
         List of dictionaries containing node metadata
     """
-    discovered_nodes = []
-
-    # Prepare paths for sys.path modification
-    project_root = Path(__file__).parent.parent.parent.parent
-    pocketflow_path = project_root / "pocketflow"
-
-    syspaths = [project_root]
-    if pocketflow_path.exists():
-        syspaths.append(pocketflow_path)
-
-    # Add src directory to sys.path so Python can find the pflow package
-    src_path = project_root / "src"
-    if src_path.exists():
-        syspaths.append(src_path)
+    discovered_nodes: list[dict[str, Any]] = []
+    syspaths = _prepare_syspaths(directories)
 
     with temporary_syspath(syspaths):
         # Import pocketflow to get BaseNode reference
@@ -201,27 +256,8 @@ def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
             logger.exception("Failed to import pocketflow")
             return []
 
+        # Scan each directory
         for directory in directories:
-            if not directory.exists():
-                logger.warning(f"Directory does not exist: {directory}")
-                continue
-
-            # Find all Python files
-            for py_file in directory.rglob("*.py"):
-                if _should_skip_file(py_file):
-                    continue
-
-                module_path = _calculate_module_path(py_file, directory)
-
-                # Try to import the module
-                try:
-                    logger.debug(f"Attempting to import: {module_path}")
-                    module = importlib.import_module(module_path)
-                except Exception as e:
-                    logger.warning(f"Failed to import {module_path}: {e}")
-                    continue
-
-                # Inspect module for BaseNode subclasses
-                discovered_nodes.extend(_scan_module_for_nodes(module, module_path, py_file, BaseNode))
+            discovered_nodes.extend(_scan_directory_for_nodes(directory, BaseNode))
 
     return discovered_nodes

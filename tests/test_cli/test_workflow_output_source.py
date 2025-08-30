@@ -16,12 +16,13 @@ LESSONS LEARNED:
 """
 
 import json
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import main
+from pocketflow import BaseNode
 
 
 class TestWorkflowOutputSourceIntegration:
@@ -35,7 +36,7 @@ class TestWorkflowOutputSourceIntegration:
         to match actual echo node behavior.
         """
 
-        class MockEchoNode(Mock):
+        class MockEchoNode(BaseNode):
             def __init__(self):
                 super().__init__()
                 self.params = {}
@@ -62,9 +63,30 @@ class TestWorkflowOutputSourceIntegration:
         registry = MagicMock()
         registry.get_node.return_value = echo_node_class
         registry.list_nodes.return_value = [{"id": "echo", "type": "echo", "category": "test"}]
+
+        # Add load() method that returns node metadata
+        registry.load.return_value = {
+            "echo": {
+                "type": "echo",
+                "module": "test_module",
+                "class_name": "MockEchoNode",
+                "params": {},
+                "interface": {"inputs": [], "outputs": ["echo", "metadata"]},
+            }
+        }
+
+        # Add get_nodes_metadata method
+        registry.get_nodes_metadata.return_value = {
+            "echo": {"type": "echo", "params": {}, "interface": {"inputs": [], "outputs": ["echo", "metadata"]}}
+        }
+
+        # Add registry_path attribute
+        registry.registry_path = MagicMock()
+        registry.registry_path.exists.return_value = True
+
         return registry
 
-    def test_workflow_with_namespacing_and_source_outputs_json(self, mock_registry, tmp_path):
+    def test_workflow_with_namespacing_and_source_outputs_json(self, mock_registry, echo_node_class, tmp_path):
         """Test complete workflow execution with namespacing and source outputs in JSON format."""
         # Create workflow with outputs using source field
         workflow = {
@@ -84,8 +106,12 @@ class TestWorkflowOutputSourceIntegration:
 
         runner = CliRunner()
 
-        with patch("pflow.registry.registry.Registry") as mock_registry_class:
+        with (
+            patch("pflow.cli.main.Registry") as mock_registry_class,
+            patch("pflow.runtime.compiler.import_node_class") as mock_import,
+        ):
             mock_registry_class.return_value = mock_registry
+            mock_import.return_value = echo_node_class
 
             # Run workflow with JSON output
             result = runner.invoke(main, ["--output-format", "json"], input=json.dumps(workflow))
@@ -98,7 +124,7 @@ class TestWorkflowOutputSourceIntegration:
             assert output["message2"] == "world"
             assert output["metadata"] == {"original_message": "hello", "count": 1, "modified": False}
 
-    def test_workflow_with_namespacing_and_source_outputs_text(self, mock_registry):
+    def test_workflow_with_namespacing_and_source_outputs_text(self, mock_registry, echo_node_class):
         """Test complete workflow execution with namespacing and source outputs in text format."""
         # Create workflow with outputs using source field
         workflow = {
@@ -111,8 +137,12 @@ class TestWorkflowOutputSourceIntegration:
 
         runner = CliRunner()
 
-        with patch("pflow.registry.registry.Registry") as mock_registry_class:
+        with (
+            patch("pflow.cli.main.Registry") as mock_registry_class,
+            patch("pflow.runtime.compiler.import_node_class") as mock_import,
+        ):
             mock_registry_class.return_value = mock_registry
+            mock_import.return_value = echo_node_class
 
             # Run workflow with text output (default)
             result = runner.invoke(main, [], input=json.dumps(workflow))
@@ -121,7 +151,7 @@ class TestWorkflowOutputSourceIntegration:
             # Text output should contain the resolved value
             assert "test message" in result.output
 
-    def test_backward_compatibility_outputs_without_source(self, mock_registry):
+    def test_backward_compatibility_outputs_without_source(self, mock_registry, echo_node_class):
         """Test that outputs without source field still work (backward compatibility)."""
         # Create workflow with outputs but no source field
         workflow = {
@@ -139,8 +169,12 @@ class TestWorkflowOutputSourceIntegration:
 
         runner = CliRunner()
 
-        with patch("pflow.registry.registry.Registry") as mock_registry_class:
+        with (
+            patch("pflow.cli.main.Registry") as mock_registry_class,
+            patch("pflow.runtime.compiler.import_node_class") as mock_import,
+        ):
             mock_registry_class.return_value = mock_registry
+            mock_import.return_value = echo_node_class
 
             # Run workflow
             result = runner.invoke(main, ["--output-format", "json"], input=json.dumps(workflow))
@@ -148,7 +182,7 @@ class TestWorkflowOutputSourceIntegration:
             assert result.exit_code == 0
             # Workflow should still execute successfully
 
-    def test_multiple_outputs_from_different_nodes(self, mock_registry):
+    def test_multiple_outputs_from_different_nodes(self, mock_registry, echo_node_class):
         """Test workflow with multiple outputs from different nodes."""
         workflow = {
             "ir_version": "0.1.0",
@@ -169,8 +203,12 @@ class TestWorkflowOutputSourceIntegration:
 
         runner = CliRunner()
 
-        with patch("pflow.registry.registry.Registry") as mock_registry_class:
+        with (
+            patch("pflow.cli.main.Registry") as mock_registry_class,
+            patch("pflow.runtime.compiler.import_node_class") as mock_import,
+        ):
             mock_registry_class.return_value = mock_registry
+            mock_import.return_value = echo_node_class
 
             result = runner.invoke(main, ["--output-format", "json"], input=json.dumps(workflow))
 
@@ -184,7 +222,7 @@ class TestWorkflowOutputSourceIntegration:
             assert output["all_metadata"]["count"] == 1
             assert output["all_metadata"]["original_message"] == "from B"
 
-    def test_nested_value_resolution(self, mock_registry):
+    def test_nested_value_resolution(self, mock_registry, echo_node_class):
         """Test resolution of nested values in outputs.
 
         Since the nested structure test is complex and the mock may not fully
@@ -205,8 +243,12 @@ class TestWorkflowOutputSourceIntegration:
 
         runner = CliRunner()
 
-        with patch("pflow.registry.registry.Registry") as mock_registry_class:
+        with (
+            patch("pflow.cli.main.Registry") as mock_registry_class,
+            patch("pflow.runtime.compiler.import_node_class") as mock_import,
+        ):
             mock_registry_class.return_value = mock_registry
+            mock_import.return_value = echo_node_class
 
             result = runner.invoke(main, ["--output-format", "json"], input=json.dumps(workflow))
 
@@ -215,7 +257,7 @@ class TestWorkflowOutputSourceIntegration:
             assert output["nested_message"] == "test"
             assert output["nested_count"] == 1
 
-    def test_verbose_mode_shows_population_messages(self, mock_registry):
+    def test_verbose_mode_shows_population_messages(self, mock_registry, echo_node_class):
         """Test that verbose mode shows output population messages.
 
         Note: In verbose mode with JSON output, the verbose messages and JSON are mixed
@@ -231,8 +273,12 @@ class TestWorkflowOutputSourceIntegration:
 
         runner = CliRunner()
 
-        with patch("pflow.registry.registry.Registry") as mock_registry_class:
+        with (
+            patch("pflow.cli.main.Registry") as mock_registry_class,
+            patch("pflow.runtime.compiler.import_node_class") as mock_import,
+        ):
             mock_registry_class.return_value = mock_registry
+            mock_import.return_value = echo_node_class
 
             result = runner.invoke(main, ["--verbose", "--output-format", "json"], input=json.dumps(workflow))
 
@@ -259,7 +305,7 @@ class TestWorkflowOutputSourceIntegration:
             # Note: Verbose messages about output population no longer appear
             # since output population moved to runtime layer
 
-    def test_cli_inputs_with_namespaced_outputs(self, mock_registry):
+    def test_cli_inputs_with_namespaced_outputs(self, mock_registry, echo_node_class):
         """Test that outputs work correctly with namespaced nodes.
 
         This test verifies that parameters passed directly to nodes work with
@@ -281,8 +327,12 @@ class TestWorkflowOutputSourceIntegration:
 
         runner = CliRunner()
 
-        with patch("pflow.registry.registry.Registry") as mock_registry_class:
+        with (
+            patch("pflow.cli.main.Registry") as mock_registry_class,
+            patch("pflow.runtime.compiler.import_node_class") as mock_import,
+        ):
             mock_registry_class.return_value = mock_registry
+            mock_import.return_value = echo_node_class
 
             # Run workflow
             result = runner.invoke(main, ["--output-format", "json"], input=json.dumps(workflow))
@@ -291,7 +341,7 @@ class TestWorkflowOutputSourceIntegration:
             output = json.loads(result.output)
             assert output["processed"] == "test input"
 
-    def test_output_source_with_mixed_formats(self, mock_registry):
+    def test_output_source_with_mixed_formats(self, mock_registry, echo_node_class):
         """Test that different source formats all work correctly."""
         workflow = {
             "ir_version": "0.1.0",
@@ -307,8 +357,12 @@ class TestWorkflowOutputSourceIntegration:
 
         runner = CliRunner()
 
-        with patch("pflow.registry.registry.Registry") as mock_registry_class:
+        with (
+            patch("pflow.cli.main.Registry") as mock_registry_class,
+            patch("pflow.runtime.compiler.import_node_class") as mock_import,
+        ):
             mock_registry_class.return_value = mock_registry
+            mock_import.return_value = echo_node_class
 
             result = runner.invoke(main, ["--output-format", "json"], input=json.dumps(workflow))
 

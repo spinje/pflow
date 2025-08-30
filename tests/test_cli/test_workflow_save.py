@@ -1,11 +1,40 @@
 """Tests for workflow save functionality in CLI."""
 
 import json
+from pathlib import Path
 
 import click.testing
 import pytest
 
 from pflow.cli import main
+from pflow.registry import Registry, scan_for_nodes
+
+
+@pytest.fixture(autouse=True)
+def ensure_write_file_node_registered() -> None:
+    """Ensure the write-file node is registered in the registry.
+
+    The tests use write-file node which needs to be available in the registry.
+    This fixture ensures it's registered before running tests.
+    """
+    registry = Registry()
+
+    # Load current registry
+    nodes = registry.load()
+
+    # If write-file node is not registered, add it
+    if "write-file" not in nodes:
+        # Find the file nodes directory
+        src_path = Path(__file__).parent.parent.parent / "src"
+        file_nodes_dir = src_path / "pflow" / "nodes" / "file"
+
+        if file_nodes_dir.exists():
+            # Scan the file directory for nodes
+            scan_results = scan_for_nodes([file_nodes_dir])
+
+            # Update registry with file nodes
+            if scan_results:
+                registry.update_from_scanner(scan_results)
 
 
 class TestWorkflowSaveCLI:

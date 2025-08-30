@@ -4,14 +4,78 @@ These tests verify the critical behavior that outputs are populated
 on success but NOT on failure, and that the wrapping happens correctly.
 """
 
+import tempfile
+from pathlib import Path
+
+import pytest
+
 from pflow.registry import Registry
 from pflow.runtime.compiler import compile_ir_to_flow
+
+
+@pytest.fixture
+def registry_with_echo():
+    """Create a test registry with echo node registered."""
+    # Create a temporary registry file
+    registry_dir = tempfile.mkdtemp()
+    registry_path = Path(registry_dir) / "test_registry.json"
+    registry = Registry(registry_path)
+
+    # Register the echo node
+    echo_metadata = {
+        "echo": {
+            "module": "pflow.nodes.test.echo",
+            "class_name": "EchoNode",
+            "file_path": "src/pflow/nodes/test/echo.py",
+            "docstring": "Simple echo node for testing workflows.",
+            "interface": {
+                "description": "Simple echo node for testing workflows.",
+                "inputs": [
+                    {"name": "message", "type": "str", "description": "Message to echo", "required": False},
+                    {"name": "count", "type": "int", "description": "Number of times to repeat", "required": False},
+                    {"name": "data", "type": "Any", "description": "Any data to pass through", "required": False},
+                ],
+                "outputs": [
+                    {"key": "echo", "type": "str", "description": "The echoed message"},
+                    {"key": "data", "type": "Any", "description": "The passed-through data"},
+                    {
+                        "key": "metadata",
+                        "type": "dict",
+                        "description": "Information about the echo operation",
+                        "structure": {
+                            "original_message": {"type": "str", "description": "The original message"},
+                            "count": {"type": "int", "description": "Number of repetitions"},
+                            "modified": {"type": "bool", "description": "Whether the message was modified"},
+                        },
+                    },
+                ],
+                "params": [
+                    {
+                        "name": "prefix",
+                        "type": "str",
+                        "description": "Optional prefix for the message",
+                        "required": False,
+                    },
+                    {
+                        "name": "suffix",
+                        "type": "str",
+                        "description": "Optional suffix for the message",
+                        "required": False,
+                    },
+                    {"name": "uppercase", "type": "bool", "description": "Convert to uppercase", "required": False},
+                ],
+                "actions": ["default"],
+            },
+        }
+    }
+    registry.save(echo_metadata)
+    return registry
 
 
 class TestCompilerOutputWrapping:
     """Test compiler's output wrapping behavior."""
 
-    def test_compiler_wraps_run_when_outputs_declared(self):
+    def test_compiler_wraps_run_when_outputs_declared(self, registry_with_echo):
         """Verify compiler wraps flow.run when outputs are present."""
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -21,13 +85,12 @@ class TestCompilerOutputWrapping:
             "outputs": {"result": {"source": "${echo1.echo}", "description": "Test output"}},
         }
 
-        registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry)
+        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
 
         # The run method should be wrapped
         assert flow.run.__name__ == "run_with_outputs"
 
-    def test_no_wrapper_when_no_outputs(self):
+    def test_no_wrapper_when_no_outputs(self, registry_with_echo):
         """Verify no wrapper is added when outputs not declared."""
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -37,13 +100,12 @@ class TestCompilerOutputWrapping:
             # No outputs field
         }
 
-        registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry)
+        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
 
         # Should NOT be wrapped
         assert flow.run.__name__ != "run_with_outputs"
 
-    def test_outputs_populated_on_success(self):
+    def test_outputs_populated_on_success(self, registry_with_echo):
         """Verify outputs ARE populated when workflow succeeds."""
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -56,8 +118,7 @@ class TestCompilerOutputWrapping:
             },
         }
 
-        registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry)
+        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
         shared = {}
         result = flow.run(shared)
 
@@ -76,7 +137,7 @@ class TestCompilerOutputWrapping:
 class TestProgrammaticUsage:
     """Test programmatic usage without CLI."""
 
-    def test_programmatic_workflow_with_outputs(self):
+    def test_programmatic_workflow_with_outputs(self, registry_with_echo):
         """Verify outputs work when using compile_ir_to_flow directly."""
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -90,8 +151,7 @@ class TestProgrammaticUsage:
         }
 
         # Use the API directly, no CLI involved
-        registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry)
+        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
         shared = {}
         result = flow.run(shared)
 
@@ -102,7 +162,7 @@ class TestProgrammaticUsage:
         assert shared["echo1"]["echo"] == "Hello World"
         assert result == "default"
 
-    def test_complex_workflow_with_multiple_nodes(self):
+    def test_complex_workflow_with_multiple_nodes(self, registry_with_echo):
         """Test outputs from a multi-node workflow."""
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -119,8 +179,7 @@ class TestProgrammaticUsage:
             },
         }
 
-        registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry)
+        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
         shared = {}
         result = flow.run(shared)
 

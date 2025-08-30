@@ -1340,12 +1340,22 @@ def workflow_command(
       command | pflow
 
     \b
+    Commands:
+      registry    Manage node registry (list, search, add custom nodes)
+      mcp         Manage MCP server connections
+
+    \b
     Examples:
       # CLI Syntax - chain nodes with => operator
       pflow read-file --path=data.txt => llm --prompt="Summarize"
 
       # Natural Language - use quotes for commands with spaces
       pflow "read the file data.txt and summarize it"
+
+      # Registry Commands - explore available nodes
+      pflow registry list                         # List all nodes
+      pflow registry search github                # Find GitHub nodes
+      pflow registry describe llm                 # Show node details
 
       # From File - store complex workflows
       pflow --file workflow.txt
@@ -1361,6 +1371,7 @@ def workflow_command(
       - Input precedence: --file > stdin > command arguments
       - Use -- to prevent pflow from parsing node flags
       - Workflows are collected as raw input for the planner
+      - Run 'pflow COMMAND --help' for more information on a command
     """
     # Handle version flag
     if version:
