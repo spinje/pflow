@@ -111,10 +111,12 @@ class TestWorkflowOutputsNamespaced:
 
             # Parse JSON output
             output_json = json.loads(result.output)
+            # Extract the actual result from the wrapper
+            actual_result = output_json.get("result", output_json)
 
             # Verify the output contains the expected value
-            assert "formatted_message" in output_json
-            assert output_json["formatted_message"] == ">>> Greetings <<<"
+            assert "formatted_message" in actual_result
+            assert actual_result["formatted_message"] == ">>> Greetings <<<"
         finally:
             Path(workflow_file).unlink(missing_ok=True)
 
@@ -157,15 +159,17 @@ class TestWorkflowOutputsNamespaced:
 
             # Parse JSON and verify all outputs
             output_json = json.loads(result.output)
+            # Extract the actual result from the wrapper
+            actual_result = output_json.get("result", output_json)
 
-            assert "repeated" in output_json
-            assert output_json["repeated"] == "First message First message"
+            assert "repeated" in actual_result
+            assert actual_result["repeated"] == "First message First message"
 
-            assert "uppercase" in output_json
-            assert output_json["uppercase"] == "SECOND MESSAGE"
+            assert "uppercase" in actual_result
+            assert actual_result["uppercase"] == "SECOND MESSAGE"
 
-            assert "prefixed" in output_json
-            assert output_json["prefixed"] == "[INFO] Third message"
+            assert "prefixed" in actual_result
+            assert actual_result["prefixed"] == "[INFO] Third message"
 
         finally:
             Path(workflow_file).unlink(missing_ok=True)

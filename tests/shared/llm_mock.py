@@ -46,14 +46,18 @@ class MockLLMModel:
             nested_response = {"content": [{"input": response_data}]}
             response.json.return_value = nested_response
         else:
-            # Text response
-            response.text = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
+            # Text response - text() is a method that returns the text (llm library behavior)
+            response_text = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
+            # Make text a callable that returns the text
+            response.text = Mock(return_value=response_text)
 
-        # Add usage tracking (even if not currently used)
-        response.usage = {
-            "input_tokens": len(prompt.split()),
-            "output_tokens": 50,  # Arbitrary for mock
-        }
+        # Add usage tracking as a method (matching llm library)
+        usage_data = Mock()
+        # LLMNode expects .input and .output properties
+        usage_data.input = len(prompt.split())
+        usage_data.output = 50  # Arbitrary for mock
+        usage_data.details = {}  # Empty details dict
+        response.usage = Mock(return_value=usage_data)
 
         return response
 

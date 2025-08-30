@@ -27,17 +27,21 @@ class DebugContext:
 
     trace_collector: "TraceCollector"
     progress: "PlannerProgress"
+    metrics_collector: Optional[Any] = None  # Optional MetricsCollector for cost tracking
 
 
 class TimedResponse:
     """Wrapper for LLM Response objects that captures timing when evaluated."""
 
-    def __init__(self, wrapped_response: Any, trace: "TraceCollector", current_node: str):
+    def __init__(
+        self, wrapped_response: Any, trace: "TraceCollector", current_node: str, shared: Optional[dict[str, Any]] = None
+    ):
         self._response = wrapped_response
         self._json_cache: Optional[Any] = None
         self._text_cache: Optional[str] = None
         self._trace = trace
         self._current_node = current_node
+        self._shared = shared
 
     def json(self) -> Any:
         if self._json_cache is None:
@@ -45,8 +49,8 @@ class TimedResponse:
             start = time.perf_counter()
             self._json_cache = self._response.json()
             duration = time.perf_counter() - start
-            # Record the response with actual duration
-            self._trace.record_llm_response(self._current_node, self._response, duration)
+            # Now that response is consumed, capture usage data
+            self._capture_usage_and_record(duration, self._json_cache)
         return self._json_cache
 
     def text(self) -> str:
@@ -55,9 +59,53 @@ class TimedResponse:
             start = time.perf_counter()
             self._text_cache = self._response.text()
             duration = time.perf_counter() - start
-            # Record the response with actual duration
-            self._trace.record_llm_response(self._current_node, self._response, duration)
+            # Now that response is consumed, capture usage data
+            # For text responses, we need to try to get JSON for metadata
+            try:
+                response_data = self._response.json() if hasattr(self._response, "json") else None
+            except (json.JSONDecodeError, AttributeError, ValueError):
+                # JSONDecodeError: Response isn't valid JSON
+                # AttributeError: Response doesn't have expected attributes
+                # ValueError: Other JSON parsing issues
+                response_data = None
+            self._capture_usage_and_record(duration, response_data or self._text_cache)
         return self._text_cache
+
+    def _capture_usage_and_record(self, duration: float, response_data: Any) -> None:
+        """Capture usage data after response consumption and record it."""
+        # Now that the response has been consumed, usage() should have data
+        usage_data = None
+        model_name = "unknown"
+
+        # Get usage data - it's now available after consumption
+        if hasattr(self._response, "usage"):
+            usage_obj = self._response.usage() if callable(self._response.usage) else self._response.usage
+            if usage_obj:
+                # Handle both dict and object forms
+                if isinstance(usage_obj, dict):
+                    usage_data = usage_obj
+                elif hasattr(usage_obj, "input") and hasattr(usage_obj, "output"):
+                    usage_data = {
+                        "input_tokens": getattr(usage_obj, "input", 0),
+                        "output_tokens": getattr(usage_obj, "output", 0),
+                        "total_tokens": getattr(usage_obj, "input", 0) + getattr(usage_obj, "output", 0),
+                    }
+                    # Check for cache-related fields
+                    if hasattr(usage_obj, "details") and usage_obj.details:
+                        details = usage_obj.details
+                        if hasattr(details, "cache_creation_input_tokens"):
+                            usage_data["cache_creation_input_tokens"] = details.cache_creation_input_tokens
+                        if hasattr(details, "cache_read_input_tokens"):
+                            usage_data["cache_read_input_tokens"] = details.cache_read_input_tokens
+
+        # Get model name from response
+        if isinstance(response_data, dict):
+            model_name = response_data.get("model", "unknown")
+
+        # Pass the captured data to record_llm_response
+        self._trace.record_llm_response_with_data(
+            self._current_node, response_data, duration, usage_data, model_name, self._shared
+        )
 
     def __getattr__(self, name: str) -> Any:
         # Forward other attributes to the wrapped response
@@ -82,6 +130,7 @@ class DebugWrapper:
 
         self.trace = debug_context.trace_collector
         self.progress = debug_context.progress
+        self.metrics = debug_context.metrics_collector  # Optional metrics collector
         # CRITICAL: Copy Flow-required attributes
         self.successors = node.successors
         self.params = getattr(node, "params", {})
@@ -133,10 +182,20 @@ class DebugWrapper:
         """Main execution - Flow calls this."""
         node_name = getattr(self._wrapped, "name", self._wrapped.__class__.__name__)
         self.progress.on_node_start(node_name)
-        start_time = time.time()
+        start_time = time.perf_counter()  # Use perf_counter for consistency
 
         # Store trace collector in shared for access
         shared["_trace_collector"] = self.trace
+
+        # Mark this as planner execution for metrics
+        shared["__is_planner__"] = True
+
+        # Initialize LLM calls list if metrics are being collected
+        if self.metrics and "__llm_calls__" not in shared:
+            shared["__llm_calls__"] = []
+
+        # Store shared reference for LLM interception
+        self._current_shared = shared
 
         try:
             # Call our own prep/exec/post to intercept LLM calls
@@ -144,21 +203,33 @@ class DebugWrapper:
             exec_res = self.exec(prep_res)
             result = self.post(shared, prep_res, exec_res)
 
-            duration = time.time() - start_time
+            duration_seconds = time.perf_counter() - start_time
+            duration_ms = duration_seconds * 1000
+
+            # Record metrics if collector present
+            if self.metrics:
+                self.metrics.record_node_execution(node_name, duration_ms, is_planner=True)
+
             # Show completion with retry indicator if retries occurred
             if hasattr(self, "had_retries") and self.had_retries:
-                click.echo(f" (retried) ✓ {duration:.1f}s", err=True)
+                click.echo(f" (retried) ✓ {duration_seconds:.1f}s", err=True)
             else:
-                self.progress.on_node_complete(node_name, duration)
-            self.trace.record_node_execution(node_name, duration, "success")
+                self.progress.on_node_complete(node_name, duration_seconds)
+            self.trace.record_node_execution(node_name, duration_seconds, "success")
             return result
         except Exception as e:
             import traceback
 
-            duration = time.time() - start_time
+            duration_seconds = time.perf_counter() - start_time
+            duration_ms = duration_seconds * 1000
+
+            # Record metrics even on failure
+            if self.metrics:
+                self.metrics.record_node_execution(node_name, duration_ms, is_planner=True)
+
             # Include full traceback for debugging
             error_msg = f"{e!s}\n{traceback.format_exc()}"
-            self.trace.record_node_execution(node_name, duration, "failed", error_msg)
+            self.trace.record_node_execution(node_name, duration_seconds, "failed", error_msg)
             raise
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
@@ -170,6 +241,8 @@ class DebugWrapper:
 
     def _create_prompt_interceptor(self, original_prompt: Any, trace: "TraceCollector") -> Any:
         """Create an interceptor for the LLM prompt method."""
+        # Capture wrapper reference for closure
+        wrapper = self
 
         def intercept_prompt(prompt_text: str, **prompt_kwargs: Any) -> Any:
             # Use current_node from trace collector
@@ -181,8 +254,10 @@ class DebugWrapper:
             try:
                 # Get the response object (lazy - no API call yet)
                 response = original_prompt(prompt_text, **prompt_kwargs)
+                # Get shared from wrapper instance or trace
+                shared = getattr(wrapper, "_current_shared", None) or getattr(trace, "_current_shared", None)
                 # Return the wrapped response
-                return TimedResponse(response, trace, current_node)
+                return TimedResponse(response, trace, current_node, shared)
             except Exception as e:
                 trace.record_llm_error(current_node, str(e))
                 raise
@@ -200,12 +275,16 @@ class DebugWrapper:
 
         return intercept_get_model
 
-    def _setup_llm_interception(self, node_name: str) -> None:
+    def _setup_llm_interception(self, node_name: str, shared: Optional[dict[str, Any]] = None) -> None:
         """Set up LLM interception if not already installed."""
         import llm
 
         # Store current node name in trace collector for LLM interception
         self.trace.current_node = node_name
+
+        # Store shared reference for metrics collection
+        if shared:
+            self.trace._current_shared = shared
 
         # Install interceptor only once (first node that uses LLM)
         if not self.trace._llm_interceptor_installed:
@@ -265,6 +344,7 @@ class TraceCollector:
         self.current_node: Optional[str] = None
         self._llm_interceptor_installed: bool = False
         self._original_get_model: Optional[Callable[..., Any]] = None
+        self._current_shared: Optional[dict[str, Any]] = None  # For storing shared reference during LLM interception
 
     def record_node_execution(self, node: str, duration: float, status: str, error: Optional[str] = None) -> None:
         """Record node execution with timing and status."""
@@ -302,34 +382,142 @@ class TraceCollector:
             "prompt_kwargs": {k: v for k, v in kwargs.items() if k != "schema"},
         }
 
-    def record_llm_response(self, node: str, response: Any, duration: float) -> None:
-        """Record LLM response after execution."""
+    def record_llm_response_with_data(
+        self,
+        node: str,
+        response_data: Any,
+        duration: float,
+        usage_data: Optional[dict[str, Any]],
+        model_name: str,
+        shared: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Record LLM response with pre-extracted data."""
         if hasattr(self, "current_llm_call"):
             # Ensure minimum 1ms for any call (even mocked ones)
             self.current_llm_call["duration_ms"] = max(1, int(duration * 1000))
+            self.current_llm_call["response"] = response_data
+            self.current_llm_call["model"] = model_name
 
-            # Extract response data
-            if hasattr(response, "json"):
-                try:
-                    response_data = response.json()
-                    self.current_llm_call["response"] = response_data
-                except Exception:
-                    self.current_llm_call["response"] = str(response)
-            else:
-                self.current_llm_call["response"] = str(response)
+            # Add token counts if available
+            if usage_data:
+                self.current_llm_call["tokens"] = {
+                    "input": usage_data.get("input_tokens", 0),
+                    "output": usage_data.get("output_tokens", 0),
+                }
 
-            # Try to get token counts if available
-            if hasattr(response, "usage"):
-                # Check if usage is a method or a property
-                usage_data = response.usage() if callable(response.usage) else response.usage
-                if isinstance(usage_data, dict):
-                    self.current_llm_call["tokens"] = {
-                        "input": usage_data.get("input_tokens", 0),
-                        "output": usage_data.get("output_tokens", 0),
+                # Also accumulate in shared store for metrics if available
+                if shared and "__llm_calls__" in shared:
+                    llm_call_metrics = {
+                        "model": model_name,
+                        "input_tokens": usage_data.get("input_tokens", 0),
+                        "output_tokens": usage_data.get("output_tokens", 0),
+                        "total_tokens": usage_data.get(
+                            "total_tokens", usage_data.get("input_tokens", 0) + usage_data.get("output_tokens", 0)
+                        ),
+                        "node_id": node,
+                        "duration_ms": self.current_llm_call["duration_ms"],
+                        "is_planner": True,
                     }
+                    # Handle cache-related fields if present
+                    if "cache_creation_input_tokens" in usage_data:
+                        llm_call_metrics["cache_creation_input_tokens"] = usage_data["cache_creation_input_tokens"]
+                    if "cache_read_input_tokens" in usage_data:
+                        llm_call_metrics["cache_read_input_tokens"] = usage_data["cache_read_input_tokens"]
+
+                    shared["__llm_calls__"].append(llm_call_metrics)
 
             self.llm_calls.append(self.current_llm_call)
             delattr(self, "current_llm_call")
+
+    def _extract_response_data(self, response: Any) -> Any:
+        """Extract response data from LLM response object."""
+        if hasattr(response, "json"):
+            try:
+                return response.json()
+            except Exception:
+                return str(response)
+        return str(response)
+
+    def _extract_usage_data(self, response: Any, current_call: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """Extract usage data from LLM response or call metadata."""
+        # First try the standard usage attribute/method
+        if hasattr(response, "usage"):
+            # Check if usage is a method or a property
+            usage_result = response.usage() if callable(response.usage) else response.usage
+            # Ensure we return dict[str, Any] or None
+            if isinstance(usage_result, dict):
+                return usage_result
+            return None
+
+        # For Claude models, check if usage is in the response JSON
+        if "response" in current_call:
+            response_json = current_call["response"]
+            if isinstance(response_json, dict) and "usage" in response_json:
+                usage_data = response_json["usage"]
+                # Ensure we return dict[str, Any] or None
+                if isinstance(usage_data, dict):
+                    return usage_data
+
+        return None
+
+    def _update_metrics_in_shared(
+        self, shared: Optional[dict[str, Any]], usage_data: dict[str, Any], node: str, duration_ms: int, model: str
+    ) -> None:
+        """Update metrics in the shared store if available."""
+        if not shared or "__llm_calls__" not in shared:
+            return
+
+        llm_call_metrics = {
+            "model": model,
+            "input_tokens": usage_data.get("input_tokens", 0),
+            "output_tokens": usage_data.get("output_tokens", 0),
+            "total_tokens": usage_data.get("input_tokens", 0) + usage_data.get("output_tokens", 0),
+            "node_id": node,
+            "duration_ms": duration_ms,
+            "is_planner": True,
+        }
+
+        # Handle Anthropic-specific fields
+        if hasattr(usage_data, "cache_creation_input_tokens"):
+            llm_call_metrics["cache_creation_input_tokens"] = usage_data.cache_creation_input_tokens
+        if hasattr(usage_data, "cache_read_input_tokens"):
+            llm_call_metrics["cache_read_input_tokens"] = usage_data.cache_read_input_tokens
+
+        shared["__llm_calls__"].append(llm_call_metrics)
+
+    def record_llm_response(
+        self, node: str, response: Any, duration: float, shared: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Record LLM response after execution (legacy method, kept for compatibility)."""
+        if not hasattr(self, "current_llm_call"):
+            return
+
+        # Ensure minimum 1ms for any call (even mocked ones)
+        self.current_llm_call["duration_ms"] = max(1, int(duration * 1000))
+
+        # Extract response data
+        self.current_llm_call["response"] = self._extract_response_data(response)
+
+        # Try to get token counts if available
+        usage_data = self._extract_usage_data(response, self.current_llm_call)
+
+        if usage_data and isinstance(usage_data, dict):
+            self.current_llm_call["tokens"] = {
+                "input": usage_data.get("input_tokens", 0),
+                "output": usage_data.get("output_tokens", 0),
+            }
+
+            # Also accumulate in shared store for metrics if available
+            self._update_metrics_in_shared(
+                shared,
+                usage_data,
+                node,
+                self.current_llm_call["duration_ms"],
+                self.current_llm_call.get("model", "unknown"),
+            )
+
+        self.llm_calls.append(self.current_llm_call)
+        delattr(self, "current_llm_call")
 
     def record_llm_error(self, node: str, error: str) -> None:
         """Record LLM error if call fails."""
@@ -359,7 +547,7 @@ class TraceCollector:
 
         # Generate filename
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        filename = f"pflow-trace-{timestamp}.json"
+        filename = f"planner-trace-{timestamp}.json"
         filepath = trace_dir / filename
 
         # Prepare trace data

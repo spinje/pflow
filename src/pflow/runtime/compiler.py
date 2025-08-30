@@ -320,7 +320,9 @@ def _create_single_node(
     registry: Registry,
     initial_params: dict[str, Any],
     enable_namespacing: bool,
-) -> Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]:
+    metrics_collector: Optional[Any] = None,
+    trace_collector: Optional[Any] = None,
+) -> Any:  # Can be any wrapper type
     """Create and configure a single node instance.
 
     Args:
@@ -328,6 +330,8 @@ def _create_single_node(
         registry: Registry instance for node class lookup
         initial_params: Parameters for template resolution
         enable_namespacing: Whether to apply namespace wrapping
+        metrics_collector: Optional MetricsCollector for cost tracking
+        trace_collector: Optional WorkflowTraceCollector for debugging
 
     Returns:
         Configured node instance
@@ -348,7 +352,8 @@ def _create_single_node(
     node_class = import_node_class(node_type, registry)
 
     # Instantiate the node (no parameters to constructor)
-    node_instance: Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper] = node_class()
+    # Use Any type since we'll be wrapping with various wrapper types
+    node_instance: Any = node_class()
 
     # Apply template wrapping if needed
     node_instance = _apply_template_wrapping(node_instance, node_id, params, initial_params)
@@ -360,6 +365,21 @@ def _create_single_node(
             extra={"phase": "node_instantiation", "node_id": node_id},
         )
         node_instance = NamespacedNodeWrapper(node_instance, node_id)
+
+    # Apply instrumentation wrapper if collectors present (outermost wrapper)
+    if metrics_collector or trace_collector:
+        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
+
+        logger.debug(
+            f"Wrapping node '{node_id}' for instrumentation",
+            extra={
+                "phase": "node_instantiation",
+                "node_id": node_id,
+                "has_metrics": bool(metrics_collector),
+                "has_trace": bool(trace_collector),
+            },
+        )
+        node_instance = InstrumentedNodeWrapper(node_instance, node_id, metrics_collector, trace_collector)
 
     # Inject special parameters for workflow and MCP nodes
     params = _inject_special_parameters(node_type, node_id, params, registry)
@@ -376,19 +396,26 @@ def _create_single_node(
 
 
 def _instantiate_nodes(
-    ir_dict: dict[str, Any], registry: Registry, initial_params: Optional[dict[str, Any]] = None
-) -> dict[str, Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]]:
+    ir_dict: dict[str, Any],
+    registry: Registry,
+    initial_params: Optional[dict[str, Any]] = None,
+    metrics_collector: Optional[Any] = None,
+    trace_collector: Optional[Any] = None,
+) -> dict[str, Any]:  # Can return nodes with various wrapper types
     """Instantiate node objects from IR node definitions with template and namespace support.
 
     This function creates pocketflow node instances for each node in the IR,
     using the registry to look up node classes and setting any provided parameters.
     Nodes with template parameters are wrapped for runtime resolution.
     If namespacing is enabled, nodes are additionally wrapped to isolate their outputs.
+    If collectors are provided, nodes are also wrapped for instrumentation.
 
     Args:
         ir_dict: The IR dictionary containing nodes array and optional enable_namespacing flag
         registry: Registry instance for node class lookup
         initial_params: Parameters extracted by planner (for template resolution)
+        metrics_collector: Optional MetricsCollector for cost tracking
+        trace_collector: Optional WorkflowTraceCollector for debugging
 
     Returns:
         Dictionary mapping node_id to instantiated node objects
@@ -397,7 +424,7 @@ def _instantiate_nodes(
         CompilationError: If node instantiation fails
     """
     logger.debug("Starting node instantiation", extra={"phase": "node_instantiation"})
-    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]] = {}
+    nodes: dict[str, Any] = {}  # Can contain various wrapper types
     initial_params = initial_params or {}
 
     # Check if namespacing is enabled in the workflow (default: True for MVP)
@@ -409,7 +436,9 @@ def _instantiate_nodes(
         node_id = node_data["id"]
 
         try:
-            node_instance = _create_single_node(node_data, registry, initial_params, enable_namespacing)
+            node_instance = _create_single_node(
+                node_data, registry, initial_params, enable_namespacing, metrics_collector, trace_collector
+            )
             nodes[node_id] = node_instance
 
         except CompilationError as e:
@@ -426,9 +455,7 @@ def _instantiate_nodes(
     return nodes
 
 
-def _wire_nodes(
-    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]], edges: list[dict[str, Any]]
-) -> None:
+def _wire_nodes(nodes: dict[str, Any], edges: list[dict[str, Any]]) -> None:
     """Wire nodes together based on edge definitions.
 
     This function connects nodes using PocketFlow's >> operator for default
@@ -495,9 +522,7 @@ def _wire_nodes(
     logger.debug("Node wiring complete", extra={"phase": "flow_wiring"})
 
 
-def _get_start_node(
-    nodes: dict[str, Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]], ir_dict: dict[str, Any]
-) -> Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]:
+def _get_start_node(nodes: dict[str, Any], ir_dict: dict[str, Any]) -> Any:
     """Identify the start node for the flow.
 
     This function determines which node should be the entry point for the flow.
@@ -716,6 +741,8 @@ def compile_ir_to_flow(
     registry: Registry,
     initial_params: Optional[dict[str, Any]] = None,
     validate: bool = True,
+    metrics_collector: Optional[Any] = None,
+    trace_collector: Optional[Any] = None,
 ) -> Flow:
     """Compile JSON IR to executable pocketflow.Flow object with template support.
 
@@ -735,6 +762,8 @@ def compile_ir_to_flow(
                        from user saying "fix github issue 1234 in pflow repo"
         validate: Whether to validate templates (default: True)
                  Set to False only for testing template resolution in isolation
+        metrics_collector: Optional MetricsCollector for cost tracking
+        trace_collector: Optional WorkflowTraceCollector for debugging
 
     Returns:
         Executable pocketflow.Flow object
@@ -771,7 +800,7 @@ def compile_ir_to_flow(
 
     # Step 7: Instantiate nodes with template support
     try:
-        nodes = _instantiate_nodes(ir_dict, registry, initial_params)
+        nodes = _instantiate_nodes(ir_dict, registry, initial_params, metrics_collector, trace_collector)
     except CompilationError:
         logger.exception("Node instantiation failed", extra={"phase": "node_instantiation"})
         raise

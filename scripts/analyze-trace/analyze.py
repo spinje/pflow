@@ -93,6 +93,12 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
     md.append(f"# {emoji} {node_name}\n")
     md.append(f"**Call #:** {node_num}  ")
     md.append(f"**Duration:** {duration:.2f}s  ")
+
+    # Add model information if available
+    model = call.get("model", "")
+    if model and model != "unknown":
+        md.append(f"**Model:** `{model}`  ")
+
     md.append(f"**Trace ID:** `{trace_id}`  \n")
 
     # Get prompt and response
@@ -142,7 +148,7 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
     # Prompt section
     if prompt:
         md.append("## 📝 Prompt\n")
-        md.append(f"*Length: {len(prompt):,} characters, ~{len(prompt.split()):,} words*\n")
+        md.append(f"*{prompt_tokens:,} tokens*\n")
         md.append("```")
         md.append(format_prompt(prompt))
         md.append("```\n")
@@ -151,7 +157,7 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
     if response:
         md.append("## 🤖 Response\n")
         response_text = format_response(response)
-        md.append(f"*Length: {len(response_text):,} characters*\n")
+        md.append(f"*{response_tokens:,} tokens*\n")
         md.append("```json")
         md.append(response_text)
         md.append("```\n")
@@ -176,26 +182,52 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
     return "\n".join(md), metadata
 
 
-def create_index_markdown(trace: dict, node_files: list, trace_file: Path) -> str:
-    """Create an index markdown file that links to all node files."""
-    md = []
+def _get_trace_title(trace: dict) -> str:
+    """Get the appropriate title for the trace based on its type."""
+    if "llm_calls" in trace:
+        return "# Planner Trace Analysis\n"
+    elif "workflow_name" in trace:
+        return f"# Workflow Trace Analysis: {trace.get('workflow_name', 'Unknown')}\n"
+    else:
+        return "# Trace Analysis\n"
 
-    # Header
-    md.append("# Planner Trace Analysis\n")
+
+def _add_header_metadata(md: list, trace: dict, trace_file: Path) -> None:
+    """Add header metadata to the markdown."""
     md.append(f"**Source File:** `{trace_file.name}`  ")
     md.append(f"**Trace ID:** `{trace.get('execution_id', 'unknown')}`  ")
-    md.append(f"**Timestamp:** {trace.get('timestamp', 'unknown')}  ")
-    md.append(f"**Status:** {trace.get('status', 'unknown')}  ")
+
+    # Handle timestamp differences
+    timestamp = trace.get("timestamp") or trace.get("start_time", "unknown")
+    md.append(f"**Timestamp:** {timestamp}  ")
+
+    # Handle status field differences (planner uses 'status', workflow uses 'final_status')
+    status = trace.get("status") or trace.get("final_status", "unknown")
+    md.append(f"**Status:** {status}  ")
+
     md.append(f"**Duration:** {trace.get('duration_ms', 0) / 1000:.1f}s  ")
-    md.append(f"**Path:** {trace.get('path_taken', 'unknown')}  \n")
 
-    # User input
-    md.append("## 📥 User Request\n")
-    md.append("```")
-    md.append(trace.get("user_input", ""))
-    md.append("```\n")
+    # Path taken is only in planner traces
+    if "path_taken" in trace:
+        md.append(f"**Path:** {trace.get('path_taken', 'unknown')}  ")
+    md.append("\n")
 
-    # Summary statistics
+
+def _get_user_input(trace: dict) -> str:
+    """Extract user input from the trace, handling different formats."""
+    user_input = trace.get("user_input", "")  # Planner trace format
+    if not user_input and "nodes" in trace:
+        # For workflow traces, we might not have the original user input
+        user_input = "N/A (Workflow execution trace)"
+    return user_input
+
+
+def _add_summary_statistics(md: list, node_files: list) -> tuple[int, int, float]:
+    """Add summary statistics to the markdown.
+
+    Returns:
+        tuple: (total_prompt_tokens, total_response_tokens, total_duration)
+    """
     total_prompt_tokens = sum(f["metadata"]["prompt_tokens"] for f in node_files)
     total_response_tokens = sum(f["metadata"]["response_tokens"] for f in node_files)
     total_tokens = total_prompt_tokens + total_response_tokens
@@ -215,7 +247,11 @@ def create_index_markdown(trace: dict, node_files: list, trace_file: Path) -> st
         total_cost = input_cost + output_cost
         md.append(f"- **Estimated Total Cost:** ${total_cost:.4f}\n")
 
-    # Node execution flow
+    return total_prompt_tokens, total_response_tokens, total_duration
+
+
+def _add_execution_flow_table(md: list, node_files: list) -> None:
+    """Add the execution flow table to the markdown."""
     md.append("## 🔄 Execution Flow\n")
     md.append("| # | Node | Duration | Tokens | File |")
     md.append("|---|------|----------|--------|------|")
@@ -232,37 +268,88 @@ def create_index_markdown(trace: dict, node_files: list, trace_file: Path) -> st
 
         md.append(f"| {i} | {short_node} | {duration:.2f}s | {tokens:,} | [{filename}](./{filename}) |")
 
-    # Error section if failed
-    if trace.get("status") in ["error", "failed"]:
-        error = trace.get("error")
-        if error:
-            md.append("\n## ❌ Error Details\n")
-            md.append("```")
-            if isinstance(error, dict):
-                md.append(error.get("message", "Unknown error"))
-            else:
-                md.append(str(error))
-            md.append("```\n")
 
-    # Final workflow if generated
-    final_store = trace.get("final_shared_store", {})
-    if final_store.get("generated_workflow"):
-        md.append("\n## ✅ Generated Workflow\n")
-        md.append("```json")
-        workflow_json = json.dumps(final_store["generated_workflow"], indent=2)
-        if len(workflow_json) > 3000:
-            md.append(workflow_json[:3000])
-            md.append("\n... (truncated)")
+def _add_error_section(md: list, trace: dict) -> None:
+    """Add error section if the trace contains errors."""
+    status = trace.get("status") or trace.get("final_status", "")
+    if status not in ["error", "failed"]:
+        return
+
+    error = trace.get("error")
+
+    # For workflow traces, check if any nodes failed
+    if not error and "nodes" in trace:
+        failed_nodes = [n for n in trace.get("nodes", []) if not n.get("success", True)]
+        if failed_nodes:
+            error = f"Failed nodes: {', '.join(n.get('node_id', 'Unknown') for n in failed_nodes)}"
+
+    if error:
+        md.append("\n## ❌ Error Details\n")
+        md.append("```")
+        if isinstance(error, dict):
+            md.append(error.get("message", "Unknown error"))
         else:
-            md.append(workflow_json)
+            md.append(str(error))
         md.append("```\n")
 
-    # Navigation
+
+def _add_generated_workflow(md: list, trace: dict) -> None:
+    """Add generated workflow section if present."""
+    final_store = trace.get("final_shared_store", {})
+    if not final_store.get("generated_workflow"):
+        return
+
+    md.append("\n## ✅ Generated Workflow\n")
+    md.append("```json")
+    workflow_json = json.dumps(final_store["generated_workflow"], indent=2)
+    if len(workflow_json) > 3000:
+        md.append(workflow_json[:3000])
+        md.append("\n... (truncated)")
+    else:
+        md.append(workflow_json)
+    md.append("```\n")
+
+
+def _add_file_navigation(md: list, node_files: list) -> None:
+    """Add file navigation section to the markdown."""
     md.append("\n## 🗂️ Files\n")
     for file_info in node_files:
         filename = file_info["filename"]
         meta = file_info["metadata"]
         md.append(f"- [{filename}](./{filename}) - {meta['node']} ({meta['total_tokens']:,} tokens)")
+
+
+def create_index_markdown(trace: dict, node_files: list, trace_file: Path) -> str:
+    """Create an index markdown file that links to all node files."""
+    md = []
+
+    # Add header with title
+    md.append(_get_trace_title(trace))
+
+    # Add header metadata
+    _add_header_metadata(md, trace, trace_file)
+
+    # Add user input section
+    user_input = _get_user_input(trace)
+    md.append("## 📥 User Request\n")
+    md.append("```")
+    md.append(user_input)
+    md.append("```\n")
+
+    # Add summary statistics
+    _add_summary_statistics(md, node_files)
+
+    # Add execution flow table
+    _add_execution_flow_table(md, node_files)
+
+    # Add error section if applicable
+    _add_error_section(md, trace)
+
+    # Add generated workflow if present
+    _add_generated_workflow(md, trace)
+
+    # Add file navigation
+    _add_file_navigation(md, node_files)
 
     return "\n".join(md)
 
@@ -277,8 +364,34 @@ def analyze_trace(trace_file: Path, output_dir: Path) -> None:
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get LLM calls
-    llm_calls = trace.get("llm_calls", [])
+    # Get LLM calls - handle both planner and workflow trace formats
+    llm_calls = []
+
+    # Check for planner trace format (llm_calls at root level)
+    if "llm_calls" in trace:
+        llm_calls = trace.get("llm_calls", [])
+
+    # Check for workflow trace format (llm data embedded in nodes)
+    elif "nodes" in trace:
+        # Extract LLM calls from node events
+        for node in trace.get("nodes", []):
+            if node.get("llm_call"):
+                # Convert workflow trace format to match planner format
+                # Now we can extract the prompt from the trace!
+                # Model is already in llm_call dict
+                llm_call = {
+                    "node": node.get("node_id", "Unknown"),
+                    "duration_ms": node.get("duration_ms", 0),
+                    "prompt": node.get("llm_prompt", node.get("llm_prompt_truncated", "")),
+                    "response": node.get("llm_response", node.get("llm_response_truncated", "")),
+                    "tokens": {
+                        "input": node["llm_call"].get("input_tokens", 0),
+                        "output": node["llm_call"].get("output_tokens", 0),
+                    },
+                    "model": node["llm_call"].get("model", "unknown"),
+                }
+                llm_calls.append(llm_call)
+
     if not llm_calls:
         print("⚠️  No LLM calls found in trace")
         return
@@ -319,7 +432,7 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python analyze_trace_split.py <trace-file.json> [output-dir]")
         print("\nExample:")
-        print("  python analyze_trace_split.py ~/.pflow/debug/pflow-trace-20250815-120310.json")
+        print("  python analyze_trace_split.py ~/.pflow/debug/planner-trace-20250815-120310.json")
         print("  python analyze_trace_split.py trace.json my-analysis/")
         sys.exit(1)
 
