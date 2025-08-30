@@ -372,12 +372,12 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 41: Implement Shell Node
 - ✅ Task 28: Improve performance of planner by modifying prompts (Discovery, Component Browsing, Metadata Generation, Parameter Prompts, Workflow Generator)
 - ✅ Task 43: MCP Server support
+- ✅ Task 32: Unified Metrics and Tracing System for User Workflow Execution
+- ✅ Task 10: Create registry CLI
 
 Next up:
-- ⏳ Task 32: Unified Metrics and Tracing System for User Workflow Execution
-- ⏳ Task 10: Create registry CLI
-- ⏳ Task 42: Claude Code Agentic Node
 - ⏳ Task 22: Named workflow execution
+- ⏳ Task 42: Claude Code Agentic Node
 - ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
 - ⏳ Task 47: Support HTTP Transport for MCP Servers
 
