@@ -120,9 +120,9 @@ The task follows a progressive enhancement pattern where we build from core util
 ## Essential Documentation
 
 ### Primary References:
-- `docs/features/shell-pipes.md` - Complete specification
-- `docs/architecture/architecture.md` section 5.1.4 - stdin in shared store
-- `docs/core-concepts/shared-store.md` - Reserved keys and conventions
+- `architecture/features/shell-pipes.md` - Complete specification
+- `architecture/architecture/architecture.md` section 5.1.4 - stdin in shared store
+- `architecture/core-concepts/shared-store.md` - Reserved keys and conventions
 
 ### Research Files:
 - `.taskmaster/tasks/task_8/research/external-patterns.md` - Implementation patterns

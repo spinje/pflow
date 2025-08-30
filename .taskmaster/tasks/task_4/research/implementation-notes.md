@@ -21,7 +21,7 @@ The registry stores module paths like `pflow.nodes.file.read_file`. For these to
 
 ### 3. **Common Pitfalls from Integration Guide**
 
-From `docs/architecture/pflow-pocketflow-integration-guide.md`, avoid these traps:
+From `architecture/architecture/pflow-pocketflow-integration-guide.md`, avoid these traps:
 - **DON'T** try to implement execution logic - PocketFlow's Flow class does this
 - **DON'T** create wrapper classes around PocketFlow components
 - **DON'T** overthink the shared store - it's just a dict

@@ -305,7 +305,7 @@ LLM's codebase provides these specific patterns:
 The rest of this document (signal handling, broken pipes, exit codes, safe output) represents Unix shell best practices that pflow should implement for robust shell integration.
 
 ## References
-- `docs/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`: Task 8 section
+- `architecture/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`: Task 8 section
 - LLM source: `llm-main/llm/cli.py` lines ~1106-1110 (stdin handling in read_prompt)
 - LLM attachment handling: `llm-main/llm/cli.py` lines ~170-190 (stdin for attachments)
 - Unix philosophy: Proper pipe citizenship

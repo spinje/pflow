@@ -66,7 +66,7 @@ During context building, many nodes fail to import due to missing dependencies. 
 
 ### 3. The Format Is Already Optimized
 
-The current format matches what's in `docs/features/planner.md` Section 6.1. Don't try to parse a different format - use exactly what the context builder provides.
+The current format matches what's in `architecture/features/planner.md` Section 6.1. Don't try to parse a different format - use exactly what the context builder provides.
 
 ## 💡 Patterns to Reuse
 
@@ -127,8 +127,8 @@ The planner needs to generate template variables like `$issue_data` for data flo
 - **Metadata Extractor**: `/Users/andfal/projects/pflow/src/pflow/registry/metadata_extractor.py`
 
 ### Documentation
-- **Planner Spec**: `/Users/andfal/projects/pflow/docs/features/planner.md` (Section 6.1 shows expected format)
-- **Workflow Analysis**: `/Users/andfal/projects/pflow/docs/features/workflow-analysis.md`
+- **Planner Spec**: `/Users/andfal/projects/pflow/architecture/features/planner.md` (Section 6.1 shows expected format)
+- **Workflow Analysis**: `/Users/andfal/projects/pflow/architecture/features/workflow-analysis.md`
 - **Strategic Vision**: `/Users/andfal/projects/pflow/.taskmaster/tasks/task_16/16-strategic-vision.md`
 
 ### Key Patterns

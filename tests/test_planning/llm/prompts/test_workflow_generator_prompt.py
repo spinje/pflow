@@ -190,7 +190,7 @@ def get_test_cases() -> list[WorkflowTestCase]:
             user_input="Generate complete API documentation: analyze the codebase structure in src/, extract all public functions and classes, generate detailed documentation for each module, create code examples for each function, build an index page linking all docs, validate all internal links are correct, commit the documentation to docs/api/, and create a PR titled 'Update API Documentation'",
             discovered_params={
                 "source_path": "src/",
-                "docs_output": "docs/api/",
+                "docs_output": "architecture/api/",
                 "pr_title": "Update API Documentation",
             },
             planning_context=base_context,
@@ -477,7 +477,7 @@ def get_test_cases() -> list[WorkflowTestCase]:
         WorkflowTestCase(
             name="multi_output_workflow",
             user_input="Analyze project structure, generate documentation for each module, create an index file linking all docs, and generate a summary report",
-            discovered_params={"project_path": "src/", "docs_output": "docs/api/"},
+            discovered_params={"project_path": "src/", "docs_output": "architecture/api/"},
             planning_context=base_context
             + "\n- analyze-structure: Analyze project structure (mock)\n  Parameters: path",
             browsed_components={

@@ -184,7 +184,7 @@ Always check registry for valid node types and suggest alternatives on errors.
 
 ## References
 
-- Task 3 specification: `docs/features/planner.md`
+- Task 3 specification: `architecture/features/planner.md`
 - IR Schema: `src/pflow/core/ir_schema.py`
 - Compiler: `src/pflow/runtime/compiler.py`
 - Registry: `src/pflow/registry/`

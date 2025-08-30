@@ -127,7 +127,7 @@ It's already implemented. You can:
 - `/src/pflow/planning/context_builder.py` - Main work here
 - `/src/pflow/registry/metadata_extractor.py` - Structure parsing
 - `/tests/test_planning/test_context_builder.py` - Already has good examples
-- `/docs/reference/enhanced-interface-format.md` - Shows the structure format
+- `/architecture/reference/enhanced-interface-format.md` - Shows the structure format
 - `/.taskmaster/tasks/task_14/subtask_14.3/implementation/subtask-review.md` - Parser insights
 
 ## What Success Looks Like

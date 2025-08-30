@@ -526,5 +526,5 @@ else:
 
 ## References
 - `llm-main/llm/models.py`: Database logging in `log_to_db()` method
-- `llm-main/llm/docs/logging.md`: SQLite storage approach
+- `llm-main/llm/architecture/logging.md`: SQLite storage approach
 - Best practices: stderr for traces, stdout for data (Unix philosophy)

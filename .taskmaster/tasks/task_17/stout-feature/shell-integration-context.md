@@ -192,11 +192,11 @@ The planner should be aware that:
 
 ## Related Documentation
 
-- **Planner Specification**: `docs/features/planner.md`
-- **Shared Store Pattern**: `docs/core-concepts/shared-store.md`
-- **Shell Pipes Feature**: `docs/features/shell-pipes.md`
-- **CLI Runtime**: `docs/features/cli-runtime.md`
-- **Template Variables**: Section 6.3 in `docs/core-concepts/shared-store.md`
+- **Planner Specification**: `architecture/features/planner.md`
+- **Shared Store Pattern**: `architecture/core-concepts/shared-store.md`
+- **Shell Pipes Feature**: `architecture/features/shell-pipes.md`
+- **CLI Runtime**: `architecture/features/cli-runtime.md`
+- **Template Variables**: Section 6.3 in `architecture/core-concepts/shared-store.md`
 
 ## Summary for Planner Implementation
 

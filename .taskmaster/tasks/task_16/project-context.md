@@ -54,9 +54,9 @@ This means:
 ## Essential Documentation References
 
 ### Primary References
-1. **`docs/features/planner.md` Section 6.1** - Template string composition and how the planner uses node context
-2. **`docs/implementation-details/metadata-extraction.md`** - Contains example PlannerContextBuilder implementation (lines 784-860)
-3. **`docs/core-concepts/shared-store.md`** - Critical for understanding parameter classification
+1. **`architecture/features/planner.md` Section 6.1** - Template string composition and how the planner uses node context
+2. **`architecture/implementation-details/metadata-extraction.md`** - Contains example PlannerContextBuilder implementation (lines 784-860)
+3. **`architecture/core-concepts/shared-store.md`** - Critical for understanding parameter classification
 
 ### PocketFlow Context
 While the context builder itself is NOT a PocketFlow component, it must understand:

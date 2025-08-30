@@ -252,7 +252,7 @@ Next: Create example workflows and update documentation
 - ✅ `examples/interfaces/README.md` - Comprehensive guide with usage examples
 
 ### Updated Documentation:
-- ✅ Updated `docs/core-concepts/schemas.md` with new "Workflow Input/Output Declaration" section
+- ✅ Updated `architecture/core-concepts/schemas.md` with new "Workflow Input/Output Declaration" section
 - ✅ Documented the schema structure, validation rules, and benefits
 - ✅ Added complete examples showing the feature in action
 - ✅ Linked to related components (WorkflowExecutor, Planner, Registry)

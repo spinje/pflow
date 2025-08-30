@@ -21,45 +21,45 @@ All code nodes in `src/pflow/nodes/` have been updated to use the enhanced forma
 ## File Inventory and Update Strategy
 
 ### 1. Core Reference Documentation
-**File**: `docs/reference/node-reference.md`
+**File**: `architecture/reference/node-reference.md`
 - **Occurrences**: Multiple examples throughout
 - **Priority**: HIGH - This is the primary reference
 - **Strategy**: Update all examples, add section about enhanced format
 
-**File**: `docs/implementation-details/metadata-extraction.md`
+**File**: `architecture/implementation-details/metadata-extraction.md`
 - **Occurrences**: Examples showing extraction process
 - **Priority**: HIGH - Must reflect new parser capabilities
 - **Strategy**: Update examples to show enhanced format extraction
 
 ### 2. Feature Documentation
-**File**: `docs/features/simple-nodes.md`
+**File**: `architecture/features/simple-nodes.md`
 - **Occurrences**: Node implementation examples
 - **Priority**: HIGH - Developers reference this
 - **Strategy**: Convert all examples, emphasize type benefits
 
-**File**: `docs/features/cli-runtime.md`
+**File**: `architecture/features/cli-runtime.md`
 - **Occurrences**: Examples of nodes in workflows
 - **Priority**: MEDIUM
 - **Strategy**: Update to show typed interfaces
 
-**File**: `docs/features/planner.md`
+**File**: `architecture/features/planner.md`
 - **Occurrences**: Examples showing planner usage
 - **Priority**: HIGH - Shows WHY types matter
 - **Strategy**: Demonstrate type-aware planning
 
-**File**: `docs/features/mcp-integration.md`
+**File**: `architecture/features/mcp-integration.md`
 - **Occurrences**: MCP node examples
 - **Priority**: MEDIUM
 - **Strategy**: Update future-facing examples
 
 ### 3. Core Concepts
-**File**: `docs/core-concepts/registry.md`
+**File**: `architecture/core-concepts/registry.md`
 - **Occurrences**: Registry storage examples
 - **Priority**: MEDIUM
 - **Strategy**: Show how types are stored
 
 ### 4. Product Documentation
-**File**: `docs/prd.md`
+**File**: `architecture/prd.md`
 - **Occurrences**: Product requirement examples
 - **Priority**: LOW
 - **Strategy**: Update for consistency

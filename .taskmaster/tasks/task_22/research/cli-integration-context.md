@@ -88,7 +88,7 @@ Named workflows would need to add:
 
 ## Template Variable Implementation
 
-According to `docs/reference/cli-reference.md` (lines 130-145), template variables use `$variable` syntax:
+According to `architecture/reference/cli-reference.md` (lines 130-145), template variables use `$variable` syntax:
 
 ### Resolution Order
 1. Check shared store for key

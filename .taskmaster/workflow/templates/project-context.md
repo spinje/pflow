@@ -87,8 +87,8 @@ Based on accumulated knowledge:
 ## Key Documentation References
 
 ### Essential pflow Documentation
-- `docs/[filename].md` - [Why this is important for the task]
-- `docs/architecture/[filename].md` - [Key architectural patterns]
+- `architecture/[filename].md` - [Why this is important for the task]
+- `architecture/architecture/[filename].md` - [Key architectural patterns]
 
 ### PocketFlow Documentation (if applicable)
 - `pocketflow/docs/[topic]/[file].md` - [Relevant concepts]

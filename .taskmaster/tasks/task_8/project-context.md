@@ -121,10 +121,10 @@
 ## Essential Documentation References
 
 ### pflow Documentation
-1. **Primary**: `docs/features/shell-pipes.md` - Complete specification
-2. **Architecture**: `docs/architecture/architecture.md` section 5.1.4
-3. **Shared Store**: `docs/core-concepts/shared-store.md`
-4. **CLI Runtime**: `docs/features/cli-runtime.md`
+1. **Primary**: `architecture/features/shell-pipes.md` - Complete specification
+2. **Architecture**: `architecture/architecture/architecture.md` section 5.1.4
+3. **Shared Store**: `architecture/core-concepts/shared-store.md`
+4. **CLI Runtime**: `architecture/features/cli-runtime.md`
 
 ### Research Files
 1. `external-patterns.md` - Simon Willison's patterns and Unix best practices

@@ -36,7 +36,7 @@ def get_input_source(file: str | None, workflow: tuple[str, ...]) -> tuple[str, 
 
 ### Documentation Requirements
 
-From `docs/features/shell-pipes.md`:
+From `architecture/features/shell-pipes.md`:
 
 1. **Basic Usage**: Automatically populate `shared["stdin"]` when piped input detected
 2. **Streaming Support**: Process large files in chunks without loading entirely into memory
@@ -44,7 +44,7 @@ From `docs/features/shell-pipes.md`:
 4. **Signal Handling**: Graceful interruption with clean stops and partial progress saving
 5. **stdout Output**: Enable workflows to output to stdout for further Unix processing
 
-From `docs/architecture/architecture.md` section 5.1.4:
+From `architecture/architecture/architecture.md` section 5.1.4:
 - Content automatically placed in `shared["stdin"]`
 - First node can consume this data naturally or via IR mapping
 - Piped content is hashed and included in execution traces
@@ -81,7 +81,7 @@ if stdin_prompt:
     prompt = " ".join(bits)
 ```
 
-From `docs/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`:
+From `architecture/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`:
 
 Key implementation patterns:
 - Signal handling for SIGINT and SIGPIPE
@@ -93,14 +93,14 @@ Key implementation patterns:
 
 ### 1. Shared Store Integration
 
-From `docs/core-concepts/shared-store.md`:
+From `architecture/core-concepts/shared-store.md`:
 - Reserved key `stdin` for piped input
 - Natural interfaces allow nodes to check `shared["stdin"]` as fallback
 - Template variable resolution supports `$stdin`
 
 ### 2. CLI Runtime Integration
 
-From `docs/features/cli-runtime.md`:
+From `architecture/features/cli-runtime.md`:
 - Table shows pipe text scenario: `cat notes.txt | pflow llm --prompt="Summarize this"` → `{ "stdin": "<bytes>" }`
 - Validation rule 5: `stdin` key reserved; nodes must handle it naturally
 
@@ -159,11 +159,11 @@ From `docs/features/cli-runtime.md`:
 
 ## Key Documentation References
 
-1. **Primary Reference**: `docs/features/shell-pipes.md`
-2. **Architecture Context**: `docs/architecture/architecture.md` section 5.1.4
-3. **Shared Store Pattern**: `docs/core-concepts/shared-store.md` (stdin handling)
-4. **CLI Runtime**: `docs/features/cli-runtime.md` (stdin in shared store)
-5. **Simon's Patterns**: `docs/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`
+1. **Primary Reference**: `architecture/features/shell-pipes.md`
+2. **Architecture Context**: `architecture/architecture/architecture.md` section 5.1.4
+3. **Shared Store Pattern**: `architecture/core-concepts/shared-store.md` (stdin handling)
+4. **CLI Runtime**: `architecture/features/cli-runtime.md` (stdin in shared store)
+5. **Simon's Patterns**: `architecture/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`
 
 ## Success Criteria
 

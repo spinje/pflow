@@ -39,7 +39,7 @@
 5. **`tests/test_nodes/test_workflow/test_workflow_node.py`** - Basic unit tests (107 lines)
 6. **`tests/test_nodes/test_workflow/test_workflow_node_comprehensive.py`** - All 26 test criteria (539 lines)
 7. **`tests/test_nodes/test_workflow/test_integration.py`** - Integration tests (402 lines)
-8. **`docs/features/nested-workflows.md`** - Comprehensive usage guide (544 lines)
+8. **`architecture/features/nested-workflows.md`** - Comprehensive usage guide (544 lines)
 9. **`examples/nested/process-text.json`** - Example reusable workflow
 10. **`examples/nested/main-workflow.json`** - Example parent workflow
 11. **`examples/nested/isolated-processing.json`** - Storage isolation example
@@ -49,7 +49,7 @@
 1. **`src/pflow/core/__init__.py`** - Added exception exports (lines 14-18, 32-34)
    - Why: Make WorkflowNode exceptions available via core module
 
-2. **`docs/reference/node-reference.md`** - Added WorkflowNode section (lines 165-258)
+2. **`architecture/reference/node-reference.md`** - Added WorkflowNode section (lines 165-258)
    - Why: Document WorkflowNode parameters and usage
 
 3. **`src/pflow/runtime/compiler.py`** - Auto-inject registry for WorkflowNode

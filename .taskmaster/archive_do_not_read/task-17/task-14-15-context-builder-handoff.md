@@ -734,7 +734,7 @@ def test_missing_component_recovery():
   - `_parse_structure()` (lines 543-612) - Parse nested structures
 
 ### Enhanced Format Documentation
-- **File**: `docs/reference/enhanced-interface-format.md`
+- **File**: `architecture/reference/enhanced-interface-format.md`
 - **Contains**: Complete specification of the enhanced docstring format
 
 ## Critical Success Factors

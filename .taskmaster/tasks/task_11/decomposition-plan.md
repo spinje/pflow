@@ -125,18 +125,18 @@ Implement five basic file I/O nodes for the pflow system (read-file, write-file,
 ## Relevant pflow Documentation
 
 ### Core Documentation
-- `docs/features/simple-nodes.md` - Simple node architecture pattern
+- `architecture/features/simple-nodes.md` - Simple node architecture pattern
   - Relevance: Defines the single-responsibility pattern all nodes must follow
   - Key concepts: No internal routing, predictable interfaces, fail-fast behavior
   - Applies to subtasks: All subtasks must follow these patterns
 
-- `docs/core-concepts/shared-store.md` - Shared store conventions and patterns
+- `architecture/core-concepts/shared-store.md` - Shared store conventions and patterns
   - Relevance: Defines how nodes communicate through shared dictionary
   - Key concepts: Natural key naming, check shared first then params, template variables
   - Applies to subtasks: All subtasks for consistent interfaces
 
 ### Architecture Documentation
-- `docs/architecture/components.md` - MVP component specifications
+- `architecture/architecture/components.md` - MVP component specifications
   - Critical for: Understanding which features belong in MVP vs future versions
   - Must follow: Synchronous execution only, no async/parallel features
 

@@ -133,10 +133,10 @@ Based on accumulated knowledge:
 ## Key Documentation References
 
 ### Essential pflow Documentation
-- `docs/implementation-details/metadata-extraction.md` - Comprehensive extraction infrastructure specification
-- `docs/core-concepts/schemas.md` - Node metadata schema (sections 2.1-2.4)
-- `docs/core-concepts/shared-store.md` - Natural interface patterns and proxy mapping needs
-- `docs/core-concepts/registry.md` - Section 4.3 on metadata generation
+- `architecture/implementation-details/metadata-extraction.md` - Comprehensive extraction infrastructure specification
+- `architecture/core-concepts/schemas.md` - Node metadata schema (sections 2.1-2.4)
+- `architecture/core-concepts/shared-store.md` - Natural interface patterns and proxy mapping needs
+- `architecture/core-concepts/registry.md` - Section 4.3 on metadata generation
 
 ### Task-Specific Documentation
 - `.taskmaster/tasks/task_14/task-14-complete-specification.md` - Detailed requirements and format specification

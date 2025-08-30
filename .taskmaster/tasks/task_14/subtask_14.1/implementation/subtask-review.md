@@ -86,7 +86,7 @@ Not applicable - this was a core infrastructure enhancement task that didn't inv
 
 ## Documentation Updates Needed
 - [x] Update code with implementation
-- [ ] Update `docs/implementation-details/metadata-extraction.md` to reflect actual implementation
+- [ ] Update `architecture/implementation-details/metadata-extraction.md` to reflect actual implementation
 - [ ] Add examples of enhanced format to node development guide
 
 ## Advice for Future Implementers

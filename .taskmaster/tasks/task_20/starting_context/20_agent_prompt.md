@@ -46,8 +46,8 @@ Think of it as enabling this:
 3. Implement integration tests
 
 ### Phase 3: Documentation (1 hour)
-1. Update `docs/reference/node-reference.md`
-2. Create `docs/features/nested-workflows.md`
+1. Update `architecture/reference/node-reference.md`
+2. Create `architecture/features/nested-workflows.md`
 3. Add examples in `examples/nested/`
 
 ### Use Parallel Execution

@@ -92,33 +92,33 @@ Task 3 "Execute a Hardcoded 'Hello World' Workflow" is the first integration mil
 ## Relevant pflow Documentation
 
 ### Core Documentation
-- `docs/features/cli-runtime.md` - CLI integration and shared store patterns
+- `architecture/features/cli-runtime.md` - CLI integration and shared store patterns
   - Relevance: Defines how CLI should integrate with the runtime
   - Key concepts: Shared store initialization, execution flow
   - Applies to subtasks: 1 and 2
 
-- `docs/core-concepts/schemas.md` - IR schema structure and validation
+- `architecture/core-concepts/schemas.md` - IR schema structure and validation
   - Relevance: Defines the JSON format for workflows
   - Key concepts: Node definitions, edge format, validation rules
   - Applies to subtasks: 1 and 3 (for test fixtures)
 
-- `docs/core-concepts/runtime.md` - Execution model (simplified for MVP)
+- `architecture/core-concepts/runtime.md` - Execution model (simplified for MVP)
   - Relevance: Explains how workflows execute
   - Key concepts: Synchronous execution, action-based transitions
   - Applies to subtasks: 1 and 2
 
-- `docs/reference/cli-reference.md` - CLI command structure
+- `architecture/reference/cli-reference.md` - CLI command structure
   - Relevance: Defines expected CLI behavior
   - Key concepts: Direct command execution, file input handling
   - Applies to subtasks: 1 and 3
 
 ### Architecture/Feature Documentation
-- `docs/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
+- `architecture/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
   - Critical for: Understanding how pflow wraps PocketFlow
   - Must follow: Parameter passing conventions, shared store usage
   - Applies to subtasks: 1
 
-- `docs/features/simple-nodes.md` - Node design philosophy
+- `architecture/features/simple-nodes.md` - Node design philosophy
   - Critical for: Understanding how file nodes work
   - Must follow: Natural interface pattern, fail-fast behavior
   - Applies to subtasks: 1 and 3

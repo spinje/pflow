@@ -26,7 +26,7 @@ When implementing features, you must:
 5. Write code that's simple, clear, and maintainable
 6. Document decisions and tradeoffs
 7. Stay focused on your assigned task
-8. ALWAYS write tests - Read and follow `/docs/best-practices/testing-quick-reference.md` *before writing any tests*
+8. ALWAYS write tests - Read and follow `/architecture/best-practices/testing-quick-reference.md` *before writing any tests*
 
 ## Implementation Scope - Stay Focused!
 
@@ -44,7 +44,7 @@ When implementing features, you must:
 
 **CRITICAL REQUIREMENT**: You MUST write tests for every piece of code you implement.
 
-1. **Read the testing instructions** at `/docs/best-practices/testing-quick-reference.md` BEFORE writing any code
+1. **Read the testing instructions** at `/architecture/best-practices/testing-quick-reference.md` BEFORE writing any code
 2. **Follow TDD if possible and it makes sense** - Write tests first when requirements are clear
 3. **Test as you go** - Never leave testing until the end
 4. **No PR without tests** - Your code is incomplete without tests

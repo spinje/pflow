@@ -79,7 +79,7 @@ def get_test_cases() -> list[TestCase]:
     """Define domain-driven test cases reflecting real ComponentBrowsingNode usage patterns.
 
     60% failed discovery (vague domain inputs), 40% explicit creation requests.
-    Based on north star examples from docs/vision/north-star-examples.md.
+    Based on north star examples from architecture/vision/north-star-examples.md.
     """
     return [
         # === GITHUB DOMAIN TESTS (Primary - Complex, 5 tests) ===

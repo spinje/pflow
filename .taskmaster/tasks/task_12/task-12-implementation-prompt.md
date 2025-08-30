@@ -341,7 +341,7 @@ Start by deploying parallel subagents to gather ALL necessary context:
    - Task: "Research VCR usage in the test suite for recording API responses"
 
 5. **Documentation Requirements**
-   - Task: "Check docs/reference/node-reference.md to understand how to document new nodes"
+   - Task: "Check architecture/reference/node-reference.md to understand how to document new nodes"
    - Task: "Find the enhanced Interface docstring format in existing nodes"
 ```
 

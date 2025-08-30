@@ -334,7 +334,7 @@ When adding new features to the IR format:
    - Add validation logic if needed beyond JSON schema
 
 2. **Update Documentation**:
-   - Update `docs/core-concepts/schemas.md` with new fields
+   - Update `architecture/core-concepts/schemas.md` with new fields
    - Add examples showing the new feature
    - Update version compatibility notes
 
@@ -405,8 +405,8 @@ The core module is used throughout pflow:
 
 ## Related Documentation
 
-- **Shell Pipes**: `docs/features/shell-pipes.md` - Unix pipe integration details
-- **Schemas**: `docs/core-concepts/schemas.md` - Conceptual schema overview
+- **Shell Pipes**: `architecture/features/shell-pipes.md` - Unix pipe integration details
+- **Schemas**: `architecture/core-concepts/schemas.md` - Conceptual schema overview
 - **Examples**: `examples/` - Valid and invalid workflow examples
 - **Runtime**: `src/pflow/runtime/compiler.py` - How validation fits execution
 - **Task 24 Review**: `.taskmaster/tasks/task_24/task-review.md` - Comprehensive WorkflowManager implementation details

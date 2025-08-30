@@ -117,7 +117,7 @@ None directly - this was a pure schema definition task. However, I evaluated:
 
 ## Documentation Updates Needed
 - [x] Module has comprehensive docstring with examples
-- [ ] Could add schema documentation to docs/core-concepts/schemas.md
+- [ ] Could add schema documentation to architecture/core-concepts/schemas.md
 - [ ] Consider adding IR examples to documentation
 
 ## Advice for Future Implementers

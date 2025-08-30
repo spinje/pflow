@@ -641,7 +641,7 @@ class TestWorkflowNodeIntegration:
 
 #### Step 3.1: Update Node Reference Documentation
 
-**File**: `docs/reference/node-reference.md`
+**File**: `architecture/reference/node-reference.md`
 
 Add a new section:
 
@@ -685,7 +685,7 @@ Executes another workflow as a sub-workflow with parameter mapping and storage i
 
 #### Step 3.2: Create WorkflowNode Usage Guide
 
-**File**: `docs/features/nested-workflows.md`
+**File**: `architecture/features/nested-workflows.md`
 
 Create comprehensive usage documentation covering:
 - When to use nested workflows

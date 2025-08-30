@@ -140,9 +140,9 @@ From Task 1's successful test-as-you-go approach:
 ## Key Documentation References
 
 Essential pflow documentation:
-- `docs/core-concepts/registry.md` - Complete registry design and architecture
-- `docs/implementation-details/metadata-extraction.md` - Detailed extraction specifications
-- `docs/core-node-packages/*.md` - Node specifications for future reference
+- `architecture/core-concepts/registry.md` - Complete registry design and architecture
+- `architecture/implementation-details/metadata-extraction.md` - Detailed extraction specifications
+- `architecture/core-node-packages/*.md` - Node specifications for future reference
 
 PocketFlow documentation (if needed during implementation):
 - `pocketflow/__init__.py` - BaseNode class definition

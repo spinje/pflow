@@ -20,7 +20,7 @@ This creates a fundamental information gap: the planner cannot see that `issue_d
 
 ### 1. Path-Based Proxy Mappings Are Central to pflow's Value
 
-The proxy mapping system (documented in `docs/core-concepts/shared-store.md`) allows workflows to:
+The proxy mapping system (documented in `architecture/core-concepts/shared-store.md`) allows workflows to:
 - Extract nested data without intermediate nodes
 - Connect incompatible node interfaces elegantly
 - Keep workflows simple and maintainable

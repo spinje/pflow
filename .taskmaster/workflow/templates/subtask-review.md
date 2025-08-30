@@ -112,7 +112,7 @@
 ## Documentation Updates Needed
 
 ### Must Update (Incorrect/Misleading)
-- [ ] `docs/[file].md` - [What's wrong] → [Correct info]
+- [ ] `architecture/[file].md` - [What's wrong] → [Correct info]
 - [ ] `README.md` - Section [X] implies [wrong thing]
 
 ### Should Enhance (Add Learnings)

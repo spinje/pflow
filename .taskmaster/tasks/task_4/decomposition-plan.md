@@ -109,10 +109,10 @@ Test scenarios:
 ## Relevant Documentation
 
 ### Essential pflow Documentation
-- `docs/architecture/pflow-pocketflow-integration-guide.md` - **Critical**: Shows the exact pattern for IR compilation (see section #7)
-- `docs/core-concepts/schemas.md` - Defines the IR structure we're compiling
-- `docs/core-concepts/registry.md` - Explains registry metadata format
-- `docs/core-concepts/runtime.md` - Shows how compiled flows will be executed
+- `architecture/architecture/pflow-pocketflow-integration-guide.md` - **Critical**: Shows the exact pattern for IR compilation (see section #7)
+- `architecture/core-concepts/schemas.md` - Defines the IR structure we're compiling
+- `architecture/core-concepts/registry.md` - Explains registry metadata format
+- `architecture/core-concepts/runtime.md` - Shows how compiled flows will be executed
 
 ### PocketFlow Documentation
 - `pocketflow/__init__.py` - Source of truth for BaseNode, Node, and Flow classes

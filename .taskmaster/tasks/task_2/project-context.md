@@ -93,11 +93,11 @@ The CLI layer sits at the very top of the pflow architecture, serving as the use
 ## Key Documentation References
 
 ### Essential pflow Documentation
-- `docs/reference/cli-reference.md` - Comprehensive CLI syntax and design philosophy
-- `docs/features/cli-runtime.md` - How CLI arguments flow through the system
-- `docs/architecture/architecture.md#5.1` - CLI layer architecture and resolution algorithm
-- `docs/features/mvp-scope.md` - MVP boundaries and what's included/excluded
-- `docs/features/planner.md#3.2` - How the planner will process CLI input
+- `architecture/reference/cli-reference.md` - Comprehensive CLI syntax and design philosophy
+- `architecture/features/cli-runtime.md` - How CLI arguments flow through the system
+- `architecture/architecture/architecture.md#5.1` - CLI layer architecture and resolution algorithm
+- `architecture/features/mvp-scope.md` - MVP boundaries and what's included/excluded
+- `architecture/features/planner.md#3.2` - How the planner will process CLI input
 
 ### PocketFlow Documentation (if applicable)
 - Not directly applicable for this task as we're only building the CLI collection layer

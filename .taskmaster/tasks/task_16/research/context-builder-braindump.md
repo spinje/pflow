@@ -532,8 +532,8 @@ Remember: You're building a bridge between static metadata and dynamic AI reason
 ## References
 
 - Task 7 output format: See `.taskmaster/tasks/task_7/7_handover.md`
-- Planner requirements: See `docs/features/planner.md`
-- Shared store patterns: See `docs/core-concepts/shared-store.md`
+- Planner requirements: See `architecture/features/planner.md`
+- Shared store patterns: See `architecture/core-concepts/shared-store.md`
 - Node examples: See `src/pflow/nodes/file/*.py` for docstring formats
 
 ---

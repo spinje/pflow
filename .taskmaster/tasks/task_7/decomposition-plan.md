@@ -85,18 +85,18 @@ Task 7 creates a metadata extractor that parses pflow node docstrings to extract
 ## Relevant pflow Documentation
 
 ### Core Documentation
-- `docs/implementation-details/metadata-extraction.md` - Complete specification
+- `architecture/implementation-details/metadata-extraction.md` - Complete specification
   - Relevance: Defines the exact requirements and output format
   - Key concepts: Runtime introspection, not registry enhancement
   - Applies to subtasks: All subtasks
 
-- `docs/features/simple-nodes.md#interface-pattern` - Interface philosophy
+- `architecture/features/simple-nodes.md#interface-pattern` - Interface philosophy
   - Relevance: Explains the rationale behind the Interface format
   - Key concepts: Natural interfaces, shared store communication
   - Applies to subtasks: 2 (parsing logic must understand this pattern)
 
 ### Architecture Documentation
-- `docs/core-concepts/registry.md` - Registry architecture
+- `architecture/core-concepts/registry.md` - Registry architecture
   - Critical for: Understanding how metadata will be used
   - Must follow: Separation between discovery (Task 5) and parsing (Task 7)
 

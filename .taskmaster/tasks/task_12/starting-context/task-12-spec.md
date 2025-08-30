@@ -11,7 +11,7 @@ Before implementing, the agent MUST:
 2. Read `/pocketflow/docs/core_abstraction/node.md` for Node lifecycle
 3. Read `/src/pflow/nodes/file/read_file.py` as reference implementation
 4. Read `/src/pflow/nodes/CLAUDE.md` for critical retry patterns and docstring format
-5. Read `/docs/reference/enhanced-interface-format.md` for Interface documentation
+5. Read `/architecture/reference/enhanced-interface-format.md` for Interface documentation
 
 ## Requirements
 

@@ -157,10 +157,10 @@ flow.run(shared_storage)
 ## Relevant Documentation References
 
 ### Core Documentation
-- `docs/features/cli-runtime.md` - CLI and shared store integration
-- `docs/core-concepts/runtime.md` - Execution model (MVP simplified)
-- `docs/core-concepts/schemas.md` - IR schema and examples
-- `docs/reference/cli-reference.md` - CLI command reference
+- `architecture/features/cli-runtime.md` - CLI and shared store integration
+- `architecture/core-concepts/runtime.md` - Execution model (MVP simplified)
+- `architecture/core-concepts/schemas.md` - IR schema and examples
+- `architecture/reference/cli-reference.md` - CLI command reference
 
 ### PocketFlow Resources
 - `pocketflow/__init__.py` - Framework source (100 lines)
@@ -169,8 +169,8 @@ flow.run(shared_storage)
 - `pocketflow/cookbook/pocketflow-communication/` - Shared store patterns
 
 ### Implementation Guides
-- `docs/features/simple-nodes.md` - Node design philosophy
-- `docs/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
+- `architecture/features/simple-nodes.md` - Node design philosophy
+- `architecture/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
 - `.taskmaster/tasks/task_3/research/` - Previous implementation analysis
 
 ## Known Issues and Considerations

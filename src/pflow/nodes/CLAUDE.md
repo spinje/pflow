@@ -137,7 +137,7 @@ Interface:
 """
 ```
 
-See `docs/reference/enhanced-interface-format.md` for more details of the docstring format for pflow nodes.
+See `architecture/reference/enhanced-interface-format.md` for more details of the docstring format for pflow nodes.
 
 ### Key Rules:
 

@@ -87,24 +87,24 @@ Task 6 aims to create JSON schema definitions for workflow intermediate represen
 ## Relevant pflow Documentation
 
 ### Core Documentation
-- `docs/core-concepts/schemas.md` - Complete schema specification
+- `architecture/core-concepts/schemas.md` - Complete schema specification
   - Relevance: Primary reference for schema structure and governance
   - Key concepts: Document envelope, node/edge structures, versioning
   - Applies to subtasks: All subtasks, especially 1
 
-- `docs/features/planner.md#10.1` - Template-driven IR details
+- `architecture/features/planner.md#10.1` - Template-driven IR details
   - Relevance: Explains template variable usage in IR
   - Key concepts: $variable syntax, runtime resolution
   - Applies to subtasks: 1 and 3 for template support
 
 ### Architecture Documentation
-- `docs/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
+- `architecture/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
   - Critical for: Understanding how IR gets converted to pocketflow objects
   - Must follow: IR is pure data format, not wrapper classes
   - Applies to subtasks: 1 for design decisions
 
 ### Supporting Documentation
-- `docs/core-concepts/shared-store.md` - Proxy pattern and mappings
+- `architecture/core-concepts/shared-store.md` - Proxy pattern and mappings
   - Relevance: Explains when mappings are needed
   - Key concepts: NodeAwareSharedStore, input/output mappings
   - Applies to subtasks: 1 for mappings schema, 3 for examples

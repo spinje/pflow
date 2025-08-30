@@ -69,7 +69,7 @@ Let me think through what might be missing from the handover document that could
     - The relationship between nodes and the registry - how exactly does discovery work?
     - Any specific testing conventions in the project
   2. From the context window:
-    - I noticed the LLM node spec in docs/core-node-packages/llm-nodes.md mentioned it should handle $variable substitution in
+    - I noticed the LLM node spec in architecture/core-node-packages/llm-nodes.md mentioned it should handle $variable substitution in
   prompts - this is template variable support that might be important
     - The context builder exists and works - this is important because the planner will use it
     - I didn't mention that template path resolution is NOT implemented yet (from my todo list check)

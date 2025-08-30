@@ -167,8 +167,8 @@
 ## Documentation Updates Needed
 
 - [x] Create user guide for template syntax (created in scratchpads)
-- [ ] Update `docs/features/template-variables.md` with usage examples
-- [ ] Add template patterns to `docs/reference/cli-reference.md`
+- [ ] Update `architecture/features/template-variables.md` with usage examples
+- [ ] Add template patterns to `architecture/reference/cli-reference.md`
 - [ ] Update node development guide about fallback pattern importance
 - [ ] Add wrapper pattern to PocketFlow cookbook
 

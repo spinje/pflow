@@ -163,7 +163,7 @@ Generator avoids multiple nodes of same type to prevent collision (until Task 9)
 - `/Users/andfal/projects/pflow/tests/test_planning/llm/behavior/test_generator_core.py`
 - See `test_template_variables_preserved_not_hardcoded` - THE critical test
 
-**North Star examples**: `/Users/andfal/projects/pflow/docs/vision/north-star-examples.md`
+**North Star examples**: `/Users/andfal/projects/pflow/architecture/vision/north-star-examples.md`
 - Use these for consistent testing across subtasks
 
 **Clarifications doc**: `/Users/andfal/projects/pflow/.taskmaster/tasks/task_17/implementation/subtask-4/subtask-4-ambiguities-clarifications.md`

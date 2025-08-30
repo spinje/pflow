@@ -170,10 +170,10 @@ Based on accumulated knowledge:
 ## Key Documentation References
 
 ### Essential pflow Documentation
-- `docs/architecture/pflow-pocketflow-integration-guide.md` - **Critical**: Shows exactly how to compile IR to Flow objects (see Critical Insight #7)
-- `docs/core-concepts/schemas.md` - Defines the IR structure the compiler must understand
-- `docs/core-concepts/registry.md` - Explains registry metadata format
-- `docs/reference/execution-reference.md` - Shows how compiled flows will be executed
+- `architecture/architecture/pflow-pocketflow-integration-guide.md` - **Critical**: Shows exactly how to compile IR to Flow objects (see Critical Insight #7)
+- `architecture/core-concepts/schemas.md` - Defines the IR structure the compiler must understand
+- `architecture/core-concepts/registry.md` - Explains registry metadata format
+- `architecture/reference/execution-reference.md` - Shows how compiled flows will be executed
 
 ### PocketFlow Documentation (if applicable)
 - `pocketflow/__init__.py` - The source of truth for BaseNode, Node, and Flow classes

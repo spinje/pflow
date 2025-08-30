@@ -117,27 +117,27 @@ Task 15 extends the existing context builder (from Task 16) to support a two-pha
 ## Relevant pflow Documentation
 
 ### Core Documentation
-- `docs/core-concepts/registry.md` - Registry architecture and metadata format
+- `architecture/core-concepts/registry.md` - Registry architecture and metadata format
   - Relevance: Understanding registry data structure for context building
   - Key concepts: Registry metadata format, node discovery
   - Applies to subtasks: 2, 4
 
-- `docs/features/planner.md` - Natural Language Planner requirements
+- `architecture/features/planner.md` - Natural Language Planner requirements
   - Relevance: Understanding how planner will consume the two-phase contexts
   - Key concepts: Discovery vs planning phases, proxy mapping needs
   - Applies to subtasks: 2, 3
 
-- `docs/core-concepts/shared-store.md` - Shared store and proxy patterns
+- `architecture/core-concepts/shared-store.md` - Shared store and proxy patterns
   - Relevance: Understanding proxy mappings and why structure paths are needed
   - Key concepts: Proxy node pattern, data flow between incompatible nodes
   - Applies to subtasks: 3
 
 ### Architecture/Feature Documentation
-- `docs/features/mvp-implementation-guide.md` - MVP scope and constraints
+- `architecture/features/mvp-implementation-guide.md` - MVP scope and constraints
   - Critical for: Understanding what's in/out of scope
   - Must follow: MVP limitations, no premature optimization
 
-- `docs/reference/enhanced-interface-format.md` - Docstring format specification
+- `architecture/reference/enhanced-interface-format.md` - Docstring format specification
   - Critical for: Understanding the Interface format and structure documentation
   - Must follow: Format conventions for structure documentation
   - Applies to subtasks: 3, 4

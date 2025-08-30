@@ -23,7 +23,7 @@ Analyze the task description and git status to create a worktree with automated 
    - The changes are DIRECTLY RELATED to the task (e.g., PRD files, planning docs, scratchpads for THIS specific feature)
    - The files contain: task descriptions, requirements, or planning for the exact feature being worked on
    - Example VALID cases:
-     - Task: "implement github-list-prs" and changes include "scratchpads/github-list-prs/*" or "docs/prd-github-list-prs.md"
+     - Task: "implement github-list-prs" and changes include "scratchpads/github-list-prs/*" or "architecture/prd-github-list-prs.md"
      - Task: "fix validation bug" and changes include "tests/test_validation_bug.py" (a failing test for the bug)
    
 2. **NEVER use --bring-changes if:**
@@ -73,12 +73,12 @@ Analyze the task description and git status to create a worktree with automated 
 
 **Scenario 1: Related changes - BRING them**
 - Task: "implement github-list-prs node"
-- Git status shows: `?? scratchpads/github-list-prs/`, `?? docs/prd-github-list-prs.md`
+- Git status shows: `?? scratchpads/github-list-prs/`, `?? architecture/prd-github-list-prs.md`
 - → Run: `./.claude/commands/scripts/worktree-claude.sh feat github-list-prs "implement github-list-prs node" --bring-changes`
 
 **Scenario 2: Unrelated changes - DON'T bring them**
 - Task: "fix validation error in compiler"
-- Git status shows: `M src/nodes/github/list_issues.py`, `?? docs/unrelated-feature.md`
+- Git status shows: `M src/nodes/github/list_issues.py`, `?? architecture/unrelated-feature.md`
 - → Run: `./.claude/commands/scripts/worktree-claude.sh fix validation-compiler "fix validation error in compiler"`
 - → (No --bring-changes flag!)
 

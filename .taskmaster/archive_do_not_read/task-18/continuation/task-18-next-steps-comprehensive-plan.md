@@ -66,13 +66,13 @@ Add test cases that use template variables to ensure integration works.
 ### 4. Documentation Updates Needed
 
 Create/update these docs:
-1. **User-facing documentation** in `docs/features/template-variables.md`:
+1. **User-facing documentation** in `architecture/features/template-variables.md`:
    - Explain template syntax (`$var`, `$var.field`)
    - Show examples of reusable workflows
    - Explain validation errors
    - Document limitations (strings only, no arrays)
 
-2. **Update CLI reference** in `docs/reference/cli-reference.md`:
+2. **Update CLI reference** in `architecture/reference/cli-reference.md`:
    - Document how initial_params are passed
    - Show examples with templates
 

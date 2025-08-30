@@ -52,7 +52,7 @@ Added comprehensive integration tests testing the flow from docstring → extrac
 ✅ Key validation: Enhanced format metadata flows correctly through to formatted output with types and descriptions preserved
 
 ## 13:30 - Created Enhanced Interface Format specification
-Wrote comprehensive documentation at `docs/reference/enhanced-interface-format.md`:
+Wrote comprehensive documentation at `architecture/reference/enhanced-interface-format.md`:
 - Complete syntax specification with examples
 - Type annotation guidelines
 - Exclusive params pattern explanation

@@ -360,8 +360,8 @@ def test_error_context(test_registry):
   - `test_integration.py` - Full execution tests
 
 ### Documentation
-- `docs/reference/node-reference.md` - Removed WorkflowNode section
-- `docs/features/nested-workflows.md` - Usage guide (NEW)
+- `architecture/reference/node-reference.md` - Removed WorkflowNode section
+- `architecture/features/nested-workflows.md` - Usage guide (NEW)
 - `examples/nested/` - Example workflows (NEW)
 
 ### No Changes To

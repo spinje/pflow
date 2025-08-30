@@ -193,7 +193,8 @@ pflow/
 │   ├── core/             # Core workflow examples
 │   ├── advanced/         # Advanced workflow patterns
 │   └── invalid/          # Invalid examples for validation testing
-├── docs/                  # Comprehensive project specifications
+├── docs/                  # User-facing documentation (empty, for mkdocs)
+├── architecture/          # Project architecture and design specifications
 │   ├── CLAUDE.md                  # Documentation navigation guide for AI
 │   ├── index.md                   # Documentation inventory and overview
 │   ├── prd.md                     # **CORE: Product requirements document**
@@ -233,7 +234,6 @@ pflow/
 │   │   │   └── task-review.md # Read this file to understand what has been implemented in previously completed tasks
 │   │   └── task_2/
 │   │   │   └── (same structure)
-│   ├── docs/             # Planning documentation
 │   ├── knowledge/        # Consolidated learning repository
 │   │   ├── CLAUDE.md    # Knowledge maintenance guide
 │   │   ├── patterns.md  # Successful implementation patterns
@@ -295,7 +295,7 @@ Is this what you're expecting?
 
 ### Documentation Navigation
 
-**For detailed implementation guidance and documentation navigation**, see `docs/CLAUDE.md`. This file provides:
+**For detailed implementation guidance and documentation navigation**, see `architecture/CLAUDE.md`. This file provides:
 - Implementation order with pocketflow prerequisites
 - Feature-to-pattern mapping
 - Critical warnings for AI implementation
@@ -311,16 +311,16 @@ Is this what you're expecting?
 
 **Pflow Project Documentation**:
 
-**`docs/index.md`**: Comprehensive file-by-file inventory of all pflow documentation. Read this first to understand what documentation is available.
+**`architecture/index.md`**: Comprehensive file-by-file inventory of all pflow documentation. Read this first to understand what documentation is available.
 
 Folders:
-- `docs/features/`: Feature specifications and guides
-- `docs/core-concepts/`: Core concepts and patterns (shared store, schemas, registry, runtime)
-- `docs/reference/`: CLI syntax and execution reference
-- `docs/core-node-packages/`: Platform node specifications
-- `docs/implementation-details/`: Detailed implementation guides
-- `docs/future-version/`: Post-MVP features
-- `docs/architecture/`: System architecture and design
+- `architecture/features/`: Feature specifications and guides
+- `architecture/core-concepts/`: Core concepts and patterns (shared store, schemas, registry, runtime)
+- `architecture/reference/`: CLI syntax and execution reference
+- `architecture/core-node-packages/`: Platform node specifications
+- `architecture/implementation-details/`: Detailed implementation guides
+- `architecture/future-version/`: Post-MVP features
+- `architecture/architecture/`: System architecture and design
 
 #### PocketFlow Documentation
 

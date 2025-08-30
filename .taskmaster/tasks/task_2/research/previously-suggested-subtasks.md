@@ -6,7 +6,7 @@ This file contains the previously suggested subtasks for task 2. These might not
           {
             "id": 1,
             "title": "Create CLI main entry point with click framework",
-            "description": "Set up src/pflow/cli.py with @click.group() decorator for the main 'pflow' command group and add a placeholder 'run' subcommand following the command structure specified in docs/reference/cli-reference.md#basic-syntax",
+            "description": "Set up src/pflow/cli.py with @click.group() decorator for the main 'pflow' command group and add a placeholder 'run' subcommand following the command structure specified in architecture/reference/cli-reference.md#basic-syntax",
             "status": "pending",
             "dependencies": [],
             "details": "Create the main CLI file at src/pflow/cli.py, implement the @click.group() decorator for 'pflow' command, add a basic 'run' subcommand with @click.command(), ensure the command structure follows the pattern 'pflow [command] [options]' as specified in the CLI reference",
@@ -15,7 +15,7 @@ This file contains the previously suggested subtasks for task 2. These might not
           {
             "id": 2,
             "title": "Collect all command arguments, including '>>', into a raw list",
-            "description": "Parse the custom '>>' flow operator to split node sequences and collect all --key=value flags into a list without categorization, following the operator semantics in docs/reference/cli-reference.md#the--operator",
+            "description": "Parse the custom '>>' flow operator to split node sequences and collect all --key=value flags into a list without categorization, following the operator semantics in architecture/reference/cli-reference.md#the--operator",
             "status": "pending",
             "dependencies": [
               1

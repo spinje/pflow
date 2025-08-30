@@ -51,19 +51,19 @@
 [ALWAYS include - Reference key project documentation that guides this task]
 
 ### Core Documentation
-- `docs/[filename].md` - [Which sections/concepts apply]
+- `architecture/[filename].md` - [Which sections/concepts apply]
   - Relevance: [How this guides the implementation]
   - Key concepts: [Specific patterns or conventions to follow]
   - Applies to subtasks: [Which subtasks should reference this]
 
 ### Architecture/Feature Documentation
-- `docs/architecture/[filename].md` - [Relevant architectural patterns]
+- `architecture/architecture/[filename].md` - [Relevant architectural patterns]
   - Critical for: [Which aspects of the task]
   - Must follow: [Specific conventions or constraints]
 
 ### Example:
 ```
-- `docs/features/cli-runtime.md` - Sections on shared store usage
+- `architecture/features/cli-runtime.md` - Sections on shared store usage
   - Relevance: All subtasks must follow shared store conventions
   - Key concepts: Store initialization, key naming patterns
   - Applies to subtasks: 2, 3, and 4

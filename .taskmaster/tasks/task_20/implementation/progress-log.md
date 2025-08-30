@@ -98,7 +98,7 @@ Next: Phase 3 - Documentation
 
 ## [2025-07-27 10:40] - Phase 3.1 Complete
 Updated node reference documentation:
-- ✅ Added WorkflowNode section to `docs/reference/node-reference.md`
+- ✅ Added WorkflowNode section to `architecture/reference/node-reference.md`
 - ✅ Documented all parameters and storage modes
 - ✅ Provided three comprehensive examples
 - ✅ Listed safety features and best practices
@@ -107,7 +107,7 @@ Next: Phase 3.2 - Create comprehensive usage guide
 
 ## [2025-07-27 10:45] - Phase 3.2 Complete
 Created comprehensive usage guide:
-- ✅ Created `docs/features/nested-workflows.md` with:
+- ✅ Created `architecture/features/nested-workflows.md` with:
   - Overview and use cases
   - Parameter mapping examples
   - Storage isolation strategies
@@ -182,7 +182,7 @@ Root cause fix: Provide a valid test setup where compilation succeeds but execut
 
 #### 5. Documentation
 - Updated node reference with WorkflowNode section
-- Created comprehensive usage guide (`docs/features/nested-workflows.md`)
+- Created comprehensive usage guide (`architecture/features/nested-workflows.md`)
 - Example workflows in `examples/nested/`
 
 #### 6. Exception Classes
@@ -266,7 +266,7 @@ Move WorkflowNode from `nodes/` to `runtime/` and rename to WorkflowExecutor to 
    - ✅ All 39 tests still passing
 
 4. **Documentation Updates**:
-   - ✅ Created `docs/architecture/runtime-components.md` explaining runtime vs node distinction
+   - ✅ Created `architecture/architecture/runtime-components.md` explaining runtime vs node distinction
    - ✅ Updated references to reflect WorkflowExecutor as runtime component
    - ✅ Preserved user-facing documentation (users still use `type: "workflow"`)
 

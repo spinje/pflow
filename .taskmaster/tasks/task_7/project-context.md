@@ -163,8 +163,8 @@ The task specifies this exact format:
 ## References
 
 ### Essential Documentation
-- `/docs/implementation-details/metadata-extraction.md` - Task specification
-- `/docs/features/simple-nodes.md#interface-pattern` - Interface pattern philosophy
+- `/architecture/implementation-details/metadata-extraction.md` - Task specification
+- `/architecture/features/simple-nodes.md#interface-pattern` - Interface pattern philosophy
 
 ### Code Examples
 - `/src/pflow/nodes/file/*.py` - Production nodes with proper docstrings

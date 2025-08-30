@@ -159,6 +159,6 @@ def test_stdin_detection():
 - **Future-proof**: Sets foundation for complex commands later
 
 ## References
-- `docs/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`: Task 2 section
+- `architecture/implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md`: Task 2 section
 - LLM source: `llm-main/llm/cli.py` lines 1-200 for CLI structure
 - Click documentation: Default groups and context passing

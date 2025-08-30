@@ -304,7 +304,7 @@ uv run pflow "test workflow with ${variable}"
 - Integration: `tests/test_integration/test_template_system_e2e.py`
 
 ### Documentation
-- Main docs: `docs/core-concepts/schemas.md`
+- Main docs: `architecture/core-concepts/schemas.md`
 - Examples: `examples/core/template-variables.json`
 
 ## Impact on Related Systems

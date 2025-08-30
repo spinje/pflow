@@ -84,7 +84,7 @@ Interface:
 ### Documentation Gaps
 1. Enhanced Interface format specification missing
 2. Migration guide for developers needed
-3. `docs/implementation-details/metadata-extraction.md` outdated
+3. `architecture/implementation-details/metadata-extraction.md` outdated
 4. No clear guidance on when to use multi-line vs single-line
 
 ## Critical Implementation Details

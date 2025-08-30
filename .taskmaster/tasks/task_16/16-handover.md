@@ -133,8 +133,8 @@ From Task 16 in tasks.json:
 ## 🔗 Key Files and References
 
 ### Must-Read Documentation
-- `/docs/features/planner.md` - Section 6.1 covers template string composition (shows how LLM uses node metadata)
-- `/docs/core-concepts/shared-store.md` - Understand shared vs params pattern
+- `/architecture/features/planner.md` - Section 6.1 covers template string composition (shows how LLM uses node metadata)
+- `/architecture/core-concepts/shared-store.md` - Understand shared vs params pattern
 - Task 16 description in tasks.json - The original task specification
 
 ### Code You'll Need

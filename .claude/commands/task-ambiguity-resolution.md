@@ -138,7 +138,7 @@ Before documenting ambiguities, thoroughly investigate:
 1. **Ambiguity: [Storage format unclear]**
    - Subagent A: "Search for existing storage patterns in similar nodes"
    - Subagent B: "Check how other components handle data persistence"
-   - Subagent C: "Look for storage conventions in docs/core-concepts/shared-store.md"
+   - Subagent C: "Look for storage conventions in architecture/core-concepts/shared-store.md"
 
 2. **Ambiguity: [Error handling approach]**
    - Subagent A: "Find error handling patterns in existing nodes"

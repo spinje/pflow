@@ -26,7 +26,7 @@ The research files contain critical decisions that have already been analyzed an
 ### 4. Resources You Should Read
 - The project context briefing has all the architectural understanding
 - The research files have specific implementation patterns (especially pocketflow-patterns.md)
-- Check `docs/core-concepts/schemas.md` for the full vision (but simplify for MVP)
+- Check `architecture/core-concepts/schemas.md` for the full vision (but simplify for MVP)
 
 ### 5. Testing Focus
 - Start with the simplest possible valid IR (single node, no edges)

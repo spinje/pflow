@@ -93,7 +93,7 @@ assert shared["planning_context"] == mock_value  # Test data flow
 
 ## 📂 Key Documentation
 
-- `docs/CLAUDE.md` - Overall implementation guidance
+- `architecture/CLAUDE.md` - Overall implementation guidance
 - `pocketflow/CLAUDE.md` - PocketFlow framework patterns
 - `tests/test_planning/CLAUDE.md` - Test organization guide (shows directory structure)
 - `src/pflow/planning/prompts/README.md` - Prompt testing guidance

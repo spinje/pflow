@@ -151,10 +151,10 @@ When selected components don't exist:
 - `.taskmaster/tasks/task_15/task-15-technical-implementation-guide.md` - Code locations
 
 ### For Understanding
-- `docs/features/planner.md` - How planner uses context
-- `docs/core-concepts/shared-store.md` - Proxy mapping concepts
-- `docs/core-concepts/registry.md` - Registry architecture
-- `docs/core-concepts/schemas.md` - JSON IR schemas
+- `architecture/features/planner.md` - How planner uses context
+- `architecture/core-concepts/shared-store.md` - Proxy mapping concepts
+- `architecture/core-concepts/registry.md` - Registry architecture
+- `architecture/core-concepts/schemas.md` - JSON IR schemas
 
 ## PocketFlow Context
 

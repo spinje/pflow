@@ -126,7 +126,7 @@ This establishes the foundation that all other components build upon.
 
 4. **What existing code should I study?**
    - Current pyproject.toml configuration
-   - CLI architecture documentation (docs/architecture/architecture.md)
+   - CLI architecture documentation (architecture/architecture/architecture.md)
    - Click framework documentation for patterns
 
 ## What This Document Does NOT Cover

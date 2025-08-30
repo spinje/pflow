@@ -21,7 +21,7 @@ Result: Subtasks that don't align with project architecture
 ### With Documentation References:
 ```
 LLM sees: "Create node for file processing
-- Follow pflow pattern from docs/features/simple-nodes.md
+- Follow pflow pattern from architecture/features/simple-nodes.md
 - Use PocketFlow lifecycle from pocketflow/docs/core_abstraction/node.md
 - Adapt pattern from pocketflow/cookbook/batch-file-processor/"
 
@@ -60,7 +60,7 @@ With proper documentation references, generated subtasks will:
 ```markdown
 ## Relevant pflow Documentation
 
-- `docs/features/cli-runtime.md` - Shared store patterns
+- `architecture/features/cli-runtime.md` - Shared store patterns
   - Relevance: All nodes must follow store conventions
   - Key concepts: Store initialization, key naming
   - Applies to subtasks: 2, 3 (node implementation)

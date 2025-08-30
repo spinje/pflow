@@ -60,7 +60,7 @@ Create a test workflow that uses `type: "workflow"` and verify it executes corre
 ### Phase 4: Documentation
 
 #### Step 4.1: Create Workflow Execution Guide
-- **File**: `docs/features/workflow-execution.md`
+- **File**: `architecture/features/workflow-execution.md`
 - Explain how to use `type: "workflow"` in IR
 - Show examples
 - Clarify this is different from saved workflows

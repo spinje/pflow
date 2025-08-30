@@ -170,7 +170,7 @@ Use **vague, minimal prompts** when testing workflow discovery:
 **Why this matters**: Users provide detailed instructions when creating new workflows but use brief commands when running existing ones.
 
 #### Use North Star Examples
-Always reference `docs/vision/north-star-examples.md` for realistic test scenarios:
+Always reference `architecture/vision/north-star-examples.md` for realistic test scenarios:
 - **Primary (Complex)**: Generate changelog - Full GitHub → LLM → Git pipeline 🌟
 - **Secondary (Medium)**: Issue triage report - Simpler analysis workflow
 - **Tertiary (Simple)**: Summarize single issue - Minimal but useful

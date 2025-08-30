@@ -112,18 +112,18 @@ Interface:
 You need to update Interface examples in these files:
 
 ### Priority 1 (Update First)
-1. `docs/reference/node-reference.md` - Primary reference documentation
-2. `docs/features/simple-nodes.md` - Node implementation guide
-3. `docs/implementation-details/metadata-extraction.md` - Parser documentation
+1. `architecture/reference/node-reference.md` - Primary reference documentation
+2. `architecture/features/simple-nodes.md` - Node implementation guide
+3. `architecture/implementation-details/metadata-extraction.md` - Parser documentation
 
 ### Priority 2 (Update Second)
-4. `docs/features/planner.md` - Shows why types matter
-5. `docs/features/cli-runtime.md` - CLI integration examples
-6. `docs/core-concepts/registry.md` - Registry examples
+4. `architecture/features/planner.md` - Shows why types matter
+5. `architecture/features/cli-runtime.md` - CLI integration examples
+6. `architecture/core-concepts/registry.md` - Registry examples
 
 ### Priority 3 (Update Last)
-7. `docs/features/mcp-integration.md` - Future MCP integration
-8. `docs/prd.md` - Product requirements
+7. `architecture/features/mcp-integration.md` - Future MCP integration
+8. `architecture/prd.md` - Product requirements
 9. Files in `docs/future-version/` - Future features
 10. Files in `docs/core-node-packages/` - Package specifications
 
@@ -132,7 +132,7 @@ You need to update Interface examples in these files:
 ### 1. Search for Interface Examples
 Use grep to find all occurrences:
 ```bash
-grep -n "Interface:" docs/**/*.md
+grep -n "Interface:" architecture/**/*.md
 ```
 
 ### 2. For Each File

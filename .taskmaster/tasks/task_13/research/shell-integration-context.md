@@ -104,7 +104,7 @@ This allows nodes to work with both explicit parameters and shared store values.
 
 ## Shell Pipes Documentation
 
-The feature is documented in `docs/features/shell-pipes.md`. Key points:
+The feature is documented in `architecture/features/shell-pipes.md`. Key points:
 
 - stdin content is placed in `shared["stdin"]` (line 46)
 - Nodes can check `shared["stdin"]` as fallback for their primary input key (line 47)
@@ -122,7 +122,7 @@ The feature is documented in `docs/features/shell-pipes.md`. Key points:
   - Stdin injection: lines 200-212, 269
   - Output handling: lines 214-231, 287
   - Temp file cleanup: lines 234-243
-- **Documentation**: `docs/features/shell-pipes.md`
+- **Documentation**: `architecture/features/shell-pipes.md`
 - **Example node**: `src/pflow/nodes/file/read_file.py`
 
 ## Signal Handling

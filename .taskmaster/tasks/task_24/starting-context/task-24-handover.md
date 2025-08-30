@@ -157,7 +157,7 @@ Context Builder's `_validate_workflow_fields()` is strict:
 - `/src/pflow/core/ir_schema.py` - The new workflow schema with inputs/outputs
 
 ### Critical Docs:
-- `/docs/features/nested-workflows.md` - How workflow composition works
+- `/architecture/features/nested-workflows.md` - How workflow composition works
 - `/.taskmaster/tasks/task_20/task-review.md` - WorkflowExecutor implementation
 - `/.taskmaster/tasks/task_21/task-review.md` - Input/output declarations
 

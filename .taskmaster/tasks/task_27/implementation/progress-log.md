@@ -209,7 +209,7 @@ These were not improvements but essential bugfixes. The template resolution syst
 ## [2025-01-14 12:00] - Documentation Complete
 
 ✅ Created comprehensive documentation:
-- New debugging guide: `docs/features/debugging.md`
+- New debugging guide: `architecture/features/debugging.md`
 - Updated CLI reference with detailed flag documentation
 - Added debugging section to main README
 - Updated docs index with new debugging guide

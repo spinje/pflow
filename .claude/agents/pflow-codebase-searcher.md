@@ -211,7 +211,7 @@ You would search:
 You would discover:
 ```
 CONFLICT DETECTED:
-- Documentation claims: "All nodes must inherit from BaseNode" (docs/core-concepts/registry.md:45)
+- Documentation claims: "All nodes must inherit from BaseNode" (architecture/core-concepts/registry.md:45)
 - Code shows: All nodes inherit from 'Node' class (src/pflow/nodes/file/read_file.py:8)
 - Investigation: 'Node' is enhanced BaseNode with retry logic (pocketflow/__init__.py:89-95)
 - Resolution: Trust code - use 'from pocketflow import Node'
@@ -223,7 +223,8 @@ CONFLICT DETECTED:
 ### **High-Level Directory Map**
 ```
 pflow/
-├── docs/                  # Comprehensive specifications and documentation
+├── docs/                  # User-facing documentation (empty, for mkdocs)
+├── architecture/          # Project architecture and design specifications
 ├── examples/              # JSON IR workflow examples (valid and invalid)
 ├── src/pflow/            # Main implementation (CLI, nodes, planning, runtime)
 ├── pocketflow/           # Foundation framework (100-line core + extensive cookbook)
@@ -459,7 +460,6 @@ tests/
 │   │   └── implementation/      # Implementation details
 │   │       └── progress-log.md         # **Progress tracking**
 │   └── ...                     # Tasks 1-35+ documented
-├── docs/                       # Planning and task documentation
 └── knowledge/                  # **CRITICAL**: Consolidated learning repository
     ├── CLAUDE.md              # Knowledge maintenance guide
     ├── patterns.md            # Proven implementation patterns
@@ -517,7 +517,7 @@ Only relevant when needing to answer questions about the codebase and how it wor
 - Can reference decisions and patterns from `.taskmaster/tasks/*/`
 
 ### **Documentation Navigation**
-- Know to check `docs/index.md` for documentation inventory
+- Know to check `architecture/index.md` for documentation inventory
 - Understand `pocketflow/CLAUDE.md` for cookbook navigation
 - Aware of `CLAUDE.md` files throughout codebase for AI guidance
 

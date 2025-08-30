@@ -39,7 +39,7 @@ The IR must represent:
 
 ### 2. Schema Governance
 
-From `docs/core-concepts/schemas.md`, the IR must include:
+From `architecture/core-concepts/schemas.md`, the IR must include:
 
 **Document Envelope**:
 ```json
@@ -207,18 +207,18 @@ Based on documentation analysis:
 ## Critical Documentation References
 
 1. **Primary References**:
-   - `docs/core-concepts/schemas.md` - Complete schema specification
-   - `docs/features/planner.md#10.1` - Template-driven IR details
-   - `docs/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
+   - `architecture/core-concepts/schemas.md` - Complete schema specification
+   - `architecture/features/planner.md#10.1` - Template-driven IR details
+   - `architecture/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
 
 2. **Supporting Documents**:
-   - `docs/core-concepts/shared-store.md` - Proxy pattern and mappings
-   - `docs/core-concepts/runtime.md` - Execution configuration (post-MVP)
-   - `docs/features/workflow-analysis.md` - Example workflows
+   - `architecture/core-concepts/shared-store.md` - Proxy pattern and mappings
+   - `architecture/core-concepts/runtime.md` - Execution configuration (post-MVP)
+   - `architecture/features/workflow-analysis.md` - Example workflows
 
 3. **Implementation References**:
-   - `docs/implementation-details/metadata-extraction.md` - Node metadata format
-   - `docs/core-concepts/registry.md` - Registry structure and versioning
+   - `architecture/implementation-details/metadata-extraction.md` - Node metadata format
+   - `architecture/core-concepts/registry.md` - Registry structure and versioning
 
 ## Success Criteria
 

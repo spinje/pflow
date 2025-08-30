@@ -59,17 +59,17 @@ Create comprehensive test coverage for the enhanced metadata extraction system a
 ### Phase 4: Documentation Creation
 
 10. [ ] Create Enhanced Interface Format specification
-    - File: `docs/reference/enhanced-interface-format.md` (new)
+    - File: `architecture/reference/enhanced-interface-format.md` (new)
     - Change: Complete format reference with examples
     - Test: Examples in doc actually parse correctly
 
 11. [ ] Create Migration Guide
-    - File: `docs/reference/interface-migration-guide.md` (new)
+    - File: `architecture/reference/interface-migration-guide.md` (new)
     - Change: Step-by-step guide with before/after examples
     - Test: Migration examples work as documented
 
 12. [ ] Update metadata extraction documentation
-    - File: `docs/implementation-details/metadata-extraction.md`
+    - File: `architecture/implementation-details/metadata-extraction.md`
     - Change: Update to reflect new parser logic and capabilities
     - Test: Code examples match actual implementation
 

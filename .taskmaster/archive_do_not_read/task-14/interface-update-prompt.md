@@ -47,9 +47,9 @@ Note how:
 ## Process
 
 1. **Start with high-priority files**:
-   - `docs/reference/node-reference.md`
-   - `docs/features/simple-nodes.md`
-   - `docs/implementation-details/metadata-extraction.md`
+   - `architecture/reference/node-reference.md`
+   - `architecture/features/simple-nodes.md`
+   - `architecture/implementation-details/metadata-extraction.md`
 
 2. **For each file**:
    - Find all Interface examples
@@ -60,11 +60,11 @@ Note how:
 3. **Use these grep commands to find examples**:
    ```bash
    # Find all Interface sections
-   grep -n "Interface:" docs/**/*.md
+   grep -n "Interface:" architecture/**/*.md
 
    # Find specific patterns
-   grep -n "Reads:" docs/**/*.md
-   grep -n "Writes:" docs/**/*.md
+   grep -n "Reads:" architecture/**/*.md
+   grep -n "Writes:" architecture/**/*.md
    ```
 
 ## Critical Rules

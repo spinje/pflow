@@ -25,16 +25,16 @@ Security Note: Optional security warnings.
 
 ### ✅ Already Updated with Correct Format
 
-1. **`/docs/implementation-details/metadata-extraction.md`**
+1. **`/architecture/implementation-details/metadata-extraction.md`**
    - Lines 75-134: Shows the actual single-line format
    - Lines 143-387: Implementation using the actual format
    - Correctly documents the real pattern used in codebase
 
-2. **`/docs/future-version/json-extraction.md`**
+2. **`/architecture/future-version/json-extraction.md`**
    - Examples use the single-line format throughout
    - No multi-line YAML-like format found
 
-3. **`/docs/features/mcp-integration.md`**
+3. **`/architecture/features/mcp-integration.md`**
    - Line 123: Shows single-line Interface format
    - Consistent with actual codebase usage
 

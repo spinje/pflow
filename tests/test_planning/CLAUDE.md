@@ -242,7 +242,7 @@ RUN_LLM_TESTS=1 pytest tests/test_planning -v  # Everything
    - `test_case_1` ❌
 
 7. **ALWAYS use the North Star workflows as examples**
-   - See the `docs/vision/north-star-examples.md` for more information.
+   - See the `architecture/vision/north-star-examples.md` for more information.
    - Search existing tests for examples of North Star workflows.
 
 ## 📊 Test Quality Standards

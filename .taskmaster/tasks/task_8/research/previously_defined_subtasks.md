@@ -4,7 +4,7 @@
             "description": "Implement the core shell integration module in src/pflow/core/shell_integration.py with functions to detect if stdin is piped using sys.stdin.isatty() and read piped content into shared['stdin']",
             "status": "pending",
             "dependencies": [],
-            "details": "Create the shell_integration module following docs/features/shell-pipes.md#internal-implementation. Key functions: detect_stdin() to check if stdin is piped, read_stdin() to read content and place in shared['stdin']. Handle text encoding (UTF-8) and empty stdin cases. Ensure the module can be imported by other pflow components.",
+            "details": "Create the shell_integration module following architecture/features/shell-pipes.md#internal-implementation. Key functions: detect_stdin() to check if stdin is piped, read_stdin() to read content and place in shared['stdin']. Handle text encoding (UTF-8) and empty stdin cases. Ensure the module can be imported by other pflow components.",
             "testStrategy": ""
           },
           {
@@ -15,7 +15,7 @@
             "dependencies": [
               1
             ],
-            "details": "Extend shell_integration.py with stream_stdin() function that reads in 8KB chunks as specified in docs/features/shell-pipes.md#streaming-support. Support both full read mode (for small inputs) and streaming mode (for large inputs). Add configuration option to set chunk size. Ensure chunks are properly concatenated when needed.",
+            "details": "Extend shell_integration.py with stream_stdin() function that reads in 8KB chunks as specified in architecture/features/shell-pipes.md#streaming-support. Support both full read mode (for small inputs) and streaming mode (for large inputs). Add configuration option to set chunk size. Ensure chunks are properly concatenated when needed.",
             "testStrategy": ""
           },
           {
@@ -26,7 +26,7 @@
             "dependencies": [
               1
             ],
-            "details": "Following docs/features/shell-pipes.md#exit-code-propagation, implement exit code handling in shell_integration.py. Create exit_with_code() function that properly exits with given code. Define standard exit codes (0=success, 1=general error, 2=usage error, etc). Ensure all error paths in stdin handling use appropriate exit codes.",
+            "details": "Following architecture/features/shell-pipes.md#exit-code-propagation, implement exit code handling in shell_integration.py. Create exit_with_code() function that properly exits with given code. Define standard exit codes (0=success, 1=general error, 2=usage error, etc). Ensure all error paths in stdin handling use appropriate exit codes.",
             "testStrategy": ""
           },
           {
@@ -38,6 +38,6 @@
               1,
               3
             ],
-            "details": "As per docs/features/shell-pipes.md#signal-handling, add signal handler for SIGINT in shell_integration.py. Create setup_signal_handlers() function that registers handler. Handler should clean up resources, print interruption message to stderr, and exit with code 130 (standard for SIGINT). Ensure handler works during stdin reading.",
+            "details": "As per architecture/features/shell-pipes.md#signal-handling, add signal handler for SIGINT in shell_integration.py. Create setup_signal_handlers() function that registers handler. Handler should clean up resources, print interruption message to stderr, and exit with code 130 (standard for SIGINT). Ensure handler works during stdin reading.",
             "testStrategy": ""
           }

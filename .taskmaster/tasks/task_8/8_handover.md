@@ -195,8 +195,8 @@ def prep(self, shared):
 
 ### Critical Reading (READ THESE FIRST)
 - `src/pflow/cli/main.py` - Current CLI implementation (focus on lines 38-110)
-- `docs/features/shell-pipes.md` - Complete specification
-- `docs/core-concepts/shared-store.md` - How data flows between nodes
+- `architecture/features/shell-pipes.md` - Complete specification
+- `architecture/core-concepts/shared-store.md` - How data flows between nodes
 
 ### Reference for Patterns
 - Task 3 integration tests: `tests/test_integration/test_e2e_workflow.py`

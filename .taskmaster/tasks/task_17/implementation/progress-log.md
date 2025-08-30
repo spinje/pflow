@@ -758,7 +758,7 @@ Applied north star example patterns to fix test expectations.
 Result: All generator tests now follow north star patterns
 - ✅ Path B tests use specific, detailed prompts (first-time use)
 - ✅ Path A tests use vague prompts (reuse existing)
-- ✅ Tests aligned with docs/vision/north-star-examples.md
+- ✅ Tests aligned with architecture/vision/north-star-examples.md
 - 💡 Critical insight: Prompt specificity determines Path A vs Path B
 
 Example of correct Path B prompt:

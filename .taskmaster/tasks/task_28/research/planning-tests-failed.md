@@ -29,8 +29,8 @@ What we should do is:
 1. when writing tests that expect a workflow to be created, we should be more specific about what the workflow should do.
 2. when writing tests that expects a workflow to be found and reused, we should be less specific
 3. we need to test both these scenarios
-4. we should use the north star examples when writing tests: see `docs/vision/north-star-examples.md`, there is three levels of increasing complexity. We should always aim to write tests at the highest level of complexity when possible.
+4. we should use the north star examples when writing tests: see `architecture/vision/north-star-examples.md`, there is three levels of increasing complexity. We should always aim to write tests at the highest level of complexity when possible.
 
-Read `docs/vision/north-star-examples.md` to make sure you understand these examples! Think hard what this means for the tests you write.
+Read `architecture/vision/north-star-examples.md` to make sure you understand these examples! Think hard what this means for the tests you write.
 
 Let me know when you have read and thought hard about this and is ready to deploy test-writer-fixer subagents to fix this.

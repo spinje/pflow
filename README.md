@@ -255,7 +255,7 @@ pflow "find all open PRs, save summaries to local files"
 
 MCP tools are prefixed with `mcp__<server>__` to avoid naming conflicts. They integrate seamlessly with pflow's planning system—just describe what you want, and pflow will find the right MCP tools.
 
-For detailed MCP configuration, see [docs/mcp-integration.md](docs/mcp-integration.md).
+For detailed MCP configuration, see [architecture/features/mcp-integration.md](architecture/features/mcp-integration.md).
 
 ## Extensibility: MCP is the Way
 
@@ -354,7 +354,7 @@ pflow --planner-timeout 120 "very complex analysis"
 # Allows up to 2 minutes for planning (default: 60s)
 ```
 
-See the [Debugging Guide](docs/features/debugging.md) for detailed trace analysis and troubleshooting tips.
+See the [Debugging Guide](architecture/features/debugging.md) for detailed trace analysis and troubleshooting tips.
 
 ## Ecosystem: Plays Well With Others
 

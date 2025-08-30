@@ -146,7 +146,7 @@ Added new field to schema (lines 218-222):
 
 ### Documentation
 
-#### 8. `docs/features/automatic-namespacing.md` (NEW)
+#### 8. `architecture/features/automatic-namespacing.md` (NEW)
 **Purpose**: User-facing documentation explaining the feature
 **Contents**: Problem, solution, examples, migration guide
 
@@ -254,7 +254,7 @@ Created comprehensive tests:
 
 ## Documentation
 
-Created `docs/features/automatic-namespacing.md` with:
+Created `architecture/features/automatic-namespacing.md` with:
 - Problem explanation
 - Solution overview
 - Usage examples

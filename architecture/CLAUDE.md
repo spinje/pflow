@@ -1,6 +1,6 @@
-# pflow Documentation Navigation Guide
+# pflow Architecture Documentation Navigation Guide
 
-> **Purpose**: This guide helps AI assistants navigate the pflow documentation to quickly find the information they need. For a detailed inventory of what's in each file, see [index.md](./index.md).
+> **Purpose**: This guide helps AI assistants navigate the pflow architecture documentation to quickly find the information they need. For a detailed inventory of what's in each file, see [index.md](./index.md).
 
 ## 🚀 AI Agents Implementing Features?
 
@@ -9,7 +9,7 @@
 ## Documentation Structure
 
 ```
-docs/
+architecture/
 ├── prd.md                     # Product Requirements Document
 ├── index.md                   # File-by-file content inventory
 ├── ai-agent-context.md        # Basic context for AI agents implementing features

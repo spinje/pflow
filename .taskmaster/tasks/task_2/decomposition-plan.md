@@ -78,22 +78,22 @@ Task 2 aims to create a basic CLI for argument collection using the click framew
 ## Relevant pflow Documentation
 
 ### Core Documentation
-- `docs/reference/cli-reference.md` - Complete CLI syntax and design philosophy
+- `architecture/reference/cli-reference.md` - Complete CLI syntax and design philosophy
   - Relevance: Defines the expected CLI behavior and syntax patterns
   - Key concepts: Raw argument collection, natural language vs CLI syntax
   - Applies to subtasks: All subtasks, especially 1 and 2
 
-- `docs/features/cli-runtime.md` - How CLI arguments flow through the system
+- `architecture/features/cli-runtime.md` - How CLI arguments flow through the system
   - Relevance: Shows where collected arguments go after this task
   - Key concepts: Shared store initialization, argument passing to planner
   - Applies to subtasks: Subtask 2 for context storage
 
-- `docs/architecture/architecture.md#5.1` - CLI layer architecture
+- `architecture/architecture/architecture.md#5.1` - CLI layer architecture
   - Relevance: Provides architectural context for the CLI's role
   - Key concepts: "Type flags; engine decides" philosophy
   - Applies to subtasks: All subtasks for understanding scope
 
-- `docs/features/mvp-scope.md` - MVP boundaries
+- `architecture/features/mvp-scope.md` - MVP boundaries
   - Relevance: Clarifies what should/shouldn't be in this implementation
   - Key concepts: MVP focuses on basic functionality
   - Applies to subtasks: All subtasks to avoid over-engineering

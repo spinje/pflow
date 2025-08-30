@@ -222,7 +222,8 @@ pflow/
 │   │   └── test_workflow_executor/ # Workflow executor tests
 │   └── test_shared/      # Tests for shared components
 ├── examples/              # Example workflows and usage patterns
-├── docs/                  # Comprehensive project specifications
+├── docs/                  # User-facing documentation (empty, for mkdocs)
+├── architecture/          # Project architecture and design specifications
 ├── .taskmaster/           # Task management and planning
 ├── Makefile              # Development automation
 ├── pyproject.toml        # Project configuration and dependencies
@@ -284,7 +285,7 @@ Is this what you're expecting?
 
 ### Documentation Navigation
 
-**For detailed implementation guidance and documentation navigation**, see `docs/CLAUDE.md`. This file provides:
+**For detailed implementation guidance and documentation navigation**, see `architecture/CLAUDE.md`. This file provides:
 - Implementation order with pocketflow prerequisites
 - Feature-to-pattern mapping
 - Critical warnings for AI implementation
@@ -300,16 +301,16 @@ Is this what you're expecting?
 
 **Pflow Project Documentation**:
 
-**`docs/index.md`**: Comprehensive file-by-file inventory of all pflow documentation. Read this first to understand what documentation is available.
+**`architecture/index.md`**: Comprehensive file-by-file inventory of all pflow documentation. Read this first to understand what documentation is available.
 
 Folders:
-- `docs/features/`: Feature specifications and guides
-- `docs/core-concepts/`: Core concepts and patterns (shared store, schemas, registry, runtime)
-- `docs/reference/`: CLI syntax and execution reference
-- `docs/core-node-packages/`: Platform node specifications
-- `docs/implementation-details/`: Detailed implementation guides
-- `docs/future-version/`: Post-MVP features
-- `docs/architecture/`: System architecture and design
+- `architecture/features/`: Feature specifications and guides
+- `architecture/core-concepts/`: Core concepts and patterns (shared store, schemas, registry, runtime)
+- `architecture/reference/`: CLI syntax and execution reference
+- `architecture/core-node-packages/`: Platform node specifications
+- `architecture/implementation-details/`: Detailed implementation guides
+- `architecture/future-version/`: Post-MVP features
+- `architecture/architecture/`: System architecture and design
 
 #### PocketFlow Documentation
 
@@ -337,7 +338,7 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 
 The codebase is in early development with these tasks completed:
 - ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
-- ✅ Comprehensive documentation infrastructure in `docs/`
+- ✅ Comprehensive documentation infrastructure in `architecture/`
 - ✅ Development tooling and testing setup
 - ✅ Task 1: Package setup and CLI entry point with `pflow` command and version subcommand
 - ✅ Task 2: Basic CLI run command with stdio/stdin support

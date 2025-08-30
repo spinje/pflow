@@ -132,9 +132,9 @@ For the hello world workflow:
 
 ## 📚 Documentation References
 
-- **Integration patterns**: `docs/architecture/pflow-pocketflow-integration-guide.md`
-- **CLI runtime**: `docs/features/cli-runtime.md`
-- **Schemas**: `docs/core-concepts/schemas.md`
+- **Integration patterns**: `architecture/architecture/pflow-pocketflow-integration-guide.md`
+- **CLI runtime**: `architecture/features/cli-runtime.md`
+- **Schemas**: `architecture/core-concepts/schemas.md`
 
 ## ⚡ Quick Implementation Path
 

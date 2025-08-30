@@ -1,6 +1,6 @@
 # Task 17: JSON IR Generation Validation - Recommendation
 
-**Note**: This document complements the broader Pydantic vs JSONSchema decision (`docs/future-version/pydantic-vs-jsonschema-decision.md`) It focuses specifically on how the planner should generate JSON IR using a hybrid approach: Pydantic models for type-safe generation with Simon Willison's LLM library, followed by JSONSchema validation for comprehensive checking.
+**Note**: This document complements the broader Pydantic vs JSONSchema decision (`architecture/future-version/pydantic-vs-jsonschema-decision.md`) It focuses specifically on how the planner should generate JSON IR using a hybrid approach: Pydantic models for type-safe generation with Simon Willison's LLM library, followed by JSONSchema validation for comprehensive checking.
 
 ## Executive Summary
 

@@ -187,8 +187,8 @@ class ReadFileNode(Node):
 
 ## Documentation References
 These documents are essential for implementation:
-- `docs/features/simple-nodes.md` - Simple node architecture pattern
-- `docs/core-concepts/shared-store.md` - Shared store conventions
+- `architecture/features/simple-nodes.md` - Simple node architecture pattern
+- `architecture/core-concepts/shared-store.md` - Shared store conventions
 - `pocketflow/docs/core_abstraction/node.md` - Node lifecycle details
 - `pocketflow/cookbook/Tutorial-Cursor/utils/` - File operation examples
 

@@ -240,12 +240,12 @@ This section lists all the important documentation and files referenced in this 
 - **`pocketflow/docs/core_abstraction/communication.md`** - Shared store vs parameters distinction
 
 ### pflow Architecture Documentation
-- **`docs/architecture/pflow-pocketflow-integration-guide.md`** - Critical insights about how pflow extends PocketFlow (MUST READ)
-- **`docs/architecture/pocketflow-interface-guide.md`** - How to interface with PocketFlow components
-- **`docs/architecture/architecture.md`** - Overall system architecture
-- **`docs/core-concepts/schemas.md`** - JSON IR schema details
-- **`docs/core-concepts/registry.md`** - Registry structure and metadata format
-- **`docs/features/simple-nodes.md`** - Simple node pattern (shared-first, params-fallback)
+- **`architecture/architecture/pflow-pocketflow-integration-guide.md`** - Critical insights about how pflow extends PocketFlow (MUST READ)
+- **`architecture/architecture/pocketflow-interface-guide.md`** - How to interface with PocketFlow components
+- **`architecture/architecture/architecture.md`** - Overall system architecture
+- **`architecture/core-concepts/schemas.md`** - JSON IR schema details
+- **`architecture/core-concepts/registry.md`** - Registry structure and metadata format
+- **`architecture/features/simple-nodes.md`** - Simple node pattern (shared-first, params-fallback)
 
 ### Task-Specific References
 - **`.taskmaster/tasks/tasks.json`** - Task 4 definition and requirements

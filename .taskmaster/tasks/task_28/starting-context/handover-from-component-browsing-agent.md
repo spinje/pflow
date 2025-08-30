@@ -28,7 +28,7 @@ I successfully improved the `component_browsing` prompt from a baseline of 16.7%
 
 ## 🧪 Test Suite Revolution: Domain-Driven Design
 
-I completely redesigned the test suite based on north star examples from `docs/vision/north-star-examples.md`. Key insights:
+I completely redesigned the test suite based on north star examples from `architecture/vision/north-star-examples.md`. Key insights:
 
 ### What Worked
 - **12 focused test cases** vs original 19 scattered ones

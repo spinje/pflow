@@ -314,7 +314,7 @@ Start by deploying parallel subagents to gather ALL necessary context:
    - Task: "Identify test utilities and fixtures used for node testing"
 
 4. **Documentation Requirements**
-   - Task: "Check docs/reference/node-reference.md structure for adding new nodes"
+   - Task: "Check architecture/reference/node-reference.md structure for adding new nodes"
    - Task: "Find examples of node documentation in the codebase"
 ```
 
@@ -683,8 +683,8 @@ Think of it as enabling this:
 3. Implement integration tests
 
 ### Phase 3: Documentation (1 hour)
-1. Update `docs/reference/node-reference.md`
-2. Create `docs/features/nested-workflows.md`
+1. Update `architecture/reference/node-reference.md`
+2. Create `architecture/features/nested-workflows.md`
 3. Add examples in `examples/nested/`
 
 ### Use Parallel Execution

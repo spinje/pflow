@@ -309,8 +309,8 @@ def _extract_description(self, docstring: str) -> str:
 - `/tests/test_registry/test_scanner.py` - Shows Task 5's approach
 
 ### Documentation
-- `/docs/features/simple-nodes.md` - Defines the Interface pattern philosophy
-- `/docs/implementation-details/metadata-extraction.md` - Your specification (but uses theoretical format)
+- `/architecture/features/simple-nodes.md` - Defines the Interface pattern philosophy
+- `/architecture/implementation-details/metadata-extraction.md` - Your specification (but uses theoretical format)
 
 ## 📝 Final Implementation Checklist
 

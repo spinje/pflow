@@ -392,13 +392,13 @@ class WorkflowRegistry:
 
 ### 4.1 Documentation Updates
 
-1. **Conceptual Guide** (`docs/features/nested-workflows.md`):
+1. **Conceptual Guide** (`architecture/features/nested-workflows.md`):
    - When and why to use nested workflows
    - Storage isolation strategies explained
    - Parameter passing patterns
    - Best practices for composition
 
-2. **Reference Documentation** (`docs/reference/workflow-node.md`):
+2. **Reference Documentation** (`architecture/reference/workflow-node.md`):
    - WorkflowNode API reference
    - IR schema for nested workflows
    - Error handling guide

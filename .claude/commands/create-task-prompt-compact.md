@@ -229,7 +229,7 @@ Deploy parallel subagents for:
    - Task: "Identify test utilities and fixtures used for node testing"
 
 4. **Documentation Requirements**
-   - Task: "Check docs/reference/node-reference.md structure for adding new nodes"
+   - Task: "Check architecture/reference/node-reference.md structure for adding new nodes"
    - Task: "Find examples of node documentation in the codebase"
 ```
 

@@ -84,18 +84,18 @@ Task 5 implements the foundation of pflow's node discovery system by creating a 
 ## Relevant pflow Documentation
 
 ### Core Documentation
-- `docs/core-concepts/registry.md` - Complete registry system design
+- `architecture/core-concepts/registry.md` - Complete registry system design
   - Relevance: Defines the registry architecture and storage format
   - Key concepts: Metadata-only storage, dynamic imports, JSON persistence
   - Applies to subtasks: All subtasks, especially 2 for storage format
 
-- `docs/implementation-details/metadata-extraction.md` - Metadata extraction specifications
+- `architecture/implementation-details/metadata-extraction.md` - Metadata extraction specifications
   - Relevance: Details what metadata to extract and how
   - Key concepts: Basic vs detailed extraction (Task 5 does basic only)
   - Applies to subtasks: Subtask 2 for extraction logic
 
 ### Architecture Documentation
-- `docs/architecture/components.md` - MVP component specifications
+- `architecture/architecture/components.md` - MVP component specifications
   - Critical for: Understanding MVP scope limitations
   - Must follow: Only scan package nodes, no user directories in MVP
 

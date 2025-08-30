@@ -34,7 +34,7 @@ outputs: [
 
 ## CRITICAL DISCOVERY: Documentation vs Reality Mismatch
 
-**IMPORTANT**: The documentation in `docs/implementation-details/metadata-extraction.md` describes a rich schema that DOES NOT EXIST in the code. The docs mention an `InterfaceSectionParser` class that is NOT IMPLEMENTED.
+**IMPORTANT**: The documentation in `architecture/implementation-details/metadata-extraction.md` describes a rich schema that DOES NOT EXIST in the code. The docs mention an `InterfaceSectionParser` class that is NOT IMPLEMENTED.
 
 **Current Reality**:
 - File: `src/pflow/registry/metadata_extractor.py`

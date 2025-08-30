@@ -99,23 +99,23 @@ Task 14 enhances pflow's metadata extraction system to support type annotations,
 [ALWAYS include - Reference key project documentation that guides this task]
 
 ### Core Documentation
-- `docs/implementation-details/metadata-extraction.md` - Comprehensive extraction infrastructure
+- `architecture/implementation-details/metadata-extraction.md` - Comprehensive extraction infrastructure
   - Relevance: Defines the metadata extraction architecture and extension points
   - Key concepts: Extraction phases, registry integration, error handling patterns
   - Applies to subtasks: 1, 2, and 4
 
-- `docs/core-concepts/schemas.md` - Sections 2.1-2.4 on Node Metadata Schema
+- `architecture/core-concepts/schemas.md` - Sections 2.1-2.4 on Node Metadata Schema
   - Relevance: Defines the storage format for node metadata
   - Key concepts: Metadata structure, validation requirements
   - Applies to subtasks: 2 (storage format changes)
 
-- `docs/core-concepts/shared-store.md` - Natural interface patterns and proxy mappings
+- `architecture/core-concepts/shared-store.md` - Natural interface patterns and proxy mappings
   - Relevance: Explains why structure visibility is crucial for proxy mappings
   - Key concepts: Path-based access, proxy mapping patterns
   - Applies to subtasks: 3 (when documenting structures)
 
 ### Architecture/Feature Documentation
-- `docs/core-concepts/registry.md` - Section 4.3 on metadata generation
+- `architecture/core-concepts/registry.md` - Section 4.3 on metadata generation
   - Critical for: Understanding how metadata integrates with registry
   - Must follow: Registry storage conventions and format
   - Applies to subtasks: 2 (integration)

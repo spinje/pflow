@@ -991,8 +991,8 @@ While it's intellectually appealing to use JSON IR to generate JSON IR (ultimate
 **Key References:**
 - `pocketflow/docs/guide.md` - Shows the intended pattern for building systems
 - `pocketflow/docs/core_abstraction/node.md` - Node design principles
-- `docs/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
-- The planner specification in `docs/features/planner.md` describes it as infrastructure
+- `architecture/architecture/pflow-pocketflow-integration-guide.md` - Integration patterns
+- The planner specification in `architecture/features/planner.md` describes it as infrastructure
 
 ### The Decision
 

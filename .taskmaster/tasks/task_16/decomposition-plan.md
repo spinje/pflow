@@ -81,23 +81,23 @@ Task 16 creates a planning context builder that formats node metadata for LLM-ba
 ## Relevant pflow Documentation
 
 ### Core Documentation
-- `docs/features/planner.md` - Section 6.1 on template string composition
+- `architecture/features/planner.md` - Section 6.1 on template string composition
   - Relevance: Shows how the planner will consume our context output
   - Key concepts: Template variables, node references in workflows
   - Applies to subtasks: All (defines target format)
 
-- `docs/implementation-details/metadata-extraction.md` - Lines 784-860
+- `architecture/implementation-details/metadata-extraction.md` - Lines 784-860
   - Relevance: Contains example PlannerContextBuilder implementation
   - Key concepts: Optimization strategies, caching approaches
   - Applies to subtasks: 2 and 3
 
-- `docs/core-concepts/shared-store.md` - Shared store patterns
+- `architecture/core-concepts/shared-store.md` - Shared store patterns
   - Relevance: Critical for understanding parameter classification
   - Key concepts: Data flow vs configuration parameters
   - Applies to subtasks: 1 (parameter filtering)
 
 ### Architecture Documentation
-- `docs/architecture/architecture.md` - System overview
+- `architecture/architecture/architecture.md` - System overview
   - Critical for: Understanding where context builder fits
   - Must follow: Component isolation principles
 

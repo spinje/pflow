@@ -105,8 +105,8 @@ When implementing collision detection, be aware that:
 
 ## Related Documentation
 
-- Shell pipes feature specification: `docs/features/shell-pipes.md`
-- Shared store concepts: `docs/core-concepts/shared-store.md`
+- Shell pipes feature specification: `architecture/features/shell-pipes.md`
+- Shared store concepts: `architecture/core-concepts/shared-store.md`
 - StdinData class definition: `src/pflow/core/shell_integration.py:104-115`
 
 ## Code References

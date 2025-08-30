@@ -36,7 +36,7 @@ Create comprehensive test coverage for the enhanced metadata extraction system a
 ### Documentation Requirements
 
 #### 1. Enhanced Interface Format Specification
-Create comprehensive guide at `docs/reference/enhanced-interface-format.md`:
+Create comprehensive guide at `architecture/reference/enhanced-interface-format.md`:
 - Syntax rules for type annotations
 - Multi-line vs single-line usage
 - Description best practices
@@ -44,7 +44,7 @@ Create comprehensive guide at `docs/reference/enhanced-interface-format.md`:
 - Examples of all patterns
 
 #### 2. Migration Guide
-Create guide at `docs/reference/interface-migration-guide.md`:
+Create guide at `architecture/reference/interface-migration-guide.md`:
 - Step-by-step conversion from old to new format
 - Exclusive params pattern explanation
 - Common pitfalls (comma handling)
@@ -52,19 +52,19 @@ Create guide at `docs/reference/interface-migration-guide.md`:
 - Testing your migrated nodes
 
 #### 3. Update Existing Documentation
-- `docs/implementation-details/metadata-extraction.md`: Reflect new parser logic
+- `architecture/implementation-details/metadata-extraction.md`: Reflect new parser logic
 - Add note about enhanced format to any node development guides
 - Document the parser fixes from 14.3
 
 #### 4. Update All Interface Examples in Documentation
 Update Interface examples to use enhanced format in:
-- `docs/reference/node-reference.md` - Node implementation patterns
-- `docs/features/simple-nodes.md` - Simple node examples
-- `docs/implementation-details/metadata-extraction.md` - Parser examples
-- `docs/core-concepts/registry.md` - Registry examples
-- `docs/features/cli-runtime.md` - CLI integration examples
-- `docs/features/planner.md` - Planner examples
-- `docs/features/mcp-integration.md` - MCP examples
+- `architecture/reference/node-reference.md` - Node implementation patterns
+- `architecture/features/simple-nodes.md` - Simple node examples
+- `architecture/implementation-details/metadata-extraction.md` - Parser examples
+- `architecture/core-concepts/registry.md` - Registry examples
+- `architecture/features/cli-runtime.md` - CLI integration examples
+- `architecture/features/planner.md` - Planner examples
+- `architecture/features/mcp-integration.md` - MCP examples
 - All files in `docs/future-version/` that show Interface examples
 - All files in `docs/core-node-packages/` that define node interfaces
 

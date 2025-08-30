@@ -14,6 +14,8 @@ check: ## Run code quality tools.
 	@uv run mypy
 	@echo "🚀 Checking for obsolete dependencies: Running deptry"
 	@uv run deptry src
+	@echo "🚀 Checking documentation: Running mkdocs build"
+	@uv run mkdocs build -s --clean
 
 .PHONY: test
 test: ## Test the code with pytest (excludes LLM tests that require API keys)

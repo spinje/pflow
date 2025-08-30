@@ -36,7 +36,7 @@ if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
   - `test_integration.py`
 
 ### 4. Documentation Updates ✅
-- **Architecture docs updated**: `docs/architecture/runtime-components.md` now explains WorkflowExecutor as a runtime component
+- **Architecture docs updated**: `architecture/architecture/runtime-components.md` now explains WorkflowExecutor as a runtime component
 - **No stale references**: No remaining references to "WorkflowNode" in Python files
 - **User-facing docs preserved**: The workflow execution feature is still documented, just not as a "node"
 

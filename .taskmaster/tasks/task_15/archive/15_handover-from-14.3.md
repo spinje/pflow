@@ -241,7 +241,7 @@ DO NOT break this - all nodes depend on it!
   - Existing tests must pass!
   - Add tests for two-phase functions
 
-- `/docs/reference/enhanced-interface-format.md`:
+- `/architecture/reference/enhanced-interface-format.md`:
   - Documents the structure format (including nested structures)
   - Has examples that the parser can handle
 

@@ -3,7 +3,7 @@
 Quick reference checklist for implementing the IR-to-PocketFlow compiler.
 
 ## Pre-Implementation
-- [ ] Read `docs/architecture/pflow-pocketflow-integration-guide.md` (CRITICAL)
+- [ ] Read `architecture/architecture/pflow-pocketflow-integration-guide.md` (CRITICAL)
 - [ ] Read `pocketflow/__init__.py` to understand Flow and Node classes
 - [ ] Review `src/pflow/core/ir_schema.py` to understand IR structure
 - [ ] Check `src/pflow/nodes/test_node.py` for available test nodes

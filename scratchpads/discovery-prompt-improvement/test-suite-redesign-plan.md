@@ -133,7 +133,7 @@
 4. Ensure each test has clear rationale and realistic expectations
 
 ### Phase 2: Validate Against North Star (1 hour)
-1. Cross-check test inputs against north star examples in `docs/vision/north-star-examples.md`
+1. Cross-check test inputs against north star examples in `architecture/vision/north-star-examples.md`
 2. Ensure complexity levels match: Primary (5 tests), Secondary (4 tests), Tertiary (3 tests)
 3. Verify component expectations match realistic workflow patterns
 

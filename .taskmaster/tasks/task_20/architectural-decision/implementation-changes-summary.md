@@ -77,10 +77,10 @@ def test_workflow_type_special_handling():
 
 ### 4. Documentation Updates
 
-#### A. Update `docs/reference/node-reference.md`
+#### A. Update `architecture/reference/node-reference.md`
 Remove the WorkflowNode section entirely (it's no longer a user-facing node).
 
-#### B. Create `docs/reference/workflow-execution.md`
+#### B. Create `architecture/reference/workflow-execution.md`
 New document explaining how workflows can execute other workflows using `type: "workflow"` in IR.
 
 #### C. Update Task 20 Spec

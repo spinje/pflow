@@ -293,8 +293,8 @@ llm keys set openai
 
 ### Must Read:
 - **Spec**: `.taskmaster/tasks/task_12/task-12-spec.md` - The formal specification
-- **LLM Docs**: `docs/core-node-packages/llm-nodes.md` - Design philosophy and examples
-- **Node Reference**: `docs/reference/node-reference.md` - Node implementation patterns
+- **LLM Docs**: `architecture/core-node-packages/llm-nodes.md` - Design philosophy and examples
+- **Node Reference**: `architecture/reference/node-reference.md` - Node implementation patterns
 - **llm Source**: `llm-main/` directory - The llm library source (in this repo)
 
 ### Related Code:
