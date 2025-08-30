@@ -4,11 +4,13 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Find the most recent trace file
-LATEST_TRACE=$(ls -t ~/.pflow/debug/pflow-trace-*.json 2>/dev/null | head -1)
+# Find the most recent trace file (planner or workflow)
+LATEST_TRACE=$(ls -t ~/.pflow/debug/planner-trace-*.json ~/.pflow/debug/workflow-trace-*.json 2>/dev/null | head -1)
 
 if [ -z "$LATEST_TRACE" ]; then
     echo "❌ No trace files found in ~/.pflow/debug/"
+    echo ""
+    echo "Looking for: planner-trace-*.json or workflow-trace-*.json"
     exit 1
 fi
 

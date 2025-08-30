@@ -182,10 +182,11 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Extract timestamps from filenames
-    # Expected format: pflow-trace-YYYYMMDD-HHMMSS.json
+    # Expected format: planner-trace-YYYYMMDD-HHMMSS.json or workflow-trace-*-YYYYMMDD-HHMMSS.json
     import re
 
-    pattern = r"pflow-trace-(\d{8}-\d{6})\.json"
+    # Updated pattern to match both planner and workflow traces
+    pattern = r"(?:planner|workflow)-trace-(?:.*?-)?(\d{8}-\d{6})\.json"
 
     match1 = re.search(pattern, file1.name)
     match2 = re.search(pattern, file2.name)

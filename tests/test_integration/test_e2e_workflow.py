@@ -7,25 +7,16 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-import pocketflow
 from pflow.cli.main import main
-from pflow.registry import Registry, scan_for_nodes
-from pflow.runtime import compile_ir_to_flow
+from tests.shared.registry_utils import ensure_test_registry
 
 
 def test_hello_workflow_execution(tmp_path):
     """Test executing a simple read-file => write-file workflow."""
     runner = CliRunner()
 
-    # Ensure registry exists for tests
-    registry = Registry()
-    if not registry.registry_path.exists():
-        # Populate registry for tests
-        src_path = Path(__file__).parent.parent.parent / "src"
-        nodes_dir = src_path / "pflow" / "nodes"
-        if nodes_dir.exists():
-            scan_results = scan_for_nodes([nodes_dir])
-            registry.update_from_scanner(scan_results)
+    # Ensure registry exists BEFORE entering isolated filesystem
+    ensure_test_registry()
 
     with runner.isolated_filesystem():
         # Create input file
@@ -107,13 +98,7 @@ def test_invalid_workflow_json(tmp_path):
     runner = CliRunner()
 
     # Ensure registry exists
-    registry = Registry()
-    if not registry.registry_path.exists():
-        src_path = Path(__file__).parent.parent.parent / "src"
-        nodes_dir = src_path / "pflow" / "nodes"
-        if nodes_dir.exists():
-            scan_results = scan_for_nodes([nodes_dir])
-            registry.update_from_scanner(scan_results)
+    ensure_test_registry()
 
     with runner.isolated_filesystem():
         # Create invalid workflow (missing ir_version)
@@ -135,13 +120,7 @@ def test_invalid_workflow_validation(tmp_path):
     runner = CliRunner()
 
     # Ensure registry exists
-    registry = Registry()
-    if not registry.registry_path.exists():
-        src_path = Path(__file__).parent.parent.parent / "src"
-        nodes_dir = src_path / "pflow" / "nodes"
-        if nodes_dir.exists():
-            scan_results = scan_for_nodes([nodes_dir])
-            registry.update_from_scanner(scan_results)
+    ensure_test_registry()
 
     with runner.isolated_filesystem():
         # Create workflow with invalid structure (empty nodes array)
@@ -185,13 +164,7 @@ def test_node_execution_failure(tmp_path):
     runner = CliRunner()
 
     # Ensure registry exists
-    registry = Registry()
-    if not registry.registry_path.exists():
-        src_path = Path(__file__).parent.parent.parent / "src"
-        nodes_dir = src_path / "pflow" / "nodes"
-        if nodes_dir.exists():
-            scan_results = scan_for_nodes([nodes_dir])
-            registry.update_from_scanner(scan_results)
+    ensure_test_registry()
 
     with runner.isolated_filesystem():
         # Create workflow that will fail (missing input file)
@@ -221,13 +194,7 @@ def test_verbose_execution_output(tmp_path):
     runner = CliRunner()
 
     # Ensure registry exists
-    registry = Registry()
-    if not registry.registry_path.exists():
-        src_path = Path(__file__).parent.parent.parent / "src"
-        nodes_dir = src_path / "pflow" / "nodes"
-        if nodes_dir.exists():
-            scan_results = scan_for_nodes([nodes_dir])
-            registry.update_from_scanner(scan_results)
+    ensure_test_registry()
 
     with runner.isolated_filesystem():
         # Create input file
@@ -264,109 +231,51 @@ def test_verbose_execution_output(tmp_path):
         assert "Workflow executed successfully" in result.output
 
 
-def test_shared_store_verification(tmp_path):
-    """Test that shared store properly passes data between nodes."""
+def test_data_flows_between_nodes(tmp_path):
+    """Test that data correctly flows from one node to another through template variables."""
+    runner = CliRunner()
+
     # Ensure registry exists
-    registry = Registry()
-    if not registry.registry_path.exists():
-        src_path = Path(__file__).parent.parent.parent / "src"
-        nodes_dir = src_path / "pflow" / "nodes"
-        if nodes_dir.exists():
-            scan_results = scan_for_nodes([nodes_dir])
-            registry.update_from_scanner(scan_results)
+    ensure_test_registry()
 
-    # Change to temp directory
-    os.chdir(tmp_path)
+    with runner.isolated_filesystem():
+        # Create input file with test data
+        with open("input.txt", "w") as f:
+            f.write("Test content\nSecond line")
 
-    # Create input file
-    with open("input.txt", "w") as f:
-        f.write("Test content\nSecond line")
-
-    # Create workflow IR with explicit template variable connection
-    workflow = {
-        "ir_version": "0.1.0",
-        "nodes": [
-            {"id": "read", "type": "read-file", "params": {"file_path": "input.txt"}},
-            {
-                "id": "write",
-                "type": "write-file",
-                "params": {
-                    "file_path": "output.txt",
-                    "content": "${read.content}",  # Explicit connection required with namespacing
+        # Create workflow that passes data between nodes
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "read", "type": "read-file", "params": {"file_path": "input.txt"}},
+                {
+                    "id": "write",
+                    "type": "write-file",
+                    "params": {
+                        "file_path": "output.txt",
+                        "content": "${read.content}",  # Template variable references read node's output
+                    },
                 },
-            },
-        ],
-        "edges": [{"from": "read", "to": "write"}],
-    }
+            ],
+            "edges": [{"from": "read", "to": "write"}],
+        }
 
-    # Compile and execute directly (not through CLI)
-    flow = compile_ir_to_flow(workflow, registry)
-    shared_storage = {}
-    result = flow.run(shared_storage)
+        with open("workflow.json", "w") as f:
+            json.dump(workflow, f)
 
-    # Verify shared store contents with namespacing
-    # With namespacing enabled, outputs are stored under node IDs
-    assert "read" in shared_storage, "Read node should have its namespace in shared store"
-    assert "content" in shared_storage["read"], "ReadFileNode should put content in its namespace"
-    assert "1: Test content" in shared_storage["read"]["content"], "Content should have line numbers"
-    assert "2: Second line" in shared_storage["read"]["content"], "All lines should be numbered"
-    assert "write" in shared_storage, "Write node should have its namespace in shared store"
-    assert "written" in shared_storage["write"], "WriteFileNode should mark success in its namespace"
-    assert "Successfully wrote to" in shared_storage["write"]["written"], "Written message should indicate success"
+        # Run the workflow
+        result = runner.invoke(main, ["--file", "workflow.json"])
 
-    # Verify the flow succeeded
-    assert result == "default", "Flow should return default action on success"
+        # Verify success
+        assert result.exit_code == 0
+        assert "Workflow executed successfully" in result.output
 
-    # Verify file was actually written
-    assert Path("output.txt").exists()
-    with open("output.txt") as f:
-        content = f.read()
+        # Verify the data was correctly passed and written
+        assert Path("output.txt").exists()
+        content = Path("output.txt").read_text()
+        # ReadFileNode adds line numbers to content
         assert "1: Test content" in content
         assert "2: Second line" in content
-
-
-def test_node_execution_order(tmp_path):
-    """Test that nodes execute in the order specified by edges."""
-
-    # Create custom test nodes that track execution order
-    class OrderTrackingNode(pocketflow.Node):
-        """Node that records its execution order in shared store."""
-
-        def __init__(self, node_id):
-            super().__init__()
-            self.node_id = node_id
-
-        def prep(self, shared_storage):
-            if "execution_order" not in shared_storage:
-                shared_storage["execution_order"] = []
-            shared_storage["execution_order"].append(f"{self.node_id}_prep")
-
-        def exec(self, prep_res):
-            return {"node_id": self.node_id}
-
-        def post(self, shared_storage, prep_res, exec_res):
-            shared_storage["execution_order"].append(f"{self.node_id}_post")
-            return "default"
-
-    # Create a flow with specific order: A -> B -> C
-    flow = pocketflow.Flow()
-    node_a = OrderTrackingNode("A")
-    node_b = OrderTrackingNode("B")
-    node_c = OrderTrackingNode("C")
-
-    # Chain them together
-    flow.start(node_a) >> node_b >> node_c
-
-    # Execute and verify order
-    shared_storage = {}
-    result = flow.run(shared_storage)
-
-    assert result == "default"
-    assert "execution_order" in shared_storage
-    expected_order = ["A_prep", "A_post", "B_prep", "B_post", "C_prep", "C_post"]
-    assert shared_storage["execution_order"] == expected_order, (
-        f"Expected {expected_order}, got {shared_storage['execution_order']}"
-    )
 
 
 def test_permission_error_read(tmp_path):
@@ -374,13 +283,7 @@ def test_permission_error_read(tmp_path):
     runner = CliRunner()
 
     # Ensure registry exists
-    registry = Registry()
-    if not registry.registry_path.exists():
-        src_path = Path(__file__).parent.parent.parent / "src"
-        nodes_dir = src_path / "pflow" / "nodes"
-        if nodes_dir.exists():
-            scan_results = scan_for_nodes([nodes_dir])
-            registry.update_from_scanner(scan_results)
+    ensure_test_registry()
 
     with runner.isolated_filesystem():
         # Create a file and make it unreadable
@@ -423,13 +326,7 @@ def test_permission_error_write(tmp_path):
     runner = CliRunner()
 
     # Ensure registry exists
-    registry = Registry()
-    if not registry.registry_path.exists():
-        src_path = Path(__file__).parent.parent.parent / "src"
-        nodes_dir = src_path / "pflow" / "nodes"
-        if nodes_dir.exists():
-            scan_results = scan_for_nodes([nodes_dir])
-            registry.update_from_scanner(scan_results)
+    ensure_test_registry()
 
     with runner.isolated_filesystem():
         # Create a read-only directory

@@ -128,9 +128,11 @@ class TestLLMMockValidation:
         model = mock_get_model("model")
         response = model.prompt("test")
 
-        # Text responses use .text attribute
-        assert response.text == "Plain text response"
-        assert response.usage["input_tokens"] == 1  # "test" = 1 token
+        # Text responses use .text() method (matching llm library)
+        assert response.text() == "Plain text response"
+        # Usage is a method that returns an object with input/output properties
+        usage = response.usage()
+        assert usage.input == 1  # "test" = 1 token
 
     def test_mock_provides_default_responses(self):
         """Test mock has sensible defaults for each schema."""

@@ -97,7 +97,9 @@ def mock_compile():
         mock_flow.run = run_flow
 
         # Store IR for params extraction
-        def compile_with_ir(ir_data, registry, initial_params=None):
+        def compile_with_ir(
+            ir_data, registry, initial_params=None, validate=True, metrics_collector=None, trace_collector=None
+        ):
             mock._last_ir = ir_data
             return mock_flow
 
@@ -559,9 +561,11 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
 
             assert result.exit_code == 0
-            # Parse the JSON output
+            # Parse the JSON output - it's now wrapped in a result structure
             output_data = json.loads(result.output)
-            assert output_data == {"summary": "Task completed successfully"}
+            # Extract the actual result from the wrapper
+            actual_result = output_data.get("result", output_data)
+            assert actual_result == {"summary": "Task completed successfully"}
         finally:
             Path(workflow_file).unlink()
 
@@ -599,10 +603,12 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
 
             assert result.exit_code == 0
-            # Parse the JSON output
+            # Parse the JSON output - it's now wrapped in a result structure
             output_data = json.loads(result.output)
+            # Extract the actual result from the wrapper
+            actual_result = output_data.get("result", output_data)
             # Should include ALL declared outputs
-            assert output_data == {
+            assert actual_result == {
                 "summary": "Analysis complete",
                 "count": 42,
                 "tags": ["important", "reviewed", "approved"],
@@ -647,8 +653,10 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
+            # Extract the actual result from the wrapper
+            actual_result = output_data.get("result", output_data)
             # Should only return the requested key
-            assert output_data == {"custom_key": "Custom value"}
+            assert actual_result == {"custom_key": "Custom value"}
         finally:
             Path(workflow_file).unlink()
 
@@ -681,8 +689,10 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
+            # Extract the actual result from the wrapper
+            actual_result = output_data.get("result", output_data)
             # Should return empty JSON object
-            assert output_data == {}
+            assert actual_result == {}
         finally:
             Path(workflow_file).unlink()
 
@@ -713,8 +723,10 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
+            # Extract the actual result from the wrapper
+            actual_result = output_data.get("result", output_data)
             # Should return first matching fallback key
-            assert output_data == {"response": "Fallback response value"}
+            assert actual_result == {"response": "Fallback response value"}
         finally:
             Path(workflow_file).unlink()
 
@@ -759,13 +771,15 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
+            # Extract the actual result from the wrapper
+            actual_result = output_data.get("result", output_data)
 
             # Verify all complex types are preserved correctly
-            assert output_data["metadata"]["author"] == "Test User"
-            assert output_data["metadata"]["nested"]["data"] == [1, 2, 3]
-            assert output_data["items"][2]["type"] == "orange"
-            assert output_data["score"] == 98.5
-            assert output_data["is_valid"] is True
+            assert actual_result["metadata"]["author"] == "Test User"
+            assert actual_result["metadata"]["nested"]["data"] == [1, 2, 3]
+            assert actual_result["items"][2]["type"] == "orange"
+            assert actual_result["score"] == 98.5
+            assert actual_result["is_valid"] is True
         finally:
             Path(workflow_file).unlink()
 
@@ -823,13 +837,15 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--file", workflow_file, "--output-format", "JSON"])
             assert result.exit_code == 0
             output_data = json.loads(result.output)
-            assert output_data == {"data": "Test value"}
+            actual_result = output_data.get("result", output_data)
+            assert actual_result == {"data": "Test value"}
 
             # Test "Json" (mixed case)
             result = runner.invoke(main, ["--file", workflow_file, "--output-format", "Json"])
             assert result.exit_code == 0
             output_data = json.loads(result.output)
-            assert output_data == {"data": "Test value"}
+            actual_result = output_data.get("result", output_data)
+            assert actual_result == {"data": "Test value"}
         finally:
             Path(workflow_file).unlink()
 
@@ -864,17 +880,19 @@ class TestWorkflowOutputHandling:
                 json_output = json.loads(result.output)
             except json.JSONDecodeError:
                 # If there are verbose messages mixed in, try to find JSON in the output
-                # Look for JSON-like structure
+                # Look for JSON-like structure (including nested objects)
                 import re
 
-                json_match = re.search(r"\{[^}]*\}", result.output)
+                json_match = re.search(r"\{.*\}", result.output, re.DOTALL)
                 if json_match:
                     json_output = json.loads(json_match.group())
                 else:
                     # If still not found, fail with helpful message
                     raise AssertionError(f"Could not find valid JSON in output:\n{result.output}") from None
 
-            assert json_output == {"expected": "Found value"}
+            # Extract the actual result from the wrapper
+            actual_result = json_output.get("result", json_output)
+            assert actual_result == {"expected": "Found value"}
         finally:
             Path(workflow_file).unlink()
 
@@ -911,7 +929,8 @@ class TestWorkflowOutputHandling:
             assert result.exit_code == 0
             # Should handle binary data without crashing
             output_data = json.loads(result.output)
-            assert "binary_output" in output_data
+            actual_result = output_data.get("result", output_data)
+            assert "binary_output" in actual_result
         finally:
             Path(workflow_file).unlink()
 
@@ -939,10 +958,12 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
+            # Extract the actual result from the wrapper
+            actual_result = output_data.get("result", output_data)
             # Both fields should be present
-            assert "nullable" in output_data
-            assert output_data["nullable"] is None
-            assert output_data["present"] == "value"
+            assert "nullable" in actual_result
+            assert actual_result["nullable"] is None
+            assert actual_result["present"] == "value"
         finally:
             Path(workflow_file).unlink()
 
@@ -981,8 +1002,10 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
+            # Extract the actual result from the wrapper
+            actual_result = output_data.get("result", output_data)
             # Should only include found outputs
-            assert output_data == {"found1": "Value 1", "found2": 42}
-            assert "missing" not in output_data
+            assert actual_result == {"found1": "Value 1", "found2": 42}
+            assert "missing" not in actual_result
         finally:
             Path(workflow_file).unlink()

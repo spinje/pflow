@@ -12,7 +12,7 @@ Tools for analyzing planner trace files to optimize prompts and debug issues.
 ./scripts/analyze-trace/latest.sh
 
 # Analyze a specific trace
-uv run python scripts/analyze-trace/analyze.py ~/.pflow/debug/pflow-trace-*.json
+uv run python scripts/analyze-trace/analyze.py ~/.pflow/debug/planner-trace-*.json
 ```
 
 See [analyze-trace/README.md](analyze-trace/README.md) for detailed documentation.

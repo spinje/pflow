@@ -33,7 +33,7 @@ def save_trace_to_file(trace_data: dict[str, Any], directory: Optional[Path] = N
 
     # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"pflow-trace-{timestamp}.json"
+    filename = f"planner-trace-{timestamp}.json"
     filepath = directory / filename
 
     # Save with proper error handling

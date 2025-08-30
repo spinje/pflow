@@ -22,7 +22,8 @@ scripts/analyze-trace/
 ├── latest.sh          # Quick script to analyze the most recent trace
 ├── compare-latest.sh  # Quick script to compare the two most recent traces
 └── output/            # Generated analysis files go here
-    ├── pflow-trace-*/  # One directory per analyzed trace
+    ├── planner-trace-*/  # One directory per analyzed planner trace
+    ├── workflow-trace-*/  # One directory per analyzed workflow trace
     │   ├── README.md                      # Index with summary statistics
     │   ├── 01-WorkflowDiscoveryNode.md   # Individual node analysis
     │   ├── 02-ComponentBrowsingNode.md   # Each LLM call gets its own file
@@ -40,7 +41,9 @@ First, run pflow with the `--trace` flag to generate a trace file:
 # Always saves trace on success or failure
 uv run pflow --trace "create a workflow that generates a changelog"
 
-# Trace files are saved to ~/.pflow/debug/pflow-trace-*.json
+# Trace files are saved to ~/.pflow/debug/
+# - Planner traces: planner-trace-*.json
+# - Workflow traces: workflow-trace-*.json
 ```
 
 ### 2. Analyze a Trace
@@ -56,7 +59,7 @@ uv run pflow --trace "create a workflow that generates a changelog"
 
 ```bash
 # Analyze a specific trace file
-uv run python scripts/analyze-trace/analyze.py ~/.pflow/debug/pflow-trace-20250815-120310.json
+uv run python scripts/analyze-trace/analyze.py ~/.pflow/debug/planner-trace-20250815-120310.json
 
 # Or specify a custom output directory
 uv run python scripts/analyze-trace/analyze.py trace.json my-analysis/
@@ -76,7 +79,7 @@ The analyzer creates a directory with:
 
 Example output structure:
 ```
-output/pflow-trace-20250815-120310/
+output/planner-trace-20250815-120310/
 ├── README.md                      # Summary with stats and navigation
 ├── 01-WorkflowDiscoveryNode.md   # First LLM call
 ├── 02-ComponentBrowsingNode.md   # Second LLM call
@@ -103,8 +106,8 @@ uv run python scripts/analyze-trace/compare.py trace1.json trace2.json
 
 # Example with full paths
 uv run python scripts/analyze-trace/compare.py \
-  ~/.pflow/debug/pflow-trace-20250815-120310.json \
-  ~/.pflow/debug/pflow-trace-20250815-130415.json
+  ~/.pflow/debug/planner-trace-20250815-120310.json \
+  ~/.pflow/debug/planner-trace-20250815-130415.json
 ```
 
 The comparison report is saved to `output/comparison-{timestamp1}-vs-{timestamp2}.md` and includes:
@@ -122,8 +125,8 @@ The report is automatically opened in your editor (Cursor or VS Code) if availab
 ./scripts/analyze-trace/compare-latest.sh
 
 # Or manually with:
-TRACE1=$(ls -t ~/.pflow/debug/pflow-trace-*.json | sed -n '2p')
-TRACE2=$(ls -t ~/.pflow/debug/pflow-trace-*.json | sed -n '1p')
+TRACE1=$(ls -t ~/.pflow/debug/planner-trace-*.json | sed -n '2p')
+TRACE2=$(ls -t ~/.pflow/debug/planner-trace-*.json | sed -n '1p')
 uv run python scripts/analyze-trace/compare.py "$TRACE1" "$TRACE2"
 ```
 
