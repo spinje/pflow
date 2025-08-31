@@ -5,7 +5,7 @@ alwaysApply: true
 ---
 # CLAUDE.md
 
-This file provides guidance to Cursor and Claude Code when working with code and documentation in this repository.
+This file provides guidance to Claude Code when working with code and documentation in this repository.
 
 ## Core Directive - Epistemic Manifesto
 
@@ -123,17 +123,19 @@ make check                     # Run all quality checks (lint, type check, etc.)
 ### Technology Stack
 
 **Core Dependencies** (discuss before adding others):
+- `Python 3.9+` - Modern Python
 - `click` - CLI framework (more flexible than Typer)
 - `pydantic` - IR/metadata validation
 - `llm` - Simon Willison's LLM CLI integration and inspiration
 
 **Development Tools**:
-- `uv` - Fast Python package manager (ALWAYS use `uv pip` instead of `pip`)
+- `uv` - Fast Python package manager (ALWAYS use `uv pip` instead of `pip`, `uv python -m pytest` instead of `python -m pytest` etc.)
 - `pytest` - Testing framework
 - `mypy` - Type checking
 - `ruff` - Linting and formatting
 - `pre-commit` - Git hooks
 - `mkdocs` - Documentation
+- `make` - Development automation
 
 ### Architecture Components
 
@@ -162,83 +164,72 @@ pflow/
 │   ├── cookbook/          # Extensive examples (40+ patterns)
 │   └── tests/             # Framework test suite
 ├── src/pflow/             # Main pflow CLI implementation
-│   ├── __init__.py       # Package initialization
 │   ├── cli/              # CLI module
 │   │   └── main.py       # CLI implementation with click
 │   ├── core/             # Core utilities and schemas
 │   │   ├── ir_schema.py  # Pydantic models for JSON IR validation
-│   │   └── shell_integration.py  # Shell pipe and stdin/stdout handling
+│   │   ├── shell_integration.py  # Shell pipe and stdin/stdout handling
+│   │   ├── workflow_manager.py  # Centralized workflow lifecycle management
+│   │   └── exceptions.py # Core exception definitions
 │   ├── nodes/            # Platform node implementations
-│   │   └── file/         # File operation nodes (read, write, copy, move, delete)
+│   │   ├── file/         # File operation nodes
+│   │   ├── git/          # Git operation nodes
+│   │   ├── github/       # GitHub API nodes
+│   │   ├── llm/          # LLM interaction node
+│   │   ├── test/         # Test nodes for development
+│   │   └── test_node*.py # Various test node implementations
 │   ├── planning/         # Natural language planning system
-│   │   └── context_builder.py  # Build context for LLM planning
+│   │   ├── context_builder.py  # Build context for LLM planning
+│   │   ├── flow.py       # Flow planning logic
+│   │   ├── nodes.py      # Node planning logic
+│   │   ├── ir_models.py  # IR models for planning
+│   │   ├── debug.py      # Debugging utilities
+│   │   ├── debug_utils.py # Additional debug helpers
+│   │   ├── prompts/      # Extracted prompts as markdown files
+│   │   └── utils/        # Planning utilities
+│   │       ├── llm_helpers.py      # LLM interaction helpers
+│   │       ├── registry_helper.py  # Registry access helpers
+│   │       └── workflow_loader.py  # Workflow loading utilities
 │   ├── registry/         # Node discovery and management
 │   │   ├── registry.py   # Central registry for nodes and metadata
 │   │   ├── scanner.py    # Dynamic node discovery from modules
 │   │   └── metadata_extractor.py  # Extract metadata from node docstrings
 │   └── runtime/          # Workflow execution components
-│       └── compiler.py   # IR to PocketFlow object compilation
+│       ├── compiler.py   # IR to PocketFlow object compilation
+│       ├── workflow_executor.py  # Workflow execution orchestration
+│       ├── workflow_validator.py # Workflow validation logic
+│       ├── template_resolver.py  # Template variable resolution
+│       ├── template_validator.py # Template validation logic
+│       ├── namespaced_store.py   # Namespaced shared store implementation
+│       ├── namespaced_wrapper.py # Node wrapper for namespacing
+│       └── node_wrapper.py       # General node wrapper utilities
 ├── tests/                 # Comprehensive test suite
+│   ├── shared/           # Shared test utilities and fixtures
 │   ├── test_cli/         # CLI interface tests
 │   ├── test_core/        # Core functionality tests
 │   ├── test_docs/        # Documentation validation
 │   ├── test_integration/ # End-to-end integration tests
 │   ├── test_nodes/       # Node implementation tests
-│   │   └── test_file/    # File node operation tests
+│   │   ├── test_file/    # File node tests
+│   │   ├── test_git/     # Git node tests
+│   │   ├── test_github/  # GitHub node tests
+│   │   └── test_llm/     # LLM node tests
 │   ├── test_planning/    # Planning system tests
+│   │   ├── fixtures/     # Test fixtures for planning
+│   │   ├── integration/  # Planning integration tests
+│   │   ├── llm/          # LLM-specific planning tests
+│   │   │   ├── behavior/ # LLM behavior tests
+│   │   │   ├── integration/ # LLM integration tests
+│   │   │   └── prompts/  # Prompt testing
+│   │   └── unit/         # Unit tests for planning
 │   ├── test_registry/    # Registry and scanner tests
-│   └── test_runtime/     # Runtime and compiler tests
+│   ├── test_runtime/     # Runtime and compiler tests
+│   │   └── test_workflow_executor/ # Workflow executor tests
+│   └── test_shared/      # Tests for shared components
 ├── examples/              # Example workflows and usage patterns
-│   ├── README.md         # Examples overview and guide
-│   ├── core/             # Core workflow examples
-│   ├── advanced/         # Advanced workflow patterns
-│   └── invalid/          # Invalid examples for validation testing
 ├── docs/                  # User-facing documentation (empty, for mkdocs)
 ├── architecture/          # Project architecture and design specifications
-│   ├── CLAUDE.md                  # Documentation navigation guide for AI
-│   ├── index.md                   # Documentation inventory and overview
-│   ├── prd.md                     # **CORE: Product requirements document**
-│   ├── architecture/                  # System architecture documentation
-│   │   ├── architecture.md        # **CORE: Complete system architecture**
-│   │   ├── components.md              # Complete MVP vs v2.0 breakdown
-│   │   └── pflow-pocketflow-integration-guide.md  # Integration patterns
-│   ├── core-concepts/                 # Core system concepts
-│   │   ├── registry.md                # Node discovery, namespacing, versioning
-│   │   ├── runtime.md                 # Execution engine, caching, safety
-│   │   ├── schemas.md                 # JSON IR and metadata schemas
-│   │   └── shared-store.md            # Shared store + proxy pattern
-│   ├── features/                      # Feature specifications
-│   │   ├── mvp-implementation-guide.md  # Comprehensive MVP guide (scope + roadmap)
-│   │   ├── simple-nodes.md            # Simple node design pattern
-│   │   ├── cli-runtime.md             # CLI integration and shared store runtime
-│   │   ├── planner.md                 # Dual-mode planner (CLI + natural language)
-│   │   ├── shell-pipes.md             # Unix pipe support and stdin handling
-│   │   ├── autocomplete.md            # CLI autocomplete specification (v2.0)
-│   │   ├── mcp-integration.md         # MCP server integration (v2.0)
-│   │   └── workflow-analysis.md       # Technical analysis of AI workflow inefficiencies
-│   ├── reference/                     # Reference documentation
-│   │   ├── cli-reference.md           # CLI commands and syntax
-│   │   ├── execution-reference.md     # Execution model and flow control
-│   │   ├── enhanced-interface-format.md # Docstring format for pflow nodes
-│   │   └── node-reference.md          # Node types and configurations
-│   ├── core-node-packages/            # Platform node package specifications
-│   ├── implementation-details/        # Implementation specifics
-│   │   ├── metadata-extraction.md
-│   │   └── autocomplete-impl.md
-│   └── future-version/               # Post-MVP features
-│       ├── llm-node-gen.md
-│       └── json-extraction.md
 ├── .taskmaster/           # Task management and planning
-│   ├── tasks/            # Task tracking
-│   │   ├── task_1/
-│   │   │   └── task-review.md # Read this file to understand what has been implemented in previously completed tasks
-│   │   └── task_2/
-│   │   │   └── (same structure)
-│   ├── knowledge/        # Consolidated learning repository
-│   │   ├── CLAUDE.md    # Knowledge maintenance guide
-│   │   ├── patterns.md  # Successful implementation patterns
-│   │   ├── pitfalls.md  # Common mistakes to avoid
-│   │   └── decisions.md # Architectural decisions
 ├── Makefile              # Development automation
 ├── pyproject.toml        # Project configuration and dependencies
 └── CLAUDE.md            # This file
@@ -291,7 +282,11 @@ Is this what you're expecting?
 - Document decisions and tradeoffs
 - Create `CLAUDE.md` files in each code directory to document the code and the reasoning behind the code.
 - Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/<conversation-subject>/` directory. Always create them in a subdirectory relevant to the current conversation.
-- *Always use subagents* when gathering information, context, do research and verifying assumptions. This is important, it is the only way to avoid running out of context window when working on complex tasks.
+
+**Utilizing subagents**:
+- Always use `pflow-codebase-searcher` when gathering information, context, do research and verifying assumptions if the check is not a trivial check. This is important, it is the only way to avoid running out of context window when working on complex tasks.
+- Always use the `test-writer-fixer` subagent to write or fix broken tests. Remember to give it small tasks, never more than fixes for one file at a time. Provide the subagent with a comprehensive context and instructions and ask it to make a plan first, before it starts implementing.
+- Consider using the `code-implementer` subagent when implementing new features or fixing bugs. This agent should only be used for tasks that require no special knowledge of the codebase and specific implementation details, and only for tasks that are small and isolated.
 
 ### Documentation Navigation
 
@@ -342,44 +337,64 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 
 *All documentation follows a single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
 
-> Remember: Always use subagents when reading documentation, examples and code. If you need specific information, ask a subagent to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
+> Remember: Proactively use subagents when reading documentation, examples and codeexcept for small lookups. If you need specific information, ask a subagent to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
 
 ### Current State of the Project
 
 The codebase is in early development with these tasks completed:
 - ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
-- ✅ Comprehensive documentation infrastructure in `docs/`
+- ✅ Comprehensive documentation infrastructure in `architecture/`
 - ✅ Development tooling and testing setup
-- ✅ Task 1 complete: Package setup and CLI entry point with `pflow` command and version subcommand
-- ✅ Task 2 complete: Basic CLI run command with stdio/stdin support
-- ✅ Task 3 complete: Execute a Hardcoded 'Hello World' Workflow
-- ✅ Task 4 complete: Implement IR-to-PocketFlow Object Converter
-- ✅ Task 5 complete: Node discovery and registry implementation
-- ✅ Task 6 complete: Define JSON IR schema
-- ✅ Task 7 complete: Extract node metadata from docstrings
-- ✅ Task 8 complete: Build comprehensive shell pipe integration with stdin/stdout
-- ✅ Task 11 complete: Implement read-file and write-file nodes
-- ✅ Task 16 complete: Create planning context builder
-- ✅ Task 14 complete: Implement type, structure, description and semantic documentation for all Interface components
-- ✅ Task 15 complete: Extend context builder for two-phase discovery and structure documentation support (modify and extend the context builder implemented in Task 16)
-- ✅ Task 18 complete: Template Variable System
-- ✅ Task 19 complete: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
-- ✅ Task 20 complete: Implement Nested Workflow Execution
+- ✅ Task 1: Package setup and CLI entry point with `pflow` command and version subcommand
+- ✅ Task 2: Basic CLI run command with stdio/stdin support
+- ✅ Task 3: Execute a Hardcoded 'Hello World' Workflow
+- ✅ Task 4: Implement IR-to-PocketFlow Object Converter
+- ✅ Task 5: Node discovery and registry implementation
+- ✅ Task 6: Define JSON IR schema
+- ✅ Task 7: Extract node metadata from docstrings
+- ✅ Task 8: Build comprehensive shell pipe integration with stdin/stdout
+- ✅ Task 11: Implement read-file and write-file nodes
+- ✅ Task 16: Create planning context builder
+- ✅ Task 14: Implement type, structure, description and semantic documentation for all Interface components
+- ✅ Task 15: Extend context builder for two-phase discovery and structure documentation support (modify and extend the context builder implemented in Task 16)
+- ✅ Task 18: Template Variable System
+- ✅ Task 19: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
+- ✅ Task 20: Implement Nested Workflow Execution
 - ✅ Task 21: Implement Workflow Input Declaration - workflows to declare their expected input and output parameters in the IR schema
 - ✅ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
 - ✅ Task 12: Implement LLM Node - Create a general-purpose LLM node - infinitely reusable building block by combining prompts with template variables
-- ✅ Task 26: Implement GitHub and Git Operation Nodes - 6 nodes for GitHub/Git automation
+- ✅ Task 26: Implement GitHub and Git Operation Nodes - 9 nodes for GitHub/Git automation
+- ✅ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
+- ✅ Task 30: Refactor Validation Functions from compiler.py
+- ✅ Task 31: Refactor Test Infrastructure - Mock at LLM Level
+- ✅ Task 27: Implement intuitive debugging capabilities and tracing system for the planner
+- ✅ Task 9: Implement shared store collision detection using automatic namespacing
+- ✅ Task 33: Extract planner prompts to markdown files in `src/pflow/planning/prompts/` and improve/create test cases for each prompt in `tests/test_planning/llm/prompts/`
+- ✅ Task 34: Prompt Accuracy Tracking System for planner prompts
+- ✅ Task 35: Migrate Template Syntax from $variable to ${variable}
+- ✅ Task 36: Update Context Builder for Namespacing Clarity
+- ✅ Task 37: Implement API Error Handling with User-Friendly Messages
+- ✅ Task 40: Improve Workflow Validation and Consolidate into Unified System
+- ✅ Task 41: Implement Shell Node
+- ✅ Task 28: Improve performance of planner by modifying prompts (Discovery, Component Browsing, Metadata Generation, Parameter Prompts, Workflow Generator)
+- ✅ Task 43: MCP Server support
+- ✅ Task 32: Unified Metrics and Tracing System for User Workflow Execution
+- ✅ Task 10: Create registry CLI
+- ✅ Task 50: Node Filtering System with Settings Management json file
 
 Next up:
-- ⏳ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
-   - Task 17 Subtask 1: Foundation & Infrastructure ✅ Completed
-   - Task 17 Subtask 2: Discovery System ✅ Completed
-   - Task 17 Subtask 3: Parameter Management System ✅ Completed
-   - Task 17 Subtask 4: Generation System ✅ Completed
-   - 🎯 Task 17 Subtask 5: Validation & Refinement System (Currently implementing)
-   - Task 17 Subtask 6: Flow Orchestration
-   - Task 17 Subtask 7: Integration & Polish
-- ⏳ Task 9: Implement shared store collision detection and proxy mapping
+- ⏳ Task 22: Named workflow execution
+- ⏳ Task 42: Claude Code Agentic Node
+- ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
+- ⏳ Task 47: Support HTTP Transport for MCP Servers
+
+Next version (post-MVP/post-Launch):
+- ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
+- ⏳ Task 46: Workflow Export to Zero-Dependency Code
+- ⏳ Task 38: Support conditional Branching in Generated Workflows
+- ⏳ Task 39: Support Parallel Execution in Workflows
+- ⏳ Task 44: Build caching system
+- ⏳ Task 45: Evaluate if wrapping n8n is worth the effort
 
 *Update this list as you complete tasks.*
 
@@ -437,11 +452,65 @@ Document for user decision:
 3. Your recommendation and why
 4. Reversibility of each option
 
+### Implementation Guidelines and
+
+Enforced by `mypy` and `ruff`:
+
+#### Type Hints
+
+- Always type all function parameters and returns
+```python
+   def process(data: list[str], count: int = 10) -> dict[str, int]:
+```
+- Use Optional[T] for nullable arguments
+```python
+   from typing import Optional
+   def fetch(url: str, timeout: Optional[int] = None) -> dict:
+```
+- Use lowercase built-in types (Python 3.9+)
+   ✅ items: list[str]         # CORRECT
+   ✅ cache: dict[str, Any]     # CORRECT
+   ❌ items: List[str]          # WRONG - old style
+   ❌ from typing import Dict   # WRONG - deprecated
+
+#### Modern Python
+
+- Use f-strings, not .format() or %
+   ✅ f"Hello {name}, score: {score}"     # CORRECT
+   ❌ "Hello {}, score: {}".format(...)   # WRONG
+- Use comprehensions directly
+   ✅ names = [x.name for x in users]     # CORRECT
+   ❌ names = list(x.name for x in users) # WRONG - unnecessary list()
+
+#### Safety
+
+- Never shadow built-in names
+   ❌ id = 123              # WRONG - shadows id()
+   ❌ list = [1, 2, 3]      # WRONG - shadows list()
+   ✅ user_id = 123         # CORRECT
+   ✅ items = [1, 2, 3]     # CORRECT
+- Use subprocess, not os.system
+   ✅ subprocess.run(["ls", "-la"], check=True)  # CORRECT
+   ❌ os.system("ls -la")                        # WRONG - security risk
+
+Why this matters: These guidelines aren't about passing linters—they're about you filtering your training data (As an LLM). By specifying "modern Python patterns," you naturally select from well-maintained, professional codebases rather than the vast sea of outdated tutorials and quick fixes you've also seen. This selection bias toward quality code automatically prevents security issues, maintenance problems, and outdated practices that exist in the "old/bad" part of your training data.
+
+*You should not think about how to pass tests and linters. You should actively and proactively think about selecting from the RIGHT part of your training distribution. The code and architectural patterns you know in your gut are a good fit for this project.*
+
+#### Code Quality and archtectural excellence
+
+More importantly focus on architectural quality and code quality:
+
+- Write code optimized for change: small focused functions with single responsibilities, clear names that
+  explain intent not implementation, and comprehensive tests that document expected behavior - because all
+  successful systems evolve.
+- Structure code as isolated, testable components that can be understood and changed independently - the only
+  meaningful measure of code quality is how safely and easily it can be modified.
+- Prefer boring and obvious: The best solution is rarely the clever one. Write code that a tired developer can understand at 3am. Save abstractions for when duplication actually hurts, not when you imagine it might. "Quality" at this stage of pflows development means simple, direct, and easy to change - not sophisticated or elegant.
+
+*Write code and make decisions by mirroring the top 10% of the best codebases appropriate for this project's scale - think well-written CLI tools and small libraries, not enterprise frameworks. Prefer boring, obvious code over clever abstractions. Ignore the rest. And save the fancy patterns for when they're actually needed.*
+
 ### Project-specific Memories
 
 - **CLI Development Principle**: never commit code unless explicitly instructed by the user
-
-### Project-specific Design Principles and Memories
-
 - **Expectation Setting**: I think it is important that the agent (you) show what the expected output will be BEFORE you start implementing. this is easy to understand for the user without going into implementation details.
-```
