@@ -528,7 +528,7 @@ def build_discovery_context(
         from pflow.registry import Registry
 
         registry = Registry()
-        registry_metadata = registry.load()
+        registry_metadata = registry.load()  # Now returns filtered nodes by default
 
     # Process nodes to get metadata
     processed_nodes, _ = _process_nodes(registry_metadata)
@@ -587,7 +587,7 @@ def build_nodes_context(
         from pflow.registry import Registry
 
         registry = Registry()
-        registry_metadata = registry.load()
+        registry_metadata = registry.load()  # Now returns filtered nodes by default
 
     # Process nodes to get metadata
     processed_nodes, _ = _process_nodes(registry_metadata)

@@ -414,7 +414,8 @@ class TestRegistryRealWorldScenarios:
 
             # Should handle unicode correctly
             registry.update_from_scanner(scan_results)
-            loaded = registry.load()
+            # Load unfiltered to test storage, not filtering
+            loaded = registry.load(include_filtered=True)
 
             assert "emoji-node-🚀" in loaded
             assert loaded["emoji-node-🚀"]["docstring"] == "Unicode test: 你好世界 🌍"
@@ -438,7 +439,8 @@ class TestRegistryRealWorldScenarios:
 
             # Should handle large datasets efficiently
             registry.update_from_scanner(scan_results)
-            loaded = registry.load()
+            # Load unfiltered to test storage, not filtering
+            loaded = registry.load(include_filtered=True)
 
             # Verify all nodes saved
             assert len(loaded) == 100
@@ -461,7 +463,8 @@ class TestRegistryRealWorldScenarios:
             registry2.update_from_scanner([{"name": "node-2", "module": "test.node2", "class_name": "Node2"}])
 
             # Load final state
-            final = Registry(registry_path).load()
+            # Load unfiltered to test storage, not filtering
+            final = Registry(registry_path).load(include_filtered=True)
 
             # Document current behavior: last write wins
             assert len(final) == 1

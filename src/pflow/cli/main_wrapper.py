@@ -1,13 +1,13 @@
-"""Wrapper to route between workflow and subcommands (MCP, Registry).
+"""Wrapper to route between workflow and subcommands (MCP, Registry, Settings).
 
 PROBLEM: Click groups with catch-all arguments don't work for subcommands.
 When @click.argument("workflow", nargs=-1) is on a @click.group(), it consumes
-ALL positional arguments including subcommand names like "mcp" or "registry", preventing
+ALL positional arguments including subcommand names like "mcp", "registry", or "settings", preventing
 Click from recognizing them as subcommands.
 
 SOLUTION: Pre-parse sys.argv to detect known subcommands BEFORE Click processes arguments.
 If found, route directly to appropriate command group. Otherwise, run workflow command.
-This allows "pflow mcp list", "pflow registry list", and "pflow 'create a poem'" to all work correctly.
+This allows "pflow mcp list", "pflow registry list", "pflow settings show", and "pflow 'create a poem'" to all work correctly.
 """
 
 import sys
@@ -16,6 +16,7 @@ import sys
 def cli_main() -> None:
     """Main entry point that routes between workflow execution and subcommands."""
     # Import here to avoid circular imports
+    from .commands.settings import settings
     from .main import workflow_command
     from .mcp import mcp
     from .registry import registry
@@ -46,6 +47,16 @@ def cli_main() -> None:
             registry_index = sys.argv.index("registry")
             sys.argv = [sys.argv[0]] + sys.argv[registry_index + 1 :]
             registry()
+        finally:
+            sys.argv = original_argv
+
+    elif first_arg == "settings":
+        # Route to Settings group
+        original_argv = sys.argv[:]
+        try:
+            settings_index = sys.argv.index("settings")
+            sys.argv = [sys.argv[0]] + sys.argv[settings_index + 1 :]
+            settings()
         finally:
             sys.argv = original_argv
 

@@ -265,7 +265,7 @@ class ComponentBrowsingNode(Node):
         # Instantiate Registry directly (PocketFlow pattern)
         try:
             registry = Registry()
-            registry_metadata = registry.load()
+            registry_metadata = registry.load()  # Now returns filtered nodes by default
             if not registry_metadata:
                 logger.warning("Registry returned empty metadata, using empty dict", extra={"phase": "prep"})
                 registry_metadata = {}
