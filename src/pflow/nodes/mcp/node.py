@@ -104,8 +104,17 @@ class MCPNode(Node):
         # - Any future MCP server without code changes
         tool_args = {k: v for k, v in self.params.items() if not k.startswith("__")}
 
-        # Get optional timeout from params
-        self._timeout = self.params.get("timeout", 30)
+        # Get optional timeout from params (validate as positive integer seconds)
+        timeout_param = self.params.get("timeout", 30)
+        try:
+            timeout_value = int(timeout_param)
+            if timeout_value <= 0:
+                raise ValueError
+            self._timeout = timeout_value
+        except Exception:
+            raise ValueError(
+                f"Invalid 'timeout' parameter: {timeout_param!r}. Must be a positive integer (seconds)."
+            ) from None
 
         logger.debug(
             "Preparing MCP tool execution", extra={"mcp_server": server, "mcp_tool": tool, "tool_args": tool_args}
@@ -153,22 +162,30 @@ class MCPNode(Node):
         # Prepare server parameters
         params = StdioServerParameters(command=config["command"], args=config.get("args", []), env=env if env else None)
 
-        # Execute with timeout
-        async with asyncio.timeout(self._timeout):
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    # Initialize handshake (required by MCP protocol)
-                    await session.initialize()
+        # Execute with timeout (Py3.11+ uses asyncio.timeout; Py3.10 falls back to wait_for)
+        async def _run_session() -> dict:
+            async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+                # Initialize handshake (required by MCP protocol)
+                await session.initialize()
 
-                    # Call the tool
-                    logger.debug(f"Calling MCP tool: {prep_res['tool']} with args: {prep_res['arguments']}")
-                    result = await session.call_tool(prep_res["tool"], prep_res["arguments"])
+                # Call the tool
+                logger.debug(f"Calling MCP tool: {prep_res['tool']} with args: {prep_res['arguments']}")
+                result = await session.call_tool(prep_res["tool"], prep_res["arguments"])
 
-                    # Extract content from result
-                    # MCP returns results as content blocks (text, image, etc.)
-                    extracted_result = self._extract_result(result)
+                # Extract content from result
+                # MCP returns results as content blocks (text, image, etc.)
+                extracted_result = self._extract_result(result)
 
-                    return {"result": extracted_result}
+                return {"result": extracted_result}
+
+        timeout_context = getattr(asyncio, "timeout", None)
+        if timeout_context is not None:
+            # Python 3.11+
+            async with timeout_context(self._timeout):
+                return await _run_session()
+        else:
+            # Python 3.10 fallback
+            return await asyncio.wait_for(_run_session(), timeout=self._timeout)
 
     def post(self, shared: dict, prep_res: dict, exec_res: dict) -> str:
         """Store results in shared store and determine next action.
