@@ -563,8 +563,9 @@ def test_main_wrapper_routes_unknown_to_workflow_command():
     workflow commands, not errors.
     """
     # Mock the workflow_command that's imported inside cli_main
+    cli_main_module = sys.modules["pflow.cli.main"]  # Get actual module from sys.modules
     with (
-        patch("pflow.cli.main.workflow_command") as mock_workflow,
+        patch.object(cli_main_module, "workflow_command") as mock_workflow,
         patch.object(sys, "argv", ["pflow", "unknown", "command"]),
     ):
         cli_main()
