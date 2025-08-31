@@ -68,7 +68,7 @@ class TestWorkflowSaveIntegration:
                 mock_prompt.side_effect = ["y", "test-workflow"]
 
                 # Use real WorkflowManager with temporary directory
-                with patch("pflow.core.workflow_manager.WorkflowManager") as mock_wm_class:
+                with patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
                     mock_wm_class.return_value = wm
 
                     _prompt_workflow_save(sample_workflow)
@@ -104,7 +104,7 @@ class TestWorkflowSaveIntegration:
                 # First attempt with duplicate name, then decline retry
                 mock_prompt.side_effect = ["y", "existing-workflow", "New description", "n"]
 
-                with patch("pflow.core.workflow_manager.WorkflowManager") as mock_wm_class:
+                with patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
                     mock_wm_class.return_value = wm
 
                     _prompt_workflow_save(sample_workflow)
@@ -127,7 +127,7 @@ class TestWorkflowSaveIntegration:
                 # Only two prompts now: save (y/n) and workflow name
                 mock_prompt.side_effect = ["y", "invalid/name"]
 
-                with patch("pflow.core.workflow_manager.WorkflowManager") as mock_wm_class:
+                with patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
                     mock_wm_class.return_value = wm
 
                     _prompt_workflow_save(sample_workflow)
@@ -177,10 +177,7 @@ class TestWorkflowSaveIntegration:
 
         # Then, test the save functionality separately (still integration testing)
         # This tests the same save flow that would be triggered in interactive mode
-        with (
-            patch("click.prompt") as mock_prompt,
-            patch("pflow.core.workflow_manager.WorkflowManager") as mock_wm_class,
-        ):
+        with patch("click.prompt") as mock_prompt, patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
             # Setup WorkflowManager with temp directory
             wm = WorkflowManager(workflows_dir)
             mock_wm_class.return_value = wm
@@ -223,7 +220,7 @@ class TestWorkflowSaveIntegration:
                     # Only two prompts now: save (y/n) and workflow name
                     mock_prompt.side_effect = ["y", "test-workflow"]
 
-                    with patch("pflow.core.workflow_manager.WorkflowManager") as mock_wm_class:
+                    with patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
                         mock_wm_class.return_value = wm
 
                         # This should handle the error gracefully
@@ -258,10 +255,7 @@ class TestWorkflowSaveUIBehavior:
             "start_node": "test",
         }
 
-        with (
-            patch("click.prompt") as mock_prompt,
-            patch("pflow.core.workflow_manager.WorkflowManager") as mock_wm_class,
-        ):
+        with patch("click.prompt") as mock_prompt, patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
             mock_prompt.return_value = "n"  # Decline to save
             mock_wm_class.return_value = wm
 
@@ -288,10 +282,7 @@ class TestWorkflowSaveUIBehavior:
         # Pre-create a workflow
         wm.save("existing", sample_workflow, "Original")
 
-        with (
-            patch("click.prompt") as mock_prompt,
-            patch("pflow.core.workflow_manager.WorkflowManager") as mock_wm_class,
-        ):
+        with patch("click.prompt") as mock_prompt, patch("pflow.cli.main.WorkflowManager") as mock_wm_class:
             mock_wm_class.return_value = wm
 
             # Simulate: save -> existing name -> retry -> new name

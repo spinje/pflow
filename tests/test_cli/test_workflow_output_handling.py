@@ -80,7 +80,7 @@ def mock_registry():
 @pytest.fixture
 def mock_compile():
     """Mock the compile_ir_to_flow function."""
-    with patch("pflow.runtime.compile_ir_to_flow") as mock:
+    with patch("pflow.cli.main.compile_ir_to_flow") as mock:
         # Create a mock flow that executes our test node
         mock_flow = Mock()
 
@@ -110,7 +110,7 @@ def mock_compile():
 @pytest.fixture
 def mock_validate_ir():
     """Mock IR validation to always pass."""
-    with patch("pflow.core.validate_ir") as mock:
+    with patch("pflow.cli.main.validate_ir") as mock:
         mock.return_value = None
         yield mock
 
@@ -118,7 +118,7 @@ def mock_validate_ir():
 @pytest.fixture
 def mock_registry_instance(mock_registry):
     """Mock the Registry class instantiation."""
-    with patch("pflow.registry.Registry") as MockRegistry:
+    with patch("pflow.cli.main.Registry") as MockRegistry:
         MockRegistry.return_value = mock_registry
         yield MockRegistry
 
