@@ -116,20 +116,13 @@ class TestDualModeStdinBehavior:
     def test_plain_text_stdin_with_args_treats_stdin_as_data(self):
         """Test that plain text stdin with args treats stdin as data.
 
-        SKIP REASON (2025-01):
-        This test uses "test-workflow" as input, which matches the workflow name pattern.
-        This triggers line 638 in main.py which tries to use WorkflowManager().
-        However, there's a duplicate import of WorkflowManager at line 668 inside a try block.
-        This causes Python to treat WorkflowManager as a local variable throughout the function.
-        When the planning import fails (mocked), WorkflowManager is never assigned, causing UnboundLocalError.
-
-        The fix requires removing the duplicate import from line 668 in main.py.
+        Uses a workflow name that's unlikely to exist as a saved workflow.
         """
         runner = CliRunner()
-        result = runner.invoke(main, ["test-workflow"], input="This is data, not workflow")
+        result = runner.invoke(main, ["nonexistent-test-workflow-xyz123"], input="This is data, not workflow")
 
         assert result.exit_code == 0
-        assert "Collected workflow from args: test-workflow" in result.output
+        assert "Collected workflow from args: nonexistent-test-workflow-xyz123" in result.output
         assert "Also collected stdin data: This is data, not workflow" in result.output
 
     def test_plain_text_stdin_without_workflow_shows_clear_error(self):
@@ -162,14 +155,13 @@ class TestDualModeStdinBehavior:
     def test_empty_stdin_falls_back_to_args(self):
         """Test that empty stdin falls back to args mode.
 
-        SKIP REASON: Same issue as test_plain_text_stdin_with_args_treats_stdin_as_data.
-        Uses "test-workflow" which triggers workflow name detection and UnboundLocalError.
+        Uses a workflow name that's unlikely to exist as a saved workflow.
         """
         runner = CliRunner()
-        result = runner.invoke(main, ["test-workflow"], input="")
+        result = runner.invoke(main, ["nonexistent-empty-test-abc789"], input="")
 
         assert result.exit_code == 0
-        assert "Collected workflow from args: test-workflow" in result.output
+        assert "Collected workflow from args: nonexistent-empty-test-abc789" in result.output
 
 
 class TestRealShellIntegration:
