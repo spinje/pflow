@@ -28,11 +28,27 @@ class Registry:
         # Add caching
         self._cached_nodes: Optional[dict[str, dict[str, Any]]] = None
 
-    def load(self) -> dict[str, dict[str, Any]]:
+        # Lazy load settings manager to avoid circular import
+        self._settings_manager: Optional[Any] = None
+
+    @property
+    def settings_manager(self) -> Any:
+        """Lazy load SettingsManager to avoid circular imports."""
+        if self._settings_manager is None:
+            from pflow.core.settings import SettingsManager
+
+            self._settings_manager = SettingsManager()
+        return self._settings_manager
+
+    def load(self, include_filtered: bool = False) -> dict[str, dict[str, Any]]:
         """Load registry from JSON file, auto-discovering core nodes if needed.
 
         Returns empty dict if file doesn't exist or is corrupt.
         Logs warnings for errors but doesn't raise exceptions.
+
+        Args:
+            include_filtered: If True, return ALL nodes including filtered ones.
+                            If False (default), return only nodes allowed by settings.
 
         Returns:
             Dictionary mapping node names to metadata
@@ -50,8 +66,19 @@ class Registry:
         if self._core_nodes_outdated(nodes):
             nodes = self._refresh_core_nodes(nodes)
 
-        # Cache the nodes
+        # Cache the nodes (always cache the full set)
         self._cached_nodes = nodes
+
+        # Apply filtering if requested (default behavior)
+        if not include_filtered:
+            filtered_nodes = {}
+            for node_name, node_data in nodes.items():
+                # Try module_path, file_path, then module (for broad pattern matching)
+                module_path = node_data.get("module_path") or node_data.get("file_path") or node_data.get("module", "")
+                if self.settings_manager.should_include_node(node_name, module_path):
+                    filtered_nodes[node_name] = node_data
+            return filtered_nodes
+
         return nodes
 
     def _load_from_file(self) -> dict[str, dict[str, Any]]:
@@ -91,6 +118,9 @@ class Registry:
 
         Creates parent directory if it doesn't exist.
         Pretty-prints JSON with indent=2 for readability.
+
+        IMPORTANT: This saves ALL nodes to the registry (unfiltered).
+        Filtering is applied at load time based on settings.
 
         Args:
             nodes: Dictionary mapping node names to metadata
@@ -162,7 +192,7 @@ class Registry:
         if node_types is None:
             raise TypeError("node_types cannot be None")
 
-        # Load the full registry
+        # Load the registry (filtered by default)
         registry_data = self.load()
 
         # Filter to only requested node types
@@ -186,12 +216,9 @@ class Registry:
         # Find core nodes directory
         nodes_path = Path(pflow.nodes.__file__).parent
 
-        # Scan all subdirectories (skip __pycache__ and test directories)
-        subdirs = [
-            d
-            for d in nodes_path.iterdir()
-            if d.is_dir() and not d.name.startswith("__") and not d.name.startswith("test")
-        ]
+        # Scan all subdirectories (skip __pycache__ only)
+        # We'll filter test nodes based on settings, not here
+        subdirs = [d for d in nodes_path.iterdir() if d.is_dir() and not d.name.startswith("__")]
 
         logger.info(f"Scanning for core nodes in: {subdirs}")
 
@@ -199,7 +226,9 @@ class Registry:
         scan_results = scan_for_nodes(subdirs)
 
         # Convert to registry format with type marking
+        # NOTE: We save ALL nodes to registry, filtering happens at load time
         registry_nodes = {}
+
         for node in scan_results:
             name = node.get("name")
             if not name:
@@ -261,7 +290,7 @@ class Registry:
 
         query_lower = query.lower()
         results = []
-        nodes = self.load()
+        nodes = self.load()  # Uses filtered nodes by default
 
         for name, metadata in nodes.items():
             name_lower = name.lower()
@@ -316,3 +345,16 @@ class Registry:
 
         logger.info(f"Found {len(scan_results)} user nodes in {path}")
         return scan_results
+
+    def list_nodes(self, include_filtered: bool = False) -> list[str]:
+        """List all available nodes with optional filtering.
+
+        Args:
+            include_filtered: If True, bypass filtering and show all nodes
+
+        Returns:
+            List of node names, sorted alphabetically
+        """
+        # Load with appropriate filtering
+        nodes = self.load(include_filtered=include_filtered)
+        return sorted(nodes.keys())

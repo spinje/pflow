@@ -95,6 +95,8 @@ def mock_registry():
         }
 
         instance.load.return_value = test_nodes
+        # Mock list_nodes to dynamically return keys from load() result
+        instance.list_nodes.side_effect = lambda include_filtered=False: list(instance.load.return_value.keys())
         yield MockRegistry, instance
 
 

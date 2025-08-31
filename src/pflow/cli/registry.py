@@ -199,7 +199,8 @@ def list_nodes(output_json: bool) -> None:
         if first_time and not output_json:
             click.echo("[Auto-discovering core nodes...]")
 
-        nodes = reg.load()  # Auto-discovers if needed
+        # Load nodes (filtered by default)
+        nodes = reg.load()
 
         if output_json:
             _output_json_nodes(nodes)

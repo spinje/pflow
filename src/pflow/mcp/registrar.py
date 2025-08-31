@@ -34,6 +34,16 @@ class MCPRegistrar:
         self.registry = registry or Registry()
         self.manager = manager or MCPServerManager()
         self.discovery = discovery or MCPDiscovery(self.manager)
+        self._settings_manager: Optional[Any] = None
+
+    @property
+    def settings_manager(self) -> Any:
+        """Lazy load SettingsManager to avoid circular imports."""
+        if self._settings_manager is None:
+            from pflow.core.settings import SettingsManager
+
+            self._settings_manager = SettingsManager()
+        return self._settings_manager
 
     def sync_server(self, server_name: str) -> dict[str, Any]:
         """Sync tools from an MCP server to the registry.
@@ -56,14 +66,24 @@ class MCPRegistrar:
             logger.exception("Failed to discover tools")
             return {"server": server_name, "tools_discovered": 0, "tools_registered": 0, "error": str(e)}
 
-        # Load existing registry
-        nodes = self.registry.load()
+        # Load complete registry (unfiltered) to avoid persisting a filtered subset
+        nodes = self.registry.load(include_filtered=True)
 
         registered_count = 0
+        filtered_count = 0
 
         for tool in tools:
             # Create node name following mcp-{server}-{tool} pattern
             node_name = f"mcp-{server_name}-{tool['name']}"
+
+            # Check if node should be included based on settings
+            if not self.settings_manager.should_include_node(node_name):
+                filtered_count += 1
+                logger.debug(f"Filtering out MCP tool '{node_name}' based on settings")
+                # Remove from registry if it was previously registered
+                if node_name in nodes:
+                    del nodes[node_name]
+                continue
 
             # Check if already exists
             if node_name in nodes:
@@ -78,9 +98,17 @@ class MCPRegistrar:
         # Save updated registry
         self.registry.save(nodes)
 
-        logger.info(f"Registered {registered_count} tools from {server_name}")
+        if filtered_count > 0:
+            logger.info(f"Registered {registered_count} tools from {server_name} ({filtered_count} filtered out)")
+        else:
+            logger.info(f"Registered {registered_count} tools from {server_name}")
 
-        return {"server": server_name, "tools_discovered": len(tools), "tools_registered": registered_count}
+        return {
+            "server": server_name,
+            "tools_discovered": len(tools),
+            "tools_registered": registered_count,
+            "tools_filtered": filtered_count,
+        }
 
     def sync_all_servers(self) -> list[dict[str, Any]]:
         """Sync tools from all configured MCP servers.
@@ -111,7 +139,8 @@ class MCPRegistrar:
         Returns:
             Number of entries removed
         """
-        nodes = self.registry.load()
+        # Load complete registry (unfiltered) to ensure removal even if tools are filtered
+        nodes = self.registry.load(include_filtered=True)
         prefix = f"mcp-{server_name}-"
 
         # Find all nodes for this server

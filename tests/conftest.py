@@ -1,5 +1,7 @@
 """Root-level test configuration and fixtures."""
 
+import os
+
 import pytest
 
 from tests.shared.llm_mock import create_mock_get_model
@@ -50,3 +52,25 @@ def mock_llm_responses(request):
 
     # Fallback if not using auto-mock (shouldn't happen)
     return create_mock_get_model()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def enable_test_nodes():
+    """Enable test nodes for all test runs.
+
+    This ensures that test nodes like 'echo' are available during testing,
+    even though they're hidden from users by default.
+    """
+    # Store original value
+    original = os.environ.get("PFLOW_INCLUDE_TEST_NODES")
+
+    # Enable test nodes for all tests
+    os.environ["PFLOW_INCLUDE_TEST_NODES"] = "true"
+
+    yield
+
+    # Restore original value after tests
+    if original is None:
+        os.environ.pop("PFLOW_INCLUDE_TEST_NODES", None)
+    else:
+        os.environ["PFLOW_INCLUDE_TEST_NODES"] = original
