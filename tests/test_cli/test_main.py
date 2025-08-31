@@ -2,7 +2,7 @@
 
 import click.testing
 
-from pflow.cli import main
+from pflow.cli.main import main
 
 
 def test_main_command_help():

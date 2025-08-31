@@ -6,7 +6,7 @@ from pathlib import Path
 import click.testing
 import pytest
 
-from pflow.cli import main
+from pflow.cli.main import main
 from pflow.registry import Registry, scan_for_nodes
 
 

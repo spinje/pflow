@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 import click.testing
 import pytest
 
-from pflow.cli import main
+from pflow.cli.main import main
 
 
 class MockOutputNode:

@@ -8,7 +8,6 @@ This wrapper exists because Click can't handle both a catch-all argument
 and subcommands in the same group - the argument consumes everything.
 """
 
-from .main import workflow_command as main  # For tests that import 'main'
 from .main_wrapper import cli_main
 
-__all__ = ["cli_main", "main"]
+__all__ = ["cli_main"]
