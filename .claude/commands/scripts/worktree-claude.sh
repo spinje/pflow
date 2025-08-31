@@ -143,7 +143,7 @@ You are now in an isolated git worktree specifically created for this task. All 
 Please wait for the user to provide specific instructions on how to proceed with: $TASK_DESC. Do not do anything until the user has provided specific instructions. STOP and WAIT after this message."
 
 # Create a command to run in the new terminal
-CLAUDE_CMD="cd '$FULL_WORKTREE_PATH' && claude '$CLAUDE_INITIAL_MSG'"
+CLAUDE_CMD="cd '$FULL_WORKTREE_PATH' && claude --dangerously-skip-permissions '$CLAUDE_INITIAL_MSG'"
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS
@@ -195,4 +195,4 @@ fi
 echo ""
 echo "A new terminal window should open with Claude ready to work on your task."
 echo "If it doesn't, manually run:"
-echo "  cd $WORKTREE_DIR && claude \"$TASK_DESC\""
+echo "  cd $WORKTREE_DIR && claude --dangerously-skip-permissions \"$TASK_DESC\""
