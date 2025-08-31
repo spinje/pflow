@@ -375,6 +375,7 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 43: MCP Server support
 - ✅ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ✅ Task 10: Create registry CLI
+- ✅ Task 50: Node Filtering System with Settings Management json file
 
 Next up:
 - ⏳ Task 22: Named workflow execution
