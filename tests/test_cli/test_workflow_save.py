@@ -103,7 +103,9 @@ class TestWorkflowSaveCLI:
 
         assert result.exit_code == 1
         assert "Save this workflow?" not in result.output
-        assert "cli: Compilation failed" in result.output
+        # Updated CLI error messaging prints a single friendly planning line
+        assert "❌ Planning failed:" in result.output
+        assert "non-existent-node" in result.output
 
     def test_no_prompt_when_stdout_is_piped(self, sample_workflow, tmp_path):
         """Test that save prompt is not shown when stdout is piped."""
