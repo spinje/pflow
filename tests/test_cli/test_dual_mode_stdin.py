@@ -176,12 +176,34 @@ class TestRealShellIntegration:
         uv_path = shutil.which("uv")
         if not uv_path:
             pytest.skip("uv not found in PATH")
+        # Ensure subprocess has a registry in an isolated HOME
+        import os
+
+        temp_home = tmp_path / "home"
+        pflow_dir = temp_home / ".pflow"
+        pflow_dir.mkdir(parents=True, exist_ok=True)
+        # Do not pre-create registry.json; allow CLI to auto-discover when missing
+
+        env = os.environ.copy()
+        env["HOME"] = str(temp_home)
+        env["PFLOW_INCLUDE_TEST_NODES"] = "true"
+
+        # Initialize registry via CLI to auto-discover core nodes
+        _ = subprocess.run(  # noqa: S603
+            [uv_path, "run", "pflow", "registry", "list", "--json"],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=env,
+        )
+
         result = subprocess.run(  # noqa: S603
             [uv_path, "run", "pflow", str(workflow_file)],  # No --file flag
             input="Test data from pipe",
             capture_output=True,
             text=True,
             shell=False,
+            env=env,
         )
 
         assert result.returncode == 0
@@ -248,6 +270,27 @@ class TestBinaryAndLargeStdinBehavior:
             uv_path = shutil.which("uv")
             if not uv_path:
                 pytest.skip("uv not found in PATH")
+            # Ensure subprocess has a registry in an isolated HOME
+            import os
+
+            temp_home = tmp_path / "home"
+            pflow_dir = temp_home / ".pflow"
+            pflow_dir.mkdir(parents=True, exist_ok=True)
+            # Do not pre-create registry.json; allow CLI to auto-discover when missing
+
+            env = os.environ.copy()
+            env["HOME"] = str(temp_home)
+            env["PFLOW_INCLUDE_TEST_NODES"] = "true"
+
+            # Initialize registry via CLI to auto-discover core nodes
+            _ = subprocess.run(  # noqa: S603
+                [uv_path, "run", "pflow", "registry", "list", "--json"],
+                capture_output=True,
+                text=True,
+                shell=False,
+                env=env,
+            )
+
             with open(binary_file, "rb") as binary_stdin:
                 result = subprocess.run(  # noqa: S603
                     [uv_path, "run", "pflow", "--verbose", str(workflow_file)],  # No --file flag, flags first
@@ -255,6 +298,7 @@ class TestBinaryAndLargeStdinBehavior:
                     capture_output=True,
                     text=True,
                     shell=False,
+                    env=env,
                 )
 
             # Should handle binary data gracefully
