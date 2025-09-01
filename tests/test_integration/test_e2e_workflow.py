@@ -45,7 +45,7 @@ def test_hello_workflow_execution(tmp_path):
             json.dump(workflow, f)
 
         # Run CLI
-        result = runner.invoke(main, ["--file", "workflow.json"])
+        result = runner.invoke(main, ["./workflow.json"])
 
         # Print output for debugging
         if result.exit_code != 0:
@@ -78,14 +78,19 @@ def test_missing_registry_error(tmp_path, monkeypatch):
         with open("workflow.json", "w") as f:
             json.dump(workflow, f)
 
-        # Mock registry to not exist
+        # Mock only the registry path's exists method
+        original_exists = Path.exists
+
         def mock_exists(self):
-            return False
+            # Only mock the registry path, not all paths
+            if "registry.json" in str(self):
+                return False
+            return original_exists(self)
 
         monkeypatch.setattr(Path, "exists", mock_exists)
 
         # Run CLI
-        result = runner.invoke(main, ["--file", "workflow.json"])
+        result = runner.invoke(main, ["./workflow.json"])
 
         # Verify error
         assert result.exit_code == 1
@@ -108,11 +113,12 @@ def test_invalid_workflow_json(tmp_path):
             json.dump(workflow, f)
 
         # Run CLI
-        result = runner.invoke(main, ["--file", "workflow.json"])
+        result = runner.invoke(main, ["./workflow.json"])
 
-        # Should be treated as non-workflow JSON (missing ir_version)
-        assert result.exit_code == 0
-        assert "Collected workflow from file:" in result.output
+        # With new system, JSON without ir_version fails validation
+        assert result.exit_code == 1
+        # Should show validation error
+        assert "validation" in result.output.lower() or "invalid" in result.output.lower()
 
 
 def test_invalid_workflow_validation(tmp_path):
@@ -134,11 +140,16 @@ def test_invalid_workflow_validation(tmp_path):
             json.dump(workflow, f)
 
         # Run CLI
-        result = runner.invoke(main, ["--file", "workflow.json"])
+        result = runner.invoke(main, ["./workflow.json"])
 
         # Verify validation error
         assert result.exit_code == 1
-        assert "Invalid workflow" in result.output
+        # The error message format may vary but should indicate validation failure
+        assert (
+            "validation" in result.output.lower()
+            or "invalid" in result.output.lower()
+            or "nodes" in result.output.lower()
+        )
 
 
 def test_plain_text_file_handling(tmp_path):
@@ -151,12 +162,13 @@ def test_plain_text_file_handling(tmp_path):
             f.write("read the file and summarize it")
 
         # Run CLI
-        result = runner.invoke(main, ["--file", "natural.txt"])
+        result = runner.invoke(main, ["./natural.txt"])
 
-        # Should collect as text, not try to execute
-        assert result.exit_code == 0
-        assert "Collected workflow from file: read the file and summarize it" in result.output
-        assert "Workflow executed successfully" not in result.output
+        # With new system, non-JSON files with paths are treated as workflow files
+        # But since it's not valid JSON, it will fail
+        assert result.exit_code == 1
+        # Should show JSON error or not found
+        assert "not found" in result.output.lower() or "json" in result.output.lower()
 
 
 def test_node_execution_failure(tmp_path):
@@ -180,7 +192,7 @@ def test_node_execution_failure(tmp_path):
             json.dump(workflow, f)
 
         # Run CLI
-        result = runner.invoke(main, ["--file", "workflow.json"])
+        result = runner.invoke(main, ["./workflow.json"])
 
         # Should report failure
         assert result.exit_code == 1
@@ -222,7 +234,7 @@ def test_verbose_execution_output(tmp_path):
             json.dump(workflow, f)
 
         # Run CLI with verbose flag
-        result = runner.invoke(main, ["--verbose", "--file", "workflow.json"])
+        result = runner.invoke(main, ["--verbose", "./workflow.json"])
 
         # Should show verbose execution info
         assert result.exit_code == 0
@@ -264,7 +276,7 @@ def test_data_flows_between_nodes(tmp_path):
             json.dump(workflow, f)
 
         # Run the workflow
-        result = runner.invoke(main, ["--file", "workflow.json"])
+        result = runner.invoke(main, ["./workflow.json"])
 
         # Verify success
         assert result.exit_code == 0
@@ -308,7 +320,7 @@ def test_permission_error_read(tmp_path):
 
             try:
                 # Run CLI
-                result = runner.invoke(main, ["--file", "workflow.json"])
+                result = runner.invoke(main, ["./workflow.json"])
 
                 # Should report failure
                 assert result.exit_code == 1
@@ -354,7 +366,7 @@ def test_permission_error_write(tmp_path):
 
             try:
                 # Run CLI
-                result = runner.invoke(main, ["--file", "workflow.json"])
+                result = runner.invoke(main, ["./workflow.json"])
 
                 # Should report failure
                 assert result.exit_code == 1

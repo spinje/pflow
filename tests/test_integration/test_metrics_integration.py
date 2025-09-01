@@ -193,9 +193,7 @@ class TestMetricsCollection:
 
         try:
             with patch.dict("os.environ", {"HOME": str(temp_home)}):
-                result = runner.invoke(
-                    cli, ["--file", workflow_file, "--output-format", "json"], env={"HOME": str(temp_home)}
-                )
+                result = runner.invoke(cli, ["--output-format", "json", workflow_file], env={"HOME": str(temp_home)})
 
             assert result.exit_code == 0
             output = json.loads(result.output)
@@ -248,9 +246,7 @@ class TestMetricsCollection:
 
         try:
             with patch.dict("os.environ", {"HOME": str(temp_home)}), patch("llm.get_model", mock_llm):
-                result = runner.invoke(
-                    cli, ["--file", workflow_file, "--output-format", "json"], env={"HOME": str(temp_home)}
-                )
+                result = runner.invoke(cli, ["--output-format", "json", workflow_file], env={"HOME": str(temp_home)})
 
             if result.exit_code != 0:
                 print(f"Exit code: {result.exit_code}")
@@ -292,7 +288,7 @@ class TestMetricsCollection:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(cli, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(cli, ["--output-format", "json", workflow_file])
 
             # Should have non-zero exit code
             assert result.exit_code != 0
@@ -336,7 +332,7 @@ class TestTraceGeneration:
 
         try:
             with patch.dict("os.environ", {"HOME": str(temp_home)}):
-                result = runner.invoke(cli, ["--file", workflow_file, "--trace"], env={"HOME": str(temp_home)})
+                result = runner.invoke(cli, ["--trace", workflow_file], env={"HOME": str(temp_home)})
 
                 if result.exit_code != 0:
                     print(f"Error output: {result.output}")
@@ -385,7 +381,7 @@ class TestTraceGeneration:
 
         try:
             with patch.dict("os.environ", {"HOME": str(temp_home)}), patch("llm.get_model", mock_llm):
-                result = runner.invoke(cli, ["--file", workflow_file, "--trace"], env={"HOME": str(temp_home)})
+                result = runner.invoke(cli, ["--trace", workflow_file], env={"HOME": str(temp_home)})
 
                 assert result.exit_code == 0
 
@@ -602,7 +598,7 @@ class TestCLIFlags:
                 patch.dict("os.environ", {"HOME": str(temp_home)}),
                 patch("pathlib.Path.home", return_value=Path(temp_home)),
             ):
-                result = runner.invoke(cli, ["--file", workflow_file, "--trace"], env={"HOME": str(temp_home)})
+                result = runner.invoke(cli, ["--trace", workflow_file], env={"HOME": str(temp_home)})
 
                 # Check the workflow ran successfully
                 if result.exit_code != 0:
@@ -676,7 +672,7 @@ class TestCLIFlags:
 
         try:
             # JSON output without trace flag
-            result = runner.invoke(cli, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(cli, ["--output-format", "json", workflow_file])
             assert result.exit_code == 0
 
             output = json.loads(result.output)
@@ -708,7 +704,7 @@ class TestJSONOutputStructure:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(cli, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(cli, ["--output-format", "json", workflow_file])
             output = json.loads(result.output)
 
             # Top-level structure
@@ -766,9 +762,7 @@ class TestJSONOutputStructure:
 
         try:
             with patch.dict("os.environ", {"HOME": str(temp_home)}):
-                result = runner.invoke(
-                    cli, ["--file", workflow_file, "--output-format", "json"], env={"HOME": str(temp_home)}
-                )
+                result = runner.invoke(cli, ["--output-format", "json", workflow_file], env={"HOME": str(temp_home)})
 
             # The workflow should fail
             assert result.exit_code != 0
@@ -821,7 +815,7 @@ class TestMetricsAccuracy:
             import time
 
             start = time.time()
-            result = runner.invoke(cli, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(cli, ["--output-format", "json", workflow_file])
             elapsed = (time.time() - start) * 1000  # Convert to ms
 
             output = json.loads(result.output)
@@ -908,7 +902,7 @@ class TestMetricsAccuracy:
                 workflow_file = f.name
 
             try:
-                result = runner.invoke(cli, ["--file", workflow_file, "--output-format", "json"])
+                result = runner.invoke(cli, ["--output-format", "json", workflow_file])
                 output = json.loads(result.output)
 
                 assert output["num_nodes"] == expected_count

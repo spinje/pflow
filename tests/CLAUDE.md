@@ -24,6 +24,18 @@ tests/
 └── test_runtime/          # Runtime, compiler, flow tests
 ```
 
+Note on real CLI subprocess tests
+- Use shared fixtures from tests/conftest.py to avoid duplication and CI drift:
+  - uv_exe: finds uv or skips
+  - prepared_subprocess_env: creates isolated HOME, sets PFLOW_INCLUDE_TEST_NODES=true, and initializes the registry via `pflow registry list --json`
+- Example:
+```python
+def test_cli_subprocess(tmp_path, uv_exe, prepared_subprocess_env):
+    env = prepared_subprocess_env
+    completed = subprocess.run([uv_exe, "run", "pflow", "--help"], capture_output=True, text=True, env=env)  # noqa: S603
+    assert completed.returncode == 0
+```
+
 ### Mapping Convention
 - Source: `src/pflow/X/Y/module.py`
 - Tests: `tests/test_X/test_Y/test_module.py`

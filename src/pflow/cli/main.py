@@ -13,17 +13,16 @@ from typing import Any
 import click
 
 from pflow.core import StdinData, ValidationError, validate_ir
-from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, WorkflowValidationError
-from pflow.core.shell_integration import (
-    determine_stdin_mode,
-    read_stdin_enhanced,
-)
+from pflow.core.exceptions import WorkflowExistsError, WorkflowValidationError
 from pflow.core.shell_integration import (
     read_stdin as read_stdin_content,
 )
+from pflow.core.shell_integration import (
+    read_stdin_enhanced,
+)
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.registry import Registry
-from pflow.runtime import CompilationError, compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 
 # Import MCP CLI commands
 
@@ -62,20 +61,6 @@ def safe_output(value: Any) -> bool:
         raise
 
 
-def read_workflow_from_file(file_path: str) -> str:
-    """Read workflow from file with proper error handling."""
-    try:
-        return Path(file_path).read_text().strip()
-    except FileNotFoundError:
-        raise click.ClickException(f"cli: File not found: '{file_path}'. Check the file path and try again.") from None
-    except PermissionError:
-        raise click.ClickException(
-            f"cli: Permission denied reading file: '{file_path}'. Check file permissions."
-        ) from None
-    except UnicodeDecodeError:
-        raise click.ClickException(f"cli: Unable to read file: '{file_path}'. File must be valid UTF-8 text.") from None
-
-
 def _read_stdin_data() -> tuple[str | None, StdinData | None]:
     """Read stdin data, trying text first then enhanced.
 
@@ -93,107 +78,111 @@ def _read_stdin_data() -> tuple[str | None, StdinData | None]:
     return stdin_content, enhanced_stdin
 
 
-def _determine_workflow_source(
-    file: str | None, workflow: tuple[str, ...], stdin_content: str | None
-) -> tuple[str, str]:
-    """Determine workflow source based on inputs.
+def _show_json_syntax_error(path: Path, content: str, error: json.JSONDecodeError) -> None:
+    """Show a helpful JSON syntax error message."""
+    click.echo(f"❌ Invalid JSON syntax in {path}", err=True)
+    click.echo(f"Error at line {error.lineno}, column {error.colno}: {error.msg}", err=True)
+    click.echo("", err=True)
+
+    # Show the problematic line with context
+    lines = content.splitlines()
+    if 0 < error.lineno <= len(lines):
+        # Show the line before (if exists) for context
+        if error.lineno > 1:
+            click.echo(f"Line {error.lineno - 1}: {lines[error.lineno - 2]}", err=True)
+
+        # Show the problematic line
+        problematic_line = lines[error.lineno - 1]
+        click.echo(f"Line {error.lineno}: {problematic_line}", err=True)
+
+        # Show a pointer to the error position
+        if error.colno > 0:
+            pointer = " " * (len(f"Line {error.lineno}: ") + error.colno - 1) + "^"
+            click.echo(pointer, err=True)
+
+    click.echo("", err=True)
+    click.echo("Fix the JSON syntax error and try again.", err=True)
+
+
+def _is_path_like(identifier: str) -> bool:
+    """Heuristic to determine if identifier looks like a file path or .json file."""
+    return (os.sep in identifier) or (os.altsep and os.altsep in identifier) or identifier.lower().endswith(".json")
+
+
+def _try_load_workflow_from_file(path: Path) -> tuple[dict | None, str | None]:
+    """Attempt to load a workflow from a file path, with error reporting.
+
+    Returns a tuple of (workflow_ir, source). On handled errors, returns (None, "json_error").
+    """
+    if not path.exists():
+        return None, None
+    try:
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+            data = json.loads(content)
+            if isinstance(data, dict) and "ir" in data:
+                return data["ir"], "file"
+            return data, "file"
+    except json.JSONDecodeError as e:
+        _show_json_syntax_error(path, content, e)
+        return None, "json_error"
+    except PermissionError:
+        click.echo(f"cli: Permission denied reading file: '{path}'. Check file permissions.", err=True)
+        return None, "json_error"
+    except UnicodeDecodeError:
+        click.echo(f"cli: Unable to read file: '{path}'. File must be valid UTF-8 text.", err=True)
+        return None, "json_error"
+
+
+def _try_load_workflow_from_registry(identifier: str, wm: WorkflowManager) -> tuple[dict | None, str | None]:
+    """Attempt to load a workflow from registry by name, including stripping .json suffix."""
+    if wm.exists(identifier):
+        return wm.load_ir(identifier), "saved"
+    if identifier.lower().endswith(".json"):
+        name = identifier[:-5]
+        if wm.exists(name):
+            return wm.load_ir(name), "saved"
+    return None, None
+
+
+def resolve_workflow(identifier: str, wm: WorkflowManager | None = None) -> tuple[dict | None, str | None]:
+    """Resolve workflow from file path or saved name.
+
+    Resolution order:
+    1. File paths (contains / or ends with .json)
+    2. Exact saved workflow name
+    3. Saved workflow without .json extension
 
     Returns:
-        Tuple of (workflow_content, source)
+        (workflow_ir, source) where source is 'file', 'saved', 'json_error', or None
     """
-    if file:
-        return read_workflow_from_file(file), "file"
-    elif stdin_content and determine_stdin_mode(stdin_content) == "workflow":
-        if workflow:
-            raise click.ClickException(
-                "cli: Cannot use stdin input when command arguments are provided. Use either piped input OR command arguments."
-            )
-        return stdin_content, "stdin"
-    else:
-        return " ".join(workflow), "args"
+    if not wm:
+        wm = WorkflowManager()
+
+    # 1. File path detection (platform separators) or .json (case-insensitive)
+    if _is_path_like(identifier):
+        path = Path(identifier).expanduser().resolve()
+        ir, source = _try_load_workflow_from_file(path)
+        if ir is not None or source == "json_error":
+            return ir, source
+
+    # 2/3. Saved workflow (exact name or .json-stripped)
+    ir, source = _try_load_workflow_from_registry(identifier, wm)
+    if ir is not None:
+        return ir, source
+
+    return None, None
 
 
-def _determine_stdin_data(
-    source: str,
-    workflow: tuple[str, ...],
-    file: str | None,
-    stdin_content: str | None,
-    enhanced_stdin: StdinData | None,
-) -> str | StdinData | None:
-    """Determine stdin data based on workflow source.
-
-    Returns:
-        stdin_data (string, StdinData, or None)
-    """
-    if source == "file":
-        # When reading from file, any stdin is data
-        return stdin_content or enhanced_stdin
-
-    if source == "stdin":
-        # Workflow came from stdin, no separate data
-        return None
-
-    if source != "args":
-        return None
-
-    # Workflow from args, stdin is data if present
-    if stdin_content and determine_stdin_mode(stdin_content) == "data":
-        if not workflow:
-            raise click.ClickException(
-                "cli: Stdin contains data but no workflow specified. Use --file or provide a workflow name/command."
-            )
-        return stdin_content
-
-    if enhanced_stdin and not workflow and not file:
-        raise click.ClickException(
-            "cli: Binary/large stdin data received but no workflow specified. Use --file or provide a workflow name."
-        )
-
-    return enhanced_stdin
-
-
-def _are_all_params(workflow_args: tuple[str, ...]) -> bool:
-    """Check if all workflow arguments are key=value parameters.
-
-    Args:
-        workflow_args: Tuple of command line arguments
-
-    Returns:
-        True if all args are parameters, False otherwise
-    """
-    if not workflow_args:
-        return True
-
-    # Parameters must contain '=' but not be CLI operators
-    return all("=" in arg and not arg.startswith("--") and arg != "=>" for arg in workflow_args)
-
-
-def get_input_source(file: str | None, workflow: tuple[str, ...]) -> tuple[str, str, str | StdinData | None]:
-    """Determine input source and read workflow input.
-
-    Returns:
-        Tuple of (workflow_content, source, stdin_data)
-        stdin_data can be a string (backward compat), StdinData object, or None
-    """
-    # Check if all workflow args are parameters (key=value) when both file and workflow are provided
-    if file and workflow and not _are_all_params(workflow):
-        # Has non-parameter args - this is an error
-        raise click.ClickException(
-            "cli: Cannot mix --file with workflow commands. You can only pass parameters (key=value) with --file."
-        )
-    # If we get here with both file and workflow, workflow contains only parameters,
-    # which is allowed. The parameters will be extracted later by _get_file_execution_params
-
-    # Read stdin data
-    stdin_content, enhanced_stdin = _read_stdin_data()
-
-    # Determine workflow source
-    workflow_content, source = _determine_workflow_source(file, workflow, stdin_content)
-
-    # Determine stdin data based on workflow source
-    stdin_data = _determine_stdin_data(source, workflow, file, stdin_content, enhanced_stdin)
-
-    return workflow_content, source, stdin_data
+def find_similar_workflows(name: str, wm: WorkflowManager, max_results: int = 3) -> list[str]:
+    """Find similar workflow names using substring matching."""
+    all_names = [w["name"] for w in wm.list_all()]
+    # Simple substring matching (existing pattern)
+    matches = [n for n in all_names if name.lower() in n.lower()]
+    if not matches:
+        # Try reverse
+        matches = [n for n in all_names if n.lower() in name.lower()]
+    return matches[:max_results]
 
 
 def _log_stdin_injection(stdin_type: str, size_or_path: str | int) -> None:
@@ -597,11 +586,8 @@ def _validate_workflow_structure(ir_data: dict[str, Any], ctx: click.Context) ->
     Returns:
         True if valid workflow, False if not a workflow.
     """
-    if not (isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data):
-        # Valid JSON but not a workflow - treat as text
-        click.echo(f"Collected workflow from {ctx.obj['input_source']}: {ctx.obj['raw_input']}")
-        return False
-    return True
+    # Return the condition directly (fixes SIM103)
+    return isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data
 
 
 def _ensure_registry_loaded(ctx: click.Context) -> Registry:
@@ -722,6 +708,119 @@ def _handle_workflow_success(
     # Only show success message if we didn't produce output
     if not output_produced:
         click.echo("Workflow executed successfully")
+
+
+def _validate_and_load_registry(ctx: click.Context, ir_data: dict[str, Any]) -> Registry:
+    """Validate workflow structure and load registry.
+
+    Args:
+        ctx: Click context
+        ir_data: Workflow IR data
+
+    Returns:
+        Loaded Registry instance
+
+    Raises:
+        SystemExit: If validation fails
+    """
+    # Check if it's valid JSON with workflow structure
+    if not _validate_workflow_structure(ir_data, ctx):
+        click.echo("cli: Invalid workflow - missing required fields (ir_version, nodes)", err=True)
+        ctx.exit(1)
+
+    # Load registry and validate IR
+    registry = _ensure_registry_loaded(ctx)
+    try:
+        validate_ir(ir_data)
+    except ValidationError as e:
+        click.echo(f"cli: Invalid workflow - {e}", err=True)
+        ctx.exit(1)
+
+    return registry
+
+
+def _compile_workflow_with_error_handling(
+    ctx: click.Context,
+    ir_data: dict[str, Any],
+    registry: Registry,
+    execution_params: dict[str, Any] | None,
+    metrics_collector: Any | None,
+    workflow_trace: Any | None,
+) -> Any:
+    """Compile workflow with error handling.
+
+    Args:
+        ctx: Click context
+        ir_data: Workflow IR data
+        registry: Loaded registry
+        execution_params: Optional execution parameters
+        metrics_collector: Optional metrics collector
+        workflow_trace: Optional workflow trace
+
+    Returns:
+        Compiled Flow object
+
+    Raises:
+        SystemExit: If compilation fails
+    """
+    try:
+        flow = _compile_workflow(ir_data, registry, execution_params, metrics_collector, workflow_trace)
+        return flow
+    except Exception as e:
+        # Handle compilation errors
+        # Surface a user-friendly planning error line (matches main behavior)
+        click.echo(f"❌ Planning failed: {e}", err=True)
+        if ctx.obj.get("verbose", False):
+            click.echo(f"cli: Error details: {e}", err=True)
+        # Save trace if requested
+        if workflow_trace:
+            trace_path = workflow_trace.save_to_file()
+            if trace_path and ctx.obj.get("verbose", False):
+                click.echo(f"cli: Trace saved to {trace_path}", err=True)
+        ctx.exit(1)
+
+
+def _execute_workflow_and_handle_result(
+    ctx: click.Context,
+    flow: Any,
+    shared_storage: dict[str, Any],
+    metrics_collector: Any | None,
+    workflow_trace: Any | None,
+    output_key: str | None,
+    ir_data: dict[str, Any],
+    output_format: str,
+    verbose: bool,
+) -> None:
+    """Execute workflow and handle the result.
+
+    Args:
+        ctx: Click context
+        flow: Compiled Flow object
+        shared_storage: Shared storage dictionary
+        metrics_collector: Optional metrics collector
+        workflow_trace: Optional workflow trace
+        output_key: Optional output key
+        ir_data: Workflow IR data
+        output_format: Output format
+        verbose: Verbose flag
+    """
+    result = flow.run(shared_storage)
+
+    # Record workflow end if metrics are being collected
+    if metrics_collector:
+        metrics_collector.record_workflow_end()
+
+    # Clean up LLM interception after successful run
+    if workflow_trace and hasattr(workflow_trace, "cleanup_llm_interception"):
+        workflow_trace.cleanup_llm_interception()
+
+    # Route to appropriate handler based on result
+    if result and isinstance(result, str) and result.startswith("error"):
+        _handle_workflow_error(ctx, workflow_trace, output_format, metrics_collector, shared_storage, verbose)
+    else:
+        _handle_workflow_success(
+            ctx, workflow_trace, shared_storage, output_key, ir_data, output_format, metrics_collector, verbose
+        )
 
 
 def _cleanup_workflow_resources(
@@ -848,19 +947,16 @@ def execute_json_workflow(
         output_format: Output format - "text" (default) or "json"
         metrics_collector: Optional existing MetricsCollector to use (from planner)
     """
-    # Check if it's valid JSON with workflow structure
-    if not _validate_workflow_structure(ir_data, ctx):
-        return
-
-    # Load registry and validate IR
-    registry = _ensure_registry_loaded(ctx)
-    validate_ir(ir_data)
+    # Validate workflow and load registry
+    registry = _validate_and_load_registry(ctx, ir_data)
 
     # Set up collectors
     metrics_collector, workflow_trace = _setup_workflow_collectors(ctx, ir_data, output_format, metrics_collector)
 
-    # Compile to Flow
-    flow = _compile_workflow(ir_data, registry, execution_params, metrics_collector, workflow_trace)
+    # Compile workflow with error handling
+    flow = _compile_workflow_with_error_handling(
+        ctx, ir_data, registry, execution_params, metrics_collector, workflow_trace
+    )
 
     # Show verbose execution info if requested
     verbose = ctx.obj.get("verbose", False)
@@ -872,23 +968,10 @@ def execute_json_workflow(
     shared_storage = _prepare_shared_storage(execution_params, planner_llm_calls, stdin_data, verbose)
 
     try:
-        result = flow.run(shared_storage)
-
-        # Record workflow end if metrics are being collected
-        if metrics_collector:
-            metrics_collector.record_workflow_end()
-
-        # Clean up LLM interception after successful run
-        if workflow_trace and hasattr(workflow_trace, "cleanup_llm_interception"):
-            workflow_trace.cleanup_llm_interception()
-
-        # Route to appropriate handler based on result
-        if result and isinstance(result, str) and result.startswith("error"):
-            _handle_workflow_error(ctx, workflow_trace, output_format, metrics_collector, shared_storage, verbose)
-        else:
-            _handle_workflow_success(
-                ctx, workflow_trace, shared_storage, output_key, ir_data, output_format, metrics_collector, verbose
-            )
+        # Execute workflow and handle result
+        _execute_workflow_and_handle_result(
+            ctx, flow, shared_storage, metrics_collector, workflow_trace, output_key, ir_data, output_format, verbose
+        )
     except (click.ClickException, SystemExit):
         # Let Click exceptions and exits propagate normally
         raise
@@ -896,219 +979,6 @@ def execute_json_workflow(
         _handle_workflow_exception(ctx, e, workflow_trace, output_format, metrics_collector, shared_storage, verbose)
     finally:
         _cleanup_workflow_resources(workflow_trace, stdin_data, verbose)
-
-
-def _get_file_execution_params(ctx: click.Context) -> dict[str, Any] | None:
-    """Get execution parameters from workflow arguments when using --file."""
-    if ctx.obj.get("input_source") != "file":
-        return None
-
-    # Get the workflow tuple from the context (it's in the same context, not parent)
-    workflow_args = ctx.params.get("workflow", ())
-
-    # If not in current context, try parent (for compatibility)
-    if not workflow_args and ctx.parent and hasattr(ctx.parent, "params"):
-        workflow_args = ctx.parent.params.get("workflow", ())
-
-    if not workflow_args:
-        return None
-
-    # Parse parameters from workflow arguments
-    execution_params = parse_workflow_params(workflow_args)
-    if execution_params and ctx.obj.get("verbose"):
-        click.echo(f"cli: With parameters: {execution_params}")
-
-    return execution_params
-
-
-def _looks_like_json_attempt(content: str) -> bool:
-    """Check if content appears to be an attempt at JSON (vs natural language).
-
-    Args:
-        content: The content to check
-
-    Returns:
-        True if content looks like attempted JSON, False otherwise
-    """
-    # Strip whitespace
-    trimmed = content.strip()
-
-    # Check for JSON-like start characters
-    if trimmed.startswith("{") or trimmed.startswith("["):
-        return True
-
-    # Check if it contains JSON structure patterns (but not at the start)
-    # This catches cases where there might be whitespace or comments before the JSON
-    return '"ir_version"' in trimmed or '"nodes"' in trimmed
-
-
-def _format_json_syntax_error(raw_input: str, error: json.JSONDecodeError, ctx: click.Context) -> None:
-    """Format and display a helpful JSON syntax error message.
-
-    Args:
-        raw_input: The raw input string that failed to parse
-        error: The JSON decode error
-        ctx: Click context for exiting
-    """
-    click.echo("cli: Invalid JSON syntax in file", err=True)
-    click.echo(f"cli: Error at line {error.lineno}, column {error.colno}: {error.msg}", err=True)
-
-    # Show the problematic line with a pointer to the error location
-    lines = raw_input.split("\n")
-    if 0 < error.lineno <= len(lines):
-        problem_line = lines[error.lineno - 1]
-        # Truncate long lines for display
-        if len(problem_line) > 80:
-            if error.colno and error.colno <= 80:
-                problem_line = problem_line[:80] + "..."
-            else:
-                # Try to show context around the error
-                start = max(0, error.colno - 40) if error.colno else 0
-                problem_line = "..." + problem_line[start : start + 77] + "..."
-
-        click.echo(f"cli: Line {error.lineno}: {problem_line}", err=True)
-
-        # Show pointer to error column if available
-        if error.colno:
-            # Adjust pointer position if line was truncated
-            pointer_pos = error.colno - 1
-            if len(lines[error.lineno - 1]) > 80 and error.colno > 80:
-                pointer_pos = min(40, error.colno - 1)  # Adjusted for truncation
-            spaces = " " * (len(f"cli: Line {error.lineno}: ") + pointer_pos)
-            click.echo(f"{spaces}^", err=True)
-
-    click.echo("cli: Fix the JSON syntax error and try again.", err=True)
-    ctx.exit(1)
-
-
-def _parse_and_validate_json_workflow(raw_input: str) -> tuple[bool, dict[str, Any] | None]:
-    """Try to parse JSON and check if it's a valid workflow structure.
-
-    Args:
-        raw_input: The raw input string to parse
-
-    Returns:
-        Tuple of (is_valid_json_workflow, parsed_data)
-        - (True, data) if valid JSON workflow
-        - (False, data) if valid JSON but not a workflow
-        - (False, None) if not valid JSON
-    """
-    try:
-        # Try to parse as JSON
-        ir_data = json.loads(raw_input)
-
-        # Check if it's actually a workflow JSON
-        if isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data:
-            return True, ir_data
-        else:
-            # Valid JSON but not a workflow
-            return False, ir_data
-
-    except json.JSONDecodeError:
-        # Not valid JSON
-        return False, None
-
-
-def _execute_json_workflow_from_file(
-    ctx: click.Context, ir_data: dict[str, Any], stdin_data: str | StdinData | None
-) -> None:
-    """Execute a JSON workflow from file input, handling all exceptions.
-
-    Args:
-        ctx: Click context
-        ir_data: Parsed workflow IR data
-        stdin_data: Optional stdin data
-    """
-    try:
-        # Parse parameters from remaining workflow arguments if using --file
-        execution_params = _get_file_execution_params(ctx)
-
-        execute_json_workflow(
-            ctx,
-            ir_data,
-            stdin_data,
-            ctx.obj.get("output_key"),
-            execution_params,
-            None,  # No planner LLM calls for file-based execution
-            ctx.obj.get("output_format", "text"),
-            None,  # No metrics collector for file-based execution
-        )
-        return  # Success - exit normally
-
-    except ValidationError as e:
-        # Workflow validation failed - show error and exit
-        click.echo(f"cli: Invalid workflow - {e.message}", err=True)
-        if hasattr(e, "path") and e.path:
-            click.echo(f"cli: Error at: {e.path}", err=True)
-        if hasattr(e, "suggestion") and e.suggestion:
-            click.echo(f"cli: Suggestion: {e.suggestion}", err=True)
-        ctx.exit(1)
-
-    except CompilationError as e:
-        # Compilation failed - show error and exit
-        click.echo(f"cli: Compilation failed - {e}", err=True)
-        ctx.exit(1)
-
-    except (click.ClickException, SystemExit):
-        # Let Click exceptions and exits propagate normally
-        raise
-
-    except Exception as e:
-        # Execution error - DO NOT fall back to planner for valid JSON
-        click.echo(f"cli: Workflow execution error - {e}", err=True)
-        click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
-        ctx.exit(1)
-
-
-def process_file_workflow(ctx: click.Context, raw_input: str, stdin_data: str | StdinData | None = None) -> None:
-    """Process file-based workflow, handling JSON and errors.
-
-    Args:
-        ctx: Click context
-        raw_input: Raw workflow content
-        stdin_data: Optional stdin data to pass to workflow
-    """
-    # Try to parse as JSON workflow
-    is_json_workflow, ir_data = _parse_and_validate_json_workflow(raw_input)
-
-    if is_json_workflow and ir_data:
-        # Execute JSON workflow
-        _execute_json_workflow_from_file(ctx, ir_data, stdin_data)
-    else:
-        # Not a valid workflow JSON - determine how to handle it
-        if _looks_like_json_attempt(raw_input) and ir_data is None:
-            # Looks like JSON but failed to parse - show syntax error
-            try:
-                json.loads(raw_input)
-            except json.JSONDecodeError as e:
-                _format_json_syntax_error(raw_input, e, ctx)
-                # _format_json_syntax_error calls ctx.exit(1), so we won't reach here
-
-        # If we get here, it's either:
-        # 1. Valid JSON but not a workflow (ir_data is not None)
-        # 2. Natural language (doesn't look like JSON)
-        # In both cases, use the planner
-
-        if ir_data is not None and ctx.obj.get("verbose"):
-            # Valid JSON but not a workflow
-            click.echo("cli: File contains valid JSON but not a workflow structure, using planner")
-        elif ctx.obj.get("verbose"):
-            # Not JSON at all
-            click.echo("cli: File contains natural language (not JSON), using planner")
-
-        # Use planner for natural language or non-workflow JSON
-        # input_source should be set by main function before calling process_file_workflow
-        source = ctx.obj.get("input_source", "file")  # Default to "file" as fallback
-        _execute_with_planner(
-            ctx,
-            raw_input,
-            stdin_data,
-            ctx.obj.get("output_key"),
-            ctx.obj.get("verbose"),
-            source,
-            ctx.obj.get("trace", False),
-            ctx.obj.get("planner_timeout", 60),
-        )
 
 
 def _display_stdin_data(stdin_data: str | StdinData | None) -> None:
@@ -1536,6 +1406,220 @@ def _handle_planning_failure(ctx: click.Context, planner_output: dict) -> None:
     ctx.exit(1)
 
 
+def _setup_signals() -> None:
+    """Setup signal handlers for the application."""
+    # Register signal handler for Ctrl+C
+    signal.signal(signal.SIGINT, handle_sigint)
+
+    # Handle broken pipe for shell compatibility
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
+
+def _initialize_context(
+    ctx: click.Context,
+    verbose: bool,
+    output_key: str | None,
+    output_format: str,
+    trace: bool,
+    trace_planner: bool,
+    planner_timeout: int,
+) -> None:
+    """Initialize the click context with configuration.
+
+    Args:
+        ctx: Click context to initialize
+        verbose: Verbose mode flag
+        output_key: Optional output key
+        output_format: Output format (text/json)
+        trace: Trace execution flag
+        trace_planner: Trace planner flag
+        planner_timeout: Planner timeout in seconds
+    """
+    if ctx.obj is None:
+        ctx.obj = {}
+
+    ctx.obj["verbose"] = verbose
+    ctx.obj["output_key"] = output_key
+    ctx.obj["output_format"] = output_format
+    ctx.obj["trace"] = trace
+    ctx.obj["trace_planner"] = trace_planner
+    ctx.obj["planner_timeout"] = planner_timeout
+
+
+def _preprocess_run_prefix(ctx: click.Context, workflow: tuple[str, ...]) -> tuple[str, ...]:
+    """Handle a leading 'run' token for UX compatibility.
+
+    Returns the possibly modified workflow tuple. Exits on 'run' alone.
+    """
+    if workflow and workflow[0] == "run":
+        if len(workflow) == 1:
+            click.echo("cli: Need to specify what to run.", err=True)
+            click.echo("cli: Usage: pflow <workflow-name>", err=True)
+            click.echo("cli: List workflows: pflow workflow list", err=True)
+            ctx.exit(1)
+        return tuple(workflow[1:])
+    return workflow
+
+
+def _validate_workflow_flags(workflow: tuple[str, ...], ctx: click.Context) -> None:
+    """Validate that CLI flags are not misplaced in workflow arguments.
+
+    Args:
+        workflow: Workflow arguments tuple
+        ctx: Click context
+
+    Raises:
+        SystemExit: If misplaced flags are found
+    """
+    misplaced_flags = [
+        arg
+        for arg in workflow
+        if arg in ("--trace", "--verbose", "-v", "--planner-timeout", "--output-key", "-o", "--output-format")
+    ]
+    if misplaced_flags:
+        click.echo("cli: Error - CLI flags must come BEFORE the workflow text", err=True)
+        click.echo(f"cli: Found misplaced flags: {', '.join(misplaced_flags)}", err=True)
+        click.echo("cli: Correct usage examples:", err=True)
+        click.echo('cli:   pflow --trace "create a story about llamas"', err=True)
+        click.echo('cli:   pflow --verbose --trace "analyze this data"', err=True)
+        click.echo('cli: NOT: pflow "create a story" --trace', err=True)
+        ctx.exit(1)
+
+
+def _validate_and_prepare_workflow_params(
+    ctx: click.Context, workflow_ir: dict[str, Any], remaining_args: tuple[str, ...]
+) -> dict[str, Any]:
+    """Validate workflow parameters and apply defaults.
+
+    Args:
+        ctx: Click context
+        workflow_ir: Workflow IR data
+        remaining_args: Command line arguments for parameters
+
+    Returns:
+        Validated and prepared parameters dictionary
+
+    Raises:
+        SystemExit: If validation errors occur
+    """
+    # Parse parameters
+    params = parse_workflow_params(remaining_args)
+
+    # Validate parameter keys are valid identifiers
+    invalid_keys = [k for k in params if not k.isidentifier()]
+    if invalid_keys:
+        click.echo(f"❌ Invalid parameter name(s): {', '.join(invalid_keys)}", err=True)
+        click.echo("   👉 Parameter names must be valid Python identifiers", err=True)
+        ctx.exit(1)
+
+    # Import prepare_inputs from the right module
+    from pflow.runtime.workflow_validator import prepare_inputs
+
+    # Validate with prepare_inputs
+    errors, defaults = prepare_inputs(workflow_ir, params)
+    if errors:
+        # Show user-friendly errors
+        for msg, path, suggestion in errors:
+            click.echo(f"❌ {msg}", err=True)
+            if path and path != "root":
+                click.echo(f"   At: {path}", err=True)
+            if suggestion:
+                click.echo(f"   👉 {suggestion}", err=True)
+        ctx.exit(1)
+
+    # Apply defaults
+    if defaults:
+        params.update(defaults)
+
+    return params
+
+
+def _handle_named_workflow(
+    ctx: click.Context,
+    first_arg: str,
+    remaining_args: tuple[str, ...],
+    stdin_data: str | StdinData | None,
+    output_key: str | None,
+    output_format: str,
+    verbose: bool,
+    workflow_ir: dict[str, Any] | None = None,
+    source: str | None = None,
+) -> bool:
+    """Handle execution of a named or file-based workflow.
+
+    Args:
+        ctx: Click context
+        first_arg: First workflow argument (name or path)
+        remaining_args: Remaining workflow arguments
+        stdin_data: Optional stdin data
+        output_key: Optional output key
+        output_format: Output format
+        verbose: Verbose mode flag
+
+    Returns:
+        True if workflow was executed, False otherwise
+    """
+    if workflow_ir is None:
+        workflow_ir, source = resolve_workflow(first_arg)
+    if not workflow_ir:
+        return False
+
+    # Validate and prepare parameters
+    params = _validate_and_prepare_workflow_params(ctx, workflow_ir, remaining_args)
+
+    # Show what we're doing if verbose
+    if verbose:
+        if source == "saved":
+            click.echo(f"cli: Loading workflow '{first_arg}' from registry")
+        else:
+            click.echo(f"cli: Loading workflow from file: {first_arg}")
+        if params:
+            click.echo(f"cli: With parameters: {params}")
+
+    # Create metrics collector if needed
+    metrics_collector = None
+    if output_format == "json":
+        from pflow.core.metrics import MetricsCollector
+
+        metrics_collector = MetricsCollector()
+
+    # Execute workflow
+    execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, None, output_format, metrics_collector)
+    return True
+
+
+def _handle_workflow_not_found(ctx: click.Context, workflow_name: str, source: str | None) -> None:
+    """Handle workflow not found error with helpful suggestions.
+
+    Args:
+        ctx: Click context
+        workflow_name: Name of the workflow that wasn't found
+        source: Source type from resolve_workflow
+
+    Raises:
+        SystemExit: Always exits with error
+    """
+    # Check if it was a JSON error (already displayed)
+    if source == "json_error":
+        ctx.exit(1)
+
+    # Workflow not found - show helpful error
+    wm = WorkflowManager()
+    similar = find_similar_workflows(workflow_name, wm)
+    click.echo(f"❌ Workflow '{workflow_name}' not found.", err=True)
+
+    if similar:
+        click.echo("\nDid you mean one of these?", err=True)
+        for name in similar:
+            click.echo(f"  - {name}", err=True)
+    else:
+        click.echo("\nUse 'pflow workflow list' to see available workflows.", err=True)
+        click.echo('Or use quotes for natural language: pflow "your request"', err=True)
+
+    ctx.exit(1)
+
+
 def _execute_with_planner(
     ctx: click.Context,
     raw_input: str,
@@ -1581,68 +1665,24 @@ def _execute_with_planner(
         raise
     except Exception as e:
         # Other errors in planner execution
-        click.echo(f"cli: Planning failed - {e}", err=True)
+        # Avoid duplicating the message printed by compilation handler
+        click.echo(f"❌ Planning failed: {e}", err=True)
         ctx.exit(1)
 
 
-def _try_direct_workflow_execution(
-    ctx: click.Context,
-    workflow: tuple[str, ...],
-    stdin_data: str | StdinData | None,
-    output_key: str | None,
-    verbose: bool,
-) -> bool:
-    """Try to execute workflow directly by name if it looks like one.
+def _single_word_hint(word: str) -> str | None:
+    """Return a helpful hint for obvious single-word commands.
 
-    Returns True if executed, False if should fall back to planner.
+    Returns a message string if a targeted hint is available, otherwise None.
     """
-    if not workflow:
-        return False
-
-    first_arg = workflow[0]
-    remaining_args = workflow[1:] if len(workflow) > 1 else ()
-
-    # Check if likely a workflow name
-    if not is_likely_workflow_name(first_arg, remaining_args):
-        return False
-
-    wm = WorkflowManager()
-    try:
-        # Try to load the workflow
-        if wm.exists(first_arg):
-            # Load workflow IR
-            workflow_ir = wm.load_ir(first_arg)
-
-            # Parse parameters from remaining arguments
-            execution_params = parse_workflow_params(remaining_args)
-
-            # Show what we're doing if verbose
-            if verbose:
-                click.echo(f"cli: Loading workflow '{first_arg}' from registry")
-                if execution_params:
-                    click.echo(f"cli: With parameters: {execution_params}")
-
-            # Execute directly (bypass planner)
-            execute_json_workflow(
-                ctx,
-                workflow_ir,
-                stdin_data,
-                output_key,
-                execution_params,
-                None,
-                ctx.obj.get("output_format", "text"),
-                None,
-            )
-            return True
-    except WorkflowNotFoundError:
-        # Fall through to planner
-        return False
-    except Exception as e:
-        # Other errors should be reported
-        click.echo(f"cli: Error loading workflow '{first_arg}': {e}", err=True)
-        ctx.exit(1)
-
-    return False
+    lower = word.lower()
+    if lower == "workflows":
+        return "Did you mean: pflow workflow list"
+    if lower in {"list", "ls"}:
+        return "Did you mean: pflow workflow list"
+    if lower in {"help", "-h", "--help"}:
+        return "For help: pflow --help"
+    return None
 
 
 def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
@@ -1666,6 +1706,10 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     # Workflow names are single words or kebab-case
     if " " in text:
         return False
+
+    # NEW: Detect file paths (platform separators) and .json (case-insensitive)
+    if os.sep in text or (os.altsep and os.altsep in text) or text.lower().endswith(".json"):
+        return True
 
     # If there are parameter-like arguments following (key=value), likely a workflow name
     # But check that it's not CLI syntax (=> or --)
@@ -1692,7 +1736,6 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
 @click.pass_context
 @click.option("--version", is_flag=True, help="Show the pflow version")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed execution output")
-@click.option("--file", "-f", type=str, help="Read workflow from file")
 @click.option("--output-key", "-o", "output_key", help="Shared store key to output to stdout (default: auto-detect)")
 @click.option(
     "--output-format",
@@ -1708,7 +1751,6 @@ def workflow_command(
     ctx: click.Context,
     version: bool,
     verbose: bool,
-    file: str | None,
     output_key: str | None,
     output_format: str,
     trace: bool,
@@ -1723,41 +1765,43 @@ def workflow_command(
     \b
     Usage:
       pflow [OPTIONS] [WORKFLOW]...
-      pflow --file PATH
+      pflow workflow.json
+      pflow my-workflow param=value
       command | pflow
 
     \b
     Commands:
       registry    Manage node registry (list, search, add custom nodes)
+      workflow    Manage saved workflows (list, describe)
       mcp         Manage MCP server connections
 
     \b
     Examples:
-      # CLI Syntax - chain nodes with => operator
-      pflow read-file --path=data.txt => llm --prompt="Summarize"
+      # Run saved workflow by name
+      pflow my-workflow input=data.txt
+
+      # Run workflow from file (no flag needed!)
+      pflow ./workflow.json
+      pflow ~/workflows/analysis.json
 
       # Natural Language - use quotes for commands with spaces
       pflow "read the file data.txt and summarize it"
 
+      # Workflow Commands - manage saved workflows
+      pflow workflow list                         # List saved workflows
+      pflow workflow describe my-workflow         # Show workflow interface
+
       # Registry Commands - explore available nodes
       pflow registry list                         # List all nodes
       pflow registry search github                # Find GitHub nodes
-      pflow registry describe llm                 # Show node details
-
-      # From File - store complex workflows
-      pflow --file workflow.txt
 
       # From stdin - pipe from other commands
       echo "analyze this text" | pflow
 
-      # Passing flags to nodes - use -- separator
-      pflow -- read-file --path=data.txt => process --flag
-
     \b
     Notes:
-      - Input precedence: --file > stdin > command arguments
-      - Use -- to prevent pflow from parsing node flags
-      - Workflows are collected as raw input for the planner
+      - Workflows can be specified by name, file path, or natural language
+      - Use key=value syntax to pass parameters to workflows
       - Run 'pflow COMMAND --help' for more information on a command
     """
     # Handle version flag
@@ -1765,21 +1809,38 @@ def workflow_command(
         click.echo("pflow version 0.0.1")
         ctx.exit(0)
 
-    # Register signal handler for Ctrl+C
-    signal.signal(signal.SIGINT, handle_sigint)
+    # Setup signal handlers
+    _setup_signals()
 
-    # Handle broken pipe for shell compatibility
-    if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    # Initialize context with configuration
+    _initialize_context(ctx, verbose, output_key, output_format, trace, trace_planner, planner_timeout)
 
-    # Initialize context object
-    if ctx.obj is None:
-        ctx.obj = {}
+    # Handle stdin data
+    stdin_content, enhanced_stdin = _read_stdin_data()
+    stdin_data = enhanced_stdin if enhanced_stdin else stdin_content
 
-    # Determine input source and read workflow
-    raw_input, source, stdin_data = get_input_source(file, workflow)
+    # Validate CLI flags are not misplaced
+    _validate_workflow_flags(workflow, ctx)
 
-    # Validate workflow is not empty
+    # Preprocess: transparently handle `run` prefix
+    workflow = _preprocess_run_prefix(ctx, workflow)
+
+    # Try to handle as named/file workflow first
+    if workflow:
+        first_arg = workflow[0]
+        if is_likely_workflow_name(first_arg, workflow[1:]):
+            # Resolve once to avoid duplicate calls
+            workflow_ir, source = resolve_workflow(first_arg)
+            # Try to execute as named workflow
+            if _handle_named_workflow(
+                ctx, first_arg, workflow[1:], stdin_data, output_key, output_format, verbose, workflow_ir, source
+            ):
+                return
+            # If not found, handle the error
+            _handle_workflow_not_found(ctx, first_arg, source or "unknown")
+
+    # Natural language fallback
+    raw_input = " ".join(workflow) if workflow else ""
     if not raw_input:
         raise click.ClickException("cli: No workflow provided. Use --help to see usage examples.")
 
@@ -1789,43 +1850,25 @@ def workflow_command(
             "cli: Workflow input too large (max 100KB). Consider breaking it into smaller workflows."
         )
 
-    # Store in context
-    ctx.obj["raw_input"] = raw_input
-    ctx.obj["input_source"] = source
-    ctx.obj["stdin_data"] = stdin_data
-    ctx.obj["verbose"] = verbose
-    ctx.obj["output_key"] = output_key
-    ctx.obj["output_format"] = output_format
-    ctx.obj["trace"] = trace
-    ctx.obj["trace_planner"] = trace_planner
-    ctx.obj["planner_timeout"] = planner_timeout
-
-    # Check for misplaced CLI flags in workflow arguments
-    misplaced_flags = [
-        arg
-        for arg in workflow
-        if arg in ("--trace", "--verbose", "-v", "--planner-timeout", "--output-key", "-o", "--output-format")
-    ]
-    if misplaced_flags:
-        click.echo("cli: Error - CLI flags must come BEFORE the workflow text", err=True)
-        click.echo(f"cli: Found misplaced flags: {', '.join(misplaced_flags)}", err=True)
-        click.echo("cli: Correct usage examples:", err=True)
-        click.echo('cli:   pflow --trace "create a story about llamas"', err=True)
-        click.echo('cli:   pflow --verbose --trace "analyze this data"', err=True)
-        click.echo('cli: NOT: pflow "create a story" --trace', err=True)
-        ctx.exit(1)
-
-    # Process workflow based on input type
-    if source in ("file", "stdin"):
-        # Process file or stdin workflows
-        process_file_workflow(ctx, raw_input, stdin_data)
-    else:
-        # Check for direct workflow execution first (before planner)
-        if _try_direct_workflow_execution(ctx, workflow, stdin_data, output_key, verbose):
+    # Single-token guardrails: block accidental planner for generic words
+    if workflow and len(workflow) == 1 and (" " not in workflow[0]):
+        word = workflow[0]
+        # If it's a saved workflow, execute it directly
+        ir, source = resolve_workflow(word)
+        if ir is not None and _handle_named_workflow(
+            ctx, word, (), stdin_data, output_key, output_format, verbose, ir, source
+        ):
             return
+        # Otherwise show targeted hints, or not-found guidance
+        hint = _single_word_hint(word)
+        if hint:
+            click.echo(hint, err=True)
+            ctx.exit(1)
+        _handle_workflow_not_found(ctx, word, None)
+        return
 
-        # If we get here, either not a workflow name or not found - use planner
-        _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, source, trace, planner_timeout)
+    # Multi-word or parameterized input: planner by design
+    _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, "args", trace, planner_timeout)
 
 
 # Alias for backward compatibility with tests that import main directly

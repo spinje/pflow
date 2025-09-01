@@ -17,6 +17,7 @@ def cli_main() -> None:
     """Main entry point that routes between workflow execution and subcommands."""
     # Import here to avoid circular imports
     from .commands.settings import settings
+    from .commands.workflow import workflow
     from .main import workflow_command
     from .mcp import mcp
     from .registry import registry
@@ -47,6 +48,16 @@ def cli_main() -> None:
             registry_index = sys.argv.index("registry")
             sys.argv = [sys.argv[0]] + sys.argv[registry_index + 1 :]
             registry()
+        finally:
+            sys.argv = original_argv
+
+    elif first_arg == "workflow":
+        # Route to Workflow group
+        original_argv = sys.argv[:]
+        try:
+            workflow_index = sys.argv.index("workflow")
+            sys.argv = [sys.argv[0]] + sys.argv[workflow_index + 1 :]
+            workflow()
         finally:
             sys.argv = original_argv
 

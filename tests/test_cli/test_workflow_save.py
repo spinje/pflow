@@ -1,7 +1,6 @@
 """Tests for workflow save functionality in CLI."""
 
 import json
-import shutil
 import subprocess
 
 import click.testing
@@ -48,16 +47,22 @@ class TestWorkflowSaveCLI:
         workflow_file = tmp_path / "workflow.json"
         workflow_file.write_text(json.dumps(sample_workflow))
 
-        # Run with file input
-        result = runner.invoke(main, ["--file", str(workflow_file)])
+        # Run with file input (no --file flag needed anymore)
+        result = runner.invoke(main, [str(workflow_file)])
 
         assert result.exit_code == 0
         assert "Save this workflow?" not in result.output
 
-    def test_save_prompt_not_shown_in_non_interactive_mode(self, runner, sample_workflow):
+    def test_save_prompt_not_shown_in_non_interactive_mode(self, runner, sample_workflow, tmp_path):
         """Test that save prompt is not shown in non-interactive mode (piped input)."""
+        # For stdin JSON workflows, we need to save to a file and reference it
+        # The CLI no longer accepts JSON workflows directly via stdin
+        workflow_file = tmp_path / "stdin_workflow.json"
+        workflow_file.write_text(json.dumps(sample_workflow))
+
         # Simulate non-interactive mode (stdin is not a TTY in tests)
-        result = runner.invoke(main, [], input=json.dumps(sample_workflow))
+        # Save prompts are only shown for generated workflows from natural language
+        result = runner.invoke(main, [str(workflow_file)])
 
         assert result.exit_code == 0
         assert "Save this workflow?" not in result.output
@@ -73,7 +78,7 @@ class TestWorkflowSaveCLI:
         # Save prompt will be added when natural language planner is implemented
         assert "Save this workflow?" not in result.output
 
-    def test_save_prompt_not_shown_after_execution_failure(self, runner):
+    def test_save_prompt_not_shown_after_execution_failure(self, runner, tmp_path):
         """Test that save prompt is not shown after execution failure."""
         # Create an invalid workflow that will fail
         invalid_workflow = {
@@ -89,13 +94,19 @@ class TestWorkflowSaveCLI:
             "start_node": "invalid",
         }
 
-        result = runner.invoke(main, [], input=json.dumps(invalid_workflow))
+        # Write to file since CLI no longer accepts JSON via stdin directly
+        workflow_file = tmp_path / "invalid_workflow.json"
+        workflow_file.write_text(json.dumps(invalid_workflow))
+
+        result = runner.invoke(main, [str(workflow_file)])
 
         assert result.exit_code == 1
         assert "Save this workflow?" not in result.output
-        assert "cli: Compilation failed" in result.output
+        # Updated CLI error messaging prints a single friendly planning line
+        assert "❌ Planning failed:" in result.output
+        assert "non-existent-node" in result.output
 
-    def test_no_prompt_when_stdout_is_piped(self, sample_workflow, tmp_path):
+    def test_no_prompt_when_stdout_is_piped(self, sample_workflow, tmp_path, uv_exe, prepared_subprocess_env):
         """Test that save prompt is not shown when stdout is piped."""
         # Create a workflow file with simpler workflow
         simple_workflow = {
@@ -108,19 +119,21 @@ class TestWorkflowSaveCLI:
         workflow_file.write_text(json.dumps(simple_workflow))
 
         # Find uv executable
-        uv = shutil.which("uv")
-        if not uv:
-            pytest.skip("uv not in PATH")
+        uv = uv_exe
 
         # Run with stdout piped - using a simple echo workflow
         try:
+            # Use prepared env with isolated HOME and initialized registry
+            env = prepared_subprocess_env
+
             completed = subprocess.run(  # noqa: S603
-                [uv, "run", "pflow", "--file", str(workflow_file), "--output-format", "json"],
+                [uv, "run", "pflow", "--output-format", "json", str(workflow_file)],
                 capture_output=True,
                 text=True,
                 timeout=10,
                 shell=False,
                 cwd=str(tmp_path),  # Use tmp_path as working directory
+                env=env,
             )
 
             # Should complete successfully when stdout is piped (no interactive prompt)
