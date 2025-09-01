@@ -326,13 +326,17 @@ if not workflow_ir:
 
 ## Critical Warnings ⚠️
 
-### 1. The Shell Pipe Bug (DO NOT FIX)
-**Issue**: Any shell operations after workflows cause hangs
+### 1. Shell Pipe Bug Has Been Fixed ✅
+**Previous Issue**: Shell operations after workflows would cause hangs
+**Status**: Fixed in BF-20250901-tty-pipes-outputs
+**What Changed**: The CLI now properly detects when both stdin AND stdout are TTYs before showing prompts, preventing hangs in pipelines
 ```bash
-pflow workflow | grep something  # HANGS
-pflow workflow && echo done      # HANGS
+# These now work correctly:
+pflow workflow | grep something  # Works
+pflow workflow && echo done      # Works
+pflow --output-format json workflow | jq '.result'  # Works
 ```
-**Action**: Leave this for a separate task. Just be aware during testing.
+**Testing Note**: You can now safely test with shell pipes and redirections
 
 ### 2. Don't Add Fuzzy Matching
 The codebase uses simple substring matching everywhere. Don't add difflib or Levenshtein distance - it's unnecessary complexity.

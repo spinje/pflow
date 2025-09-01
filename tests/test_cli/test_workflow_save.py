@@ -48,16 +48,22 @@ class TestWorkflowSaveCLI:
         workflow_file = tmp_path / "workflow.json"
         workflow_file.write_text(json.dumps(sample_workflow))
 
-        # Run with file input
-        result = runner.invoke(main, ["--file", str(workflow_file)])
+        # Run with file input (no --file flag needed anymore)
+        result = runner.invoke(main, [str(workflow_file)])
 
         assert result.exit_code == 0
         assert "Save this workflow?" not in result.output
 
-    def test_save_prompt_not_shown_in_non_interactive_mode(self, runner, sample_workflow):
+    def test_save_prompt_not_shown_in_non_interactive_mode(self, runner, sample_workflow, tmp_path):
         """Test that save prompt is not shown in non-interactive mode (piped input)."""
+        # For stdin JSON workflows, we need to save to a file and reference it
+        # The CLI no longer accepts JSON workflows directly via stdin
+        workflow_file = tmp_path / "stdin_workflow.json"
+        workflow_file.write_text(json.dumps(sample_workflow))
+
         # Simulate non-interactive mode (stdin is not a TTY in tests)
-        result = runner.invoke(main, [], input=json.dumps(sample_workflow))
+        # Save prompts are only shown for generated workflows from natural language
+        result = runner.invoke(main, [str(workflow_file)])
 
         assert result.exit_code == 0
         assert "Save this workflow?" not in result.output
@@ -73,7 +79,7 @@ class TestWorkflowSaveCLI:
         # Save prompt will be added when natural language planner is implemented
         assert "Save this workflow?" not in result.output
 
-    def test_save_prompt_not_shown_after_execution_failure(self, runner):
+    def test_save_prompt_not_shown_after_execution_failure(self, runner, tmp_path):
         """Test that save prompt is not shown after execution failure."""
         # Create an invalid workflow that will fail
         invalid_workflow = {
@@ -89,7 +95,11 @@ class TestWorkflowSaveCLI:
             "start_node": "invalid",
         }
 
-        result = runner.invoke(main, [], input=json.dumps(invalid_workflow))
+        # Write to file since CLI no longer accepts JSON via stdin directly
+        workflow_file = tmp_path / "invalid_workflow.json"
+        workflow_file.write_text(json.dumps(invalid_workflow))
+
+        result = runner.invoke(main, [str(workflow_file)])
 
         assert result.exit_code == 1
         assert "Save this workflow?" not in result.output

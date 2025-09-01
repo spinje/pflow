@@ -149,8 +149,8 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            # Run the workflow
-            result = runner.invoke(main, ["--file", workflow_file])
+            # Run the workflow (--file flag removed in Task 22)
+            result = runner.invoke(main, [workflow_file])
 
             # Verify the declared output was printed
             assert result.exit_code == 0
@@ -183,7 +183,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file])
+            result = runner.invoke(main, [workflow_file])
 
             # Should fall back to hardcoded keys and find "response"
             assert result.exit_code == 0
@@ -220,7 +220,7 @@ class TestWorkflowOutputHandling:
 
         try:
             # Use --output-key to override and get custom_key
-            result = runner.invoke(main, ["--file", workflow_file, "--output-key", "custom_key"])
+            result = runner.invoke(main, ["--output-key", "custom_key", workflow_file])
 
             assert result.exit_code == 0
             assert "Custom value" in result.output
@@ -260,7 +260,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--verbose", "--file", workflow_file])
+            result = runner.invoke(main, ["--verbose", workflow_file])
 
             assert result.exit_code == 0
             # Should warn about missing declared outputs
@@ -300,7 +300,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file])
+            result = runner.invoke(main, [workflow_file])
 
             assert result.exit_code == 0
             # Should print the first available declared output
@@ -329,7 +329,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--verbose", "--file", workflow_file])
+            result = runner.invoke(main, ["--verbose", workflow_file])
 
             assert result.exit_code == 0
             # Should show the output description in verbose mode
@@ -366,7 +366,7 @@ class TestWorkflowOutputHandling:
                 workflow_file = f.name
 
             try:
-                result = runner.invoke(main, ["--file", workflow_file])
+                result = runner.invoke(main, [workflow_file])
 
                 assert result.exit_code == 0
                 assert expected_output in result.output
@@ -397,7 +397,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file])
+            result = runner.invoke(main, [workflow_file])
 
             assert result.exit_code == 0
             # Should show success message when no output is produced
@@ -427,7 +427,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file, "--output-key", "nonexistent_key"])
+            result = runner.invoke(main, ["--output-key", "nonexistent_key", workflow_file])
 
             assert result.exit_code == 0
             # Should warn about missing key
@@ -463,7 +463,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file])
+            result = runner.invoke(main, [workflow_file])
 
             assert result.exit_code == 0
             # Should use declared output, not fallback
@@ -487,7 +487,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file])
+            result = runner.invoke(main, [workflow_file])
 
             assert result.exit_code == 0
             # Should fall back to hardcoded keys
@@ -521,7 +521,7 @@ class TestWorkflowOutputHandling:
                 workflow_file = f.name
 
             try:
-                result = runner.invoke(main, ["--file", workflow_file])
+                result = runner.invoke(main, [workflow_file])
 
                 assert result.exit_code == 0
                 # Output should be in the result (formatted as string/JSON)
@@ -558,7 +558,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
             # Parse the JSON output - it's now wrapped in a result structure
@@ -600,7 +600,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
             # Parse the JSON output - it's now wrapped in a result structure
@@ -647,9 +647,7 @@ class TestWorkflowOutputHandling:
 
         try:
             # Request specific key with JSON format
-            result = runner.invoke(
-                main, ["--file", workflow_file, "--output-format", "json", "--output-key", "custom_key"]
-            )
+            result = runner.invoke(main, ["--output-format", "json", "--output-key", "custom_key", workflow_file])
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
@@ -685,7 +683,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
@@ -719,7 +717,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
@@ -767,7 +765,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
@@ -805,12 +803,12 @@ class TestWorkflowOutputHandling:
 
         try:
             # Test with explicit --output-format text
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "text"])
+            result = runner.invoke(main, ["--output-format", "text", workflow_file])
             assert result.exit_code == 0
             assert "Plain text output" in result.output
 
             # Test without format flag (default)
-            result = runner.invoke(main, ["--file", workflow_file])
+            result = runner.invoke(main, [workflow_file])
             assert result.exit_code == 0
             assert "Plain text output" in result.output
         finally:
@@ -834,14 +832,14 @@ class TestWorkflowOutputHandling:
 
         try:
             # Test "JSON" (uppercase)
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "JSON"])
+            result = runner.invoke(main, ["--output-format", "JSON", workflow_file])
             assert result.exit_code == 0
             output_data = json.loads(result.output)
             actual_result = output_data.get("result", output_data)
             assert actual_result == {"data": "Test value"}
 
             # Test "Json" (mixed case)
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "Json"])
+            result = runner.invoke(main, ["--output-format", "Json", workflow_file])
             assert result.exit_code == 0
             output_data = json.loads(result.output)
             actual_result = output_data.get("result", output_data)
@@ -869,7 +867,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--verbose", "--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(main, ["--verbose", "--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
 
@@ -924,7 +922,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
             # Should handle binary data without crashing
@@ -954,7 +952,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)
@@ -998,7 +996,7 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
             output_data = json.loads(result.output)

@@ -45,7 +45,7 @@ class TestWorkflowOutputsNamespaced:
         try:
             # Run the workflow
             runner = CliRunner()
-            result = runner.invoke(cli, ["--file", workflow_file])
+            result = runner.invoke(cli, [workflow_file])
 
             # Verify execution succeeded
             assert result.exit_code == 0, f"Failed with output: {result.output}"
@@ -79,7 +79,7 @@ class TestWorkflowOutputsNamespaced:
         try:
             # Run with JSON output format
             runner = CliRunner()
-            result = runner.invoke(cli, ["--output-format", "json", "--file", workflow_file])
+            result = runner.invoke(cli, ["--output-format", "json", workflow_file])
 
             # Verify execution succeeded
             assert result.exit_code == 0, f"Failed with output: {result.output}"
@@ -121,14 +121,14 @@ class TestWorkflowOutputsNamespaced:
         try:
             # Test 1: Text format returns first output
             runner = CliRunner()
-            result = runner.invoke(cli, ["--file", workflow_file])
+            result = runner.invoke(cli, [workflow_file])
 
             assert result.exit_code == 0, f"Failed with output: {result.output}"
             # Should return the first output (repeated message)
             assert "First message First message" in result.output
 
             # Test 2: JSON format returns all outputs
-            result = runner.invoke(cli, ["--output-format", "json", "--file", workflow_file])
+            result = runner.invoke(cli, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0, f"Failed with output: {result.output}"
 

@@ -33,20 +33,15 @@ Remove the `--file` flag entirely and implement unified workflow resolution that
 
 **Files to read (in this order):**
 1. `task-22-spec.md` - The specification (FOLLOW THIS PRECISELY) - contains all requirements, test criteria, and validated function signatures
+2. `task-22-handover.md` - Critical tacit knowledge and discoveries from the planning phase - explains WHY we're deleting code instead of adding it
+3. `implementation-guide.md` - Comprehensive implementation guide with ALL accumulated insights from extensive planning
 
-**Instructions**: Read EACH file listed above. The specification is the source of truth for requirements and test criteria. Follow it PRECISELY.
+**Instructions**: Read EACH file listed above in order. The specification is the source of truth for requirements. The handover contains critical discoveries about what's already implemented. The implementation guide has exact code to use.
 
-### 4. CRITICAL: Implementation Guide
-**File**: `.taskmaster/tasks/task_22/implementation-guide.md`
-
-**Purpose**: This document contains ALL the accumulated insights from extensive planning:
-- The discovery that 70% is already implemented
-- Exactly which 200 lines of code to DELETE
-- Step-by-step implementation with actual code snippets
-- Critical warnings (shell pipe bug, no fuzzy matching)
-- All verified function signatures
-
-**Why this is essential**: This guide contains discoveries and insights that took hours of investigation to uncover. It will save you from reimplementing what already exists.
+### Why These Files Matter:
+- **The spec** tells you WHAT to build
+- **The handover** tells you WHY this approach (70% already works!) and what NOT to do
+- **The implementation guide** tells you HOW with exact code snippets and functions to DELETE
 
 ## What You're Building
 
@@ -211,13 +206,17 @@ execute_json_workflow(ctx, ir_data, stdin_data, output_key, execution_params,
 
 ## Critical Warnings from Experience
 
-### 1. The Shell Pipe Bug - DO NOT FIX
-**Issue**: Any shell operations after workflows cause hangs
+### 1. Shell Pipe Bug Has Been Fixed ✅
+**Previous Issue**: Shell operations after workflows would cause hangs
+**Status**: Fixed in BF-20250901-tty-pipes-outputs
+**What Changed**: The CLI now properly detects when both stdin AND stdout are TTYs before showing prompts
 ```bash
-pflow workflow | grep something  # HANGS - known bug
-pflow workflow && echo done      # HANGS - known bug
+# These now work correctly:
+pflow workflow | grep something  # Works
+pflow workflow && echo done      # Works
+pflow --output-format json workflow | jq '.result'  # Works
 ```
-**Action**: Leave this for a separate task. Just be aware during testing. Test without shell pipes.
+**Testing Note**: You can now safely test with shell pipes and redirections
 
 ### 2. Don't Add Fuzzy Matching
 The codebase uses simple substring matching everywhere:
@@ -314,8 +313,8 @@ Your implementation is complete when:
 1. **Don't overthink the design** - The implementation guide has exact code to use
 2. **Don't add features not in spec** - No aliases, no versioning, no caching
 3. **Don't create new abstractions** - Use existing functions directly
-4. **Don't fix the shell pipe bug** - It's a separate task
-5. **Don't keep --file flag** - Remove it completely
+4. **Don't keep --file flag** - Remove it completely
+5. **Don't modify existing working code** - Focus on the simplification
 
 ## Your Implementation Order
 
@@ -422,10 +421,10 @@ def test_json_extension_works():
 - **DON'T** keep --file flag for "backward compatibility" - We have no users
 - **DON'T** add fuzzy matching or new dependencies
 - **DON'T** create wrapper functions around existing ones
-- **DON'T** fix the shell pipe bug - It's a known issue for later
 - **DON'T** add features like aliases or versioning
 - **DON'T** modify the workflow IR structure
 - **DON'T** change how workflows are stored
+- **DON'T** overcomplicate - this is about simplification
 
 ## Getting Started
 

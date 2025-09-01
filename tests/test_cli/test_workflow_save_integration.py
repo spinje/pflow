@@ -166,8 +166,12 @@ class TestWorkflowSaveIntegration:
         workflows_dir = tmp_path / "workflows"
 
         # First, test workflow execution via CLI
+        # With Task 22 changes, we need to provide the workflow as a file
+        workflow_file = tmp_path / "test_workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
         runner = CliRunner()
-        result = runner.invoke(main, [], input=json.dumps(workflow))
+        result = runner.invoke(main, [str(workflow_file)])
 
         # Verify workflow executed successfully
         assert result.exit_code == 0

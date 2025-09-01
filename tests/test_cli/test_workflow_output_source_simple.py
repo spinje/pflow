@@ -31,16 +31,24 @@ class TestWorkflowOutputSource:
             },
         }
 
-        runner = CliRunner()
-        result = runner.invoke(main, ["--output-format", "json"], input=json.dumps(workflow))
+        # Create a temporary file since stdin-only JSON workflows are no longer supported
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(workflow, f)
+            workflow_file = f.name
 
-        assert result.exit_code == 0
-        output = json.loads(result.output)
-        actual_result = output.get("result", output)
+        try:
+            runner = CliRunner()
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
-        # Check that outputs were populated correctly
-        assert actual_result["message1"] == "hello"
-        assert actual_result["message2"] == "world"
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            actual_result = output.get("result", output)
+
+            # Check that outputs were populated correctly
+            assert actual_result["message1"] == "hello"
+            assert actual_result["message2"] == "world"
+        finally:
+            Path(workflow_file).unlink(missing_ok=True)
 
     def test_output_source_with_echo_node_text(self):
         """Test that output source works with text output format."""
@@ -51,12 +59,20 @@ class TestWorkflowOutputSource:
             "outputs": {"result": {"source": "${echo1.echo}", "description": "Echo result"}},
         }
 
-        runner = CliRunner()
-        result = runner.invoke(main, [], input=json.dumps(workflow))
+        # Create a temporary file since stdin-only JSON workflows are no longer supported
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(workflow, f)
+            workflow_file = f.name
 
-        assert result.exit_code == 0
-        # Text output should contain the resolved value
-        assert "test message" in result.output
+        try:
+            runner = CliRunner()
+            result = runner.invoke(main, [workflow_file])
+
+            assert result.exit_code == 0
+            # Text output should contain the resolved value
+            assert "test message" in result.output
+        finally:
+            Path(workflow_file).unlink(missing_ok=True)
 
     def test_multiple_outputs_json(self):
         """Test workflow with multiple outputs from different nodes."""
@@ -73,15 +89,23 @@ class TestWorkflowOutputSource:
             },
         }
 
-        runner = CliRunner()
-        result = runner.invoke(main, ["--output-format", "json"], input=json.dumps(workflow))
+        # Create a temporary file since stdin-only JSON workflows are no longer supported
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(workflow, f)
+            workflow_file = f.name
 
-        assert result.exit_code == 0
-        output = json.loads(result.output)
-        actual_result = output.get("result", output)
+        try:
+            runner = CliRunner()
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
-        assert actual_result["first"] == "from A"
-        assert actual_result["second"] == "from B"
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            actual_result = output.get("result", output)
+
+            assert actual_result["first"] == "from A"
+            assert actual_result["second"] == "from B"
+        finally:
+            Path(workflow_file).unlink(missing_ok=True)
 
     def test_output_source_from_file(self):
         """Test output source when running from a file."""
@@ -98,7 +122,8 @@ class TestWorkflowOutputSource:
 
         try:
             runner = CliRunner()
-            result = runner.invoke(main, ["--file", workflow_file, "--output-format", "json"])
+            # Use direct file path instead of --file flag, with flags BEFORE the workflow
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
             output = json.loads(result.output)
@@ -121,17 +146,25 @@ class TestWorkflowOutputSource:
             },
         }
 
-        runner = CliRunner()
-        result = runner.invoke(main, ["--output-format", "json"], input=json.dumps(workflow))
+        # Create a temporary file since stdin-only JSON workflows are no longer supported
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(workflow, f)
+            workflow_file = f.name
 
-        assert result.exit_code == 0
-        output = json.loads(result.output)
-        actual_result = output.get("result", output)
+        try:
+            runner = CliRunner()
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
-        # Should find the echo output (either from root or from namespaced node)
-        # When no source is specified, it should look for the key name in shared store
-        # The echo node writes "backward compat" to shared["echo"] (or echo1.echo with namespacing)
-        # TODO: This backward compatibility feature is not yet implemented
-        # For now, verify that the workflow executes successfully and returns a result structure
-        assert actual_result is not None
-        assert isinstance(actual_result, dict)
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            actual_result = output.get("result", output)
+
+            # Should find the echo output (either from root or from namespaced node)
+            # When no source is specified, it should look for the key name in shared store
+            # The echo node writes "backward compat" to shared["echo"] (or echo1.echo with namespacing)
+            # TODO: This backward compatibility feature is not yet implemented
+            # For now, verify that the workflow executes successfully and returns a result structure
+            assert actual_result is not None
+            assert isinstance(actual_result, dict)
+        finally:
+            Path(workflow_file).unlink(missing_ok=True)

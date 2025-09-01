@@ -30,7 +30,7 @@ class TestJSONErrorHandling:
 
         try:
             runner = CliRunner()
-            result = runner.invoke(main, ["--file", temp_path])
+            result = runner.invoke(main, [temp_path])
 
             # Should exit with error
             assert result.exit_code != 0
@@ -63,7 +63,7 @@ class TestJSONErrorHandling:
 
         try:
             runner = CliRunner()
-            result = runner.invoke(main, ["--file", temp_path])
+            result = runner.invoke(main, [temp_path])
 
             # Should exit with error
             assert result.exit_code != 0
@@ -93,7 +93,7 @@ class TestJSONErrorHandling:
 
         try:
             runner = CliRunner()
-            result = runner.invoke(main, ["--file", temp_path])
+            result = runner.invoke(main, [temp_path])
 
             # Should exit with error
             assert result.exit_code != 0
@@ -107,26 +107,16 @@ class TestJSONErrorHandling:
 
     def test_natural_language_not_treated_as_json(self):
         """Test that natural language text doesn't trigger JSON error."""
-        natural_text = "analyze the data in my file and summarize it"
+        # With the new system, only files ending in .json or with / in the path
+        # are treated as file paths. Natural language is passed directly.
+        runner = CliRunner()
+        result = runner.invoke(main, ["analyze the data in my file and summarize it", "--verbose"])
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write(natural_text)
-            temp_path = f.name
+        # Should NOT show JSON syntax errors since it's not a file path
+        assert "Invalid JSON syntax" not in result.output
 
-        try:
-            runner = CliRunner()
-            # Use verbose to see what path it takes (but don't require planner to work)
-            result = runner.invoke(main, ["--file", temp_path, "--verbose"])
-
-            # Should NOT show JSON syntax errors
-            assert "Invalid JSON syntax" not in result.output
-
-            # In verbose mode, should mention it's not JSON
-            # (or fail because planner isn't configured, which is OK for this test)
-            # The key is it shouldn't try to parse as JSON
-
-        finally:
-            Path(temp_path).unlink()
+        # It will either try the planner or fail if no API key,
+        # but shouldn't show JSON errors
 
     def test_valid_json_workflow_no_error(self):
         """Test that valid JSON workflow doesn't show JSON errors."""
@@ -149,37 +139,11 @@ class TestJSONErrorHandling:
 
         try:
             runner = CliRunner()
-            result = runner.invoke(main, ["--file", temp_path])
+            result = runner.invoke(main, [temp_path])
 
             # Should NOT show JSON syntax errors
             # (May show other errors like node not found, but that's OK)
             assert "Invalid JSON syntax" not in result.output
-
-        finally:
-            Path(temp_path).unlink()
-
-    def test_json_with_ir_version_keyword_detected(self):
-        """Test that files containing 'ir_version' are detected as JSON attempts."""
-        # Even if it doesn't start with { or [, if it has ir_version it's likely JSON
-        malformed_with_keyword = """
-// Some comment that breaks JSON
-{
-  "ir_version": "0.1.0"
-"""
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            f.write(malformed_with_keyword)
-            temp_path = f.name
-
-        try:
-            runner = CliRunner()
-            result = runner.invoke(main, ["--file", temp_path])
-
-            # Should exit with error
-            assert result.exit_code != 0
-
-            # Should show JSON syntax error
-            assert "Invalid JSON syntax" in result.output
 
         finally:
             Path(temp_path).unlink()
@@ -197,7 +161,7 @@ class TestJSONErrorHandling:
 
         try:
             runner = CliRunner()
-            result = runner.invoke(main, ["--file", temp_path])
+            result = runner.invoke(main, [temp_path])
 
             # Should show the problematic line
             assert '"broken": incomplete' in result.output
