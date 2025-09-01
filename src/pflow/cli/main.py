@@ -768,12 +768,13 @@ def _compile_workflow_with_error_handling(
         return flow
     except Exception as e:
         # Handle compilation errors
-        click.echo("cli: Compilation failed", err=True)
+        # Surface a user-friendly planning error line (matches main behavior)
+        click.echo(f"❌ Planning failed: {e}", err=True)
         if ctx.obj.get("verbose", False):
             click.echo(f"cli: Error details: {e}", err=True)
         # Save trace if requested
         if workflow_trace:
-            trace_path = workflow_trace.save()
+            trace_path = workflow_trace.save_to_file()
             if trace_path and ctx.obj.get("verbose", False):
                 click.echo(f"cli: Trace saved to {trace_path}", err=True)
         ctx.exit(1)
@@ -1664,7 +1665,8 @@ def _execute_with_planner(
         raise
     except Exception as e:
         # Other errors in planner execution
-        click.echo(f"cli: Planning failed - {e}", err=True)
+        # Avoid duplicating the message printed by compilation handler
+        click.echo(f"❌ Planning failed: {e}", err=True)
         ctx.exit(1)
 
 
