@@ -18,40 +18,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import main
-from pflow.registry import Registry, scan_for_nodes
 
-
-@pytest.fixture(autouse=True)
-def ensure_write_file_node_registered() -> None:
-    """Ensure the write-file node is registered in the registry.
-
-    The tests use write-file node which needs to be available in the registry.
-    This fixture ensures it's registered before running tests.
-    """
-    registry = Registry()
-
-    # Load current registry
-    nodes = registry.load()
-
-    # If write-file node is not registered, add it
-    if "write-file" not in nodes:
-        # Find the file nodes directory
-        src_path = Path(__file__).parent.parent.parent / "src"
-        file_nodes_dir = src_path / "pflow" / "nodes" / "file"
-
-        if file_nodes_dir.exists():
-            # Scan the file directory for nodes
-            scan_results = scan_for_nodes([file_nodes_dir])
-
-            # Update registry with file nodes
-            if scan_results:
-                registry.update_from_scanner(scan_results)
+# Note: Removed autouse fixture that was modifying user's registry.
+# The global test isolation in tests/conftest.py now ensures tests use
+# temporary registry paths, and nodes are auto-discovered as needed.
 
 
 class TestDualModeStdinBehavior:
@@ -107,11 +82,7 @@ class TestDualModeStdinBehavior:
         assert result.exit_code == 0
         # Test that workflow was executed successfully
         # The output may be in text or JSON format, so check for success indicators
-        assert (
-            "Workflow executed successfully" in result.output
-            or "Content from piped workflow" in result.output
-            or result.exit_code == 0
-        )  # Success is indicated by exit code 0
+        assert "Workflow executed successfully" in result.output or "Content from piped workflow" in result.output
 
     def test_plain_text_stdin_with_args_treats_stdin_as_data(self):
         """Test that plain text stdin with args treats stdin as data.
@@ -212,8 +183,6 @@ class TestRealShellIntegration:
         assert result.returncode == 0
         # Verify workflow executed - success indicated by exit code 0 and output present
         assert result.stdout  # Should have some output
-        # Success can be indicated in various ways depending on output format
-        assert result.returncode == 0
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
     def test_pipe_json_workflow_executes_correctly(self, tmp_path):
@@ -242,11 +211,7 @@ class TestRealShellIntegration:
         # Verify workflow executed - check for successful completion
         assert result.stdout  # Should have some output
         # The message content or success message should be present
-        assert (
-            "Content from piped workflow" in result.stdout
-            or "Workflow executed successfully" in result.stdout
-            or result.returncode == 0
-        )
+        assert "Content from piped workflow" in result.stdout or "Workflow executed successfully" in result.stdout
 
 
 class TestBinaryAndLargeStdinBehavior:

@@ -64,7 +64,7 @@ def temp_home(tmp_path):
 def temp_registry(temp_home):
     """Create a temporary registry for testing."""
     registry_path = temp_home / ".pflow" / "registry.json"
-    registry_path.parent.mkdir(parents=True)
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Create minimal registry with test nodes
     # Note: Registry stores nodes directly, not wrapped in a structure
@@ -652,7 +652,7 @@ class TestCLIFlags:
         mock_llm = create_mock_get_model()
         mock_get_model.return_value = mock_llm("gpt-4o-mini")
 
-        with tempfile.TemporaryDirectory() as temp_home, patch.dict("os.environ", {"HOME": temp_home}):
+        with tempfile.TemporaryDirectory() as temp_home_dir, patch.dict("os.environ", {"HOME": temp_home_dir}):
             result = runner.invoke(cli, ["--trace-planner", "test workflow"])
 
             # Verify the command accepted the flag (may not succeed without full setup)
@@ -660,7 +660,7 @@ class TestCLIFlags:
             assert result is not None  # Command executed
 
             # Check for planner trace files
-            debug_dir = Path(temp_home) / ".pflow" / "debug"
+            debug_dir = Path(temp_home_dir) / ".pflow" / "debug"
             if debug_dir.exists():
                 list(debug_dir.glob("planner_*.json"))
                 # Planner traces would be created if planner ran

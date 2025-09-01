@@ -1,40 +1,17 @@
 """Tests for workflow save functionality in CLI."""
 
 import json
-from pathlib import Path
+import shutil
+import subprocess
 
 import click.testing
 import pytest
 
 from pflow.cli.main import main
-from pflow.registry import Registry, scan_for_nodes
 
-
-@pytest.fixture(autouse=True)
-def ensure_write_file_node_registered() -> None:
-    """Ensure the write-file node is registered in the registry.
-
-    The tests use write-file node which needs to be available in the registry.
-    This fixture ensures it's registered before running tests.
-    """
-    registry = Registry()
-
-    # Load current registry
-    nodes = registry.load()
-
-    # If write-file node is not registered, add it
-    if "write-file" not in nodes:
-        # Find the file nodes directory
-        src_path = Path(__file__).parent.parent.parent / "src"
-        file_nodes_dir = src_path / "pflow" / "nodes" / "file"
-
-        if file_nodes_dir.exists():
-            # Scan the file directory for nodes
-            scan_results = scan_for_nodes([file_nodes_dir])
-
-            # Update registry with file nodes
-            if scan_results:
-                registry.update_from_scanner(scan_results)
+# Note: Removed autouse fixture that was modifying user's registry.
+# The global test isolation in tests/conftest.py now ensures tests use
+# temporary registry paths, and nodes are auto-discovered as needed.
 
 
 class TestWorkflowSaveCLI:
@@ -117,3 +94,42 @@ class TestWorkflowSaveCLI:
         assert result.exit_code == 1
         assert "Save this workflow?" not in result.output
         assert "cli: Compilation failed" in result.output
+
+    def test_no_prompt_when_stdout_is_piped(self, sample_workflow, tmp_path):
+        """Test that save prompt is not shown when stdout is piped."""
+        # Create a workflow file with simpler workflow
+        simple_workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(simple_workflow))
+
+        # Find uv executable
+        uv = shutil.which("uv")
+        if not uv:
+            pytest.skip("uv not in PATH")
+
+        # Run with stdout piped - using a simple echo workflow
+        try:
+            completed = subprocess.run(  # noqa: S603
+                [uv, "run", "pflow", "--file", str(workflow_file), "--output-format", "json"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                shell=False,
+                cwd=str(tmp_path),  # Use tmp_path as working directory
+            )
+
+            # Should complete successfully when stdout is piped (no interactive prompt)
+            assert completed.returncode == 0
+
+            # The key test: no save prompt should appear when stdout is piped
+            assert "Save this workflow?" not in completed.stdout
+            assert "Save this workflow?" not in completed.stderr
+
+        except subprocess.TimeoutExpired as e:
+            # Timeout means it's likely waiting for input (prompt), which is a test failure
+            pytest.fail(f"Command timed out - likely showing prompt when piped: {e}")
