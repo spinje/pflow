@@ -14,7 +14,6 @@ LESSONS LEARNED:
 """
 
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -153,7 +152,7 @@ class TestRealShellIntegration:
     """
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
-    def test_pipe_data_to_workflow_file_creates_expected_output(self, tmp_path):
+    def test_pipe_data_to_workflow_file_creates_expected_output(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test actual shell pipe: echo 'data' | pflow workflow.json"""
         # Create a workflow using echo node
         workflow = {
@@ -173,32 +172,10 @@ class TestRealShellIntegration:
         workflow_file.write_text(json.dumps(workflow))
 
         # Test real shell pipe
-        uv_path = shutil.which("uv")
-        if not uv_path:
-            pytest.skip("uv not found in PATH")
-        # Ensure subprocess has a registry in an isolated HOME
-        import os
-
-        temp_home = tmp_path / "home"
-        pflow_dir = temp_home / ".pflow"
-        pflow_dir.mkdir(parents=True, exist_ok=True)
-        # Do not pre-create registry.json; allow CLI to auto-discover when missing
-
-        env = os.environ.copy()
-        env["HOME"] = str(temp_home)
-        env["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
-        # Initialize registry via CLI to auto-discover core nodes
-        _ = subprocess.run(  # noqa: S603
-            [uv_path, "run", "pflow", "registry", "list", "--json"],
-            capture_output=True,
-            text=True,
-            shell=False,
-            env=env,
-        )
+        env = prepared_subprocess_env
 
         result = subprocess.run(  # noqa: S603
-            [uv_path, "run", "pflow", str(workflow_file)],  # No --file flag
+            [uv_exe, "run", "pflow", str(workflow_file)],  # No --file flag
             input="Test data from pipe",
             capture_output=True,
             text=True,
@@ -211,15 +188,13 @@ class TestRealShellIntegration:
         assert result.stdout  # Should have some output
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
-    def test_pipe_json_triggers_planner(self, tmp_path):
+    def test_pipe_json_triggers_planner(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test piping JSON data now triggers planner, not direct workflow execution."""
         json_data = '{"task": "analyze this data"}'
 
-        uv_path = shutil.which("uv")
-        if not uv_path:
-            pytest.skip("uv not found in PATH")
+        env = prepared_subprocess_env
         result = subprocess.run(  # noqa: S603
-            [uv_path, "run", "pflow"], input=json_data, capture_output=True, text=True, shell=False
+            [uv_exe, "run", "pflow"], input=json_data, capture_output=True, text=True, shell=False, env=env
         )
 
         # The behavior depends on whether a planner is available
@@ -238,7 +213,7 @@ class TestBinaryAndLargeStdinBehavior:
     - Focus on user-visible behavior when handling different stdin types
     """
 
-    def test_binary_stdin_shows_appropriate_warning(self, tmp_path):
+    def test_binary_stdin_shows_appropriate_warning(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test that binary stdin produces appropriate user feedback."""
         # Create a simple workflow using echo node
         workflow = {
@@ -267,33 +242,11 @@ class TestBinaryAndLargeStdinBehavior:
 
         try:
             # Test with actual binary file input
-            uv_path = shutil.which("uv")
-            if not uv_path:
-                pytest.skip("uv not found in PATH")
-            # Ensure subprocess has a registry in an isolated HOME
-            import os
-
-            temp_home = tmp_path / "home"
-            pflow_dir = temp_home / ".pflow"
-            pflow_dir.mkdir(parents=True, exist_ok=True)
-            # Do not pre-create registry.json; allow CLI to auto-discover when missing
-
-            env = os.environ.copy()
-            env["HOME"] = str(temp_home)
-            env["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
-            # Initialize registry via CLI to auto-discover core nodes
-            _ = subprocess.run(  # noqa: S603
-                [uv_path, "run", "pflow", "registry", "list", "--json"],
-                capture_output=True,
-                text=True,
-                shell=False,
-                env=env,
-            )
+            env = prepared_subprocess_env
 
             with open(binary_file, "rb") as binary_stdin:
                 result = subprocess.run(  # noqa: S603
-                    [uv_path, "run", "pflow", "--verbose", str(workflow_file)],  # No --file flag, flags first
+                    [uv_exe, "run", "pflow", "--verbose", str(workflow_file)],  # No --file flag, flags first
                     stdin=binary_stdin,
                     capture_output=True,
                     text=True,

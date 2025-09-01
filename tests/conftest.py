@@ -1,6 +1,8 @@
 """Root-level test configuration and fixtures."""
 
 import os
+import shutil
+import subprocess
 
 import pytest
 
@@ -268,3 +270,40 @@ def isolate_pflow_config(tmp_path, monkeypatch):
         "settings_path": test_settings_path,
         "mcp_servers_path": test_mcp_servers_path,
     }
+
+
+# --- Subprocess test helpers (DRY for real shell tests) ---
+
+
+@pytest.fixture
+def uv_exe():
+    """Return path to uv executable or skip if not found."""
+    path = shutil.which("uv")
+    if not path:
+        pytest.skip("uv not found in PATH")
+    return path
+
+
+@pytest.fixture
+def prepared_subprocess_env(tmp_path, uv_exe):
+    """Prepare isolated HOME and enable test nodes for subprocess CLI tests.
+
+    Also ensures the registry is initialized by invoking registry list once.
+    """
+    home = tmp_path / "home"
+    (home / ".pflow").mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
+
+    # Initialize registry via CLI (no-op if already created)
+    subprocess.run(  # noqa: S603
+        [uv_exe, "run", "pflow", "registry", "list", "--json"],
+        capture_output=True,
+        text=True,
+        shell=False,
+        env=env,
+    )
+
+    return env

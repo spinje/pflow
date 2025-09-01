@@ -1,7 +1,6 @@
 """Tests for workflow save functionality in CLI."""
 
 import json
-import shutil
 import subprocess
 
 import click.testing
@@ -107,7 +106,7 @@ class TestWorkflowSaveCLI:
         assert "❌ Planning failed:" in result.output
         assert "non-existent-node" in result.output
 
-    def test_no_prompt_when_stdout_is_piped(self, sample_workflow, tmp_path):
+    def test_no_prompt_when_stdout_is_piped(self, sample_workflow, tmp_path, uv_exe, prepared_subprocess_env):
         """Test that save prompt is not shown when stdout is piped."""
         # Create a workflow file with simpler workflow
         simple_workflow = {
@@ -120,34 +119,12 @@ class TestWorkflowSaveCLI:
         workflow_file.write_text(json.dumps(simple_workflow))
 
         # Find uv executable
-        uv = shutil.which("uv")
-        if not uv:
-            pytest.skip("uv not in PATH")
+        uv = uv_exe
 
         # Run with stdout piped - using a simple echo workflow
         try:
-            # Seed isolated HOME with minimal registry for subprocess
-            import os
-
-            temp_home = tmp_path / "home"
-            pflow_dir = temp_home / ".pflow"
-            pflow_dir.mkdir(parents=True, exist_ok=True)
-            # Do not pre-create registry.json; allow CLI to auto-discover when missing
-
-            env = os.environ.copy()
-            env["HOME"] = str(temp_home)
-            env["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
-            # Initialize registry via CLI to auto-discover core nodes
-            _ = subprocess.run(  # noqa: S603
-                [uv, "run", "pflow", "registry", "list", "--json"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                shell=False,
-                cwd=str(tmp_path),
-                env=env,
-            )
+            # Use prepared env with isolated HOME and initialized registry
+            env = prepared_subprocess_env
 
             completed = subprocess.run(  # noqa: S603
                 [uv, "run", "pflow", "--output-format", "json", str(workflow_file)],
