@@ -125,7 +125,7 @@ class TestWorkflowSaveCLI:
         # Run with stdout piped - using a simple echo workflow
         try:
             completed = subprocess.run(  # noqa: S603
-                [uv, "run", "pflow", "--file", str(workflow_file), "--output-format", "json"],
+                [uv, "run", "pflow", "--output-format", "json", str(workflow_file)],
                 capture_output=True,
                 text=True,
                 timeout=10,
