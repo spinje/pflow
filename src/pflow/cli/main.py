@@ -294,6 +294,27 @@ def _handle_text_output(
     return False
 
 
+def _emit_declared_output(
+    shared_storage: dict[str, Any],
+    declared_outputs: dict[str, Any],
+    verbose: bool,
+) -> bool:
+    """Emit the first available declared output and return True.
+
+    This helper reduces complexity in `_try_declared_outputs` by encapsulating
+    the loop and verbose description printing.
+    """
+    for output_name, output_config in declared_outputs.items():
+        if output_name in shared_storage:
+            value = shared_storage[output_name]
+            if verbose and isinstance(output_config, dict):
+                output_desc = output_config.get("description", "")
+                if output_desc:
+                    click.echo(f"cli: Output '{output_name}': {output_desc}", err=True)
+            return safe_output(value)
+    return False
+
+
 def _try_declared_outputs(
     shared_storage: dict[str, Any],
     workflow_ir: dict[str, Any] | None,
@@ -314,25 +335,41 @@ def _try_declared_outputs(
 
     declared_outputs = workflow_ir["outputs"]
 
-    # Try each declared output in order (they should be populated at root level now)
-    for output_name, output_config in declared_outputs.items():
-        if output_name in shared_storage:
-            value = shared_storage[output_name]
+    # First attempt: use already-populated outputs (preferred path via compiler wrapper)
+    if _emit_declared_output(shared_storage, declared_outputs, verbose):
+        return True
 
-            # Optional: Add context about what we're outputting
-            if verbose:
-                output_desc = output_config.get("description", "") if isinstance(output_config, dict) else ""
-                if output_desc:
-                    click.echo(f"cli: Output '{output_name}': {output_desc}", err=True)
+    # Populate on-demand if not present
+    _populate_declared_outputs_best_effort(shared_storage, workflow_ir)
 
-            return safe_output(value)
+    # Second attempt after population
+    if _emit_declared_output(shared_storage, declared_outputs, verbose):
+        return True
 
-    # If workflow declares outputs but none are found, warn in verbose mode
-    if verbose:
-        expected = ", ".join(declared_outputs.keys())
-        click.echo(f"cli: Warning - workflow declares outputs [{expected}] but none could be resolved", err=True)
-
+    _warn_missing_declared_outputs(declared_outputs, verbose)
     return False
+
+
+def _populate_declared_outputs_best_effort(shared_storage: dict[str, Any], workflow_ir: dict[str, Any]) -> None:
+    """Best-effort population of declared outputs from source expressions."""
+    try:
+        from pflow.runtime.output_resolver import populate_declared_outputs
+
+        populate_declared_outputs(shared_storage, workflow_ir)
+    except Exception:
+        # Ignore population failures; fallback behavior will handle printing
+        return
+
+
+def _warn_missing_declared_outputs(declared_outputs: dict[str, Any], verbose: bool) -> None:
+    """Warn when declared outputs are present but none were resolved."""
+    if not verbose:
+        return
+    expected = ", ".join(declared_outputs.keys())
+    click.echo(
+        f"cli: Warning - workflow declares outputs [{expected}] but none could be resolved",
+        err=True,
+    )
 
 
 def _handle_json_output(
@@ -1444,7 +1481,10 @@ def _execute_successful_workflow(
     )
 
     # Handle post-execution based on workflow source
-    if sys.stdin.isatty():  # Only in interactive mode
+    # Only prompt in fully interactive mode (both stdin and stdout are TTY).
+    # This prevents hanging when output is piped (e.g., to jq), because the
+    # downstream process waits for EOF which won't occur if we prompt.
+    if sys.stdin.isatty() and sys.stdout.isatty():
         workflow_source = planner_output.get("workflow_source")
 
         if workflow_source and workflow_source.get("found"):

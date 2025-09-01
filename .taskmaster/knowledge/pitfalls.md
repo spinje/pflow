@@ -256,3 +256,71 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 ---
 
 <!-- New pitfalls are appended below this line -->
+
+## Pitfall: Interactive Prompts in Pipelines Cause Hangs
+- **Date**: 2025-08-31
+- **Discovered in**: CLI post-execution prompt (planner path)
+- **What we tried**: Showing a "Save this workflow? (y/n)" prompt when `sys.stdin.isatty()` was true
+- **Why it seemed good**: Avoided prompting when stdin was piped
+- **Why it failed**: In a typical shell pipeline only stdout is piped; stdin can still be a TTY. Gating on stdin alone prompts into a non-interactive pipeline, blocking downstream consumers (e.g., `jq`) that wait for EOF.
+- **Symptoms**:
+  - `pflow ... | jq ...` hangs after workflow finishes
+  - No progress, no error, terminal appears stuck
+- **Better approach**: Prompt only when both stdin and stdout are TTYs: `if sys.stdin.isatty() and sys.stdout.isatty(): ...`. Never prompt in non-interactive contexts. Also ensure SIGPIPE is set to default and all output goes through a BrokenPipe-safe function.
+- **Key Lesson**: Treat “interactive” as (stdin && stdout are TTY). Tests rarely catch this because CliRunner is not a real TTY; verify with real pipelines.
+
+---
+
+## Pitfall: Declared Outputs Require Explicit Source When Namespacing Is On
+- **Date**: 2025-08-31
+- **Discovered in**: Workflow output handling
+- **What we tried**: Declaring outputs without `source` while automatic namespacing is enabled
+- **Why it seemed good**: Older flows wrote directly to root keys; expected the same
+- **Why it failed**: With namespacing, node writes live under `shared["node_id"]["key"]`. Root-level outputs aren’t populated unless (a) compiler’s run wrapper maps them via `populate_declared_outputs()` using `outputs[*].source`, or (b) a node explicitly writes root keys.
+- **Symptoms**:
+  - `--output-format json` returns empty/missing keys despite nodes producing values
+  - In text mode, fallback keys sometimes show, creating inconsistent behavior
+- **Better approach**: Always include `"source": "${node_id.key}"` (or path) for each declared output. Rely on compiler’s post-run mapping; the CLI fallback is best-effort only.
+- **Key Lesson**: Namespacing is the default; declared outputs must bridge namespaced values to root explicitly.
+
+---
+
+## Pitfall: JSON Output Contract Is Wrapped and Includes Metrics
+- **Date**: 2025-08-31
+- **Discovered in**: CLI JSON output consumption
+- **What we tried**: Parsing top-level keys directly from stdout JSON
+- **Why it seemed good**: Early assumptions before metrics integration
+- **Why it failed**: In JSON mode, the CLI wraps results as `{ "result": <outputs>, "is_error": false, ...metrics }`. jq scripts expecting bare outputs break.
+- **Symptoms**:
+  - `jq -r '.some_key'` returns null
+  - Users think outputs are missing
+- **Better approach**: Parse `.result` first (`jq -r '.result.some_key'`). Treat the top-level as an envelope that may include metrics like `duration_ms`, `total_cost_usd`, `num_nodes`, and a `metrics` breakdown.
+- **Key Lesson**: The JSON envelope is a stable contract; downstream tools should always read from `.result`.
+
+---
+
+## Pitfall: Testing TTY/PIPE Behavior with CliRunner Gives False Confidence
+- **Date**: 2025-08-31
+- **Discovered in**: CLI integration tests
+- **What we tried**: Using Click’s `CliRunner` for pipeline/TTY behavior
+- **Why it seemed good**: Fast, in-process testing
+- **Why it failed**: `CliRunner` is not a real TTY and doesn’t simulate shell pipelines/EOF semantics. TTY gating logic and SIGPIPE behavior diverge from reality.
+- **Symptoms**:
+  - Tests pass while real pipelines hang
+  - Prompt gating appears correct in tests, wrong in practice
+- **Better approach**: For critical TTY/pipe paths, use subprocess + pty (or mock `isatty` explicitly for both stdin and stdout). Add at least one end-to-end test that runs through a real shell pipeline.
+- **Key Lesson**: Separate fast unit tests from e2e TTY/pipe tests; mock both ends or use pty.
+
+---
+
+## Pitfall: Missing SIGPIPE/BrokenPipe Handling Causes Noisy Errors or Hangs
+- **Date**: 2025-08-31
+- **Discovered in**: CLI output layer
+- **What we tried**: Unhandled writes to closed pipes
+- **Why it seemed good**: Naively printing is fine in terminals
+- **Why it failed**: In pipelines, downstream consumers may exit early; writing to a closed pipe raises `BrokenPipeError` or EPIPE. Without handling, processes spew tracebacks or hang waiting.
+- **Symptoms**:
+  - Tracebacks on EPIPE
+  - Stalled processes
+- **Better approach**: Set `SIGPIPE` to `SIG_DFL` and centralize printing through a `safe_output()` that catches `BrokenPipeError`/EPIPE and exits cleanly.
+- **Key Lesson**: Pipe-robust CLIs must be explicit about SIGPIPE and write failures.
