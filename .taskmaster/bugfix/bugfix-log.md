@@ -231,9 +231,12 @@ Lessons & heuristics:
 - Lessons learned:
   - “Interactive” means stdin AND stdout are TTYs; gate prompts on both.
   - With namespacing enabled, declared outputs should include `source` and may require population.
+  - Shell behavior differs across runners (BSD vs GNU utils); normalize safe non-error exit codes (ls/which/command -v/type) and ensure stderr carries expected messages for deterministic tests.
+  - After pre-commit mutations, always re-stage before committing; keep functions under ruff complexity with small helpers.
 - Heuristics to detect recurrence:
   - Grep for single-ended `isatty()` checks in CLI code paths that might prompt.
   - If `.result` is unexpectedly empty in JSON mode, check `outputs[*].source` and ensure population occurs.
+  - Watch for tests asserting tool-specific stderr/exit codes; prefer normalized, cross-platform behavior in nodes.
 - Related pitfalls: `.taskmaster/knowledge/pitfalls.md#interactive-prompts-in-pipelines-cause-hangs`, `.taskmaster/knowledge/pitfalls.md#declared-outputs-require-explicit-source-when-namespacing-is-on`
 
 Follow-ups:
