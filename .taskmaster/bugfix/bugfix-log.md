@@ -10,7 +10,8 @@ Meta:
 - versions: uncommitted (working tree)
 - affects: all test runs, user's ~/.pflow/registry.json, synced MCP tools
 - owner: ai-agent
-- links: tests/conftest.py, tests/test_integration/test_metrics_integration.py
+- links: tests/conftest.py, tests/test_integration/test_metrics_integration.
+- session_id: 8185f1f8-8b2d-4e14-b9b6-44ed2a5cdafb
 
 Summary:
 - Problem: Running `make test` erased all MCP tool registrations from user's registry.

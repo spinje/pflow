@@ -483,16 +483,20 @@ def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> No
                 click.echo(f"cli: Warning - could not clean up temp file: {stdin_data.temp_path}", err=True)
 
 
-def _prompt_workflow_save(ir_data: dict[str, Any], metadata: dict[str, Any] | None = None) -> None:
+def _prompt_workflow_save(ir_data: dict[str, Any], metadata: dict[str, Any] | None = None) -> tuple[bool, str | None]:
     """Prompt user to save workflow after execution.
 
     Args:
         ir_data: The workflow IR data to save
         metadata: Optional metadata with suggested_name and description from planner
+
+    Returns:
+        Tuple of (was_saved, workflow_name) where was_saved indicates if the workflow
+        was successfully saved and workflow_name is the name if saved.
     """
     save_response = click.prompt("\nSave this workflow? (y/n)", type=str, default="n").lower()
     if save_response != "y":
-        return
+        return (False, None)
 
     workflow_manager = WorkflowManager()
 
@@ -529,20 +533,20 @@ def _prompt_workflow_save(ir_data: dict[str, Any], metadata: dict[str, Any] | No
             # Save the workflow with metadata passed directly (not embedded in IR)
             workflow_manager.save(workflow_name, ir_data, description, metadata=rich_metadata)
             click.echo(f"\n✅ Workflow saved as '{workflow_name}'")
-            break  # Success, exit loop
+            return (True, workflow_name)  # Success, return saved status
         except WorkflowExistsError:
             click.echo(f"\n❌ Error: A workflow named '{workflow_name}' already exists.")
             # Offer to use a different name
             retry = click.prompt("Try with a different name? (y/n)", type=str, default="n").lower()
             if retry != "y":
-                break  # User declined to retry, exit loop
+                return (False, None)  # User declined to retry
             # Continue loop to try again
         except WorkflowValidationError as e:
             click.echo(f"\n❌ Error: Invalid workflow name: {e!s}")
-            break  # Invalid name, don't retry
+            return (False, None)  # Invalid name, don't retry
         except Exception as e:
             click.echo(f"\n❌ Error saving workflow: {e!s}")
-            break  # Other error, don't retry
+            return (False, None)  # Other error, don't retry
 
 
 def _prepare_shared_storage(
@@ -1361,9 +1365,26 @@ def _execute_successful_workflow(
             # Existing workflow was reused - just show which one
             workflow_name = workflow_source.get("workflow_name", "unknown")
             click.echo(f"\n✅ Reused existing workflow: '{workflow_name}'")
+
+            # Display rerun command for reused workflows
+            from .rerun_display import display_rerun_commands
+
+            execution_params = planner_output.get("execution_params")
+            if execution_params is not None and workflow_name != "unknown":
+                display_rerun_commands(workflow_name, execution_params)
         else:
             # New workflow was generated - offer to save
-            _prompt_workflow_save(planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata"))
+            was_saved, saved_name = _prompt_workflow_save(
+                planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata")
+            )
+
+            # Display rerun command only if workflow was saved
+            if was_saved and saved_name:
+                from .rerun_display import display_rerun_commands
+
+                execution_params = planner_output.get("execution_params")
+                if execution_params is not None:
+                    display_rerun_commands(saved_name, execution_params)
 
 
 def _handle_planning_failure(ctx: click.Context, planner_output: dict) -> None:

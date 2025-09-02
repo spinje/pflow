@@ -166,4 +166,7 @@ llm_usage = shared.get("llm_usage") or shared.get(self.node_id, {}).get("llm_usa
 
 These changes was made with Claude Code with Session ID: `be131375-e3d6-4359-9f9b-25d69c759c64`
 
+## PR URL
+https://github.com/spinje/pflow/pull/10
+
 ---
