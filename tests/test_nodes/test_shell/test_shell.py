@@ -195,16 +195,16 @@ class TestShellNodeErrorHandling:
         assert shared["stderr"] != ""
 
     def test_grep_no_match_returns_exit_code_1(self):
-        """Test command with non-zero exit code (grep with no match)."""
+        """Test that grep with no match is auto-handled as success."""
         # node = ShellNode()
         shared = {}
 
-        # grep returns exit code 1 when no match found
+        # grep returns exit code 1 when no match found, but this is auto-handled
         action = run_shell_node(shared, command='echo "hello" | grep "xyz"')
 
-        assert shared["exit_code"] == 1
+        assert shared["exit_code"] == 1  # Original exit code preserved
         assert shared["stdout"] == ""  # No match, no output
-        assert action == "error"
+        assert action == "default"  # Auto-handled as success (no match is valid)
 
     def test_timeout_functionality(self):
         """Test that timeout works correctly - combines multiple timeout tests."""
@@ -223,7 +223,7 @@ class TestShellNodeErrorHandling:
         # Test 2: Commands that complete before timeout succeed
         shared = {}
         action = run_shell_node(shared, command="echo quick", timeout=1)
-        assert action == "success"
+        assert action == "default"
         assert shared["exit_code"] == 0
 
     def test_ignore_errors_allows_continuation_on_failure(self):
@@ -235,7 +235,7 @@ class TestShellNodeErrorHandling:
         action = run_shell_node(shared, command='grep "xyz" /dev/null', ignore_errors=True)
 
         assert shared["exit_code"] == 1  # grep returns 1 for no match
-        assert action == "success"  # But we return success due to ignore_errors
+        assert action == "default"  # But we return success due to ignore_errors
 
     def test_ignore_errors_with_nonexistent_command(self):
         """Test ignore_errors with command that doesn't exist."""
@@ -245,7 +245,7 @@ class TestShellNodeErrorHandling:
         action = run_shell_node(shared, command="nonexistent_command_789", ignore_errors=True)
 
         assert shared["exit_code"] != 0
-        assert action == "success"  # Still returns success
+        assert action == "default"  # Still returns default
 
     def test_false_command_returns_exit_code_1(self):
         """Test using the 'false' command which always returns exit code 1."""
@@ -265,7 +265,7 @@ class TestShellNodeErrorHandling:
         action = run_shell_node(shared, command="true")
 
         assert shared["exit_code"] == 0
-        assert action == "success"
+        assert action == "default"
 
 
 class TestShellNodeConfiguration:
@@ -425,7 +425,7 @@ class TestShellNodeFlowControl:
 
         action = run_shell_node(shared, command="echo test")
 
-        assert action == "success"
+        assert action == "default"
         assert shared["exit_code"] == 0
 
     def test_failed_command_returns_error_action(self):
@@ -445,7 +445,7 @@ class TestShellNodeFlowControl:
 
         action = run_shell_node(shared, command="false", ignore_errors=True)
 
-        assert action == "success"  # Returns success despite failure
+        assert action == "default"  # Returns success despite failure
         assert shared["exit_code"] == 1  # But exit code is still 1
 
 
@@ -545,7 +545,7 @@ class TestShellNodePracticalScenarios:
         # Try to get curl version
         action = run_shell_node(shared, command="curl --version")
 
-        if action == "success":
+        if action == "default":
             assert "curl" in shared["stdout"].lower()
             assert shared["exit_code"] == 0
         else:

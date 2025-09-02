@@ -23,6 +23,16 @@ class ShellNode(Node):
     - Set PFLOW_SHELL_STRICT=true to block warning patterns
     - Audit logs all executed commands for security review
 
+    Smart Error Handling:
+    The shell node automatically treats certain non-zero exits as success:
+    - ls with glob patterns that match no files (e.g., ls *.txt)
+    - grep/rg that find no matches
+    - which/command -v/type checking for non-existent commands
+    - find returning no results
+
+    These are treated as empty results, not errors. Use ignore_errors=true
+    for other cases where you want to continue despite failures.
+
     Interface:
     - Reads: shared["stdin"]: str  # Optional input data for the command
     - Writes: shared["stdout"]: str  # Command standard output
@@ -33,7 +43,7 @@ class ShellNode(Node):
     - Params: env: dict  # Additional environment variables (optional)
     - Params: timeout: int  # Max execution time in seconds (optional, default 30)
     - Params: ignore_errors: bool  # Continue on non-zero exit (optional, default false)
-    - Actions: success (exit code 0 or ignore_errors=true), error (non-zero exit or timeout)
+    - Actions: default (exit code 0 or ignore_errors=true or auto-handled), error (non-zero exit or timeout)
     """
 
     # Basic patterns for obviously dangerous commands
@@ -82,6 +92,53 @@ class ShellNode(Node):
     ]
 
     DEFAULT_TIMEOUT = 30  # seconds
+
+    def _is_safe_non_error(self, command: str, exit_code: int, stdout: str, stderr: str) -> tuple[bool, str]:
+        """Check if a non-zero exit code is actually a safe "no results" case.
+
+        Returns:
+            Tuple of (is_safe, reason) where is_safe indicates if this should be treated
+            as success, and reason explains why (for logging).
+        """
+        # ls with glob patterns that match no files
+        if (
+            exit_code == 1
+            and command.strip().startswith("ls ")
+            and any(char in command for char in ["*", "?", "[", "]"])
+            and "No such file or directory" in stderr
+        ):
+            return True, "ls with glob pattern - empty matches are valid"
+
+        # grep returns 1 when pattern not found (this is normal behavior)
+        if exit_code == 1 and (
+            command.strip().startswith("grep ") or " grep " in command or "|grep " in command or "| grep " in command
+        ):
+            return True, "grep returns 1 when pattern not found - valid result"
+
+        # ripgrep (rg) returns 1 when pattern not found
+        if exit_code == 1 and (
+            command.strip().startswith("rg ") or " rg " in command or "|rg " in command or "| rg " in command
+        ):
+            return True, "ripgrep returns 1 when pattern not found - valid result"
+
+        # which returns 1 when command doesn't exist (that's its purpose)
+        if exit_code == 1 and command.strip().startswith("which "):
+            return True, "which returns 1 when command doesn't exist - existence check"
+
+        # command -v returns 1 when command doesn't exist
+        if exit_code == 1 and "command -v" in command:
+            return True, "command -v returns 1 when command doesn't exist - existence check"
+
+        # type returns 1 when command not found
+        if exit_code == 1 and command.strip().startswith("type ") and "not found" in stderr:
+            return True, "type returns 1 when command not found - existence check"
+
+        # find with no results (returns 0 but empty output)
+        if exit_code == 0 and command.strip().startswith("find ") and not stdout.strip():
+            # This is actually already success (exit 0), but documenting the pattern
+            return False, ""
+
+        return False, ""
 
     def __init__(self) -> None:
         """Initialize the shell node with retry support."""
@@ -254,14 +311,32 @@ class ShellNode(Node):
 
         if exit_code == 0:
             logger.info("Command succeeded", extra={"phase": "post"})
-            return "success"
+            return "default"  # PocketFlow standard success action
 
         if ignore_errors:
             logger.info(
                 f"Command failed with exit code {exit_code} but continuing (ignore_errors=true)",
                 extra={"phase": "post", "exit_code": exit_code},
             )
-            return "success"
+            return "default"  # Continue on normal path
+
+        # Check if this is a safe "no results" pattern that shouldn't be treated as an error
+        command = prep_res["command"]
+        stdout = exec_res["stdout"]
+        stderr = exec_res["stderr"]
+
+        is_safe, reason = self._is_safe_non_error(command, exit_code, stdout, stderr)
+        if is_safe:
+            logger.info(
+                f"Auto-handling non-error: {reason}",
+                extra={
+                    "phase": "post",
+                    "exit_code": exit_code,
+                    "auto_handled": True,
+                    "command": command[:100] + "..." if len(command) > 100 else command,
+                },
+            )
+            return "default"  # Continue on normal path
 
         logger.warning(f"Command failed with exit code {exit_code}", extra={"phase": "post", "exit_code": exit_code})
         return "error"

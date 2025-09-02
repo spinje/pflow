@@ -212,7 +212,7 @@ class TestStrictMode:
                 shared = {}
                 # These should work fine
                 action = run_shell_node(shared, command=cmd, ignore_errors=True)
-                assert action == "success"
+                assert action == "default"
         finally:
             del os.environ["PFLOW_SHELL_STRICT"]
 

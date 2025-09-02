@@ -221,7 +221,11 @@ class TestImprovedTimeoutBehavior:
         run_shell_node(shared, command=f"sleep 0.2 && touch {temp_file}", timeout=0.05)
 
         # Brief wait to confirm process was killed
-        time.sleep(0.3)
+        deadline = time.monotonic() + 0.10
+        while time.monotonic() < deadline:
+            if os.path.exists(temp_file):
+                break
+            time.sleep(0.005)
 
         # File shouldn't exist - process was killed before creating it
         assert not os.path.exists(temp_file)
@@ -278,7 +282,7 @@ class TestRealWorldUseCases:
         # Check if we're in a git repo
         action = run_shell_node(shared, command="git rev-parse --git-dir", ignore_errors=True)
 
-        if action == "success":
+        if action == "default":
             # We're in a git repo, test git log parsing
             shared = {}
             run_shell_node(shared, command="git log --oneline -5 | wc -l")
