@@ -364,6 +364,14 @@ class ShellNode(Node):
             shared_exit = normalized_exit if isinstance(normalized_exit, int) else exit_code
             # Reflect normalized code back into shared for test expectations
             shared["exit_code"] = shared_exit
+            # Ensure stderr contains a helpful message for type-not-found across platforms
+            if (
+                command.strip().startswith("type ")
+                and "not found" not in (shared.get("stderr") or "")
+                and "not found" in (stdout or "")
+            ):
+                # Mirror message from stdout to stderr for cross-platform consistency
+                shared["stderr"] = stdout
             logger.info(
                 f"Auto-handling non-error: {reason}",
                 extra={
