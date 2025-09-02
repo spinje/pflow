@@ -130,7 +130,7 @@ class ShellNode(Node):
             return True, "command -v returns 1 when command doesn't exist - existence check"
 
         # type returns 1 when command not found
-        if exit_code != 0 and command.strip().startswith("type ") and "not found" in stderr:
+        if exit_code != 0 and command.strip().startswith("type ") and ("not found" in stderr or "not found" in stdout):
             return True, "type returns 1 when command not found - existence check"
 
         # find with no results (returns 0 but empty output)
@@ -360,7 +360,10 @@ class ShellNode(Node):
             )
             return "default"  # Continue on normal path
 
-        logger.warning(f"Command failed with exit code {exit_code}", extra={"phase": "post", "exit_code": exit_code})
+        logger.warning(
+            f"Command failed with exit code {exit_code}",
+            extra={"phase": "post", "exit_code": exit_code},
+        )
         return "error"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
