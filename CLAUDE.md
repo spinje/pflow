@@ -379,7 +379,8 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 22: Named workflow execution
 
 Next up:
-- ⏳ Task 42: Claude Code Agentic Node
+- ⏳ Task 42: Claude Code Agentic
+- ⏳ Task 52: Improve planner with "plan" and "requirements" steps
 - ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
 - ⏳ Task 47: Support HTTP Transport for MCP Servers
 
