@@ -379,6 +379,7 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 22: Named workflow execution
 
 Next up:
+- ⏳ Task 53: Add Rerun Command Display
 - ⏳ Task 42: Claude Code Agentic
 - ⏳ Task 52: Improve planner with "plan" and "requirements" steps
 - ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
@@ -390,7 +391,7 @@ Next version (post-MVP/post-Launch):
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
 - ⏳ Task 44: Build caching system
-- ⏳ Task 45: Evaluate if wrapping n8n is worth the effort
+- ⏳ Task 45: Evaluate if wrapping or integratingn8n is worth the effort
 
 *Update this list as you complete tasks.*
 
