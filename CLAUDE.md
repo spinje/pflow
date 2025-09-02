@@ -377,9 +377,10 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 10: Create registry CLI
 - ✅ Task 50: Node Filtering System with Settings Management json file
 - ✅ Task 22: Named workflow execution
+- ✅ Task 53: Add Rerun Command Display
 
 Next up:
-- ⏳ Task 53: Add Rerun Command Display
+- ⏳ Task 55: Fix Output Control for Interactive vs Non-Interactive Execution
 - ⏳ Task 54: Implement HTTP Node
 - ⏳ Task 42: Implement Claude Code Agentic Node
 - ⏳ Task 52: Improve planner with "plan" and "requirements" steps
