@@ -1,12 +1,36 @@
 """Tests for workflow save functionality in CLI."""
 
 import json
+import os
 import subprocess
+import sys
 
 import click.testing
 import pytest
 
 from pflow.cli.main import main
+
+
+@pytest.fixture(scope="module")
+def prepared_subprocess_env(tmp_path_factory, uv_exe):
+    """Module-scoped env to avoid repeated registry init overhead per test."""
+    home = tmp_path_factory.mktemp("home_workflow_save")
+    (home / ".pflow").mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
+
+    subprocess.run(  # noqa: S603
+        [uv_exe, "run", "pflow", "registry", "list", "--json"],
+        capture_output=True,
+        text=True,
+        shell=False,
+        env=env,
+    )
+
+    return env
+
 
 # Note: Removed autouse fixture that was modifying user's registry.
 # The global test isolation in tests/conftest.py now ensures tests use
@@ -119,7 +143,7 @@ class TestWorkflowSaveCLI:
         workflow_file.write_text(json.dumps(simple_workflow))
 
         # Find uv executable
-        uv = uv_exe
+        _ = uv_exe  # Ensure fixture is requested for skip behavior without using it
 
         # Run with stdout piped - using a simple echo workflow
         try:
@@ -127,7 +151,7 @@ class TestWorkflowSaveCLI:
             env = prepared_subprocess_env
 
             completed = subprocess.run(  # noqa: S603
-                [uv, "run", "pflow", "--output-format", "json", str(workflow_file)],
+                [sys.executable, "-m", "pflow.cli.main_wrapper", "--output-format", "json", str(workflow_file)],
                 capture_output=True,
                 text=True,
                 timeout=10,

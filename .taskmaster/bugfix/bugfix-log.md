@@ -95,6 +95,82 @@ Follow-ups:
 
 <!-- ===== BUGFIX ENTRY START ===== -->
 
+## [BUGFIX] Test slowdown from per-test isolation and uv subprocess init; brittle CLI stdout assertions — 2025-09-02
+
+Meta:
+- id: BF-20250902-test-slowdown-cli-stdout
+- area: tests, cli
+- severity: perf, reliability
+- status: fixed
+- versions: uncommitted (working tree)
+- affects: full test suite runtime, CLI subprocess tests, shell-node behavioral expectations
+- owner: ai-agent
+- links: tests/conftest.py, tests/test_cli/test_dual_mode_stdin.py, tests/test_cli/test_workflow_save.py, tests/test_nodes/test_shell/test_improved_behavior.py, tests/test_nodes/test_shell/test_auto_handling.py
+
+Summary:
+- Problems:
+  - The suite regressed from ~7s to ~11–12s after adding ~100–200 tests and a per-test isolation fixture. A portion of the increase came from uv-based child process startup and subprocess registry initialization in CLI tests.
+  - A CLI test asserted that stdout must be non-empty on success. With the updated CLI behavior (and aligned with shell-node principles), empty stdout is a valid outcome for a successful workflow.
+- Root causes:
+  - Autouse function-scoped isolation runs on every test and adds small overhead that aggregates at scale.
+  - CLI subprocess tests invoked `uv run pflow` and called `pflow registry list` just to initialize a registry, adding ~0.2–0.3s per affected test.
+  - Test over-specification: using stdout content to infer success rather than exit code.
+- Fixes:
+  - Replaced `uv run pflow` with `sys.executable -m pflow.cli.main_wrapper` to remove uv startup overhead while preserving true CLI routing.
+  - Wrote a precomputed registry file directly in the subprocess HOME instead of spawning a child process to run `pflow registry list`.
+  - Adjusted assertion to accept empty stdout when exit code is 0 in real CLI test; mirrors shell-node principle that "empty results are valid".
+  - Reduced a 0.3s sleep to a ≤100ms polling loop in a shell timeout test.
+
+Repro:
+- Steps:
+  1) Run `uv run pytest --durations=50` before changes; note many top slots are uv-based CLI tests and ~0.3s sleep.
+  2) CLI tests rely on `uv run pflow` and subprocess registry init; suite totals ~12.17s.
+  3) A CLI subprocess test fails if stdout is empty despite exit code 0.
+- Expected vs actual:
+  - Expected: fast, deterministic tests; successful workflows indicated by exit code 0; empty stdout allowed.
+  - Actual: slower suite due to uv startup per test and unnecessary subprocess registry init; brittle stdout assertion.
+
+Implementation:
+- Changed files:
+  - `tests/conftest.py`:
+    - Added `precomputed_core_registry_nodes` (session-scoped) using Registry internals in a test-only context.
+    - Updated `_create_registry_patcher` to write precomputed nodes on first load for test registries.
+    - Reworked `prepared_subprocess_env` (module-scoped) to write a minimal registry JSON directly and set HOME/vars; removed uv-based init.
+  - `tests/test_cli/test_dual_mode_stdin.py` and `tests/test_cli/test_workflow_save.py`:
+    - Switched to `sys.executable -m pflow.cli.main_wrapper` for subprocess execution.
+    - Relaxed assertion to rely on `returncode == 0`; empty stdout is valid. Kept optional verbose pattern when specific output is required.
+  - `tests/test_nodes/test_shell/test_improved_behavior.py`:
+    - Replaced `time.sleep(0.3)` with short polling loop to confirm termination.
+  - `tests/test_nodes/test_shell/test_auto_handling.py`:
+    - Security lint: restored permissions with `0o700` instead of `0o755` during cleanup.
+
+Verification:
+- Before: 1736 passed, 3 skipped in 12.17s (local); CLI suite ~1.9s.
+- After: 1761 passed, 3 skipped in 10.04s; CLI suite ~1.17s. `make check` fully green (ruff, mypy, deptry, mkdocs).
+
+Risks & rollbacks:
+- Risk flags: relying on `main_wrapper` as the CLI entry point for subprocess tests; precomputing registry nodes relies on stable Registry APIs.
+- Rollback plan: revert to `uv run pflow` and subprocess `registry list` if CLI invocation changes; revert registry precompute to on-demand scanning if APIs change.
+
+Lessons & heuristics:
+- Lessons learned:
+  - Small per-test work adds up across large suites; prefer session/module scoping and reuse whenever safe.
+  - Success should be asserted via exit codes; "empty results are valid" for both shell flows and CLI workflows.
+  - Avoid bootstrapping child processes just to initialize state; write known-good minimal files directly in tests.
+  - When a CLI has a wrapper entry point, tests should invoke the wrapper module to match real routing behavior.
+- Heuristics to detect recurrence:
+  - Grep for `subprocess.run([..., "uv", "run", "pflow"` in tests; replace with `sys.executable -m pflow.cli.main_wrapper` unless uv semantics are required.
+  - Grep for `registry list` used as a side-effect for test setup.
+  - Flag tests that assert non-empty stdout on success without requiring verbose/debug output.
+  - Track new `time.sleep(...)` usages > 50ms in tests.
+
+Follow-ups:
+- Consider parametrizing similar shell tests to reduce total subprocess count.
+- Provide a fast Make target that excludes slow real-subprocess tests for local iteration while keeping them in CI.
+
+<!-- ===== BUGFIX ENTRY END ===== -->
+
+
 ## [BUGFIX] Prevent CLI hangs when piped; resolve declared outputs on print — 2025-09-01
 
 Meta:

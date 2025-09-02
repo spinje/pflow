@@ -2,7 +2,6 @@
 
 import os
 import shutil
-import subprocess
 
 import pytest
 
@@ -105,7 +104,20 @@ def _import_test_modules() -> tuple:
     return Registry, SettingsManager, MCPServerManager
 
 
-def _create_registry_patcher(test_registry_path) -> callable:
+@pytest.fixture(scope="session")
+def precomputed_core_registry_nodes(tmp_path_factory):
+    """Precompute core registry nodes once per session to avoid repeated scans."""
+    os.environ["PFLOW_INCLUDE_TEST_NODES"] = "true"
+    from pflow.registry.registry import Registry
+
+    session_registry_path = tmp_path_factory.mktemp("session_core") / "registry.json"
+    reg = Registry(session_registry_path)
+    reg._auto_discover_core_nodes()  # safe in tests
+    raw = reg._load_from_file()
+    return raw.get("nodes", raw)
+
+
+def _create_registry_patcher(test_registry_path, precomputed_nodes=None) -> callable:
     """Create a patcher function for Registry initialization.
 
     Args:
@@ -116,24 +128,24 @@ def _create_registry_patcher(test_registry_path) -> callable:
     """
     from pathlib import Path
 
-    # Track initialization to prevent recursion
     _initializing = set()
 
     def create_patched_init(original_init):
         def patched_registry_init(self, *args, **kwargs):
-            # Use temp path if no explicit path provided
             if "registry_path" not in kwargs and (len(args) < 1 or args[0] is None):
                 kwargs["registry_path"] = test_registry_path
             original_init(self, *args, **kwargs)
 
-            # Only auto-load for test registries, avoiding recursion
             path = _get_registry_path(args, kwargs, test_registry_path)
             p = Path(path) if path else test_registry_path
 
             if _should_auto_load(p, test_registry_path, _initializing):
                 _initializing.add(p)
                 try:
-                    self.load()
+                    if precomputed_nodes is not None:
+                        self.save(precomputed_nodes)
+                    else:
+                        self.load()
                 finally:
                     _initializing.discard(p)
 
@@ -220,7 +232,7 @@ def _patch_mcp_server_manager(monkeypatch, MCPServerManager, test_mcp_servers_pa
 
 
 @pytest.fixture(autouse=True, scope="function")
-def isolate_pflow_config(tmp_path, monkeypatch):
+def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes):
     """Ensure all tests use isolated pflow configuration paths.
 
     This fixture prevents tests from modifying the user's actual ~/.pflow directory
@@ -249,7 +261,7 @@ def isolate_pflow_config(tmp_path, monkeypatch):
     Registry, SettingsManager, MCPServerManager = _import_test_modules()
 
     # Patch Registry to use temp path by default
-    registry_patcher = _create_registry_patcher(test_registry_path)
+    registry_patcher = _create_registry_patcher(test_registry_path, precomputed_core_registry_nodes)
     patched_registry_init = registry_patcher(Registry.__init__)
     monkeypatch.setattr(Registry, "__init__", patched_registry_init)
 
@@ -275,7 +287,7 @@ def isolate_pflow_config(tmp_path, monkeypatch):
 # --- Subprocess test helpers (DRY for real shell tests) ---
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def uv_exe():
     """Return path to uv executable or skip if not found."""
     path = shutil.which("uv")
@@ -284,26 +296,31 @@ def uv_exe():
     return path
 
 
-@pytest.fixture
-def prepared_subprocess_env(tmp_path, uv_exe):
+@pytest.fixture(scope="module")
+def prepared_subprocess_env(tmp_path_factory, precomputed_core_registry_nodes):
     """Prepare isolated HOME and enable test nodes for subprocess CLI tests.
 
-    Also ensures the registry is initialized by invoking registry list once.
+    Also ensures the registry is initialized by writing a precomputed registry file.
     """
-    home = tmp_path / "home"
+    import json as _json
+    from datetime import datetime
+
+    import pflow as _pflow
+
+    home = tmp_path_factory.mktemp("home_subprocess")
     (home / ".pflow").mkdir(parents=True, exist_ok=True)
+
+    # Write precomputed registry file directly
+    registry_path = home / ".pflow" / "registry.json"
+    registry_data = {
+        "version": getattr(_pflow, "__version__", "0.0.1"),
+        "last_core_scan": datetime.now().isoformat(),
+        "nodes": precomputed_core_registry_nodes,
+    }
+    registry_path.write_text(_json.dumps(registry_data, indent=2))
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
-    # Initialize registry via CLI (no-op if already created)
-    subprocess.run(  # noqa: S603
-        [uv_exe, "run", "pflow", "registry", "list", "--json"],
-        capture_output=True,
-        text=True,
-        shell=False,
-        env=env,
-    )
 
     return env
