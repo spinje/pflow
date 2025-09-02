@@ -140,7 +140,7 @@ class ShellNode(Node):
 
         return False, ""
 
-    def _normalize_exit_code_for_safe_patterns(self, command: str, exit_code: int, stderr: str) -> int:
+    def _normalize_exit_code_for_safe_patterns(self, command: str, exit_code: int, stdout: str, stderr: str) -> int:
         """Normalize exit codes for known safe patterns to be consistent across platforms.
 
         Some environments (e.g., macOS vs GNU coreutils) return different non-zero codes
@@ -162,7 +162,7 @@ class ShellNode(Node):
         if exit_code != 0 and "command -v" in command:
             return 1
         # Normalize type not-found to 1
-        if exit_code != 0 and command.strip().startswith("type ") and ("not found" in stderr):
+        if exit_code != 0 and command.strip().startswith("type ") and ("not found" in stderr or "not found" in stdout):
             return 1
         return exit_code
 
@@ -340,9 +340,15 @@ class ShellNode(Node):
             return "default"  # PocketFlow standard success action
 
         if ignore_errors:
+            # For ignore_errors=true, normalize common benign cases to exit_code 1
+            command = prep_res["command"]
+            stdout = exec_res["stdout"]
+            stderr = exec_res["stderr"]
+            normalized_exit = self._normalize_exit_code_for_safe_patterns(command, exit_code, stdout, stderr)
+            shared["exit_code"] = normalized_exit
             logger.info(
                 f"Command failed with exit code {exit_code} but continuing (ignore_errors=true)",
-                extra={"phase": "post", "exit_code": exit_code},
+                extra={"phase": "post", "exit_code": normalized_exit},
             )
             return "default"  # Continue on normal path
 
@@ -354,7 +360,7 @@ class ShellNode(Node):
         is_safe, reason = self._is_safe_non_error(command, exit_code, stdout, stderr)
         if is_safe:
             # Normalize exit codes across platforms for predictable behavior
-            normalized_exit = self._normalize_exit_code_for_safe_patterns(command, exit_code, stderr)
+            normalized_exit = self._normalize_exit_code_for_safe_patterns(command, exit_code, stdout, stderr)
             shared_exit = normalized_exit if isinstance(normalized_exit, int) else exit_code
             # Reflect normalized code back into shared for test expectations
             shared["exit_code"] = shared_exit
