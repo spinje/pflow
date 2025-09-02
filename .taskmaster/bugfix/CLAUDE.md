@@ -41,13 +41,14 @@ Use this exact shape. Replace braces with real values. Keep headings/markers as-
 
 Meta:
 - id: BF-{YYYYMMDD}-{slug}
-- area: {cli|runtime|planning|nodes|registry|tests|docs|infra}
+- area: {cli|runtime|planning|nodes|registry|tests|docs|infra|other}
 - severity: {hang|crash|incorrect-output|data-loss|perf|ux|other}
 - status: fixed
 - versions: {commit|tag|range}
 - affects: {flags, modes, platforms}
 - owner: {name/agent}
 - links: {PR|commit|issue URLs or paths}
+- session_id: {Claude Code Session ID}
 
 Summary:
 - Problem: {one-line symptom}
@@ -90,6 +91,9 @@ Lessons & heuristics:
 
 Follow-ups:
 - TODOs: {brief, if any}
+
+Implementer details:
+- Claude Code Session ID: {session ID}
 
 <!-- ===== BUGFIX ENTRY END ===== -->
 ```
@@ -184,5 +188,5 @@ Follow-ups:
 3) Cross-link any new or updated items in `pitfalls.md`.
 4) Commit both the code and the new log entry together when possible.
 
-That’s it. Keep entries short, structured, and battle-tested.
+That’s it. Keep entries short, structured, and battle-tested but with enough context for future agents to understand all important concepts.
 
