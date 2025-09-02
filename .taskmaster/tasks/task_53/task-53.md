@@ -41,11 +41,13 @@ The feature should:
 💾 Workflow saved as 'commit-analyzer'
 
 ✨ Run again with:
-  $ pflow run commit-analyzer --time_period="last week" --author="me"
+  $ pflow commit-analyzer time_period="last week" author="me"
 
 📖 Learn more:
   $ pflow workflow describe commit-analyzer
 ```
+
+Note: Parameters use `key=value` format without `--` prefix, matching pflow's actual CLI implementation.
 
 ### Integration Points
 - Hook into the workflow creation/discovery flow
