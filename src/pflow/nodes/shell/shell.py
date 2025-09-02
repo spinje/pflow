@@ -155,6 +155,15 @@ class ShellNode(Node):
             and ("No such file or directory" in stderr or "cannot access" in stderr)
         ):
             return 1
+        # Normalize which not-found to 1
+        if exit_code != 0 and command.strip().startswith("which "):
+            return 1
+        # Normalize command -v not-found to 1
+        if exit_code != 0 and "command -v" in command:
+            return 1
+        # Normalize type not-found to 1
+        if exit_code != 0 and command.strip().startswith("type ") and ("not found" in stderr):
+            return 1
         return exit_code
 
     def __init__(self) -> None:
