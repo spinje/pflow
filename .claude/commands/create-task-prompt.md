@@ -232,12 +232,16 @@ Example:
 ### Phase 3: {{phase3_name}} ({{time_estimate}})
 {{phase3_tasks}}
 
-### Use Parallel Execution
+### Use Subagents effectively
 
 Use subagents to maximize efficiency and avoid context window limitations.
 
-> Always use subagents to gather information, context, do research and verifying assumptions. This is important!
-> Always use the `test-writer-fixer` subagent for writing tests, fixing test failures, and debugging test issues. Deploy it alongside implementation, not as a separate phase.
+> Always use @agent-pflow-codebase-searcher to gather information, context, do research and verifying assumptions. This is important!
+> Always use the @agent-test-writer-fixer subagent for writing tests, fixing test failures, and debugging test issues.
+> Always give subagents small isolated tasks, never more than fixes for one file at a time.
+> Always deploy subagents in paralel, never sequentially. This means using ONE function call block to deploy all subagents simultaneously.
+
+Implementation should be done by yourself! Write tests using the @agent-test-writer-fixer subagent AFTER implementation is complete.
 
 ## Critical Technical Details
 
@@ -687,12 +691,16 @@ Think of it as enabling this:
 2. Create `architecture/features/nested-workflows.md`
 3. Add examples in `examples/nested/`
 
-### Use Parallel Execution
+### Use Subagents effectively
 
 Use subagents to maximize efficiency and avoid context window limitations.
 
-> Always use subagents to gather information, context, do research and verifying assumptions. This is important!
-> Always use the `test-writer-fixer` subagent for writing tests, fixing test failures, and debugging test issues. Deploy it alongside implementation, not as a separate phase.
+> Always use @agent-pflow-codebase-searcher to gather information, context, do research and verifying assumptions. This is important!
+> Always use the @agent-test-writer-fixer subagent for writing tests, fixing test failures, and debugging test issues.
+> Always give subagents small isolated tasks, never more than fixes for one file at a time.
+> Always deploy subagents in paralel, never sequentially. This means using ONE function call block to deploy all subagents simultaneously.
+
+Implementation should be done by yourself! Write tests using the @agent-test-writer-fixer subagent AFTER implementation is complete.
 
 ## Critical Technical Details
 
