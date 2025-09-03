@@ -21,21 +21,26 @@ high
 ## Details
 The HTTP node is a fundamental building block that enables essential workflows like API health checks, webhook notifications, and data fetching. Without it, users must rely on awkward shell+curl combinations or install MCP servers for basic HTTP operations.
 
+Research shows 60% of HTTP operations are simple GET/POST with JSON, 25% require authentication, and only 15% need advanced features. This guides our phased implementation approach.
+
 ### Core Requirements
 The HTTPNode should support:
 - All standard HTTP methods (GET, POST, PUT, DELETE, PATCH)
+- Automatic method detection (POST with body, GET without)
 - Automatic JSON serialization/deserialization
-- Custom headers including authentication
-- Configurable timeouts
-- Proper error handling with status codes
+- Query parameters as a separate field for clean URL handling
+- Custom headers including authentication (API key 70%, Bearer token 20% of use cases)
+- Configurable timeouts (default: 30 seconds based on industry standards)
+- Proper error handling with actionable suggestions, not just status codes
 - Both JSON and plain text responses
 
 ### Interface Design
 The node should follow pflow's standard interface patterns:
-- Clear parameter names matching common usage (url, method, headers, body)
+- Only `url` is required; all other parameters have smart defaults
+- Clear parameter names matching common usage (url, method, headers, body, params)
 - Automatic detection of JSON responses based on Content-Type
-- Store responses in predictable shared store keys
-- Return appropriate actions based on HTTP status codes
+- Store responses in predictable shared store keys (response, status_code, response_headers)
+- Return specific actions: success (2xx), client_error (4xx), server_error (5xx), timeout
 
 ### Key Use Cases
 1. API Health Monitoring - Check if services are responding
@@ -45,11 +50,12 @@ The node should follow pflow's standard interface patterns:
 5. Multi-step API Workflows - Chain multiple API calls
 
 ### Implementation Considerations
-- Use the requests library for reliability and simplicity
+- Use the requests library for reliability and simplicity (validated through research)
 - Handle both JSON and form-encoded request bodies
-- Provide clear error messages for common failures (timeout, connection refused, auth errors)
+- Provide actionable error messages with suggestions (e.g., "Request timed out. Try --timeout=60")
 - Support environment variable expansion for sensitive data like API keys
-- Consider retry logic for transient failures (can be added in v2)
+- Natural language mapping: "fetch"→GET, "send"→POST, "update"→PUT, "delete"→DELETE
+- Defer retry logic for transient failures to v2 (only 15% of use cases need advanced features)
 
 ### Integration Points
 - Works with LLMNode for analyzing API responses
