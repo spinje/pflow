@@ -24,6 +24,7 @@ dependencies = [
     "llm-anthropic>=0.17",  # Anthropic Claude models for planner
     "pydantic",       # IR/metadata validation (used in planning/ir_models.py)
     "mcp[cli]>=1.13.1",  # Model Context Protocol for MCP server support
+    "requests>=2.32.5",  # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
 ]
 
 # Optional dependencies can be added here for future LLM providers
@@ -53,6 +54,7 @@ dev = [
     "PyYAML>=6.0.0",
     "types-PyYAML>=6.0.0",
     "types-jsonschema>=4.25.0.20250809",
+    "types-requests>=2.32.4.20250809",
 ]
 
 [build-system]
