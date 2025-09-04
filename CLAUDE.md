@@ -378,12 +378,14 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 50: Node Filtering System with Settings Management json file
 - ✅ Task 22: Named workflow execution
 - ✅ Task 53: Add Rerun Command Display
+- ✅ Task 55: Fix Output Control for Interactive vs Non-Interactive Execution
+- ✅ Task 54: Implement HTTP Node
 
 Next up:
-- ⏳ Task 55: Fix Output Control for Interactive vs Non-Interactive Execution
-- ⏳ Task 54: Implement HTTP Node
 - ⏳ Task 42: Implement Claude Code Agentic Node
+- ⏳ Task 57: Update planner tests to use better test cases with real world north star examples
 - ⏳ Task 52: Improve planner with "plan" and "requirements" steps
+- ⏳ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
 - ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
 - ⏳ Task 47: Support HTTP Transport for MCP Servers
 

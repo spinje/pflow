@@ -43,6 +43,8 @@ Implement CLI commands for registry operations (`pflow registry list|describe|se
 
 **IMPORTANT**: The specification file (`task-10-spec.md`) is the source of truth for requirements and test criteria. Follow it PRECISELY.
 
+Always read all the above files yourself, don't rely on subagents to read them for you. Make sure to read ALL the files, they are all very important for understanding the task and the codebase.
+
 ## What You're Building
 
 A complete registry CLI system that provides four commands:
@@ -142,6 +144,8 @@ Use subagents to maximize efficiency and avoid context window limitations.
 
 > Always use subagents to gather information, context, do research and verifying assumptions. This is important!
 > Always use the `test-writer-fixer` subagent for writing tests, fixing test failures, and debugging test issues. Deploy it alongside implementation, not as a separate phase.
+
+You should always WRITE YOUR OWN CODE, don't rely on subagents to write it for you. You need this to keep track of what you're doing and to be able to debug it if it doesn't work.
 
 ## Critical Technical Details
 
