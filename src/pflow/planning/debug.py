@@ -601,11 +601,23 @@ class PlannerProgress:
         "ResultPreparationNode": "result-preparation",
     }
 
+    def __init__(self, is_interactive: bool = True):
+        """Initialize progress display.
+
+        Args:
+            is_interactive: Whether to display progress (True for terminal, False for pipes)
+        """
+        self.is_interactive = is_interactive
+
     def on_node_start(self, node_name: str) -> None:
         """Display node start with emoji and name."""
+        if not self.is_interactive:
+            return
         display_name = self.NODE_ICONS.get(node_name, node_name)
         click.echo(f"{display_name}...", err=True, nl=False)
 
     def on_node_complete(self, node_name: str, duration: float) -> None:
         """Display node completion with duration."""
+        if not self.is_interactive:
+            return
         click.echo(f" ✓ {duration:.1f}s", err=True)

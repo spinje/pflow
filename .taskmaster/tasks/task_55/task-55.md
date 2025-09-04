@@ -78,7 +78,7 @@ $ pflow "complex analysis"  # In terminal, shows all progress
 - Create `is_interactive()` helper checking TTY status, JSON mode, and print flag
 - Auto-detect non-TTY but allow explicit override with `-p`
 - Wrap ALL progress outputs in interactive checks
-- Add node execution callbacks to WorkflowExecutor
+- Add node execution callbacks to InstrumentedNodeWrapper
 - Use consistent progress format across planner and executor
 - Ensure clean result output for non-interactive use
 
@@ -97,8 +97,8 @@ The progress output should match the existing planner style for consistency:
 - Use emoji sparingly but effectively (📊 for workflow start)
 
 ### Integration Points
-- WorkflowExecutor class needs progress callback hooks
-- CLI main.py needs to pass progress reporter to executor
+- InstrumentedNodeWrapper needs progress callback hooks
+- CLI main.py passes callbacks via shared storage
 - Must respect --output-format json flag
 - Should work with both traced and non-traced execution
 - Consider integration with existing metrics system

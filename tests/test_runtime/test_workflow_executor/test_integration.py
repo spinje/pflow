@@ -292,7 +292,7 @@ class TestWorkflowExecutorIntegration:
             def prep(self, shared):
                 nonlocal child_storage_snapshot
                 child_storage_snapshot = {
-                    k: v for k, v in shared.items() if not k.startswith("_pflow_") and k != "__registry__"
+                    k: v for k, v in shared.items() if not k.startswith("_pflow_") and not k.startswith("__")
                 }
                 return None
 

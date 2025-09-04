@@ -8,12 +8,13 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
 from pflow.core import StdinData, ValidationError, validate_ir
 from pflow.core.exceptions import WorkflowExistsError, WorkflowValidationError
+from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
     read_stdin as read_stdin_content,
 )
@@ -59,6 +60,63 @@ def safe_output(value: Any) -> bool:
         if hasattr(e, "errno") and e.errno == 32:  # EPIPE
             os._exit(0)
         raise
+
+
+def _get_output_controller(ctx: click.Context) -> OutputController:
+    """Get the OutputController from context, creating it if needed.
+
+    Args:
+        ctx: Click context
+
+    Returns:
+        OutputController instance
+    """
+    if ctx.obj and "output_controller" in ctx.obj:
+        return cast(OutputController, ctx.obj["output_controller"])
+
+    # Fallback: create one if not in context (shouldn't happen normally)
+    return OutputController(
+        print_flag=ctx.obj.get("print_flag", False) if ctx.obj else False,
+        output_format=ctx.obj.get("output_format", "text") if ctx.obj else "text",
+    )
+
+
+def _echo_trace(ctx: click.Context, message: str) -> None:
+    """Output trace file location message only in interactive mode.
+
+    Trace messages are informational, not errors, so they should be
+    suppressed in non-interactive mode (pipes, -p flag).
+
+    Args:
+        ctx: Click context
+        message: Trace message to display
+    """
+    output_controller = _get_output_controller(ctx)
+    if output_controller.is_interactive():
+        click.echo(message, err=True)
+
+
+def _echo_info(ctx: click.Context, message: str) -> None:
+    """Output informational message only in interactive mode.
+
+    Args:
+        ctx: Click context
+        message: Info message to display
+    """
+    output_controller = _get_output_controller(ctx)
+    if output_controller.is_interactive():
+        click.echo(message, err=True)
+
+
+def _echo_error(message: str) -> None:
+    """Output error message always, even in non-interactive mode.
+
+    Errors are critical and should always be visible.
+
+    Args:
+        message: Error message to display
+    """
+    click.echo(message, err=True)
 
 
 def _read_stdin_data() -> tuple[str | None, StdinData | None]:
@@ -254,6 +312,81 @@ def _handle_workflow_output(
         return _handle_text_output(shared_storage, output_key, workflow_ir, verbose)
 
 
+def _is_valid_output_value(value: Any) -> bool:
+    """Check if a value is valid for output.
+
+    Args:
+        value: The value to check
+
+    Returns:
+        True if the value is non-None and (not a string or non-empty string)
+    """
+    return value is not None and (not isinstance(value, str) or value.strip() != "")
+
+
+def _find_in_namespaces(shared_storage: dict[str, Any], key: str) -> Any:
+    """Find the last occurrence of a key in namespaced storage.
+
+    Args:
+        shared_storage: The shared storage dictionary
+        key: The key to search for
+
+    Returns:
+        The last valid value found, or None
+    """
+    last_value = None
+
+    for storage_key, namespace_dict in shared_storage.items():
+        # Skip non-dict values and special keys
+        if not isinstance(namespace_dict, dict):
+            continue
+        if storage_key.startswith("__") or storage_key.startswith("_"):
+            continue
+
+        # Check if this namespace contains the key
+        if key in namespace_dict:
+            value = namespace_dict[key]
+            if _is_valid_output_value(value):
+                last_value = value
+
+    return last_value
+
+
+def _find_auto_output(shared_storage: dict[str, Any]) -> tuple[str | None, Any]:
+    """Find the auto-detectable output with the highest priority.
+
+    In sequential workflows, returns the last occurrence of the highest priority key.
+    Priority order: response > output > result > text > stdout
+
+    Args:
+        shared_storage: The shared storage dictionary
+
+    Returns:
+        Tuple of (key_found, value) or (None, None) if no output found
+    """
+    # Common output keys in priority order (highest priority first)
+    priority_keys = ["response", "output", "result", "text", "stdout"]
+
+    # For each priority level, find the LAST occurrence
+    for priority_key in priority_keys:
+        # Check namespaced storage first
+        last_value = _find_in_namespaces(shared_storage, priority_key)
+        if last_value is not None:
+            return priority_key, last_value
+
+        # Check direct storage (legacy/non-namespaced)
+        if priority_key in shared_storage:
+            value = shared_storage[priority_key]
+            # Skip special dictionaries that are actually namespaces
+            if not isinstance(value, dict) and _is_valid_output_value(value):
+                return priority_key, value
+            # Handle the case where it might be a dict but not a namespace
+            if isinstance(value, dict) and not any(k in priority_keys for k in value) and _is_valid_output_value(value):
+                return priority_key, value
+
+    return None, None
+
+
 def _handle_text_output(
     shared_storage: dict[str, Any],
     output_key: str | None,
@@ -275,10 +408,10 @@ def _handle_text_output(
     if _try_declared_outputs(shared_storage, workflow_ir, verbose):
         return True
 
-    # Fall back to auto-detect from common keys (backward compatibility)
-    for key in ["response", "output", "result", "text"]:
-        if key in shared_storage:
-            return safe_output(shared_storage[key])
+    # Fall back to auto-detect from common keys (using unified function)
+    key_found, value = _find_auto_output(shared_storage)
+    if key_found:
+        return safe_output(value)
 
     return False
 
@@ -431,11 +564,10 @@ def _collect_json_outputs(
             click.echo(f"cli: Warning - no declared outputs found {expected}", err=True)
 
     else:
-        # Fallback: Use first matching hardcoded key for consistency
-        for key in ["response", "output", "result", "text"]:
-            if key in shared_storage:
-                result[key] = shared_storage[key]
-                break  # Only first for consistency with text format
+        # Fallback: Use auto-detection (using unified function)
+        key_found, value = _find_auto_output(shared_storage)
+        if key_found:
+            result[key_found] = value
 
     return result
 
@@ -554,6 +686,7 @@ def _prepare_shared_storage(
     planner_llm_calls: list[dict[str, Any]] | None,
     stdin_data: str | StdinData | None,
     verbose: bool,
+    output_controller: OutputController | None = None,
 ) -> dict[str, Any]:
     """Prepare shared storage with execution params and stdin data.
 
@@ -562,6 +695,7 @@ def _prepare_shared_storage(
         planner_llm_calls: Optional LLM calls from planner for metrics
         stdin_data: Optional stdin data to inject
         verbose: Whether to show verbose output
+        output_controller: Optional OutputController for progress callbacks
 
     Returns:
         Prepared shared storage dictionary
@@ -580,6 +714,15 @@ def _prepare_shared_storage(
 
     # Inject stdin data if present (may override execution params)
     _inject_stdin_data(shared_storage, stdin_data, verbose)
+
+    # Add verbose flag for nodes to check
+    shared_storage["__verbose__"] = verbose
+
+    # Add output controller callback if provided
+    if output_controller:
+        callback = output_controller.create_progress_callback()
+        if callback:
+            shared_storage["__progress_callback__"] = callback
 
     return shared_storage
 
@@ -673,7 +816,7 @@ def _handle_workflow_error(
     # Save trace even on error
     if workflow_trace:
         trace_file = workflow_trace.save_to_file()
-        click.echo(f"📊 Workflow trace saved: {trace_file}", err=True)
+        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     # Include metrics in error JSON if applicable
     if output_format == "json" and metrics_collector:
@@ -702,7 +845,7 @@ def _handle_workflow_success(
     # Save trace if requested
     if workflow_trace:
         trace_file = workflow_trace.save_to_file()
-        click.echo(f"📊 Workflow trace saved: {trace_file}", err=True)
+        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     # Check for output from shared store (now with metrics)
     output_produced = _handle_workflow_output(
@@ -771,15 +914,35 @@ def _compile_workflow_with_error_handling(
         flow = _compile_workflow(ir_data, registry, execution_params, metrics_collector, workflow_trace)
         return flow
     except Exception as e:
-        # Handle compilation errors
-        # Surface a user-friendly planning error line (matches main behavior)
-        click.echo(f"❌ Planning failed: {e}", err=True)
-        if ctx.obj.get("verbose", False):
-            click.echo(f"cli: Error details: {e}", err=True)
+        # Handle compilation errors with user-friendly formatting
+        from pflow.core.user_errors import UserFriendlyError
+        from pflow.runtime.compiler import CompilationError as CompilerCompilationError
+
+        verbose = ctx.obj.get("verbose", False)
+
+        # Check error type and format appropriately
+        if isinstance(e, UserFriendlyError):
+            # Use the formatted user-friendly error
+            error_message = e.format_for_cli(verbose=verbose)
+            click.echo(error_message, err=True)
+        elif isinstance(e, CompilerCompilationError):
+            # Handle old-style CompilationError with suggestion field
+            # Keep as "Planning failed" for consistency with existing tests and UX
+            click.echo(f"❌ Planning failed: {e}", err=True)
+            if hasattr(e, "suggestion") and e.suggestion:
+                click.echo(f"\n{e.suggestion}", err=True)
+            if verbose:
+                click.echo(f"\ncli: Error details: {e}", err=True)
+        else:
+            # Fallback for other exceptions
+            click.echo(f"❌ Planning failed: {e}", err=True)
+            if verbose:
+                click.echo(f"cli: Error details: {e}", err=True)
+
         # Save trace if requested
         if workflow_trace:
             trace_path = workflow_trace.save_to_file()
-            if trace_path and ctx.obj.get("verbose", False):
+            if trace_path and verbose:
                 click.echo(f"cli: Trace saved to {trace_path}", err=True)
         ctx.exit(1)
 
@@ -905,6 +1068,9 @@ def _handle_workflow_exception(
         except Exception as cleanup_error:
             logger.error(f"Failed to cleanup during exception: {cleanup_error}", exc_info=True)
 
+    # Check if this is a user-friendly error
+    from pflow.core.user_errors import UserFriendlyError
+
     # In JSON mode, output error as JSON
     if output_format == "json":
         error_output = {"error": str(e), "is_error": True}
@@ -918,13 +1084,20 @@ def _handle_workflow_exception(
 
         _serialize_json_result(error_output, verbose)
     else:
-        click.echo(f"cli: Workflow execution failed - {e}", err=True)
-        click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
+        # Format error based on type
+        if isinstance(e, UserFriendlyError):
+            # Use the formatted user-friendly error
+            error_message = e.format_for_cli(verbose=verbose)
+            click.echo(error_message, err=True)
+        else:
+            # Fallback to generic error message
+            click.echo(f"cli: Workflow execution failed - {e}", err=True)
+            click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
 
     # Save trace on error if requested
     if workflow_trace:
         trace_file = workflow_trace.save_to_file()
-        click.echo(f"📊 Workflow trace saved: {trace_file}", err=True)
+        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     ctx.exit(1)
 
@@ -968,8 +1141,20 @@ def execute_json_workflow(
         node_count = len(ir_data.get("nodes", []))
         click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
 
+    # Get output controller for interactive vs non-interactive mode
+    output_controller = _get_output_controller(ctx)
+
+    # Show workflow execution header if interactive
+    if output_controller.is_interactive():
+        node_count = len(ir_data.get("nodes", []))
+        callback = output_controller.create_progress_callback()
+        if callback:
+            callback(str(node_count), "workflow_start", None, 0)
+
     # Prepare shared storage with params and stdin
-    shared_storage = _prepare_shared_storage(execution_params, planner_llm_calls, stdin_data, verbose)
+    shared_storage = _prepare_shared_storage(
+        execution_params, planner_llm_calls, stdin_data, verbose, output_controller
+    )
 
     try:
         # Execute workflow and handle result
@@ -1100,25 +1285,26 @@ def _handle_llm_configuration_error(
     ctx.exit(1)
 
 
-def _save_trace_if_needed(trace_collector: Any, trace_planner: bool, success: bool) -> None:
+def _save_trace_if_needed(trace_collector: Any, trace_planner: bool, success: bool, ctx: click.Context) -> None:
     """Save trace file if needed based on conditions."""
     should_save = trace_planner or not success
     if not should_save:
         return
 
     trace_file = trace_collector.save_to_file()
+
     if not success:
-        click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+        _echo_trace(ctx, f"📝 Debug trace saved: {trace_file}")
     else:  # trace_planner is True and success is True
-        # Use err=True to ensure message is visible even with workflow output
-        click.echo(f"📝 Planner trace saved: {trace_file}", err=True)
+        _echo_trace(ctx, f"📝 Planner trace saved: {trace_file}")
 
 
-def _create_debug_context(raw_input: str, metrics_collector: Any | None = None) -> tuple[Any, Any]:
+def _create_debug_context(raw_input: str, ctx: click.Context, metrics_collector: Any | None = None) -> tuple[Any, Any]:
     """Create debugging context for planner execution.
 
     Args:
         raw_input: The natural language input
+        ctx: Click context containing configuration
         metrics_collector: Optional MetricsCollector for cost tracking
 
     Returns:
@@ -1126,8 +1312,11 @@ def _create_debug_context(raw_input: str, metrics_collector: Any | None = None) 
     """
     from pflow.planning.debug import DebugContext, PlannerProgress, TraceCollector
 
+    # Get output controller to determine interactive mode
+    output_controller = _get_output_controller(ctx)
+
     trace_collector = TraceCollector(raw_input)
-    progress = PlannerProgress()
+    progress = PlannerProgress(is_interactive=output_controller.is_interactive())
     debug_context = DebugContext(
         trace_collector=trace_collector, progress=progress, metrics_collector=metrics_collector
     )
@@ -1165,7 +1354,7 @@ def _handle_timeout_completion(
         _show_timeout_help(planner_timeout)
         trace_collector.set_final_status("timeout", shared)
         trace_file = trace_collector.save_to_file()
-        click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+        _echo_trace(ctx, f"📝 Debug trace saved: {trace_file}")
         ctx.exit(1)
 
 
@@ -1194,7 +1383,7 @@ def _setup_planner_execution(
         metrics_collector.record_planner_start()
 
     # Create debugging context with optional metrics
-    debug_context, trace_collector = _create_debug_context(raw_input, metrics_collector)
+    debug_context, trace_collector = _create_debug_context(raw_input, ctx, metrics_collector)
 
     # Initialize shared state
     shared = {
@@ -1251,13 +1440,14 @@ def _run_planner_with_timeout(
             click.echo(f"❌ Planning aborted: {e.reason}", err=True)
             if verbose and e.original_error:
                 click.echo(f"   Original error: {e.original_error}", err=True)
-            click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+            # Only show trace messages in interactive mode
+            _echo_trace(ctx, f"📝 Debug trace saved: {trace_file}")
         else:
             # Handle other execution errors
             trace_collector.set_final_status("error", shared, {"message": str(e)})
             trace_file = trace_collector.save_to_file()
             click.echo(f"❌ Planner failed: {e}", err=True)
-            click.echo(f"📝 Debug trace saved: {trace_file}", err=True)
+            _echo_trace(ctx, f"📝 Debug trace saved: {trace_file}")
         ctx.exit(1)
 
     finally:
@@ -1291,7 +1481,7 @@ def _process_planner_result(
 
     # Save trace if needed (using trace_planner flag for planner traces)
     trace_planner = ctx.obj.get("trace_planner", False)
-    _save_trace_if_needed(trace_collector, trace_planner, success)
+    _save_trace_if_needed(trace_collector, trace_planner, success, ctx)
 
     # Record planner end if metrics are being collected
     if metrics_collector:
@@ -1358,7 +1548,8 @@ def _execute_successful_workflow(
     # Only prompt in fully interactive mode (both stdin and stdout are TTY).
     # This prevents hanging when output is piped (e.g., to jq), because the
     # downstream process waits for EOF which won't occur if we prompt.
-    if sys.stdin.isatty() and sys.stdout.isatty():
+    output_controller = _get_output_controller(ctx)
+    if output_controller.should_show_prompts():
         workflow_source = planner_output.get("workflow_source")
 
         if workflow_source and workflow_source.get("found"):
@@ -1437,11 +1628,60 @@ def _setup_signals() -> None:
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 
+def _check_mcp_setup(ctx: click.Context) -> None:
+    """Check if MCP tools need to be synced and inform user.
+
+    This provides proactive guidance to users who have MCP servers configured
+    but haven't synced the tools yet.
+    """
+    # Only check if this looks like a command that might use MCP
+    # Skip check if in non-interactive mode to avoid clutter
+    output_controller = _get_output_controller(ctx)
+    if not output_controller.is_interactive():
+        return
+
+    # Only check if workflow text contains keywords suggesting MCP usage
+    workflow_text = ctx.obj.get("workflow_text", "")
+    mcp_keywords = ["slack", "github", "mcp", "message", "issue", "channel"]
+
+    # Check if any keyword is in the workflow text (case-insensitive)
+    if workflow_text and any(keyword in workflow_text.lower() for keyword in mcp_keywords):
+        try:
+            from pflow.registry import Registry
+
+            registry = Registry()
+            all_nodes = registry.list_nodes()
+            mcp_count = len([n for n in all_nodes if n.startswith("mcp-")])
+
+            # If no MCP tools are registered, check if servers are configured
+            if mcp_count == 0:
+                try:
+                    from pflow.mcp import MCPServerManager
+
+                    manager = MCPServerManager()
+                    servers = manager.list_servers()
+
+                    if servers:
+                        # User has configured servers but hasn't synced
+                        click.echo(
+                            "💡 Tip: You have MCP servers configured but no tools synced.\n"
+                            "   This workflow might need MCP tools. Run: pflow mcp sync --all\n",
+                            err=True,
+                        )
+                except Exception as e:
+                    # Log MCP check failure at debug level - this is optional functionality
+                    logger.debug(f"Failed to check MCP server status: {e}")
+        except Exception as e:
+            # Log registry check failure at debug level - this is optional functionality
+            logger.debug(f"Failed to check registry for MCP nodes: {e}")
+
+
 def _initialize_context(
     ctx: click.Context,
     verbose: bool,
     output_key: str | None,
     output_format: str,
+    print_flag: bool,
     trace: bool,
     trace_planner: bool,
     planner_timeout: int,
@@ -1453,6 +1693,7 @@ def _initialize_context(
         verbose: Verbose mode flag
         output_key: Optional output key
         output_format: Output format (text/json)
+        print_flag: Force non-interactive output flag
         trace: Trace execution flag
         trace_planner: Trace planner flag
         planner_timeout: Planner timeout in seconds
@@ -1463,9 +1704,16 @@ def _initialize_context(
     ctx.obj["verbose"] = verbose
     ctx.obj["output_key"] = output_key
     ctx.obj["output_format"] = output_format
+    ctx.obj["print_flag"] = print_flag
     ctx.obj["trace"] = trace
     ctx.obj["trace_planner"] = trace_planner
     ctx.obj["planner_timeout"] = planner_timeout
+
+    # Create OutputController once and store it for reuse
+    ctx.obj["output_controller"] = OutputController(
+        print_flag=print_flag,
+        output_format=output_format,
+    )
 
 
 def _preprocess_run_prefix(ctx: click.Context, workflow: tuple[str, ...]) -> tuple[str, ...]:
@@ -1764,6 +2012,7 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     default="text",
     help="Output format: text (default) or json",
 )
+@click.option("-p", "--print", "print_flag", is_flag=True, help="Force non-interactive output (print mode)")
 @click.option("--trace", is_flag=True, help="Save workflow execution trace to file")
 @click.option("--trace-planner", is_flag=True, help="Save planner execution trace to file")
 @click.option("--planner-timeout", type=int, default=60, help="Timeout for planner execution (seconds)")
@@ -1774,6 +2023,7 @@ def workflow_command(
     verbose: bool,
     output_key: str | None,
     output_format: str,
+    print_flag: bool,
     trace: bool,
     trace_planner: bool,
     planner_timeout: int,
@@ -1834,7 +2084,7 @@ def workflow_command(
     _setup_signals()
 
     # Initialize context with configuration
-    _initialize_context(ctx, verbose, output_key, output_format, trace, trace_planner, planner_timeout)
+    _initialize_context(ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout)
 
     # Handle stdin data
     stdin_content, enhanced_stdin = _read_stdin_data()
@@ -1845,6 +2095,14 @@ def workflow_command(
 
     # Preprocess: transparently handle `run` prefix
     workflow = _preprocess_run_prefix(ctx, workflow)
+
+    # Store workflow text in context for MCP check
+    raw_input = " ".join(workflow) if workflow else ""
+    ctx.obj["workflow_text"] = raw_input
+
+    # Check MCP setup and provide guidance if needed
+    # Temporarily disabled for debugging
+    # _check_mcp_setup(ctx)
 
     # Try to handle as named/file workflow first
     if workflow:
