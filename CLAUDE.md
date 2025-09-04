@@ -393,6 +393,7 @@ Next up:
 Next version (post-MVP/post-Launch):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
+- ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
 - ⏳ Task 44: Build caching system
