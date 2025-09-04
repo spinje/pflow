@@ -1,5 +1,6 @@
 """Unified wrapper for metrics collection and optional tracing."""
 
+import contextlib
 import logging
 import time
 from typing import Any, Optional, cast
@@ -243,6 +244,14 @@ class InstrumentedNodeWrapper:
         # Set up LLM interception if needed
         self._setup_llm_interception()
 
+        # Call progress callback for node start if present
+        callback = shared.get("__progress_callback__")
+        if callable(callback):
+            depth = shared.get("_pflow_depth", 0)
+            # Never let callback errors break execution
+            with contextlib.suppress(Exception):
+                callback(self.node_id, "node_start", None, depth)
+
         try:
             # Execute the inner node
             result = self.inner_node._run(shared)
@@ -259,6 +268,12 @@ class InstrumentedNodeWrapper:
 
             # Record trace if collector present
             self._record_trace(duration_ms, shared_before, dict(shared), success=True)
+
+            # Call progress callback for node complete if present
+            if callable(callback):
+                # Never let callback errors break execution
+                with contextlib.suppress(Exception):
+                    callback(self.node_id, "node_complete", duration_ms, depth)
 
             return result
 

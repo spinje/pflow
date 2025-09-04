@@ -75,6 +75,11 @@ Use this EXACT structure for the review (skip sections if necessary):
 ```markdown
 # Task {{task_id}} Review: {{title}}
 
+## Metadata
+<!-- Include Implementation Date if available -->
+<!-- Include Session ID if available -->
+<!-- Include Pull Request URL if available -->
+
 ## Executive Summary
 <!-- 2-3 sentences: What was built and its impact on the system -->
 

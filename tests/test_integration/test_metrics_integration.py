@@ -605,10 +605,9 @@ class TestCLIFlags:
                     print(f"Error with --trace: {result.output}")
                 assert result.exit_code == 0, "Workflow should run successfully with --trace"
 
-                # Test 1: Output should mention trace file was saved
-                assert "Workflow trace saved" in result.output, (
-                    f"Expected 'Workflow trace saved' in output, got: {result.output}"
-                )
+                # Test 1: Trace message is suppressed in non-interactive mode (CliRunner)
+                # This is expected behavior after task 55c - trace output fix
+                # The actual test is that the trace file exists (Test 2)
 
                 # Test 2: Trace file should exist
                 debug_dir = Path(temp_home) / ".pflow" / "debug"

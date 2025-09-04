@@ -69,7 +69,7 @@ class MCPNode(Node):
         # TODO: Future improvement would be to cache and reuse server connections
         super().__init__(max_retries=1, wait=0)
         self._server_config: Optional[dict[str, Any]] = None
-        self._timeout: int = 60  # Increased timeout for slow servers like Slack
+        self._timeout: int = 30  # Default timeout in seconds
 
     def prep(self, shared: dict) -> dict:
         """Prepare MCP tool execution.
@@ -85,11 +85,46 @@ class MCPNode(Node):
         tool = self.params.get("__mcp_tool__")
 
         if not server or not tool:
-            raise ValueError(
-                f"MCP node requires __mcp_server__ and __mcp_tool__ parameters. "
-                f"Got server={server}, tool={tool}. "
-                f"These should be injected by the compiler for virtual MCP nodes."
-            )
+            # Check if any MCP tools are registered to provide better guidance
+            from pflow.core.user_errors import MCPError
+            from pflow.registry import Registry
+
+            try:
+                registry = Registry()
+                mcp_nodes = [n for n in registry.list_nodes() if n.startswith("mcp-")]
+
+                if not mcp_nodes:
+                    # No MCP tools in registry - user needs to sync
+                    raise MCPError(
+                        title="MCP tools not available",
+                        explanation=(
+                            "The workflow tried to use MCP tools that aren't registered.\n"
+                            "This usually happens when MCP servers haven't been synced."
+                        ),
+                        technical_details=f"Debug: server={server}, tool={tool}",
+                    )
+                else:
+                    # MCP tools exist but parameters missing - likely a workflow issue
+                    raise MCPError(
+                        title="MCP tool configuration error",
+                        explanation=(
+                            f"The workflow is trying to use an MCP tool but it wasn't properly configured.\n"
+                            f"This might indicate the workflow file is corrupted or was manually edited.\n\n"
+                            f"Available MCP tools: {', '.join(mcp_nodes[:3])}"
+                            f"{f' (and {len(mcp_nodes) - 3} more)' if len(mcp_nodes) > 3 else ''}"
+                        ),
+                        suggestions=[
+                            "Regenerate the workflow using natural language",
+                            "Check the workflow file for manual edits",
+                            "Run: pflow registry list | grep mcp",
+                        ],
+                        technical_details=f"Debug: server={server}, tool={tool}, registry_count={len(mcp_nodes)}",
+                    )
+            except ImportError:
+                # Fallback if Registry can't be imported
+                from pflow.core.user_errors import MCPError
+
+                raise MCPError(technical_details=f"Debug: server={server}, tool={tool}") from None
 
         # Load server configuration
         config = self._load_server_config(server)
@@ -120,7 +155,11 @@ class MCPNode(Node):
             "Preparing MCP tool execution", extra={"mcp_server": server, "mcp_tool": tool, "tool_args": tool_args}
         )
 
-        return {"server": server, "tool": tool, "config": config, "arguments": tool_args}
+        # Get verbose flag from shared store (defaults to False if not set)
+        verbose = shared.get("__verbose__", False)
+        logger.debug(f"MCP Node prep: verbose={verbose}, __verbose__ in shared={shared.get('__verbose__')}")
+
+        return {"server": server, "tool": tool, "config": config, "arguments": tool_args, "verbose": verbose}
 
     def exec(self, prep_res: dict) -> dict:
         """Execute MCP tool using async-to-sync wrapper.
@@ -151,10 +190,15 @@ class MCPNode(Node):
         Returns:
             Tool execution results
         """
+        import contextlib
+        import sys
+        from typing import TextIO
+
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
         config = prep_res["config"]
+        verbose = prep_res.get("verbose", False)
 
         # Expand environment variables in config
         env = self._expand_env_vars(config.get("env", {}))
@@ -162,30 +206,41 @@ class MCPNode(Node):
         # Prepare server parameters
         params = StdioServerParameters(command=config["command"], args=config.get("args", []), env=env if env else None)
 
-        # Execute with timeout (Py3.11+ uses asyncio.timeout; Py3.10 falls back to wait_for)
-        async def _run_session() -> dict:
-            async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
-                # Initialize handshake (required by MCP protocol)
-                await session.initialize()
+        # Use ExitStack to properly manage the devnull file context
+        with contextlib.ExitStack() as stack:
+            # Determine where to send MCP server stderr output
+            if verbose:
+                errlog: TextIO = sys.stderr
+            else:
+                # Open os.devnull as a file to get a proper TextIO object
+                # ExitStack will ensure it's properly closed
+                errlog = stack.enter_context(open(os.devnull, "w"))
 
-                # Call the tool
-                logger.debug(f"Calling MCP tool: {prep_res['tool']} with args: {prep_res['arguments']}")
-                result = await session.call_tool(prep_res["tool"], prep_res["arguments"])
+            # Execute with timeout (Py3.11+ uses asyncio.timeout; Py3.10 falls back to wait_for)
+            async def _run_session() -> dict:
+                # Pass errlog to suppress stderr in non-verbose mode
+                async with stdio_client(params, errlog=errlog) as (read, write), ClientSession(read, write) as session:
+                    # Initialize handshake (required by MCP protocol)
+                    await session.initialize()
 
-                # Extract content from result
-                # MCP returns results as content blocks (text, image, etc.)
-                extracted_result = self._extract_result(result)
+                    # Call the tool
+                    logger.debug(f"Calling MCP tool: {prep_res['tool']} with args: {prep_res['arguments']}")
+                    result = await session.call_tool(prep_res["tool"], prep_res["arguments"])
 
-                return {"result": extracted_result}
+                    # Extract content from result
+                    # MCP returns results as content blocks (text, image, etc.)
+                    extracted_result = self._extract_result(result)
 
-        timeout_context = getattr(asyncio, "timeout", None)
-        if timeout_context is not None:
-            # Python 3.11+
-            async with timeout_context(self._timeout):
-                return await _run_session()
-        else:
-            # Python 3.10 fallback
-            return await asyncio.wait_for(_run_session(), timeout=self._timeout)
+                    return {"result": extracted_result}
+
+            timeout_context = getattr(asyncio, "timeout", None)
+            if timeout_context is not None:
+                # Python 3.11+
+                async with timeout_context(self._timeout):
+                    return await _run_session()
+            else:
+                # Python 3.10 fallback
+                return await asyncio.wait_for(_run_session(), timeout=self._timeout)
 
     def post(self, shared: dict, prep_res: dict, exec_res: dict) -> str:
         """Store results in shared store and determine next action.

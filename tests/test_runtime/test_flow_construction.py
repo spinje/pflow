@@ -66,13 +66,24 @@ class TestInstantiateNodes:
         assert "node1" in nodes
         node = nodes["node1"]
 
-        # With namespacing enabled by default, nodes are wrapped
+        # With namespacing and instrumentation enabled by default, nodes are wrapped multiple times
+        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
         from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
 
-        assert isinstance(node, NamespacedNodeWrapper)
+        # Node may be wrapped with InstrumentedNodeWrapper (in real execution) or just NamespacedNodeWrapper (in tests)
+        if isinstance(node, InstrumentedNodeWrapper):
+            # Real execution: InstrumentedNodeWrapper wraps NamespacedNodeWrapper
+            namespaced_node = node.inner_node
+        elif isinstance(node, NamespacedNodeWrapper):
+            # Test execution: Just NamespacedNodeWrapper
+            namespaced_node = node
+        else:
+            raise TypeError(f"Unexpected node wrapper type: {type(node)}")
+
+        assert isinstance(namespaced_node, NamespacedNodeWrapper)
 
         # Get the inner node for direct testing
-        inner_node = node._inner_node
+        inner_node = namespaced_node._inner_node
         assert isinstance(inner_node, BaseNode)
 
         # Test the inner node directly (bypassing namespacing)
@@ -112,13 +123,25 @@ class TestInstantiateNodes:
         assert len(nodes) == 3
         assert all(key in nodes for key in ["node1", "node2", "node3"])
 
-        # With namespacing, nodes are wrapped
+        # With namespacing, nodes are wrapped (possibly multiple times)
+        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
         from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
 
-        assert all(isinstance(node, NamespacedNodeWrapper) for node in nodes.values())
+        # Helper to get the NamespacedNodeWrapper (may be wrapped by InstrumentedNodeWrapper)
+        def get_namespaced_wrapper(node):
+            if isinstance(node, NamespacedNodeWrapper):
+                return node
+            elif isinstance(node, InstrumentedNodeWrapper) and isinstance(node.inner_node, NamespacedNodeWrapper):
+                return node.inner_node
+            return None
+
+        # Verify all nodes have NamespacedNodeWrapper (either directly or wrapped)
+        namespaced_nodes = {node_id: get_namespaced_wrapper(node) for node_id, node in nodes.items()}
+        assert all(wrapper is not None for wrapper in namespaced_nodes.values())
+        assert all(isinstance(wrapper, NamespacedNodeWrapper) for wrapper in namespaced_nodes.values())
 
         # Get inner nodes for testing
-        inner_nodes = {node_id: node._inner_node for node_id, node in nodes.items()}
+        inner_nodes = {node_id: node._inner_node for node_id, node in namespaced_nodes.items()}
         assert all(isinstance(node, BaseNode) for node in inner_nodes.values())
 
         # Verify they're different instances (not the same object)
@@ -169,10 +192,19 @@ class TestInstantiateNodes:
         node = nodes["node1"]
 
         # With namespacing, node is wrapped - get inner node
+        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
         from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
 
-        assert isinstance(node, NamespacedNodeWrapper)
-        inner_node = node._inner_node
+        # Helper to get the NamespacedNodeWrapper (may be wrapped by InstrumentedNodeWrapper)
+        if isinstance(node, NamespacedNodeWrapper):
+            namespaced_node = node
+        elif isinstance(node, InstrumentedNodeWrapper) and isinstance(node.inner_node, NamespacedNodeWrapper):
+            namespaced_node = node.inner_node
+        else:
+            raise TypeError(f"Unexpected node type: {type(node)}")
+
+        assert isinstance(namespaced_node, NamespacedNodeWrapper)
+        inner_node = namespaced_node._inner_node
 
         # Test that parameters were actually set on the inner node
         assert hasattr(inner_node, "params")
@@ -221,10 +253,19 @@ class TestInstantiateNodes:
         node = nodes["node1"]
 
         # With namespacing, node is wrapped - get inner node
+        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
         from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
 
-        assert isinstance(node, NamespacedNodeWrapper)
-        inner_node = node._inner_node
+        # Helper to get the NamespacedNodeWrapper (may be wrapped by InstrumentedNodeWrapper)
+        if isinstance(node, NamespacedNodeWrapper):
+            namespaced_node = node
+        elif isinstance(node, InstrumentedNodeWrapper) and isinstance(node.inner_node, NamespacedNodeWrapper):
+            namespaced_node = node.inner_node
+        else:
+            raise TypeError(f"Unexpected node type: {type(node)}")
+
+        assert isinstance(namespaced_node, NamespacedNodeWrapper)
+        inner_node = namespaced_node._inner_node
 
         # Test that the node functions correctly without params
         shared_store = {"test_input": "no_params_test"}

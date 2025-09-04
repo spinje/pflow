@@ -238,14 +238,20 @@ class TestEndToEndCompilation:
         # Get the node and check it's wrapped
         node = flow.start_node
 
-        # With namespacing enabled by default, the outermost wrapper is NamespacedNodeWrapper
+        # The wrapping order is: TemplateAwareNodeWrapper -> NamespacedNodeWrapper -> InstrumentedNodeWrapper
+        # So the outermost wrapper is InstrumentedNodeWrapper
+        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
         from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
         from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
 
-        assert isinstance(node, NamespacedNodeWrapper)
+        assert isinstance(node, InstrumentedNodeWrapper)
 
-        # The inner node should be the TemplateAwareNodeWrapper
-        template_wrapper = node._inner_node
+        # The inner node should be the NamespacedNodeWrapper
+        namespaced_wrapper = node.inner_node
+        assert isinstance(namespaced_wrapper, NamespacedNodeWrapper)
+
+        # And inside that should be the TemplateAwareNodeWrapper
+        template_wrapper = namespaced_wrapper._inner_node
         assert isinstance(template_wrapper, TemplateAwareNodeWrapper)
 
         # The wrapper should have the template params stored
