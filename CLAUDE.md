@@ -382,6 +382,7 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 54: Implement HTTP Node
 
 Next up:
+- ⏳ Task 58: Update workflow generator prompt-tests to use better real world test cases
 - ⏳ Task 57: Update planner tests to use better test cases with real world north star examples
 - ⏳ Task 52: Improve planner with "plan" and "requirements" steps
 - ⏳ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
