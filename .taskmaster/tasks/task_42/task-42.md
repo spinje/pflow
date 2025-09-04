@@ -1,4 +1,4 @@
-Claude Code Agentic Node
+# Task 42: Claude Code Agentic Node
 
 ## ID
 42
