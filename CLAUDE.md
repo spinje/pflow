@@ -382,10 +382,10 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 54: Implement HTTP Node
 
 Next up:
-- ⏳ Task 42: Implement Claude Code Agentic Node
 - ⏳ Task 57: Update planner tests to use better test cases with real world north star examples
 - ⏳ Task 52: Improve planner with "plan" and "requirements" steps
 - ⏳ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
+- ⏳ Task 42: Implement Claude Code Agentic Node
 - ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
 - ⏳ Task 47: Support HTTP Transport for MCP Servers
 
