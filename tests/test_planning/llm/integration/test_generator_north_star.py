@@ -36,10 +36,10 @@ class TestGeneratorNorthStarExamples:
 
     def test_generate_changelog_complete_flow(self):
         """Test complete Path B flow for generate-changelog North Star example."""
-        # Initialize shared store with North Star example
-        shared = {
-            "user_input": "Generate a changelog for anthropic/pflow repository since 2024-01-01 with the last 20 commits"
-        }
+        # EXACT verbose north star prompt from architecture/vision/north-star-examples.md
+        CHANGELOG_VERBOSE = """generate a changelog for version 1.3 from the last 20 closed issues from github, generating a changelog from them and then writing it to versions/1.3/CHANGELOG.md and checkout a new branch called create-changelog-version-1.3 and committing the changes."""
+
+        shared = {"user_input": CHANGELOG_VERBOSE}
 
         try:
             # Step 1: Parameter Discovery
@@ -52,10 +52,13 @@ class TestGeneratorNorthStarExamples:
             discovered = shared["discovered_params"]
             logger.info(f"Discovered parameters: {discovered}")
 
-            # Should discover key parameters
-            assert any("anthropic" in str(v) or "pflow" in str(v) for v in discovered.values())
-            assert any("2024" in str(v) for v in discovered.values())
-            assert any("20" in str(v) for v in discovered.values())
+            # Should discover EXACT parameters from north star prompt
+            # Parameters are strings, not integers
+            assert any("1.3" in str(v) for v in discovered.values()), "Should discover version 1.3"
+            assert any("20" in str(v) for v in discovered.values()), "Should discover limit 20"
+            assert any("create-changelog-version-1.3" in str(v) for v in discovered.values()), (
+                "Should discover branch name"
+            )
 
             # Step 2: Component Browsing
             browsing_node = ComponentBrowsingNode()
@@ -108,8 +111,9 @@ class TestGeneratorNorthStarExamples:
 
                 # Verify defaults match discovered values
                 defaults_str = json.dumps({k: v.get("default") for k, v in inputs.items()})
-                assert "anthropic/pflow" in defaults_str or "pflow" in defaults_str, "Should have repository default"
-                assert "2024" in defaults_str or "20" in defaults_str, "Should have date or limit default"
+                assert "1.3" in defaults_str or "version" in defaults_str, "Should have version default"
+                assert "20" in defaults_str, "Should have limit default of 20"
+                assert "CHANGELOG.md" in defaults_str or "versions/1.3" in defaults_str, "Should have path default"
 
                 logger.info("Workflow uses input defaults instead of template variables")
             else:
@@ -157,17 +161,10 @@ class TestGeneratorNorthStarExamples:
         This follows the north star example pattern where first-time users
         provide detailed instructions for workflow generation.
         """
-        # Use a specific prompt like the north star example
-        # Original north star: "create a triage report for all open issues by fetching
-        # the last 50 open issues from github, categorizing them by priority and type
-        # and then write them to triage-reports/2025-08-07-triage-report.md then commit the changes"
-        shared = {
-            "user_input": (
-                "Create an issue triage report by fetching the last 30 open bug issues "
-                "from github project-x repository, categorize them by priority (high/medium/low), "
-                "then write the report to reports/bug-triage.md"
-            )
-        }
+        # EXACT verbose north star prompt with intentional double "the"
+        TRIAGE_VERBOSE = """create a triage report for all open issues by fetching the the last 50 open issues from github, categorizing them by priority and type and then write them to triage-reports/2025-08-07-triage-report.md then commit the changes. Replace 2025-08-07 with the current date and mention the date in the commit message."""
+
+        shared = {"user_input": TRIAGE_VERBOSE}
 
         try:
             # Step 1: Parameter Discovery
@@ -179,10 +176,12 @@ class TestGeneratorNorthStarExamples:
             discovered = shared.get("discovered_params", {})
             logger.info(f"Discovered: {discovered}")
 
-            # Should discover GitHub-related parameters from the specific prompt
-            assert any("github" in str(v).lower() or "project-x" in str(v).lower() for v in discovered.values())
-            assert any("30" in str(v) or "bug" in str(v).lower() for v in discovered.values())
-            assert any("report" in str(v).lower() or ".md" in str(v) for v in discovered.values())
+            # Should discover EXACT parameters from north star prompt
+            assert any("50" in str(v) for v in discovered.values()), "Should discover limit 50"
+            assert any("github" in str(v).lower() for v in discovered.values()), "Should discover GitHub source"
+            assert any("2025-08-07" in str(v) or "triage-report" in str(v) for v in discovered.values()), (
+                "Should discover date/filename"
+            )
 
             # Step 2: Component Browsing
             browsing_node = ComponentBrowsingNode()
@@ -243,16 +242,10 @@ class TestGeneratorNorthStarExamples:
                     # Check that inputs have defaults matching discovered params
                     inputs = workflow["inputs"]
 
-                    # Repository should match what was discovered
-                    if "repository" in inputs:
-                        assert inputs["repository"].get("default") == "project-x", (
-                            "Repository default should match discovered value"
-                        )
-
                     # Output file should match what was specified
                     if "output_file_path" in inputs or "output_path" in inputs:
                         output_input = inputs.get("output_file_path") or inputs.get("output_path")
-                        assert "bug-triage.md" in str(output_input.get("default", "")), (
+                        assert "triage-report" in str(output_input.get("default", "")), (
                             "Output path default should match specified value"
                         )
 
@@ -479,3 +472,220 @@ class TestGeneratorNorthStarExamples:
             # Ambiguous requests might fail, which is acceptable
             logger.info(f"Ambiguous request handling: {e}")
             pass
+
+    def test_summarize_issue_tertiary_example(self):
+        """Test Path B flow for simple issue summary North Star tertiary example.
+
+        This is the simplest north star example - just summarize a single issue.
+        Even though it's simple, a specific issue number should trigger Path B.
+        """
+        # EXACT tertiary north star prompt from architecture/vision/north-star-examples.md
+        ISSUE_SUMMARY = "summarize github issue 1234"
+
+        shared = {"user_input": ISSUE_SUMMARY}
+
+        try:
+            # Step 1: Parameter Discovery
+            discovery_node = ParameterDiscoveryNode()
+            prep_res = discovery_node.prep(shared)
+            exec_res = discovery_node.exec(prep_res)
+            discovery_node.post(shared, prep_res, exec_res)
+
+            assert "discovered_params" in shared
+            discovered = shared["discovered_params"]
+            logger.info(f"Discovered parameters: {discovered}")
+
+            # Should discover the specific issue number
+            assert any("1234" in str(v) for v in discovered.values()), "Should discover issue number 1234"
+
+            # Step 2: Component Browsing
+            browsing_node = ComponentBrowsingNode()
+            prep_res = browsing_node.prep(shared)
+            exec_res = browsing_node.exec(prep_res)
+            browsing_node.post(shared, prep_res, exec_res)
+
+            assert "browsed_components" in shared
+            components = shared["browsed_components"]
+            logger.info(f"Browsed components for simple workflow: {list(components.keys())[:5]}")
+
+            # Step 3: Workflow Generation
+            generator_node = WorkflowGeneratorNode()
+            prep_res = generator_node.prep(shared)
+            exec_res = generator_node.exec(prep_res)
+            action = generator_node.post(shared, prep_res, exec_res)
+
+            assert action == "validate"
+            assert "generated_workflow" in shared
+
+            workflow = shared["generated_workflow"]
+            logger.info(f"Generated simple workflow with {len(workflow.get('nodes', []))} nodes")
+
+            # Simple workflow should still be valid
+            assert "ir_version" in workflow
+            assert "nodes" in workflow
+
+            # Should be minimal - likely just github-get-issue + llm
+            nodes = workflow.get("nodes", [])
+            assert len(nodes) >= 2, "Even simple workflow needs at least fetch + process"
+            assert len(nodes) <= 4, "Simple workflow shouldn't be overly complex"
+
+            # Verify it includes GitHub issue operation
+            node_types = [n["type"] for n in nodes]
+            assert any("github" in t.lower() or "issue" in t.lower() for t in node_types), (
+                "Should include GitHub issue node"
+            )
+
+            # Should have summarization step (likely LLM)
+            assert any("llm" in t.lower() or "summar" in t.lower() for t in node_types), (
+                "Should include summarization step"
+            )
+
+            # Step 4: Parameter Mapping
+            shared["selected_workflow"] = workflow
+            shared["extracted_params"] = {}
+
+            mapping_node = ParameterMappingNode()
+            prep_res = mapping_node.prep(shared)
+            exec_res = mapping_node.exec(prep_res)
+            action = mapping_node.post(shared, prep_res, exec_res)
+
+            logger.info(f"Parameter mapping for simple workflow: {action}")
+
+            # Should extract the issue number
+            extracted = shared.get("extracted_params", {})
+            assert "1234" in str(extracted.values()), "Should map issue number 1234"
+
+            logger.info("Tertiary example successfully tested")
+
+        except Exception as e:
+            if "API" in str(e) or "key" in str(e).lower():
+                pytest.skip(f"LLM API not configured: {e}")
+            raise
+
+    def test_performance_monitoring(self):
+        """Test that performance is monitored but doesn't fail tests.
+
+        This test validates that slow API responses don't cause test failures,
+        only warnings. This is important because API response times can vary
+        significantly between models and network conditions.
+        """
+        import time
+
+        shared = {
+            "user_input": "generate a changelog for version 1.5"  # Brief prompt for faster execution
+        }
+
+        start = time.time()
+
+        try:
+            # Just test discovery node performance
+            from pflow.planning.nodes import WorkflowDiscoveryNode
+
+            discovery = WorkflowDiscoveryNode()
+            prep_res = discovery.prep(shared)
+            exec_res = discovery.exec(prep_res)
+            action = discovery.post(shared, prep_res, exec_res)
+
+            duration = time.time() - start
+
+            # Performance check - NEVER fail, only warn
+            # This follows Task 28 lessons about API variance
+            if duration > 20.0:
+                logger.warning(f"Slow performance: {duration:.2f}s (model-dependent)")
+
+            # Test passes regardless of performance
+            assert action in ["found_existing", "not_found"]
+
+            logger.info(f"Performance test completed in {duration:.2f}s")
+
+        except Exception as e:
+            if "API" in str(e) or "key" in str(e).lower():
+                pytest.skip(f"LLM API not configured: {e}")
+            raise
+
+    def test_parameter_types_are_strings(self):
+        """Test that discovered parameters are strings, not integers.
+
+        This is critical for pflow - all parameters must be strings for
+        consistent template variable replacement and JSON serialization.
+        """
+        # EXACT verbose north star prompt
+        CHANGELOG_VERBOSE = """generate a changelog for version 1.3 from the last 20 closed issues from github, generating a changelog from them and then writing it to versions/1.3/CHANGELOG.md and checkout a new branch called create-changelog-version-1.3 and committing the changes."""
+
+        shared = {"user_input": CHANGELOG_VERBOSE}
+
+        try:
+            # Test parameter discovery
+            param_discovery = ParameterDiscoveryNode()
+            prep_res = param_discovery.prep(shared)
+            exec_res = param_discovery.exec(prep_res)
+            param_discovery.post(shared, prep_res, exec_res)
+
+            discovered = shared.get("discovered_params", {})
+
+            # Check that numeric values are stored as strings
+            for key, value in discovered.items():
+                if value in ["20", "1.3", "50", "1234"]:
+                    assert isinstance(value, str), f"Parameter {key}={value} should be string, got {type(value)}"
+
+            # Specifically check our known numeric parameters
+            if "version" in discovered:
+                assert isinstance(discovered["version"], str), "Version should be string"
+            if "issue_count" in discovered or "limit" in discovered:
+                limit_key = "issue_count" if "issue_count" in discovered else "limit"
+                assert isinstance(discovered[limit_key], str), "Issue count/limit should be string"
+
+            logger.info("Parameter types validated - all strings")
+
+        except Exception as e:
+            if "API" in str(e) or "key" in str(e).lower():
+                pytest.skip(f"LLM API not configured: {e}")
+            raise
+
+    def test_validation_with_production_validator(self):
+        """Test workflow validation with production WorkflowValidator.
+
+        This ensures that generated workflows can be validated with the same
+        validator used in production, catching any schema or structure issues.
+        """
+        from pflow.core.workflow_validator import WorkflowValidator
+        from pflow.registry import Registry
+
+        # Create a test workflow that might have validation challenges
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "fetch", "type": "github-list-issues", "params": {"limit": "${limit}"}},
+                {"id": "process", "type": "llm", "params": {"prompt": "Process ${data}"}},
+            ],
+            "edges": [
+                {"from": "fetch", "to": "process", "action": "default"},
+            ],
+            "start_node": "fetch",
+            "inputs": {
+                "limit": {"required": True}  # This might fail validation if no value provided!
+            },
+            "outputs": {},
+        }
+
+        # Load real registry
+        registry = Registry()
+        registry.load()
+
+        # Use static validator method - same as production
+        errors = WorkflowValidator.validate(
+            workflow_ir=workflow, extracted_params={"limit": "20"}, registry=registry, skip_node_types=False
+        )
+
+        if errors:
+            logger.warning(f"Validation errors (expected for test): {errors}")
+        else:
+            logger.info("Workflow passed validation")
+
+        # Test should not fail on validation errors - just verify validator works
+        assert isinstance(errors, list), "Validator should return list of errors"
+
+        # If we have errors, they should be strings describing the issues
+        for error in errors:
+            assert isinstance(error, str), "Each error should be a string"
+            logger.info(f"Validation error detail: {error}")

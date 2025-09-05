@@ -15,6 +15,13 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
     This test verifies that when nodes are denied via settings,
     they are completely hidden from the LLM/planner context.
     This is a security feature to prevent access to dangerous operations.
+
+    FIX HISTORY:
+    - 2025-01-05: Fixed overly broad test node detection in context_builder.py
+      The previous logic skipped any node with "test" in the file path, which
+      incorrectly excluded all nodes when the project directory contained "test"
+      (e.g., "pflow-test-planner-north-star-examples"). Now uses more specific
+      detection based on module paths to only skip actual test nodes.
     """
     # Create a temporary settings file with explicit denies
     settings_file = tmp_path / "settings.json"

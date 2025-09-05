@@ -43,9 +43,22 @@ def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[s
     skipped_count = 0
 
     for node_type, node_info in registry_metadata.items():
-        # Skip test nodes
+        # Skip test nodes - check for nodes in test directory or test_node files
+        # We check the module path, not the full file path to avoid issues with
+        # project directories that contain "test" in their name
+        module_path = node_info.get("module", "")
         file_path = node_info.get("file_path", "")
-        if "test" in file_path.lower():
+
+        # Check if this is a test node by looking at the module path
+        # Test nodes are either in pflow.nodes.test.* or pflow.nodes.test_node*
+        is_test_node = (
+            "pflow.nodes.test." in module_path
+            or "pflow.nodes.test_node" in module_path
+            or "/nodes/test/" in file_path
+            or "/test_node" in file_path
+        )
+
+        if is_test_node:
             logger.debug(f"context: Skipping test node: {node_type}")
             skipped_count += 1
             continue
