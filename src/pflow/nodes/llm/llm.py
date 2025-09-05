@@ -5,7 +5,7 @@ Interface:
 - Reads: shared["system"]: str  # System prompt (optional)
 - Writes: shared["response"]: str  # Model's text response
 - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
-- Params: model: str  # Model to use (default: gpt-5-nano)
+- Params: model: str  # Model to use (default: gemini-2.5-flash-lite)
 - Params: temperature: float  # Sampling temperature (default: 1.0)
 - Params: max_tokens: int  # Max response tokens (optional)
 - Actions: default (always)
@@ -38,7 +38,7 @@ class LLMNode(Node):
         - total_tokens: int  # Total tokens (input + output)
         - cache_creation_input_tokens: int  # Tokens used for cache creation
         - cache_read_input_tokens: int  # Tokens read from cache
-    - Params: model: str  # Model to use (default: gpt-5-nano)
+    - Params: model: str  # Model to use (default: gemini-2.5-flash-lite)
     - Params: temperature: float  # Sampling temperature (default: 1.0)
     - Params: max_tokens: int  # Max response tokens (optional)
     - Actions: default (always)
@@ -71,7 +71,7 @@ class LLMNode(Node):
 
         return {
             "prompt": prompt,
-            "model": self.params.get("model", "gpt-5-nano"),  # Default to OpenAI's cheapest model
+            "model": self.params.get("model", "gemini-2.5-flash-lite"),  # Default to Google's cheapest model
             "temperature": temperature,
             "system": system,
             "max_tokens": self.params.get("max_tokens"),
