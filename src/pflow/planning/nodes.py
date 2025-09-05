@@ -331,13 +331,21 @@ class ComponentBrowsingNode(Node):
         response = model.prompt(prompt, schema=ComponentSelection, temperature=prep_res["temperature"])
         result = parse_structured_response(response, ComponentSelection)
 
+        # IMPORTANT: Clear workflow_names to prevent confusion
+        # Until nested workflow execution is supported (Task 59), we can't use workflows as nodes
+        if result.get("workflow_names"):
+            logger.info(
+                f"ComponentBrowsingNode: Ignoring {len(result['workflow_names'])} workflows "
+                "(nested workflows not supported yet)",
+                extra={"phase": "exec", "ignored_workflows": result["workflow_names"]},
+            )
+            result["workflow_names"] = []  # Clear workflows
+
         logger.info(
-            f"ComponentBrowsingNode: Selected {len(result['node_ids'])} nodes, "
-            f"{len(result['workflow_names'])} workflows",
+            f"ComponentBrowsingNode: Selected {len(result['node_ids'])} nodes",
             extra={
                 "phase": "exec",
                 "node_count": len(result["node_ids"]),
-                "workflow_count": len(result["workflow_names"]),
             },
         )
 
@@ -366,9 +374,12 @@ class ComponentBrowsingNode(Node):
         workflow_manager = shared.get("workflow_manager")
 
         # Get detailed planning context for selected components
+        # IMPORTANT: We pass empty workflow_names to prevent the LLM from trying
+        # to use workflows as nodes (which would fail at runtime).
+        # Until nested workflow execution is supported (Task 59), we only provide nodes.
         planning_context = build_planning_context(
             selected_node_ids=exec_res["node_ids"],
-            selected_workflow_names=exec_res["workflow_names"],
+            selected_workflow_names=[],  # Disabled until nested workflows supported
             registry_metadata=prep_res["registry_metadata"],
             saved_workflows=None,  # Will load automatically
             workflow_manager=workflow_manager,  # Pass from shared store

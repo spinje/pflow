@@ -123,6 +123,8 @@ class TestComponentBrowsingSelection:
         VALIDATES: ComponentSelection response parsing.
         The LLM returns selected node IDs and workflow names in a nested
         structure that must be correctly extracted for planning context.
+        NOTE: Workflows are now cleared from the result until nested workflow
+        execution is supported (Task 59).
         """
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
@@ -149,7 +151,9 @@ class TestComponentBrowsingSelection:
 
             # Verify nested extraction worked
             assert result["node_ids"] == ["read-file", "llm", "write-file"]
-            assert result["workflow_names"] == ["data-pipeline", "text-processor"]
+            # Workflows are now cleared to prevent them from being used as nodes
+            # until nested workflow execution is supported (Task 59)
+            assert result["workflow_names"] == []
             assert result["reasoning"] == "Test reasoning for component selection"
 
     def test_post_always_routes_to_generate(self):
@@ -183,8 +187,9 @@ class TestComponentBrowsingSelection:
         """Test post correctly calls build_planning_context with selections.
 
         VALIDATES: Planning context generation for selected components.
-        The selected node IDs and workflow names must be passed correctly
-        to build_planning_context to create detailed specs for generation.
+        The selected node IDs are passed to build_planning_context, but
+        workflow names are now always empty to prevent workflows from being
+        used as nodes until nested workflow execution is supported (Task 59).
         """
         with patch("pflow.planning.nodes.build_planning_context") as mock_build:
             mock_build.return_value = "context"
@@ -197,9 +202,11 @@ class TestComponentBrowsingSelection:
 
             node.post(shared, prep_res, exec_res)
 
+            # Verify workflow_names are now always passed as empty list
+            # to prevent workflows from being used as nodes (Task 59)
             mock_build.assert_called_once_with(
                 selected_node_ids=["n1", "n2"],
-                selected_workflow_names=["w1"],
+                selected_workflow_names=[],  # Always empty now
                 registry_metadata={"meta": "data"},
                 saved_workflows=None,
                 workflow_manager=None,

@@ -28,7 +28,10 @@ class TestDiscoveryPlanningFlow:
         metadata = registry.load()
 
         # Discovery phase - should include all available nodes
-        discovery = build_discovery_context(registry_metadata=metadata)
+        # NOTE: We must explicitly pass node_ids=None and workflow_names=None as keyword arguments
+        # to match the function signature. The function expects these as the first two positional
+        # arguments, so we need to be explicit about what we're passing.
+        discovery = build_discovery_context(node_ids=None, workflow_names=None, registry_metadata=metadata)
 
         # Verify discovery content structure
         assert "## Available Nodes" in discovery
@@ -43,6 +46,7 @@ class TestDiscoveryPlanningFlow:
         selected_nodes = available_nodes[:2]  # Take first 2 available nodes
 
         # Planning phase - should show detailed interfaces
+        # Note: workflows are no longer included in planning context (disabled in ComponentBrowsingNode)
         planning = build_planning_context(selected_nodes, [], metadata)
 
         # Verify planning content structure
@@ -75,7 +79,7 @@ class TestDiscoveryPlanningFlow:
                     # Isolate workflow manager to prevent state pollution
                     with patch("pflow.planning.context_builder._workflow_manager", None):
                         # Discovery should include workflow - pass empty registry to avoid loading real one
-                        discovery = build_discovery_context(registry_metadata={})
+                        discovery = build_discovery_context(node_ids=None, workflow_names=None, registry_metadata={})
                         assert "## Available Workflows" in discovery
                         assert "test-integration-workflow" in discovery
 
@@ -138,7 +142,7 @@ class TestDiscoveryPlanningFlow:
                 }
             mock_process.return_value = (processed_nodes, 0)
 
-            discovery = build_discovery_context(registry_metadata=large_registry)
+            discovery = build_discovery_context(node_ids=None, workflow_names=None, registry_metadata=large_registry)
 
         discovery_time = time.time() - start_time
 
@@ -328,7 +332,10 @@ class TestRealWorldScenarios:
         metadata = registry.load()
 
         # Discovery phase
-        discovery = build_discovery_context(registry_metadata=metadata)
+        # NOTE: We must explicitly pass node_ids=None and workflow_names=None as keyword arguments
+        # to match the function signature. The function expects these as the first two positional
+        # arguments, so we need to be explicit about what we're passing.
+        discovery = build_discovery_context(node_ids=None, workflow_names=None, registry_metadata=metadata)
 
         # Should show file operations category
         assert "File Operations" in discovery
@@ -394,7 +401,7 @@ class TestRealWorldScenarios:
         }
 
         # Discovery should group by categories
-        discovery = build_discovery_context(registry_metadata=registry_metadata)
+        discovery = build_discovery_context(node_ids=None, workflow_names=None, registry_metadata=registry_metadata)
 
         # Should contain category headers - verify at least one category is created
         assert "### File Operations" in discovery  # file-reader should be categorized
@@ -428,7 +435,7 @@ class TestErrorAndEdgeCases:
             mock_wf_manager = mock_manager.return_value
             mock_wf_manager.list_all.return_value = []
 
-            discovery = build_discovery_context(registry_metadata={})
+            discovery = build_discovery_context(node_ids=None, workflow_names=None, registry_metadata={})
 
             # Should handle empty registry gracefully - returns empty string
             assert isinstance(discovery, str)
@@ -447,7 +454,7 @@ class TestErrorAndEdgeCases:
             # Simulate processing that skips broken nodes
             mock_process.return_value = ({}, 2)  # Empty processed, 2 skipped
 
-            discovery = build_discovery_context(registry_metadata=bad_registry)
+            discovery = build_discovery_context(node_ids=None, workflow_names=None, registry_metadata=bad_registry)
 
             # Should handle gracefully and return a valid string
             assert isinstance(discovery, str)
@@ -472,7 +479,9 @@ class TestErrorAndEdgeCases:
             def build_context():
                 try:
                     # Test discovery context building
-                    discovery = build_discovery_context(registry_metadata=registry_metadata)
+                    discovery = build_discovery_context(
+                        node_ids=None, workflow_names=None, registry_metadata=registry_metadata
+                    )
                     results.append(len(discovery) > 0)  # Should have content
                 except Exception as e:
                     errors.append(str(e))
@@ -507,7 +516,7 @@ class TestErrorAndEdgeCases:
                 0,
             )
 
-            discovery = build_discovery_context(registry_metadata=registry_metadata)
+            discovery = build_discovery_context(node_ids=None, workflow_names=None, registry_metadata=registry_metadata)
             planning = build_planning_context(["unicode-node"], [], registry_metadata)
 
             # Should handle Unicode gracefully
