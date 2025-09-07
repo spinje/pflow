@@ -1,8 +1,10 @@
 # Task 42 Review: Claude Code Agentic Node
 
 ## Metadata
-<!-- Implementation Date: 2025-09-04 to 2025-09-06 -->
+<!-- Implementation Date: 2025-09-04 to 2025-09-07 -->
 <!-- Session ID: dde18df2-7c45-4d38-a89a-a964a8ea5e5d -->
+<!-- PR: https://github.com/spinje/pflow/pull/17 -->
+<!-- Commit: 6fc9a69 -->
 
 ## Executive Summary
 Implemented a "super node" for pflow that integrates Claude Code SDK to execute comprehensive development tasks with AI assistance. Features a dynamic schema-driven output system that converts user schemas to prompt instructions, enabling structured outputs from Claude's unstructured text generation while capturing full execution metadata including costs, tool usage, and streaming progress.
@@ -80,6 +82,11 @@ Followed MCP node's async-to-sync wrapper pattern exactly, prioritizing compatib
 ### Test Strategy Applied
 Mock SDK at query() function level, not deep internals. Test integration patterns, not actual API calls. All 23 spec criteria covered plus edge cases.
 
+### Test Suite Status
+- **31 tests total** - All passing after fixing for consistent dict format
+- **6 tests updated 2025-09-07** - Changed to expect dict format instead of raw strings
+- **Full suite**: 1949 passed, 162 skipped
+
 ### Critical Test Cases
 - `test_valid_task_with_schema` - Validates schema-driven output
 - `test_rate_limit_error` - Error transformation to user-friendly message
@@ -90,10 +97,12 @@ Mock SDK at query() function level, not deep internals. Test integration pattern
 
 ### Gotchas Encountered
 1. **SDK parameter names differ from typical LLM APIs**: `max_thinking_tokens` not `max_tokens`, no `temperature`
-2. **--output-format json breaks SDK**: Returns error `'list' object has no attribute 'items'`
-3. **ResultMessage contains metadata**: Not documented, found through testing
+2. **--output-format json breaks SDK**: Returns error `'list' object has no attribute 'items'` - must use streaming
+3. **ResultMessage contains metadata**: Not documented, found through testing - this is how we get cost/usage
 4. **Token aggregation critical**: Cache tokens in separate fields, must sum for costs
 5. **Metrics system ignores actual costs**: Always calculates from tokens with hardcoded pricing
+6. **Metadata storage bug**: Must store metadata BEFORE any early returns in `_store_results()`
+7. **Prompt changes needed**: Claude outputs preliminary text with schema unless prompt is very forceful
 
 ### Edge Cases Found
 - Claude outputs preliminary text with `max_turns=1` instead of JSON
@@ -122,10 +131,12 @@ shared["llm_usage"] = {
 ```
 
 ### Anti-Patterns to Avoid
-- Don't use `extra_args=["--output-format", "json"]` - breaks SDK
+- Don't use `extra_args=["--output-format", "json"]` - breaks SDK with AttributeError
 - Don't catch exceptions in exec() - breaks retry mechanism
-- Don't trust Claude's first response with max_turns=1
+- Don't trust Claude's first response with max_turns=1 - outputs preliminary text
 - Don't calculate cost from tokens when actual cost available
+- Don't return early before storing metadata - causes data loss
+- Don't use weak prompts with schema - Claude ignores JSON instructions
 
 ## Breaking Changes
 
@@ -134,7 +145,10 @@ None - follows standard node interface
 
 ### Behavioral Changes
 - Metrics now show actual costs instead of estimates (592x difference fixed)
-- Results stored as dict structure, not individual keys
+- Results always stored as dict structure for consistency:
+  - Without schema: `{"text": response_text}`
+  - With schema: dict with schema keys directly
+  - Parse failure: `{"text": raw_text}` plus `_schema_error`
 
 ## Future Considerations
 
@@ -177,6 +191,26 @@ pytest tests/test_nodes/test_claude/test_claude_code.py::test_metadata_capture -
 python -c "from pflow.nodes.claude import ClaudeCodeNode; print('Import works')"
 ```
 
+## Latest Session Updates (2025-09-07)
+
+### Critical Fixes Applied
+1. **Output Format Investigation**: Discovered `--output-format json` breaks SDK, removed it
+2. **Metadata Capture Fix**: ResultMessage provides metadata in streaming mode
+3. **Test Suite Updates**: Fixed 6 failing tests to match dict return format
+4. **Prompt Strengthening**: Made schema prompts more forceful with "YOU MUST RESPOND WITH JSON ONLY"
+
+### Example Workflows Created
+- `claude-code-basic.json` - Simple code generation with metadata reporting
+- `claude-code-schema.json` - Code review with structured output schema
+- `claude-code-debug.json` - Error analysis with detailed schema
+- `claude-code-git-workflow.json` - Multi-step git workflow with cost tracking
+
+### Documentation Created
+- `AUTHENTICATION.md` - Comprehensive auth guide for both methods
+- `examples/nodes/claude-code/README.md` - Usage examples and patterns
+- Progress log with all implementation decisions and discoveries
+
 ---
 
 *Generated from implementation context of Task 42*
+*Final review updated: 2025-09-07*
