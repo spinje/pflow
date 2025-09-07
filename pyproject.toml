@@ -25,6 +25,7 @@ dependencies = [
     "pydantic",       # IR/metadata validation (used in planning/ir_models.py)
     "mcp[cli]>=1.13.1",  # Model Context Protocol for MCP server support
     "requests>=2.32.5",  # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
+    "claude-code-sdk>=0.0.21",  # Claude Code SDK for agentic development node
 ]
 
 # Optional dependencies can be added here for future LLM providers

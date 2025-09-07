@@ -71,6 +71,9 @@ class MetricsCollector:
     def calculate_costs(self, llm_calls: list[dict[str, Any]]) -> float:
         """Calculate total cost from accumulated LLM calls.
 
+        Prioritizes actual cost (total_cost_usd) when available,
+        otherwise falls back to token-based calculation.
+
         Args:
             llm_calls: List of LLM call data from shared["__llm_calls__"]
 
@@ -84,6 +87,12 @@ class MetricsCollector:
             if not call:
                 continue
 
+            # PRIORITY 1: Use actual cost if available (e.g., from Claude Code)
+            if "total_cost_usd" in call and call["total_cost_usd"] is not None:
+                total_cost += call["total_cost_usd"]
+                continue
+
+            # PRIORITY 2: Fall back to token-based calculation
             model = call.get("model", "unknown")
             pricing = MODEL_PRICING.get(model, DEFAULT_PRICING)
 
