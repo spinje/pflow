@@ -406,7 +406,7 @@ class TestPlannerFlowIntegration:
             )
             if isinstance(shared["generated_workflow"], dict) and not shared["generated_workflow"].get("ir_version"):
                 print(f"Full generated_workflow: {shared['generated_workflow']}")
-        assert shared["generated_workflow"]["ir_version"] == "0.1.0"
+        assert shared["generated_workflow"]["ir_version"] == "1.0.0"
 
         # Verify validation passed (no validation_errors means success)
         assert "validation_errors" not in shared or len(shared.get("validation_errors", [])) == 0
@@ -469,14 +469,14 @@ class TestPlannerFlowIntegration:
             }
 
             # Generation attempts - first 2 invalid, 3rd valid
-            # Attempt 1: Missing ir_version (will fail structural validation)
+            # Attempt 1: Invalid node type (will fail validation)
             gen_fail1 = Mock()
             gen_fail1.json.return_value = {
                 "content": [
                     {
                         "input": {
-                            # Missing ir_version - will fail validation
-                            "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "test"}}],
+                            # Invalid node type - will fail validation
+                            "nodes": [{"id": "n1", "type": "invalid-node-type", "params": {"prompt": "test"}}],
                             "edges": [],
                             "start_node": "n1",
                             "inputs": {},

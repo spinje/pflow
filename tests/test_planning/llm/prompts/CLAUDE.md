@@ -1,5 +1,25 @@
 # Prompt Testing System Guide
 
+## ⚠️ CRITICAL: Parallel Execution Required
+
+**Tests in this directory MUST be run with parallel execution (`-n auto` or `-n <number>`) or they will take 2+ minutes instead of 10-20 seconds.**
+
+```bash
+# ❌ WRONG - Takes 2+ minutes (serial execution)
+RUN_LLM_TESTS=1 uv run pytest tests/test_planning/llm/prompts/ -v
+
+# ✅ CORRECT - Takes 10-20 seconds (parallel execution)
+RUN_LLM_TESTS=1 uv run pytest tests/test_planning/llm/prompts/ -n auto -v
+
+# ✅ BEST - Use the test accuracy script (handles parallelization automatically)
+RUN_LLM_TESTS=1 uv run python tools/test_prompt_accuracy.py workflow_generator
+```
+
+**Requirements for parallel execution:**
+- `pytest-xdist` must be installed (already in dev dependencies)
+- Always use `-n auto` or `-n <number>` flag when running pytest directly
+- The test accuracy script handles this automatically
+
 ## Executive Summary
 
 This directory contains the **prompt accuracy testing system** - a critical infrastructure that ensures LLM prompts in pflow maintain quality, performance, and cost-effectiveness over time.
@@ -280,10 +300,12 @@ The tool automatically finds prompts by scanning the prompts directory, but ensu
 
 ## Running Tests
 
-### Via test_prompt_accuracy.py (Recommended)
+### Via test_prompt_accuracy.py (STRONGLY RECOMMENDED)
+
+This is the **best way** to run tests as it handles parallel execution automatically:
 
 ```bash
-# Run with default model (Claude Sonnet)
+# Run with default model (Claude Sonnet) - automatically uses parallel execution
 uv run python tools/test_prompt_accuracy.py discovery
 
 # Run with cheap test model
@@ -292,19 +314,35 @@ uv run python tools/test_prompt_accuracy.py discovery --model gpt-5-nano
 # Dry run (no updates)
 uv run python tools/test_prompt_accuracy.py discovery --dry-run
 
-# Override parallelization
+# Override parallelization (rarely needed)
 uv run python tools/test_prompt_accuracy.py discovery --parallel 10
 ```
 
-### Direct pytest execution
+### Direct pytest execution (REQUIRES -n flag!)
+
+**⚠️ WARNING**: Always include `-n auto` or tests will take 2+ minutes!
 
 ```bash
-# Run all tests for a prompt
-RUN_LLM_TESTS=1 pytest tests/test_planning/llm/prompts/test_discovery_prompt.py -v
+# ✅ CORRECT - Run all tests with parallel execution (~10-20 seconds)
+RUN_LLM_TESTS=1 uv run pytest tests/test_planning/llm/prompts/test_discovery_prompt.py -n auto -v
 
-# Run specific test case
-RUN_LLM_TESTS=1 pytest tests/test_planning/llm/prompts/test_discovery_prompt.py::TestDiscoveryPrompt::test_discovery_scenario[exact_match] -v
+# ✅ CORRECT - Run with specific number of workers
+RUN_LLM_TESTS=1 uv run pytest tests/test_planning/llm/prompts/test_discovery_prompt.py -n 15 -v
+
+# Run specific test case (no -n needed for single test)
+RUN_LLM_TESTS=1 uv run pytest tests/test_planning/llm/prompts/test_discovery_prompt.py::TestDiscoveryPrompt::test_discovery_scenario[exact_match] -v
+
+# ❌ WRONG - Missing -n flag (will take 2+ minutes!)
+# RUN_LLM_TESTS=1 pytest tests/test_planning/llm/prompts/test_discovery_prompt.py -v
 ```
+
+### Performance Comparison
+
+| Execution Method | Time | Cost | Notes |
+|-----------------|------|------|-------|
+| Serial (no `-n`) | 2-3 minutes | Same | ❌ Unacceptably slow |
+| Parallel (`-n auto`) | 10-20 seconds | Same | ✅ Optimal |
+| Test accuracy script | 10-20 seconds | Same | ✅ Best - handles everything |
 
 ## How conftest.py Works
 
@@ -385,10 +423,12 @@ Organize tests by behavior category:
    - Check `PFLOW_TEST_FAILURE_FILE` is set
    - Ensure file writes are flushed
 
-3. **Tests running slowly**
-   - Check pytest-xdist is installed
-   - Verify parallel workers are configured
-   - Use `--model gpt-5-nano` for faster responses
+3. **Tests running slowly (2+ minutes)**
+   - **MOST LIKELY CAUSE**: Missing `-n auto` flag when using pytest directly
+   - Check pytest-xdist is installed: `uv pip list | grep pytest-xdist`
+   - Verify you're using `-n auto` or `-n <number>` flag
+   - Or better: use the test accuracy script which handles this automatically
+   - Use `--model gpt-5-nano` for faster/cheaper responses
 
 4. **Token tracking not working**
    - Check conftest.py is in the directory
@@ -408,9 +448,39 @@ Organize tests by behavior category:
 
 The prompt testing system ensures:
 - **Quality**: Track accuracy over time
-- **Performance**: ~10 second test runs
+- **Performance**: ~10 second test runs (with parallel execution)
 - **Cost**: $0.006 per full test suite with test models
 - **Visibility**: Real-time failure feedback
 - **Reliability**: Behavioral testing approach
 
 Follow the patterns from `test_discovery_prompt.py` exactly. This is not optional - it's the only way to ensure your tests integrate properly with the accuracy tracking system.
+
+## 🤖 Instructions for AI Agents
+
+When running or modifying tests in this directory:
+
+1. **ALWAYS use parallel execution** when running tests directly:
+   ```bash
+   # ✅ CORRECT
+   RUN_LLM_TESTS=1 uv run pytest tests/test_planning/llm/prompts/ -n auto -v
+
+   # ❌ WRONG (will timeout after 2+ minutes)
+   RUN_LLM_TESTS=1 uv run pytest tests/test_planning/llm/prompts/ -v
+   ```
+
+2. **PREFER the test accuracy script** over direct pytest:
+   ```bash
+   # Best approach - handles everything automatically
+   RUN_LLM_TESTS=1 uv run python tools/test_prompt_accuracy.py <prompt_name>
+   ```
+
+3. **NEVER remove the `-n` flag** thinking it's optional - it's required for acceptable performance
+
+4. **VERIFY pytest-xdist is installed** before running tests:
+   ```bash
+   uv pip list | grep pytest-xdist || uv pip install pytest-xdist
+   ```
+
+5. **EXPECT 10-20 second execution time** - if tests take longer than 30 seconds, something is wrong
+
+Remember: Serial execution (without `-n`) makes tests unusable. This is not a preference - it's a requirement.

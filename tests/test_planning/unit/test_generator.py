@@ -188,10 +188,10 @@ class TestParameterIntegration:
 
         prompt = node._build_prompt(prep_res)
 
-        assert "Discovered parameters" in prompt
-        assert "rename for clarity" in prompt
-        assert "filename: test.txt" in prompt
-        assert "repo: owner/repo" in prompt
+        assert "Suggested default values" in prompt
+        assert "NEVER hardcode these values" in prompt
+        assert 'filename: default="test.txt"' in prompt
+        assert 'repo: default="owner/repo"' in prompt
 
     @patch("llm.get_model")
     def test_discovered_params_none_generates_workflow(self, mock_get_model, mock_llm_generator):

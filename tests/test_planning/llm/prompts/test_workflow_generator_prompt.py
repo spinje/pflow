@@ -1,8 +1,27 @@
 """Comprehensive tests for workflow_generator prompt with pytest parametrization.
 
 WHEN TO RUN: Only when RUN_LLM_TESTS=1 environment variable is set.
-These tests validate that the workflow generator creates valid, complex workflows
-with proper template variable usage, data flow, and structural integrity.
+
+WHAT THESE TESTS VALIDATE:
+--------------------------
+These tests validate that WorkflowGeneratorNode creates STRUCTURALLY VALID workflows,
+not that workflows can execute with specific runtime values. This is intentional.
+
+The tests verify:
+1. Workflows are structurally correct (valid JSON schema)
+2. Data flow is valid (no forward references, proper execution order)
+3. All node types exist in the registry (no hallucinated nodes)
+4. All template variables are declared in workflow.inputs
+5. Generated workflows follow quality standards (descriptive purposes, etc.)
+
+The tests do NOT verify:
+- Whether specific runtime values can resolve all template paths
+- This is ParameterMappingNode's responsibility in the real planner
+
+This separation matches the real planner architecture where:
+- WorkflowGeneratorNode creates the workflow structure
+- ParameterMappingNode extracts runtime values
+- WorkflowValidatorNode validates with those runtime values
 
 Run with:
   RUN_LLM_TESTS=1 pytest test_workflow_generator_prompt.py -v
@@ -14,12 +33,14 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import pytest
 
+from pflow.planning.context_builder import build_planning_context
 from pflow.planning.nodes import WorkflowGeneratorNode
+from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 
 # Set up logger for immediate failure reporting
@@ -59,8 +80,7 @@ class WorkflowTestCase:
     name: str
     user_input: str
     discovered_params: dict[str, str]
-    planning_context: str
-    browsed_components: dict
+    browsed_node_ids: list[str]  # Node IDs that were "browsed"
     validation_errors: Optional[list[str]]  # For retry tests
     expected_nodes: list[str]  # Node types in order
     min_nodes: int
@@ -70,435 +90,602 @@ class WorkflowTestCase:
     node_output_refs: list[str]  # Expected ${node.output} patterns
     category: str
     why_hard: str
+    critical_nodes: Optional[list[str]] = None  # Must have these node types
+    allowed_extra_nodes: Optional[list[str]] = None  # Can have these as extras
+    browsed_workflow_names: list[str] = field(default_factory=list)  # Workflow names if any
+
+    def get_browsed_components(self) -> dict:
+        """Get browsed_components in the correct format for WorkflowGeneratorNode."""
+        return {
+            "node_ids": self.browsed_node_ids,
+            "workflow_names": self.browsed_workflow_names,
+            "reasoning": f"Components selected for {self.name} test case",
+        }
+
+
+def build_test_planning_context(browsed_components: dict, include_mcp_mocks: bool = False) -> str:
+    """Build planning context using the real context builder, filtered to browsed components.
+
+    This ensures tests use the exact same context formatting as production.
+
+    Args:
+        browsed_components: Dict with node_ids, workflow_names, reasoning
+        include_mcp_mocks: Whether to include Slack MCP mock nodes
+
+    Returns:
+        Formatted planning context string
+    """
+
+    # Get real registry data
+    registry = Registry()
+    registry_data = {}
+    with contextlib.suppress(Exception):
+        registry_data = registry.load()
+
+    # Add MCP mocks if needed
+    if include_mcp_mocks:
+        mcp_mocks = {
+            "mcp-slack-slack_get_channel_history": {
+                "class_name": "MCPNode",
+                "module": "pflow.nodes.mcp.node",
+                "interface": {
+                    "description": "Get Slack channel history",
+                    "inputs": [
+                        {"key": "channel_id", "type": "str", "description": "Slack channel ID"},
+                        {"key": "limit", "type": "int", "description": "Number of messages to retrieve"},
+                    ],
+                    "outputs": [
+                        {"key": "messages", "type": "list", "description": "Channel messages"},
+                        {"key": "channel_info", "type": "dict", "description": "Channel information"},
+                    ],
+                    "params": [],
+                },
+            },
+            "mcp-slack-slack_post_message": {
+                "class_name": "MCPNode",
+                "module": "pflow.nodes.mcp.node",
+                "interface": {
+                    "description": "Post message to Slack channel",
+                    "inputs": [
+                        {"key": "channel_id", "type": "str", "description": "Slack channel ID"},
+                        {"key": "text", "type": "str", "description": "Message text to post"},
+                    ],
+                    "outputs": [
+                        {"key": "message_id", "type": "str", "description": "Posted message ID"},
+                        {"key": "timestamp", "type": "str", "description": "Message timestamp"},
+                    ],
+                    "params": [],
+                },
+            },
+        }
+        registry_data.update(mcp_mocks)
+
+    # Use real context builder with filtering
+    try:
+        context = build_planning_context(
+            selected_node_ids=browsed_components.get("node_ids", []),
+            selected_workflow_names=browsed_components.get("workflow_names", []),
+            registry_metadata=registry_data,
+            saved_workflows=[],
+        )
+
+        # If context is a dict (error case), return a simple fallback
+        if isinstance(context, dict):
+            # Build simple context manually
+            lines = ["Available nodes:"]
+            for node_id in browsed_components.get("node_ids", []):
+                if node_id in registry_data:
+                    lines.append(f"- {node_id}")
+            return "\n".join(lines)
+
+        return context
+    except Exception:
+        # Fallback to simple format if context builder fails
+        lines = ["Available nodes:"]
+        for node_id in browsed_components.get("node_ids", []):
+            lines.append(f"- {node_id}")
+        return "\n".join(lines)
 
 
 def get_test_cases() -> list[WorkflowTestCase]:
-    """Define all test cases for workflow generation."""
+    """Define all test cases for workflow generation.
 
-    # Common planning context with various node types
-    base_context = """Available nodes:
-- github-list-issues: Fetch GitHub issues
-  Parameters: repo_owner, repo_name, state, limit
-  Outputs: issues
-- github-list-prs: List GitHub pull requests (mock)
-  Parameters: repo_owner, repo_name, state, limit
-  Outputs: prs
-- github-create-pr: Create pull request
-  Parameters: repo_owner, repo_name, title, body, head, base
-  Outputs: pr_url, pr_number
-- github-create-release: Create GitHub release (mock)
-  Parameters: repo_owner, repo_name, tag_name, name, body
-  Outputs: release_url, release_id
-- github-get-latest-tag: Get latest tag from GitHub (mock)
-  Parameters: repo_owner, repo_name
-  Outputs: tag, date
-- llm: Generate text using LLM
-  Parameters: prompt, model, temperature
-  Outputs: response, llm_usage
-- read-file: Read file content
-  Parameters: file_path, encoding
-  Outputs: content
-- write-file: Write content to file
-  Parameters: file_path, content, encoding, overwrite
-  Outputs: file_path, success
-- git-commit: Commit changes
-  Parameters: message, files
-  Outputs: commit_hash
-- git-checkout: Checkout branch
-  Parameters: branch
-  Outputs: branch_name
-- git-log: Get git log
-  Parameters: since, until, limit, author, grep, path
-  Outputs: commits
-- git-get-latest-tag: Get the most recent tag (IMPLEMENTED)
-  Parameters: pattern, working_directory
-  Outputs: latest_tag (dict with name, sha, date, message, is_annotated)
-- git-tag: Create git tag (mock - needs implementation as git-tag-create)
-  Parameters: tag_name, message
-  Outputs: tag
-- slack-notify: Send Slack notification (mock)
-  Parameters: channel, message
-  Outputs: status
-- analyze-code: Analyze codebase structure (mock)
-  Parameters: path
-  Outputs: analysis, files_analyzed
-- validate-links: Validate documentation links (mock)
-  Parameters: content
-  Outputs: valid_links, broken_links
-- filter-data: Filter data based on criteria (mock)
-  Parameters: data, criteria
-  Outputs: filtered_data
-- build-project: Build the project (mock)
-  Parameters: config_path
-  Outputs: status, artifacts
-"""
+    This now uses ONLY real nodes from the registry plus 2 Slack MCP mocks.
+    Shell workarounds are used for missing git/github features.
+    """
 
     return [
-        # Category 1: Ultra-Complex 8+ Node Workflows
+        # Test 1: North Star - Changelog Generation ⭐
         WorkflowTestCase(
-            name="full_release_pipeline",
-            user_input="Create a complete release pipeline: get the latest tag from GitHub, list all commits and issues since that tag, generate a comprehensive changelog, create release notes, write both to files, commit changes, create a PR for review, create a GitHub release after approval, and notify the #releases Slack channel about the new release",
-            discovered_params={
-                "repo_owner": "anthropic",
-                "repo_name": "pflow",
-                "slack_channel": "#releases",
-                "changelog_file": "CHANGELOG.md",
-                "release_notes_file": "RELEASE_NOTES.md",
-            },
-            planning_context=base_context,
-            browsed_components={
-                "github-get-latest-tag": {"type": "node"},
-                "git-log": {"type": "node"},
-                "github-list-issues": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
-                "git-commit": {"type": "node"},
-                "github-create-pr": {"type": "node"},
-                "github-create-release": {"type": "node"},
-                "slack-notify": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=[
-                "github-get-latest-tag",
-                "git-log",
-                "github-list-issues",
-                "llm",
-                "llm",
-                "write-file",
-                "write-file",
-                "git-commit",
-                "github-create-pr",
-                "github-create-release",
-                "slack-notify",
-            ],
-            min_nodes=8,
-            max_nodes=12,
-            must_have_inputs=["repo_owner", "repo_name", "slack_channel", "changelog_file", "release_notes_file"],
-            must_not_have_inputs=["latest_tag", "commits", "issues", "changelog", "release_notes"],
-            node_output_refs=[
-                "get_tag.tag",
-                "get_commits.log",
-                "list_issues.issues",
-                "generate_changelog.response",
-                "generate_notes.response",
-            ],
-            category="ultra_complex",
-            why_hard="10+ nodes with multiple data sources, parallel processing, and external notifications",
-        ),
-        WorkflowTestCase(
-            name="comprehensive_documentation_generator",
-            user_input="Generate complete API documentation: analyze the codebase structure in src/, extract all public functions and classes, generate detailed documentation for each module, create code examples for each function, build an index page linking all docs, validate all internal links are correct, commit the documentation to docs/api/, and create a PR titled 'Update API Documentation'",
-            discovered_params={
-                "source_path": "src/",
-                "docs_output": "architecture/api/",
-                "pr_title": "Update API Documentation",
-            },
-            planning_context=base_context,
-            browsed_components={
-                "analyze-code": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
-                "validate-links": {"type": "node"},
-                "git-commit": {"type": "node"},
-                "github-create-pr": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=[
-                "analyze-code",
-                "llm",
-                "llm",
-                "llm",
-                "write-file",
-                "write-file",
-                "write-file",
-                "validate-links",
-                "git-commit",
-                "github-create-pr",
-            ],
-            min_nodes=8,
-            max_nodes=11,
-            must_have_inputs=["source_path", "docs_output", "pr_title"],
-            must_not_have_inputs=["structure", "functions", "documentation", "examples", "index"],
-            node_output_refs=[
-                "analyze.structure",
-                "extract.functions",
-                "generate_docs.response",
-                "generate_examples.response",
-                "create_index.response",
-            ],
-            category="ultra_complex",
-            why_hard="9+ nodes with iterative documentation generation and validation",
-        ),
-        WorkflowTestCase(
-            name="multi_source_weekly_report",
-            user_input="Create a weekly project report by: fetching closed issues from GitHub repository, fetching merged pull requests, getting git commits from the last 7 days, analyzing all this data for trends, writing a detailed report to a file, writing a summary to another file, committing both files, and sending a notification to Slack",
-            discovered_params={
-                "repo_owner": "anthropic",
-                "repo_name": "pflow",
-                "issue_limit": "50",
-                "pr_limit": "50",
-                "report_path": "reports/weekly/report.md",
-                "summary_file": "reports/summary.md",
-                "slack_channel": "#weekly-updates",
-            },
-            planning_context=base_context,
-            browsed_components={
-                "github-list-issues": {"type": "node"},
-                "github-list-prs": {"type": "node"},
-                "git-log": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
-                "git-commit": {"type": "node"},
-                "slack-notify": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=[
-                "github-list-issues",
-                "github-list-prs",
-                "git-log",
-                "llm",
-                "write-file",
-                "write-file",
-                "git-commit",
-                "slack-notify",
-            ],
-            min_nodes=7,  # More realistic
-            max_nodes=12,  # Allow flexibility
-            must_have_inputs=["repo_owner", "repo_name"],  # The essential GitHub inputs
-            must_not_have_inputs=["issues", "prs", "commits", "trends", "summary"],
-            node_output_refs=["fetch_issues.issues", "fetch_prs.prs", "get_commits.log"],
-            category="ultra_complex",
-            why_hard="10 nodes combining multiple GitHub data sources with analysis and reporting",
-        ),
-        # Keep the original complex 4-6 node tests
-        # Category 1: Complex Multi-Node Workflows
-        WorkflowTestCase(
-            name="changelog_pipeline",
-            user_input="Create a comprehensive changelog by fetching the last 30 closed issues from anthropic/pflow, analyze them with AI to categorize by type (bug/feature/docs), generate a formatted changelog with sections, save it to CHANGELOG.md, commit the changes, and create a PR",
-            discovered_params={
-                "repo_owner": "anthropic",
-                "repo_name": "pflow",
-                "issue_count": "30",
-                "changelog_path": "CHANGELOG.md",
-            },
-            planning_context=base_context,
-            browsed_components={
-                "github-list-issues": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
-                "git-commit": {"type": "node"},
-                "github-create-pr": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=["github-list-issues", "llm", "llm", "write-file", "git-commit", "github-create-pr"],
-            min_nodes=5,
-            max_nodes=7,
-            must_have_inputs=["repo_owner", "repo_name", "issue_count", "changelog_path"],
-            must_not_have_inputs=["content", "issues", "changelog", "categorized"],
-            node_output_refs=["fetch_issues.issues", "categorize.response", "format.response"],
-            category="complex",
-            why_hard="6 nodes with complex data flow and multiple template variables",
-        ),
-        WorkflowTestCase(
-            name="data_analysis_pipeline",
-            user_input="Read sales data from data/2024-sales.csv, filter for Q4 records where revenue > 10000, analyze trends with AI, generate visualization code, and save both the analysis report and code to outputs folder",
-            discovered_params={
-                "input_file": "data/2024-sales.csv",
-                "output_dir": "outputs",
-                "revenue_threshold": "10000",
-            },
-            planning_context=base_context,
-            browsed_components={
-                "read-file": {"type": "node"},
-                "filter-data": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=["read-file", "filter-data", "llm", "llm", "write-file", "write-file"],
-            min_nodes=5,
-            max_nodes=6,
-            must_have_inputs=["input_file", "output_dir", "revenue_threshold"],
-            must_not_have_inputs=["data", "filtered_data", "analysis", "visualization"],
-            node_output_refs=["read_data.content", "filter.output", "analyze.response", "generate_viz.response"],
-            category="complex",
-            why_hard="Multiple outputs and data transformation between steps",
-        ),
-        WorkflowTestCase(
-            name="release_automation",
-            user_input="Generate release notes from git log since tag v1.2.0, create GitHub release with the notes, build the project, and upload artifacts to the release",
-            discovered_params={"since_tag": "v1.2.0", "repo_owner": "anthropic", "repo_name": "pflow"},
-            planning_context=base_context,
-            browsed_components={
-                "git-log": {"type": "node"},
-                "llm": {"type": "node"},
-                "github-create-release": {"type": "node"},
-                "build-project": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=["git-log", "llm", "github-create-release", "build-project"],
-            min_nodes=4,
-            max_nodes=5,
-            must_have_inputs=["since_tag", "repo_owner", "repo_name"],
-            must_not_have_inputs=["release_notes", "commits", "release_id"],
-            node_output_refs=["get_commits.log", "generate_notes.response"],
-            category="complex",
-            why_hard="Git to GitHub flow with artifact handling",
-        ),
-        WorkflowTestCase(
-            name="migration_workflow",
-            user_input="Backup production database to backups/2024-01-15/prod.sql, run migration scripts from migrations folder, verify data integrity, and generate migration report",
-            discovered_params={"backup_path": "backups/2024-01-15/prod.sql", "migrations_dir": "migrations"},
-            planning_context=base_context
-            + "\n- run-migrations: Run database migrations (mock)\n  Parameters: migrations_path\n- verify-data: Verify data integrity (mock)\n  Parameters: connection_string",
-            browsed_components={
-                "backup-database": {"type": "node"},
-                "run-migrations": {"type": "node"},
-                "verify-data": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=["backup-database", "run-migrations", "verify-data", "llm", "write-file"],
-            min_nodes=4,
-            max_nodes=5,
-            must_have_inputs=["backup_path", "migrations_dir"],
-            must_not_have_inputs=["report", "verification_results"],
-            node_output_refs=["verify.results", "generate_report.response"],
-            category="complex",
-            why_hard="Critical operations requiring careful sequencing",
-        ),
-        # Category 2: Template Variable Confusion Tests
-        WorkflowTestCase(
-            name="content_generation_trap",
-            user_input="Generate a blog post about Python testing best practices, review it for technical accuracy, then save the final content to blog/testing-guide.md",
-            discovered_params={"topic": "Python testing best practices", "output_file": "blog/testing-guide.md"},
-            planning_context=base_context,
-            browsed_components={"llm": {"type": "node"}, "write-file": {"type": "node"}},
-            validation_errors=None,
-            expected_nodes=["llm", "llm", "write-file"],
-            min_nodes=3,
-            max_nodes=4,
-            must_have_inputs=["topic", "output_file"],
-            must_not_have_inputs=["content", "blog_post", "review"],
-            node_output_refs=["generate_post.response", "review.response"],
-            category="template_confusion",
-            why_hard="Classic trap: content seems like user input but is generated",
-        ),
-        WorkflowTestCase(
-            name="parameter_vs_output",
-            user_input="Fetch user profile for user_id 12345, extract their preferences, generate personalized recommendations based on preferences, and save to recommendations.json",
-            discovered_params={"user_id": "12345", "output_file": "recommendations.json"},
-            planning_context=base_context + "\n- fetch-profile: Fetch user profile (mock)\n  Parameters: user_id",
-            browsed_components={
-                "fetch-profile": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=["fetch-profile", "llm", "llm", "write-file"],
-            min_nodes=4,
-            max_nodes=5,
-            must_have_inputs=["user_id", "output_file"],
-            must_not_have_inputs=["preferences", "profile", "recommendations", "email"],
-            node_output_refs=["fetch_profile.data", "extract_prefs.response", "generate_recs.response"],
-            category="template_confusion",
-            why_hard="Must distinguish user_id (input) from extracted data (outputs)",
-        ),
-        # Category 3: Validation Recovery Tests
-        WorkflowTestCase(
-            name="fix_validation_errors",
-            user_input="Fetch closed issues from a GitHub repository, generate a simple bullet-point changelog listing issue titles only, and save it to a file",
+            name="changelog_from_issues",
+            user_input="Get the last 20 closed issues from github repo anthropic/pflow, group them into sections (Features, Bugs, Documentation) based on their labels, create a markdown changelog with '## Version X.Y.Z' header and bullet points for each issue showing number and title, write to CHANGELOG.md, then commit with message 'Update changelog for release'",
             discovered_params={
                 "repo_owner": "anthropic",
                 "repo_name": "pflow",
                 "issue_limit": "20",
-                "output_file": "CHANGELOG.md",
+                "changelog_file": "CHANGELOG.md",
+                "commit_message": "Update changelog",
             },
-            planning_context=base_context,
-            browsed_components={
-                "github-list-issues": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
+            browsed_node_ids=["github-list-issues", "llm", "write-file", "git-commit"],
+            validation_errors=None,
+            expected_nodes=["github-list-issues", "llm", "write-file", "git-commit"],
+            min_nodes=4,
+            max_nodes=5,
+            must_have_inputs=["repo_owner", "repo_name", "issue_limit", "changelog_file", "commit_message"],
+            must_not_have_inputs=["issues", "changelog"],
+            node_output_refs=["list_issues.issues", "generate.response"],
+            category="north_star",
+            why_hard="Primary example showing GitHub → LLM → Git pipeline",
+            critical_nodes=["github-list-issues", "llm", "write-file", "git-commit"],  # ALL expected nodes
+            allowed_extra_nodes=["llm"],  # Allow extra LLM for processing
+        ),
+        # Test 2: Multi-Repository Dependency Security Audit (HARDER)
+        WorkflowTestCase(
+            name="security_audit_pipeline",
+            user_input="Check if package.json exists using 'test -f package.json', if it exists run 'npm audit --json'. Check if requirements.txt exists using 'test -f requirements.txt', if it exists run 'pip-audit requirements.txt --format json'. Run 'trivy fs . --format json --scanners vuln' for overall scan. Get GitHub issues with label 'security' or 'vulnerability' from repo anthropic/pflow. Parse all security reports extracting critical and high severity issues, correlate with GitHub issues, generate unified security report with vulnerabilities by severity and affected packages grouped by ecosystem. Write report to security-audit.md and machine-readable vulnerabilities.json.",
+            discovered_params={
+                "repo_owner": "anthropic",
+                "repo_name": "pflow",
+                "report_file": "security-audit.md",
+                "json_file": "vulnerabilities.json",
             },
+            browsed_node_ids=["shell", "github-list-issues", "llm", "write-file"],
+            validation_errors=None,
+            expected_nodes=["shell", "shell", "shell", "github-list-issues", "llm", "write-file", "write-file"],
+            min_nodes=8,
+            max_nodes=14,  # Complex multi-tool security pipeline - allow extra analysis steps
+            must_have_inputs=["repo_owner", "repo_name", "report_file", "json_file"],
+            must_not_have_inputs=["vulnerabilities", "issues", "npm_audit", "pip_audit"],
+            node_output_refs=["npm_check.stdout", "pip_check.stdout", "trivy.stdout", "get_issues.issues"],
+            category="complex_pipeline",
+            why_hard="Multiple security tools, JSON parsing, cross-referencing with GitHub",
+            critical_nodes=["shell", "github-list-issues", "llm", "write-file"],
+            allowed_extra_nodes=["shell", "llm"],  # Multiple shells for different tools
+        ),
+        # Test 3: Test Generator
+        WorkflowTestCase(
+            name="test_generator",
+            user_input="Read main.py, identify all functions that don't start with underscore, generate pytest unit tests with at least one test per function using assert statements, include import statements, write to test_main.py",
+            discovered_params={"source_file": "main.py", "test_file": "test_main.py"},
+            browsed_node_ids=["read-file", "llm", "write-file"],
+            validation_errors=None,
+            expected_nodes=["read-file", "llm", "write-file"],
+            min_nodes=3,
+            max_nodes=5,  # Allow extra processing
+            must_have_inputs=["source_file", "test_file"],
+            must_not_have_inputs=["content", "tests"],
+            node_output_refs=["read.content", "generate.response"],
+            category="developer_workflow",
+            why_hard="Common developer task",
+            critical_nodes=["read-file", "llm", "write-file"],  # ALL expected nodes
+            allowed_extra_nodes=["llm"],  # Allow extra LLM for processing
+        ),
+        # Test 4: Documentation Updater
+        # Note: Less capable models may miss the commit_message parameter - this is a legitimate test of parameter discovery
+        WorkflowTestCase(
+            name="documentation_updater",
+            user_input="Read README.md and api.json, find the section '## API Reference' in README.md, replace it with a new markdown table generated from api.json showing Method, Endpoint, and Description columns, commit with message 'Update API documentation from api.json'",
+            discovered_params={
+                "readme_file": "README.md",
+                "api_file": "api.json",
+                "commit_message": "Update README with API changes",
+            },
+            browsed_node_ids=["read-file", "llm", "write-file", "git-commit"],
+            validation_errors=None,
+            expected_nodes=["read-file", "read-file", "llm", "write-file", "git-commit"],
+            min_nodes=5,
+            max_nodes=7,  # Allow extra processing
+            must_have_inputs=["readme_file", "api_file", "commit_message"],
+            must_not_have_inputs=["content", "updated_content"],
+            node_output_refs=["read_readme.content", "read_api.content", "update.response"],
+            category="developer_workflow",
+            why_hard="Multiple file reads and updates",
+            critical_nodes=[
+                "read-file",
+                "llm",
+                "write-file",
+                "git-commit",
+            ],  # ALL expected nodes (note: 2 read-files expected)
+            allowed_extra_nodes=["read-file", "llm"],  # Allow second read-file and extra LLM
+        ),
+        # Test 5: Dependency Checker
+        WorkflowTestCase(
+            name="dependency_checker",
+            user_input="Run 'npm outdated --json' to check for outdated packages, parse the output to create a markdown table with columns: Package, Current, Wanted, Latest, and highlight major version changes, write to deps-report.md",
+            discovered_params={"report_file": "deps-report.md"},
+            browsed_node_ids=["shell", "llm", "write-file"],
+            validation_errors=None,
+            expected_nodes=["shell", "llm", "write-file"],
+            min_nodes=3,
+            max_nodes=5,  # Allow extra processing
+            must_have_inputs=["report_file"],
+            must_not_have_inputs=["packages", "report"],
+            node_output_refs=["check.stdout", "analyze.response"],
+            category="developer_workflow",
+            why_hard="Shell command integration",
+            critical_nodes=["shell", "llm", "write-file"],  # ALL expected nodes
+            allowed_extra_nodes=["llm"],  # Allow extra LLM for processing
+        ),
+        # Test 6: Slack Q&A Automation (MCP)
+        WorkflowTestCase(
+            name="slack_qa_automation",
+            user_input="Get the last 10 messages from slack channel C09C16NAU5B, identify messages that end with '?' as questions, generate helpful answers for each question using context from the thread, then post a consolidated Q&A summary to the channel",
+            discovered_params={"channel_id": "C09C16NAU5B", "message_limit": "10"},
+            browsed_node_ids=["mcp-slack-slack_get_channel_history", "llm", "mcp-slack-slack_post_message"],
+            validation_errors=None,
+            expected_nodes=["mcp-slack-slack_get_channel_history", "llm", "mcp-slack-slack_post_message"],
+            min_nodes=3,
+            max_nodes=6,  # Allow for: get messages, identify questions, generate answers, format summary, post
+            must_have_inputs=["channel_id", "message_limit"],
+            must_not_have_inputs=["messages", "answers"],
+            node_output_refs=["get_history.messages", "answer.response"],
+            category="mcp_integration",
+            why_hard="Real MCP integration from trace",
+            critical_nodes=[
+                "mcp-slack-slack_get_channel_history",
+                "mcp-slack-slack_post_message",
+            ],  # Must get messages and post back
+            allowed_extra_nodes=["llm"],  # Allow extra LLM for processing
+        ),
+        # Test 7: Comprehensive Repository Analytics Pipeline (HARDER)
+        WorkflowTestCase(
+            name="repository_analytics_pipeline",
+            user_input="Generate complete repository analytics: Run 'git log --since=\"30 days ago\" --pretty=format:\"%H|%an|%ae|%at|%s\" --numstat' for detailed commit history. Run 'git shortlog -sn --since=\"30 days ago\"' for contributor stats. Run 'cloc . --json --exclude-dir=node_modules,venv,.git' for code metrics. Run 'find . -type f -name \"*.md\" | wc -l' for documentation count. Get last 100 issues (both open and closed) from GitHub repo anthropic/pflow. Get all pull requests from last 30 days. Analyze commit patterns, calculate average time between commits, identify top contributors, calculate issue closure rate, PR merge rate, lines of code by language. Generate comprehensive analytics report with sections for velocity metrics, contributor analytics, code composition, issue/PR statistics. Write main report to analytics-report.md and data visualization file to analytics-data.json. Create branch 'analytics-$(date +%Y%m%d)', commit both files with message 'Analytics report $(date +%Y-%m-%d)', create PR requesting review.",
+            discovered_params={
+                "repo_owner": "anthropic",
+                "repo_name": "pflow",
+                "report_file": "analytics-report.md",
+                "data_file": "analytics-data.json",
+                "issue_limit": "100",
+            },
+            browsed_node_ids=[
+                "shell",
+                "github-list-issues",
+                "github-list-prs",
+                "llm",
+                "write-file",
+                "git-commit",
+                "github-create-pr",
+            ],
+            validation_errors=None,
+            expected_nodes=[
+                "shell",
+                "shell",
+                "shell",
+                "shell",
+                "shell",
+                "github-list-issues",
+                "github-list-prs",
+                "llm",
+                "llm",
+                "write-file",
+                "write-file",
+                "shell",
+                "git-commit",
+                "github-create-pr",
+            ],  # 6 shells for: git log, git shortlog, cloc, find, date, git checkout -b
+            min_nodes=12,
+            max_nodes=16,  # Very complex analytics pipeline
+            must_have_inputs=["repo_owner", "repo_name", "report_file", "data_file", "issue_limit"],
+            must_not_have_inputs=["commits", "issues", "prs", "analytics"],
+            node_output_refs=[
+                "git_log.stdout",
+                "shortlog.stdout",
+                "cloc.stdout",
+                "list_issues.issues",
+                "list_prs.prs",
+            ],  # Using shell stdout for git log
+            category="complex_pipeline",
+            why_hard="14+ nodes, multiple data sources, complex analysis, dynamic branch naming",
+            critical_nodes=[
+                "shell",
+                "github-list-issues",
+                "github-list-prs",
+                "llm",
+                "write-file",
+                "git-commit",
+                "github-create-pr",
+            ],  # Shell handles branch creation with date substitution
+            allowed_extra_nodes=[
+                "shell",
+                "llm",
+            ],  # Allow multiple shells and LLMs for complex analysis
+        ),
+        # Test 8: HTTP Weather Integration (renamed from MCP since we don't have weather MCP)
+        WorkflowTestCase(
+            name="http_weather_integration",
+            user_input="Use HTTP to fetch weather data from api.openweathermap.org for location San Francisco, generate a human-readable weather report including temperature and conditions, format as markdown and save to weather-report.md",
+            discovered_params={
+                "location": "San Francisco",
+                "api_url": "https://api.openweathermap.org/data/2.5/weather",
+                "report_file": "weather-report.md",
+            },
+            browsed_node_ids=["http", "llm", "write-file"],
+            validation_errors=None,
+            expected_nodes=["http", "llm", "write-file"],
+            min_nodes=3,
+            max_nodes=5,  # Allow extra processing nodes
+            must_have_inputs=["location", "api_url", "report_file"],
+            must_not_have_inputs=["weather", "report"],
+            node_output_refs=["http.response", "llm.response"],
+            category="integration",
+            why_hard="HTTP API integration with data processing",
+            critical_nodes=["http", "llm", "write-file"],  # ALL expected nodes
+            allowed_extra_nodes=["llm"],  # Allow extra LLM for processing
+        ),
+        # Test 9: GitHub Slack Notifier
+        WorkflowTestCase(
+            name="github_slack_notifier",
+            user_input="Get issues closed in the last 7 days from github repo anthropic/pflow, create a summary showing total count, list of issue titles with numbers, and top contributors, post to slack channel updates with heading 'Weekly Closed Issues Report'",
+            discovered_params={"repo_owner": "anthropic", "repo_name": "pflow", "channel_id": "updates"},
+            browsed_node_ids=["github-list-issues", "llm", "mcp-slack-slack_post_message"],
+            validation_errors=None,
+            expected_nodes=["github-list-issues", "llm", "mcp-slack-slack_post_message"],
+            min_nodes=3,
+            max_nodes=4,
+            must_have_inputs=["repo_owner", "repo_name", "channel_id"],
+            must_not_have_inputs=["issues", "summary"],
+            node_output_refs=["list.issues", "summarize.response"],
+            category="mcp_integration",
+            why_hard="Cross-service integration",
+            critical_nodes=["github-list-issues", "llm", "mcp-slack-slack_post_message"],  # ALL expected nodes
+            allowed_extra_nodes=["llm"],  # Allow extra LLM for processing
+        ),
+        # Test 10: Automated Test Failure Analysis Pipeline (HARDER)
+        WorkflowTestCase(
+            name="test_failure_analysis",
+            user_input="Run 'npm test -- --json --outputFile=test-results.json' to execute tests. Read test-results.json and parse to identify all failing tests. Run 'git log --since=\"7 days ago\" --oneline' to find recent changes. Run 'git blame --show-stats' to get overall contribution stats. Search GitHub issues for 'test failure' or 'broken test' in repo anthropic/pflow. Search GitHub PRs with label 'bug' or 'test'. Analyze failure patterns and correlate with recent repository activity. Generate detailed failure analysis report including: list of failing tests, recent commits that may be related, active issues and PRs about tests, recommendations for fixes. Write main report to test-analysis.md, create summary as test-failures.csv, post key findings to Slack channel 'testing'.",
+            discovered_params={
+                "repo_owner": "anthropic",
+                "repo_name": "pflow",
+                "test_results_file": "test-results.json",
+                "report_file": "test-analysis.md",
+                "csv_file": "test-failures.csv",
+                "channel_id": "testing",
+            },
+            browsed_node_ids=[
+                "shell",
+                "read-file",
+                "github-list-issues",
+                "github-list-prs",
+                "llm",
+                "write-file",
+                "mcp-slack-slack_post_message",
+            ],
+            validation_errors=None,
+            expected_nodes=[
+                "shell",
+                "read-file",
+                "llm",
+                "shell",
+                "shell",
+                "github-list-issues",
+                "github-list-prs",
+                "llm",
+                "llm",
+                "write-file",
+                "write-file",
+                "mcp-slack-slack_post_message",
+            ],
+            min_nodes=9,  # Reduced from 10 - allows more efficient implementations
+            max_nodes=14,  # Complex forensics and analysis pipeline
+            must_have_inputs=["repo_owner", "repo_name", "test_results_file", "report_file", "csv_file", "channel_id"],
+            must_not_have_inputs=["test_results", "failures", "issues", "prs"],
+            node_output_refs=[
+                "run_tests.stdout",
+                "read_results.content",
+                "git_log.stdout",
+                "git_blame.stdout",
+                "list_issues.issues",
+                "list_prs.prs",
+            ],
+            category="complex_pipeline",
+            why_hard="Test forensics, git blame analysis, multi-source correlation, developer attribution",
+            critical_nodes=[
+                "shell",
+                "read-file",
+                "github-list-issues",
+                "github-list-prs",
+                "llm",
+                "write-file",
+                "mcp-slack-slack_post_message",
+            ],
+            allowed_extra_nodes=["shell", "llm"],  # Multiple git commands and analysis steps
+        ),
+        # Test 11: Full Release Pipeline (Complex)
+        WorkflowTestCase(
+            name="full_release_pipeline",
+            user_input="Get the latest git tag, then use that tag to get all commits since that tag with git-log, generate release notes grouping commits by type (feat/fix/docs), use shell to create git tag v1.3.0 and push it, use shell to run 'gh release create v1.3.0 --notes-file release-notes.md', append the release notes to CHANGELOG.md with ## v1.3.0 header, commit with message 'Release v1.3.0', create PR to main branch for repo anthropic/pflow",
+            discovered_params={
+                "repo_owner": "anthropic",
+                "repo_name": "pflow",
+                "new_tag": "v1.3.0",
+                "changelog_file": "CHANGELOG.md",
+            },
+            browsed_node_ids=[
+                "git-get-latest-tag",
+                "git-log",
+                "llm",
+                "shell",
+                "write-file",
+                "git-commit",
+                "github-create-pr",
+            ],
+            validation_errors=None,
+            expected_nodes=[
+                "git-get-latest-tag",
+                "git-log",
+                "llm",
+                "shell",
+                "shell",
+                "shell",
+                "write-file",
+                "git-commit",
+                "github-create-pr",
+            ],
+            min_nodes=8,
+            max_nodes=12,  # Complex workflow needs flexibility
+            must_have_inputs=["repo_owner", "repo_name", "new_tag", "changelog_file"],
+            must_not_have_inputs=["commits", "release_notes", "latest_tag"],
+            node_output_refs=["latest_tag", "commits", "response"],  # Key outputs that should be referenced
+            category="complex_pipeline",
+            why_hard="8+ nodes with shell workarounds for git tag and gh release",
+            critical_nodes=[
+                "git-get-latest-tag",
+                "git-log",
+                "write-file",
+                "git-commit",
+                "github-create-pr",
+            ],  # Core required operations
+            allowed_extra_nodes=["llm", "shell"],  # Allow flexibility in implementation
+        ),
+        # Test 12: Issue Triage Automation (Complex)
+        WorkflowTestCase(
+            name="issue_triage_automation",
+            user_input="Get 50 open issues from github repo anthropic/pflow, categorize as high priority if labeled 'bug' or 'security', medium if 'enhancement', low otherwise, group by days since creation (0-7, 8-30, 30+), create markdown report with tables for each priority level and recommendations for issues older than 30 days, save to triage-$(date +%Y-%m-%d).md using shell for date, commit with message 'Triage report for $(date +%Y-%m-%d)', create PR requesting review from @teamlead",
+            discovered_params={
+                "repo_owner": "anthropic",
+                "repo_name": "pflow",
+                "issue_limit": "50",
+                # Note: report_file is NOT a param - it's dynamically generated using shell date
+            },
+            browsed_node_ids=["llm", "shell", "write-file", "git-commit", "github-create-pr"],
+            validation_errors=None,
+            expected_nodes=[
+                "github-list-issues",
+                "llm",
+                "shell",
+                "write-file",
+                "git-commit",
+                "github-create-pr",
+                "shell",
+            ],
+            min_nodes=6,
+            max_nodes=10,  # Allow for modular design with separate categorization, grouping, and recommendation steps
+            must_have_inputs=["repo_owner", "repo_name", "issue_limit"],
+            must_not_have_inputs=["issues", "report", "date"],
+            node_output_refs=["list.issues", "analyze.response", "get_date.stdout"],
+            category="complex_pipeline",
+            why_hard="Multiple data sources and shell integration",
+            critical_nodes=[
+                "github-list-issues",
+                "llm",
+                "shell",
+                "write-file",
+                "git-commit",
+                "github-create-pr",
+            ],  # ALL expected including shell for date
+            allowed_extra_nodes=["shell", "llm"],  # Allow extra shell for review request and LLM for modular analysis
+        ),
+        # Test 13: Codebase Quality Report (Complex)
+        WorkflowTestCase(
+            name="codebase_quality_report",
+            user_input="Run 'npm run lint' and capture output, run 'npm test -- --coverage --json' to get coverage percentage, run 'npx complexity-report src/ --format json' to analyze complexity, get last 10 open bugs from github repo anthropic/pflow, combine all results into a markdown quality report with sections for each metric, save to quality-report.md, checkout quality-reports branch, commit with message 'Quality report $(date +%Y-%m-%d)', push to origin, create PR to main",
+            discovered_params={
+                "repo_owner": "anthropic",
+                "repo_name": "pflow",
+                "branch_name": "quality-reports",
+                "report_file": "quality-report.md",
+            },
+            browsed_node_ids=[
+                "shell",
+                "github-list-issues",
+                "llm",
+                "write-file",
+                "git-checkout",
+                "git-commit",
+                "git-push",
+                "github-create-pr",
+            ],
+            validation_errors=None,
+            expected_nodes=[
+                "shell",
+                "shell",
+                "shell",
+                "github-list-issues",
+                "llm",
+                "write-file",
+                "git-checkout",
+                "git-commit",
+                "git-push",
+                "github-create-pr",
+            ],
+            min_nodes=9,
+            max_nodes=11,
+            must_have_inputs=["repo_owner", "repo_name", "branch_name", "report_file"],
+            must_not_have_inputs=["lint_results", "coverage", "issues"],
+            node_output_refs=[
+                "lint.stdout",
+                "coverage.stdout",
+                "complexity.stdout",
+                "list.issues",
+                "generate.response",
+            ],
+            category="complex_pipeline",
+            why_hard="10+ nodes with multiple shell commands",
+            critical_nodes=[
+                "shell",
+                "github-list-issues",
+                "write-file",
+                "git-checkout",
+                "git-commit",
+                "git-push",
+                "github-create-pr",
+            ],  # Core required operations
+            allowed_extra_nodes=["llm", "shell"],  # Allow flexibility with multiple shells and LLMs
+        ),
+        # Test 14: Template Stress Test (Edge) - Fixed to use natural language
+        WorkflowTestCase(
+            name="template_stress_test",
+            user_input="Read config.yaml and extract the version field, write it to VERSION.txt, use shell to run 'curl -X POST https://api.example.com/deploy -d @VERSION.txt', then send 'Deployment complete' to slack channel deployments",
+            discovered_params={
+                "config_file": "config.yaml",
+                "version_file": "VERSION.txt",
+                "deploy_url": "https://api.example.com/deploy",
+                "slack_channel": "deployments",
+            },
+            browsed_node_ids=["read-file", "write-file", "llm", "shell", "mcp-slack-slack_post_message"],
+            validation_errors=None,
+            expected_nodes=["read-file", "llm", "shell", "mcp-slack-slack_post_message"],
+            min_nodes=4,
+            max_nodes=6,  # Allow extra processing for template confusion
+            must_have_inputs=["config_file", "version_file", "deploy_url", "slack_channel"],
+            must_not_have_inputs=["config", "data", "result"],
+            node_output_refs=["read.content", "process.response", "deploy.stdout"],
+            category="edge_case",
+            why_hard="Heavy template variable usage",
+            critical_nodes=[
+                "read-file",
+                "write-file",
+                "shell",
+                "mcp-slack-slack_post_message",
+            ],  # Clear required operations
+            allowed_extra_nodes=["llm"],  # Might need for extracting version
+        ),
+        # Test 15: Validation Recovery Test (Edge)
+        WorkflowTestCase(
+            name="validation_recovery_test",
+            user_input="Get open issues from github repo anthropic/pflow, analyze their labels and age to identify stale issues (>60 days without activity), generate a markdown report listing stale issues with recommendations for closure or follow-up, save to stale-issues-report.md",
+            discovered_params={
+                "repo_owner": "anthropic",
+                "repo_name": "pflow",
+                "report_file": "stale-issues-report.md",
+            },
+            browsed_node_ids=["github-list-issues", "llm", "write-file"],
             validation_errors=[
+                "Missing required input: repo_owner",
                 "Template variable ${repo_owner} not defined in inputs",
-                "Template variable ${repo_name} not defined in inputs",
-                "Node type 'github_commits' not found - did you mean 'github-list-commits'?",
-                "Declared input 'changelog_file' never used as template variable",
             ],
             expected_nodes=["github-list-issues", "llm", "write-file"],
             min_nodes=3,
-            max_nodes=5,  # Allow more flexibility for validation fixes
-            must_have_inputs=["repo_owner", "repo_name"],  # The main required inputs
-            must_not_have_inputs=["changelog_file"],  # Should be removed due to "never used" error
-            node_output_refs=["list_issues.issues", "generate.response"],
-            category="validation_recovery",
-            why_hard="Must parse and fix multiple validation errors",
-        ),
-        WorkflowTestCase(
-            name="output_mapping_fix",
-            user_input="Generate a simple status report with the text 'Monthly report: System operational. All metrics normal.' and save it to reports/monthly.md",
-            discovered_params={"report_type": "monthly", "output_path": "reports/monthly.md"},
-            planning_context=base_context,
-            browsed_components={"llm": {"type": "node"}, "write-file": {"type": "node"}},
-            validation_errors=["Workflow output 'report_path' must have 'description' and 'source' fields"],
-            expected_nodes=["llm", "write-file"],
-            min_nodes=2,
-            max_nodes=4,  # Allow some flexibility
-            must_have_inputs=["output_path"],  # Only expect what's actually used
-            must_not_have_inputs=["report", "content"],
-            node_output_refs=["generate.response"],
-            category="validation_recovery",
-            why_hard="Must fix output structure with source field",
-        ),
-        WorkflowTestCase(
-            name="complex_data_flow",
-            user_input="Read config from config.yaml, fetch data from the API endpoint in config, process according to rules in config, and save to output path in config",
-            discovered_params={"config_file": "config.yaml"},
-            planning_context=base_context
-            + "\n- fetch-data: Fetch data from API (mock)\n  Parameters: endpoint, headers",
-            browsed_components={
-                "read-file": {"type": "node"},
-                "fetch-data": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=["read-file", "fetch-data", "llm", "write-file"],
-            min_nodes=4,
-            max_nodes=5,
-            must_have_inputs=["config_file"],
-            must_not_have_inputs=["api_endpoint", "output_path", "rules", "data"],
-            node_output_refs=["read_config.content", "fetch.data", "process.response"],
-            category="complex",
-            why_hard="Config values are node outputs, not user inputs",
-        ),
-        WorkflowTestCase(
-            name="multi_output_workflow",
-            user_input="Analyze project structure, generate documentation for each module, create an index file linking all docs, and generate a summary report",
-            discovered_params={"project_path": "src/", "docs_output": "architecture/api/"},
-            planning_context=base_context
-            + "\n- analyze-structure: Analyze project structure (mock)\n  Parameters: path",
-            browsed_components={
-                "analyze-structure": {"type": "node"},
-                "llm": {"type": "node"},
-                "write-file": {"type": "node"},
-            },
-            validation_errors=None,
-            expected_nodes=["analyze-structure", "llm", "write-file", "llm", "write-file", "llm", "write-file"],
-            min_nodes=5,
-            max_nodes=8,
-            must_have_inputs=["project_path", "docs_output"],
-            must_not_have_inputs=["modules", "documentation", "index", "summary"],
-            node_output_refs=[
-                "analyze.structure",
-                "generate_docs.response",
-                "create_index.response",
-                "generate_summary.response",
-            ],
-            category="complex",
-            why_hard="Multiple parallel outputs from single analysis",
+            max_nodes=4,
+            must_have_inputs=["repo_owner", "repo_name", "report_file"],
+            must_not_have_inputs=["issues", "report"],
+            node_output_refs=["fetch.issues", "analyze.response"],
+            category="edge_case",
+            why_hard="Must recover from validation errors",
+            critical_nodes=["github-list-issues", "llm", "write-file"],  # ALL expected nodes
+            allowed_extra_nodes=["llm"],  # Allow extra LLM for processing
         ),
     ]
 
@@ -549,24 +736,45 @@ def validate_node_count(workflow: dict, test_case: WorkflowTestCase, errors: lis
         errors.append(f"Too many nodes: {node_count} > {test_case.max_nodes}")
 
 
-def validate_inputs(workflow: dict, test_case: WorkflowTestCase, errors: list[str]) -> None:
-    """Validate required and forbidden inputs."""
+def validate_inputs(workflow: dict, test_case: WorkflowTestCase, errors: list[str]) -> None:  # noqa: C901
+    """Validate required and forbidden inputs with STRICT checking."""
     inputs = set(workflow.get("inputs", {}).keys())
 
-    # Check required inputs are declared
+    # STRICT: Check required inputs are declared (exact match preferred)
     for required in test_case.must_have_inputs:
-        # Allow flexible naming (e.g., "repo_name" or "repository")
-        if not any(required in inp or inp in required for inp in inputs):
-            errors.append(f"Missing required input: {required}")
+        if required not in inputs:
+            # Only allow flexibility if there's a clear match
+            fuzzy_match = [inp for inp in inputs if required in inp or inp in required]
+            if not fuzzy_match:
+                errors.append(f"[STRICT] Missing required input: {required}")
+            elif len(fuzzy_match) > 1:
+                errors.append(f"[STRICT] Ambiguous input matching for '{required}': {fuzzy_match}")
 
     # Check forbidden inputs are NOT declared
     for forbidden in test_case.must_not_have_inputs:
         if forbidden in inputs:
             errors.append(f"Should not declare '{forbidden}' as input (it's node output)")
 
+    # STRICT CHECK: Ensure discovered params that should be inputs ARE inputs
+    # This catches cases where the model might rename parameters
+    if hasattr(test_case, "discovered_params"):
+        expected_input_params = {
+            k for k in test_case.discovered_params if k not in (test_case.must_not_have_inputs or [])
+        }
+        missing_discovered = expected_input_params - inputs
+        if missing_discovered:
+            # Check if they're renamed (e.g., repo_owner → repository_owner)
+            truly_missing = []
+            for param in missing_discovered:
+                # Look for obvious renames
+                if not any(param.split("_")[-1] in inp for inp in inputs):
+                    truly_missing.append(param)
+            if truly_missing:
+                errors.append(f"[STRICT] Discovered params not in inputs: {truly_missing}")
 
-def validate_template_usage(workflow: dict, test_case: WorkflowTestCase, errors: list[str]) -> None:
-    """Validate template variables are properly used."""
+
+def validate_template_usage(workflow: dict, test_case: WorkflowTestCase, errors: list[str]) -> None:  # noqa: C901
+    """Validate template variables are properly used with STRICT checking."""
     template_vars = extract_template_variables(workflow)
     declared_inputs = set(workflow.get("inputs", {}).keys())
 
@@ -575,21 +783,142 @@ def validate_template_usage(workflow: dict, test_case: WorkflowTestCase, errors:
     if unused:
         errors.append(f"Declared but unused inputs: {unused}")
 
-    # Check for hardcoded values from discovered_params
+    # STRICT CHECK 1: Deep inspection for ANY hardcoded values
     workflow_str = json.dumps(workflow)
-    for param_name, param_value in test_case.discovered_params.items():
-        # Check if the literal value appears without ${}
-        if f'"{param_value}"' in workflow_str:
-            # Make sure it's not inside a template variable
-            template_pattern = f"${{{param_name}"  # Will look for ${param_name
-            if template_pattern not in workflow_str and "${" + param_name not in workflow_str:
-                errors.append(f"Hardcoded value '{param_value}' instead of template variable")
 
-    # Check node output references
-    node_refs = extract_node_references(workflow)
-    # Check that we have some node references (not exact match due to naming flexibility)
-    if test_case.node_output_refs and not node_refs:
-        errors.append("No node output references found (${node.output} patterns)")
+    # Check each discovered param value
+    for param_name, param_value in test_case.discovered_params.items():
+        if param_value is None or param_value == "":
+            continue
+
+        # Convert to string for searching
+        str_value = str(param_value)
+
+        # ENHANCED: Check for value in ANY context (not just quoted)
+        # This catches: "value", value, 'value', /value/, etc.
+        if str_value in workflow_str:
+            # Get workflow without inputs section for checking
+            # (We exclude inputs section because defaults are allowed there)
+            workflow_copy = workflow.copy()
+            workflow_copy.pop("inputs", None)
+            workflow_nodes_str = json.dumps(workflow_copy)
+
+            # If value appears in nodes/edges/outputs (not just inputs defaults)
+            if str_value in workflow_nodes_str:
+                # Check if it's properly templated
+                template_pattern = f"${{{param_name}"
+                if template_pattern not in workflow_nodes_str:
+                    errors.append(f"[STRICT] Hardcoded value '{str_value}' found - should use ${{{param_name}}}")
+
+    # STRICT CHECK 2: Verify ALL discovered params are declared as inputs
+    workflow_inputs = workflow.get("inputs", {})
+    for param_name, param_value in test_case.discovered_params.items():
+        if param_name not in workflow_inputs:
+            errors.append(f"[STRICT] Discovered param '{param_name}' not declared in workflow inputs")
+        else:
+            # Check that default matches discovered value if present
+            input_spec = workflow_inputs[param_name]
+            if "default" in input_spec and str(input_spec["default"]) != str(param_value):
+                errors.append(
+                    f"[STRICT] Input '{param_name}' default '{input_spec['default']}' doesn't match discovered value '{param_value}'"
+                )
+
+    # STRICT CHECK 3: Verify no compound strings with hardcoded values
+    # Look for patterns like "repo anthropic/pflow" or "channel C09C16NAU5B"
+    for node in workflow.get("nodes", []):
+        for param_key, param_value in node.get("params", {}).items():
+            if isinstance(param_value, str):
+                for disc_name, disc_value in test_case.discovered_params.items():
+                    if (
+                        disc_value
+                        and str(disc_value) in param_value
+                        and not (f"${{{disc_name}}}" in param_value or f"${disc_name}" in param_value)
+                    ):
+                        errors.append(
+                            f"[STRICT] Node '{node.get('id')}' param '{param_key}' contains hardcoded '{disc_value}'"
+                        )
+
+    # Node output references are validated in validate_node_output_refs function
+
+
+def validate_node_output_refs(workflow: dict, test_case: WorkflowTestCase, errors: list[str]) -> None:  # noqa: C901
+    """Validate that expected node output references are present in the workflow.
+
+    This ensures the workflow has the correct data flow by checking that expected
+    output fields (like 'issues', 'response', 'stdout') are actually referenced.
+    We're flexible on node IDs but strict on output field names.
+    """
+    # Extract actual references from workflow
+    actual_refs = extract_node_references(workflow)
+
+    # If no expected refs, nothing to validate
+    if not test_case.node_output_refs:
+        return
+
+    # If we expect refs but found none at all
+    if not actual_refs:
+        errors.append("[STRICT] No node output references found in workflow (expected ${node.output} patterns)")
+        return
+
+    # Check each expected reference
+    missing_outputs = []
+    for expected_ref in test_case.node_output_refs:
+        # Split into node_id and output_field (e.g., "list_issues.issues" -> ["list_issues", "issues"])
+        parts = expected_ref.split(".")
+        if len(parts) != 2:
+            continue  # Skip malformed expectations
+
+        expected_node_pattern, expected_output = parts
+
+        # Check if any actual ref has this output field
+        # We're flexible on node naming but strict on output field
+        matching_refs = [ref for ref in actual_refs if ref.endswith(f".{expected_output}")]
+
+        if not matching_refs:
+            # Special handling for shell outputs - accept any valid shell output field
+            # Shell nodes can output: stdout, stderr, or exit_code - all are valid
+            if expected_output in ["stdout", "stderr", "exit_code"]:
+                shell_outputs = ["stdout", "stderr", "exit_code"]
+                shell_match_found = False
+                for shell_output in shell_outputs:
+                    if any(ref.endswith(f".{shell_output}") for ref in actual_refs):
+                        # Found a valid shell output, even if not the exact one expected
+                        shell_match_found = True
+                        break
+                if shell_match_found:
+                    continue  # Don't add to missing outputs, shell output was found
+
+            # Try to find similar refs to provide helpful feedback
+            similar_refs = [ref for ref in actual_refs if expected_output.lower() in ref.lower()]
+            if similar_refs:
+                missing_outputs.append(
+                    f"*.{expected_output} (expected like {expected_ref}, found similar: {similar_refs[0]})"
+                )
+            else:
+                missing_outputs.append(f"*.{expected_output} (expected like {expected_ref})")
+
+    if missing_outputs:
+        errors.append(f"[STRICT] Missing expected output references: {', '.join(missing_outputs)}")
+
+
+def validate_node_types(workflow: dict, test_case: WorkflowTestCase, errors: list[str]) -> None:
+    """Validate that critical node types are present and no forbidden types exist."""
+    actual_types = [node.get("type") for node in workflow.get("nodes", [])]
+
+    # Use critical_nodes if specified, otherwise fall back to expected_nodes
+    required_types = test_case.critical_nodes if test_case.critical_nodes is not None else test_case.expected_nodes
+
+    # Check all required types are present (order doesn't matter)
+    missing_types = set(required_types) - set(actual_types)
+    if missing_types:
+        errors.append(f"Missing required node types: {sorted(missing_types)}")
+
+    # If allowed_extra_nodes is specified, check for forbidden extras
+    if test_case.allowed_extra_nodes is not None:
+        allowed = set(required_types) | set(test_case.allowed_extra_nodes)
+        forbidden = set(actual_types) - allowed
+        if forbidden:
+            errors.append(f"Unexpected node types: {sorted(forbidden)}")
 
 
 def validate_purposes(workflow: dict, errors: list[str]) -> None:
@@ -637,9 +966,10 @@ def validate_linear_workflow(workflow: dict, errors: list[str]) -> None:
 
 
 def create_test_registry():
-    """Create registry with current + future planned nodes for testing."""
+    """Create registry with ONLY 2 Slack MCP mock nodes.
 
-    from pflow.registry import Registry
+    All other nodes come from the real registry.
+    """
 
     registry = Registry()
 
@@ -648,47 +978,18 @@ def create_test_registry():
     with contextlib.suppress(Exception):
         real_data = registry.load()
 
-    # Add future/mock nodes that are referenced in tests
-    # These represent nodes that will exist but aren't implemented yet
+    # Add ONLY 2 Slack MCP mock nodes (based on real trace evidence)
     test_nodes = {
-        # Future agentic node (claude-code)
-        "claude-code": {
-            "interface": {
-                "inputs": ["prompt", "context", "output_schema"],
-                "outputs": ["response", "files_created", "files_modified", "data"],
-            }
+        "mcp-slack-slack_get_channel_history": {
+            "class_name": "MCPNode",
+            "module": "pflow.nodes.mcp.node",
+            "interface": {"inputs": ["channel_id", "limit"], "outputs": ["messages", "channel_info"]},
         },
-        # Renamed versions for specific tasks (will all be claude-code)
-        "analyze-code": {"interface": {"inputs": ["path"], "outputs": ["analysis", "files_analyzed"]}},
-        "analyze-structure": {"interface": {"inputs": ["path"], "outputs": ["structure", "components"]}},
-        # Basic nodes that should exist
-        "github-list-prs": {"interface": {"inputs": ["repo_owner", "repo_name", "state", "limit"], "outputs": ["prs"]}},
-        # NOTE: git-log is now a real node (GitLogNode), not a mock
-        # NOTE: git-get-latest-tag is now a real node (GitGetLatestTagNode), not a mock
-        "git-tag": {
-            "interface": {"inputs": ["tag_name", "message"], "outputs": ["tag"]}
-        },  # git-tag-create still needs implementation
-        "github-get-latest-tag": {
-            "interface": {"inputs": ["repo_owner", "repo_name"], "outputs": ["tag", "date"]}
-        },  # Different from git-get-latest-tag
-        "github-create-release": {
-            "interface": {
-                "inputs": ["repo_owner", "repo_name", "tag_name", "name", "body"],
-                "outputs": ["release_url", "release_id"],
-            }
+        "mcp-slack-slack_post_message": {
+            "class_name": "MCPNode",
+            "module": "pflow.nodes.mcp.node",
+            "interface": {"inputs": ["channel_id", "text"], "outputs": ["message_id", "timestamp"]},
         },
-        # External integrations (out of MVP scope)
-        "slack-notify": {"interface": {"inputs": ["channel", "message"], "outputs": ["status"]}},
-        "build-project": {"interface": {"inputs": ["config_path"], "outputs": ["status", "artifacts"]}},
-        # Vague nodes that appear in tests (should be replaced)
-        "fetch-data": {"interface": {"inputs": ["endpoint", "headers"], "outputs": ["data"]}},
-        "fetch-profile": {"interface": {"inputs": ["user_id"], "outputs": ["profile"]}},
-        "filter-data": {"interface": {"inputs": ["data", "criteria"], "outputs": ["filtered_data"]}},
-        "validate-links": {"interface": {"inputs": ["content"], "outputs": ["valid_links", "broken_links"]}},
-        # Database operations (out of scope)
-        "run-migrations": {"interface": {"inputs": ["migrations_path"], "outputs": ["status"]}},
-        "backup-database": {"interface": {"inputs": ["connection_string"], "outputs": ["backup_path"]}},
-        "verify-data": {"interface": {"inputs": ["connection_string"], "outputs": ["status", "report"]}},
     }
 
     # Merge test nodes with real data
@@ -716,15 +1017,34 @@ def create_test_registry():
 
 
 def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool, str]:
-    """Validate the generated workflow using production WorkflowValidator."""
+    """Validate the generated workflow using production WorkflowValidator.
+
+    This function performs TWO types of validation:
+
+    1. PRODUCTION VALIDATION (via WorkflowValidator):
+       - Structural correctness (JSON schema)
+       - Data flow validation (node ordering, dependencies)
+       - Node type verification (all nodes exist in registry)
+       - Input declaration validation (all ${params} are declared)
+
+    2. TEST-SPECIFIC QUALITY CHECKS:
+       - Node count within expected range (flexibility for good engineering)
+       - Expected inputs are declared (but allows flexibility in naming)
+       - No hardcoded values where templates should be used
+       - Critical node types are present (via validate_node_types)
+       - Purposes are descriptive (not generic)
+       - Workflow is linear (no branching - MVP requirement)
+
+    The production validation ensures the workflow is EXECUTABLE.
+    The test-specific checks ensure the workflow meets our QUALITY standards.
+    """
     errors = []
 
-    # PART 1: Use production WorkflowValidator
+    # PART 1: Use production WorkflowValidator for correctness
     from pflow.core.workflow_validator import WorkflowValidator
-    from pflow.registry import Registry
 
-    # Check if test uses mock nodes (indicated by "(mock)" in planning context)
-    uses_mock_nodes = "(mock)" in test_case.planning_context
+    # Check if test uses MCP nodes
+    uses_mcp_nodes = any("mcp" in node_id for node_id in test_case.browsed_node_ids)
 
     # Fix common LLM mistakes before validation
     import copy
@@ -735,21 +1055,64 @@ def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool
             input_spec["type"] = "number"
 
     # Create appropriate registry
-    registry = create_test_registry() if uses_mock_nodes else Registry()
+    registry = create_test_registry() if uses_mcp_nodes else Registry()
 
-    # CRITICAL FIX: Don't validate templates against discovered_params
-    # The workflow generator should be free to create better parameter structures
-    # For testing, we just check if the workflow is internally consistent
-    # We don't need to provide runtime values - let the validator check structure only
-    runtime_params = None  # Don't provide any runtime values for template validation
+    # ================================================================================
+    # CRITICAL VALIDATION DESIGN: Understanding What We Validate and Why
+    # ================================================================================
+    #
+    # We intentionally pass extracted_params=None to the WorkflowValidator.
+    # This is NOT skipping validation - it's testing the RIGHT thing for workflow generation.
+    #
+    # What validation DOES happen (even with extracted_params=None):
+    # ----------------------------------------------------------------
+    # 1. STRUCTURAL VALIDATION (WorkflowValidator lines 50-51) - ALWAYS runs
+    #    - JSON schema compliance (all required fields present)
+    #    - Correct data types for all fields
+    #    - No duplicate node IDs
+    #
+    # 2. DATA FLOW VALIDATION (WorkflowValidator lines 54-55) - ALWAYS runs
+    #    - No forward references (can't use ${node2.output} in node1)
+    #    - No circular dependencies
+    #    - All referenced nodes must exist
+    #    - All ${input_param} refs must be DECLARED in workflow.inputs
+    #    - Validates execution order is possible
+    #
+    # 3. NODE TYPE VALIDATION (WorkflowValidator lines 65-69) - runs since skip_node_types=False
+    #    - All node types exist in the registry
+    #    - No hallucinated/fantasy nodes
+    #
+    # What validation DOESN'T happen (because extracted_params=None):
+    # ----------------------------------------------------------------
+    # 4. RUNTIME TEMPLATE RESOLUTION (WorkflowValidator lines 58-62) - SKIPPED
+    #    - Whether user PROVIDED values for all required inputs
+    #    - Whether complex template paths resolve with actual values
+    #    - This is ParameterMappingNode's job in the real planner
+    #
+    # Why this is CORRECT for these tests:
+    # -------------------------------------
+    # These tests validate that WorkflowGeneratorNode creates STRUCTURALLY VALID workflows.
+    # We're testing "can the generator create a valid workflow?" not "can this workflow
+    # execute with these specific runtime values?"
+    #
+    # The real planner also separates these concerns:
+    # - WorkflowGeneratorNode: Creates structurally valid workflow
+    # - ParameterMappingNode: Extracts runtime values from user input
+    # - WorkflowValidatorNode: Validates with extracted_params for execution
+    #
+    # By passing extracted_params=None, we're testing ONLY the generator's responsibility,
+    # not the entire planner pipeline. This is proper separation of concerns.
+    # ================================================================================
 
-    # Use production validation to check workflow structure and consistency
-    # Not providing runtime values means we only validate the workflow is well-formed
+    runtime_params = None  # Intentionally None - see detailed explanation above
+
+    # Use production WorkflowValidator with same validation as real planner
+    # (except runtime template resolution which requires extracted_params)
     validation_errors = WorkflowValidator.validate(
         workflow_ir=workflow_copy,
-        extracted_params=runtime_params,  # None - only validate structure, not runtime
+        extracted_params=runtime_params,  # None - validates structure, not runtime execution
         registry=registry,
-        skip_node_types=False,  # Don't skip, we have proper registry now
+        skip_node_types=False,  # Always validate node types exist in registry
     )
 
     # Add validation errors with prefix for clarity
@@ -759,9 +1122,16 @@ def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool
         else:
             errors.append(error)
 
-    # PART 2: Test-specific expectations (these are quality checks, not correctness)
+    # PART 2: Test-specific expectations (quality and convention checks)
+    # ===================================================================
+    # These checks ensure the workflow meets our QUALITY standards and conventions.
+    # They're not about whether the workflow can execute (that's Part 1's job),
+    # but whether it follows best practices and meets test expectations.
+    # The model adding extra nodes for validation/formatting is GOOD engineering,
+    # so we allow flexibility with ranges rather than exact counts.
+    # ===================================================================
 
-    # Check node count is within expected range
+    # Check node count is within expected range (allows good engineering practices)
     validate_node_count(workflow, test_case, errors)
 
     # Check expected inputs (test expectation, not correctness)
@@ -775,6 +1145,12 @@ def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool
             if template_pattern not in workflow_str and "${" + param_name not in workflow_str:
                 errors.append(f"[TEST] Hardcoded value '{param_value}' instead of template variable")
 
+    # Check node types are appropriate (critical validation)
+    validate_node_types(workflow, test_case, errors)
+
+    # Check node output references for correct data flow (critical validation)
+    validate_node_output_refs(workflow, test_case, errors)
+
     # Check purposes exist and aren't generic (quality check)
     validate_purposes(workflow, errors)
 
@@ -786,41 +1162,8 @@ def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool
     return True, ""
 
 
-def filter_planning_context_to_browsed(planning_context: str, browsed_components: dict) -> str:
-    """Filter planning context to only include browsed components for validation recovery tests.
-
-    This prevents the LLM from using nodes that weren't selected by ComponentBrowsingNode,
-    ensuring validation recovery tests only use the minimal set of nodes that were
-    originally intended for the workflow.
-    """
-    if not browsed_components:
-        return planning_context
-
-    # Extract node types from browsed components
-    browsed_node_types = set(browsed_components.keys())
-
-    # Parse planning context and filter
-    lines = planning_context.strip().split("\n")
-    filtered_lines = []
-
-    for line in lines:
-        # Check if this line describes a node
-        if line.startswith("- "):
-            # More robust extraction: handle "- node-type: Description (params)" format
-            node_part = line[2:].split(":")[0] if ":" in line else line[2:]
-            node_type = node_part.strip().split("(")[0].strip()
-            if node_type in browsed_node_types:
-                filtered_lines.append(line)
-        else:
-            # Keep header/other lines
-            if filtered_lines or line.startswith("Available"):
-                filtered_lines.append(line)
-
-    return "\n".join(filtered_lines) if filtered_lines else planning_context
-
-
 class TestWorkflowGeneratorPrompt:
-    """Test the workflow generator prompt with complex scenarios."""
+    """Test the workflow generator prompt with real-world scenarios."""
 
     @pytest.mark.parametrize("test_case", get_test_cases(), ids=lambda tc: tc.name)
     def test_workflow_generation(self, test_case):
@@ -828,20 +1171,31 @@ class TestWorkflowGeneratorPrompt:
 
         node = WorkflowGeneratorNode()
 
-        # For validation recovery tests, only show browsed components
-        planning_context = test_case.planning_context
-        if test_case.validation_errors and test_case.browsed_components:
-            # Filter to only show nodes that were browsed
-            planning_context = filter_planning_context_to_browsed(
-                test_case.planning_context, test_case.browsed_components
-            )
+        # Get properly formatted browsed_components
+        browsed_components = test_case.get_browsed_components()
 
-        # Build shared context
+        # Build planning context dynamically using real context builder
+        # Check if test uses MCP nodes
+        uses_mcp = any("mcp" in node_id for node_id in test_case.browsed_node_ids)
+        planning_context = build_test_planning_context(browsed_components, include_mcp_mocks=uses_mcp)
+
+        # Templatize the user input to match real planner behavior
+        # In the real planner, ParameterDiscoveryNode does this
+        from pflow.planning.nodes import ParameterDiscoveryNode
+
+        param_node = ParameterDiscoveryNode()
+        templatized_input = param_node._templatize_user_input(test_case.user_input, test_case.discovered_params)
+
+        # TEST: Temporarily disable templatization to verify strict validation works
+        # templatized_input = test_case.user_input  # UNCOMMENT TO TEST STRICT VALIDATION
+
+        # Build shared context with correct structure
         shared = {
-            "user_input": test_case.user_input,
+            "user_input": test_case.user_input,  # Keep original for reference
+            "templatized_input": templatized_input,  # ADD templatized version!
             "discovered_params": test_case.discovered_params,
-            "planning_context": planning_context,
-            "browsed_components": test_case.browsed_components,
+            "planning_context": planning_context,  # Now dynamically built and already filtered
+            "browsed_components": browsed_components,  # Correct format: {"node_ids": [...], "workflow_names": [...], "reasoning": "..."}
         }
 
         # Add validation errors for retry tests
