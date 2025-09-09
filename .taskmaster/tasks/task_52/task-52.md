@@ -1,5 +1,12 @@
-Improve planner
+# Task 52: Improve planner with "plan" and "requirements" steps
 
+## ID
+52
+
+## Title
+Improve planner with "plan" and "requirements" steps
+
+## Description
 1. The planner needs to make a "plan" before writing the json ir
 
 2. The planner needs to define requirements before starting to write the json ir
@@ -66,3 +73,5 @@ This could be implemented either:
 2. **v0.2**: If current success rate is acceptable, ship first and enhance based on user feedback
 
 The decision depends on current planner reliability metrics and user tolerance for retry attempts.
+
+*This document is a draft and will change a lot as we discuss the task.*
