@@ -570,12 +570,51 @@ class ParameterDiscoveryNode(Node):
         response = model.prompt(prompt, schema=ParameterDiscovery, temperature=prep_res["temperature"])
         result = parse_structured_response(response, ParameterDiscovery)
 
+        # Create templatized version of user input
+        templatized_input = self._templatize_user_input(prep_res["user_input"], result["parameters"])
+
+        # Add templatized input to result
+        result["templatized_input"] = templatized_input
+
         logger.info(
             f"ParameterDiscoveryNode: Discovered {len(result['parameters'])} parameters",
             extra={"phase": "exec", "param_count": len(result["parameters"]), "stdin": result.get("stdin_type")},
         )
 
         return result
+
+    def _templatize_user_input(self, user_input: str, params: dict) -> str:
+        """Replace parameter values in user input with ${param_name} placeholders.
+
+        Args:
+            user_input: Original user request
+            params: Discovered parameters from LLM
+
+        Returns:
+            User input with values replaced by ${param_name}
+        """
+        if not params:
+            return user_input
+
+        transformed = user_input
+
+        # Sort by value length (longest first) to avoid partial replacements
+        # e.g., replace "2024-01-01" before "2024"
+        sorted_params = sorted(params.items(), key=lambda x: len(str(x[1])) if x[1] is not None else 0, reverse=True)
+
+        for param_name, param_value in sorted_params:
+            if param_value is None or param_value == "":
+                continue
+
+            # Convert to string for replacement
+            value_str = str(param_value)
+
+            # Replace all occurrences with template variable
+            if value_str in transformed:
+                # Use ${} syntax to match our template system
+                transformed = transformed.replace(value_str, f"${{{param_name}}}")
+
+        return transformed
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store discovered parameters and continue Path B.
@@ -590,6 +629,9 @@ class ParameterDiscoveryNode(Node):
         """
         # Store discovered parameters
         shared["discovered_params"] = exec_res["parameters"]
+
+        # Store templatized user input
+        shared["templatized_input"] = exec_res.get("templatized_input", shared.get("user_input", ""))
 
         # Store error info separately if present (for error extraction)
         if "_error" in exec_res:
@@ -978,7 +1020,7 @@ class WorkflowGeneratorNode(Node):
             "model_name": self.params.get("model", "anthropic/claude-sonnet-4-0"),
             "temperature": self.params.get("temperature", 0.0),
             "planning_context": shared.get("planning_context", ""),
-            "user_input": shared.get("user_input", ""),
+            "user_input": shared.get("templatized_input", shared.get("user_input", "")),
             "discovered_params": shared.get("discovered_params"),
             "browsed_components": shared.get("browsed_components", {}),
             "validation_errors": shared.get("validation_errors", []),
@@ -1028,9 +1070,41 @@ class WorkflowGeneratorNode(Node):
         else:
             workflow = dict(result)
 
+        # Post-process to add system fields that don't need LLM generation
+        workflow = self._post_process_workflow(workflow)
+
         logger.debug(f"Generated {len(workflow.get('nodes', []))} nodes")
 
         return {"workflow": workflow, "attempt": prep_res["generation_attempts"] + 1}
+
+    def _post_process_workflow(self, workflow: dict) -> dict:
+        """Add system fields that don't need LLM generation.
+
+        Currently adds:
+        - ir_version: Always set to "1.0" (required field)
+
+        Note: start_node is optional and handled by the compiler if missing.
+
+        Args:
+            workflow: The LLM-generated workflow dict
+
+        Returns:
+            The workflow with system fields added
+        """
+        if not workflow:
+            return workflow
+
+        # Always set IR version to current version
+        # This is pure boilerplate that the LLM doesn't need to generate
+        # Note: Must be semantic version (X.Y.Z) per IR schema
+        workflow["ir_version"] = "1.0.0"
+
+        # Note: We don't need to handle start_node here because:
+        # 1. It's optional in the IR schema
+        # 2. The compiler automatically uses the first node if missing
+        # 3. This follows the "principle of least surprise" design
+
+        return workflow
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store generated workflow and route to validation.
@@ -1093,10 +1167,15 @@ class WorkflowGeneratorNode(Node):
         # Build discovered parameters section
         discovered_params_section = "None"
         if prep_res.get("discovered_params"):
-            params_lines = ["Discovered parameters (use as hints, rename for clarity):"]
+            params_lines = [
+                "Suggested default values for workflow inputs:",
+                "IMPORTANT: These are ONLY for setting default values in the inputs section.",
+                "NEVER hardcode these values in node parameters - always use ${param_name} syntax.",
+            ]
             for param, value in prep_res["discovered_params"].items():
-                params_lines.append(f"  - {param}: {value}")
-            params_lines.append("Remember: These are hints. You control the inputs specification.")
+                # Format to emphasize these are defaults
+                params_lines.append(f'  - {param}: default="{value}"')
+            params_lines.append("\nRemember: ALL parameter values in nodes MUST use ${param_name} template syntax.")
             discovered_params_section = "\n".join(params_lines)
 
         # Build validation errors section
@@ -1264,6 +1343,9 @@ class MetadataGenerationNode(Node):
         return {
             "workflow": shared.get("generated_workflow", {}),
             "user_input": shared.get("user_input", ""),
+            "templatized_input": shared.get(
+                "templatized_input", shared.get("user_input", "")
+            ),  # Use pre-computed templatized input
             "planning_context": shared.get("planning_context", ""),
             "discovered_params": shared.get("discovered_params", {}),
             "extracted_params": shared.get("extracted_params", {}),  # Add extracted params from ParameterMappingNode
@@ -1292,6 +1374,7 @@ class MetadataGenerationNode(Node):
             user_input=prep_res.get("user_input", ""),
             discovered_params=prep_res.get("discovered_params", {}),
             extracted_params=extracted_params,  # Pass extracted_params directly
+            templatized_input=prep_res.get("templatized_input"),  # Use pre-computed templatized input
         )
 
         # Get LLM to analyze and generate metadata
@@ -1358,14 +1441,21 @@ class MetadataGenerationNode(Node):
         return safe_response
 
     def _build_metadata_prompt(
-        self, workflow: dict, user_input: str, discovered_params: dict, extracted_params: dict | None = None
+        self,
+        workflow: dict,
+        user_input: str,
+        discovered_params: dict,
+        extracted_params: dict | None = None,
+        templatized_input: str | None = None,
     ) -> str:
         """Build comprehensive prompt for metadata generation.
 
         Args:
             workflow: The generated workflow IR
-            user_input: Original user request
+            user_input: Original user request (fallback if templatized not available)
             discovered_params: Parameters discovered from user input (kept for compatibility, not used)
+            extracted_params: Parameters extracted from mapping (kept for compatibility, not used)
+            templatized_input: Pre-templatized user input from ParameterDiscoveryNode
 
         Returns:
             Detailed prompt for LLM metadata generation
@@ -1375,9 +1465,9 @@ class MetadataGenerationNode(Node):
 
         prompt_template = load_prompt("metadata_generation")
 
-        # Transform user input to replace values with parameter placeholders
-        if extracted_params:
-            user_input = self._transform_user_input_with_parameters(user_input, extracted_params)
+        # Use pre-computed templatized input if available, otherwise use original
+        if templatized_input:
+            user_input = templatized_input
 
         # Generate node flow visualization - shows execution order
         node_flow = _build_node_flow(workflow)
@@ -1407,44 +1497,6 @@ class MetadataGenerationNode(Node):
                 "parameter_bindings": param_bindings,  # Which params go where
             },
         )
-
-    def _transform_user_input_with_parameters(self, user_input: str, extracted_params: dict) -> str:
-        """Replace parameter values in user input with [parameter_name] placeholders.
-
-        Args:
-            user_input: Original user request
-            extracted_params: Mapped parameters from ParameterMappingNode
-
-        Returns:
-            Transformed input with values replaced by [param_name] placeholders
-        """
-        if not extracted_params:
-            return user_input
-
-        transformed = user_input
-
-        # Sort by value length (longest first) to avoid partial replacements
-        # e.g., replace "2024" before "24"
-        sorted_params = sorted(
-            extracted_params.items(), key=lambda x: len(str(x[1])) if x[1] is not None else 0, reverse=True
-        )
-
-        for param_name, param_value in sorted_params:
-            if param_value is None:
-                continue
-
-            # Convert to string for replacement
-            value_str = str(param_value)
-
-            # Skip empty strings to avoid replacing every character
-            if not value_str:
-                continue
-
-            # Replace all occurrences of the value
-            if value_str in transformed:
-                transformed = transformed.replace(value_str, f"[{param_name}]")
-
-        return transformed
 
     def _summarize_nodes(self, nodes: list) -> str:
         """Summarize the types of nodes used in the workflow.

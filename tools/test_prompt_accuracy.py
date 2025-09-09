@@ -464,10 +464,17 @@ def run_tests(
             if not show_live:
                 print(f"   Running with {parallel_workers} parallel workers (pytest-xdist)")
         except ImportError:
-            # Fall back to serial execution
-            if not show_live:
-                print(f"   Note: Install pytest-xdist for parallel execution (would use {parallel_workers} workers)")
-            pass
+            # Parallel execution is required for LLM tests to avoid timeouts
+            print(f"\n❌ ERROR: pytest-xdist is required for parallel execution")
+            print(f"   The test suite would take 2+ minutes without parallelization.")
+            print(f"   Install it with: uv pip install pytest-xdist")
+            print(f"\n   Or add to pyproject.toml:")
+            print(f"   [dependency-groups]")
+            print(f"   dev = [")
+            print(f"       ...,")
+            print(f"       \"pytest-xdist>=3.0.0\",")
+            print(f"   ]")
+            raise SystemExit(1)
 
     # Initialize parser and display if showing live results
     parser = TestResultParser() if show_live else None
@@ -501,6 +508,8 @@ def run_tests(
             # Read output line by line
             pending_failures = {}  # Store failure reasons that arrive before test results
             displayed_failures = set()  # Track which failures we've shown
+            last_progress_time = time.time()  # Track when we last saw progress
+            warned_about_slow = False  # Only warn once about slow execution
 
             # Function to check for new failures in the file
             def check_failure_file():
@@ -526,10 +535,21 @@ def run_tests(
                 # Check for new failures in the file
                 check_failure_file()
 
+                # Check for timeout - warn if no progress for 30 seconds
+                current_time = time.time()
+                if not warned_about_slow and (current_time - last_progress_time) > 30:
+                    if parser and len(parser.results) == 0:
+                        print(f"\n⚠️  WARNING: No test results after 30 seconds!")
+                        print(f"   This usually means pytest-xdist isn't working properly.")
+                        print(f"   Tests might be running serially (2+ minutes) instead of parallel (10-20 seconds).")
+                        print(f"   Consider stopping with Ctrl+C and checking pytest-xdist installation.")
+                        warned_about_slow = True
+
                 # Parse and display results in real-time
                 if parser:
                     result = parser.parse_line(line)
                     if result:
+                        last_progress_time = current_time  # Reset timeout on progress
                         if result.status == "FAILURE_INFO":
                             # We got a failure reason from stdout/logging (backup)
                             test_name = result.name
@@ -575,6 +595,12 @@ def run_tests(
             if display and parser:
                 passed, total = parser.get_summary()
                 display.show_summary(passed, total, duration)
+
+                # Warn if execution was suspiciously slow
+                if total > 5 and duration > 60:
+                    print(f"\n⚠️  Tests took {duration:.1f} seconds - this is unusually slow!")
+                    print(f"   Expected: 10-20 seconds with parallel execution")
+                    print(f"   This suggests pytest-xdist may not be working correctly.")
 
             # Create result object for compatibility
             class Result:
@@ -735,8 +761,14 @@ def calculate_average(test_runs: list) -> float:
     return float(round(sum(test_runs) / len(test_runs), 1))
 
 
-def should_increment_version(prompt_content: str, metadata: dict) -> bool:
-    """Check if prompt has changed significantly enough to increment version."""
+def should_increment_version(prompt_content: str, metadata: dict, dry_run: bool = False) -> bool:
+    """Check if prompt has changed significantly enough to increment version.
+
+    Args:
+        prompt_content: The current prompt content
+        metadata: The metadata dictionary
+        dry_run: If True, don't ask user - just return False
+    """
     current_hash = get_prompt_hash(prompt_content)
     stored_hash = metadata.get("prompt_hash", "")
 
@@ -746,8 +778,15 @@ def should_increment_version(prompt_content: str, metadata: dict) -> bool:
         return False
 
     if current_hash != stored_hash:
-        # Prompt has changed - ask user
+        # Prompt has changed
         print(f"\n📝 Prompt content has changed (hash: {stored_hash} → {current_hash})")
+
+        if dry_run:
+            # In dry-run mode, don't increment version or reset tracking
+            print("   (Skipping version increment in dry-run mode)")
+            return False
+
+        # Ask user only if not in dry-run
         response = input("Increment version and reset accuracy tracking? [y/N]: ").strip().lower()
         return response == "y"
 
@@ -788,7 +827,7 @@ def run_prompt_test(
 
     Args:
         prompt_name: Name of the prompt to test
-        update: Whether to update the frontmatter with results
+        update: Whether to update the frontmatter with results (False for dry-run)
         model: Optional model name to use for testing
         parallel_workers: Optional number of parallel workers for tests that support it
     """
@@ -828,8 +867,9 @@ def run_prompt_test(
     if "test_count" not in metadata:
         metadata["test_count"] = 0
 
-    # Check for version increment
-    if should_increment_version(prompt_content, metadata):
+    # Check for version increment (pass dry_run flag which is the inverse of update)
+    dry_run = not update
+    if should_increment_version(prompt_content, metadata, dry_run=dry_run):
         metadata = handle_version_increment(metadata, prompt_content)
         if update:
             # Save version increment immediately
