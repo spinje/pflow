@@ -67,35 +67,62 @@ def test_hello_workflow_execution(tmp_path):
         assert "2: World" in content
 
 
-def test_missing_registry_error(tmp_path, monkeypatch):
-    """Test helpful error when registry is missing."""
+def test_registry_auto_discovery(tmp_path):
+    """Test that registry is auto-discovered when missing."""
     runner = CliRunner()
 
     with runner.isolated_filesystem():
-        # Create a workflow file
-        workflow = {"ir_version": "0.1.0", "nodes": [{"id": "test", "type": "test", "params": {}}], "edges": []}
+        # Create a workflow file using a core node (shell is auto-discovered)
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+        }
 
         with open("workflow.json", "w") as f:
             json.dump(workflow, f)
 
-        # Mock only the registry path's exists method
-        original_exists = Path.exists
+        # Ensure we don't have an existing registry
+        # The auto-discovery should kick in when the workflow is executed
+        result = runner.invoke(main, ["./workflow.json"])
 
-        def mock_exists(self):
-            # Only mock the registry path, not all paths
-            if "registry.json" in str(self):
-                return False
-            return original_exists(self)
+        # The workflow should execute successfully with auto-discovery
+        assert result.exit_code == 0
+        assert "test" in result.output or "Workflow executed successfully" in result.output
 
-        monkeypatch.setattr(Path, "exists", mock_exists)
+
+def test_registry_load_error(tmp_path, monkeypatch):
+    """Test helpful error when registry fails to load."""
+    runner = CliRunner()
+
+    # Import Registry to mock it
+    from pflow.registry.registry import Registry
+
+    with runner.isolated_filesystem():
+        # Create a workflow file
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+        }
+
+        with open("workflow.json", "w") as f:
+            json.dump(workflow, f)
+
+        # Mock Registry.load to raise an exception
+        def mock_load(self, *args, **kwargs):
+            raise RuntimeError("Failed to access registry file")
+
+        monkeypatch.setattr(Registry, "load", mock_load)
 
         # Run CLI
         result = runner.invoke(main, ["./workflow.json"])
 
-        # Verify error
+        # Verify helpful error message
         assert result.exit_code == 1
-        assert "Node registry not found" in result.output
-        assert "python scripts/populate_registry.py" in result.output
+        assert "Failed to load registry" in result.output
+        assert "pflow registry list" in result.output  # Suggests registry command
+        assert "pflow registry scan" in result.output  # Suggests scan command
 
 
 def test_invalid_workflow_json(tmp_path):

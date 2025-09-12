@@ -1,5 +1,81 @@
 <!-- ===== BUGFIX ENTRY START ===== -->
 
+## [BUGFIX] Registry auto-discovery fails; MCP node exposed in listings — 2025-01-12
+
+Meta:
+- id: BF-20250112-registry-autodiscovery-mcp
+- area: cli|registry
+- severity: ux
+- status: fixed
+- versions: uncommitted (working tree)
+- affects: CLI workflow execution, registry initialization, node listings
+- owner: ai-agent
+- links: src/pflow/cli/main.py, src/pflow/core/settings.py, tests/test_integration/test_e2e_workflow.py
+- session_id: 7c553001-0781-4903-aedc-cec1cd5404b2
+
+Summary:
+- Problem: Registry deletion caused outdated error; internal MCPNode appeared in user listings
+- Root cause: `_ensure_registry_loaded()` checked file existence before `Registry.load()` auto-discovery; MCPNode in nodes/mcp/ was auto-scanned
+- Fix: Call `Registry.load()` directly for auto-discovery; add "mcp" to test node exclusion list
+
+Repro:
+- Steps:
+  1) Delete ~/.pflow/registry.json
+  2) Run any pflow command requiring registry
+- Commands:
+  ```bash
+  mv ~/.pflow/registry.json ~/.pflow/registry.json.backup
+  uv run pflow registry list
+  ```
+- Expected vs actual:
+  - Expected: Auto-discovers nodes and lists them
+  - Actual: "Error - Node registry not found. Run 'python scripts/populate_registry.py'" (script doesn't exist)
+
+Implementation:
+- Changed files:
+  - `src/pflow/cli/main.py`: Updated `_ensure_registry_loaded()` to call `Registry.load()` directly
+  - `src/pflow/core/settings.py`: Added "mcp" to `known_test_names` set in `_is_test_node()`
+  - `tests/test_integration/test_e2e_workflow.py`: Replaced error test with auto-discovery test
+- Key edits:
+  - Removed premature `registry.registry_path.exists()` check
+  - Added try/except around `Registry.load()` with helpful error messages
+  - Leveraged existing test node exclusion pattern for MCPNode
+- Tests: Added `test_registry_auto_discovery` and `test_registry_load_error`
+
+Verification:
+- Manual:
+  ```bash
+  # Test auto-discovery
+  mv ~/.pflow/registry.json ~/.pflow/registry.json.backup
+  echo '{"ir_version": "0.1.0", "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo Hello"}}], "edges": []}' > /tmp/test.json
+  uv run pflow /tmp/test.json
+  ```
+  Output: `Hello`
+- CI: All 1952 tests pass, including new tests
+
+Risks & rollbacks:
+- Risk flags: Registry auto-discovery logic, test node classification
+- Rollback plan: Revert `_ensure_registry_loaded()` changes; remove "mcp" from test node list
+
+Lessons & heuristics:
+- Lessons learned:
+  - Framework methods should handle their own initialization (Registry.load() has auto-discovery)
+  - Internal implementation classes need exclusion from user-visible listings
+  - Error messages must reference current commands, not deleted scripts
+- Heuristics to detect recurrence:
+  - Grep for file existence checks before framework initialization calls
+  - Check for nodes in src/pflow/nodes/ that shouldn't be user-visible
+  - Verify error messages reference valid commands/scripts
+- Related pitfalls: Premature validation prevents framework initialization
+
+Follow-ups:
+- Consider moving MCPNode outside auto-scanned directories
+- Document internal vs user-visible node distinction
+
+<!-- ===== BUGFIX ENTRY END ===== -->
+
+<!-- ===== BUGFIX ENTRY START ===== -->
+
 ## [BUGFIX] Test suite reset user registry and erased MCP tools — 2025-09-01
 
 Meta:
