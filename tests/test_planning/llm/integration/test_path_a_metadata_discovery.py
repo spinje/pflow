@@ -1,4 +1,7 @@
-"""Test that enhanced metadata enables Path A workflow discovery - Simplified Version.
+"""PATH A (Reuse) Integration Tests - Metadata and Discovery.
+
+Tests workflow DISCOVERY and REUSE through enhanced metadata.
+Focuses on Path A where existing workflows are found and reused.
 
 WHEN TO RUN:
 - After changing MetadataGenerationNode
@@ -6,13 +9,15 @@ WHEN TO RUN:
 - Before releases to ensure Path A works
 
 WHAT IT VALIDATES:
-- Generated metadata enables workflow discovery
-- Different query phrasings find the same workflow
-- Search keywords actually improve discovery
+- Metadata generation enables discovery
+- Search keywords improve matching
+- Different phrasings find same workflow
 
 DEPENDENCIES:
 - Requires RUN_LLM_TESTS=1
 - Requires configured LLM API key
+
+Run with: RUN_LLM_TESTS=1 pytest tests/test_planning/llm/integration/test_path_a_metadata_discovery.py -v
 """
 
 import os
@@ -24,8 +29,8 @@ from pflow.planning.nodes import MetadataGenerationNode
 pytestmark = pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), reason="LLM tests disabled. Set RUN_LLM_TESTS=1 to run")
 
 
-class TestSimpleMetadataDiscovery:
-    """Test that LLM-generated metadata improves workflow discovery."""
+class TestPathAMetadataDiscovery:
+    """Test Path A workflow discovery through LLM-generated metadata."""
 
     @pytest.fixture
     def sample_workflow_ir(self):

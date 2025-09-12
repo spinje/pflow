@@ -1,9 +1,17 @@
-"""End-to-end tests for the complete Natural Language Planner with real LLM calls.
+"""PRODUCTION Integration Tests - Real Planner Flow.
+
+Tests the ACTUAL production planner as invoked by the CLI.
+Tests both Path A (reuse) and Path B (generation) through create_planner_flow().
 
 These tests run the entire planner flow as the CLI would invoke it, using actual LLM
-calls instead of mocks. They test both Path A (workflow reuse) and Path B (generation).
+calls instead of mocks. They test both paths through the production integration.
 
-Run with: RUN_LLM_TESTS=1 pytest tests/test_planning/llm/integration/test_planner_e2e_real_llm.py -xvs
+CRITICAL FOR:
+- Validating production integration
+- Testing both paths converge correctly
+- Ensuring CLI invocation works end-to-end
+
+Run with: RUN_LLM_TESTS=1 pytest tests/test_planning/llm/integration/test_production_planner_flow.py -xvs
 """
 
 import os
@@ -18,8 +26,8 @@ from pflow.planning import create_planner_flow
 
 
 @pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), reason="Skipping LLM tests. Set RUN_LLM_TESTS=1 to run.")
-class TestPlannerE2ERealLLM:
-    """End-to-end tests with real LLM calls for the complete planner flow."""
+class TestProductionPlannerFlow:
+    """Production planner flow tests with real LLM calls for both Path A and Path B."""
 
     @pytest.fixture
     def test_workflows_dir(self):

@@ -30,6 +30,38 @@ from pflow.planning.flow import create_planner_flow
 logger = logging.getLogger(__name__)
 
 
+def create_requirements_mock(is_clear=True, steps=None, capabilities=None):
+    """Helper to create RequirementsAnalysisNode mock response."""
+    return Mock(
+        json=lambda: {
+            "content": [
+                {
+                    "input": {
+                        "is_clear": is_clear,
+                        "clarification_needed": None if is_clear else "Please specify what needs to be done",
+                        "steps": steps or ["Process input", "Generate output"],
+                        "estimated_nodes": len(steps) if steps else 2,
+                        "required_capabilities": capabilities or ["llm"],
+                        "complexity_indicators": {"has_conditional": False},
+                    }
+                }
+            ]
+        }
+    )
+
+
+def create_planning_mock(status="FEASIBLE", node_chain="node1 >> node2"):
+    """Helper to create PlanningNode mock response."""
+    return Mock(
+        text=lambda: f"""## Execution Plan
+
+Based on requirements, creating workflow.
+
+**Status**: {status}
+**Node Chain**: {node_chain}"""
+    )
+
+
 class TestPlannerFlowIntegration:
     """Test complete planner flow integration scenarios."""
 
@@ -259,6 +291,37 @@ class TestPlannerFlowIntegration:
                 ]
             }
 
+            # Parameter discovery (comes BEFORE requirements in new flow)
+            param_discovery_response = Mock()
+            param_discovery_response.json.return_value = {
+                "content": [
+                    {
+                        "input": {
+                            "parameters": {"input_file": "data.txt", "output_file": "result.txt"},
+                            "stdin_type": None,
+                            "reasoning": "Extracted parameters from user input",
+                        }
+                    }
+                ]
+            }
+
+            # RequirementsAnalysisNode - NEW
+            requirements_response = Mock()
+            requirements_response.json.return_value = {
+                "content": [
+                    {
+                        "input": {
+                            "is_clear": True,
+                            "clarification_needed": None,
+                            "steps": ["Read file", "Process content", "Write output"],
+                            "estimated_nodes": 3,
+                            "required_capabilities": ["file", "llm"],
+                            "complexity_indicators": {"has_conditional": False},
+                        }
+                    }
+                ]
+            }
+
             # Component browsing - selects components
             browsing_response = Mock()
             browsing_response.json.return_value = {
@@ -273,19 +336,14 @@ class TestPlannerFlowIntegration:
                 ]
             }
 
-            # Parameter discovery
-            param_discovery_response = Mock()
-            param_discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "parameters": {"input_file": "data.txt", "output_file": "result.txt"},
-                            "stdin_type": None,
-                            "reasoning": "Extracted parameters from user input",
-                        }
-                    }
-                ]
-            }
+            # PlanningNode - NEW
+            planning_response = Mock()
+            planning_response.text.return_value = """## Execution Plan
+
+Based on the requirements, I'll create a workflow that reads a file, processes it, and writes output.
+
+**Status**: FEASIBLE
+**Node Chain**: read-file >> llm >> write-file"""
 
             # Workflow generation - realistic workflow with valid data flow
             generation_response = Mock()
@@ -353,18 +411,19 @@ class TestPlannerFlowIntegration:
                 ]
             }
 
-            # Setup responses in correct NEW order
-            # New flow: Generate → ParameterMapping → Validate → Metadata → Final ParameterMapping
-            # Since we fixed the workflow to have valid data flow, validation should pass on first try
+            # Setup responses in correct order for Task 52 flow
+            # Flow: Discovery → ParamDiscovery → Requirements → ComponentBrowsing → Planning → Generation → ParamMapping
             mock_model.prompt.side_effect = [
                 discovery_response,  # 1. Discovery (not found)
-                browsing_response,  # 2. Browse components
-                param_discovery_response,  # 3. Discover parameters
-                generation_response,  # 4. Generate workflow
-                param_mapping_response,  # 5. Parameter mapping (BEFORE validation)
+                param_discovery_response,  # 2. Parameter discovery (MOVED earlier)
+                requirements_response,  # 3. Requirements analysis (NEW)
+                browsing_response,  # 4. Browse components
+                planning_response,  # 5. Planning (NEW)
+                generation_response,  # 6. Generate workflow
+                param_mapping_response,  # 7. Parameter mapping (BEFORE validation)
                 # ValidatorNode validates internally (no LLM call)
-                metadata_response,  # 6. Generate metadata (after successful validation)
-                param_mapping_response,  # 7. Final parameter mapping
+                metadata_response,  # 8. Generate metadata (after successful validation)
+                param_mapping_response,  # 9. Final parameter mapping
             ]
             mock_get_model.return_value = mock_model
 
@@ -462,11 +521,37 @@ class TestPlannerFlowIntegration:
                 "content": [{"input": {"node_ids": ["llm"], "workflow_names": [], "reasoning": "Simple LLM workflow"}}]
             }
 
-            # Parameter discovery
+            # Parameter discovery (moved earlier in new flow)
             param_discovery = Mock()
             param_discovery.json.return_value = {
                 "content": [{"input": {"parameters": {}, "stdin_type": None, "reasoning": "No parameters discovered"}}]
             }
+
+            # RequirementsAnalysisNode - NEW
+            requirements_response = Mock()
+            requirements_response.json.return_value = {
+                "content": [
+                    {
+                        "input": {
+                            "is_clear": True,  # Must be True to continue
+                            "clarification_needed": None,
+                            "steps": ["Generate workflow", "Validate output"],
+                            "estimated_nodes": 1,
+                            "required_capabilities": ["llm"],
+                            "complexity_indicators": {"has_conditional": False},
+                        }
+                    }
+                ]
+            }
+
+            # PlanningNode - NEW
+            planning_response = Mock()
+            planning_response.text.return_value = """## Execution Plan
+
+Creating a simple workflow that will be validated with retries.
+
+**Status**: FEASIBLE
+**Node Chain**: llm"""
 
             # Generation attempts - first 2 invalid, 3rd valid
             # Attempt 1: Invalid node type (will fail validation)
@@ -547,23 +632,25 @@ class TestPlannerFlowIntegration:
                 ]
             }
 
-            # Setup the sequence with NEW flow order
-            # New flow: Generate → ParameterMapping → Validate → (retry to Generate if fail)
-            # After successful validation → MetadataGeneration → ParameterPreparation
+            # Setup the sequence with Task 52 flow order
+            # Flow: Discovery → ParamDiscovery → Requirements → Browse → Planning → Generate → ParamMapping → Validate
+            # On validation failure: retry to Generate (up to 3 times)
             mock_model.prompt.side_effect = [
-                discovery_response,  # 1. Discovery
-                browsing_response,  # 2. Browse
-                param_discovery,  # 3. Parameter discovery
-                gen_fail1,  # 4. Generation attempt 1 (invalid - missing ir_version)
-                param_mapping,  # 5. Parameter mapping for attempt 1
+                discovery_response,  # 1. Discovery (not found)
+                param_discovery,  # 2. Parameter discovery (MOVED earlier)
+                requirements_response,  # 3. Requirements analysis (NEW)
+                browsing_response,  # 4. Browse components
+                planning_response,  # 5. Planning (NEW)
+                gen_fail1,  # 6. Generation attempt 1 (invalid - missing ir_version)
+                param_mapping,  # 7. Parameter mapping for attempt 1
                 # ValidatorNode validates internally, finds structural error, returns "retry"
-                gen_fail2,  # 6. Generation attempt 2 (invalid - missing start_node)
-                param_mapping,  # 7. Parameter mapping for attempt 2
+                gen_fail2,  # 8. Generation attempt 2 (invalid - missing start_node)
+                param_mapping,  # 9. Parameter mapping for attempt 2
                 # ValidatorNode validates internally, finds structural error, returns "retry"
-                gen_success,  # 8. Generation attempt 3 (valid)
-                param_mapping,  # 9. Parameter mapping for attempt 3
+                gen_success,  # 10. Generation attempt 3 (valid)
+                param_mapping,  # 11. Parameter mapping for attempt 3
                 # ValidatorNode validates internally, passes, returns "metadata_generation"
-                metadata_response,  # 10. Metadata generation (after successful validation)
+                metadata_response,  # 12. Metadata generation (after successful validation)
                 # ParameterPreparationNode doesn't use LLM
                 # ResultPreparationNode doesn't use LLM
             ]
@@ -744,21 +831,7 @@ class TestPlannerFlowIntegration:
                         ]
                     }
                 ),
-                # 2. Component browsing
-                Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "node_ids": ["read-file", "llm"],
-                                    "workflow_names": [],
-                                    "reasoning": "File and LLM nodes",
-                                }
-                            }
-                        ]
-                    }
-                ),
-                # 3. Parameter discovery (correct structure)
+                # 2. Parameter discovery (MOVED earlier)
                 Mock(
                     json=lambda: {
                         "content": [
@@ -772,7 +845,47 @@ class TestPlannerFlowIntegration:
                         ]
                     }
                 ),
-                # 4. Generation - only 1 needed now!
+                # 3. Requirements analysis (NEW)
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {
+                                "input": {
+                                    "is_clear": True,
+                                    "clarification_needed": None,
+                                    "steps": ["Create workflow", "Read file"],
+                                    "estimated_nodes": 1,
+                                    "required_capabilities": ["file"],
+                                    "complexity_indicators": {},
+                                }
+                            }
+                        ]
+                    }
+                ),
+                # 4. Component browsing
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {
+                                "input": {
+                                    "node_ids": ["read-file", "llm"],
+                                    "workflow_names": [],
+                                    "reasoning": "File and LLM nodes",
+                                }
+                            }
+                        ]
+                    }
+                ),
+                # 5. Planning (NEW)
+                Mock(
+                    text=lambda: """## Execution Plan
+
+Creating workflow to read file.
+
+**Status**: FEASIBLE
+**Node Chain**: read-file"""
+                ),
+                # 6. Generation - only 1 needed now!
                 Mock(
                     json=lambda: {
                         "content": [
@@ -782,7 +895,7 @@ class TestPlannerFlowIntegration:
                         ]
                     }
                 ),
-                # 5. Parameter mapping - missing required param
+                # 7. Parameter mapping - missing required param
                 Mock(
                     json=lambda: {
                         "content": [
@@ -901,18 +1014,34 @@ class TestPlannerFlowIntegration:
                 ]
             }
 
-            # Setup sequence: discovery, browse, param_disc,
-            # then 3 cycles of (generate, validate_fail)
+            # Parameter mapping response - needed after each generation
+            param_mapping = Mock()
+            param_mapping.json.return_value = {
+                "content": [{"input": {"extracted": {}, "missing": [], "confidence": 0.9, "reasoning": "No params"}}]
+            }
+
+            # Create helper mocks for new nodes
+            requirements_response = create_requirements_mock(
+                is_clear=True, steps=["Create workflow"], capabilities=["llm"]
+            )
+            planning_response = create_planning_mock(status="FEASIBLE", node_chain="llm")
+
+            # Setup sequence with Task 52 flow - ValidatorNode doesn't use LLM (validates internally)
             mock_model.prompt.side_effect = [
-                discovery_response,  # Discovery
-                browsing_response,  # Browse
-                param_discovery,  # Parameter discovery
-                gen_response,  # Generation 1
-                validation_fail,  # Validation fail 1
-                gen_response,  # Generation 2
-                validation_fail,  # Validation fail 2
-                gen_response,  # Generation 3
-                validation_fail,  # Validation fail 3 - max retries
+                discovery_response,  # 1. Discovery
+                param_discovery,  # 2. Parameter discovery (MOVED)
+                requirements_response,  # 3. Requirements (NEW)
+                browsing_response,  # 4. Browse
+                planning_response,  # 5. Planning (NEW)
+                gen_response,  # 6. Generation attempt 1
+                param_mapping,  # 7. Parameter mapping 1
+                # ValidatorNode validates internally, finds invalid node type, returns "retry"
+                gen_response,  # 8. Generation attempt 2
+                param_mapping,  # 9. Parameter mapping 2
+                # ValidatorNode validates internally, finds invalid node type, returns "retry"
+                gen_response,  # 10. Generation attempt 3
+                param_mapping,  # 11. Parameter mapping 3
+                # ValidatorNode validates internally, finds invalid node type, returns "failed" (max retries)
             ]
             mock_get_model.return_value = mock_model
 
@@ -1033,7 +1162,7 @@ class TestPlannerFlowIntegration:
                 "outputs": {},
             }
 
-            # Path B responses (no validation mock needed)
+            # Path B responses with Task 52 flow order
             responses = [
                 # 1. Discovery not found
                 Mock(
@@ -1050,15 +1179,7 @@ class TestPlannerFlowIntegration:
                         ]
                     }
                 ),
-                # 2. Browse
-                Mock(
-                    json=lambda: {
-                        "content": [
-                            {"input": {"node_ids": ["llm"], "workflow_names": [], "reasoning": "LLM components"}}
-                        ]
-                    }
-                ),
-                # 3. Param discovery (uses "parameters" field)
+                # 2. Param discovery (MOVED earlier in Task 52)
                 Mock(
                     json=lambda: {
                         "content": [
@@ -1072,13 +1193,37 @@ class TestPlannerFlowIntegration:
                         ]
                     }
                 ),
-                # 4. Generation attempt 1
+                # 3. Requirements analysis (NEW in Task 52)
+                create_requirements_mock(is_clear=True, steps=["Generate text with LLM"], capabilities=["llm"]),
+                # 4. Component browsing
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {"input": {"node_ids": ["llm"], "workflow_names": [], "reasoning": "LLM components"}}
+                        ]
+                    }
+                ),
+                # 5. Planning (NEW in Task 52)
+                create_planning_mock(status="FEASIBLE", node_chain="llm"),
+                # 6. Generation attempt
                 Mock(json=lambda: {"content": [{"input": simple_workflow}]}),
-                # 5. Generation attempt 2 (if validator retries)
-                Mock(json=lambda: {"content": [{"input": simple_workflow}]}),
-                # 6. Generation attempt 3 (if validator retries again)
-                Mock(json=lambda: {"content": [{"input": simple_workflow}]}),
-                # 7. Metadata
+                # 7. Parameter mapping (before validation)
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {
+                                "input": {
+                                    "extracted": {},  # No params to extract for simple workflow
+                                    "missing": [],
+                                    "confidence": 0.9,
+                                    "reasoning": "No parameters needed",
+                                }
+                            }
+                        ]
+                    }
+                ),
+                # ValidatorNode validates internally (no LLM call)
+                # 8. Metadata generation (after successful validation)
                 Mock(
                     json=lambda: {
                         "content": [
@@ -1096,13 +1241,13 @@ class TestPlannerFlowIntegration:
                         ]
                     }
                 ),
-                # 8. Parameter mapping (convergence point!)
+                # 9. Final parameter mapping (convergence point!)
                 Mock(
                     json=lambda: {
                         "content": [
                             {
                                 "input": {
-                                    "extracted": {},  # No params to extract for simple workflow
+                                    "extracted": {},
                                     "missing": [],
                                     "confidence": 0.9,
                                     "reasoning": "No parameters needed",
@@ -1177,9 +1322,9 @@ class TestPlannerFlowIntegration:
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
 
-            # Path B with stdin awareness
+            # Path B with stdin awareness - Task 52 flow order
             responses = [
-                # Discovery
+                # 1. Discovery
                 Mock(
                     json=Mock(
                         return_value={
@@ -1196,23 +1341,7 @@ class TestPlannerFlowIntegration:
                         }
                     )
                 ),
-                # Browse
-                Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "node_ids": ["llm"],
-                                        "workflow_names": [],
-                                        "reasoning": "Process stdin data",
-                                    }
-                                }
-                            ]
-                        }
-                    )
-                ),
-                # Param discovery (should detect stdin)
+                # 2. Param discovery (MOVED earlier - should detect stdin)
                 Mock(
                     json=Mock(
                         return_value={
@@ -1230,7 +1359,29 @@ class TestPlannerFlowIntegration:
                         }
                     )
                 ),
-                # Generation - realistic workflow with stdin input
+                # 3. Requirements analysis (NEW in Task 52)
+                create_requirements_mock(
+                    is_clear=True, steps=["Process stdin data", "Generate output"], capabilities=["llm"]
+                ),
+                # 4. Component browsing
+                Mock(
+                    json=Mock(
+                        return_value={
+                            "content": [
+                                {
+                                    "input": {
+                                        "node_ids": ["llm"],
+                                        "workflow_names": [],
+                                        "reasoning": "Process stdin data",
+                                    }
+                                }
+                            ]
+                        }
+                    )
+                ),
+                # 5. Planning (NEW in Task 52)
+                create_planning_mock(status="FEASIBLE", node_chain="llm"),
+                # 6. Generation - realistic workflow with stdin input
                 Mock(
                     json=Mock(
                         return_value={
@@ -1257,7 +1408,7 @@ class TestPlannerFlowIntegration:
                         }
                     )
                 ),
-                # Parameter mapping - maps stdin to input_data
+                # 7. Parameter mapping - maps stdin to input_data (before validation)
                 Mock(
                     json=Mock(
                         return_value={
@@ -1274,8 +1425,8 @@ class TestPlannerFlowIntegration:
                         }
                     )
                 ),
-                # Validation happens here with extracted params (including stdin)
-                # Metadata
+                # ValidatorNode validates internally with extracted params (including stdin)
+                # 8. Metadata generation (after successful validation)
                 Mock(
                     json=Mock(
                         return_value={
@@ -1289,6 +1440,23 @@ class TestPlannerFlowIntegration:
                                         "typical_use_cases": ["Processing piped input"],
                                         "declared_inputs": ["input_data"],
                                         "declared_outputs": [],
+                                    }
+                                }
+                            ]
+                        }
+                    )
+                ),
+                # 9. Final parameter mapping (after metadata)
+                Mock(
+                    json=Mock(
+                        return_value={
+                            "content": [
+                                {
+                                    "input": {
+                                        "extracted": {"input_data": "<stdin>"},  # Maps stdin again
+                                        "missing": [],
+                                        "confidence": 1.0,
+                                        "reasoning": "Using stdin data for input_data",
                                     }
                                 }
                             ]

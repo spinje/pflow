@@ -283,6 +283,8 @@ Is this what you're expecting?
 - Always use the `test-writer-fixer` subagent to write or fix broken tests. Remember to give it small tasks, never more than fixes for one file at a time. Provide the subagent with a comprehensive context and instructions and ask it to make a plan first, before it starts implementing.
 - Consider using the `code-implementer` subagent when implementing new features or fixing bugs. This agent should only be used for tasks that require no special knowledge of the codebase and specific implementation details, and only for tasks that are small and isolated.
 
+> Important: When utilizing subagents, you should always deploy them in parallel, never sequentially. This means using ONE function call block to deploy all neeeded subagents simultaneously.
+
 ### Documentation Navigation
 
 **For detailed implementation guidance and documentation navigation**, see `architecture/CLAUDE.md`. This file provides:
@@ -398,6 +400,7 @@ Next version (post-MVP/post-Launch):
 - ⏳ Task 39: Support Parallel Execution in Workflows
 - ⏳ Task 44: Build caching system
 - ⏳ Task 45: Evaluate if wrapping or integratingn8n is worth the effort
+- ⏳ Task 61: Implement Fast Mode for Planner
 
 *Update this list as you complete tasks.*
 

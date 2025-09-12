@@ -21,6 +21,8 @@ from pflow.planning.nodes import (
     ParameterDiscoveryNode,
     ParameterMappingNode,
     ParameterPreparationNode,
+    PlanningNode,
+    RequirementsAnalysisNode,
     ResultPreparationNode,
     ValidatorNode,
     WorkflowDiscoveryNode,
@@ -50,12 +52,14 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None) -> "Flow
     Returns:
         The complete planner flow ready for execution
     """
-    logger.debug("Creating planner flow with 9 nodes")
+    logger.debug("Creating planner flow with 11 nodes")
 
     # Create all nodes (type as Node since DebugWrapper also acts as Node)
     discovery_node: Node = WorkflowDiscoveryNode()
     component_browsing: Node = ComponentBrowsingNode()
     parameter_discovery: Node = ParameterDiscoveryNode()
+    requirements_analysis: Node = RequirementsAnalysisNode()
+    planning: Node = PlanningNode()
     parameter_mapping: Node = ParameterMappingNode()
     parameter_preparation: Node = ParameterPreparationNode()
     workflow_generator: Node = WorkflowGeneratorNode()
@@ -72,6 +76,8 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None) -> "Flow
         discovery_node = DebugWrapper(discovery_node, debug_context)  # type: ignore[assignment]
         component_browsing = DebugWrapper(component_browsing, debug_context)  # type: ignore[assignment]
         parameter_discovery = DebugWrapper(parameter_discovery, debug_context)  # type: ignore[assignment]
+        requirements_analysis = DebugWrapper(requirements_analysis, debug_context)  # type: ignore[assignment]
+        planning = DebugWrapper(planning, debug_context)  # type: ignore[assignment]
         parameter_mapping = DebugWrapper(parameter_mapping, debug_context)  # type: ignore[assignment]
         parameter_preparation = DebugWrapper(parameter_preparation, debug_context)  # type: ignore[assignment]
         workflow_generator = DebugWrapper(workflow_generator, debug_context)  # type: ignore[assignment]
@@ -94,16 +100,31 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None) -> "Flow
     # ============================================================
     # Path B: Workflow Generation (no existing workflow found)
     # ============================================================
-    # Discovery doesn't find workflow → browse for components
-    discovery_node - "not_found" >> component_browsing
+    # UPDATED ROUTING FOR TASK 52:
+    # Discovery → Parameter Discovery (MOVED) → Requirements → Component Browsing → Planning → Generator
 
-    # Browse components → discover parameters from natural language
-    # ComponentBrowsingNode returns "generate" so we wire that action
-    component_browsing - "generate" >> parameter_discovery
+    # Discovery doesn't find workflow → discover parameters first (MOVED HERE)
+    discovery_node - "not_found" >> parameter_discovery
 
-    # Discover parameters → generate workflow
-    # ParameterDiscoveryNode returns "" (empty string) so we use default
-    parameter_discovery >> workflow_generator
+    # Parameter discovery → requirements analysis (NEW)
+    parameter_discovery >> requirements_analysis
+    # Requirements analysis → component browsing
+    requirements_analysis >> component_browsing
+    # Requirements too vague → result with clarification (NEW ERROR ROUTE)
+    requirements_analysis - "clarification_needed" >> result_preparation
+
+    # Component browsing → planning (NEW)
+    component_browsing - "generate" >> planning
+    # Planning → workflow generator (only for FEASIBLE)
+    planning >> workflow_generator
+    # Planning determines impossible → result with explanation (NEW ERROR ROUTE)
+    planning - "impossible_requirements" >> result_preparation
+    # Planning determines partial solution → abort with explanation of missing capabilities
+    # Users should know what's missing before attempting generation
+    planning - "partial_solution" >> result_preparation
+    # TODO: Future enhancement - PARTIAL could retry component_browsing with expanded search
+    # This would allow finding alternative components when first selection is insufficient
+    # DO NOT implement now - requires careful design to avoid infinite loops
 
     # Generate workflow → extract parameters FIRST (VALIDATION REDESIGN FIX)
     # WorkflowGeneratorNode returns "validate" but we route to parameter mapping first
@@ -170,6 +191,6 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None) -> "Flow
     # 2. From ParameterMappingNode - Missing parameters
     # 3. From ValidatorNode - Generation failed after 3 attempts
 
-    logger.info("Planner flow created with 9 nodes: 2-path architecture with convergence at ParameterMappingNode")
+    logger.info("Planner flow created with 11 nodes: 2-path architecture with Requirements/Planning enhancement")
 
     return flow

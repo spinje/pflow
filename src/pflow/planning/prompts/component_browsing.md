@@ -31,9 +31,16 @@ You are a smart component curator for workflow generation. Your job is to select
 {{user_input}}
 </user_request>
 
+<extracted_requirements>
+{{requirements}}
+</extracted_requirements>
+
 ## Selection Process
 
-### Step 1: Identify the Workflow Domain & Complexity
+### Step 1: Consider Extracted Requirements
+If requirements have been extracted, use them to guide component selection. Each requirement needs corresponding components to fulfill it.
+
+### Step 2: Identify the Workflow Domain & Complexity
 Analyze the user request to understand both domain AND workflow pattern:
 
 **GitHub Domain Patterns**:
@@ -48,6 +55,12 @@ Analyze the user request to understand both domain AND workflow pattern:
 **Primary Evidence**: Direct functionality match within the identified domain
 
 **GitHub Simple Read** (get/summarize single item):
+- `github-get-issue` for single item retrieval
+- `llm` for analysis/processing
+- output to stdout (default)
+- NO save operations unless explicitly mentioned
+
+**GitHub Simple Read and Save** (get/summarize single item):
 - `github-get-issue` for single item retrieval
 - `llm` for analysis/processing
 - `write-file` for output

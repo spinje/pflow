@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from pflow.core.exceptions import WorkflowNotFoundError
 from pflow.core.workflow_manager import WorkflowManager
+from pflow.planning.context_blocks import PlannerContextBuilder
 from pflow.planning.context_builder import (
     _build_node_flow,
     build_nodes_context,
@@ -49,6 +50,17 @@ class ComponentSelection(BaseModel):
     node_ids: list[str] = Field(description="Selected node type identifiers")
     workflow_names: list[str] = Field(description="Selected workflow names as building blocks")
     reasoning: str = Field(description="Selection rationale")
+
+
+class RequirementsSchema(BaseModel):
+    """Schema for requirements analysis output."""
+
+    is_clear: bool = Field(description="True if requirements can be extracted")
+    clarification_needed: Optional[str] = Field(None, description="Message if input too vague")
+    steps: list[str] = Field(default_factory=list, description="Abstract operational requirements")
+    estimated_nodes: int = Field(0, description="Estimated number of nodes needed")
+    required_capabilities: list[str] = Field(default_factory=list, description="Services/capabilities needed")
+    complexity_indicators: dict[str, Any] = Field(default_factory=dict, description="Complexity analysis")
 
 
 class WorkflowDiscoveryNode(Node):
@@ -291,11 +303,15 @@ class ComponentBrowsingNode(Node):
             logger.exception("Failed to build browsing contexts", extra={"phase": "prep", "error": str(e)})
             raise ValueError(f"Context preparation failed: {e}") from e
 
+        # NEW: Get requirements if available (from RequirementsAnalysisNode)
+        requirements_result = shared.get("requirements_result", {})
+
         return {
             "user_input": user_input,
             "nodes_context": nodes_context,
             "workflows_context": workflows_context,
             "registry_metadata": registry_metadata,
+            "requirements_result": requirements_result,  # NEW
             "model_name": model_name,
             "temperature": temperature,
         }
@@ -316,6 +332,12 @@ class ComponentBrowsingNode(Node):
 
         prompt_template = load_prompt("component_browsing")
 
+        # Build requirements context if available
+        requirements_text = "None"
+        if prep_res.get("requirements_result") and prep_res["requirements_result"].get("steps"):
+            steps = prep_res["requirements_result"]["steps"]
+            requirements_text = "\n".join(f"- {step}" for step in steps)
+
         # Format with our variables - validation happens automatically
         prompt = format_prompt(
             prompt_template,
@@ -323,6 +345,7 @@ class ComponentBrowsingNode(Node):
                 "nodes_context": prep_res["nodes_context"],
                 "workflows_context": prep_res["workflows_context"],
                 "user_input": prep_res["user_input"],
+                "requirements": requirements_text,  # NEW: Include requirements
             },
         )
 
@@ -664,6 +687,474 @@ class ParameterDiscoveryNode(Node):
         return safe_response
 
 
+class RequirementsAnalysisNode(Node):
+    """Extract abstract operational requirements from templatized input (Path B only).
+
+    Takes templatized input from ParameterDiscoveryNode and extracts WHAT needs to be done
+    without implementation details. Abstracts values but keeps services explicit.
+
+    Interface:
+    - Reads: templatized_input (str), user_input (str fallback)
+    - Writes: requirements_result (dict)
+    - Actions: "" (success) or "clarification_needed"
+    """
+
+    name = "requirements-analysis"  # For registry discovery
+
+    def __init__(self, max_retries: int = 2, wait: float = 1.0) -> None:
+        """Initialize with retry support for LLM operations.
+
+        Args:
+            max_retries: Number of retries on LLM failure (default 2)
+            wait: Wait time between retries in seconds (default 1.0)
+        """
+        super().__init__(max_retries=max_retries, wait=wait)
+
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """Prepare context for requirements extraction.
+
+        Args:
+            shared: PocketFlow shared store
+
+        Returns:
+            Dict with templatized_input and model configuration
+
+        Raises:
+            ValueError: If no input is available
+        """
+        logger.debug("RequirementsAnalysisNode: Preparing for requirements extraction", extra={"phase": "prep"})
+
+        # Get templatized input from ParameterDiscoveryNode (preferred)
+        # Falls back to user_input if templatization didn't happen
+        templatized_input = shared.get("templatized_input")
+        user_input = shared.get("user_input") or self.params.get("user_input", "")
+
+        input_text = templatized_input or user_input
+        if not input_text:
+            raise ValueError("Missing required input (templatized_input or user_input)")
+
+        # Configuration from params with defaults
+        model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
+        temperature = self.params.get("temperature", 0.0)
+
+        return {
+            "input_text": input_text,
+            "is_templatized": bool(templatized_input),
+            "model_name": model_name,
+            "temperature": temperature,
+        }
+
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Extract abstract requirements using LLM.
+
+        Args:
+            prep_res: Prepared data with input_text and model config
+
+        Returns:
+            RequirementsSchema dict with extraction results
+        """
+        logger.debug(f"RequirementsAnalysisNode: Extracting requirements from: {prep_res['input_text'][:100]}...")
+
+        # Load prompt from markdown file
+        from pflow.planning.prompts.loader import format_prompt, load_prompt
+
+        prompt_template = load_prompt("requirements_analysis")
+
+        # Format prompt with input
+        prompt = format_prompt(
+            prompt_template,
+            {
+                "input_text": prep_res["input_text"],
+                "is_templatized": "Yes" if prep_res["is_templatized"] else "No",
+            },
+        )
+
+        # STANDALONE LLM call - NOT part of conversation
+        model = llm.get_model(prep_res["model_name"])
+        response = model.prompt(prompt, schema=RequirementsSchema, temperature=prep_res["temperature"])
+        result = parse_structured_response(response, RequirementsSchema)
+
+        logger.info(
+            f"RequirementsAnalysisNode: Extracted {len(result.get('steps', []))} requirements, "
+            f"is_clear={result.get('is_clear', False)}",
+            extra={
+                "phase": "exec",
+                "is_clear": result.get("is_clear", False),
+                "steps_count": len(result.get("steps", [])),
+                "capabilities": result.get("required_capabilities", []),
+            },
+        )
+
+        return result
+
+    def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
+        """Store requirements and route based on clarity.
+
+        Args:
+            shared: PocketFlow shared store
+            prep_res: Prepared data
+            exec_res: Execution result (RequirementsSchema)
+
+        Returns:
+            "" for success or "clarification_needed" for vague input
+        """
+        # Store requirements result with potential error embedded
+        shared["requirements_result"] = exec_res
+
+        # Check if input was too vague
+        if not exec_res.get("is_clear", False):
+            clarification_msg = exec_res.get(
+                "clarification_needed", "Please specify what needs to be processed and what operations to perform"
+            )
+
+            # Create a PlannerError for vague input
+            from pflow.planning.error_handler import ErrorCategory, PlannerError
+
+            planner_error = PlannerError(
+                category=ErrorCategory.INVALID_INPUT,
+                message="Request is too vague to create a workflow",
+                user_action=clarification_msg,
+                technical_details="Requirements extraction failed due to insufficient clarity",
+                retry_suggestion=False,
+            )
+
+            # Embed the error in the requirements result for ResultPreparationNode to extract
+            exec_res["_error"] = planner_error.to_dict()
+            shared["requirements_result"] = exec_res  # Update with embedded error
+
+            logger.warning(
+                f"RequirementsAnalysisNode: Input too vague - {clarification_msg}",
+                extra={"phase": "post", "action": "clarification_needed"},
+            )
+            return "clarification_needed"
+
+        logger.info(
+            "RequirementsAnalysisNode: Requirements extracted successfully",
+            extra={
+                "phase": "post",
+                "action": "success",
+                "requirements": exec_res.get("steps", [])[:3],  # Log first 3 for debugging
+            },
+        )
+
+        # Continue to component browsing
+        return ""  # Empty string for default routing
+
+    def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
+        """Handle LLM failures with safe defaults.
+
+        Args:
+            prep_res: Prepared data
+            exc: Exception that occurred
+
+        Returns:
+            Safe default RequirementsSchema matching exec() return type
+        """
+        safe_response, planner_error = create_fallback_response("RequirementsAnalysisNode", exc, prep_res)
+
+        # Return a valid RequirementsSchema-like dict
+        return safe_response or {
+            "is_clear": False,
+            "clarification_needed": f"Failed to analyze requirements: {exc!s}",
+            "steps": [],
+            "estimated_nodes": 0,
+            "required_capabilities": [],
+            "complexity_indicators": {},
+        }
+
+
+class PlanningNode(Node):
+    """Create execution plan using available components (Path B only).
+
+    STARTS a multi-turn conversation that will be continued by WorkflowGenerator.
+    Outputs markdown with parseable Status and Node Chain. Critical for the
+    multi-turn conversation architecture that enables context caching.
+
+    Interface:
+    - Reads: requirements_result, browsed_components, planning_context
+    - Writes: planning_result, planner_conversation (CRITICAL!)
+    - Actions: "" (continue), "impossible_requirements", "partial_solution"
+    """
+
+    name = "planning"  # For registry discovery
+
+    def __init__(self, max_retries: int = 2, wait: float = 1.0) -> None:
+        """Initialize with retry support for LLM operations.
+
+        Args:
+            max_retries: Number of retries on LLM failure (default 2)
+            wait: Wait time between retries in seconds (default 1.0)
+        """
+        super().__init__(max_retries=max_retries, wait=wait)
+
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """Prepare context for planning.
+
+        Args:
+            shared: PocketFlow shared store
+
+        Returns:
+            Dict with requirements, components, and model config
+
+        Raises:
+            ValueError: If critical inputs are missing
+        """
+        logger.debug("PlanningNode: Preparing for execution planning", extra={"phase": "prep"})
+
+        # Get requirements from RequirementsAnalysisNode
+        requirements_result = shared.get("requirements_result", {})
+        if not requirements_result:
+            logger.warning("PlanningNode: No requirements_result found", extra={"phase": "prep"})
+
+        # Get browsed components from ComponentBrowsingNode
+        browsed_components = shared.get("browsed_components", {})
+        if not browsed_components:
+            raise ValueError("Missing required 'browsed_components' in shared store")
+
+        # Get planning context (detailed component info)
+        planning_context = shared.get("planning_context", "")
+
+        # Get the user's request (prefer templatized version)
+        templatized_input = shared.get("templatized_input")
+        user_input = shared.get("user_input", "")
+        user_request = templatized_input or user_input
+
+        # Get discovered parameters for context
+        discovered_params = shared.get("discovered_params")
+
+        # Configuration from params with defaults
+        model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
+        temperature = self.params.get("temperature", 0.3)  # Slightly higher for creative planning
+
+        return {
+            "requirements_result": requirements_result,
+            "browsed_components": browsed_components,
+            "planning_context": planning_context,
+            "user_request": user_request,
+            "discovered_params": discovered_params,
+            "model_name": model_name,
+            "temperature": temperature,
+        }
+
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Create execution plan using cache-optimized context blocks.
+
+        Args:
+            prep_res: Prepared data with requirements and components
+
+        Returns:
+            Dict with plan_markdown, status, node_chain, and context blocks
+        """
+        logger.debug("PlanningNode: Creating execution plan with cache-optimized context")
+
+        # Build base context block (cacheable)
+        base_context = PlannerContextBuilder.build_base_context(
+            user_request=prep_res["user_request"],
+            requirements_result=prep_res["requirements_result"],
+            browsed_components=prep_res["browsed_components"],
+            planning_context=prep_res["planning_context"],
+            discovered_params=prep_res.get("discovered_params"),
+        )
+
+        # Log context metrics
+        metrics = PlannerContextBuilder.get_context_metrics(base_context)
+        logger.info(
+            f"PlanningNode: Base context built - {metrics['estimated_tokens']} tokens",
+            extra={"phase": "exec", "context_metrics": metrics},
+        )
+
+        # Load planning instructions (static, not cached)
+        from pflow.planning.prompts.loader import load_prompt
+
+        planning_instructions = load_prompt("planning_instructions")
+
+        # Combine: base context + instructions
+        full_prompt = f"{base_context}\n\n{planning_instructions}"
+
+        # Get model and generate plan
+        model = llm.get_model(prep_res["model_name"])
+        response = model.prompt(full_prompt, temperature=prep_res["temperature"])
+
+        # Extract text from response
+        plan_markdown = response.text() if hasattr(response, "text") else str(response)
+
+        # Parse the structured ending
+        parsed = self._parse_plan_assessment(plan_markdown)
+
+        # Create extended context (base + plan output)
+        extended_context = PlannerContextBuilder.append_planning_output(base_context, plan_markdown, parsed)
+
+        # Log extended context metrics
+        ext_metrics = PlannerContextBuilder.get_context_metrics(extended_context)
+        logger.info(
+            f"PlanningNode: Extended context created - {ext_metrics['estimated_tokens']} tokens",
+            extra={
+                "phase": "exec",
+                "status": parsed["status"],
+                "has_node_chain": bool(parsed["node_chain"]),
+                "context_metrics": ext_metrics,
+            },
+        )
+
+        return {
+            "plan_markdown": plan_markdown,
+            "status": parsed["status"],
+            "node_chain": parsed["node_chain"],
+            "missing_capabilities": parsed.get("missing_capabilities", []),
+            "base_context": base_context,  # Pass forward for caching
+            "extended_context": extended_context,  # For WorkflowGeneratorNode
+        }
+
+    def _parse_plan_assessment(self, markdown: str) -> dict[str, Any]:
+        """Extract Status and Node Chain from markdown output.
+
+        Args:
+            markdown: The planning markdown to parse
+
+        Returns:
+            Dict with status, node_chain, and missing_capabilities
+        """
+        import re
+
+        # Default values
+        status = "FEASIBLE"
+        node_chain = ""
+        missing_capabilities = []
+
+        # Extract Status (FEASIBLE/PARTIAL/IMPOSSIBLE)
+        if match := re.search(r"\*\*Status\*\*:\s*(\w+)", markdown, re.IGNORECASE):
+            status = match.group(1).upper()
+
+        # Extract Node Chain
+        if match := re.search(r"\*\*Node Chain\*\*:\s*([^\n]+)", markdown, re.IGNORECASE):
+            node_chain = match.group(1).strip()
+
+        # Extract Missing Capabilities (if any)
+        if match := re.search(r"\*\*Missing Capabilities\*\*:\s*([^\n]+)", markdown, re.IGNORECASE):
+            caps = match.group(1).strip()
+            if caps and caps.lower() != "none":
+                missing_capabilities = [c.strip() for c in caps.split(",")]
+
+        return {
+            "status": status,
+            "node_chain": node_chain,
+            "missing_capabilities": missing_capabilities,
+        }
+
+    def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
+        """Store planning results and context narrative, then route.
+
+        Args:
+            shared: PocketFlow shared store
+            prep_res: Prepared data
+            exec_res: Execution result with plan and context narrative
+
+        Returns:
+            Action string based on feasibility status
+        """
+        # Store planning result
+        shared["planning_result"] = {
+            "plan_markdown": exec_res["plan_markdown"],
+            "status": exec_res["status"],
+            "node_chain": exec_res["node_chain"],
+            "missing_capabilities": exec_res.get("missing_capabilities", []),
+        }
+
+        # Store context blocks for WorkflowGeneratorNode
+        if "base_context" in exec_res:
+            shared["planner_base_context"] = exec_res["base_context"]
+        if "extended_context" in exec_res:
+            shared["planner_extended_context"] = exec_res["extended_context"]
+            logger.info(
+                "PlanningNode: Stored cache-optimized context blocks",
+                extra={"phase": "post", "extended_size": len(exec_res["extended_context"])},
+            )
+
+        # Route based on status
+        status = exec_res["status"]
+
+        if status == "IMPOSSIBLE":
+            # Create a PlannerError for impossible requirements
+            from pflow.planning.error_handler import ErrorCategory, PlannerError
+
+            missing_caps = exec_res.get("missing_capabilities", [])
+            capabilities_text = ", ".join(missing_caps) if missing_caps else "required capabilities"
+
+            planner_error = PlannerError(
+                category=ErrorCategory.MISSING_RESOURCE,
+                message="Cannot create workflow with available components",
+                user_action=f"This workflow requires capabilities not currently available: {capabilities_text}. Consider breaking down the request into smaller parts or using different approaches.",
+                technical_details=f"Missing nodes/capabilities: {capabilities_text}",
+                retry_suggestion=False,
+            )
+
+            # Embed the error in the planning result for ResultPreparationNode to extract
+            exec_res["_error"] = planner_error.to_dict()
+            shared["planning_result"]["_error"] = planner_error.to_dict()  # Also embed in planning_result
+
+            logger.warning(
+                f"PlanningNode: Impossible requirements - missing {capabilities_text}",
+                extra={"phase": "post", "action": "impossible_requirements"},
+            )
+            return "impossible_requirements"
+
+        elif status == "PARTIAL":
+            # Create an error for partial solution (routes to result_preparation, not continuing)
+            from pflow.planning.error_handler import ErrorCategory, PlannerError
+
+            missing_caps = exec_res.get("missing_capabilities", [])
+            if missing_caps:
+                capabilities_text = ", ".join(missing_caps)
+
+                planner_error = PlannerError(
+                    category=ErrorCategory.MISSING_RESOURCE,
+                    message="Cannot create complete workflow - missing capabilities",
+                    user_action=f"This request requires capabilities not currently available: {capabilities_text}. You can either install the missing components or modify your request to work with available tools.",
+                    technical_details=f"Unavailable capabilities: {capabilities_text}",
+                    retry_suggestion=False,
+                )
+
+                # Embed as error since we're aborting (routing to result_preparation)
+                exec_res["_error"] = planner_error.to_dict()
+                shared["planning_result"]["_error"] = planner_error.to_dict()
+
+            logger.info(
+                "PlanningNode: Partial solution - aborting with explanation",
+                extra={"phase": "post", "action": "partial_solution"},
+            )
+            return "partial_solution"
+
+        # FEASIBLE or default
+        logger.info(
+            "PlanningNode: Plan feasible, continuing to generation",
+            extra={"phase": "post", "action": "continue"},
+        )
+        return ""  # Empty string for default routing to workflow generator
+
+    def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
+        """Planning is critical - abort on LLM failure.
+
+        Args:
+            prep_res: Prepared data
+            exc: Exception that occurred
+
+        Raises:
+            CriticalPlanningError: Always, as planning is critical
+        """
+        from pflow.core.exceptions import CriticalPlanningError
+        from pflow.planning.error_handler import classify_error
+
+        # Classify the error for better user messaging
+        planner_error = classify_error(exc, context="PlanningNode")
+
+        # Planning is critical - we cannot generate workflows without a plan
+        raise CriticalPlanningError(
+            node_name="PlanningNode",
+            reason=f"Cannot create execution plan: {planner_error.message}. {planner_error.user_action}",
+            original_error=exc,
+        )
+
+
 class ParameterMappingNode(Node):
     """Extract and validate parameters for workflow execution (convergence point).
 
@@ -733,6 +1224,109 @@ class ParameterMappingNode(Node):
             "temperature": temperature,
         }
 
+    def _build_parameter_description(self, param_name: str, param_spec: Any) -> str:
+        """Build description string for a single parameter.
+
+        Args:
+            param_name: Name of the parameter
+            param_spec: Parameter specification (string or dict)
+
+        Returns:
+            Formatted parameter description
+        """
+        if isinstance(param_spec, str):
+            # Simple string format from LLM generation
+            required = True
+            param_type = "string"
+            description = param_spec
+            default = None
+        elif isinstance(param_spec, dict):
+            # Structured format with metadata
+            required = param_spec.get("required", True)
+            param_type = param_spec.get("type", "string")
+            description = param_spec.get("description", "")
+            default = param_spec.get("default")
+        else:
+            # Fallback for unexpected formats
+            required = True
+            param_type = "string"
+            description = f"Input parameter: {param_name}"
+            default = None
+
+        status = "required" if required else f"optional (default: {default})"
+        return f"- {param_name} ({param_type}, {status}): {description}"
+
+    def _extract_parameters_from_llm(self, inputs_description_text: str, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Call LLM to extract parameters from user input.
+
+        Args:
+            inputs_description_text: Formatted description of inputs
+            prep_res: Prepared resources with user_input, stdin_data, etc.
+
+        Returns:
+            Parsed ParameterExtraction result
+        """
+        from pflow.planning.prompts.loader import format_prompt, load_prompt
+
+        prompt_template = load_prompt("parameter_mapping")
+
+        # Prepare stdin data - truncate if too long, use "None" if empty
+        stdin_data = prep_res.get("stdin_data", "")[:500] if prep_res.get("stdin_data") else "None"
+
+        # Format with all variables - structure is fully in markdown
+        prompt = format_prompt(
+            prompt_template,
+            {
+                "inputs_description": inputs_description_text,
+                "user_input": prep_res["user_input"],
+                "stdin_data": stdin_data,
+            },
+        )
+
+        # Lazy-load model at execution time (PocketFlow best practice)
+        model = llm.get_model(prep_res["model_name"])
+        response = model.prompt(prompt, schema=ParameterExtraction, temperature=prep_res["temperature"])
+        return parse_structured_response(response, ParameterExtraction)
+
+    def _apply_defaults_and_validate(
+        self, result: dict[str, Any], inputs_spec: dict[str, Any]
+    ) -> tuple[list[str], float]:
+        """Apply default values and validate required parameters.
+
+        Args:
+            result: Extraction result from LLM
+            inputs_spec: Workflow inputs specification
+
+        Returns:
+            Tuple of (missing_params_list, confidence_score)
+        """
+        final_missing = []
+
+        for param_name, param_spec in inputs_spec.items():
+            # Check if parameter is missing from extraction
+            if param_name not in result["extracted"]:
+                # Handle both string and dict formats
+                if isinstance(param_spec, str):
+                    # Simple string format - no defaults, always required
+                    final_missing.append(param_name)
+                elif isinstance(param_spec, dict):
+                    # Structured format - check for defaults
+                    if "default" in param_spec:
+                        logger.info(
+                            f"ParameterMappingNode: Using default value for {param_name}: {param_spec['default']}"
+                        )
+                        result["extracted"][param_name] = param_spec["default"]
+                    # Only mark as missing if it's required AND has no default
+                    elif param_spec.get("required", True):
+                        final_missing.append(param_name)
+                else:
+                    # Fallback - treat as required
+                    final_missing.append(param_name)
+
+        # Calculate confidence based on missing parameters
+        confidence = 0.0 if final_missing else max(result.get("confidence", 0.5), 0.5)
+        return final_missing, confidence
+
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Extract parameters independently and validate against workflow inputs.
 
@@ -765,64 +1359,20 @@ class ParameterMappingNode(Node):
             }
 
         # Build inputs description for LLM
-        inputs_description = []
-        for param_name, param_spec in inputs_spec.items():
-            required = param_spec.get("required", True)  # Default to required
-            param_type = param_spec.get("type", "string")
-            description = param_spec.get("description", "")
-            default = param_spec.get("default")
-
-            status = "required" if required else f"optional (default: {default})"
-            inputs_description.append(f"- {param_name} ({param_type}, {status}): {description}")
-
-        # Load prompt from markdown file
-        from pflow.planning.prompts.loader import format_prompt, load_prompt
-
-        prompt_template = load_prompt("parameter_mapping")
-
-        # Format the inputs description as a multiline string
+        inputs_description = [
+            self._build_parameter_description(param_name, param_spec) for param_name, param_spec in inputs_spec.items()
+        ]
         inputs_description_text = "\n".join(inputs_description) if inputs_description else "None"
 
-        # Prepare stdin data - truncate if too long, use "None" if empty
-        stdin_data = prep_res.get("stdin_data", "")[:500] if prep_res.get("stdin_data") else "None"
+        # Extract parameters using LLM
+        result = self._extract_parameters_from_llm(inputs_description_text, prep_res)
 
-        # Format with all variables - structure is fully in markdown
-        prompt = format_prompt(
-            prompt_template,
-            {
-                "inputs_description": inputs_description_text,
-                "user_input": prep_res["user_input"],
-                "stdin_data": stdin_data,
-            },
-        )
+        # Validate and apply defaults
+        final_missing, confidence = self._apply_defaults_and_validate(result, inputs_spec)
 
-        # Lazy-load model at execution time (PocketFlow best practice)
-        model = llm.get_model(prep_res["model_name"])
-        response = model.prompt(prompt, schema=ParameterExtraction, temperature=prep_res["temperature"])
-        result = parse_structured_response(response, ParameterExtraction)
-
-        # Validate all required parameters are present and apply defaults
-        final_missing = []
-
-        for param_name, param_spec in inputs_spec.items():
-            # Check if parameter is missing from extraction
-            if param_name not in result["extracted"]:
-                # If it has a default value, use it
-                if "default" in param_spec:
-                    logger.info(f"ParameterMappingNode: Using default value for {param_name}: {param_spec['default']}")
-                    result["extracted"][param_name] = param_spec["default"]
-                # Only mark as missing if it's required AND has no default
-                elif param_spec.get("required", True):
-                    final_missing.append(param_name)
-
-        # Replace the missing list entirely with our validated list
-        # This ensures parameters with defaults are NOT in the missing list
+        # Update result with validated values
         result["missing"] = final_missing
-        if final_missing:
-            result["confidence"] = 0.0  # No confidence if missing required params
-        else:
-            # All required params are present (either extracted or defaulted)
-            result["confidence"] = max(result.get("confidence", 0.5), 0.5)
+        result["confidence"] = confidence
 
         logger.info(
             f"ParameterMappingNode: Extracted {len(result['extracted'])} parameters, {len(result['missing'])} missing",
@@ -1019,47 +1569,88 @@ class WorkflowGeneratorNode(Node):
         return {
             "model_name": self.params.get("model", "anthropic/claude-sonnet-4-0"),
             "temperature": self.params.get("temperature", 0.0),
-            "planning_context": shared.get("planning_context", ""),
+            "planning_context": shared.get("planning_context", ""),  # Legacy fallback
             "user_input": shared.get("templatized_input", shared.get("user_input", "")),
             "discovered_params": shared.get("discovered_params"),
             "browsed_components": shared.get("browsed_components", {}),
             "validation_errors": shared.get("validation_errors", []),
             "generation_attempts": shared.get("generation_attempts", 0),
+            "planner_extended_context": shared.get("planner_extended_context"),  # New cache-optimized context
+            "planner_accumulated_context": shared.get("planner_accumulated_context"),  # For retries
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
-        """Generate workflow using LLM with structured output.
+        """Generate workflow using cache-optimized context blocks.
 
         Args:
-            prep_res: Prepared data including planning context and parameters
+            prep_res: Prepared data including extended context or accumulated context
 
         Returns:
             Dict with generated workflow and attempt count
 
         Raises:
-            ValueError: If planning context is empty or response parsing fails
+            ValueError: If no context is available or response parsing fails
         """
-        logger.debug(f"Generating workflow for: {prep_res['user_input'][:1000]}...")
-
-        # CRITICAL: Planning context must be available
-        if not prep_res["planning_context"]:
-            raise ValueError("Planning context is required but was empty")
-
-        # Check if planning context is an error dict
-        if isinstance(prep_res["planning_context"], dict) and "error" in prep_res["planning_context"]:
-            raise ValueError(f"Planning context error: {prep_res['planning_context']['error']}")
-
-        # Lazy load model
-        model = llm.get_model(prep_res["model_name"])
-
-        # Build prompt with template emphasis
-        prompt = self._build_prompt(prep_res)
+        logger.debug(f"Generating workflow for: {prep_res['user_input'][:100]}...")
 
         # Import FlowIR here to avoid circular imports
         from pflow.planning.ir_models import FlowIR
+        from pflow.planning.prompts.loader import load_prompt
 
-        # Generate with schema
-        response = model.prompt(prompt, schema=FlowIR, temperature=prep_res["temperature"])
+        # Determine if this is a retry
+        is_retry = prep_res.get("generation_attempts", 0) > 0 and prep_res.get("validation_errors")
+
+        # Determine which context to use
+        if is_retry and prep_res.get("planner_accumulated_context"):
+            # Use accumulated context from previous attempt(s)
+            base_context = prep_res["planner_accumulated_context"]
+
+            # Add validation errors as new block
+            if prep_res.get("validation_errors"):
+                base_context = PlannerContextBuilder.append_validation_errors(
+                    base_context, prep_res["validation_errors"]
+                )
+
+            logger.info(
+                f"WorkflowGeneratorNode: Using accumulated context for retry (attempt {prep_res['generation_attempts'] + 1})",
+                extra={"phase": "exec", "is_retry": True},
+            )
+        elif prep_res.get("planner_extended_context"):
+            # First attempt - use extended context from planning
+            base_context = prep_res["planner_extended_context"]
+            logger.info(
+                "WorkflowGeneratorNode: Using extended context from planning",
+                extra={"phase": "exec", "is_retry": False},
+            )
+        else:
+            # No context available - this should not happen in normal flow
+            raise ValueError(
+                "WorkflowGeneratorNode requires either planner_extended_context "
+                "or planner_accumulated_context from PlanningNode. "
+                "The workflow must go through RequirementsAnalysisNode and PlanningNode first. "
+                "Direct usage of WorkflowGeneratorNode is no longer supported."
+            )
+
+        # NEW PATH: Use cache-optimized context
+        # Log context metrics
+        metrics = PlannerContextBuilder.get_context_metrics(base_context)
+        logger.info(
+            f"WorkflowGeneratorNode: Context size - {metrics['estimated_tokens']} tokens",
+            extra={"phase": "exec", "context_metrics": metrics},
+        )
+
+        # Load appropriate instructions
+        if is_retry:
+            generation_instructions = load_prompt("workflow_generator_retry")
+        else:
+            generation_instructions = load_prompt("workflow_generator_instructions")
+
+        # Combine: context + instructions
+        full_prompt = f"{base_context}\n\n{generation_instructions}"
+
+        # Generate workflow
+        model = llm.get_model(prep_res["model_name"])
+        response = model.prompt(full_prompt, schema=FlowIR, temperature=prep_res["temperature"])
 
         # Parse nested Anthropic response
         result = parse_structured_response(response, FlowIR)
@@ -1107,7 +1698,7 @@ class WorkflowGeneratorNode(Node):
         return workflow
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
-        """Store generated workflow and route to validation.
+        """Store generated workflow and accumulate context for potential retry.
 
         Args:
             shared: PocketFlow shared store
@@ -1122,6 +1713,24 @@ class WorkflowGeneratorNode(Node):
         # Store generated workflow for validation
         shared["generated_workflow"] = exec_res["workflow"]
         shared["generation_attempts"] = exec_res["attempt"]
+
+        # CRITICAL: Accumulate context for potential retry
+        # Get the base context (either extended from planning or accumulated from previous retry)
+        current_context = prep_res.get("planner_extended_context") or prep_res.get("planner_accumulated_context", "")
+
+        if current_context and exec_res.get("workflow"):
+            # Add the generated workflow as a new cacheable block
+            accumulated = PlannerContextBuilder.append_workflow_output(
+                current_context, exec_res["workflow"], exec_res["attempt"]
+            )
+            shared["planner_accumulated_context"] = accumulated
+
+            # Log accumulated context metrics
+            metrics = PlannerContextBuilder.get_context_metrics(accumulated)
+            logger.info(
+                f"WorkflowGeneratorNode: Accumulated context for retry - {metrics['estimated_tokens']} tokens",
+                extra={"phase": "post", "attempt": exec_res["attempt"], "context_metrics": metrics},
+            )
 
         # CRITICAL: Always route to validation
         return "validate"
@@ -1148,64 +1757,6 @@ class WorkflowGeneratorNode(Node):
             node_name="WorkflowGeneratorNode",
             reason=f"Cannot generate workflow: {planner_error.message}. {planner_error.user_action}",
             original_error=exc,
-        )
-
-    def _build_prompt(self, prep_res: dict[str, Any]) -> str:
-        """Build generation prompt with template emphasis.
-
-        Args:
-            prep_res: Prepared data with context and parameters
-
-        Returns:
-            Formatted prompt string
-        """
-        # Load prompt from markdown file
-        from pflow.planning.prompts.loader import format_prompt, load_prompt
-
-        prompt_template = load_prompt("workflow_generator")
-
-        # Build discovered parameters section
-        discovered_params_section = "None"
-        if prep_res.get("discovered_params"):
-            params_lines = [
-                "Suggested default values for workflow inputs:",
-                "IMPORTANT: These are ONLY for setting default values in the inputs section.",
-                "NEVER hardcode these values in node parameters - always use ${param_name} syntax.",
-            ]
-            for param, value in prep_res["discovered_params"].items():
-                # Format to emphasize these are defaults
-                params_lines.append(f'  - {param}: default="{value}"')
-            params_lines.append("\nRemember: ALL parameter values in nodes MUST use ${param_name} template syntax.")
-            discovered_params_section = "\n".join(params_lines)
-
-        # Build validation errors section
-        validation_errors_section = "None"
-        if prep_res.get("generation_attempts", 0) > 0 and prep_res.get("validation_errors"):
-            error_lines = ["⚠️ FIX THESE VALIDATION ERRORS from the previous attempt:"]
-            for error in prep_res["validation_errors"][:3]:  # Max 3 errors
-                error_lines.append(f"- {error}")
-                # Add specific guidance for common errors
-                if "never used as template variable" in error:
-                    param_name = error.split(":")[-1].strip()
-                    error_lines.append(f"  → FIX: Use ${{{param_name}}} in the appropriate node's params field")
-                    error_lines.append(
-                        f'  → Example: If read-file node, use: "params": {{"file_path": "${{{param_name}}}"}}'
-                    )
-                elif "is not of type 'object'" in error and "outputs" in error:
-                    error_lines.append("  → FIX: Outputs must be objects with 'description' field, not strings")
-                    error_lines.append('  → Example: "outputs": {"result": {"description": "Result description"}}')
-            error_lines.append("Keep the rest of the workflow unchanged but FIX the template variable usage!")
-            validation_errors_section = "\n".join(error_lines)
-
-        # Format with all variables - structure is fully in markdown
-        return format_prompt(
-            prompt_template,
-            {
-                "user_input": prep_res["user_input"],
-                "planning_context": prep_res["planning_context"],
-                "discovered_params_section": discovered_params_section,
-                "validation_errors_section": validation_errors_section,
-            },
         )
 
 
@@ -1730,6 +2281,8 @@ class ResultPreparationNode(Node):
         error_sources = [
             "discovery_result",
             "browsed_components",
+            "requirements_result",  # Added for RequirementsAnalysisNode
+            "planning_result",  # Added for PlanningNode
             "generated_workflow",
             "discovered_params",
             "extracted_params",
@@ -1765,6 +2318,7 @@ class ResultPreparationNode(Node):
         # Build error message if not successful
         error = None
         if not success:
+            # Build generic error message
             error_parts = []
 
             if not prep_res["workflow_ir"]:

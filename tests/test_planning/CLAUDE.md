@@ -20,8 +20,6 @@ tests/test_planning/
 └── llm/                    # REAL LLM tests - Requires API, expensive
     ├── prompts/            # Tests that validate prompt structure/format
     │   └── test_*_prompts.py      # Break when prompts change
-    ├── behavior/           # Tests that validate outcomes/decisions
-    │   └── test_*.py               # Resilient to prompt tweaks
     └── integration/        # End-to-end flows with real components
         └── test_*_flow.py          # Complete path validation with real LLM
 ```
@@ -58,11 +56,6 @@ tests/test_planning/
 **What**: Test that prompts produce expected LLM responses
 **Breaks When**: Prompt text or structure changes
 **Example**: "Does the discovery prompt correctly identify workflows?"
-
-#### Behavior Tests (`llm/behavior/`)
-**What**: Test outcomes regardless of exact prompt wording
-**Breaks When**: Core logic or requirements change
-**Example**: "Does Path A get triggered for high-confidence matches?"
 
 #### Integration Tests (`llm/integration/`)
 **What**: Test complete flows through multiple nodes
@@ -168,7 +161,6 @@ Is it testing real LLM behavior?
 │
 └── YES → llm/
     ├── Testing prompt format/structure? → prompts/test_*_prompts.py
-    ├── Testing decisions/outcomes? → behavior/test_*.py
     └── Testing complete flows with real LLM? → integration/test_*_flow.py
 ```
 
@@ -189,7 +181,6 @@ RUN_LLM_TESTS=1 pytest tests/test_planning/llm/prompts -v
 # After changing logic
 pytest tests/test_planning/unit -v
 pytest tests/test_planning/integration -v
-RUN_LLM_TESTS=1 pytest tests/test_planning/llm/behavior -v
 
 # Before committing
 pytest tests/test_planning/unit -v  # Must pass
@@ -204,7 +195,7 @@ RUN_LLM_TESTS=1 pytest tests/test_planning -v  # Everything
 | What Changed | Run These Tests |
 |-------------|-----------------|
 | Prompt text | `llm/prompts/` for that component |
-| Routing logic | `unit/test_*_routing.py` + `llm/behavior/` |
+| Routing logic | `unit/test_*_routing.py` |
 | Error handling | `unit/test_*_error_handling.py` |
 | Shared store contract | `unit/test_shared_store_*.py` |
 | Multi-node flows | `integration/` + `llm/integration/` |
@@ -258,8 +249,7 @@ RUN_LLM_TESTS=1 pytest tests/test_planning -v  # Everything
 - **Unit tests**: High coverage (>80%) of individual component logic
 - **Integration tests**: Cover main multi-component flows
 - **LLM prompt tests**: Cover critical prompt variations
-- **LLM behavior tests**: Cover main success/failure paths
-- **LLM integration tests**: Cover primary user journeys
+- **LLM integration tests**: Cover primary user journeys and success/failure paths
 
 ## 🔄 Migration Guide for New Nodes
 
@@ -281,7 +271,6 @@ When adding tests for new planning nodes (e.g., ParameterDiscoveryNode):
 3. **Create LLM test files** (if node uses LLM):
    ```
    llm/prompts/test_parameter_prompts.py
-   llm/behavior/test_parameter_extraction_accuracy.py
    ```
 
 4. **Add LLM integration tests** (for end-to-end with real LLM):

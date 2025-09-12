@@ -12,6 +12,7 @@ MODEL_PRICING = {
     "anthropic/claude-3-5-sonnet-20240620": {"input": 3.00, "output": 15.00},
     "anthropic/claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
     "anthropic/claude-sonnet-4-0": {"input": 3.00, "output": 15.00},
+    "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
     "gpt-4": {"input": 30.0, "output": 60.0},
     "gpt-4-turbo": {"input": 10.0, "output": 30.0},
     "gpt-4o": {"input": 5.0, "output": 15.0},
@@ -72,7 +73,7 @@ class MetricsCollector:
         """Calculate total cost from accumulated LLM calls.
 
         Prioritizes actual cost (total_cost_usd) when available,
-        otherwise falls back to token-based calculation.
+        otherwise falls back to token-based calculation with cache awareness.
 
         Args:
             llm_calls: List of LLM call data from shared["__llm_calls__"]
@@ -92,15 +93,38 @@ class MetricsCollector:
                 total_cost += call["total_cost_usd"]
                 continue
 
-            # PRIORITY 2: Fall back to token-based calculation
-            model = call.get("model", "unknown")
+            # PRIORITY 2: Fall back to token-based calculation with cache awareness
+            # Check both model field and prompt_kwargs.model for compatibility
+            model = call.get("model") or call.get("prompt_kwargs", {}).get("model", "unknown")
             pricing = MODEL_PRICING.get(model, DEFAULT_PRICING)
 
-            input_tokens = call.get("input_tokens", 0)
+            # Handle cache tokens (Anthropic SDK)
+            cache_creation_tokens = call.get("cache_creation_input_tokens", 0)
+            cache_read_tokens = call.get("cache_read_input_tokens", 0)
+            regular_input_tokens = call.get("input_tokens", 0)
             output_tokens = call.get("output_tokens", 0)
 
-            # Pricing is per million tokens
-            input_cost = (input_tokens / 1_000_000) * pricing["input"]
+            # Calculate input cost with cache discounts
+            # IMPORTANT: input_tokens from Anthropic already EXCLUDES cache tokens
+            # Cache creation costs 25% more than regular input
+            # Cache reads cost 90% less than regular input
+            if cache_creation_tokens or cache_read_tokens:
+                # Anthropic SDK with caching - calculate separately
+                # input_tokens already excludes cache tokens (per Anthropic API spec)
+                regular_input_cost = (regular_input_tokens / 1_000_000) * pricing["input"]
+
+                # Cache creation tokens (25% premium)
+                cache_creation_cost = (cache_creation_tokens / 1_000_000) * pricing["input"] * 1.25
+
+                # Cache read tokens (90% discount)
+                cache_read_cost = (cache_read_tokens / 1_000_000) * pricing["input"] * 0.10
+
+                input_cost = regular_input_cost + cache_creation_cost + cache_read_cost
+            else:
+                # Regular pricing (no caching)
+                input_cost = (regular_input_tokens / 1_000_000) * pricing["input"]
+
+            # Output cost remains the same
             output_cost = (output_tokens / 1_000_000) * pricing["output"]
 
             total_cost += input_cost + output_cost
@@ -130,6 +154,8 @@ class MetricsCollector:
         # Aggregate token counts
         total_input = sum(call.get("input_tokens", 0) for call in llm_calls if call)
         total_output = sum(call.get("output_tokens", 0) for call in llm_calls if call)
+        total_cache_creation = sum(call.get("cache_creation_input_tokens", 0) for call in llm_calls if call)
+        total_cache_read = sum(call.get("cache_read_input_tokens", 0) for call in llm_calls if call)
 
         # Calculate costs
         total_cost = self.calculate_costs(llm_calls)
@@ -145,17 +171,20 @@ class MetricsCollector:
             planner_llm_calls = [c for c in llm_calls if c.get("is_planner", False)]
             planner_cost = self.calculate_costs(planner_llm_calls)
 
-            # Aggregate planner tokens
+            # Aggregate planner tokens including cache tokens
             planner_input = sum(call.get("input_tokens", 0) for call in planner_llm_calls if call)
             planner_output = sum(call.get("output_tokens", 0) for call in planner_llm_calls if call)
+            planner_cache_creation = sum(
+                call.get("cache_creation_input_tokens", 0) for call in planner_llm_calls if call
+            )
+            planner_cache_read = sum(call.get("cache_read_input_tokens", 0) for call in planner_llm_calls if call)
             planner_total = planner_input + planner_output
 
             # Extract unique models used in planner
-            planner_models = list({
-                call.get("model", "unknown") for call in planner_llm_calls if call and call.get("model")
-            })
+            # Model should be in the model field directly now
+            planner_models = list({call.get("model", "unknown") for call in planner_llm_calls if call})
 
-            metrics["planner"] = {
+            planner_metrics = {
                 "duration_ms": round(planner_duration, 2) if planner_duration else None,
                 "nodes_executed": len(self.planner_nodes),
                 "cost_usd": planner_cost,
@@ -166,22 +195,33 @@ class MetricsCollector:
                 "node_timings": self.planner_nodes,
             }
 
+            # Add cache tokens if present
+            if planner_cache_creation > 0:
+                planner_metrics["cache_creation_tokens"] = planner_cache_creation
+            if planner_cache_read > 0:
+                planner_metrics["cache_read_tokens"] = planner_cache_read
+
+            metrics["planner"] = planner_metrics
+
         # Add workflow metrics if present
         if self.workflow_nodes:
             workflow_llm_calls = [c for c in llm_calls if not c.get("is_planner", False)]
             workflow_cost = self.calculate_costs(workflow_llm_calls)
 
-            # Aggregate workflow tokens
+            # Aggregate workflow tokens including cache tokens
             workflow_input = sum(call.get("input_tokens", 0) for call in workflow_llm_calls if call)
             workflow_output = sum(call.get("output_tokens", 0) for call in workflow_llm_calls if call)
+            workflow_cache_creation = sum(
+                call.get("cache_creation_input_tokens", 0) for call in workflow_llm_calls if call
+            )
+            workflow_cache_read = sum(call.get("cache_read_input_tokens", 0) for call in workflow_llm_calls if call)
             workflow_total = workflow_input + workflow_output
 
             # Extract unique models used in workflow
-            workflow_models = list({
-                call.get("model", "unknown") for call in workflow_llm_calls if call and call.get("model")
-            })
+            # Model should be in the model field directly now
+            workflow_models = list({call.get("model", "unknown") for call in workflow_llm_calls if call})
 
-            metrics["workflow"] = {
+            workflow_metrics = {
                 "duration_ms": round(workflow_duration, 2) if workflow_duration else None,
                 "nodes_executed": len(self.workflow_nodes),
                 "cost_usd": workflow_cost,
@@ -192,13 +232,29 @@ class MetricsCollector:
                 "node_timings": self.workflow_nodes,
             }
 
+            # Add cache tokens if present
+            if workflow_cache_creation > 0:
+                workflow_metrics["cache_creation_tokens"] = workflow_cache_creation
+            if workflow_cache_read > 0:
+                workflow_metrics["cache_read_tokens"] = workflow_cache_read
+
+            metrics["workflow"] = workflow_metrics
+
         # Add total metrics
-        metrics["total"] = {
+        total_metrics = {
             "tokens_input": total_input,
             "tokens_output": total_output,
             "tokens_total": total_input + total_output,
             "cost_usd": total_cost,
         }
+
+        # Add cache tokens if present
+        if total_cache_creation > 0:
+            total_metrics["cache_creation_tokens"] = total_cache_creation
+        if total_cache_read > 0:
+            total_metrics["cache_read_tokens"] = total_cache_read
+
+        metrics["total"] = total_metrics
 
         # Return top-level metrics and detailed breakdown
         return {

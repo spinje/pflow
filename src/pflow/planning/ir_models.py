@@ -21,6 +21,12 @@ class EdgeIR(BaseModel):
     to_node: str = Field(..., alias="to")
     action: str = Field(default="default")
 
+    class Config:
+        populate_by_name = True  # Allow both field names and aliases during parsing
+        use_enum_values = True
+        json_encoders = {str: lambda v: v}
+        by_alias = True  # CRITICAL: Use aliases when serializing for IR compliance
+
 
 class FlowIR(BaseModel):
     """Flow IR for planner output generation."""
@@ -32,6 +38,10 @@ class FlowIR(BaseModel):
     # Task 21 fields: workflows can declare their expected inputs/outputs
     inputs: Optional[dict[str, Any]] = None
     outputs: Optional[dict[str, Any]] = None
+
+    class Config:
+        # Ensure nested models also use aliases
+        by_alias = True
 
     def to_dict(self) -> dict:
         """Convert to dict for validation with existing schema."""

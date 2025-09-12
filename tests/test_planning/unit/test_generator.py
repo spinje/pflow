@@ -21,7 +21,32 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from pflow.planning.context_blocks import PlannerContextBuilder
 from pflow.planning.nodes import WorkflowGeneratorNode
+
+
+def create_minimal_context():
+    """Create minimal planner context for unit tests."""
+    # Create a simple base context
+    base_context = PlannerContextBuilder.build_base_context(
+        user_request="test request",
+        requirements_result={
+            "is_clear": True,
+            "steps": ["Step 1"],
+            "estimated_nodes": 1,
+            "required_capabilities": ["test"],
+        },
+        browsed_components={"node_ids": ["test-node"], "workflow_names": [], "reasoning": "Test reasoning"},
+        planning_context="Test planning context",
+        discovered_params={},
+    )
+
+    # Add planning output to make it extended context
+    extended_context = PlannerContextBuilder.append_planning_output(
+        base_context, "Test plan", {"status": "FEASIBLE", "node_chain": "test-node"}
+    )
+
+    return extended_context
 
 
 @pytest.fixture
@@ -82,11 +107,11 @@ class TestWorkflowGeneratorNodeStructure:
 class TestPlanningContextValidation:
     """Test planning context validation and error handling."""
 
-    def test_empty_planning_context_raises_valueerror(self):
-        """Test empty planning_context raises ValueError with specific message."""
+    def test_missing_context_raises_valueerror(self):
+        """Test missing extended context raises ValueError with specific message."""
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "",
+            # No planner_extended_context or planner_accumulated_context provided
             "user_input": "test request",
             "discovered_params": None,
             "browsed_components": {},
@@ -99,26 +124,34 @@ class TestPlanningContextValidation:
         with pytest.raises(ValueError) as exc_info:
             node.exec(prep_res)
 
-        assert "Planning context is required but was empty" in str(exc_info.value)
+        assert "requires either planner_extended_context" in str(exc_info.value)
 
-    def test_dict_planning_context_with_error_raises_valueerror(self):
-        """Test dict planning_context with error key raises ValueError."""
+    def test_retry_with_accumulated_context(self):
+        """Test retry uses accumulated context properly."""
         node = WorkflowGeneratorNode()
+        accumulated = create_minimal_context()
+        accumulated = PlannerContextBuilder.append_workflow_output(
+            accumulated, {"nodes": [], "edges": [], "start_node": "n1"}, 1
+        )
+
         prep_res = {
-            "planning_context": {"error": "Failed to build context"},
+            "planner_accumulated_context": accumulated,
             "user_input": "test request",
             "discovered_params": None,
             "browsed_components": {},
-            "validation_errors": [],
-            "generation_attempts": 0,
+            "validation_errors": ["Error 1"],
+            "generation_attempts": 1,
             "model_name": "test-model",
             "temperature": 0.0,
         }
 
-        with pytest.raises(ValueError) as exc_info:
+        # Should not raise - accumulated context is valid
+        try:
+            # This will fail at the LLM call, but that's OK for this test
             node.exec(prep_res)
-
-        assert "Planning context error: Failed to build context" in str(exc_info.value)
+        except Exception as e:
+            # Should fail on LLM call, not context validation
+            assert "planner_extended_context" not in str(e)
 
     @patch("llm.get_model")
     def test_valid_planning_context_generates_workflow(self, mock_get_model, mock_llm_generator):
@@ -129,7 +162,7 @@ class TestPlanningContextValidation:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "Available nodes: git-log, llm",
+            "planner_extended_context": create_minimal_context(),
             "user_input": "generate changelog",
             "discovered_params": None,
             "browsed_components": {},
@@ -168,30 +201,25 @@ class TestParameterIntegration:
     """Test parameter discovery integration and renaming."""
 
     @patch("llm.get_model")
-    def test_discovered_params_renamed_for_clarity(self, mock_get_model, mock_llm_generator):
-        """Test discovered_params are renamed for clarity in inputs."""
+    def test_discovered_params_included_in_context(self, mock_get_model, mock_llm_generator):
+        """Test discovered_params are included in base context."""
         mock_model = Mock()
         mock_model.prompt.return_value = mock_llm_generator()
         mock_get_model.return_value = mock_model
 
-        node = WorkflowGeneratorNode()
-        prep_res = {
-            "planning_context": "test context",
-            "user_input": "test",
-            "discovered_params": {"filename": "test.txt", "repo": "owner/repo"},
-            "browsed_components": {},
-            "validation_errors": [],
-            "generation_attempts": 0,
-            "model_name": "test-model",
-            "temperature": 0.0,
-        }
+        # Create context with discovered params
+        context = PlannerContextBuilder.build_base_context(
+            user_request="test",
+            requirements_result={"is_clear": True, "steps": ["Step 1"]},
+            browsed_components={"node_ids": ["test-node"]},
+            planning_context="test context",
+            discovered_params={"filename": "test.txt", "repo": "owner/repo"},
+        )
 
-        prompt = node._build_prompt(prep_res)
-
-        assert "Suggested default values" in prompt
-        assert "NEVER hardcode these values" in prompt
-        assert 'filename: default="test.txt"' in prompt
-        assert 'repo: default="owner/repo"' in prompt
+        assert "Discovered Parameters" in context
+        assert "filename" in context
+        assert "repo" in context
+        assert "NEVER be hardcoded" in context  # Warning about not hardcoding
 
     @patch("llm.get_model")
     def test_discovered_params_none_generates_workflow(self, mock_get_model, mock_llm_generator):
@@ -202,7 +230,7 @@ class TestParameterIntegration:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
             "user_input": "test",
             "discovered_params": None,
             "browsed_components": {},
@@ -212,67 +240,38 @@ class TestParameterIntegration:
             "temperature": 0.0,
         }
 
-        prompt = node._build_prompt(prep_res)
         result = node.exec(prep_res)
-
-        assert "Discovered parameters" not in prompt
         assert "workflow" in result
 
 
 class TestValidationErrorHandling:
-    """Test validation error feedback in prompts."""
+    """Test validation error feedback through context blocks."""
 
-    @patch("llm.get_model")
-    def test_validation_errors_included_in_prompt(self, mock_get_model, mock_llm_generator):
-        """Test validation_errors present includes error fixing instructions in prompt."""
-        mock_model = Mock()
-        mock_model.prompt.return_value = mock_llm_generator()
-        mock_get_model.return_value = mock_model
+    def test_validation_errors_included_in_context(self):
+        """Test validation_errors are included in context blocks."""
+        base_context = create_minimal_context()
+        errors = ["Missing required parameter: repo", "Invalid node type: unknown"]
 
-        node = WorkflowGeneratorNode()
-        prep_res = {
-            "planning_context": "test context",
-            "user_input": "test",
-            "discovered_params": None,
-            "browsed_components": {},
-            "validation_errors": ["Missing required parameter: repo", "Invalid node type: unknown"],
-            "generation_attempts": 1,  # Must be > 0 for errors to be included
-            "model_name": "test-model",
-            "temperature": 0.0,
-        }
+        context_with_errors = PlannerContextBuilder.append_validation_errors(base_context, errors)
 
-        prompt = node._build_prompt(prep_res)
+        assert "Validation Errors" in context_with_errors
+        assert "Missing required parameter: repo" in context_with_errors
+        assert "Invalid node type: unknown" in context_with_errors
+        assert "Please generate a corrected workflow" in context_with_errors
 
-        assert "⚠️ FIX THESE VALIDATION ERRORS from the previous attempt:" in prompt
-        assert "Missing required parameter: repo" in prompt
-        assert "Invalid node type: unknown" in prompt
+    def test_validation_errors_max_five_in_context(self):
+        """Test validation_errors > 5 only includes first 5 in context."""
+        base_context = create_minimal_context()
+        errors = ["Error 1", "Error 2", "Error 3", "Error 4", "Error 5", "Error 6", "Error 7"]
 
-    @patch("llm.get_model")
-    def test_validation_errors_max_three_in_prompt(self, mock_get_model, mock_llm_generator):
-        """Test validation_errors > 3 only includes first 3 in prompt."""
-        mock_model = Mock()
-        mock_model.prompt.return_value = mock_llm_generator()
-        mock_get_model.return_value = mock_model
+        context_with_errors = PlannerContextBuilder.append_validation_errors(base_context, errors)
 
-        node = WorkflowGeneratorNode()
-        prep_res = {
-            "planning_context": "test context",
-            "user_input": "test",
-            "discovered_params": None,
-            "browsed_components": {},
-            "validation_errors": ["Error 1", "Error 2", "Error 3", "Error 4", "Error 5"],
-            "generation_attempts": 1,
-            "model_name": "test-model",
-            "temperature": 0.0,
-        }
-
-        prompt = node._build_prompt(prep_res)
-
-        assert "Error 1" in prompt
-        assert "Error 2" in prompt
-        assert "Error 3" in prompt
-        assert "Error 4" not in prompt
-        assert "Error 5" not in prompt
+        assert "Error 1" in context_with_errors
+        assert "Error 2" in context_with_errors
+        assert "Error 3" in context_with_errors
+        assert "Error 4" in context_with_errors
+        assert "Error 5" in context_with_errors
+        assert "and 2 more errors" in context_with_errors  # 7 - 5 = 2 more
 
 
 class TestLLMResponseParsing:
@@ -289,7 +288,7 @@ class TestLLMResponseParsing:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
             "user_input": "test",
             "discovered_params": None,
             "browsed_components": {},
@@ -314,7 +313,7 @@ class TestLLMResponseParsing:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
             "user_input": "test",
             "discovered_params": None,
             "browsed_components": {},
@@ -340,7 +339,7 @@ class TestLLMResponseParsing:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
             "user_input": "test",
             "discovered_params": None,
             "browsed_components": {},
@@ -379,7 +378,7 @@ class TestWorkflowGeneration:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
             "user_input": "test",
             "discovered_params": None,
             "browsed_components": {},
@@ -427,7 +426,7 @@ class TestTemplateVariables:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
             "user_input": "test",
             "discovered_params": None,
             "browsed_components": {},
@@ -471,7 +470,7 @@ class TestTemplateVariables:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
             "user_input": "test",
             "discovered_params": None,
             "browsed_components": {},
@@ -524,7 +523,8 @@ class TestTemplateVariables:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
+            "old_planning_context": "test context",
             "user_input": "create issue triage report",
             "discovered_params": None,
             "browsed_components": {},
@@ -610,7 +610,7 @@ class TestLazyLoading:
 
         # Call exec - should call get_model
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
             "user_input": "test",
             "discovered_params": None,
             "browsed_components": {},
@@ -636,7 +636,8 @@ class TestLogging:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "test context",
+            "planner_extended_context": create_minimal_context(),
+            "old_planning_context": "test context",
             "user_input": "generate a changelog for my repository",
             "discovered_params": None,
             "browsed_components": {},
@@ -698,7 +699,8 @@ class TestNorthStarExamples:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "Available: git-log, llm nodes",
+            "planner_extended_context": create_minimal_context(),
+            "old_planning_context": "Available: git-log, llm nodes",
             "user_input": "generate changelog for my repo since last month",
             "discovered_params": {"repo": "owner/repo", "since": "last month"},
             "browsed_components": {},
@@ -768,7 +770,8 @@ class TestNorthStarExamples:
 
         node = WorkflowGeneratorNode()
         prep_res = {
-            "planning_context": "Available: github-issues, llm nodes",
+            "planner_extended_context": create_minimal_context(),
+            "old_planning_context": "Available: github-issues, llm nodes",
             "user_input": "create issue triage report for high priority bugs",
             "discovered_params": {
                 "repo": "owner/repo",

@@ -2444,6 +2444,14 @@ def workflow_command(
         ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout, save
     )
 
+    # Always install Anthropic model wrapper for planning models
+    # This gives us better performance with caching and structured output
+    from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+
+    install_anthropic_model()
+    if verbose:
+        click.echo("cli: Using Anthropic SDK for planning models", err=True)
+
     # Handle stdin data
     stdin_content, enhanced_stdin = _read_stdin_data()
     stdin_data = enhanced_stdin if enhanced_stdin else stdin_content

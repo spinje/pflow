@@ -522,8 +522,8 @@ class TestPlanningContext:
         # Should contain main section headers
         assert "## Selected Components" in result
         assert "### read-file" in result
-        assert "**Parameters** (all go in params field):" in result
-        assert "**Outputs** (access as" in result
+        assert "**Parameters**:" in result
+        assert "**Outputs**:" in result
 
     def test_planning_context_handles_structured_data_appropriately(self, sample_registry_metadata):
         """Test planning context can handle nodes with structured data outputs."""
@@ -543,8 +543,8 @@ class TestPlanningContext:
         assert "read-file" in result
 
         # Should contain interface information for planning
-        assert "**Parameters** (all go in params field):" in result
-        assert "**Outputs** (access as" in result
+        assert "**Parameters**:" in result
+        assert "**Outputs**:" in result
 
         # Should show detailed interface information
         assert "file_path" in result
@@ -939,7 +939,7 @@ class TestCategoryGrouping:
         assert "encoding" in result  # Should appear
 
         # Should use new format
-        assert "**Parameters** (all go in params field):" in result
+        assert "**Parameters**:" in result
         assert "Configuration parameter" in result  # validate should be marked as config
 
 
@@ -968,8 +968,8 @@ class TestNodeFormatting:
         # Should format as planning context with all sections
         assert "### read-file" in result
         assert "Reads a file from disk" in result
-        assert "**Parameters** (all go in params field):" in result
-        assert "**Outputs** (access as" in result
+        assert "**Parameters**:" in result
+        assert "**Outputs**:" in result
 
         # Should include interface details for planning
         assert "file_path" in result

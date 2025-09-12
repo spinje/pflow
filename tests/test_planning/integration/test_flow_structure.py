@@ -11,6 +11,8 @@ from pflow.planning.nodes import (
     ParameterDiscoveryNode,
     ParameterMappingNode,
     ParameterPreparationNode,
+    PlanningNode,
+    RequirementsAnalysisNode,
     ResultPreparationNode,
     ValidatorNode,
     WorkflowDiscoveryNode,
@@ -30,7 +32,7 @@ class TestFlowStructure:
         assert flow.start_node.name == "workflow-discovery"
 
     def test_all_nodes_are_connected(self):
-        """Test that all 9 nodes are connected in the flow."""
+        """Test that all 11 nodes are connected in the flow."""
         flow = create_planner_flow()
 
         # Collect all nodes by traversing successors
@@ -48,12 +50,14 @@ class TestFlowStructure:
                 if successor not in visited_nodes:
                     nodes_to_visit.append(successor)
 
-        # Check we have all 9 node types
+        # Check we have all 11 node types
         node_types = {type(node).__name__ for node in visited_nodes}
         expected_types = {
             "WorkflowDiscoveryNode",
             "ComponentBrowsingNode",
             "ParameterDiscoveryNode",
+            "RequirementsAnalysisNode",
+            "PlanningNode",
             "ParameterMappingNode",
             "ParameterPreparationNode",
             "WorkflowGeneratorNode",
@@ -63,7 +67,7 @@ class TestFlowStructure:
         }
 
         assert node_types == expected_types
-        assert len(visited_nodes) == 9
+        assert len(visited_nodes) == 11
 
     def test_path_a_edges(self):
         """Test Path A edges: Discovery → ParameterMapping → Preparation → Result."""
@@ -94,25 +98,35 @@ class TestFlowStructure:
         assert param_prep.successors["default"] is result
 
     def test_path_b_edges(self):
-        """Test Path B edges: Discovery → Browse → ParamDisc → Generate → Validate."""
+        """Test Path B edges: Discovery → ParamDisc → Requirements → Browse → Planning → Generate → Validate."""
         flow = create_planner_flow()
 
         # Get nodes
         discovery = flow.start_node
 
-        # Check discovery has "not_found" edge
+        # Check discovery has "not_found" edge leading to parameter discovery (MOVED)
         assert "not_found" in discovery.successors
-        browsing = discovery.successors["not_found"]
-        assert isinstance(browsing, ComponentBrowsingNode)
-
-        # Check browsing leads to parameter discovery (generate)
-        assert "generate" in browsing.successors
-        param_disc = browsing.successors["generate"]
+        param_disc = discovery.successors["not_found"]
         assert isinstance(param_disc, ParameterDiscoveryNode)
 
-        # Check parameter discovery leads to generator (default)
+        # Check parameter discovery leads to requirements analysis (default)
         assert "default" in param_disc.successors
-        generator = param_disc.successors["default"]
+        requirements = param_disc.successors["default"]
+        assert isinstance(requirements, RequirementsAnalysisNode)
+
+        # Check requirements analysis leads to component browsing (default)
+        assert "default" in requirements.successors
+        browsing = requirements.successors["default"]
+        assert isinstance(browsing, ComponentBrowsingNode)
+
+        # Check component browsing leads to planning (generate)
+        assert "generate" in browsing.successors
+        planning = browsing.successors["generate"]
+        assert isinstance(planning, PlanningNode)
+
+        # Check planning leads to generator (default)
+        assert "default" in planning.successors
+        generator = planning.successors["default"]
         assert isinstance(generator, WorkflowGeneratorNode)
 
         # VALIDATION REDESIGN: Generator now leads to ParameterMapping first
@@ -125,11 +139,13 @@ class TestFlowStructure:
         """Test the retry loop: Validator → Generator."""
         flow = create_planner_flow()
 
-        # Navigate to validator (VALIDATION REDESIGN: new path through ParameterMapping)
+        # Navigate to validator (NEW PATH: Discovery → ParamDisc → Requirements → Browse → Planning → Generator)
         discovery = flow.start_node
-        browsing = discovery.successors["not_found"]
-        param_disc = browsing.successors["generate"]
-        generator = param_disc.successors["default"]
+        param_disc = discovery.successors["not_found"]
+        requirements = param_disc.successors["default"]
+        browsing = requirements.successors["default"]
+        planning = browsing.successors["generate"]
+        generator = planning.successors["default"]
         # Generator now goes to ParameterMapping first
         param_mapping = generator.successors["validate"]
         # From ParameterMapping, if params complete for generated workflow → Validator
@@ -159,10 +175,12 @@ class TestFlowStructure:
         discovery = flow.start_node
         param_mapping_a = discovery.successors["found_existing"]
 
-        # Get nodes from Path B (VALIDATION REDESIGN: convergence happens earlier)
-        browsing = discovery.successors["not_found"]
-        param_disc = browsing.successors["generate"]
-        generator = param_disc.successors["default"]
+        # Get nodes from Path B (NEW PATH with Requirements and Planning)
+        param_disc = discovery.successors["not_found"]
+        requirements = param_disc.successors["default"]
+        browsing = requirements.successors["default"]
+        planning = browsing.successors["generate"]
+        generator = planning.successors["default"]
         # Path B now goes to ParameterMapping immediately after generation
         param_mapping_b = generator.successors["validate"]
 
@@ -175,8 +193,8 @@ class TestFlowStructure:
         assert "params_complete_validate" in param_mapping_a.successors  # Path B
         assert "params_incomplete" in param_mapping_a.successors  # Both paths
 
-    def test_result_node_has_three_entry_points(self):
-        """Test that ResultPreparationNode has three entry points."""
+    def test_result_node_has_six_entry_points(self):
+        """Test that ResultPreparationNode has six entry points."""
         flow = create_planner_flow()
 
         # Helper to find all predecessors
@@ -206,15 +224,18 @@ class TestFlowStructure:
         # Find predecessors
         predecessors = find_predecessors(result_node, all_nodes)
 
-        # Should have 3 entry points
-        assert len(predecessors) == 3
+        # Should have 6 entry points (after Task 52 additions)
+        assert len(predecessors) == 6
 
-        # Check the three entry points
+        # Check the six entry points
         predecessor_types = [(type(node).__name__, action) for node, action in predecessors]
         expected_entries = [
             ("ParameterPreparationNode", "default"),  # Success path
             ("ParameterMappingNode", "params_incomplete"),  # Missing params
             ("ValidatorNode", "failed"),  # Generation failed
+            ("RequirementsAnalysisNode", "clarification_needed"),  # Vague input
+            ("PlanningNode", "impossible_requirements"),  # Can't do with available nodes
+            ("PlanningNode", "partial_solution"),  # Missing capabilities
         ]
 
         for expected in expected_entries:
@@ -229,6 +250,8 @@ class TestFlowStructure:
             WorkflowDiscoveryNode: ["found_existing", "not_found"],
             ComponentBrowsingNode: ["generate"],  # Returns "generate"
             ParameterDiscoveryNode: ["default"],  # Returns "" so uses default
+            RequirementsAnalysisNode: ["default", "clarification_needed"],  # New node
+            PlanningNode: ["default", "impossible_requirements", "partial_solution"],  # New node
             ParameterMappingNode: [
                 "params_complete",
                 "params_complete_validate",
@@ -284,12 +307,12 @@ class TestFlowStructure:
                 if successor not in reachable:
                     nodes_to_visit.append(successor)
 
-        # All 9 nodes should be reachable
-        assert len(reachable) == 9
+        # All 11 nodes should be reachable
+        assert len(reachable) == 11
 
         # Check all node types are reachable
         node_types = {type(node).__name__ for node in reachable}
-        assert len(node_types) == 9
+        assert len(node_types) == 11
 
     def test_flow_is_deterministic(self):
         """Test that creating the flow multiple times produces same structure."""
@@ -312,4 +335,4 @@ class TestFlowStructure:
                 to_visit.extend(node.successors.values())
             return len(nodes)
 
-        assert count_nodes(flow1) == count_nodes(flow2) == 9
+        assert count_nodes(flow1) == count_nodes(flow2) == 11

@@ -24,7 +24,7 @@ Look for these types of values in the user input:
 - **Numeric values**: Counts, limits, sizes, IDs
 - **States/Filters**: Status values, conditions, filters
 - **Time periods**: Dates, months, periods, durations
-- **Identifiers**: Names, IDs, locations, repositories
+- **Identifiers**: Names, IDs, specific repos
 - **Formats/Types**: Output formats, data types, units
 - **Content descriptors**: Topics, subjects, descriptions
 
@@ -36,8 +36,9 @@ For each identified parameter:
 
 ### Step 3: Apply Extraction Rules
 - **DO extract**: Actual values, paths, names, numbers, states
-- **DON'T extract**: Action verbs, commands, prompts, instructions
+- **DON'T extract**: Action verbs, commands, prompts, instructions, platform/service names (github, slack, API)
 - **DO recognize stdin**: When data comes from pipe, parameters may be minimal
+- **Preposition hint**: Words after "from/to/into" often indicate WHERE (node selection) not WHAT (parameter)
 
 ## Context Information
 
@@ -68,6 +69,9 @@ For each identified parameter:
   → `{"source_dir": "src/", "file_pattern": "Python files", "backup_dir": "backups/2024-01-15/"}`
 
 ### Numeric and Filter Parameters
+- "Get last 30 closed issues from github"
+  → `{"issue_count": "30", "issue_state": "closed"}` (NOT `"source": "github"`)
+
 - "Get last 30 closed issues from pflow repo"
   → `{"issue_count": "30", "issue_state": "closed", "repo_name": "pflow"}`
 
@@ -115,13 +119,23 @@ For each identified parameter:
 
 3. **Never extract prompts or instructions as parameters**
    - Extract: topics, lengths, styles as separate parameters
-   - Don't extract: "Write a story about..." as a prompt parameter
+   - Don't extract: "Write a story about..." as a prompt
 
-4. **Keep values exactly as specified**
+4. **Never extract data sources or services as parameters**
+   - Don't extract: "from github", "from slack", "from API" → github/slack/API are node selections, not parameters
+   - Good: `{"issue_number": "123"}` from "get issue 123 from github"
+   - Bad: `{"issue_number": "123", "source": "github"}` from "get issue 123 from github"
+
+5. **Never extract file extensions separately when already in the path**
+   - If extension is part of the file path, don't create a separate format parameter
+   - Good: `{"output_file": "report.md"}`
+   - Bad: `{"output_file": "report.md", "file_format": "md"}`
+
+6. **Keep values exactly as specified**
    - If user says "30", extract "30" (not "thirty")
    - If user says "Python files", extract "Python files" (not "*.py")
 
-5. **When stdin is present**
+7. **When stdin is present**
    - Recognize that parameters may come from piped data
    - Extract only parameters explicitly mentioned in the request
 

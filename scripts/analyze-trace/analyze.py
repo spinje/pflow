@@ -32,26 +32,35 @@ def format_prompt(prompt: str) -> str:
     return prompt
 
 
-def format_response(response: any) -> str:
-    """Format an LLM response for markdown."""
+def format_response(response: any) -> tuple[str, bool]:
+    """Format an LLM response for markdown.
+
+    Returns:
+        tuple: (formatted_response, is_json)
+    """
     if isinstance(response, dict):
-        # Check if it's a raw LLM response with 'content' field
+        # Check if it's an Anthropic message format with text content
         if "content" in response and isinstance(response["content"], list):
-            # Extract the actual response from the content array
+            # Look for text field (used by PlanningNode and other text responses)
             for item in response["content"]:
-                if isinstance(item, dict) and "input" in item:
-                    # This is the actual response data
-                    return json.dumps(item["input"], indent=2)
-        return json.dumps(response, indent=2)
+                if isinstance(item, dict):
+                    if "text" in item:
+                        # This is a text response (e.g., from PlanningNode)
+                        return item["text"], False
+                    elif "input" in item:
+                        # This is structured data
+                        return json.dumps(item["input"], indent=2), True
+        # Regular structured response
+        return json.dumps(response, indent=2), True
     elif isinstance(response, str):
         try:
             # Try to parse as JSON
             parsed = json.loads(response)
-            return json.dumps(parsed, indent=2)
+            return json.dumps(parsed, indent=2), True
         except (json.JSONDecodeError, ValueError):
-            return response
+            return response, False
     else:
-        return str(response)
+        return str(response), False
 
 
 def sanitize_filename(name: str) -> str:
@@ -78,6 +87,8 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
         "WorkflowDiscoveryNode": "🔍",
         "ComponentBrowsingNode": "📦",
         "ParameterDiscoveryNode": "🔎",
+        "RequirementsAnalysisNode": "📐",
+        "PlanningNode": "🗺️",
         "ParameterMappingNode": "📝",
         "WorkflowGeneratorNode": "🤖",
         "ValidatorNode": "✅",
@@ -113,7 +124,7 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
     else:
         # Estimate if not provided
         prompt_tokens = estimate_tokens(prompt)
-        response_text = format_response(response) if response else ""
+        response_text, _ = format_response(response) if response else ("", False)
         response_tokens = estimate_tokens(response_text)
 
     # Token summary box
@@ -156,9 +167,12 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
     # Response section
     if response:
         md.append("## 🤖 Response\n")
-        response_text = format_response(response)
+        response_text, is_json = format_response(response)
         md.append(f"*{response_tokens:,} tokens*\n")
-        md.append("```json")
+        if is_json:
+            md.append("```json")
+        else:
+            md.append("```markdown")
         md.append(response_text)
         md.append("```\n")
 

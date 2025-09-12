@@ -98,9 +98,15 @@ class TimedResponse:
                         if hasattr(details, "cache_read_input_tokens"):
                             usage_data["cache_read_input_tokens"] = details.cache_read_input_tokens
 
-        # Get model name from response
-        if isinstance(response_data, dict):
-            model_name = response_data.get("model", "unknown")
+        # Get model name from current_llm_call (it was stored when request was made)
+        # The model is already in current_llm_call from record_llm_request
+        model_name = "unknown"
+        if hasattr(self._trace, "current_llm_call") and self._trace.current_llm_call:
+            # First try to get from prompt_kwargs where our interceptor put it
+            model_name = self._trace.current_llm_call.get("prompt_kwargs", {}).get("model")
+            # Fallback to top-level model field if not in prompt_kwargs
+            if not model_name:
+                model_name = self._trace.current_llm_call.get("model", "unknown")
 
         # Pass the captured data to record_llm_response
         self._trace.record_llm_response_with_data(
@@ -134,6 +140,10 @@ class DebugWrapper:
         # CRITICAL: Copy Flow-required attributes
         self.successors = node.successors
         self.params = getattr(node, "params", {})
+
+    def __call__(self, shared: dict[str, Any]) -> Any:
+        """CRITICAL: Flow calls this to execute the node."""
+        return self._run(shared)
 
     def __getattr__(self, name: str) -> Any:
         """CRITICAL: Delegate ALL unknown attributes to wrapped node."""
@@ -234,12 +244,26 @@ class DebugWrapper:
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Wrap prep phase."""
+        # Initialize metrics tracking on first method call
+        # Mark this as planner execution for metrics
+        shared["__is_planner__"] = True
+
+        # Initialize LLM calls list if metrics are being collected
+        if self.metrics and "__llm_calls__" not in shared:
+            shared["__llm_calls__"] = []
+
+        # Store shared reference for LLM interception
+        self._current_shared = shared
+
+        # Store trace collector in shared for access
+        shared["_trace_collector"] = self.trace
+
         start = time.time()
         result = self._wrapped.prep(shared)
         self.trace.record_phase(self._wrapped.__class__.__name__, "prep", time.time() - start)
         return result  # type: ignore[no-any-return]
 
-    def _create_prompt_interceptor(self, original_prompt: Any, trace: "TraceCollector") -> Any:
+    def _create_prompt_interceptor(self, original_prompt: Any, trace: "TraceCollector", model: Any = None) -> Any:
         """Create an interceptor for the LLM prompt method."""
         # Capture wrapper reference for closure
         wrapper = self
@@ -248,14 +272,31 @@ class DebugWrapper:
             # Use current_node from trace collector
             current_node = getattr(trace, "current_node", "Unknown")
 
-            # Record the prompt BEFORE calling
+            # Extract model info before modifying kwargs
+            model_id = None
+            if model is not None:
+                if hasattr(model, "model_id"):
+                    model_id = model.model_id
+                elif hasattr(model, "model_name"):
+                    model_id = model.model_name
+                elif hasattr(model, "name"):
+                    model_id = model.name
+                else:
+                    # Model exists but has no identifying attribute
+                    model_id = str(type(model).__name__)
+
+            # Add model to kwargs for downstream use
+            if model_id:
+                prompt_kwargs["model"] = model_id
+
+            # Record the prompt with model info
             trace.record_llm_request(current_node, prompt_text, prompt_kwargs)
 
             try:
                 # Get the response object (lazy - no API call yet)
                 response = original_prompt(prompt_text, **prompt_kwargs)
-                # Get shared from wrapper instance or trace
-                shared = getattr(wrapper, "_current_shared", None) or getattr(trace, "_current_shared", None)
+                # Get shared from trace (not wrapper, since wrapper is from first node only)
+                shared = getattr(trace, "_current_shared", None)
                 # Return the wrapped response
                 return TimedResponse(response, trace, current_node, shared)
             except Exception as e:
@@ -270,7 +311,8 @@ class DebugWrapper:
         def intercept_get_model(*args: Any, **kwargs: Any) -> Any:
             model = original_get_model(*args, **kwargs)
             original_prompt = model.prompt
-            model.prompt = self._create_prompt_interceptor(original_prompt, trace)
+            # Pass model to interceptor so it can get model_id
+            model.prompt = self._create_prompt_interceptor(original_prompt, trace, model)
             return model
 
         return intercept_get_model
@@ -302,7 +344,7 @@ class DebugWrapper:
 
         # Set up LLM interception if this node uses LLM
         if "model_name" in prep_res:  # Node uses LLM
-            self._setup_llm_interception(node_name)
+            self._setup_llm_interception(node_name, self._current_shared)
 
         try:
             # CRITICAL FIX: Call _exec() to use retry mechanism, not exec() directly
@@ -374,10 +416,13 @@ class TraceCollector:
     def record_llm_request(self, node: str, prompt: str, kwargs: dict[str, Any]) -> None:
         """Record LLM request before execution."""
         # Store the pending request
+        # Model should be in kwargs from our interceptor
+        model_name = kwargs.get("model", "unknown")
+
         self.current_llm_call = {
             "node": node,
             "timestamp": datetime.utcnow().isoformat(),
-            "model": kwargs.get("model", "unknown"),
+            "model": model_name,
             "prompt": prompt,
             "prompt_kwargs": {k: v for k, v in kwargs.items() if k != "schema"},
         }
@@ -533,8 +578,11 @@ class TraceCollector:
         self.final_status = status
         if shared_store:
             # Only save important keys, not internal ones
+            # But keep __llm_calls__ and __is_planner__ as they're needed for metrics
             self.final_shared_store = {
-                k: v for k, v in shared_store.items() if not k.startswith("_") and k not in ["workflow_manager"]
+                k: v
+                for k, v in shared_store.items()
+                if (not k.startswith("_") or k in ["__llm_calls__", "__is_planner__"]) and k not in ["workflow_manager"]
             }
         if error:
             self.error_info = error
@@ -576,6 +624,7 @@ class TraceCollector:
 
     def cleanup_llm_interception(self) -> None:
         """Restore original LLM get_model function if it was intercepted."""
+        # The trace IS the TraceCollector, check it directly
         if hasattr(self, "_original_get_model"):
             import llm
 
