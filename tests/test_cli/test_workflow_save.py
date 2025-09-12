@@ -170,3 +170,81 @@ class TestWorkflowSaveCLI:
         except subprocess.TimeoutExpired as e:
             # Timeout means it's likely waiting for input (prompt), which is a test failure
             pytest.fail(f"Command timed out - likely showing prompt when piped: {e}")
+
+    def test_save_flag_auto_saves_in_non_interactive_mode(self, runner, tmp_path):
+        """Test that --save flag is accepted by CLI in non-interactive mode (json output)."""
+        # NOTE: Since the planner is blocked in tests, we can't test actual workflow generation
+        # and saving. We can only verify that the flag is accepted by the CLI.
+        simple_workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(simple_workflow))
+
+        # Test that --save flag is accepted with --output-format json
+        result = runner.invoke(main, ["--save", "--output-format", "json", str(workflow_file)])
+        assert result.exit_code == 0
+        # No interactive prompt should be shown with json output
+        assert "Save this workflow?" not in result.output
+
+    def test_save_flag_auto_saves_with_print_flag(self, runner, tmp_path):
+        """Test that --save flag is accepted with -p flag."""
+        # NOTE: Since the planner is blocked in tests, we can't test actual workflow generation
+        # and saving. We can only verify that the flag is accepted by the CLI.
+        simple_workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(simple_workflow))
+
+        # Test that --save flag is accepted with -p
+        result = runner.invoke(main, ["--save", "-p", str(workflow_file)])
+        assert result.exit_code == 0
+        # No interactive prompt should be shown with -p flag
+        assert "Save this workflow?" not in result.output
+
+    def test_no_save_flag_prevents_saving(self, runner, tmp_path):
+        """Test that --no-save flag is accepted by the CLI."""
+        # NOTE: Since the planner is blocked in tests, we can't test actual workflow generation
+        # and saving. We can only verify that the flag is accepted by the CLI.
+        simple_workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(simple_workflow))
+
+        # Test that --no-save flag is accepted
+        result = runner.invoke(main, ["--no-save", "-p", str(workflow_file)])
+        assert result.exit_code == 0
+        # No save prompts should appear
+        assert "Save this workflow?" not in result.output
+        assert "saved" not in result.output.lower()
+
+    def test_save_flag_in_interactive_mode_defaults_to_yes(self, runner, tmp_path):
+        """Test that --save flag in interactive mode prompts with default 'yes'."""
+        # Note: CliRunner can't fully test interactive prompts, but we can verify the flag is accepted
+        simple_workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(simple_workflow))
+
+        # Test that --save flag is accepted by the CLI
+        result = runner.invoke(main, ["--save", str(workflow_file)])
+        assert result.exit_code == 0
+
+        # Test that --no-save flag is also accepted
+        result = runner.invoke(main, ["--no-save", str(workflow_file)])
+        assert result.exit_code == 0

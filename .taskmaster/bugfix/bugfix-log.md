@@ -1,5 +1,111 @@
 <!-- ===== BUGFIX ENTRY START ===== -->
 
+## [BUGFIX] Workflows not saving with json output or -p flag; Clean JSON output for CI/CD — 2025-09-12
+
+Meta:
+- id: BF-20250912-workflow-save-json-output
+- area: cli
+- severity: ux
+- status: fixed
+- versions: uncommitted (working tree)
+- affects: --output-format json, -p flag, piped output, workflow persistence, CI/CD pipelines
+- owner: ai-agent
+- links: src/pflow/cli/main.py, tests/test_cli/test_workflow_save.py, tests/test_integration/test_metrics_integration.py
+- session_id: 92d242fc-23c6-4659-ab65-f81a376bf7a8
+
+Summary:
+- Problem: Workflows never saved in non-interactive modes; JSON output polluted with stderr messages; no workflow metadata in output
+- Root cause: OutputController.should_show_prompts() returned False for non-interactive modes; stderr messages broke JSON parsers
+- Fix: Added --save/--no-save flag with auto-save; unified JSON structure with workflow metadata; eliminated stderr in JSON/p modes
+
+Repro:
+- Steps:
+  1) Generate workflow with json output or -p flag
+  2) Check if workflow was saved and JSON is clean
+- Commands:
+  ```bash
+  echo "Test" | uv run pflow --output-format json "write hello to file.txt" 2>&1 | jq .
+  # Before: Parse error due to stderr messages mixed with JSON
+  ls ~/.pflow/workflows/*.json  # No new workflow saved
+  ```
+- Expected vs actual:
+  - Expected: Clean JSON output, workflow saved automatically
+  - Actual: Mixed stderr/stdout broke parsers, no save
+
+Implementation:
+- Changed files:
+  - `src/pflow/cli/main.py`:
+    - Added --save/--no-save flag (default: --save)
+    - Created unified JSON structure with success/error status
+    - Added workflow metadata to JSON output (name, action: created/reused/unsaved)
+    - Created helper functions to eliminate code duplication:
+      - `_get_default_workflow_metadata()`: Default unsaved metadata
+      - `_create_workflow_metadata()`: Factory with validation
+      - `_extract_workflow_node_count()`: Extract only workflow nodes
+    - Modified error handling to output JSON in JSON mode
+    - Suppressed all stderr output in JSON/-p modes
+    - Fixed UserFriendlyError attribute access (title/explanation/suggestions)
+  - `tests/test_cli/test_workflow_save.py`:
+    - Updated tests for new save behavior
+  - `tests/test_integration/test_metrics_integration.py`:
+    - Updated assertions for new JSON structure
+- Key edits:
+  - JSON always includes `"success"`, `"result"`, `"workflow"` keys
+  - Metrics at top level: `"duration_ms"`, `"total_cost_usd"`, `"nodes_executed"`
+  - `nodes_executed` only counts workflow nodes (excludes planner nodes)
+  - Error output uses same JSON structure with `"error"` object
+  - `-p` flag outputs ONLY result value (no wrapper/metadata)
+
+Verification:
+- Manual:
+  ```bash
+  # Clean JSON output with workflow metadata
+  echo "Test" | uv run pflow --output-format json "write hello to test.txt" 2>/dev/null | jq .
+  {
+    "success": true,
+    "result": {...},
+    "workflow": {"name": "file-writer", "action": "reused"},
+    "duration_ms": 123.45,
+    "total_cost_usd": 0.001,
+    "nodes_executed": 1  // Only workflow nodes, not planner
+  }
+
+  # Clean -p output (just result)
+  echo "Test" | uv run pflow -p "write hello to test.txt"
+  Successfully wrote to '/path/to/test.txt'
+  ```
+- CI: All 1956 tests pass; make check passes (fixed mypy and ruff issues)
+
+Risks & rollbacks:
+- Risk flags: Breaking change to JSON output structure (but no users yet)
+- Rollback plan: Revert JSON structure changes, restore old metrics placement
+
+Lessons & heuristics:
+- Lessons learned:
+  - CI/CD pipelines need pure stdout (no stderr pollution)
+  - JSON output must be consistent for success and error cases
+  - Code duplication leads to maintenance issues - use helper functions
+  - Type annotations catch bugs early (mypy found attribute misuse)
+  - UserFriendlyError uses title/explanation/suggestions, not what/why/how
+  - Metrics should distinguish workflow vs planner node counts
+  - Test expectations should match production (removed unused found_any variable)
+- Heuristics to detect recurrence:
+  - Test JSON output with `2>&1 | jq .` to catch stderr pollution
+  - Always check both success and error JSON structures
+  - Run `make check` to catch type and linting issues early
+  - Look for repeated code patterns that should be helper functions
+  - Watch for unused variables after refactoring (ruff catches these)
+- Related pitfalls: Mixed stdout/stderr breaks parsers; inconsistent JSON structures; type mismatches
+
+Follow-ups:
+- Document JSON output schema in API documentation
+- Consider versioning JSON output format for future compatibility
+- Add integration tests for CI/CD pipeline scenarios
+
+<!-- ===== BUGFIX ENTRY END ===== -->
+
+<!-- ===== BUGFIX ENTRY START ===== -->
+
 ## [BUGFIX] Registry auto-discovery fails; MCP node exposed in listings — 2025-01-12
 
 Meta:

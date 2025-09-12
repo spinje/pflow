@@ -198,7 +198,11 @@ class TestMetricsCollection:
             assert result.exit_code == 0
             output = json.loads(result.output)
 
-            # Check top-level metrics
+            # Check new unified structure
+            assert "success" in output
+            assert output["success"] is True
+
+            # Check metrics are at top level
             assert "duration_ms" in output
             assert isinstance(output["duration_ms"], (int, float))
             assert output["duration_ms"] > 0
@@ -206,11 +210,12 @@ class TestMetricsCollection:
             assert "total_cost_usd" in output
             assert output["total_cost_usd"] == 0  # No LLM calls
 
-            assert "num_nodes" in output
-            assert output["num_nodes"] == 1  # just write1
+            assert "nodes_executed" in output
+            assert output["nodes_executed"] == 1  # just write1
 
-            assert "is_error" in output
-            assert output["is_error"] is False
+            # Check workflow metadata
+            assert "workflow" in output
+            assert "action" in output["workflow"]
 
             # Check detailed metrics
             assert "metrics" in output
@@ -308,7 +313,7 @@ class TestMetricsCollection:
 
             # If we found JSON output, verify it has error info
             if output:
-                assert output.get("is_error") is True or "error" in output
+                assert output.get("success") is False or "error" in output
                 # Should have some metrics even on error
                 assert "duration_ms" in output or "metrics" in output
 
@@ -676,10 +681,10 @@ class TestCLIFlags:
 
             output = json.loads(result.output)
 
-            # Metrics should be present
+            # Metrics should be present at top level
             assert "duration_ms" in output
             assert "total_cost_usd" in output
-            assert "num_nodes" in output
+            assert "nodes_executed" in output
             assert "metrics" in output
 
             # But no trace file created
@@ -707,14 +712,14 @@ class TestJSONOutputStructure:
             output = json.loads(result.output)
 
             # Top-level structure
-            assert output["is_error"] is False
+            assert output["success"] is True
             assert "result" in output
             assert isinstance(output["result"], dict)
 
             # Metrics at top level
             assert isinstance(output["duration_ms"], (int, float))
             assert isinstance(output["total_cost_usd"], (int, float))
-            assert isinstance(output["num_nodes"], int)
+            assert isinstance(output["nodes_executed"], int)
 
             # Detailed metrics structure
             assert "metrics" in output
@@ -904,7 +909,7 @@ class TestMetricsAccuracy:
                 result = runner.invoke(cli, ["--output-format", "json", workflow_file])
                 output = json.loads(result.output)
 
-                assert output["num_nodes"] == expected_count
+                assert output["nodes_executed"] == expected_count
                 assert output["metrics"]["workflow"]["nodes_executed"] == expected_count
 
             finally:

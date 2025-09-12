@@ -292,6 +292,8 @@ def _handle_workflow_output(
     verbose: bool = False,
     output_format: str = "text",
     metrics_collector: Any | None = None,
+    print_flag: bool = False,
+    workflow_metadata: dict[str, Any] | None = None,
 ) -> bool:
     """Handle output from workflow execution.
 
@@ -302,14 +304,18 @@ def _handle_workflow_output(
         verbose: Whether to show verbose output
         output_format: Output format - "text" or "json"
         metrics_collector: Optional MetricsCollector for including metrics in JSON output
+        print_flag: Whether -p flag is set (suppress warnings)
+        workflow_metadata: Optional workflow metadata for JSON output
 
     Returns:
         True if output was produced, False otherwise.
     """
     if output_format == "json":
-        return _handle_json_output(shared_storage, output_key, workflow_ir, verbose, metrics_collector)
+        return _handle_json_output(
+            shared_storage, output_key, workflow_ir, verbose, metrics_collector, workflow_metadata
+        )
     else:  # text format (default)
-        return _handle_text_output(shared_storage, output_key, workflow_ir, verbose)
+        return _handle_text_output(shared_storage, output_key, workflow_ir, verbose, print_flag)
 
 
 def _is_valid_output_value(value: Any) -> bool:
@@ -392,20 +398,24 @@ def _handle_text_output(
     output_key: str | None,
     workflow_ir: dict[str, Any] | None,
     verbose: bool,
+    print_flag: bool = False,
 ) -> bool:
     """Handle text formatted output (current behavior).
 
     Returns the first matching output as plain text.
+    When print_flag (-p) is True, suppresses all warnings.
     """
     # User-specified key takes priority
     if output_key:
         if output_key in shared_storage:
             return safe_output(shared_storage[output_key])
-        click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
+        # Suppress warnings in -p mode
+        if not print_flag:
+            click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
         return False
 
     # Check workflow-declared outputs
-    if _try_declared_outputs(shared_storage, workflow_ir, verbose):
+    if _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag):
         return True
 
     # Fall back to auto-detect from common keys (using unified function)
@@ -500,6 +510,7 @@ def _handle_json_output(
     workflow_ir: dict[str, Any] | None,
     verbose: bool,
     metrics_collector: Any | None = None,
+    workflow_metadata: dict[str, Any] | None = None,
 ) -> bool:
     """Handle JSON formatted output.
 
@@ -507,17 +518,29 @@ def _handle_json_output(
     """
     outputs = _collect_json_outputs(shared_storage, output_key, workflow_ir, verbose)
 
-    # If metrics collector is present, wrap outputs with metrics
+    # Build unified JSON structure
+    result = {
+        "success": True,
+        "result": outputs,
+    }
+
+    # Always include workflow metadata (default to unsaved if not provided)
+    result["workflow"] = workflow_metadata if workflow_metadata else _get_default_workflow_metadata()
+
+    # Add metrics at top level if available (like before)
     if metrics_collector:
         llm_calls = shared_storage.get("__llm_calls__", [])
         metrics_summary = metrics_collector.get_summary(llm_calls)
-        result = {
-            "result": outputs,
-            "is_error": False,
-            **metrics_summary,  # Spreads top-level metrics
-        }
-    else:
-        result = outputs
+
+        # Add top-level metrics (matching old structure)
+        result["duration_ms"] = metrics_summary.get("duration_ms")
+        result["total_cost_usd"] = metrics_summary.get("total_cost_usd")
+
+        # For nodes_executed, only count workflow nodes (not planner nodes)
+        result["nodes_executed"] = _extract_workflow_node_count(metrics_summary)
+
+        # Also include detailed metrics for compatibility
+        result["metrics"] = metrics_summary.get("metrics", {})
 
     return _serialize_json_result(result, verbose)
 
@@ -545,29 +568,139 @@ def _collect_json_outputs(
         # Specific key requested
         if output_key in shared_storage:
             result[output_key] = shared_storage[output_key]
-        elif verbose:
-            # Still output empty JSON, but warn
-            click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
+        # In JSON mode, don't output warnings to stderr
 
     elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
         # Collect ALL declared outputs
         declared = workflow_ir["outputs"]
-        found_any = False
 
         for output_name in declared:
             if output_name in shared_storage:
                 result[output_name] = shared_storage[output_name]
-                found_any = True
-
-        if not found_any and verbose:
-            expected = list(declared.keys())
-            click.echo(f"cli: Warning - no declared outputs found {expected}", err=True)
+        # In JSON mode, don't output warnings to stderr
 
     else:
         # Fallback: Use auto-detection (using unified function)
         key_found, value = _find_auto_output(shared_storage)
         if key_found:
             result[key_found] = value
+
+    return result
+
+
+def _get_default_workflow_metadata() -> dict[str, Any]:
+    """Get default workflow metadata when none is provided."""
+    return {"action": "unsaved"}
+
+
+def _create_workflow_metadata(name: str | None, action: str) -> dict[str, Any]:
+    """Create workflow metadata with name and action.
+
+    Args:
+        name: Workflow name (optional)
+        action: Workflow action ("created", "reused", "unsaved")
+
+    Returns:
+        Workflow metadata dictionary
+
+    Raises:
+        ValueError: If action is not one of the allowed values
+    """
+    allowed_actions = {"created", "reused", "unsaved"}
+    if action not in allowed_actions:
+        raise ValueError(f"Invalid workflow action: {action}. Must be one of {allowed_actions}")
+
+    metadata = {"action": action}
+    if name:
+        metadata["name"] = name
+    return metadata
+
+
+def _extract_workflow_node_count(metrics_summary: dict[str, Any]) -> int:
+    """Extract workflow node count from metrics summary.
+
+    Only counts workflow nodes, not planner nodes.
+    """
+    workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
+    node_count = workflow_metrics.get("nodes_executed", 0)
+    return int(node_count)  # Ensure we return an int
+
+
+def _create_json_error_output(
+    exception: Exception,
+    metrics_collector: Any | None = None,
+    shared_storage: dict[str, Any] | None = None,
+    workflow_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create unified JSON error structure.
+
+    Args:
+        exception: The exception that occurred
+        metrics_collector: Optional metrics collector
+        shared_storage: Optional shared storage for LLM calls
+        workflow_metadata: Optional workflow metadata
+
+    Returns:
+        Dictionary with unified error structure
+    """
+    from pflow.core.user_errors import UserFriendlyError
+    from pflow.planning.error_handler import PlannerError
+
+    # Determine error type
+    suggestion: str | None
+    if isinstance(exception, PlannerError):
+        error_type = "PlannerError"
+        message = exception.message
+        details = str(exception)
+        suggestion = exception.user_action
+    elif isinstance(exception, UserFriendlyError):
+        error_type = exception.__class__.__name__
+        # Extract components from UserFriendlyError
+        message = exception.title
+        details = exception.explanation
+        # Join suggestions list into a single string
+        suggestion = " ".join(exception.suggestions) if exception.suggestions else None
+    else:
+        error_type = exception.__class__.__name__
+        message = str(exception)
+        details = None
+        suggestion = None
+
+    # Build error structure
+    error_dict: dict[str, Any] = {
+        "type": error_type,
+        "message": message,
+    }
+
+    # Add optional error fields
+    if details:
+        error_dict["details"] = details
+    if suggestion:
+        error_dict["suggestion"] = suggestion
+
+    result = {
+        "success": False,
+        "error": error_dict,
+    }
+
+    # Add workflow metadata if available
+    result["workflow"] = workflow_metadata if workflow_metadata else _get_default_workflow_metadata()
+
+    # Add metrics if available
+    if metrics_collector:
+        metrics_collector.record_workflow_end()
+        llm_calls = shared_storage.get("__llm_calls__", []) if shared_storage else []
+        metrics_summary = metrics_collector.get_summary(llm_calls)
+
+        # Add top-level metrics (matching success structure)
+        result["duration_ms"] = metrics_summary.get("duration_ms")
+        result["total_cost_usd"] = metrics_summary.get("total_cost_usd")
+
+        # For nodes_executed, only count workflow nodes
+        result["nodes_executed"] = _extract_workflow_node_count(metrics_summary)
+
+        # Include detailed metrics
+        result["metrics"] = metrics_summary.get("metrics", {})
 
     return result
 
@@ -615,8 +748,8 @@ def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> No
                 click.echo(f"cli: Warning - could not clean up temp file: {stdin_data.temp_path}", err=True)
 
 
-def _prompt_workflow_save(ir_data: dict[str, Any], metadata: dict[str, Any] | None = None) -> tuple[bool, str | None]:
-    """Prompt user to save workflow after execution.
+def _auto_save_workflow(ir_data: dict[str, Any], metadata: dict[str, Any] | None = None) -> tuple[bool, str | None]:
+    """Automatically save workflow without prompting (for non-interactive mode).
 
     Args:
         ir_data: The workflow IR data to save
@@ -626,7 +759,66 @@ def _prompt_workflow_save(ir_data: dict[str, Any], metadata: dict[str, Any] | No
         Tuple of (was_saved, workflow_name) where was_saved indicates if the workflow
         was successfully saved and workflow_name is the name if saved.
     """
-    save_response = click.prompt("\nSave this workflow? (y/n)", type=str, default="n").lower()
+    workflow_manager = WorkflowManager()
+
+    # Extract or generate workflow name
+    default_name = metadata.get("suggested_name", "") if metadata else ""
+    if not default_name:
+        # Generate a timestamp-based name if no suggestion
+        from datetime import datetime
+
+        default_name = f"workflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # Use the AI-generated description if available
+    description = metadata.get("description", "") if metadata else ""
+
+    # Extract rich metadata if available
+    rich_metadata = None
+    if metadata:
+        rich_metadata = {
+            "search_keywords": metadata.get("search_keywords", []),
+            "capabilities": metadata.get("capabilities", []),
+            "typical_use_cases": metadata.get("typical_use_cases", []),
+        }
+        # Filter out empty lists
+        rich_metadata = {k: v for k, v in rich_metadata.items() if v}
+        if not rich_metadata:
+            rich_metadata = None
+
+    # Try to save with the generated name
+    workflow_name = default_name
+    counter = 1
+    while True:
+        try:
+            workflow_manager.save(workflow_name, ir_data, description, metadata=rich_metadata)
+            return (True, workflow_name)
+        except WorkflowExistsError:
+            # If name exists, append a counter
+            workflow_name = f"{default_name}_{counter}"
+            counter += 1
+            if counter > 100:  # Safety limit
+                return (False, None)
+        except Exception:
+            # Other errors, don't save
+            return (False, None)
+
+
+def _prompt_workflow_save(
+    ir_data: dict[str, Any], metadata: dict[str, Any] | None = None, default_save: bool = False
+) -> tuple[bool, str | None]:
+    """Prompt user to save workflow after execution.
+
+    Args:
+        ir_data: The workflow IR data to save
+        metadata: Optional metadata with suggested_name and description from planner
+        default_save: Whether the default prompt response should be "yes"
+
+    Returns:
+        Tuple of (was_saved, workflow_name) where was_saved indicates if the workflow
+        was successfully saved and workflow_name is the name if saved.
+    """
+    default_response = "y" if default_save else "n"
+    save_response = click.prompt("\nSave this workflow? (y/n)", type=str, default=default_response).lower()
     if save_response != "y":
         return (False, None)
 
@@ -748,9 +940,22 @@ def _ensure_registry_loaded(ctx: click.Context) -> Registry:
         # This will auto-discover core nodes if registry doesn't exist
         registry.load()
     except Exception as e:
-        click.echo(f"cli: Error - Failed to load registry: {e}", err=True)
-        click.echo("cli: Try 'pflow registry list' to see available nodes.", err=True)
-        click.echo("cli: Or 'pflow registry scan <path>' to add custom nodes.", err=True)
+        output_format = ctx.obj.get("output_format", "text")
+        verbose = ctx.obj.get("verbose", False)
+
+        if output_format == "json":
+            workflow_metadata = ctx.obj.get("workflow_metadata")
+            error_output = _create_json_error_output(
+                e,
+                None,  # No metrics collector
+                None,  # No shared storage
+                workflow_metadata,
+            )
+            _serialize_json_result(error_output, verbose)
+        else:
+            click.echo(f"cli: Error - Failed to load registry: {e}", err=True)
+            click.echo("cli: Try 'pflow registry list' to see available nodes.", err=True)
+            click.echo("cli: Or 'pflow registry scan <path>' to add custom nodes.", err=True)
         ctx.exit(1)
     return registry
 
@@ -842,7 +1047,7 @@ def _handle_workflow_success(
     verbose: bool,
 ) -> None:
     """Handle successful workflow execution."""
-    if verbose:
+    if verbose and output_format != "json":
         click.echo("cli: Workflow execution completed")
 
     # Save trace if requested
@@ -851,8 +1056,17 @@ def _handle_workflow_success(
         _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     # Check for output from shared store (now with metrics)
+    print_flag = ctx.obj.get("print_flag", False)
+    workflow_metadata = ctx.obj.get("workflow_metadata")
     output_produced = _handle_workflow_output(
-        shared_storage, output_key, ir_data, verbose, output_format, metrics_collector=metrics_collector
+        shared_storage,
+        output_key,
+        ir_data,
+        verbose,
+        output_format,
+        metrics_collector=metrics_collector,
+        print_flag=print_flag,
+        workflow_metadata=workflow_metadata,
     )
 
     # Only show success message if we didn't produce output
@@ -873,9 +1087,25 @@ def _validate_and_load_registry(ctx: click.Context, ir_data: dict[str, Any]) -> 
     Raises:
         SystemExit: If validation fails
     """
+    output_format = ctx.obj.get("output_format", "text")
+    verbose = ctx.obj.get("verbose", False)
+
     # Check if it's valid JSON with workflow structure
     if not _validate_workflow_structure(ir_data, ctx):
-        click.echo("cli: Invalid workflow - missing required fields (ir_version, nodes)", err=True)
+        error_msg = "Invalid workflow - missing required fields (ir_version, nodes)"
+        if output_format == "json":
+            # Create a simple exception for the error
+            error = ValueError(error_msg)
+            workflow_metadata = ctx.obj.get("workflow_metadata")
+            error_output = _create_json_error_output(
+                error,
+                None,  # No metrics collector
+                None,  # No shared storage
+                workflow_metadata,
+            )
+            _serialize_json_result(error_output, verbose)
+        else:
+            click.echo(f"cli: {error_msg}", err=True)
         ctx.exit(1)
 
     # Load registry and validate IR
@@ -883,10 +1113,72 @@ def _validate_and_load_registry(ctx: click.Context, ir_data: dict[str, Any]) -> 
     try:
         validate_ir(ir_data)
     except ValidationError as e:
-        click.echo(f"cli: Invalid workflow - {e}", err=True)
+        if output_format == "json":
+            workflow_metadata = ctx.obj.get("workflow_metadata")
+            error_output = _create_json_error_output(
+                e,
+                None,  # No metrics collector
+                None,  # No shared storage
+                workflow_metadata,
+            )
+            _serialize_json_result(error_output, verbose)
+        else:
+            click.echo(f"cli: Invalid workflow - {e}", err=True)
         ctx.exit(1)
 
     return registry
+
+
+def _format_compilation_error_text(e: Exception, verbose: bool) -> None:
+    """Format and display compilation error in text mode.
+
+    Args:
+        e: The exception to format
+        verbose: Whether to show verbose output
+    """
+    from pflow.core.user_errors import UserFriendlyError
+    from pflow.runtime.compiler import CompilationError as CompilerCompilationError
+
+    if isinstance(e, UserFriendlyError):
+        # Use the formatted user-friendly error
+        error_message = e.format_for_cli(verbose=verbose)
+        click.echo(error_message, err=True)
+    elif isinstance(e, CompilerCompilationError):
+        # Handle old-style CompilationError with suggestion field
+        # Keep as "Planning failed" for consistency with existing tests and UX
+        click.echo(f"❌ Planning failed: {e}", err=True)
+        if hasattr(e, "suggestion") and e.suggestion:
+            click.echo(f"\n{e.suggestion}", err=True)
+        if verbose:
+            click.echo(f"\ncli: Error details: {e}", err=True)
+    else:
+        # Fallback for other exceptions
+        click.echo(f"❌ Planning failed: {e}", err=True)
+        if verbose:
+            click.echo(f"cli: Error details: {e}", err=True)
+
+
+def _handle_compilation_error_json(
+    ctx: click.Context,
+    e: Exception,
+    metrics_collector: Any | None,
+) -> None:
+    """Handle compilation error in JSON output mode.
+
+    Args:
+        ctx: Click context
+        e: The exception to handle
+        metrics_collector: Optional metrics collector
+    """
+    verbose = ctx.obj.get("verbose", False)
+    workflow_metadata = ctx.obj.get("workflow_metadata")
+    error_output = _create_json_error_output(
+        e,
+        metrics_collector,
+        None,  # No shared_storage at compilation time
+        workflow_metadata,
+    )
+    _serialize_json_result(error_output, verbose)
 
 
 def _compile_workflow_with_error_handling(
@@ -917,35 +1209,20 @@ def _compile_workflow_with_error_handling(
         flow = _compile_workflow(ir_data, registry, execution_params, metrics_collector, workflow_trace)
         return flow
     except Exception as e:
-        # Handle compilation errors with user-friendly formatting
-        from pflow.core.user_errors import UserFriendlyError
-        from pflow.runtime.compiler import CompilationError as CompilerCompilationError
-
         verbose = ctx.obj.get("verbose", False)
+        output_format = ctx.obj.get("output_format", "text")
 
-        # Check error type and format appropriately
-        if isinstance(e, UserFriendlyError):
-            # Use the formatted user-friendly error
-            error_message = e.format_for_cli(verbose=verbose)
-            click.echo(error_message, err=True)
-        elif isinstance(e, CompilerCompilationError):
-            # Handle old-style CompilationError with suggestion field
-            # Keep as "Planning failed" for consistency with existing tests and UX
-            click.echo(f"❌ Planning failed: {e}", err=True)
-            if hasattr(e, "suggestion") and e.suggestion:
-                click.echo(f"\n{e.suggestion}", err=True)
-            if verbose:
-                click.echo(f"\ncli: Error details: {e}", err=True)
+        # Handle error based on output format
+        if output_format == "json":
+            _handle_compilation_error_json(ctx, e, metrics_collector)
         else:
-            # Fallback for other exceptions
-            click.echo(f"❌ Planning failed: {e}", err=True)
-            if verbose:
-                click.echo(f"cli: Error details: {e}", err=True)
+            _format_compilation_error_text(e, verbose)
 
         # Save trace if requested
         if workflow_trace:
             trace_path = workflow_trace.save_to_file()
-            if trace_path and verbose:
+            # Combine conditions to avoid nested if
+            if trace_path and verbose and output_format != "json":
                 click.echo(f"cli: Trace saved to {trace_path}", err=True)
         ctx.exit(1)
 
@@ -1076,15 +1353,9 @@ def _handle_workflow_exception(
 
     # In JSON mode, output error as JSON
     if output_format == "json":
-        error_output = {"error": str(e), "is_error": True}
-
-        # Add metrics if available
-        if metrics_collector:
-            metrics_collector.record_workflow_end()
-            llm_calls = shared_storage.get("__llm_calls__", [])
-            metrics_summary = metrics_collector.get_summary(llm_calls)
-            error_output.update(metrics_summary)
-
+        # Get workflow metadata from context if available
+        workflow_metadata = ctx.obj.get("workflow_metadata")
+        error_output = _create_json_error_output(e, metrics_collector, shared_storage, workflow_metadata)
         _serialize_json_result(error_output, verbose)
     else:
         # Format error based on type
@@ -1140,7 +1411,7 @@ def execute_json_workflow(
 
     # Show verbose execution info if requested
     verbose = ctx.obj.get("verbose", False)
-    if verbose:
+    if verbose and ctx.obj.get("output_format", "text") != "json":
         node_count = len(ir_data.get("nodes", []))
         click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
 
@@ -1523,6 +1794,107 @@ def _execute_planner_and_workflow(
     _process_planner_result(ctx, shared, trace_collector, metrics_collector, stdin_data, output_key, verbose)
 
 
+def _determine_workflow_metadata(
+    ctx: click.Context,
+    planner_output: dict,
+    output_controller: Any,
+) -> tuple[bool, str | None]:
+    """Determine workflow metadata and handle pre-execution saving.
+
+    Args:
+        ctx: Click context
+        planner_output: Planner output dictionary
+        output_controller: Output controller for interactive checks
+
+    Returns:
+        Tuple of (was_saved, saved_name) for new workflows
+    """
+    workflow_source = planner_output.get("workflow_source")
+    save_flag = ctx.obj.get("save", True)  # Default to True
+
+    if workflow_source and workflow_source.get("found"):
+        # Existing workflow was reused
+        workflow_name = workflow_source.get("workflow_name", "unknown")
+        ctx.obj["workflow_metadata"] = _create_workflow_metadata(workflow_name, "reused")
+        return False, None
+
+    if not save_flag:
+        # save_flag is False, don't save at all
+        ctx.obj["workflow_metadata"] = _get_default_workflow_metadata()
+        return False, None
+
+    # New workflow with save_flag=True
+    if output_controller.should_show_prompts():
+        # Interactive mode: will prompt after execution
+        ctx.obj["workflow_metadata"] = None  # Will be set after execution
+        return False, None
+
+    # Non-interactive mode: auto-save NOW before execution
+    was_saved, saved_name = _auto_save_workflow(
+        planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata")
+    )
+    workflow_metadata = (
+        _create_workflow_metadata(saved_name, "created")
+        if was_saved and saved_name
+        else _get_default_workflow_metadata()
+    )
+    ctx.obj["workflow_metadata"] = workflow_metadata
+    return was_saved, saved_name
+
+
+def _handle_post_execution_display(
+    ctx: click.Context,
+    planner_output: dict,
+    output_controller: Any,
+    save_flag: bool,
+) -> None:
+    """Handle post-execution display and prompts.
+
+    Args:
+        ctx: Click context
+        planner_output: Planner output dictionary
+        output_controller: Output controller for interactive checks
+        save_flag: Whether saving is enabled
+    """
+    from .rerun_display import display_rerun_commands
+
+    workflow_source = planner_output.get("workflow_source")
+
+    if workflow_source and workflow_source.get("found"):
+        # Handle reused workflow display
+        if not output_controller.should_show_prompts():
+            return
+
+        workflow_name = workflow_source.get("workflow_name", "unknown")
+        click.echo(f"\n✅ Reused existing workflow: '{workflow_name}'")
+
+        execution_params = planner_output.get("execution_params")
+        if execution_params is not None and workflow_name != "unknown":
+            display_rerun_commands(workflow_name, execution_params)
+
+    elif save_flag and output_controller.should_show_prompts():
+        # Interactive mode: prompt for save after execution
+        was_saved, saved_name = _prompt_workflow_save(
+            planner_output["workflow_ir"],
+            metadata=planner_output.get("workflow_metadata"),
+            default_save=True,  # Default to "yes" when --save is set
+        )
+
+        # Update workflow metadata based on save result
+        workflow_metadata = (
+            _create_workflow_metadata(saved_name, "created")
+            if was_saved and saved_name
+            else _get_default_workflow_metadata()
+        )
+        ctx.obj["workflow_metadata"] = workflow_metadata
+
+        # Display rerun command if saved
+        if was_saved and saved_name:
+            execution_params = planner_output.get("execution_params")
+            if execution_params is not None:
+                display_rerun_commands(saved_name, execution_params)
+
+
 def _execute_successful_workflow(
     ctx: click.Context,
     planner_output: dict,
@@ -1536,6 +1908,11 @@ def _execute_successful_workflow(
     if verbose:
         click.echo("cli: Executing generated/discovered workflow")
 
+    # Pre-determine workflow metadata and handle saving BEFORE execution
+    output_controller = _get_output_controller(ctx)
+    _determine_workflow_metadata(ctx, planner_output, output_controller)
+
+    # Execute the workflow
     execute_json_workflow(
         ctx,
         planner_output["workflow_ir"],
@@ -1547,38 +1924,9 @@ def _execute_successful_workflow(
         metrics_collector,
     )
 
-    # Handle post-execution based on workflow source
-    # Only prompt in fully interactive mode (both stdin and stdout are TTY).
-    # This prevents hanging when output is piped (e.g., to jq), because the
-    # downstream process waits for EOF which won't occur if we prompt.
-    output_controller = _get_output_controller(ctx)
-    if output_controller.should_show_prompts():
-        workflow_source = planner_output.get("workflow_source")
-
-        if workflow_source and workflow_source.get("found"):
-            # Existing workflow was reused - just show which one
-            workflow_name = workflow_source.get("workflow_name", "unknown")
-            click.echo(f"\n✅ Reused existing workflow: '{workflow_name}'")
-
-            # Display rerun command for reused workflows
-            from .rerun_display import display_rerun_commands
-
-            execution_params = planner_output.get("execution_params")
-            if execution_params is not None and workflow_name != "unknown":
-                display_rerun_commands(workflow_name, execution_params)
-        else:
-            # New workflow was generated - offer to save
-            was_saved, saved_name = _prompt_workflow_save(
-                planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata")
-            )
-
-            # Display rerun command only if workflow was saved
-            if was_saved and saved_name:
-                from .rerun_display import display_rerun_commands
-
-                execution_params = planner_output.get("execution_params")
-                if execution_params is not None:
-                    display_rerun_commands(saved_name, execution_params)
+    # Handle post-execution actions (prompts and display for interactive mode)
+    save_flag = ctx.obj.get("save", True)
+    _handle_post_execution_display(ctx, planner_output, output_controller, save_flag)
 
 
 def _handle_planning_failure(ctx: click.Context, planner_output: dict) -> None:
@@ -1688,6 +2036,7 @@ def _initialize_context(
     trace: bool,
     trace_planner: bool,
     planner_timeout: int,
+    save: bool,
 ) -> None:
     """Initialize the click context with configuration.
 
@@ -1700,6 +2049,7 @@ def _initialize_context(
         trace: Trace execution flag
         trace_planner: Trace planner flag
         planner_timeout: Planner timeout in seconds
+        save: Save workflow flag
     """
     if ctx.obj is None:
         ctx.obj = {}
@@ -1711,6 +2061,7 @@ def _initialize_context(
     ctx.obj["trace"] = trace
     ctx.obj["trace_planner"] = trace_planner
     ctx.obj["planner_timeout"] = planner_timeout
+    ctx.obj["save"] = save
 
     # Create OutputController once and store it for reuse
     ctx.obj["output_controller"] = OutputController(
@@ -1840,8 +2191,8 @@ def _handle_named_workflow(
     # Validate and prepare parameters
     params = _validate_and_prepare_workflow_params(ctx, workflow_ir, remaining_args)
 
-    # Show what we're doing if verbose
-    if verbose:
+    # Show what we're doing if verbose (but not in JSON mode)
+    if verbose and output_format != "json":
         if source == "saved":
             click.echo(f"cli: Loading workflow '{first_arg}' from registry")
         else:
@@ -2019,6 +2370,7 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
 @click.option("--trace", is_flag=True, help="Save workflow execution trace to file")
 @click.option("--trace-planner", is_flag=True, help="Save planner execution trace to file")
 @click.option("--planner-timeout", type=int, default=60, help="Timeout for planner execution (seconds)")
+@click.option("--save/--no-save", default=True, help="Save generated workflow (default: save)")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def workflow_command(
     ctx: click.Context,
@@ -2030,6 +2382,7 @@ def workflow_command(
     trace: bool,
     trace_planner: bool,
     planner_timeout: int,
+    save: bool,
     workflow: tuple[str, ...],
 ) -> None:
     """pflow - Plan Once, Run Forever
@@ -2087,7 +2440,9 @@ def workflow_command(
     _setup_signals()
 
     # Initialize context with configuration
-    _initialize_context(ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout)
+    _initialize_context(
+        ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout, save
+    )
 
     # Handle stdin data
     stdin_content, enhanced_stdin = _read_stdin_data()
