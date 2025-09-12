@@ -744,10 +744,13 @@ def _ensure_registry_loaded(ctx: click.Context) -> Registry:
         Loaded Registry instance.
     """
     registry = Registry()
-    if not registry.registry_path.exists():
-        click.echo("cli: Error - Node registry not found.", err=True)
-        click.echo("cli: Run 'python scripts/populate_registry.py' to populate the registry.", err=True)
-        click.echo("cli: Note: This is temporary until 'pflow registry' commands are implemented.", err=True)
+    try:
+        # This will auto-discover core nodes if registry doesn't exist
+        registry.load()
+    except Exception as e:
+        click.echo(f"cli: Error - Failed to load registry: {e}", err=True)
+        click.echo("cli: Try 'pflow registry list' to see available nodes.", err=True)
+        click.echo("cli: Or 'pflow registry scan <path>' to add custom nodes.", err=True)
         ctx.exit(1)
     return registry
 

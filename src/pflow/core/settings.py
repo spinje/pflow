@@ -147,6 +147,7 @@ class SettingsManager:
             "no-docstring",
             "retry-example",
             "structured-example",
+            "mcp",  # Internal MCPNode - only used for virtual MCP tool entries
         }
         if node_name in known_test_names:
             return True
