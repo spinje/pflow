@@ -191,6 +191,46 @@ These examples represent real developer workflows that provide actual value, not
 
 ## Writing New Tests
 
+### ⚠️ Performance Note: First Test Pays Setup Cost
+
+**When running tests in isolation:**
+- The FIRST test in a session pays ~0.2s for registry setup (session-scoped)
+- Subsequent tests have minimal overhead
+- This is only noticeable when running single tests during development
+
+**For subprocess tests specifically:**
+1. **`prepared_subprocess_env`** - Use this for tests needing the full registry
+2. **Minimal setup** - For simple tests, create your own minimal registry:
+   ```python
+   # tests/test_core/conftest.py - Override heavy fixtures for core tests
+   @pytest.fixture(autouse=True)
+   def isolate_pflow_config(tmp_path, monkeypatch):
+       """Lightweight version - no registry scanning."""
+       monkeypatch.setenv("HOME", str(tmp_path))
+   ```
+
+### Subprocess Tests - Use Sparingly
+
+**Rule: ONE subprocess test per bug/feature is usually enough**
+
+Instead of multiple subprocess tests, use:
+- 1 subprocess test to prove the integration works
+- Multiple unit tests for edge cases (1000x faster)
+
+**For subprocess tests, consider minimal setup instead of shared fixtures:**
+```python
+# FAST: Minimal inline setup (~0.3s)
+env = os.environ.copy()
+env["HOME"] = str(tmp_path)
+(tmp_path / ".pflow").mkdir()
+# Only register the nodes you actually need
+registry = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode"}}}
+(tmp_path / ".pflow/registry.json").write_text(json.dumps(registry))
+
+# SLOW: Full shared fixture (~0.6s)
+def test_something(prepared_subprocess_env):  # Triggers full registry scan
+```
+
 ### Where to Place New Tests - Decision Tree
 
 ```
@@ -340,7 +380,17 @@ def test_something(mock_llm_responses):
 - Makes it easy to update mock behavior in one place
 - Allows tests to run without making expensive LLM API calls
 
-#### Current Fixture Locations
+#### Note on Autouse Fixtures
+
+**The project has autouse fixtures in `tests/conftest.py`:**
+- `mock_llm_calls` - Mocks LLM API calls (lightweight)
+- `isolate_pflow_config` - Creates isolated config (uses session-cached registry)
+- `enable_test_nodes` - Session-scoped, sets environment variable
+
+**Performance:** The registry scan happens ONCE per test session (~0.2s total), not per test.
+Only matters when running single tests in isolation during development.
+
+### Current Fixture Locations
 The project currently defines fixtures inline within test files. Future refactoring could move common fixtures to the appropriate conftest.py files:
 
 ```python
@@ -416,6 +466,21 @@ def mock_registry():
    - Use multiple tests rather than complex single tests
 
 ## Debugging Tests
+
+### 0. Debugging Slow Tests
+
+```bash
+# Find out WHY your test is slow
+pytest path/to/slow_test.py -v --durations=10 --setup-show
+
+# Note: First test in session shows ~0.2s setup (registry caching)
+# This is normal and only happens once per session
+```
+
+**If your test is genuinely slow:**
+1. Replace subprocess tests with unit tests where possible (100x faster)
+2. Use minimal inline setup for subprocess tests instead of full registry
+3. Consider if you're testing the same thing multiple times
 
 ### 1. Verbose Output
 ```bash

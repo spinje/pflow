@@ -139,7 +139,7 @@ def test_stdin_no_hang_integration(tmp_path):
 
     # Create minimal .pflow directory with just the shell node
     pflow_dir = tmp_path / ".pflow"
-    pflow_dir.mkdir()
+    pflow_dir.mkdir(exist_ok=True)  # exist_ok=True in case conftest already created it
     registry_data = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode"}}}
     (pflow_dir / "registry.json").write_text(json.dumps(registry_data))
 
