@@ -1,5 +1,95 @@
 <!-- ===== BUGFIX ENTRY START ===== -->
 
+## [BUGFIX] Fix stdin hang when piped through grep in non-TTY environments — 2025-01-12
+
+Meta:
+- id: BF-20250112-stdin-hang-nontty-grep
+- area: cli
+- severity: hang
+- status: fixed
+- versions: uncommitted (working tree)
+- affects: Claude Code environment, Docker containers, CI pipelines, piped execution
+- owner: ai-agent
+- links: src/pflow/core/shell_integration.py, tests/test_core/test_stdin_no_hang.py
+- session_id: 6c1662ce-2378-4ed8-aa17-2a981d21d1f0
+
+Summary:
+- Problem: `pflow --trace workflow.json 2>&1 | grep "pattern"` hung indefinitely in Claude Code
+- Root cause: stdin.read() blocked waiting for EOF when stdin was non-TTY but had no actual data
+- Fix: Use select.select() with 0 timeout to check if stdin has data before attempting to read
+
+Repro:
+- Steps:
+  1) Create a simple workflow JSON file
+  2) Run pflow with output piped through grep
+  3) Command hangs indefinitely
+- Commands:
+  ```bash
+  cat > /tmp/test.json << 'EOF'
+  {
+    "ir_version": "0.1.0",
+    "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo hello"}}],
+    "edges": []
+  }
+  EOF
+
+  # This hangs before fix:
+  uv run pflow --trace /tmp/test.json 2>&1 | grep "hello"
+  ```
+- Expected vs actual:
+  - Expected: Command completes, grep filters output
+  - Actual: Command hangs indefinitely waiting for stdin input
+
+Implementation:
+- Changed files:
+  - `src/pflow/core/shell_integration.py`:
+    - Added `stdin_has_data()` function using select.select() to check stdin readiness
+    - Updated `read_stdin()` to call `stdin_has_data()` instead of `detect_stdin()`
+    - Updated `read_stdin_enhanced()` similarly
+  - `src/pflow/core/__init__.py`: Export new `stdin_has_data` function
+  - `tests/test_core/test_stdin_no_hang.py`: Added comprehensive tests
+- Key edits:
+  - `stdin_has_data()` uses `select.select([sys.stdin], [], [], 0)` for non-blocking check
+  - Graceful fallback if select() fails on some platforms
+  - No longer assumes non-TTY means stdin has data
+- Tests: 4 new tests covering hang prevention, function behavior, and grep integration
+
+Verification:
+- Manual:
+  ```bash
+  # After fix - completes immediately:
+  uv run pflow --trace /tmp/test.json 2>&1 | grep "hello"
+  # Output: hello
+
+  # Test with actual stdin data still works:
+  echo "input data" | uv run pflow /tmp/test.json
+  ```
+- CI: All 1960 tests pass, make check passes
+
+Risks & rollbacks:
+- Risk flags: select() behavior varies by platform; stdin detection in different environments
+- Rollback plan: Revert stdin_has_data() function, restore direct detect_stdin() calls
+
+Lessons & heuristics:
+- Lessons learned:
+  - Claude Code environment has stdin/stdout always non-TTY even when not piped
+  - sys.stdin.read() blocks indefinitely waiting for EOF if no data available
+  - select.select() with 0 timeout provides non-blocking stdin readiness check
+  - Test subprocess commands need to account for grep exit codes (0=found, 1=not found)
+- Heuristics to detect recurrence:
+  - Look for sys.stdin.read() without prior data availability check
+  - Watch for hangs when `| grep` or `| jq` used with pflow
+  - Check for assumptions that non-TTY always means piped data
+- Related pitfalls: Similar issues could affect any CLI tool in containerized/virtualized environments
+
+Follow-ups:
+- Consider Windows compatibility testing (select() behavior differs)
+- Document behavior in non-standard terminal environments
+
+<!-- ===== BUGFIX ENTRY END ===== -->
+
+<!-- ===== BUGFIX ENTRY START ===== -->
+
 ## [BUGFIX] Workflows not saving with json output or -p flag; Clean JSON output for CI/CD — 2025-09-12
 
 Meta:

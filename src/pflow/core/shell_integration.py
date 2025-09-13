@@ -15,6 +15,7 @@ The module supports:
 import contextlib
 import json
 import os
+import select
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -64,6 +65,31 @@ def detect_stdin() -> bool:
     return not sys.stdin.isatty()
 
 
+def stdin_has_data() -> bool:
+    """Check if stdin actually has data available without blocking.
+
+    This function uses select() to check if stdin is ready for reading,
+    which helps avoid hanging when stdin is non-TTY but has no actual data.
+    This can happen in environments like Claude Code where stdin/stdout
+    are always non-TTY.
+
+    Returns:
+        True if stdin has data available, False otherwise
+    """
+    if sys.stdin.isatty():
+        return False
+
+    # Use select with 0 timeout to check if stdin is ready without blocking
+    # This avoids the hang when stdin is non-TTY but has no data
+    try:
+        rlist, _, _ = select.select([sys.stdin], [], [], 0)
+        return bool(rlist)
+    except (OSError, ValueError):
+        # select() might fail on some platforms or file types
+        # In that case, fall back to assuming stdin has data if it's not a TTY
+        return not sys.stdin.isatty()
+
+
 def read_stdin() -> str | None:
     """Read all stdin content if available.
 
@@ -78,7 +104,8 @@ def read_stdin() -> str | None:
     Raises:
         UnicodeDecodeError: If stdin contains invalid UTF-8
     """
-    if not detect_stdin():
+    # Check if stdin actually has data available to avoid hanging
+    if not stdin_has_data():
         return None
 
     # For backward compatibility, we still use the simple text reading
@@ -113,7 +140,8 @@ def read_stdin_enhanced() -> StdinData | None:
         StdinData object with appropriate field populated,
         or None if no stdin available
     """
-    if not detect_stdin():
+    # Check if stdin actually has data available to avoid hanging
+    if not stdin_has_data():
         return None
 
     try:
