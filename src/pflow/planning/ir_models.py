@@ -66,10 +66,12 @@ class WorkflowMetadata(BaseModel):
     )
 
     search_keywords: list[str] = Field(
-        description="Alternative terms users might search for", min_length=3, max_length=10
+        description="Alternative terms users might search for", min_length=3, max_length=20
     )
 
-    capabilities: list[str] = Field(description="What this workflow can do (bullet points)", min_length=2, max_length=6)
+    capabilities: list[str] = Field(
+        description="What this workflow can do (bullet points)", min_length=2, max_length=10
+    )
 
     typical_use_cases: list[str] = Field(description="When/why someone would use this", min_length=1, max_length=3)
 

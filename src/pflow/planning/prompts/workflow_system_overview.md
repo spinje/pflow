@@ -57,7 +57,7 @@ Each node produces outputs that can be referenced by subsequent nodes:
 - **shell**: `stdout` (string), `stderr` (string), `exit_code` (int)
 - **http**: `response` (object) - response with body, headers, status
 
-### Referencing Outputs:
+### Referencing Node Outputs:
 - Use `${node_id.output_key}` format
 - Default output (if node has single main output): `${node_id.output}`
 - Specific outputs: `${shell_cmd.stdout}`, `${shell_cmd.exit_code}`
@@ -65,7 +65,7 @@ Each node produces outputs that can be referenced by subsequent nodes:
 
 ## Workflow Input Format
 
-Each input MUST be a structured object with metadata:
+Each input MUST be a structured object with metadata inside the `inputs` section:
 
 ```json
 "param_name": {
@@ -80,6 +80,20 @@ Each input MUST be a structured object with metadata:
 ```json
 "param_name": "Description"  // ❌ WRONG - must be object with type/description/required
 ```
+
+## Workflow Output Format
+
+Each output MUST be a structured object with metadata inside the `outputs` section:
+
+```json
+"output_name": {
+  "description": "Clear explanation of what this output is for", // Required
+  "source": "${node_id.output_key}"     // Required: template expression to resolve the output value from the source node's output
+}
+```
+
+**Only description and source are allowed in the output object. Nothing else.**
+**All workflow must have at least one output. Always put the most relevant output at the top of the outputs object.**
 
 ## Complete Example Workflow
 
@@ -157,6 +171,20 @@ Here's a real workflow showing inputs, nodes with outputs, and complete data flo
     {"from": "analyze_patterns", "to": "format_report"},
     {"from": "format_report", "to": "save_report"}
   ],
+  "outputs": {
+    "analysis_report": {
+      "description": "The formatted markdown analysis report",
+      "source": "${format_report.response}"
+    },
+    "issues_count": {
+      "description": "Number of issues that were analyzed",
+      "source": "${fetch_issues.issues.length}"
+    },
+    "file_saved": {
+      "description": "Path where the report was saved",
+      "source": "${save_report.file_path}"
+    }
+  }
 }
 ```
 

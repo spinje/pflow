@@ -58,16 +58,18 @@ Generate the following metadata:
    - Focus on value to the user
    - Make sure to mention everything the workflow does
 
-3. search_keywords (5-20 terms):
+3. search_keywords (2-10 terms):
    - Think: What would users type when looking for this functionality?
    - Extract core concepts from the flow and purposes
    - Include both specific terms (from nodes) and general concepts (from actions)
    - Cover different search angles: domain, action, purpose, technology
+   - Dont add too many keywords, just the most relevant ones. Quality over quantity.
 
-4. capabilities (2-6 bullet points):
+4. capabilities (2-10 bullet points):
    - Focus on what users can achieve with this workflow
    - Highlight key configurability from optional parameters
    - Think outcomes, not technical steps
+   - Only add capabilities that are actually possible with the workflow.
 
 5. typical_use_cases (1-3 scenarios):
    - Concrete situations where this workflow saves time
