@@ -42,23 +42,25 @@ class TimedResponse:
         self._trace = trace
         self._current_node = current_node
         self._shared = shared
+        # Record when the response object was created (when prompt() returned)
+        self._request_time = time.perf_counter()
 
     def json(self) -> Any:
         if self._json_cache is None:
-            # Time the actual API call
-            start = time.perf_counter()
+            # Get the response data
             self._json_cache = self._response.json()
-            duration = time.perf_counter() - start
+            # Calculate full request-to-response duration
+            duration = time.perf_counter() - self._request_time
             # Now that response is consumed, capture usage data
             self._capture_usage_and_record(duration, self._json_cache)
         return self._json_cache
 
     def text(self) -> str:
         if self._text_cache is None:
-            # Time the actual API call
-            start = time.perf_counter()
+            # Get the response text
             self._text_cache = self._response.text()
-            duration = time.perf_counter() - start
+            # Calculate full request-to-response duration
+            duration = time.perf_counter() - self._request_time
             # Now that response is consumed, capture usage data
             # For text responses, we need to try to get JSON for metadata
             try:
@@ -265,8 +267,6 @@ class DebugWrapper:
 
     def _create_prompt_interceptor(self, original_prompt: Any, trace: "TraceCollector", model: Any = None) -> Any:
         """Create an interceptor for the LLM prompt method."""
-        # Capture wrapper reference for closure
-        wrapper = self
 
         def intercept_prompt(prompt_text: str, **prompt_kwargs: Any) -> Any:
             # Use current_node from trace collector
@@ -448,6 +448,11 @@ class TraceCollector:
                 self.current_llm_call["tokens"] = {
                     "input": usage_data.get("input_tokens", 0),
                     "output": usage_data.get("output_tokens", 0),
+                    "cache_creation": usage_data.get("cache_creation_input_tokens", 0),
+                    "cache_read": usage_data.get("cache_read_input_tokens", 0),
+                    "total": usage_data.get(
+                        "total_tokens", usage_data.get("input_tokens", 0) + usage_data.get("output_tokens", 0)
+                    ),
                 }
 
                 # Also accumulate in shared store for metrics if available
