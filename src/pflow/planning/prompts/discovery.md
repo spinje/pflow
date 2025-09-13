@@ -66,6 +66,12 @@ You must return a structured decision with:
 4. **Single words can match** - "changelog" can match a changelog workflow if unambiguous
 5. **When uncertain, return false** - Better to create new than fail with wrong workflow
 
+## Examples
+
+- ✅ "get latest 20 open github issues and prioritize them by priority then save to a file named issues_prioritized.md" → MATCHES a workflow with "github-list-issues -> llm -> write-file"
+- ❌ "get latest 20 open github issues and prioritize them by priority" → NO MATCH for a workflow with "github-list-issues -> llm -> write-file" because the workflow doesn't save to a file
+
+
 ## Context
 
 <existing_workflows>

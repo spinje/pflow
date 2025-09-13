@@ -293,12 +293,17 @@ class DebugWrapper:
             trace.record_llm_request(current_node, prompt_text, prompt_kwargs)
 
             try:
-                # Get the response object (lazy - no API call yet)
+                # Start timing before making the request
+                request_start = time.perf_counter()
+                # Get the response object (may or may not be lazy depending on implementation)
                 response = original_prompt(prompt_text, **prompt_kwargs)
                 # Get shared from trace (not wrapper, since wrapper is from first node only)
                 shared = getattr(trace, "_current_shared", None)
-                # Return the wrapped response
-                return TimedResponse(response, trace, current_node, shared)
+                # Return the wrapped response with the request start time
+                timed_response = TimedResponse(response, trace, current_node, shared)
+                # Override the request time with the actual start time
+                timed_response._request_time = request_start
+                return timed_response
             except Exception as e:
                 trace.record_llm_error(current_node, str(e))
                 raise
@@ -445,14 +450,21 @@ class TraceCollector:
 
             # Add token counts if available
             if usage_data:
+                input_tokens = usage_data.get("input_tokens", 0)
+                output_tokens = usage_data.get("output_tokens", 0)
+                cache_creation_tokens = usage_data.get("cache_creation_input_tokens", 0)
+                cache_read_tokens = usage_data.get("cache_read_input_tokens", 0)
+
+                # Calculate total - should include ALL tokens processed
+                # If API provides total_tokens, use it; otherwise calculate including cache
+                calculated_total = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
+
                 self.current_llm_call["tokens"] = {
-                    "input": usage_data.get("input_tokens", 0),
-                    "output": usage_data.get("output_tokens", 0),
-                    "cache_creation": usage_data.get("cache_creation_input_tokens", 0),
-                    "cache_read": usage_data.get("cache_read_input_tokens", 0),
-                    "total": usage_data.get(
-                        "total_tokens", usage_data.get("input_tokens", 0) + usage_data.get("output_tokens", 0)
-                    ),
+                    "input": input_tokens,
+                    "output": output_tokens,
+                    "cache_creation": cache_creation_tokens,
+                    "cache_read": cache_read_tokens,
+                    "total": usage_data.get("total_tokens", calculated_total),
                 }
 
                 # Also accumulate in shared store for metrics if available
