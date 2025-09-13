@@ -140,6 +140,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
 "tests/test_integration/test_git_*.py" = ["S603", "S607"]  # Allow subprocess calls for git integration tests
+"tests/test_core/test_stdin_no_hang.py" = ["S603", "S607", "UP022"]  # Allow subprocess calls for testing stdin hang issue
 "src/pflow/nodes/shell/shell.py" = ["S602"]  # shell=True is intentional for shell node
 
 [tool.ruff.format]
