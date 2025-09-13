@@ -6,13 +6,12 @@ when piped through grep).
 """
 
 import json
-import os
 import subprocess
 
 import pytest
 
 
-def test_stdin_no_hang_when_piped(tmp_path):
+def test_stdin_no_hang_when_piped(tmp_path, prepared_subprocess_env):
     """Test that pflow doesn't hang when stdout is piped (non-TTY)."""
     # Create a simple test workflow
     workflow = {
@@ -24,24 +23,7 @@ def test_stdin_no_hang_when_piped(tmp_path):
     workflow_path = tmp_path / "test.json"
     workflow_path.write_text(json.dumps(workflow))
 
-    # Set up isolated environment to avoid affecting user's registry
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / ".pflow").mkdir()
-
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
     try:
-        # Initialize registry first
-        subprocess.run(
-            ["uv", "run", "pflow", "registry", "list", "--json"],
-            capture_output=True,
-            env=env,
-            timeout=5,
-        )
-
         # Run pflow with stdout as PIPE (simulates non-TTY like when piped to grep)
         # This tests the core issue: pflow shouldn't hang when stdout is non-TTY
         # Note: We can't use capture_output here because we need stdin=DEVNULL
@@ -51,7 +33,7 @@ def test_stdin_no_hang_when_piped(tmp_path):
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,  # No stdin input, simulating pipe scenario
             text=True,
-            env=env,
+            env=prepared_subprocess_env,
             timeout=3,
         )
 
@@ -101,7 +83,7 @@ def test_read_stdin_no_hang(monkeypatch):
     assert result is None
 
 
-def test_workflow_execution_with_piped_output(tmp_path):
+def test_workflow_execution_with_piped_output(tmp_path, prepared_subprocess_env):
     """Integration test: workflow execution with non-TTY output (simulating pipe)."""
     workflow = {
         "ir_version": "0.1.0",
@@ -115,24 +97,7 @@ def test_workflow_execution_with_piped_output(tmp_path):
     workflow_path = tmp_path / "test.json"
     workflow_path.write_text(json.dumps(workflow))
 
-    # Set up isolated environment
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / ".pflow").mkdir()
-
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
     try:
-        # Initialize registry
-        subprocess.run(
-            ["uv", "run", "pflow", "registry", "list", "--json"],
-            capture_output=True,
-            env=env,
-            timeout=5,
-        )
-
         # Run pflow with pipes (non-TTY) and verify it completes without hanging
         # Note: We can't use capture_output here because we need stdin=DEVNULL
         result = subprocess.run(
@@ -141,7 +106,7 @@ def test_workflow_execution_with_piped_output(tmp_path):
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,  # No stdin input
             text=True,
-            env=env,
+            env=prepared_subprocess_env,
             timeout=3,
         )
 
@@ -157,7 +122,7 @@ def test_workflow_execution_with_piped_output(tmp_path):
         pytest.fail("Workflow execution hung when output is piped (non-TTY)")
 
 
-def test_simulated_grep_filtering(tmp_path):
+def test_simulated_grep_filtering(tmp_path, prepared_subprocess_env):
     """Test that output can be filtered (like grep) without hanging."""
     workflow = {
         "ir_version": "0.1.0",
@@ -168,24 +133,7 @@ def test_simulated_grep_filtering(tmp_path):
     workflow_path = tmp_path / "test.json"
     workflow_path.write_text(json.dumps(workflow))
 
-    # Set up isolated environment
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / ".pflow").mkdir()
-
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
     try:
-        # Initialize registry
-        subprocess.run(
-            ["uv", "run", "pflow", "registry", "list", "--json"],
-            capture_output=True,
-            env=env,
-            timeout=5,
-        )
-
         # Run pflow with piped output (simulating what happens with grep)
         proc = subprocess.Popen(
             ["uv", "run", "pflow", str(workflow_path)],
@@ -193,7 +141,7 @@ def test_simulated_grep_filtering(tmp_path):
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,  # No stdin input (like grep doesn't provide input to pflow)
             text=True,
-            env=env,
+            env=prepared_subprocess_env,
         )
 
         # Read output with timeout (simulating grep reading the output)
@@ -215,4 +163,4 @@ def test_simulated_grep_filtering(tmp_path):
             pytest.fail("pflow hung when output is being read (simulating grep)")
 
     except subprocess.TimeoutExpired:
-        pytest.fail("pflow hung during registry initialization")
+        pytest.fail("pflow hung during initialization")
