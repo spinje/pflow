@@ -17,32 +17,6 @@ last_test_cost: 0.084984
 
 Analyze this workflow and generate metadata that enables accurate discovery and reuse.
 
-Notice: Values in the user input have been replaced with [parameter_name] to show what's configurable.
-
-<original_request>
-{{user_input}}
-</original_request>
-
-<workflow_structure>
-   <flow>{{node_flow}}</flow>
-
-   <stages>
-   {{workflow_stages}}
-   </stages>
-
-   <inputs>
-   {{workflow_inputs}}
-   </inputs>
-
-   <parameter_bindings>
-   {{parameter_bindings}}
-   </parameter_bindings>
-</workflow_structure>
-
-Key insight: The workflow stages show WHAT it does, the inputs show WHAT'S CONFIGURABLE.
-
-Important: Keep all metadata generic and reusable. Even though specific values have been replaced with [parameter_name] in the input, avoid introducing any specific values, time periods, or file names in your metadata.
-
 Generate the following metadata:
 
 1. suggested_name (kebab-case, max 50 chars):
@@ -76,3 +50,34 @@ Generate the following metadata:
    - Focus on the "when" and "why" someone needs this
 
 Goal: Enable users to find this workflow when they need it, understand what it does, and know it fits their use case.
+
+## Notes
+
+Notice: Values in the user input have been replaced with ${parameter_name} to show what's configurable.
+
+Key insight: The workflow stages show WHAT it does, the inputs show WHAT'S CONFIGURABLE.
+
+Important: Keep all metadata generic and reusable. Even though specific values have been replaced with ${parameter_name} in the input, avoid introducing any specific values, time periods, or file names in your metadata.
+
+## Context
+
+<user_input>
+{{user_input}}
+</user_input>
+
+<workflow_structure>
+   <flow>{{node_flow}}</flow>
+
+   <stages>
+   {{workflow_stages}}
+   </stages>
+
+   <inputs>
+   {{workflow_inputs}}
+   </inputs>
+
+   <parameter_bindings>
+   {{parameter_bindings}}
+   </parameter_bindings>
+</workflow_structure>
+

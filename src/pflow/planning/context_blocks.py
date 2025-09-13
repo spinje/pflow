@@ -1,7 +1,7 @@
 """Context block management for cache-optimized planner pipeline.
 
 This module provides structured context building for the planner pipeline,
-optimized for future context caching with clear block boundaries.
+optimized for Anthropic prompt caching with clear block boundaries.
 Each block is self-contained and cacheable, enabling incremental context
 accumulation across planning, generation, and retry stages.
 """
@@ -28,6 +28,9 @@ class PlannerContextBuilder:
 
     # Cached workflow overview (loaded once)
     _workflow_overview_cache: Optional[str] = None
+    
+    # Maximum retry history to keep in blocks
+    MAX_RETRY_HISTORY = 3
 
     @classmethod
     def _load_workflow_overview(cls) -> str:
@@ -52,88 +55,209 @@ class PlannerContextBuilder:
         return cls._workflow_overview_cache
 
     @classmethod
-    def build_base_context(
+    def build_base_blocks(
         cls,
         user_request: str,
         requirements_result: dict[str, Any],
         browsed_components: dict[str, Any],
         planning_context: str,
         discovered_params: Optional[dict[str, Any]] = None,
-    ) -> str:
-        """Build the base context block shared by Planning and Generator.
-
-        This is the foundational context that both nodes need. It will be
-        cached and reused across the pipeline.
-
+    ) -> list[dict[str, Any]]:
+        """Build cache blocks for Anthropic SDK with proper static/dynamic separation.
+        
+        Block 1: Workflow System Overview (including introduction) - FULLY STATIC, cacheable across all requests
+        Block 2: Dynamic Context - All workflow-specific data in XML tags
+        
+        This structure ensures Block 1 can be cached and reused across ALL workflow
+        planning requests, providing maximum cache efficiency.
+        
         Args:
             user_request: The user's request (preferably templatized)
             requirements_result: Requirements analysis output
             browsed_components: Selected components from ComponentBrowsingNode
             planning_context: Detailed component information
             discovered_params: Parameters discovered from user input (optional)
-
+            
         Returns:
-            Formatted base context block as a string
+            List of cache blocks with cache_control markers
         """
-        sections = []
-
-        # Add introduction
-        sections.extend(cls._build_introduction_section())
-
-        # Add user request
-        sections.extend(cls._build_user_request_section(user_request))
-
-        # Add workflow overview
-        sections.extend(cls._build_workflow_overview_section())
-
-        # Add discovered parameters
+        blocks = []
+        
+        # Block 1: Workflow System Overview (FULLY STATIC - cacheable across all requests)
+        # This now includes the introduction text, making it 100% static
+        workflow_overview = cls._load_workflow_overview()
+        if workflow_overview:
+            blocks.append({
+                "text": workflow_overview,
+                "cache_control": {"type": "ephemeral"}
+            })
+        
+        # Block 2: ALL Dynamic Context (workflow-specific, wrapped in XML tags)
+        dynamic_sections = []
+        
+        # Add user request in XML tags
+        dynamic_sections.append("<user_request>")
+        dynamic_sections.append(user_request)
+        dynamic_sections.append("</user_request>")
+        dynamic_sections.append("")
+        
+        # Add discovered parameters if available
         if discovered_params:
-            sections.extend(cls._build_discovered_params_section(discovered_params))
-
-        # Add requirements analysis
+            dynamic_sections.append("<discovered_parameters>")
+            dynamic_sections.extend(cls._build_discovered_params_content(discovered_params))
+            dynamic_sections.append("</discovered_parameters>")
+            dynamic_sections.append("")
+        
+        # Add requirements if available
         if requirements_result:
-            sections.extend(cls._build_requirements_section(requirements_result))
-
-        # Add selected components
+            dynamic_sections.append("<requirements_analysis>")
+            dynamic_sections.extend(cls._build_requirements_content(requirements_result))
+            dynamic_sections.append("</requirements_analysis>")
+            dynamic_sections.append("")
+        
+        # Add selected components if available
         if browsed_components:
-            sections.extend(cls._build_selected_components_section(browsed_components))
-
-        # Add component details
+            dynamic_sections.append("<selected_components>")
+            dynamic_sections.extend(cls._build_components_content(browsed_components))
+            dynamic_sections.append("</selected_components>")
+            dynamic_sections.append("")
+        
+        # Add component details if available
         if planning_context:
-            sections.extend(cls._build_component_details_section(planning_context))
-
-        return "\n".join(sections)
-
-    @classmethod
-    def _build_introduction_section(cls) -> list[str]:
-        """Build the introduction section for the context.
-
-        Returns:
-            List of strings forming the introduction section
-        """
-        return [
-            "You are a specialized workflow planner that first generatoes a detailed execution plan and then generates JSON workflows based on user requests and highly specific system requirements. Follow the provided instructions carefully and think hard about all the requirements, constraints and your current task (either creating a plan or executing the plan and creating the final workflow json ir).",
-            "",
-        ]
+            dynamic_sections.append("<component_details>")
+            dynamic_sections.append(planning_context)
+            dynamic_sections.append("</component_details>")
+            dynamic_sections.append("")
+        
+        dynamic_text = "\n".join(dynamic_sections)
+        if dynamic_text:
+            blocks.append({
+                "text": dynamic_text,
+                "cache_control": {"type": "ephemeral"}
+            })
+        
+        return blocks
 
     @classmethod
-    def _build_user_request_section(cls, user_request: str) -> list[str]:
-        """Build the user request section.
-
+    def append_planning_block(
+        cls,
+        blocks: list[dict],
+        plan_output: str,
+        parsed_plan: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Append planning output block to existing blocks.
+        
+        CRITICAL: Returns NEW list with block appended (immutable pattern)!
+        Example: [Static, Dynamic] + [Plan] → [Static, Dynamic, Plan] as separate list entries
+        
+        NEVER modify the original blocks list - return blocks + [new_block]
+        
         Args:
-            user_request: The user's request
-
+            blocks: Existing cache blocks [Static overview, Dynamic context]
+            plan_output: Markdown plan from PlanningNode
+            parsed_plan: Parsed plan dictionary (for potential metadata)
+            
         Returns:
-            List of strings forming the user request section
+            New list with planning block appended: [Static, Dynamic, Plan]
         """
-        if not user_request:
-            return []
+        plan_text = f"## Execution Plan\n\n{plan_output}"
+        
+        # Check if we're approaching the 4-breakpoint limit
+        # Anthropic allows max 4 cache_control markers
+        if len(blocks) >= 4:
+            # We're at the limit - combine with the last block
+            last_block = blocks[-1].copy()
+            last_block["text"] = last_block["text"] + "\n\n" + plan_text
+            return blocks[:-1] + [last_block]
+        
+        # Return new list with block appended
+        return blocks + [{
+            "text": plan_text,
+            "cache_control": {"type": "ephemeral"}
+        }]
 
-        return [
-            "## User Request\n",
-            user_request,
-            "",
-        ]
+    @classmethod
+    def append_workflow_block(
+        cls,
+        blocks: list[dict],
+        workflow: dict[str, Any],
+        attempt_number: int,
+    ) -> list[dict[str, Any]]:
+        """Append Block E (generated workflow) for retry attempts.
+        
+        CRITICAL: Returns NEW list with block appended (immutable pattern)!
+        Example: [A, B, C, D] + [E] → [A, B, C, D, E]
+        
+        Args:
+            blocks: Existing cache blocks
+            workflow: Generated workflow JSON
+            attempt_number: Which attempt this is (1, 2, 3...)
+            
+        Returns:
+            New list with workflow block appended
+        """
+        workflow_text = f"## Generated Workflow (Attempt {attempt_number})\n\n{json.dumps(workflow, indent=2)}"
+        
+        # Check if we're approaching the 4-breakpoint limit
+        # Anthropic allows max 4 cache_control markers
+        if len(blocks) >= 4:
+            # We're at the limit - combine with the last block
+            # This typically happens on retry 2+
+            last_block = blocks[-1].copy()
+            last_block["text"] = last_block["text"] + "\n\n" + workflow_text
+            return blocks[:-1] + [last_block]
+        
+        # Return new list with block appended
+        return blocks + [{
+            "text": workflow_text,
+            "cache_control": {"type": "ephemeral"}
+        }]
+
+    @classmethod
+    def append_errors_block(
+        cls,
+        blocks: list[dict],
+        validation_errors: list[str],
+    ) -> list[dict[str, Any]]:
+        """Append Block F (validation errors) for retry attempts.
+        
+        CRITICAL: Returns NEW list with block appended (immutable pattern)!
+        Example: [A, B, C, D, E] + [F] → [A, B, C, D, E, F]
+        
+        Only appends if validation_errors is non-empty.
+        If approaching 4-breakpoint limit, may combine with previous block.
+        
+        Args:
+            blocks: Existing cache blocks
+            validation_errors: List of validation error messages
+            
+        Returns:
+            New list with errors block appended (or same list if no errors)
+        """
+        if not validation_errors:
+            return blocks
+        
+        # Take top 3 errors to avoid bloat
+        errors_to_show = validation_errors[:3]
+        errors_text = "## Validation Errors\n\n" + "\n".join(
+            f"{i+1}. {err}" for i, err in enumerate(errors_to_show)
+        )
+        
+        # Check if we're at or approaching the 4-breakpoint limit
+        if len(blocks) >= 4:
+            # Combine with the last block
+            last_block = blocks[-1].copy()
+            last_block["text"] = last_block["text"] + "\n\n" + errors_text
+            return blocks[:-1] + [last_block]
+        
+        # Return new list with block appended
+        return blocks + [{
+            "text": errors_text,
+            "cache_control": {"type": "ephemeral"}
+        }]
+
+    # Introduction section removed - now part of workflow_system_overview.md
+    # User request section removed - handled directly in build_base_blocks with XML tags
 
     @classmethod
     def _build_workflow_overview_section(cls) -> list[str]:
@@ -152,42 +276,41 @@ class PlannerContextBuilder:
         ]
 
     @classmethod
-    def _build_discovered_params_section(cls, discovered_params: dict[str, Any]) -> list[str]:
-        """Build the discovered parameters section.
+    def _build_discovered_params_content(cls, discovered_params: dict[str, Any]) -> list[str]:
+        """Build the discovered parameters content (without headers, for XML wrapping).
 
         Args:
             discovered_params: Parameters discovered from user input
 
         Returns:
-            List of strings forming the discovered parameters section
+            List of strings with parameter content
         """
-        sections = [
-            "## Discovered Parameters\n",
-            "These values were extracted from the user's request:",
-        ]
+        sections = ["These values were extracted from the user's request:"]
 
-        for param, value in discovered_params.items():
+        # Handle both dict format and nested format with 'parameters' key
+        params_dict = discovered_params.get("parameters", discovered_params) if isinstance(discovered_params, dict) else {}
+        
+        for param, value in params_dict.items():
             sections.append(f"- {param}: {json.dumps(value)}")
 
         sections.extend([
             "",
-            "> Note that these should NEVER be hardcoded in the workflow and should only be considered as POTENTIAL defaults in the inputs section",
-            "",
+            "Note: These should NEVER be hardcoded in the workflow and should only be considered as POTENTIAL defaults in the inputs section",
         ])
 
         return sections
 
     @classmethod
-    def _build_requirements_section(cls, requirements_result: dict[str, Any]) -> list[str]:
-        """Build the requirements analysis section.
+    def _build_requirements_content(cls, requirements_result: dict[str, Any]) -> list[str]:
+        """Build the requirements analysis content (without headers, for XML wrapping).
 
         Args:
             requirements_result: Requirements analysis output
 
         Returns:
-            List of strings forming the requirements section
+            List of strings with requirements content
         """
-        sections = ["## Requirements Analysis\n"]
+        sections = []
 
         # Add extracted steps
         steps = requirements_result.get("steps", [])
@@ -209,21 +332,20 @@ class PlannerContextBuilder:
             sections.append("Complexity analysis:")
             for key, value in complexity.items():
                 sections.append(f"- {key}: {value}")
-            sections.append("")
 
-        return sections
+        return sections if sections else ["No requirements analysis available"]
 
     @classmethod
-    def _build_selected_components_section(cls, browsed_components: dict[str, Any]) -> list[str]:
-        """Build the selected components section.
+    def _build_components_content(cls, browsed_components: dict[str, Any]) -> list[str]:
+        """Build the selected components content (without headers, for XML wrapping).
 
         Args:
             browsed_components: Selected components from ComponentBrowsingNode
 
         Returns:
-            List of strings forming the selected components section
+            List of strings with components content
         """
-        sections = ["## Available Nodes\n"]
+        sections = []
 
         # Add node IDs
         node_ids = browsed_components.get("node_ids", [])
@@ -239,144 +361,12 @@ class PlannerContextBuilder:
 
         if node_ids:
             sections.append(
-                "> Note that you should not blindly use all the nodes available to you, but rather use the nodes that are most relevant to the user's request and requirements. There may or may not be more available nodes than what you are going to need to suffice the user's request."
+                "Note: You should not blindly use all the nodes available to you, but rather use the nodes that are most relevant to the user's request and requirements. There may or may not be more available nodes than what you are going to need to suffice the user's request."
             )
-            sections.append("")
 
-        return sections
+        return sections if sections else ["No components selected"]
 
-    @classmethod
-    def _build_component_details_section(cls, planning_context: str) -> list[str]:
-        """Build the component details section with truncation.
-
-        Args:
-            planning_context: Detailed component information
-
-        Returns:
-            List of strings forming the component details section
-        """
-        sections = ["## Node Details\n"]
-
-        # Intelligently truncate - keep first 3000 chars
-        # This should include interfaces but not full descriptions
-        truncated = planning_context[:5000]
-        if len(planning_context) > 5000:
-            truncated += "\n... (truncated for context management)"
-
-        sections.append(truncated)
-        sections.append("")
-
-        return sections
-
-    @classmethod
-    def append_planning_output(cls, base_context: str, plan_markdown: str, parsed_plan: dict[str, Any]) -> str:
-        """Append planning output as new cacheable block.
-
-        This extends the base context with the planning results,
-        creating a new cacheable prefix for the workflow generator.
-
-        Args:
-            base_context: The base context block
-            plan_markdown: The full planning response
-            parsed_plan: Parsed plan details (status, node_chain, etc.)
-
-        Returns:
-            Extended context with planning output appended
-        """
-        sections = [base_context.rstrip()]
-
-        # Add planning output block
-        sections.append(cls.BLOCK_SEPARATOR)
-        sections.append("## Execution Plan\n")
-        sections.append(plan_markdown)
-        sections.append("")
-
-        # Add parsed summary for quick reference
-        sections.append("### Plan Summary\n")
-        sections.append(f"- Status: {parsed_plan.get('status', 'UNKNOWN')}")
-        sections.append(f"- Node Chain: {parsed_plan.get('node_chain', 'None')}")
-
-        missing_caps = parsed_plan.get("missing_capabilities", [])
-        if missing_caps:
-            sections.append(f"- Missing Capabilities: {', '.join(missing_caps)}")
-
-        sections.append("")
-
-        return "\n".join(sections)
-
-    @classmethod
-    def append_workflow_output(cls, context: str, workflow: dict[str, Any], attempt: int) -> str:
-        """Append generated workflow as new cacheable block.
-
-        This adds the generated workflow to the context for potential
-        retry scenarios, enabling the LLM to see what was previously tried.
-
-        Args:
-            context: The current context (base + planning)
-            workflow: The generated workflow dict
-            attempt: The attempt number
-
-        Returns:
-            Context with workflow output appended
-        """
-        sections = [context.rstrip()]
-
-        # Add workflow output block
-        sections.append(cls.BLOCK_SEPARATOR)
-        sections.append(f"## Generated Workflow (Attempt {attempt})\n")
-
-        # Add summary first
-        nodes = workflow.get("nodes", [])
-        node_ids = [n.get("id", "unknown") for n in nodes]
-        sections.append(f"Generated {len(nodes)} nodes: {', '.join(node_ids)}")
-        sections.append(f"Start node: {workflow.get('start_node', 'none')}")
-
-        inputs = workflow.get("inputs", {})
-        if inputs:
-            sections.append(f"Workflow inputs: {', '.join(inputs.keys())}")
-        sections.append("")
-
-        # Add full JSON for reference
-        sections.append("Full workflow JSON:")
-        sections.append("```json")
-        sections.append(json.dumps(workflow, indent=2))
-        sections.append("```")
-        sections.append("")
-
-        return "\n".join(sections)
-
-    @classmethod
-    def append_validation_errors(cls, context: str, errors: list[str]) -> str:
-        """Append validation errors for retry.
-
-        This adds validation errors to the context so the LLM can
-        understand what went wrong and fix it in the next attempt.
-
-        Args:
-            context: The current context
-            errors: List of validation error messages
-
-        Returns:
-            Context with validation errors appended
-        """
-        sections = [context.rstrip()]
-
-        # Add validation errors block
-        sections.append(cls.BLOCK_SEPARATOR)
-        sections.append("## Validation Errors\n")
-        sections.append("The previous workflow failed validation with these errors:")
-
-        for error in errors[:5]:  # Limit to 5 errors to avoid bloat
-            sections.append(f"- {error}")
-
-        if len(errors) > 5:
-            sections.append(f"... and {len(errors) - 5} more errors")
-
-        sections.append("")
-        sections.append("Please generate a corrected workflow that fixes these specific issues.")
-        sections.append("")
-
-        return "\n".join(sections)
+    # Component details section removed - handled directly in build_base_blocks with XML tags
 
     @classmethod
     def get_context_metrics(cls, context: str) -> dict[str, Any]:

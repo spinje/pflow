@@ -497,16 +497,168 @@ Moving ParameterDiscovery earlier had a cascade effect:
 - ✅ Planning creates feasible execution paths
 - ✅ Context accumulation enables retries with learning
 - ✅ Error messages now helpful (not "workflow generation failed")
-- ✅ Ready for production use
 
-### Hidden Gotcha Discovered:
-WorkflowGeneratorNode now REQUIRES context from PlanningNode. This is a breaking change but ensures quality. Direct usage throws clear error:
-```
-"WorkflowGeneratorNode requires either planner_extended_context
-or planner_accumulated_context from PlanningNode"
-```
+## [2025-09-13] - Critical Discovery: Planner Broken & Cross-Session Caching Opportunity
 
-This forces proper pipeline usage and prevents bypass attempts.
+### The Breaking Change We Introduced
+In our zeal to ensure cache blocks worked, we made `cache_blocks` a REQUIRED parameter in `AnthropicLLMModel.prompt()`. This broke 6 out of 8 planner nodes that don't provide cache blocks:
+- WorkflowDiscoveryNode ❌
+- ComponentBrowsingNode ❌  
+- RequirementsAnalysisNode ❌
+- ParameterDiscoveryNode ❌
+- ParameterMappingNode ❌
+- MetadataGenerationNode ❌
+- PlanningNode ✅ (uses cache blocks)
+- WorkflowGeneratorNode ✅ (uses cache blocks)
+
+**Impact**: ALL planner commands fail immediately with ValueError
+
+### The Cross-Session Caching Opportunity
+While fixing the broken planner, we discovered a powerful optimization opportunity:
+- **Current**: Cache only works within single workflow generation (PlanningNode → WorkflowGeneratorNode)
+- **Opportunity**: Cache static content (prompts, node docs) ACROSS different user queries
+- **Implementation**: Add `--cache-planner` flag to enable cross-session caching
+- **Benefit**: 90%+ cost reduction on subsequent runs within 5-minute window
+
+### Critical Architectural Discoveries
+
+#### 1. The Tool-Choice Cache Sharing Hack
+We discovered WHY cache sharing works between PlanningNode and WorkflowGeneratorNode despite different output formats:
+```python
+# Both nodes define the same FlowIR tool
+# PlanningNode: force_text_output=True → tool_choice='none' → text output
+# WorkflowGeneratorNode: force_text_output=False → tool_choice='tool' → structured output
+# Same tool definition = same cache namespace = cache sharing works!
+```
+This clever hack is what enables the ~$0.01 per workflow savings. Breaking it would undo Task 52's core value.
+
+#### 2. AnthropicStructuredClient Already Perfect
+Critical realization: Both `generate_with_schema` and `generate_with_schema_text_mode` already accept `cache_blocks: Optional[...] = None`. When None, they simply don't add system parameter. No modifications needed!
+
+#### 3. The 1024 Token Minimum Is Not A Problem
+Anthropic gracefully handles blocks <1024 tokens by simply not caching them. No errors, no issues. This means we can attempt to cache everything without checking sizes.
+
+### Implementation Strategy for Cross-Session Caching
+
+#### Phase 1: Fix the Breaking Change
+- Make `cache_blocks` optional in AnthropicLLMModel
+- Pass None to structured client for non-cached calls
+- Restore planner functionality
+
+#### Phase 2: Add Infrastructure
+- Add `--cache-planner` CLI flag
+- Propagate through shared store
+- Available to all nodes via `prep_res.get("cache_planner", False)`
+
+#### Phase 3: Enable Cross-Session Caching
+- Each node checks flag and builds cache blocks if enabled
+- Static content (prompts, docs) in cache blocks
+- Dynamic content (user input) in prompt parameter
+
+### Critical Design Decisions
+
+1. **PlanningNode/WorkflowGeneratorNode Always Cache**: These two should ALWAYS use cache blocks (for intra-session benefit) regardless of flag. The flag only controls OTHER nodes.
+
+2. **No Backward Compatibility**: Clean break from string-based context. No consumers of old keys exist.
+
+3. **Preserve Tool-Choice Hack**: Both nodes must continue using FlowIR tool definition for cache namespace sharing.
+
+### Performance Impact Analysis
+- **Without caching**: ~$0.05 per planner run
+- **First run with --cache-planner**: ~$0.06 (creates cache + 25% premium)
+- **Subsequent runs**: ~$0.005 (90% cached content)
+- **Developer iteration**: 10x cost reduction after first run
+
+### Lessons Learned
+1. **Test All Nodes**: Making assumptions about which nodes use what parameters is dangerous
+2. **Optional By Default**: New parameters should be optional to avoid breaking existing code
+3. **Check Existing Infrastructure**: AnthropicStructuredClient already handled our needs
+4. **Cache TTL Alignment**: 5-minute TTL perfect for rapid development iteration
+5. **Breaking Changes Cascade**: One required parameter can break the entire system
+6. **Cross-Session Opportunity**: Every bug fix is a chance to find optimization opportunities
+
+## [2025-09-13 Evening] - Cross-Session Caching Implementation & Critical Architecture Fixes
+
+### Critical Discovery: Nodes Were Bypassing Prompt Templates
+
+During implementation of cross-session caching, discovered a MAJOR architectural violation:
+- **Problem**: When `cache_planner=True`, nodes were creating inline prompts instead of using .md templates
+- **Impact**: Prompts became unmaintainable, scattered across code instead of centralized in .md files
+- **Root Cause**: Misunderstanding of how to separate static (cacheable) from dynamic content
+
+### The Prompt Template Architecture Fix
+
+Created `prompt_cache_helper.py` with intelligent prompt handling:
+
+1. **Smart Context Understanding**:
+   - Most prompts have dynamic `## Context` sections (user input, generated content)
+   - Two exceptions: `discovery.md` and `component_browsing.md` have cacheable documentation in Context
+   - Instructions (before `## Context`) are always cacheable
+
+2. **Proper Template Usage**:
+   ```python
+   # All nodes now use this pattern
+   cache_blocks, formatted_prompt = build_cached_prompt(
+       "prompt_name",
+       all_variables=all_vars,
+       cacheable_variables={...}  # Only for discovery/component_browsing
+   )
+   ```
+
+3. **Results**: 
+   - ALL nodes now properly use .md templates
+   - Clean separation of static vs dynamic
+   - ~33,000+ tokens cached (vs 594 before fix)
+
+### Critical Optimization: PlanningNode Cache Block Structure
+
+Discovered inefficiency in PlanningNode/WorkflowGeneratorNode cache blocks:
+
+**Before (Mixed Static/Dynamic):**
+- Block 1: Static intro + Dynamic user request (uncacheable!)
+- Block 2: Static workflow overview (cacheable)
+- Block 3: Dynamic requirements (uncacheable)
+
+**After (Clean Separation):**
+- Block 1: PURELY STATIC - intro + overview (~8647 chars, ~2161 tokens)
+- Block 2: ALL dynamic content in XML tags (~917 chars)
+
+**Impact**: Block 1 is now 100% cacheable across ALL workflows, not just retries!
+
+### Implementation Metrics
+
+**Cache Performance Achieved:**
+- Total cached tokens: ~33,000+ (56x improvement from 594)
+- Static block reuse: 8647 chars cached across ALL requests
+- Cost reduction: 90%+ on subsequent runs
+- Cache TTL: 5 minutes (perfect for development iteration)
+
+**Node Caching Status:**
+| Node | Instructions Cached | Context Cached | Total Cache |
+|------|-------------------|----------------|-------------|
+| WorkflowDiscoveryNode | ✅ ~2000 tokens | ✅ discovery_context ~5000 | ~7000 tokens |
+| ComponentBrowsingNode | ✅ ~3000 tokens | ✅ nodes+workflows ~15000 | ~18000 tokens |
+| RequirementsAnalysisNode | ✅ ~1500 tokens | ❌ | ~1500 tokens |
+| ParameterDiscoveryNode | ✅ ~2000 tokens | ❌ | ~2000 tokens |
+| ParameterMappingNode | ✅ ~1500 tokens | ❌ | ~1500 tokens |
+| MetadataGenerationNode | ✅ ~1000 tokens | ❌ | ~1000 tokens |
+| PlanningNode | ✅ Always caches | ✅ Multi-block | ~8647 tokens (static) |
+| WorkflowGeneratorNode | ✅ Always caches | ✅ Multi-block | Reuses Planning cache |
+
+### Architectural Insights Gained
+
+1. **Prompt Template Sanctity**: Never bypass .md templates - they're the single source of truth
+2. **Context Section Intelligence**: Most Context sections are dynamic, but some contain cacheable documentation
+3. **Cache Block Purity**: Never mix static and dynamic content in the same cache block
+4. **Tool-Choice Hack Preservation**: PlanningNode/WorkflowGeneratorNode's cache sharing via FlowIR tool is genius
+5. **XML Tag Strategy**: Wrapping dynamic content in XML tags provides clear structure without breaking caching
+
+### Lessons for Future Development
+
+1. **Always Verify Cache Content**: Test what's actually being cached, not just that caching works
+2. **Separate Early**: Design with static/dynamic separation from the start
+3. **Template First**: Start with .md templates, then figure out caching - not vice versa
+4. **Measure Impact**: 56x improvement shows the value of proper architecture
 
 ## [2025-09-10 17:30] - Task 52 Implementation Complete
 

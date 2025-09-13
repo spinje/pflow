@@ -13,27 +13,11 @@ prompt_hash: c5607421
 last_test_cost: 0.07053
 ---
 
+You are a smart component curator for workflow generation.
+
 ## Your Task
 
-You are a smart component curator for workflow generation. Your job is to select the right building blocks based on the user's workflow domain and requirements.
-
-## Available Components
-
-<available_nodes>
-{{nodes_context}}
-</available_nodes>
-
-<available_workflows>
-{{workflows_context}}
-</available_workflows>
-
-<user_request>
-{{user_input}}
-</user_request>
-
-<extracted_requirements>
-{{requirements}}
-</extracted_requirements>
+Your job is to select the right building blocks (see <available_nodes> and <available_workflows>) based on the user's request (see <user_request>) and requirements (see <extracted_requirements>).
 
 ## Selection Process
 
@@ -131,4 +115,22 @@ Analyze the user request to understand both domain AND workflow pattern:
 ✅ Include: read-file, llm, write-file
 ❌ Exclude: github-list-issues, git-commit (no GitHub operations needed)
 
-Return node IDs and workflow names that fit the identified domain and support the workflow requirements.
+Return node IDs and workflow names that fit the identified domain and support the workflow requirements (see <extracted_requirements>).
+
+## Context
+
+<available_nodes>
+{{nodes_context}}
+</available_nodes>
+
+<available_workflows>
+{{workflows_context}}
+</available_workflows>
+
+<user_request>
+{{user_input}}
+</user_request>
+
+<extracted_requirements>
+{{requirements}}
+</extracted_requirements>

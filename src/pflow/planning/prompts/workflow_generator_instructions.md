@@ -66,6 +66,3 @@ Every node MUST have a "purpose" field (10-200 chars) that:
 - Follow the **Execution Plan** for the node sequence
 - Use the **Selected Components** for node types
 - Map **Discovered Parameters** to workflow inputs
-
-## Task
-

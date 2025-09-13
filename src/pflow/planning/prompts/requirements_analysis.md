@@ -1,13 +1,6 @@
 # Requirements Analysis
 
-You are analyzing a user's workflow request to extract abstract operational requirements.
-
-## User Input
-{{input_text}}
-
-## Input Type
-This input has been templatized: {{is_templatized}}
-(If "Yes", values have been replaced with ${param_name} placeholders)
+You are analyzing a user's workflow request (see <user_input>) to extract abstract operational requirements.
 
 ## Your Task
 
@@ -80,6 +73,8 @@ Steps:
 3. "Generate markdown changelog"
 4. "Write changelog to file"
 
+> Note: The input has been templatized, so that you are not dealing with the raw values, but with the ${param_name} placeholders. This is to ensure you are not accidentally extracting the raw values or letting them influence your output.
+
 ### Example 2: Too Vague
 Input: "process the data"
 
@@ -87,3 +82,9 @@ is_clear: false
 clarification_needed: "Please specify: 1) What data to process 2) What type of processing 3) Expected output format"
 
 Remember: Extract WHAT needs to be done, not HOW to do it. The planning phase will determine HOW.
+
+## Context
+
+<user_input>
+{{input_text}}
+</user_input>

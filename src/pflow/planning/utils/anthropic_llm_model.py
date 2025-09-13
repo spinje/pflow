@@ -5,7 +5,6 @@ compatibility with the existing llm.get_model() pattern used throughout the code
 """
 
 import os
-import re
 from typing import Any, Optional, Union
 
 from pydantic import BaseModel
@@ -54,6 +53,7 @@ class AnthropicLLMModel:
         prompt: Union[str, list],
         schema: Optional[type[BaseModel]] = None,
         temperature: float = 0.0,
+        cache_blocks: Optional[list[dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> "AnthropicResponse":
         """Execute a prompt using the Anthropic SDK.
@@ -62,195 +62,146 @@ class AnthropicLLMModel:
         the Anthropic SDK underneath for caching and structured output.
 
         Args:
-            prompt: The prompt text or messages
+            prompt: The prompt text or messages (instructions only when cache_blocks provided)
             schema: Optional Pydantic model for structured output
             temperature: Sampling temperature
+            cache_blocks: Optional list of cache blocks for multi-block prompt caching
             **kwargs: Additional arguments (model added for debug tracking)
 
         Returns:
             AnthropicResponse object that mimics llm.Response
         """
-        # Add model to kwargs for debug wrapper tracking
-        kwargs["model"] = self.model_id
-        if schema:
-            # Use structured output with tool calling - also needs caching!
-            prompt_str = prompt if isinstance(prompt, str) else str(prompt)
-
-            # Build cacheable blocks for structured output
-            cache_blocks = self._build_cache_blocks_for_structured(prompt_str)
-
-            # If we have cache blocks, we need to remove the cached content from the prompt
-            # so it's not duplicated (cache blocks go in system, rest goes in user message)
-            if cache_blocks:
-                # Remove the cached workflow overview from the prompt
-                workflow_pattern = r"(# Workflow System Overview.*?)(?=\n## (?:Requirements Analysis|User Request|Available|Planning Instructions|Workflow Generation)|\Z)"
-                workflow_match = re.search(workflow_pattern, prompt_str, re.DOTALL)
-                if workflow_match:
-                    # Remove the workflow overview from the prompt
-                    remaining_prompt = prompt_str.replace(workflow_match.group(1), "").strip()
-                else:
-                    remaining_prompt = prompt_str
-            else:
-                remaining_prompt = prompt_str
-
-            # Use the unified method with force_text_output=False for structured output
-            result, usage = self.client.generate_with_schema_text_mode(
-                prompt=remaining_prompt,  # Send only non-cached content as user message
-                response_model=schema,
-                temperature=temperature,
-                cache_blocks=cache_blocks if cache_blocks else None,
-                force_text_output=False,  # This will use tool_choice={'type': 'tool'}
-            )
-            return AnthropicResponse(result, usage, is_structured=True)
-        else:
-            # Non-structured output - BUT we need to use the same tools as structured
-            # to enable cache sharing. We'll use tool_choice='none' to get text output.
-            prompt_str = prompt if isinstance(prompt, str) else str(prompt)
-
-            # Extract workflow overview for caching (same as structured path)
-            workflow_pattern = r"(# Workflow System Overview.*?)(?=\n## (?:Requirements Analysis|User Request|Available|Planning Instructions|Workflow Generation)|\Z)"
-            workflow_match = re.search(workflow_pattern, prompt_str, re.DOTALL)
-
-            cache_blocks = None
-            if workflow_match and len(workflow_match.group(1)) > 3000:
-                # Extract workflow overview for system parameter
-                workflow_overview = workflow_match.group(1).strip()
-                # Everything else goes in user message
-                user_content = prompt_str.replace(workflow_match.group(0), "").strip()
-
-                # Build cache blocks for system parameter
-                cache_blocks = [{"text": workflow_overview, "cache_control": {"type": "ephemeral"}}]
-            else:
-                # No workflow overview found
-                user_content = prompt_str
-
-            # CRITICAL: Use the same tool definition as structured output
-            # but with tool_choice='none' to get text output
-            # This enables cache sharing between PlanningNode and WorkflowGeneratorNode
-            from pflow.planning.ir_models import FlowIR
-
-            # Create a dummy FlowIR tool (same as WorkflowGeneratorNode uses)
-            # But we won't actually use it (tool_choice='none')
-            dummy_response_model = FlowIR
-
-            # Use the structured client with tool_choice='none' for text output
-            result_text, usage = self.client.generate_with_schema_text_mode(
-                prompt=user_content,
-                response_model=dummy_response_model,
+        # Handle both cached and non-cached paths
+        if cache_blocks is not None:
+            # Optimized path with cache blocks provided
+            return self._prompt_with_cache_blocks(
+                prompt=prompt,
+                schema=schema,
                 temperature=temperature,
                 cache_blocks=cache_blocks,
-                force_text_output=True,  # This will set tool_choice='none'
+                **kwargs,
+            )
+        else:
+            # Fallback path without cache blocks - pass None to structured client
+            return self._prompt_without_cache(
+                prompt=prompt,
+                schema=schema,
+                temperature=temperature,
+                **kwargs,
             )
 
-            return AnthropicResponse(result_text, usage, is_structured=False)
-
-    def _build_cache_blocks_for_structured(self, prompt: str) -> Optional[list[dict[str, Any]]]:
-        """Build cache blocks for structured output (WorkflowGenerator).
-
-        For structured output, we need to extract the cacheable context
-        and return it as blocks that will be passed to the system parameter.
-
+    def _prompt_with_cache_blocks(
+        self,
+        prompt: Union[str, list],
+        schema: Optional[type[BaseModel]],
+        temperature: float,
+        cache_blocks: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> "AnthropicResponse":
+        """Execute prompt with provided cache blocks (optimized path).
+        
+        This is the new optimized path where cache blocks are provided directly,
+        avoiding regex extraction and enabling multi-block caching.
+        
         Args:
-            prompt: The full prompt string
-
+            prompt: Instructions only (not the full context)
+            schema: Optional Pydantic model for structured output
+            temperature: Temperature for response generation
+            cache_blocks: List of cache blocks with cache_control markers
+            **kwargs: Additional arguments
+            
         Returns:
-            List of cache blocks or None if no caching opportunity
+            AnthropicResponse wrapping the result
         """
-        # Extract ONLY the workflow system overview for caching
-        # This ensures it matches exactly what PlanningNode cached
-        # The overview ends at "## Requirements Analysis" or similar context sections
-        workflow_pattern = r"(# Workflow System Overview.*?)(?=\n## (?:Requirements Analysis|User Request|Available|Planning Instructions|Workflow Generation)|\Z)"
-        workflow_match = re.search(workflow_pattern, prompt, re.DOTALL)
+        # Convert prompt to string if needed
+        prompt_str = prompt if isinstance(prompt, str) else str(prompt)
+        
+        # Add model to kwargs for debug wrapper tracking
+        kwargs["model"] = self.model_id
+        
+        if schema:
+            # Structured output with provided blocks
+            result, usage = self.client.generate_with_schema_text_mode(
+                prompt=prompt_str,  # Instructions only
+                response_model=schema,
+                temperature=temperature,
+                cache_blocks=cache_blocks,  # Use provided blocks
+                force_text_output=False,
+            )
+        else:
+            # Text output with provided blocks (PlanningNode path)
+            # Use the tool-choice hack for cache sharing
+            from pflow.planning.ir_models import FlowIR
+            
+            result, usage = self.client.generate_with_schema_text_mode(
+                prompt=prompt_str,  # Instructions only
+                response_model=FlowIR,  # Tool definition for cache sharing
+                temperature=temperature,
+                cache_blocks=cache_blocks,  # Use provided blocks
+                force_text_output=True,  # Get text output despite tool
+            )
+        
+        # Log cache metrics for debugging
+        if usage:
+            cache_creation = usage.get("cache_creation_input_tokens", 0)
+            cache_read = usage.get("cache_read_input_tokens", 0)
+            if cache_creation > 0 or cache_read > 0:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Cache metrics: created={cache_creation} tokens, "
+                    f"read={cache_read} tokens, blocks={len(cache_blocks)}"
+                )
+        
+        return AnthropicResponse(result, usage, is_structured=bool(schema))
 
-        if workflow_match and len(workflow_match.group(1)) > 3000:
-            # Found the workflow overview - cache ONLY this part
-            workflow_content = workflow_match.group(1).strip()
-
-            # Return just the workflow overview with cache control
-            # Everything else (plan output, instructions) will be in the user message
-            return [{"text": workflow_content, "cache_control": {"type": "ephemeral"}}]
-
-        return None
-
-    def _build_cacheable_blocks(self, prompt: str) -> list[dict[str, Any]]:
-        """Split prompt into cacheable blocks for optimal caching.
-
-        The planner prompt typically contains:
-        1. Introduction and user request
-        2. Workflow System Overview (static, highly cacheable)
-        3. Requirements/components (semi-dynamic)
-        4. Instructions (dynamic)
-
-        We want to cache the static parts (especially the workflow overview)
-        which is typically 1800+ tokens and doesn't change between calls.
-
+    def _prompt_without_cache(
+        self,
+        prompt: Union[str, list],
+        schema: Optional[type[BaseModel]],
+        temperature: float,
+        **kwargs: Any,
+    ) -> "AnthropicResponse":
+        """Execute prompt without cache blocks (fallback path for non-cached nodes).
+        
         Args:
-            prompt: The full prompt string
-
+            prompt: The full prompt text
+            schema: Optional Pydantic model for structured output
+            temperature: Temperature for response generation
+            **kwargs: Additional arguments
+            
         Returns:
-            List of content blocks with cache_control where appropriate
+            AnthropicResponse wrapping the result
         """
-        import re
-
-        # Look for the workflow system overview section which is our best caching candidate
-        # The overview ends at "## Requirements Analysis" or similar context sections
-        workflow_pattern = r"(# Workflow System Overview.*?)(?=\n## (?:Requirements Analysis|User Request|Available|Planning Instructions|Workflow Generation)|\Z)"
-        workflow_match = re.search(workflow_pattern, prompt, re.DOTALL)
-
-        if workflow_match and len(workflow_match.group(1)) > 3000:  # ~1000 tokens minimum
-            # Found a substantial workflow overview section
-            workflow_content = workflow_match.group(1).strip()
-
-            # CRITICAL: Put workflow overview FIRST with cache control
-            # This ensures it's in the exact same position for all nodes
-            blocks = [{"type": "text", "text": workflow_content, "cache_control": {"type": "ephemeral"}}]
-
-            # Add everything else as a single non-cached block
-            # Remove the workflow overview from the prompt to avoid duplication
-            remaining = prompt.replace(workflow_match.group(0), "").strip()
-            if remaining:
-                blocks.append({"type": "text", "text": remaining})
-
-            return blocks
-
-        # Alternative: Try to find other cacheable sections
-        # Look for the separator pattern used by PlannerContextBuilder
-        separator_pattern = r"={60}"
-        if re.search(separator_pattern, prompt):
-            # Split by major sections
-            sections = re.split(r"\n={60}\n", prompt)
-
-            if len(sections) > 1:
-                blocks = []
-                for i, section in enumerate(sections):
-                    if not section.strip():
-                        continue
-
-                    # Cache the first major section if it's substantial
-                    # (likely contains static context)
-                    if i == 0 and len(section) > 3000:
-                        blocks.append({"type": "text", "text": section.strip(), "cache_control": {"type": "ephemeral"}})
-                    else:
-                        blocks.append({"type": "text", "text": section.strip()})
-
-                if blocks:
-                    return blocks
-
-        # Fallback: If we can't identify clear sections, try to cache the first
-        # substantial portion of the prompt (if it's large enough)
-        if len(prompt) > 6000:  # ~2000 tokens
-            # Find a natural break point around 2/3 of the content
-            break_point = int(len(prompt) * 0.66)
-            # Look for a paragraph break near the break point
-            newline_idx = prompt.find("\n\n", break_point)
-            if newline_idx > 0:
-                return [
-                    {"type": "text", "text": prompt[:newline_idx].strip(), "cache_control": {"type": "ephemeral"}},
-                    {"type": "text", "text": prompt[newline_idx:].strip()},
-                ]
-
-        # No caching opportunity found - return as single block
-        return [{"type": "text", "text": prompt}]
+        # Convert prompt to string if needed
+        prompt_str = prompt if isinstance(prompt, str) else str(prompt)
+        
+        # Add model to kwargs for debug wrapper tracking
+        kwargs["model"] = self.model_id
+        
+        if schema:
+            # Structured output without caching - pass None for cache_blocks
+            result, usage = self.client.generate_with_schema_text_mode(
+                prompt=prompt_str,
+                response_model=schema,
+                temperature=temperature,
+                cache_blocks=None,  # No caching for this path
+                force_text_output=False,
+            )
+        else:
+            # Text output without caching - still use FlowIR tool for consistency
+            # This maintains compatibility with any future caching scenarios
+            from pflow.planning.ir_models import FlowIR
+            
+            result, usage = self.client.generate_with_schema_text_mode(
+                prompt=prompt_str,
+                response_model=FlowIR,  # Tool definition for consistency
+                temperature=temperature,
+                cache_blocks=None,  # No caching for this path
+                force_text_output=True,  # Get text output despite tool
+            )
+        
+        return AnthropicResponse(result, usage, is_structured=bool(schema))
 
 
 class AnthropicResponse:

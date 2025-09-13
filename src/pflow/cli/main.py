@@ -1637,6 +1637,7 @@ def _setup_planner_execution(
     raw_input: str,
     stdin_data: str | StdinData | None,
     verbose: bool,
+    cache_planner: bool,
 ) -> tuple[Any | None, Any, Any, dict[str, Any]]:
     """Set up planner execution environment.
 
@@ -1664,6 +1665,7 @@ def _setup_planner_execution(
         "user_input": raw_input,
         "workflow_manager": WorkflowManager(),  # Uses default ~/.pflow/workflows
         "stdin_data": stdin_data if stdin_data else None,
+        "cache_planner": cache_planner,  # Enable cross-session caching if flag is set
     }
 
     # Initialize LLM calls list when metrics collection is enabled
@@ -1777,11 +1779,12 @@ def _execute_planner_and_workflow(
     create_planner_flow: Any,
     trace: bool,
     planner_timeout: int,
+    cache_planner: bool,
 ) -> None:
     """Execute the planner flow and resulting workflow with optional debugging."""
     # Set up planner execution environment
     metrics_collector, debug_context, trace_collector, shared = _setup_planner_execution(
-        ctx, raw_input, stdin_data, verbose
+        ctx, raw_input, stdin_data, verbose, cache_planner
     )
 
     # Create planner flow with debugging context
@@ -2037,6 +2040,7 @@ def _initialize_context(
     trace_planner: bool,
     planner_timeout: int,
     save: bool,
+    cache_planner: bool,
 ) -> None:
     """Initialize the click context with configuration.
 
@@ -2050,6 +2054,7 @@ def _initialize_context(
         trace_planner: Trace planner flag
         planner_timeout: Planner timeout in seconds
         save: Save workflow flag
+        cache_planner: Enable cross-session caching for planner
     """
     if ctx.obj is None:
         ctx.obj = {}
@@ -2062,6 +2067,7 @@ def _initialize_context(
     ctx.obj["trace_planner"] = trace_planner
     ctx.obj["planner_timeout"] = planner_timeout
     ctx.obj["save"] = save
+    ctx.obj["cache_planner"] = cache_planner
 
     # Create OutputController once and store it for reuse
     ctx.obj["output_controller"] = OutputController(
@@ -2252,6 +2258,7 @@ def _execute_with_planner(
     source: str,
     trace: bool,
     planner_timeout: int,
+    cache_planner: bool,
 ) -> None:
     """Execute workflow using the natural language planner.
 
@@ -2274,7 +2281,7 @@ def _execute_with_planner(
 
         # Execute planner and workflow
         _execute_planner_and_workflow(
-            ctx, raw_input, stdin_data, output_key, verbose, create_planner_flow, trace, planner_timeout
+            ctx, raw_input, stdin_data, output_key, verbose, create_planner_flow, trace, planner_timeout, cache_planner
         )
 
     except ImportError:
@@ -2371,6 +2378,11 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
 @click.option("--trace-planner", is_flag=True, help="Save planner execution trace to file")
 @click.option("--planner-timeout", type=int, default=60, help="Timeout for planner execution (seconds)")
 @click.option("--save/--no-save", default=True, help="Save generated workflow (default: save)")
+@click.option(
+    "--cache-planner",
+    is_flag=True,
+    help="Enable cross-session caching for planner LLM calls (reduces cost for repeated runs)",
+)
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def workflow_command(
     ctx: click.Context,
@@ -2383,6 +2395,7 @@ def workflow_command(
     trace_planner: bool,
     planner_timeout: int,
     save: bool,
+    cache_planner: bool,
     workflow: tuple[str, ...],
 ) -> None:
     """pflow - Plan Once, Run Forever
@@ -2441,7 +2454,7 @@ def workflow_command(
 
     # Initialize context with configuration
     _initialize_context(
-        ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout, save
+        ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout, save, cache_planner
     )
 
     # Always install Anthropic model wrapper for planning models
@@ -2513,7 +2526,8 @@ def workflow_command(
         return
 
     # Multi-word or parameterized input: planner by design
-    _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, "args", trace, planner_timeout)
+    cache_planner = ctx.obj.get("cache_planner", False)
+    _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, "args", trace, planner_timeout, cache_planner)
 
 
 # Alias for backward compatibility with tests that import main directly

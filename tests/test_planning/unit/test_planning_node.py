@@ -100,8 +100,8 @@ class TestPlanningNode:
             mock_llm.return_value = mock_model
 
             # Mock context builder to avoid file reads
-            with patch("pflow.planning.nodes.PlannerContextBuilder.build_base_context") as mock_context:
-                mock_context.return_value = "Mock base context"
+            with patch("pflow.planning.nodes.PlannerContextBuilder.build_base_blocks") as mock_blocks:
+                mock_blocks.return_value = [{"text": "Mock base context", "cache_control": {"type": "ephemeral"}}]
 
                 shared = {
                     "requirements_result": {"steps": ["Deploy to Kubernetes", "Monitor with Prometheus"]},
@@ -147,8 +147,8 @@ class TestPlanningNode:
             )
             mock_llm.return_value = mock_model
 
-            with patch("pflow.planning.nodes.PlannerContextBuilder.build_base_context") as mock_context:
-                mock_context.return_value = "Mock base context"
+            with patch("pflow.planning.nodes.PlannerContextBuilder.build_base_blocks") as mock_blocks:
+                mock_blocks.return_value = [{"text": "Mock base context", "cache_control": {"type": "ephemeral"}}]
 
                 shared = {
                     "requirements_result": {"steps": ["Fetch issues", "Send to Slack"]},
@@ -187,8 +187,8 @@ class TestPlanningNode:
             )
             mock_llm.return_value = mock_model
 
-            with patch("pflow.planning.nodes.PlannerContextBuilder.build_base_context") as mock_context:
-                mock_context.return_value = "Mock base context"
+            with patch("pflow.planning.nodes.PlannerContextBuilder.build_base_blocks") as mock_blocks:
+                mock_blocks.return_value = [{"text": "Mock base context", "cache_control": {"type": "ephemeral"}}]
 
                 shared = {
                     "requirements_result": {"steps": ["Fetch issues", "Generate changelog"]},
@@ -224,8 +224,8 @@ class TestPlanningNode:
             mock_llm.return_value = mock_model
 
             with patch("pflow.planning.nodes.PlannerContextBuilder") as MockBuilder:
-                MockBuilder.build_base_context.return_value = "BASE CONTEXT BLOCK"
-                MockBuilder.append_planning_output.return_value = "EXTENDED CONTEXT BLOCK"
+                MockBuilder.build_base_blocks.return_value = [{"text": "BASE CONTEXT BLOCK", "cache_control": {"type": "ephemeral"}}]
+                MockBuilder.append_planning_block.return_value = [{"text": "BASE CONTEXT BLOCK", "cache_control": {"type": "ephemeral"}}, {"text": "EXTENDED CONTEXT BLOCK", "cache_control": {"type": "ephemeral"}}]
                 MockBuilder.get_context_metrics.return_value = {"estimated_tokens": 1000, "blocks": 2}
 
                 shared = {
@@ -238,10 +238,11 @@ class TestPlanningNode:
                 node.post(shared, prep_res, exec_res)
 
                 # CRITICAL ASSERTIONS - Context stored for pipeline
-                assert "planner_base_context" in shared, "Base context must be stored"
-                assert shared["planner_base_context"] == "BASE CONTEXT BLOCK"
-                assert "planner_extended_context" in shared, "Extended context must be stored"
-                assert shared["planner_extended_context"] == "EXTENDED CONTEXT BLOCK"
+                assert "planner_base_blocks" in shared, "Base blocks must be stored"
+                assert "planner_extended_blocks" in shared, "Extended blocks must be stored"
+                # The actual values will be arrays of blocks
+                assert len(shared["planner_base_blocks"]) > 0
+                assert len(shared["planner_extended_blocks"]) > 0
 
     def test_only_uses_browsed_component_nodes(self):
         """Planning MUST only use nodes from browsed_components.

@@ -31,7 +31,7 @@ class TestContextAccumulation:
         """
 
         # Stage 1: Build base context
-        base_context = PlannerContextBuilder.build_base_context(
+        base_blocks = PlannerContextBuilder.build_base_blocks(
             user_request="fetch ${issue_count} issues from ${repo} and create changelog",
             requirements_result={
                 "is_clear": True,
@@ -54,6 +54,7 @@ class TestContextAccumulation:
         )
 
         # CRITICAL ASSERTIONS - Base context has all foundation blocks
+        base_context = "\n".join(block["text"] for block in base_blocks)
         assert "## User Request" in base_context, "Must include user request"
         assert "fetch ${issue_count} issues" in base_context, "Must show templatized input"
         assert "# Workflow System Overview" in base_context, "Must include shared knowledge"
@@ -62,7 +63,7 @@ class TestContextAccumulation:
         assert "github-list-issues" in base_context, "Must list available nodes"
 
         # Count initial blocks
-        initial_block_count = base_context.count("##")
+        initial_block_count = len(base_blocks)
 
         # Stage 2: Add planning output
         plan_markdown = """
@@ -79,15 +80,16 @@ class TestContextAccumulation:
         **Node Chain**: github-list-issues >> llm >> write-file
         """
 
-        extended_context = PlannerContextBuilder.append_planning_output(
-            base_context, plan_markdown, {"status": "FEASIBLE", "node_chain": "github-list-issues >> llm >> write-file"}
+        extended_blocks = PlannerContextBuilder.append_planning_block(
+            base_blocks, plan_markdown, {"status": "FEASIBLE", "node_chain": "github-list-issues >> llm >> write-file"}
         )
 
         # CRITICAL ASSERTIONS - Planning added to context
+        extended_context = "\n".join(block["text"] for block in extended_blocks)
         assert base_context in extended_context, "Must preserve ALL base context"
         assert "## Execution Plan" in extended_context, "Must add planning block"
         assert "github-list-issues >> llm >> write-file" in extended_context
-        assert extended_context.count("##") > initial_block_count, "Must add new blocks"
+        assert len(extended_blocks) > initial_block_count, "Must add new blocks"
 
         # Stage 3: Add generated workflow (first attempt)
         workflow_attempt1 = {
@@ -107,11 +109,12 @@ class TestContextAccumulation:
             },
         }
 
-        accumulated_context = PlannerContextBuilder.append_workflow_output(
-            extended_context, workflow_attempt1, attempt=1
+        accumulated_blocks = PlannerContextBuilder.append_workflow_block(
+            extended_blocks, workflow_attempt1, attempt_number=1
         )
 
         # CRITICAL ASSERTIONS - Workflow added to context
+        accumulated_context = "\n".join(block["text"] for block in accumulated_blocks)
         assert extended_context in accumulated_context, "Must preserve ALL previous context"
         assert "## Generated Workflow (Attempt 1)" in accumulated_context
         assert '"type": "github-list-issues"' in accumulated_context, "Must include workflow JSON"
@@ -124,7 +127,8 @@ class TestContextAccumulation:
             "Node 'fetch' missing required 'state' parameter",
         ]
 
-        with_errors = PlannerContextBuilder.append_validation_errors(accumulated_context, validation_errors)
+        with_errors_blocks = PlannerContextBuilder.append_errors_block(accumulated_blocks, validation_errors)
+        with_errors = "\n".join(block["text"] for block in with_errors_blocks)
 
         # CRITICAL ASSERTIONS - ALL context preserved for learning
         assert "## User Request" in with_errors, "Original request preserved"
@@ -158,7 +162,7 @@ class TestContextAccumulation:
 
         This ensures the LLM can see all previous attempts and errors.
         """
-        base_context = PlannerContextBuilder.build_base_context(
+        base_blocks = PlannerContextBuilder.build_base_blocks(
             user_request="simple test",
             requirements_result={"steps": ["Test step"]},
             browsed_components={"node_ids": ["test-node"]},
@@ -167,28 +171,29 @@ class TestContextAccumulation:
         )
 
         # Add planning
-        with_plan = PlannerContextBuilder.append_planning_output(
-            base_context, "Plan text", {"status": "FEASIBLE", "node_chain": "test"}
+        with_plan_blocks = PlannerContextBuilder.append_planning_block(
+            base_blocks, "Plan text", {"status": "FEASIBLE", "node_chain": "test"}
         )
 
         # Attempt 1
-        with_attempt1 = PlannerContextBuilder.append_workflow_output(
-            with_plan, {"nodes": [{"id": "1", "type": "test"}]}, attempt=1
+        with_attempt1_blocks = PlannerContextBuilder.append_workflow_block(
+            with_plan_blocks, {"nodes": [{"id": "1", "type": "test"}]}, attempt_number=1
         )
 
-        with_errors1 = PlannerContextBuilder.append_validation_errors(with_attempt1, ["Error 1"])
+        with_errors1_blocks = PlannerContextBuilder.append_errors_block(with_attempt1_blocks, ["Error 1"])
 
         # Attempt 2
-        with_attempt2 = PlannerContextBuilder.append_workflow_output(
-            with_errors1, {"nodes": [{"id": "2", "type": "test-fixed"}]}, attempt=2
+        with_attempt2_blocks = PlannerContextBuilder.append_workflow_block(
+            with_errors1_blocks, {"nodes": [{"id": "2", "type": "test-fixed"}]}, attempt_number=2
         )
 
-        with_errors2 = PlannerContextBuilder.append_validation_errors(with_attempt2, ["Error 2"])
+        with_errors2_blocks = PlannerContextBuilder.append_errors_block(with_attempt2_blocks, ["Error 2"])
 
         # Attempt 3
-        with_attempt3 = PlannerContextBuilder.append_workflow_output(
-            with_errors2, {"nodes": [{"id": "3", "type": "test-final"}]}, attempt=3
+        with_attempt3_blocks = PlannerContextBuilder.append_workflow_block(
+            with_errors2_blocks, {"nodes": [{"id": "3", "type": "test-final"}]}, attempt_number=3
         )
+        with_attempt3 = "\n".join(block["text"] for block in with_attempt3_blocks)
 
         # CRITICAL ASSERTIONS - Complete history preserved
         assert "## Generated Workflow (Attempt 1)" in with_attempt3
@@ -209,7 +214,7 @@ class TestContextAccumulation:
 
         This helps monitor token usage and cache efficiency.
         """
-        base_context = PlannerContextBuilder.build_base_context(
+        base_blocks = PlannerContextBuilder.build_base_blocks(
             user_request="test",
             requirements_result={"steps": ["Step 1"]},
             browsed_components={"node_ids": ["node1"]},
@@ -217,19 +222,27 @@ class TestContextAccumulation:
             discovered_params={},
         )
 
+        base_context = "\n".join(block["text"] for block in base_blocks)
+
+
         base_metrics = PlannerContextBuilder.get_context_metrics(base_context)
 
         # Add planning
-        with_plan = PlannerContextBuilder.append_planning_output(
-            base_context,
+        with_plan_blocks = PlannerContextBuilder.append_planning_block(
+            base_blocks,
             "A" * 1000,  # 1000 chars of planning
             {"status": "FEASIBLE", "node_chain": "test"},
         )
 
+        with_plan = "\n".join(block["text"] for block in with_plan_blocks)
+
+
         plan_metrics = PlannerContextBuilder.get_context_metrics(with_plan)
 
         # CRITICAL ASSERTIONS
-        assert plan_metrics["blocks"] > base_metrics["blocks"], "Block count should increase"
+        # Note: "blocks" in metrics refers to text separators, not cache blocks
+        # We check cache block count separately
+        assert len(with_plan_blocks) > len(base_blocks), "Cache block count should increase"
         assert plan_metrics["characters"] > base_metrics["characters"], "Character count should increase"
         assert plan_metrics["estimated_tokens"] > base_metrics["estimated_tokens"], "Tokens should increase"
 
@@ -249,7 +262,7 @@ class TestContextAccumulation:
             mock_read.return_value = "# Workflow System Overview\nCritical shared knowledge..."
 
             # First call - should load from file
-            context1 = PlannerContextBuilder.build_base_context(
+            blocks1 = PlannerContextBuilder.build_base_blocks(
                 user_request="test 1",
                 requirements_result={"steps": []},
                 browsed_components={"node_ids": []},
@@ -258,11 +271,13 @@ class TestContextAccumulation:
             )
 
             assert mock_read.call_count == 1, "Should read file once"
-            assert "Workflow System Overview" in context1
-            assert "Critical shared knowledge" in context1
+            # Check workflow overview is in one of the blocks
+            combined1 = "\n".join(block["text"] for block in blocks1)
+            assert "Workflow System Overview" in combined1
+            assert "Critical shared knowledge" in combined1
 
             # Second call - should use cache
-            context2 = PlannerContextBuilder.build_base_context(
+            blocks2 = PlannerContextBuilder.build_base_blocks(
                 user_request="test 2",
                 requirements_result={"steps": []},
                 browsed_components={"node_ids": []},
@@ -271,15 +286,16 @@ class TestContextAccumulation:
             )
 
             assert mock_read.call_count == 1, "Should NOT read file again - use cache"
-            assert "Workflow System Overview" in context2
-            assert "Critical shared knowledge" in context2
+            combined2 = "\n".join(block["text"] for block in blocks2)
+            assert "Workflow System Overview" in combined2
+            assert "Critical shared knowledge" in combined2
 
     def test_context_blocks_have_clear_boundaries(self):
         """Context blocks MUST have clear boundaries for caching.
 
         This enables efficient cache prefix matching.
         """
-        base_context = PlannerContextBuilder.build_base_context(
+        base_blocks = PlannerContextBuilder.build_base_blocks(
             user_request="test",
             requirements_result={"steps": ["Step"]},
             browsed_components={"node_ids": ["node"]},
@@ -287,21 +303,17 @@ class TestContextAccumulation:
             discovered_params={"param": "value"},
         )
 
-        # Each major section should start with ##
+        # Check that we have separate blocks with cache control
+        assert len(base_blocks) >= 2, "Should have at least 2 blocks"
+        for block in base_blocks:
+            assert "text" in block, "Each block must have text"
+            assert "cache_control" in block, "Each block must have cache_control"
+            assert block["cache_control"] == {"type": "ephemeral"}, "Cache control must be ephemeral"
+
+        # Check content is distributed across blocks
+        base_context = "\n".join(block["text"] for block in base_blocks)
         assert "## User Request" in base_context
         assert "Workflow System Overview" in base_context  # This uses # not ##
         assert "## Discovered Parameters" in base_context
         assert "## Requirements Analysis" in base_context
         assert "Available Nodes" in base_context  # Available Nodes section
-
-        # Sections should be clearly separated
-        sections = base_context.split("##")
-        assert len(sections) > 5, "Should have multiple clear sections"
-
-        # Each section should be self-contained
-        for section in sections[1:]:  # Skip first empty
-            if section.strip():
-                lines = section.strip().split("\n")
-                assert len(lines) > 0, "Section should have content"
-                # First line should be section title
-                assert not lines[0].startswith("#"), "Section title should not have extra #"
