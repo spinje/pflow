@@ -11,41 +11,6 @@ import subprocess
 import pytest
 
 
-def test_stdin_no_hang_when_piped(tmp_path, prepared_subprocess_env):
-    """Test that pflow doesn't hang when stdout is piped (non-TTY)."""
-    # Create a simple test workflow
-    workflow = {
-        "ir_version": "0.1.0",
-        "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo 'test output'"}}],
-        "edges": [],
-    }
-
-    workflow_path = tmp_path / "test.json"
-    workflow_path.write_text(json.dumps(workflow))
-
-    try:
-        # Run pflow with stdout as PIPE (simulates non-TTY like when piped to grep)
-        # This tests the core issue: pflow shouldn't hang when stdout is non-TTY
-        # Note: We can't use capture_output here because we need stdin=DEVNULL
-        result = subprocess.run(
-            ["uv", "run", "pflow", str(workflow_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,  # No stdin input, simulating pipe scenario
-            text=True,
-            env=prepared_subprocess_env,
-            timeout=3,
-        )
-
-        # Should have completed without hanging
-        assert result.returncode == 0, f"Unexpected return code: {result.returncode}\nstderr: {result.stderr}"
-        # Check output is as expected
-        assert "test output" in result.stdout or "test output" in result.stderr
-
-    except subprocess.TimeoutExpired:
-        pytest.fail("pflow hung when stdout is non-TTY (piped)")
-
-
 def test_stdin_has_data_function():
     """Test the stdin_has_data function directly."""
     from pflow.core.shell_integration import stdin_has_data
@@ -83,84 +48,118 @@ def test_read_stdin_no_hang(monkeypatch):
     assert result is None
 
 
-def test_workflow_execution_with_piped_output(tmp_path, prepared_subprocess_env):
-    """Integration test: workflow execution with non-TTY output (simulating pipe)."""
+def test_read_stdin_enhanced_no_hang(monkeypatch):
+    """Test that read_stdin_enhanced doesn't hang when there's no actual input."""
+    import io
+
+    from pflow.core.shell_integration import read_stdin_enhanced
+
+    # Mock stdin to simulate non-TTY with no data
+    mock_stdin = io.StringIO("")
+    mock_stdin.isatty = lambda: False
+    monkeypatch.setattr("sys.stdin", mock_stdin)
+
+    # Mock select to indicate no data available
+    def mock_select(rlist, wlist, xlist, timeout):
+        return ([], [], [])
+
+    monkeypatch.setattr("select.select", mock_select)
+
+    # This should return None quickly without hanging
+    result = read_stdin_enhanced()
+
+    # Should return None when no stdin data available
+    assert result is None
+
+
+def test_stdin_has_data_with_actual_data(monkeypatch):
+    """Test stdin_has_data returns True when data is available."""
+    import io
+    import sys
+
+    from pflow.core.shell_integration import stdin_has_data
+
+    # Mock stdin with data
+    mock_stdin = io.StringIO("test data")
+    mock_stdin.isatty = lambda: False
+    monkeypatch.setattr("sys.stdin", mock_stdin)
+
+    # Mock select to indicate data is available
+    def mock_select(rlist, wlist, xlist, timeout):
+        return ([sys.stdin], [], [])
+
+    monkeypatch.setattr("select.select", mock_select)
+
+    # Should detect that stdin has data
+    assert stdin_has_data() is True
+
+
+def test_stdin_has_data_fallback_on_select_error(monkeypatch):
+    """Test stdin_has_data fallback behavior when select() fails."""
+
+    from pflow.core.shell_integration import stdin_has_data
+
+    # Mock stdin as non-TTY
+    mock_stdin = type("MockStdin", (), {"isatty": lambda self: False})()
+    monkeypatch.setattr("sys.stdin", mock_stdin)
+
+    # Mock select to raise an error (simulating platform incompatibility)
+    def mock_select(rlist, wlist, xlist, timeout):
+        raise ValueError("select not supported")
+
+    monkeypatch.setattr("select.select", mock_select)
+
+    # Should fall back to detecting non-TTY
+    assert stdin_has_data() is True
+
+
+# Integration test - only ONE subprocess test to verify the actual fix
+def test_stdin_no_hang_integration(tmp_path):
+    """Integration test: verify pflow doesn't hang when piped through grep.
+
+    This is the only subprocess test - it verifies the actual bug is fixed.
+    All other tests are unit tests for better performance.
+    """
+    import os
+
+    # Create a simple test workflow
     workflow = {
         "ir_version": "0.1.0",
-        "nodes": [
-            {"id": "echo1", "type": "shell", "params": {"command": "echo 'Line 1: hello'"}},
-            {"id": "echo2", "type": "shell", "params": {"command": "echo 'Line 2: world'"}},
-        ],
-        "edges": [{"from": "echo1", "to": "echo2"}],
-    }
-
-    workflow_path = tmp_path / "test.json"
-    workflow_path.write_text(json.dumps(workflow))
-
-    try:
-        # Run pflow with pipes (non-TTY) and verify it completes without hanging
-        # Note: We can't use capture_output here because we need stdin=DEVNULL
-        result = subprocess.run(
-            ["uv", "run", "pflow", str(workflow_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,  # No stdin input
-            text=True,
-            env=prepared_subprocess_env,
-            timeout=3,
-        )
-
-        # Should complete successfully
-        assert result.returncode == 0, f"Unexpected return code: {result.returncode}\nstderr: {result.stderr}"
-
-        # Verify the output contains expected text (at least one should appear)
-        combined_output = result.stdout + result.stderr
-        # Due to how shell nodes work, we may only see the last output
-        assert "world" in combined_output or "hello" in combined_output
-
-    except subprocess.TimeoutExpired:
-        pytest.fail("Workflow execution hung when output is piped (non-TTY)")
-
-
-def test_simulated_grep_filtering(tmp_path, prepared_subprocess_env):
-    """Test that output can be filtered (like grep) without hanging."""
-    workflow = {
-        "ir_version": "0.1.0",
-        "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo 'hello world'"}}],
+        "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo 'test output'"}}],
         "edges": [],
     }
 
     workflow_path = tmp_path / "test.json"
     workflow_path.write_text(json.dumps(workflow))
 
+    # Create minimal env - we don't need the full registry for this test
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
+
+    # Create minimal .pflow directory with just the shell node
+    pflow_dir = tmp_path / ".pflow"
+    pflow_dir.mkdir()
+    registry_data = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode"}}}
+    (pflow_dir / "registry.json").write_text(json.dumps(registry_data))
+
     try:
-        # Run pflow with piped output (simulating what happens with grep)
-        proc = subprocess.Popen(
+        # Run pflow with stdout as PIPE (simulates non-TTY like when piped to grep)
+        # This tests the core issue: pflow shouldn't hang when stdout is non-TTY
+        result = subprocess.run(
             ["uv", "run", "pflow", str(workflow_path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,  # No stdin input (like grep doesn't provide input to pflow)
+            stdin=subprocess.DEVNULL,  # No stdin input, simulating pipe scenario
             text=True,
-            env=prepared_subprocess_env,
+            env=env,
+            timeout=2,  # Shorter timeout - if it doesn't hang, it completes quickly
         )
 
-        # Read output with timeout (simulating grep reading the output)
-        try:
-            stdout, stderr = proc.communicate(timeout=3)
-
-            # Simulate grep filtering - check if pattern exists
-            combined_output = stdout + stderr
-            lines_with_hello = [line for line in combined_output.splitlines() if "hello" in line]
-
-            # Should find the output line
-            assert len(lines_with_hello) > 0, (
-                f"Pattern 'hello' not found in output.\nstdout: {stdout}\nstderr: {stderr}"
-            )
-            assert any("hello world" in line for line in lines_with_hello)
-
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            pytest.fail("pflow hung when output is being read (simulating grep)")
+        # Should have completed without hanging
+        assert result.returncode == 0, f"Unexpected return code: {result.returncode}\nstderr: {result.stderr}"
+        # Check output is as expected
+        assert "test output" in result.stdout or "test output" in result.stderr
 
     except subprocess.TimeoutExpired:
-        pytest.fail("pflow hung during initialization")
+        pytest.fail("pflow hung when stdout is non-TTY (piped)")
