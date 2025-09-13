@@ -981,3 +981,96 @@ Per run with 2914 cache tokens:
 - This is architectural constraint, not a bug
 
 The cache sharing implementation is now complete and verified working. The solution of using unified tools with different tool_choice values is elegant and leverages Anthropic's cache rules perfectly.
+
+## [2025-09-13 Evening] - Tracing and Analysis Improvements
+
+### Critical Tracing System Issues Discovered and Fixed
+
+During debugging of Task 52, discovered that the tracing system had several critical issues preventing proper cache analysis:
+
+#### 1. **Cache Tokens Missing from Trace Files**
+**Problem**: The `llm_calls` section in trace JSON files only included `input` and `output` tokens, while cache tokens were stored in `shared["__llm_calls__"]` but not in the trace file.
+
+**Root Cause**: `TraceCollector.record_llm_response_with_data()` only stored limited token data in trace files.
+
+**Fix**: Updated to include all token types in trace files:
+```python
+"tokens": {
+    "input": input_tokens,
+    "output": output_tokens,
+    "cache_creation": cache_creation_tokens,
+    "cache_read": cache_read_tokens,
+    "total": calculated_total  # Now includes ALL tokens
+}
+```
+
+#### 2. **Duration Measurements Showing 0-1ms**
+**Problem**: All LLM call durations showed as 0-1ms regardless of actual API latency.
+
+**Root Cause**: Duration was measured from JSON parsing time, not from request initiation. This is actually **correct behavior** - Anthropic SDK uses lazy evaluation where the actual API call happens during `.json()` or `.text()` consumption, not when `prompt()` returns.
+
+**Fix**: Changed timing to measure from when `prompt()` is called to when response is consumed:
+```python
+# In prompt interceptor
+request_start = time.perf_counter()
+response = original_prompt(prompt_text, **prompt_kwargs)
+# In TimedResponse.json()
+duration = time.perf_counter() - self._request_time
+```
+
+**Result**: Now showing realistic durations (4-6 seconds for API calls).
+
+#### 3. **Wrong Total Token Calculation**
+**Problem**: Total tokens only included `input + output`, not cache tokens.
+
+**Impact**: Made it impossible to see true token usage and costs.
+
+**Fix**: Calculate total as `input + output + cache_creation + cache_read`.
+
+### Analyze-Trace Script Enhancements
+
+Enhanced the `scripts/analyze-trace/analyze.py` script to provide comprehensive cache visibility:
+
+#### 1. **Cache Blocks Display**
+Now shows cache blocks BEFORE the user prompt (as they're sent to the LLM):
+- Shows cache control type (ephemeral/none)
+- Displays estimated tokens for each block
+- Uses expandable details for full content
+- Clearly indicates ordering: "sent FIRST to the LLM as system context"
+
+#### 2. **Cache Statistics in Token Usage**
+Enhanced token table to show:
+- Cache Creation tokens with +25% cost factor
+- Cache Read tokens with -90% cost factor
+- Cache Efficiency: "X% of input was reused from cache" (only counts reads, not creation)
+
+#### 3. **Cost Analysis with Savings Display**
+Added comprehensive cost analysis:
+- **Total Cost**: Actual cost with caching
+- **Cost Without Cache**: What it would have cost
+- **💚 Cache Savings**: Shows actual money saved with percentage
+
+#### 4. **Enhanced README Summary**
+The generated README now includes:
+- **Cache Performance Section**: Shows nodes creating/reading cache
+- **Overall Cache Efficiency**: Percentage of input reused
+- **Cost Savings**: Actual dollars saved by caching
+- **Execution Flow Table**: New Cache column with 📝/📖 indicators
+
+### Key Technical Insights
+
+1. **Lazy Evaluation in Anthropic SDK**: The API call doesn't happen when `client.messages.create()` returns, but when you access response content. This is why timing at consumption is correct.
+
+2. **Cache Efficiency Calculation**: Only cache reads should count as "efficient" since cache creation costs 25% MORE, not less. Previous calculation incorrectly counted creation as efficient.
+
+3. **Total Tokens Must Include Everything**: The API processes all tokens (input, output, cache_creation, cache_read), so total must include all of them for accurate cost calculation.
+
+### Impact
+
+These improvements provide complete visibility into:
+- What content is being cached vs not cached
+- Real cost savings from caching implementation
+- Actual API call latencies for performance analysis
+- Per-node cache usage patterns
+
+The tracing system now serves as a powerful debugging and optimization tool for the Task 52 cache implementation, making it easy to identify which nodes benefit from caching and quantify the actual savings.

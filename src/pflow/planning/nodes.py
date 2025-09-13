@@ -2089,32 +2089,82 @@ class MetadataGenerationNode(Node):
 
         workflow = prep_res.get("workflow", {})
         extracted_params = prep_res.get("extracted_params", {})
+        
+        # DEBUG: Log entry and workflow details
+        logger.info(
+            "MetadataGenerationNode: Starting exec with workflow containing %d nodes",
+            len(workflow.get("nodes", [])),
+            extra={
+                "phase": "exec_start",
+                "has_workflow": bool(workflow),
+                "has_extracted_params": bool(extracted_params),
+                "cache_planner": prep_res.get("cache_planner", False),
+                "model_name": prep_res.get("model_name", "unknown"),
+            }
+        )
 
         # Check if caching is enabled
         cache_planner = prep_res.get("cache_planner", False)
         
         # Get LLM to analyze and generate metadata
-        model = llm.get_model(prep_res["model_name"])
+        try:
+            model = llm.get_model(prep_res["model_name"])
+            logger.debug("MetadataGenerationNode: Successfully retrieved model %s", prep_res["model_name"])
+        except Exception as e:
+            logger.error(
+                "MetadataGenerationNode: Failed to get model %s: %s",
+                prep_res["model_name"],
+                str(e),
+                extra={"phase": "model_init", "error": str(e)}
+            )
+            raise
         
         # Build the structured workflow information for the prompt
         # Use the existing helper method to build the components
-        prompt = self._build_metadata_prompt(
-            workflow=workflow,
-            user_input=prep_res.get("user_input", ""),
-            discovered_params=prep_res.get("discovered_params", {}),
-            extracted_params=extracted_params,
-            templatized_input=prep_res.get("templatized_input"),
-        )
+        try:
+            prompt = self._build_metadata_prompt(
+                workflow=workflow,
+                user_input=prep_res.get("user_input", ""),
+                discovered_params=prep_res.get("discovered_params", {}),
+                extracted_params=extracted_params,
+                templatized_input=prep_res.get("templatized_input"),
+            )
+            logger.debug("MetadataGenerationNode: Built metadata prompt successfully")
+        except Exception as e:
+            logger.error(
+                "MetadataGenerationNode: Failed to build metadata prompt: %s",
+                str(e),
+                extra={"phase": "prompt_building", "error": str(e)}
+            )
+            raise
         
         # Extract the variables from the formatted prompt
         # The _build_metadata_prompt already formats everything, so we need to extract
         # We'll use the template directly and format it ourselves
-        node_flow = _build_node_flow(workflow)
-        if not node_flow:
+        try:
+            node_flow = _build_node_flow(workflow)
+            if not node_flow:
+                node_flow = "empty workflow"
+            logger.debug("MetadataGenerationNode: Built node flow: %s", node_flow[:100])
+        except Exception as e:
+            logger.error(
+                "MetadataGenerationNode: Failed to build node flow: %s",
+                str(e),
+                extra={"phase": "node_flow", "error": str(e)}
+            )
             node_flow = "empty workflow"
         
-        workflow_stages = _build_workflow_stages(workflow)
-        if not workflow_stages:
+        try:
+            workflow_stages = self._build_workflow_stages(workflow)
+            if not workflow_stages:
+                workflow_stages = "No stages defined"
+            logger.debug("MetadataGenerationNode: Built workflow stages")
+        except Exception as e:
+            logger.error(
+                "MetadataGenerationNode: Failed to build workflow stages: %s",
+                str(e),
+                extra={"phase": "workflow_stages", "error": str(e)}
+            )
             workflow_stages = "No stages defined"
         
         workflow_inputs = json.dumps(workflow.get("inputs", {}), indent=2)
@@ -2130,33 +2180,84 @@ class MetadataGenerationNode(Node):
         
         if cache_planner:
             # Build cache blocks for instructions only (context is all dynamic - workflow-specific)
-            cache_blocks, formatted_prompt = build_cached_prompt(
-                "metadata_generation",
-                all_variables=all_vars,
-                cacheable_variables=None  # No cacheable context for this node
-            )
+            try:
+                cache_blocks, formatted_prompt = build_cached_prompt(
+                    "metadata_generation",
+                    all_variables=all_vars,
+                    cacheable_variables=None  # No cacheable context for this node
+                )
+                logger.debug(
+                    "MetadataGenerationNode: Built cache blocks, %d blocks, prompt length %d",
+                    len(cache_blocks) if cache_blocks else 0,
+                    len(formatted_prompt)
+                )
+            except Exception as e:
+                logger.error(
+                    "MetadataGenerationNode: Failed to build cached prompt: %s",
+                    str(e),
+                    extra={"phase": "cache_blocks", "error": str(e)}
+                )
+                raise
             
             # Make LLM call with cache blocks
-            response = model.prompt(
-                formatted_prompt,
-                schema=WorkflowMetadata,
-                temperature=prep_res["temperature"],
-                cache_blocks=cache_blocks
-            )
+            logger.info("MetadataGenerationNode: Making LLM call with cache blocks")
+            try:
+                response = model.prompt(
+                    formatted_prompt,
+                    schema=WorkflowMetadata,
+                    temperature=prep_res["temperature"],
+                    cache_blocks=cache_blocks
+                )
+                logger.debug("MetadataGenerationNode: LLM call successful with cache blocks")
+            except Exception as e:
+                logger.error(
+                    "MetadataGenerationNode: LLM call failed with cache blocks: %s",
+                    str(e),
+                    extra={"phase": "llm_call_cached", "error": str(e), "error_type": type(e).__name__}
+                )
+                raise
         else:
             # Traditional approach - no caching
-            prompt_template = load_prompt("metadata_generation")
-            prompt = format_prompt(prompt_template, all_vars)
+            try:
+                prompt_template = load_prompt("metadata_generation")
+                prompt = format_prompt(prompt_template, all_vars)
+                logger.debug("MetadataGenerationNode: Built traditional prompt, length %d", len(prompt))
+            except Exception as e:
+                logger.error(
+                    "MetadataGenerationNode: Failed to build traditional prompt: %s",
+                    str(e),
+                    extra={"phase": "traditional_prompt", "error": str(e)}
+                )
+                raise
             
             # Make LLM call without cache blocks
-            response = model.prompt(
-                prompt,
-                schema=WorkflowMetadata,
-                temperature=prep_res["temperature"]
-            )
+            logger.info("MetadataGenerationNode: Making LLM call without cache blocks")
+            try:
+                response = model.prompt(
+                    prompt,
+                    schema=WorkflowMetadata,
+                    temperature=prep_res["temperature"]
+                )
+                logger.debug("MetadataGenerationNode: LLM call successful without cache blocks")
+            except Exception as e:
+                logger.error(
+                    "MetadataGenerationNode: LLM call failed without cache blocks: %s",
+                    str(e),
+                    extra={"phase": "llm_call_traditional", "error": str(e), "error_type": type(e).__name__}
+                )
+                raise
 
         # Parse the structured response
-        metadata = parse_structured_response(response, WorkflowMetadata)
+        try:
+            metadata = parse_structured_response(response, WorkflowMetadata)
+            logger.debug("MetadataGenerationNode: Successfully parsed structured response")
+        except Exception as e:
+            logger.error(
+                "MetadataGenerationNode: Failed to parse structured response: %s",
+                str(e),
+                extra={"phase": "parse_response", "error": str(e)}
+            )
+            raise
 
         # Convert to plain dict for uniform downstream handling
         metadata_dict = metadata.model_dump() if hasattr(metadata, "model_dump") else dict(metadata)
@@ -2168,7 +2269,7 @@ class MetadataGenerationNode(Node):
         )
 
         # Return comprehensive metadata (keep keys as produced by schema/tests)
-        return {
+        result = {
             "suggested_name": metadata_dict.get("suggested_name"),
             "description": metadata_dict.get("description"),
             "search_keywords": metadata_dict.get("search_keywords", []),
@@ -2177,6 +2278,23 @@ class MetadataGenerationNode(Node):
             "declared_inputs": list(workflow.get("inputs", {}).keys()),
             "declared_outputs": self._extract_outputs(workflow),
         }
+        
+        # Log successful completion
+        logger.info(
+            "MetadataGenerationNode: Successfully generated metadata - name='%s', keywords=%d, capabilities=%d",
+            result.get("suggested_name"),
+            len(result.get("search_keywords", [])),
+            len(result.get("capabilities", [])),
+            extra={
+                "phase": "exec_complete",
+                "success": True,
+                "metadata_name": result.get("suggested_name"),
+                "keyword_count": len(result.get("search_keywords", [])),
+                "capability_count": len(result.get("capabilities", [])),
+            }
+        )
+        
+        return result
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store metadata and continue flow.
@@ -2206,7 +2324,35 @@ class MetadataGenerationNode(Node):
         Returns:
             Dict with basic metadata
         """
+        # Log the fallback trigger with detailed error information
+        logger.warning(
+            "MetadataGenerationNode: Falling back to static metadata due to error: %s",
+            str(exc),
+            extra={
+                "phase": "exec_fallback",
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "has_workflow": bool(prep_res.get("workflow")),
+                "cache_planner": prep_res.get("cache_planner", False),
+                "model_name": prep_res.get("model_name", "unknown"),
+            },
+            exc_info=True  # Include full traceback
+        )
+        
         safe_response, planner_error = create_fallback_response("MetadataGenerationNode", exc, prep_res)
+        
+        # Log what fallback metadata is being generated
+        logger.info(
+            "MetadataGenerationNode: Generated fallback metadata - name='%s'",
+            safe_response.get("suggested_name", "unknown"),
+            extra={
+                "phase": "fallback_complete",
+                "metadata_name": safe_response.get("suggested_name"),
+                "has_keywords": bool(safe_response.get("search_keywords")),
+                "has_capabilities": bool(safe_response.get("capabilities")),
+                "error_category": planner_error.category.value if planner_error else "unknown",
+            }
+        )
 
         # Note: We cannot store the error in shared store from exec_fallback
         # as shared store is not accessible here in PocketFlow architecture.
