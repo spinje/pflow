@@ -33,7 +33,7 @@ from pocketflow import Flow, Node
 logger = logging.getLogger(__name__)
 
 
-def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: float = 1.0) -> "Flow":
+def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: int = 1) -> "Flow":
     """Create the complete planner meta-workflow.
 
     This flow implements the sophisticated two-path architecture:
@@ -48,7 +48,7 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: fl
 
     Args:
         debug_context: Optional DebugContext for debugging capabilities
-        wait: Wait time between retries in seconds (default 1.0, use 0 for tests)
+        wait: Wait time between retries in seconds (default 1, use 0 for tests)
 
     Returns:
         The complete planner flow ready for execution

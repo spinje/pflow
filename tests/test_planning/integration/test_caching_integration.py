@@ -85,7 +85,7 @@ class TestCachingIntegration:
 
                     # Execute
                     prep_res = node.prep(shared)
-                    result = node.exec(prep_res)
+                    node.exec(prep_res)
 
                     # Verify cache blocks were passed to LLM
                     mock_model.prompt.assert_called_once()
@@ -174,7 +174,7 @@ class TestCachingIntegration:
 
                     # Execute
                     prep_res = node.prep(shared)
-                    result = node.exec(prep_res)
+                    node.exec(prep_res)
 
                     # Verify cache blocks parameter is None when disabled
                     mock_model.prompt.assert_called_once()
@@ -223,7 +223,7 @@ class TestCachingIntegration:
 
         # Execute
         prep_res = node.prep(shared)
-        result = node.exec(prep_res)
+        node.exec(prep_res)
 
         # Verify cache blocks were used
         call_args = mock_model.prompt.call_args
@@ -292,7 +292,7 @@ This section will be dynamically built."""
 
                             # Execute
                             prep_res = node.prep(shared)
-                            result = node.exec(prep_res)
+                            node.exec(prep_res)
 
                             # Verify cache blocks were passed to LLM
                             call_args = mock_model.prompt.call_args
@@ -354,14 +354,16 @@ class TestCacheFlagPropagation:
             shared = {"user_input": "test", "cache_planner": True}
 
             # Mock minimal dependencies
-            with patch("pflow.planning.context_builder.build_workflows_context", return_value="context"):
-                with patch("pflow.planning.context_builder.build_nodes_context", return_value="nodes"):
-                    with patch("pflow.registry.registry.Registry.load", return_value={}):
-                        prep_res = node.prep(shared)
+            with (
+                patch("pflow.planning.context_builder.build_workflows_context", return_value="context"),
+                patch("pflow.planning.context_builder.build_nodes_context", return_value="nodes"),
+                patch("pflow.registry.registry.Registry.load", return_value={}),
+            ):
+                prep_res = node.prep(shared)
 
-                        # Verify cache flag is preserved
-                        assert "cache_planner" in prep_res
-                        assert prep_res["cache_planner"] is True
+                # Verify cache flag is preserved
+                assert "cache_planner" in prep_res
+                assert prep_res["cache_planner"] is True
 
 
 class TestCacheEffectiveness:

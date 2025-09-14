@@ -131,16 +131,12 @@ class MetricsCollector:
 
         return round(total_cost, 6)
 
-    def get_summary(self, llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
-        """Generate metrics summary for JSON output.
-
-        Args:
-            llm_calls: List of LLM call data from shared["__llm_calls__"]
+    def _calculate_durations(self) -> tuple[float, Optional[float], Optional[float]]:
+        """Calculate total, planner, and workflow durations.
 
         Returns:
-            Dictionary with top-level metrics and detailed breakdown
+            Tuple of (total_duration_ms, planner_duration_ms, workflow_duration_ms)
         """
-        # Calculate durations
         total_duration = (time.perf_counter() - self.start_time) * 1000
 
         planner_duration = None
@@ -151,13 +147,84 @@ class MetricsCollector:
         if self.workflow_start and self.workflow_end:
             workflow_duration = (self.workflow_end - self.workflow_start) * 1000
 
-        # Aggregate token counts
-        total_input = sum(call.get("input_tokens", 0) for call in llm_calls if call)
-        total_output = sum(call.get("output_tokens", 0) for call in llm_calls if call)
-        total_cache_creation = sum(call.get("cache_creation_input_tokens", 0) for call in llm_calls if call)
-        total_cache_read = sum(call.get("cache_read_input_tokens", 0) for call in llm_calls if call)
+        return total_duration, planner_duration, workflow_duration
 
-        # Calculate costs
+    def _aggregate_token_counts(self, llm_calls: list[dict[str, Any]]) -> dict[str, int]:
+        """Aggregate token counts from LLM calls.
+
+        Args:
+            llm_calls: List of LLM call data
+
+        Returns:
+            Dictionary with aggregated token counts
+        """
+        return {
+            "input": sum(call.get("input_tokens", 0) for call in llm_calls if call),
+            "output": sum(call.get("output_tokens", 0) for call in llm_calls if call),
+            "cache_creation": sum(call.get("cache_creation_input_tokens", 0) for call in llm_calls if call),
+            "cache_read": sum(call.get("cache_read_input_tokens", 0) for call in llm_calls if call),
+        }
+
+    def _build_execution_metrics(
+        self,
+        llm_calls: list[dict[str, Any]],
+        node_timings: dict[str, float],
+        duration: Optional[float],
+        is_planner: bool,
+    ) -> dict[str, Any]:
+        """Build metrics for planner or workflow execution.
+
+        Args:
+            llm_calls: Filtered LLM calls for this execution type
+            node_timings: Node execution timings
+            duration: Execution duration in milliseconds
+            is_planner: Whether this is for planner metrics
+
+        Returns:
+            Dictionary with execution metrics
+        """
+        cost = self.calculate_costs(llm_calls)
+        tokens = self._aggregate_token_counts(llm_calls)
+        tokens_total = tokens["input"] + tokens["output"]
+
+        # Extract unique models used
+        models = list({call.get("model", "unknown") for call in llm_calls if call})
+
+        metrics = {
+            "duration_ms": round(duration, 2) if duration else None,
+            "nodes_executed": len(node_timings),
+            "cost_usd": cost,
+            "tokens_input": tokens["input"],
+            "tokens_output": tokens["output"],
+            "tokens_total": tokens_total,
+            "models_used": models,
+            "node_timings": node_timings,
+        }
+
+        # Add cache tokens if present
+        if tokens["cache_creation"] > 0:
+            metrics["cache_creation_tokens"] = tokens["cache_creation"]
+        if tokens["cache_read"] > 0:
+            metrics["cache_read_tokens"] = tokens["cache_read"]
+
+        return metrics
+
+    def get_summary(self, llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
+        """Generate metrics summary for JSON output.
+
+        Args:
+            llm_calls: List of LLM call data from shared["__llm_calls__"]
+
+        Returns:
+            Dictionary with top-level metrics and detailed breakdown
+        """
+        # Calculate durations
+        total_duration, planner_duration, workflow_duration = self._calculate_durations()
+
+        # Aggregate total token counts
+        total_tokens = self._aggregate_token_counts(llm_calls)
+
+        # Calculate total cost
         total_cost = self.calculate_costs(llm_calls)
 
         # Count nodes
@@ -169,90 +236,30 @@ class MetricsCollector:
         # Add planner metrics if present
         if self.planner_nodes:
             planner_llm_calls = [c for c in llm_calls if c.get("is_planner", False)]
-            planner_cost = self.calculate_costs(planner_llm_calls)
-
-            # Aggregate planner tokens including cache tokens
-            planner_input = sum(call.get("input_tokens", 0) for call in planner_llm_calls if call)
-            planner_output = sum(call.get("output_tokens", 0) for call in planner_llm_calls if call)
-            planner_cache_creation = sum(
-                call.get("cache_creation_input_tokens", 0) for call in planner_llm_calls if call
+            metrics["planner"] = self._build_execution_metrics(
+                planner_llm_calls, self.planner_nodes, planner_duration, is_planner=True
             )
-            planner_cache_read = sum(call.get("cache_read_input_tokens", 0) for call in planner_llm_calls if call)
-            planner_total = planner_input + planner_output
-
-            # Extract unique models used in planner
-            # Model should be in the model field directly now
-            planner_models = list({call.get("model", "unknown") for call in planner_llm_calls if call})
-
-            planner_metrics = {
-                "duration_ms": round(planner_duration, 2) if planner_duration else None,
-                "nodes_executed": len(self.planner_nodes),
-                "cost_usd": planner_cost,
-                "tokens_input": planner_input,
-                "tokens_output": planner_output,
-                "tokens_total": planner_total,
-                "models_used": planner_models,
-                "node_timings": self.planner_nodes,
-            }
-
-            # Add cache tokens if present
-            if planner_cache_creation > 0:
-                planner_metrics["cache_creation_tokens"] = planner_cache_creation
-            if planner_cache_read > 0:
-                planner_metrics["cache_read_tokens"] = planner_cache_read
-
-            metrics["planner"] = planner_metrics
 
         # Add workflow metrics if present
         if self.workflow_nodes:
             workflow_llm_calls = [c for c in llm_calls if not c.get("is_planner", False)]
-            workflow_cost = self.calculate_costs(workflow_llm_calls)
-
-            # Aggregate workflow tokens including cache tokens
-            workflow_input = sum(call.get("input_tokens", 0) for call in workflow_llm_calls if call)
-            workflow_output = sum(call.get("output_tokens", 0) for call in workflow_llm_calls if call)
-            workflow_cache_creation = sum(
-                call.get("cache_creation_input_tokens", 0) for call in workflow_llm_calls if call
+            metrics["workflow"] = self._build_execution_metrics(
+                workflow_llm_calls, self.workflow_nodes, workflow_duration, is_planner=False
             )
-            workflow_cache_read = sum(call.get("cache_read_input_tokens", 0) for call in workflow_llm_calls if call)
-            workflow_total = workflow_input + workflow_output
-
-            # Extract unique models used in workflow
-            # Model should be in the model field directly now
-            workflow_models = list({call.get("model", "unknown") for call in workflow_llm_calls if call})
-
-            workflow_metrics = {
-                "duration_ms": round(workflow_duration, 2) if workflow_duration else None,
-                "nodes_executed": len(self.workflow_nodes),
-                "cost_usd": workflow_cost,
-                "tokens_input": workflow_input,
-                "tokens_output": workflow_output,
-                "tokens_total": workflow_total,
-                "models_used": workflow_models,
-                "node_timings": self.workflow_nodes,
-            }
-
-            # Add cache tokens if present
-            if workflow_cache_creation > 0:
-                workflow_metrics["cache_creation_tokens"] = workflow_cache_creation
-            if workflow_cache_read > 0:
-                workflow_metrics["cache_read_tokens"] = workflow_cache_read
-
-            metrics["workflow"] = workflow_metrics
 
         # Add total metrics
         total_metrics = {
-            "tokens_input": total_input,
-            "tokens_output": total_output,
-            "tokens_total": total_input + total_output,
+            "tokens_input": total_tokens["input"],
+            "tokens_output": total_tokens["output"],
+            "tokens_total": total_tokens["input"] + total_tokens["output"],
             "cost_usd": total_cost,
         }
 
         # Add cache tokens if present
-        if total_cache_creation > 0:
-            total_metrics["cache_creation_tokens"] = total_cache_creation
-        if total_cache_read > 0:
-            total_metrics["cache_read_tokens"] = total_cache_read
+        if total_tokens["cache_creation"] > 0:
+            total_metrics["cache_creation_tokens"] = total_tokens["cache_creation"]
+        if total_tokens["cache_read"] > 0:
+            total_metrics["cache_read_tokens"] = total_tokens["cache_read"]
 
         metrics["total"] = total_metrics
 

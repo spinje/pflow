@@ -16,7 +16,7 @@ class TestCachePlannerFlag:
 
         with patch("pflow.cli.main._execute_with_planner") as mock_execute:
             # Set up to avoid actual planner execution
-            result = runner.invoke(workflow_command, ["test workflow"], catch_exceptions=False)
+            runner.invoke(workflow_command, ["test workflow"], catch_exceptions=False)
 
             # Check that the function was called
             assert mock_execute.called
@@ -24,7 +24,7 @@ class TestCachePlannerFlag:
             # Get the arguments passed to _execute_with_planner
             call_args = mock_execute.call_args[0]
             # The last argument should be cache_planner=False
-            assert call_args[-1] == False  # cache_planner should be False
+            assert not call_args[-1]  # cache_planner should be False
 
     def test_cache_planner_flag_set_to_true(self):
         """Test that cache_planner is True when --cache-planner flag is provided."""
@@ -32,7 +32,7 @@ class TestCachePlannerFlag:
 
         with patch("pflow.cli.main._execute_with_planner") as mock_execute:
             # Set up to avoid actual planner execution
-            result = runner.invoke(workflow_command, ["--cache-planner", "test workflow"], catch_exceptions=False)
+            runner.invoke(workflow_command, ["--cache-planner", "test workflow"], catch_exceptions=False)
 
             # Check that the function was called
             assert mock_execute.called
@@ -40,7 +40,7 @@ class TestCachePlannerFlag:
             # Get the arguments passed to _execute_with_planner
             call_args = mock_execute.call_args[0]
             # The last argument should be cache_planner=True
-            assert call_args[-1] == True  # cache_planner should be True
+            assert call_args[-1]  # cache_planner should be True
 
     def test_cache_planner_propagates_to_shared_store(self):
         """Test that cache_planner flag is properly propagated to the shared store."""
@@ -55,13 +55,13 @@ class TestCachePlannerFlag:
         ctx.obj = {"output_format": "text", "cache_planner": False}
         _, _, _, shared = _setup_planner_execution(ctx, "test input", None, False, False)
         assert "cache_planner" in shared
-        assert shared["cache_planner"] == False
+        assert not shared["cache_planner"]
 
         # Test with flag
         ctx.obj = {"output_format": "text", "cache_planner": True}
         _, _, _, shared = _setup_planner_execution(ctx, "test input", None, False, True)
         assert "cache_planner" in shared
-        assert shared["cache_planner"] == True
+        assert shared["cache_planner"]
 
     def test_cache_planner_flag_appears_in_help(self):
         """Test that the --cache-planner flag appears in the help text."""

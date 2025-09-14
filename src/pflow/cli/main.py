@@ -2359,6 +2359,100 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     return False
 
 
+def _install_anthropic_model_if_needed(verbose: bool) -> None:
+    """Install Anthropic model wrapper for planning models unless in tests."""
+    import os
+
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+
+        install_anthropic_model()
+        if verbose:
+            click.echo("cli: Using Anthropic SDK for planning models", err=True)
+
+
+def _try_execute_named_workflow(
+    ctx: click.Context,
+    workflow: tuple[str, ...],
+    stdin_data: StdinData | str | None,
+    output_key: str | None,
+    output_format: str,
+    verbose: bool,
+) -> bool:
+    """Try to execute workflow as a named/file workflow.
+
+    Returns True if workflow was handled (either executed or error shown), False otherwise.
+    """
+    if not workflow:
+        return False
+
+    first_arg = workflow[0]
+    if not is_likely_workflow_name(first_arg, workflow[1:]):
+        return False
+
+    # Resolve once to avoid duplicate calls
+    workflow_ir, source = resolve_workflow(first_arg)
+    # Try to execute as named workflow
+    if _handle_named_workflow(
+        ctx, first_arg, workflow[1:], stdin_data, output_key, output_format, verbose, workflow_ir, source
+    ):
+        return True
+    # If not found, handle the error
+    _handle_workflow_not_found(ctx, first_arg, source or "unknown")
+    return True  # We handled it by showing an error
+
+
+def _handle_single_token_workflow(
+    ctx: click.Context,
+    workflow: tuple[str, ...],
+    stdin_data: StdinData | str | None,
+    output_key: str | None,
+    output_format: str,
+    verbose: bool,
+) -> bool:
+    """Handle single-token workflow input with guardrails.
+
+    Returns True if handled, False if should continue to planner.
+    """
+    if not (workflow and len(workflow) == 1 and (" " not in workflow[0])):
+        return False
+
+    word = workflow[0]
+    # If it's a saved workflow, execute it directly
+    ir, source = resolve_workflow(word)
+    if ir is not None and _handle_named_workflow(
+        ctx, word, (), stdin_data, output_key, output_format, verbose, ir, source
+    ):
+        return True
+    # Otherwise show targeted hints, or not-found guidance
+    hint = _single_word_hint(word)
+    if hint:
+        click.echo(hint, err=True)
+        ctx.exit(1)
+    _handle_workflow_not_found(ctx, word, None)
+    return True
+
+
+def _validate_and_prepare_natural_language_input(workflow: tuple[str, ...]) -> str:
+    """Validate and prepare input for natural language processing.
+
+    Returns the raw input string.
+    Raises ClickException if input is invalid.
+    """
+    raw_input = " ".join(workflow) if workflow else ""
+
+    if not raw_input:
+        raise click.ClickException("cli: No workflow provided. Use --help to see usage examples.")
+
+    # Validate input length (100KB limit)
+    if len(raw_input) > 100 * 1024:
+        raise click.ClickException(
+            "cli: Workflow input too large (max 100KB). Consider breaking it into smaller workflows."
+        )
+
+    return raw_input
+
+
 # NOTE: This MUST be @click.command, not @click.group with catch-all argument.
 # Click groups consume ALL positional args when using @click.argument("workflow", nargs=-1),
 # preventing subcommands from being recognized. The wrapper (main_wrapper.py) handles routing.
@@ -2457,17 +2551,8 @@ def workflow_command(
         ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout, save, cache_planner
     )
 
-    # Install Anthropic model wrapper for planning models (unless we're in tests)
-    # This gives us better performance with caching and structured output
-    # Skip in tests to avoid conflicts with test mocks
-    import os
-
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
-        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
-
-        install_anthropic_model()
-        if verbose:
-            click.echo("cli: Using Anthropic SDK for planning models", err=True)
+    # Install Anthropic model wrapper for planning models
+    _install_anthropic_model_if_needed(verbose)
 
     # Handle stdin data
     stdin_content, enhanced_stdin = _read_stdin_data()
@@ -2488,45 +2573,14 @@ def workflow_command(
     # _check_mcp_setup(ctx)
 
     # Try to handle as named/file workflow first
-    if workflow:
-        first_arg = workflow[0]
-        if is_likely_workflow_name(first_arg, workflow[1:]):
-            # Resolve once to avoid duplicate calls
-            workflow_ir, source = resolve_workflow(first_arg)
-            # Try to execute as named workflow
-            if _handle_named_workflow(
-                ctx, first_arg, workflow[1:], stdin_data, output_key, output_format, verbose, workflow_ir, source
-            ):
-                return
-            # If not found, handle the error
-            _handle_workflow_not_found(ctx, first_arg, source or "unknown")
+    if _try_execute_named_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
+        return
 
-    # Natural language fallback
-    raw_input = " ".join(workflow) if workflow else ""
-    if not raw_input:
-        raise click.ClickException("cli: No workflow provided. Use --help to see usage examples.")
+    # Validate input for natural language processing
+    raw_input = _validate_and_prepare_natural_language_input(workflow)
 
-    # Validate input length (100KB limit)
-    if len(raw_input) > 100 * 1024:
-        raise click.ClickException(
-            "cli: Workflow input too large (max 100KB). Consider breaking it into smaller workflows."
-        )
-
-    # Single-token guardrails: block accidental planner for generic words
-    if workflow and len(workflow) == 1 and (" " not in workflow[0]):
-        word = workflow[0]
-        # If it's a saved workflow, execute it directly
-        ir, source = resolve_workflow(word)
-        if ir is not None and _handle_named_workflow(
-            ctx, word, (), stdin_data, output_key, output_format, verbose, ir, source
-        ):
-            return
-        # Otherwise show targeted hints, or not-found guidance
-        hint = _single_word_hint(word)
-        if hint:
-            click.echo(hint, err=True)
-            ctx.exit(1)
-        _handle_workflow_not_found(ctx, word, None)
+    # Handle single-token workflow with guardrails
+    if _handle_single_token_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
         return
 
     # Multi-word or parameterized input: planner by design

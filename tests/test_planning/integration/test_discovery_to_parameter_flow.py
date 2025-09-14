@@ -217,9 +217,10 @@ class TestPathADiscoveryToParameter:
         # 3. ~75 tests will fail due to state pollution
         # The 0.2s performance cost is necessary for correctness.
         import importlib
+
         import pflow.planning.prompts.loader as loader_module
         import pflow.planning.utils.prompt_cache_helper as cache_helper_module
-        
+
         importlib.reload(loader_module)
         importlib.reload(cache_helper_module)
 

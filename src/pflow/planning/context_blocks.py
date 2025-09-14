@@ -165,7 +165,7 @@ class PlannerContextBuilder:
             return blocks[:-1] + [last_block]
 
         # Return new list with block appended
-        return blocks + [{"text": plan_text, "cache_control": {"type": "ephemeral"}}]
+        return [*blocks, {"text": plan_text, "cache_control": {"type": "ephemeral"}}]
 
     @classmethod
     def append_workflow_block(
@@ -199,7 +199,7 @@ class PlannerContextBuilder:
             return blocks[:-1] + [last_block]
 
         # Return new list with block appended
-        return blocks + [{"text": workflow_text, "cache_control": {"type": "ephemeral"}}]
+        return [*blocks, {"text": workflow_text, "cache_control": {"type": "ephemeral"}}]
 
     @classmethod
     def append_errors_block(
@@ -237,7 +237,7 @@ class PlannerContextBuilder:
             return blocks[:-1] + [last_block]
 
         # Return new list with block appended
-        return blocks + [{"text": errors_text, "cache_control": {"type": "ephemeral"}}]
+        return [*blocks, {"text": errors_text, "cache_control": {"type": "ephemeral"}}]
 
     # Introduction section removed - now part of workflow_system_overview.md
     # User request section removed - handled directly in build_base_blocks with XML tags

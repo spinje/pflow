@@ -1806,7 +1806,6 @@ class WorkflowGeneratorNode(Node):
 
         # Determine which blocks to use (prefer blocks over strings)
         blocks = None
-        base_context = None  # For backward compatibility
 
         if is_retry and prep_res.get("planner_accumulated_blocks"):
             # Use accumulated blocks from previous attempt(s)
@@ -2160,10 +2159,9 @@ class MetadataGenerationNode(Node):
             model = llm.get_model(prep_res["model_name"])
             logger.debug("MetadataGenerationNode: Successfully retrieved model %s", prep_res["model_name"])
         except Exception as e:
-            logger.error(
-                "MetadataGenerationNode: Failed to get model %s: %s",
+            logger.exception(
+                "MetadataGenerationNode: Failed to get model %s",
                 prep_res["model_name"],
-                str(e),
                 extra={"phase": "model_init", "error": str(e)},
             )
             raise
@@ -2175,9 +2173,8 @@ class MetadataGenerationNode(Node):
                 node_flow = "empty workflow"
             logger.debug("MetadataGenerationNode: Built node flow: %s", node_flow[:100])
         except Exception as e:
-            logger.error(
-                "MetadataGenerationNode: Failed to build node flow: %s",
-                str(e),
+            logger.exception(
+                "MetadataGenerationNode: Failed to build node flow",
                 extra={"phase": "node_flow", "error": str(e)},
             )
             node_flow = "empty workflow"
@@ -2188,9 +2185,8 @@ class MetadataGenerationNode(Node):
                 workflow_stages = "No stages defined"
             logger.debug("MetadataGenerationNode: Built workflow stages")
         except Exception as e:
-            logger.error(
-                "MetadataGenerationNode: Failed to build workflow stages: %s",
-                str(e),
+            logger.exception(
+                "MetadataGenerationNode: Failed to build workflow stages",
                 extra={"phase": "workflow_stages", "error": str(e)},
             )
             workflow_stages = "No stages defined"
@@ -2223,9 +2219,8 @@ class MetadataGenerationNode(Node):
                 len(formatted_prompt),
             )
         except Exception as e:
-            logger.error(
-                "MetadataGenerationNode: Failed to build prompt: %s",
-                str(e),
+            logger.exception(
+                "MetadataGenerationNode: Failed to build prompt",
                 extra={"phase": "build_prompt", "error": str(e)},
             )
             raise
@@ -2241,9 +2236,8 @@ class MetadataGenerationNode(Node):
             )
             logger.debug("MetadataGenerationNode: LLM call successful")
         except Exception as e:
-            logger.error(
-                "MetadataGenerationNode: LLM call failed: %s",
-                str(e),
+            logger.exception(
+                "MetadataGenerationNode: LLM call failed",
                 extra={"phase": "llm_call", "error": str(e), "error_type": type(e).__name__},
             )
             raise
@@ -2253,9 +2247,8 @@ class MetadataGenerationNode(Node):
             metadata = parse_structured_response(response, WorkflowMetadata)
             logger.debug("MetadataGenerationNode: Successfully parsed structured response")
         except Exception as e:
-            logger.error(
-                "MetadataGenerationNode: Failed to parse structured response: %s",
-                str(e),
+            logger.exception(
+                "MetadataGenerationNode: Failed to parse structured response",
                 extra={"phase": "parse_response", "error": str(e)},
             )
             raise

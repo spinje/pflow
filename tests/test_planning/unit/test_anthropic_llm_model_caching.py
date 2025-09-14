@@ -39,19 +39,23 @@ class TestAnthropicLLMModelInitialization:
 
     def test_api_key_from_environment(self):
         """Model gets API key from environment variable."""
-        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client:
-                model = AnthropicLLMModel()
-                mock_client.assert_called_once_with(api_key="test-key")
+        with (
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
+            patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client,
+        ):
+            AnthropicLLMModel()
+            mock_client.assert_called_once_with(api_key="test-key")
 
     def test_api_key_from_llm_library(self):
         """Model falls back to llm library for API key."""
-        with patch.dict("os.environ", {}, clear=True):  # No env var
-            with patch("llm.get_key") as mock_get_key:
-                mock_get_key.return_value = "llm-key"
-                with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client:
-                    model = AnthropicLLMModel()
-                    mock_client.assert_called_once_with(api_key="llm-key")
+        with (
+            patch.dict("os.environ", {}, clear=True),  # No env var
+            patch("llm.get_key") as mock_get_key,
+            patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client,
+        ):
+            mock_get_key.return_value = "llm-key"
+            AnthropicLLMModel()
+            mock_client.assert_called_once_with(api_key="llm-key")
 
 
 class TestAnthropicLLMModelPromptRouting:
@@ -62,16 +66,18 @@ class TestAnthropicLLMModelPromptRouting:
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient"):
             model = AnthropicLLMModel()
 
-            with patch.object(model, "_prompt_without_cache") as mock_fallback:
-                with patch.object(model, "_prompt_with_cache_blocks") as mock_cached:
-                    mock_fallback.return_value = Mock(spec=AnthropicResponse)
+            with (
+                patch.object(model, "_prompt_without_cache") as mock_fallback,
+                patch.object(model, "_prompt_with_cache_blocks") as mock_cached,
+            ):
+                mock_fallback.return_value = Mock(spec=AnthropicResponse)
 
-                    # Call without cache_blocks
-                    result = model.prompt("test prompt", temperature=0.5)
+                # Call without cache_blocks
+                model.prompt("test prompt", temperature=0.5)
 
-                    # Should use fallback path
-                    mock_fallback.assert_called_once_with(prompt="test prompt", schema=None, temperature=0.5)
-                    mock_cached.assert_not_called()
+                # Should use fallback path
+                mock_fallback.assert_called_once_with(prompt="test prompt", schema=None, temperature=0.5)
+                mock_cached.assert_not_called()
 
     def test_routes_to_cached_when_cache_blocks_provided(self):
         """When cache_blocks provided, uses cached path."""
@@ -80,18 +86,20 @@ class TestAnthropicLLMModelPromptRouting:
 
             cache_blocks = [{"text": "cached", "cache_control": {"type": "ephemeral"}}]
 
-            with patch.object(model, "_prompt_without_cache") as mock_fallback:
-                with patch.object(model, "_prompt_with_cache_blocks") as mock_cached:
-                    mock_cached.return_value = Mock(spec=AnthropicResponse)
+            with (
+                patch.object(model, "_prompt_without_cache") as mock_fallback,
+                patch.object(model, "_prompt_with_cache_blocks") as mock_cached,
+            ):
+                mock_cached.return_value = Mock(spec=AnthropicResponse)
 
-                    # Call with cache_blocks
-                    result = model.prompt("test prompt", temperature=0.5, cache_blocks=cache_blocks)
+                # Call with cache_blocks
+                model.prompt("test prompt", temperature=0.5, cache_blocks=cache_blocks)
 
-                    # Should use cached path
-                    mock_cached.assert_called_once_with(
-                        prompt="test prompt", schema=None, temperature=0.5, cache_blocks=cache_blocks
-                    )
-                    mock_fallback.assert_not_called()
+                # Should use cached path
+                mock_cached.assert_called_once_with(
+                    prompt="test prompt", schema=None, temperature=0.5, cache_blocks=cache_blocks
+                )
+                mock_fallback.assert_not_called()
 
     def test_passes_schema_parameter_correctly(self):
         """Schema parameter is passed through correctly."""
@@ -102,7 +110,7 @@ class TestAnthropicLLMModelPromptRouting:
                 mock_fallback.return_value = Mock(spec=AnthropicResponse)
 
                 # Call with schema but no cache
-                result = model.prompt("test prompt", schema=MockSchema, temperature=0.7)
+                model.prompt("test prompt", schema=MockSchema, temperature=0.7)
 
                 mock_fallback.assert_called_once_with(prompt="test prompt", schema=MockSchema, temperature=0.7)
 
@@ -239,7 +247,7 @@ class TestPromptWithoutCache:
             model = AnthropicLLMModel()
             model.client = mock_client
 
-            result = model._prompt_without_cache(
+            model._prompt_without_cache(
                 prompt="full prompt",
                 schema=None,  # Text mode
                 temperature=0.5,
@@ -344,7 +352,7 @@ class TestBackwardCompatibility:
             model.client = mock_client
 
             # Pass prompt as list (some code might do this)
-            result = model.prompt(["part1", "part2"])
+            model.prompt(["part1", "part2"])
 
             # Should convert to string
             call_args = mock_client.generate_with_schema_text_mode.call_args

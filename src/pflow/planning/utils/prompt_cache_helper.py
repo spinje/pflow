@@ -4,16 +4,16 @@ This module provides basic caching support for prompt templates.
 Special-case logic has been moved into the nodes themselves.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from pflow.planning.prompts.loader import format_prompt, load_prompt
 
 
 def build_cached_prompt(
     prompt_name: str,
-    all_variables: Dict[str, str],
-    cacheable_variables: Optional[Dict[str, str]] = None,  # Deprecated - kept for compatibility
-) -> Tuple[List[Dict[str, Any]], str]:
+    all_variables: dict[str, str],
+    cacheable_variables: Optional[dict[str, str]] = None,  # Deprecated - kept for compatibility
+) -> tuple[list[dict[str, Any]], str]:
     """Build cache blocks from a prompt template.
 
     Simple strategy:

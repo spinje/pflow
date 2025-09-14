@@ -1,6 +1,6 @@
 """Pydantic models for structured LLM output."""
 
-from typing import Any, Optional
+from typing import Any, Callable, ClassVar, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -24,7 +24,7 @@ class EdgeIR(BaseModel):
     class Config:
         populate_by_name = True  # Allow both field names and aliases during parsing
         use_enum_values = True
-        json_encoders = {str: lambda v: v}
+        json_encoders: ClassVar[dict[type, Callable[[Any], Any]]] = {str: lambda v: v}
         by_alias = True  # CRITICAL: Use aliases when serializing for IR compliance
 
 

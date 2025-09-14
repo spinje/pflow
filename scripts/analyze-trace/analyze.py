@@ -73,16 +73,8 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
-def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str, dict]:
-    """Create markdown content for a single node/LLM call.
-
-    Returns:
-        tuple: (markdown_content, metadata_dict)
-    """
-    node_name = call.get("node", "Unknown")
-    duration = call.get("duration_ms", 0) / 1000
-
-    # Get emoji for node type
+def _get_node_emoji(node_name: str) -> str:
+    """Get emoji for node type."""
     emoji_map = {
         "WorkflowDiscoveryNode": "🔍",
         "ComponentBrowsingNode": "📦",
@@ -96,7 +88,192 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
         "ParameterPreparationNode": "📋",
         "ResultPreparationNode": "📤",
     }
-    emoji = emoji_map.get(node_name, "📋")
+    return emoji_map.get(node_name, "📋")
+
+
+def _calculate_token_counts(call: dict) -> tuple[int, int, int, int, int]:
+    """Calculate or extract token counts from call.
+
+    Returns:
+        tuple: (prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens)
+    """
+    tokens = call.get("tokens", {})
+
+    # Get cache tokens if available
+    cache_creation = tokens.get("cache_creation", 0)
+    cache_read = tokens.get("cache_read", 0)
+
+    if tokens:
+        prompt_tokens = tokens.get("input", 0)
+        response_tokens = tokens.get("output", 0)
+    else:
+        # Estimate if not provided
+        prompt = call.get("prompt", "")
+        prompt_tokens = estimate_tokens(prompt)
+        response = call.get("response")
+        response_text, _ = format_response(response) if response else ("", False)
+        response_tokens = estimate_tokens(response_text)
+
+    # Total should include ALL tokens processed by the API
+    total_tokens = tokens.get("total", prompt_tokens + cache_creation + cache_read + response_tokens)
+
+    return prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens
+
+
+def _format_token_usage_table(
+    prompt_tokens: int, response_tokens: int, cache_creation: int, cache_read: int, total_tokens: int
+) -> list[str]:
+    """Format token usage as a markdown table."""
+    md = []
+    md.append("## 📊 Token Usage\n")
+    md.append("| Type | Count | Cost Factor | Notes |")
+    md.append("|------|-------|-------------|-------|")
+
+    # Display token breakdown
+    if cache_creation > 0:
+        md.append(f"| **Cache Creation** | {cache_creation:,} | +25% | New cache blocks created |")
+    if cache_read > 0:
+        md.append(f"| **Cache Read** | {cache_read:,} | -90% | Reused from cache |")
+    md.append(f"| **Input (non-cached)** | {prompt_tokens:,} | 100% | Regular input tokens |")
+    md.append(f"| **Output** | {response_tokens:,} | 100% | Generated tokens |")
+    md.append(f"| **Total** | {total_tokens:,} | - | All tokens processed |")
+    md.append("")
+
+    # Cache efficiency if applicable
+    if cache_read > 0:
+        total_input = prompt_tokens + cache_creation + cache_read
+        cache_efficiency = (cache_read / total_input * 100) if total_input > 0 else 0
+        md.append(f"**Cache Efficiency:** {cache_efficiency:.1f}% of input was reused from cache\n")
+
+    return md
+
+
+def _calculate_cost_with_cache(
+    prompt_tokens: int, response_tokens: int, cache_creation: int, cache_read: int, total_tokens: int
+) -> list[str]:
+    """Calculate and format cost information with cache-aware pricing."""
+    md = []
+
+    if total_tokens <= 0:
+        return md
+
+    # Anthropic Claude 3.5 Sonnet pricing (per 1K tokens)
+    input_cost_per_1k = 0.003  # $3 per 1M tokens
+    output_cost_per_1k = 0.015  # $15 per 1M tokens
+    cache_write_cost_per_1k = input_cost_per_1k * 1.25  # 25% premium for cache creation
+    cache_read_cost_per_1k = input_cost_per_1k * 0.1  # 90% discount for cache reads
+
+    # Calculate costs
+    prompt_cost = (prompt_tokens / 1000) * input_cost_per_1k
+    cache_creation_cost = (cache_creation / 1000) * cache_write_cost_per_1k if cache_creation > 0 else 0
+    cache_read_cost = (cache_read / 1000) * cache_read_cost_per_1k if cache_read > 0 else 0
+    response_cost = (response_tokens / 1000) * output_cost_per_1k
+    total_cost = prompt_cost + cache_creation_cost + cache_read_cost + response_cost
+
+    md.append(f"\n**💰 Estimated Cost:** ${total_cost:.6f}\n")
+
+    # Calculate savings from cache reuse
+    if cache_read > 0:
+        # What it would have cost without cache
+        full_price_for_cached = (cache_read / 1000) * input_cost_per_1k
+        # What it actually cost with cache
+        actual_cache_cost = (cache_read / 1000) * cache_read_cost_per_1k
+        # Savings
+        savings = full_price_for_cached - actual_cache_cost
+        savings_percentage = (savings / (total_cost + savings) * 100) if (total_cost + savings) > 0 else 0
+
+        md.append(f"**💚 Cache Savings:** ${savings:.6f} ({savings_percentage:.1f}% cost reduction)\n")
+
+    if cache_creation > 0 or cache_read > 0:
+        md.append("*Cost breakdown:*\n")
+        if cache_creation > 0:
+            md.append(f"- Cache Creation: ${cache_creation_cost:.6f} (+25% premium)\n")
+        if cache_read > 0:
+            md.append(f"- Cache Read: ${cache_read_cost:.6f} (-90% discount)\n")
+        md.append(f"- Regular Input: ${prompt_cost:.6f}\n")
+        md.append(f"- Output: ${response_cost:.6f}\n")
+    else:
+        md.append(f"(Input: ${prompt_cost:.6f}, Output: ${response_cost:.6f})\n")
+
+    return md
+
+
+def _format_cache_blocks(call: dict) -> list[str]:
+    """Format cache blocks section."""
+    md = []
+    prompt_kwargs = call.get("prompt_kwargs", {})
+    cache_blocks = prompt_kwargs.get("cache_blocks", [])
+
+    if not cache_blocks:
+        return md
+
+    md.append("## 🔒 Cache Blocks (System Context)\n")
+    md.append("*These blocks are sent FIRST to the LLM as system context, enabling efficient caching*\n")
+
+    for i, block in enumerate(cache_blocks, 1):
+        block_text = block.get("text", "")
+        cache_control = block.get("cache_control", {})
+        block_tokens = estimate_tokens(block_text)
+
+        md.append(f"### Cache Block {i}")
+
+        # Show cache control type
+        if cache_control:
+            cache_type = cache_control.get("type", "none")
+            md.append(f"**Cache Type:** `{cache_type}` | **Estimated Tokens:** {block_tokens:,}\n")
+        else:
+            md.append(f"**Cache Type:** `none` (not cached) | **Estimated Tokens:** {block_tokens:,}\n")
+
+        # Show full content in expandable section (removed unused preview variable)
+        md.append("<details>")
+        md.append("<summary>Preview (click to expand)</summary>\n")
+        md.append("```")
+        md.append(block_text)
+        md.append("```")
+        md.append("</details>\n")
+
+    return md
+
+
+def _format_prompt_and_response(call: dict, prompt_tokens: int, response_tokens: int) -> list[str]:
+    """Format prompt and response sections."""
+    md = []
+
+    # Prompt section
+    prompt = call.get("prompt", "")
+    if prompt:
+        md.append("## 📝 User Prompt\n")
+        md.append("*This is sent AFTER the cache blocks as the user message*\n")
+        md.append(f"*{prompt_tokens:,} tokens (non-cached)*\n")
+        md.append("```")
+        md.append(format_prompt(prompt))
+        md.append("```\n")
+
+    # Response section
+    response = call.get("response")
+    if response:
+        md.append("## 🤖 Response\n")
+        response_text, is_json = format_response(response)
+        md.append(f"*{response_tokens:,} tokens*\n")
+        if is_json:
+            md.append("```json")
+        else:
+            md.append("```markdown")
+        md.append(response_text)
+        md.append("```\n")
+
+    return md
+
+
+def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str, dict]:
+    """Create markdown content for a single node/LLM call.
+
+    Returns:
+        tuple: (markdown_content, metadata_dict)
+    """
+    node_name = call.get("node", "Unknown")
+    duration = call.get("duration_ms", 0) / 1000
+    emoji = _get_node_emoji(node_name)
 
     md = []
 
@@ -112,139 +289,20 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
 
     md.append(f"**Trace ID:** `{trace_id}`  \n")
 
-    # Get prompt and response
-    prompt = call.get("prompt", "")
-    response = call.get("response")
+    # Calculate token counts
+    prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens = _calculate_token_counts(call)
 
-    # Calculate or get token counts
-    tokens = call.get("tokens", {})
-    if tokens:
-        prompt_tokens = tokens.get("input", 0)
-        response_tokens = tokens.get("output", 0)
-    else:
-        # Estimate if not provided
-        prompt_tokens = estimate_tokens(prompt)
-        response_text, _ = format_response(response) if response else ("", False)
-        response_tokens = estimate_tokens(response_text)
+    # Add token usage table
+    md.extend(_format_token_usage_table(prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens))
 
-    # Token summary box with cache information
-    md.append("## 📊 Token Usage\n")
-    md.append("| Type | Count | Cost Factor | Notes |")
-    md.append("|------|-------|-------------|-------|")
+    # Add cost calculations
+    md.extend(_calculate_cost_with_cache(prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens))
 
-    # Get cache tokens if available
-    cache_creation = tokens.get("cache_creation", 0)
-    cache_read = tokens.get("cache_read", 0)
-    # Total should include ALL tokens processed by the API
-    total_tokens = tokens.get("total", prompt_tokens + cache_creation + cache_read + response_tokens)
+    # Add cache blocks section
+    md.extend(_format_cache_blocks(call))
 
-    # Display token breakdown
-    if cache_creation > 0:
-        md.append(f"| **Cache Creation** | {cache_creation:,} | +25% | New cache blocks created |")
-    if cache_read > 0:
-        md.append(f"| **Cache Read** | {cache_read:,} | -90% | Reused from cache |")
-    md.append(f"| **Input (non-cached)** | {prompt_tokens:,} | 100% | Regular input tokens |")
-    md.append(f"| **Output** | {response_tokens:,} | 100% | Generated tokens |")
-    md.append(f"| **Total** | {total_tokens:,} | - | All tokens processed |")
-    md.append("")
-
-    # Cache efficiency if applicable (only count reads as efficient, not creation)
-    if cache_read > 0:
-        total_input = prompt_tokens + cache_creation + cache_read
-        cache_efficiency = (cache_read / total_input * 100) if total_input > 0 else 0
-        md.append(f"**Cache Efficiency:** {cache_efficiency:.1f}% of input was reused from cache\n")
-
-    # Cost estimation with cache-aware pricing
-    if total_tokens > 0:
-        # Anthropic Claude 3.5 Sonnet pricing (per 1K tokens)
-        input_cost_per_1k = 0.003  # $3 per 1M tokens
-        output_cost_per_1k = 0.015  # $15 per 1M tokens
-        cache_write_cost_per_1k = input_cost_per_1k * 1.25  # 25% premium for cache creation
-        cache_read_cost_per_1k = input_cost_per_1k * 0.1  # 90% discount for cache reads
-
-        # Calculate costs
-        prompt_cost = (prompt_tokens / 1000) * input_cost_per_1k
-        cache_creation_cost = (cache_creation / 1000) * cache_write_cost_per_1k if cache_creation > 0 else 0
-        cache_read_cost = (cache_read / 1000) * cache_read_cost_per_1k if cache_read > 0 else 0
-        response_cost = (response_tokens / 1000) * output_cost_per_1k
-        total_cost = prompt_cost + cache_creation_cost + cache_read_cost + response_cost
-
-        md.append(f"\n**💰 Estimated Cost:** ${total_cost:.6f}\n")
-
-        # Calculate savings from cache reuse
-        if cache_read > 0:
-            # What it would have cost without cache
-            full_price_for_cached = (cache_read / 1000) * input_cost_per_1k
-            # What it actually cost with cache
-            actual_cache_cost = (cache_read / 1000) * cache_read_cost_per_1k
-            # Savings
-            savings = full_price_for_cached - actual_cache_cost
-            savings_percentage = (savings / (total_cost + savings) * 100) if (total_cost + savings) > 0 else 0
-
-            md.append(f"**💚 Cache Savings:** ${savings:.6f} ({savings_percentage:.1f}% cost reduction)\n")
-
-        if cache_creation > 0 or cache_read > 0:
-            md.append("*Cost breakdown:*\n")
-            if cache_creation > 0:
-                md.append(f"- Cache Creation: ${cache_creation_cost:.6f} (+25% premium)\n")
-            if cache_read > 0:
-                md.append(f"- Cache Read: ${cache_read_cost:.6f} (-90% discount)\n")
-            md.append(f"- Regular Input: ${prompt_cost:.6f}\n")
-            md.append(f"- Output: ${response_cost:.6f}\n")
-        else:
-            md.append(f"(Input: ${prompt_cost:.6f}, Output: ${response_cost:.6f})\n")
-
-    # Cache blocks section (comes BEFORE prompt in the actual API call)
-    prompt_kwargs = call.get("prompt_kwargs", {})
-    cache_blocks = prompt_kwargs.get("cache_blocks", [])
-
-    if cache_blocks:
-        md.append("## 🔒 Cache Blocks (System Context)\n")
-        md.append("*These blocks are sent FIRST to the LLM as system context, enabling efficient caching*\n")
-
-        for i, block in enumerate(cache_blocks, 1):
-            block_text = block.get("text", "")
-            cache_control = block.get("cache_control", {})
-            block_tokens = estimate_tokens(block_text)
-
-            md.append(f"### Cache Block {i}")
-
-            # Show cache control type
-            if cache_control:
-                cache_type = cache_control.get("type", "none")
-                md.append(f"**Cache Type:** `{cache_type}` | **Estimated Tokens:** {block_tokens:,}\n")
-            else:
-                md.append(f"**Cache Type:** `none` (not cached) | **Estimated Tokens:** {block_tokens:,}\n")
-
-            # Show first 500 chars as preview
-            preview = block_text[:500] + "..." if len(block_text) > 500 else block_text
-            md.append("<details>")
-            md.append("<summary>Preview (click to expand)</summary>\n")
-            md.append("```")
-            md.append(block_text)
-            md.append("```")
-            md.append("</details>\n")
-
-    # Prompt section (comes AFTER cache blocks)
-    if prompt:
-        md.append("## 📝 User Prompt\n")
-        md.append("*This is sent AFTER the cache blocks as the user message*\n")
-        md.append(f"*{prompt_tokens:,} tokens (non-cached)*\n")
-        md.append("```")
-        md.append(format_prompt(prompt))
-        md.append("```\n")
-
-    # Response section
-    if response:
-        md.append("## 🤖 Response\n")
-        response_text, is_json = format_response(response)
-        md.append(f"*{response_tokens:,} tokens*\n")
-        if is_json:
-            md.append("```json")
-        else:
-            md.append("```markdown")
-        md.append(response_text)
-        md.append("```\n")
+    # Add prompt and response sections
+    md.extend(_format_prompt_and_response(call, prompt_tokens, response_tokens))
 
     # Analysis hints
     md.append("## 💭 Analysis Notes\n")

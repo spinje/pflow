@@ -4,12 +4,15 @@ This allows us to use Anthropic SDK features (caching, thinking) while maintaini
 compatibility with the existing llm.get_model() pattern used throughout the codebase.
 """
 
+import logging
 import os
 from typing import Any, Optional, Union
 
 from pydantic import BaseModel
 
 from pflow.planning.utils.anthropic_structured_client import AnthropicStructuredClient
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicLLMModel:
@@ -38,13 +41,13 @@ class AnthropicLLMModel:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
 
         if not api_key:
-            # Use llm's key management
+            # Use llm's key management as fallback
             try:
                 import llm
 
                 api_key = llm.get_key("", "anthropic", "ANTHROPIC_API_KEY")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to retrieve API key using llm library fallback: {e}")
 
         return api_key
 
@@ -146,9 +149,6 @@ class AnthropicLLMModel:
             cache_creation = usage.get("cache_creation_input_tokens", 0)
             cache_read = usage.get("cache_read_input_tokens", 0)
             if cache_creation > 0 or cache_read > 0:
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.info(
                     f"Cache metrics: created={cache_creation} tokens, "
                     f"read={cache_read} tokens, blocks={len(cache_blocks)}"
@@ -225,7 +225,7 @@ class AnthropicResponse:
         if self.is_structured:
             # Convert Pydantic model to string
             if hasattr(self.content, "model_dump_json"):
-                return self.content.model_dump_json()
+                return str(self.content.model_dump_json())
             return str(self.content)
         return str(self.content)
 
@@ -268,20 +268,18 @@ def install_anthropic_model() -> None:
     # Store original get_model
     original_get_model = llm.get_model
 
-    def get_model_with_anthropic(model_name: Optional[str] = None) -> Any:
+    def get_model_with_anthropic(name: Optional[str] = None, _skip_async: bool = False) -> Any:
         """Replacement for llm.get_model that uses Anthropic SDK for planning models."""
         # Always use Anthropic SDK for planning models (better caching, thinking)
         # Planning nodes use "anthropic/claude-sonnet-4-0" by default
-        is_planning_model = model_name and (
-            "claude-sonnet-4" in model_name or model_name == "anthropic/claude-sonnet-4-0"
-        )
+        is_planning_model = name and ("claude-sonnet-4" in name or name == "anthropic/claude-sonnet-4-0")
 
-        if is_planning_model:
+        if is_planning_model and name is not None:
             # Use our Anthropic SDK wrapper for planning models
-            return AnthropicLLMModel(model_name)
+            return AnthropicLLMModel(name)
         else:
             # Use original llm library for everything else
-            return original_get_model(model_name)
+            return original_get_model(name, _skip_async)
 
     # Replace llm.get_model
     llm.get_model = get_model_with_anthropic

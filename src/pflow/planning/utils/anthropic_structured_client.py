@@ -35,8 +35,10 @@ class AnthropicStructuredClient:
         """
         try:
             from anthropic import Anthropic
-        except ImportError:
-            raise PlannerException("Anthropic SDK not installed. Please install with: pip install anthropic>=0.40.0")
+        except ImportError as e:
+            raise PlannerException(
+                "Anthropic SDK not installed. Please install with: pip install anthropic>=0.40.0"
+            ) from e
 
         # Get API key with fallback chain
         if not api_key:
@@ -64,6 +66,130 @@ class AnthropicStructuredClient:
         self.client = Anthropic(api_key=api_key)
         self.model = "claude-sonnet-4-20250514"  # Model specified in requirements
 
+    def _build_tool_definition(self, response_model: type[BaseModel]) -> tuple[str, dict[str, Any]]:
+        """Build tool definition from a Pydantic model.
+
+        Args:
+            response_model: Pydantic model defining the expected response structure
+
+        Returns:
+            Tuple of (tool_name, tool_definition)
+        """
+        tool_name = response_model.__name__.lower()
+        tool_schema = response_model.model_json_schema()
+        tool = {"name": tool_name, "description": f"Generate {response_model.__name__}", "input_schema": tool_schema}
+        return tool_name, tool
+
+    def _build_messages_with_cache(
+        self, prompt: str, cache_blocks: Optional[list[dict[str, Any]]] = None
+    ) -> tuple[list[dict[str, str]], Optional[list[dict[str, Any]]]]:
+        """Build messages and system content with cache control.
+
+        Args:
+            prompt: The user prompt to send
+            cache_blocks: Optional cache control blocks
+
+        Returns:
+            Tuple of (messages, system_content)
+        """
+        if cache_blocks:
+            system_parts = []
+            for block in cache_blocks:
+                if block.get("cache_control"):
+                    system_parts.append({
+                        "type": "text",
+                        "text": block["text"],
+                        "cache_control": block["cache_control"],
+                    })
+                else:
+                    system_parts.append({"type": "text", "text": block["text"]})
+            messages = [{"role": "user", "content": prompt}]
+            return messages, system_parts
+        else:
+            messages = [{"role": "user", "content": prompt}]
+            return messages, None
+
+    def _extract_usage_metadata(self, response: Any, temperature: float) -> dict[str, Any]:
+        """Extract usage metadata from API response.
+
+        Args:
+            response: Anthropic API response
+            temperature: Temperature used in the request
+
+        Returns:
+            Dictionary containing usage metadata
+        """
+        usage = response.usage
+        return {
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0),
+            "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0),
+            "model": self.model,
+            "temperature": temperature,
+        }
+
+    def _handle_anthropic_exception(self, e: Exception) -> None:
+        """Handle Anthropic-specific exceptions.
+
+        Args:
+            e: The exception to handle
+
+        Raises:
+            PlannerException: Always raises with appropriate error message
+        """
+        if "anthropic" in str(type(e).__module__):
+            error_msg = str(e)
+            if "rate_limit" in error_msg.lower():
+                raise PlannerException("Anthropic rate limit exceeded. Please wait and try again.") from e
+            elif "invalid_api_key" in error_msg.lower():
+                raise PlannerException("Invalid Anthropic API key. Please check your configuration.") from e
+            else:
+                raise PlannerException(f"Anthropic API error: {error_msg}") from e
+        else:
+            raise
+
+    def _extract_tool_response(
+        self, response_content: list, tool_name: str, response_model: type[BaseModel]
+    ) -> BaseModel:
+        """Extract and validate tool response from API response.
+
+        Args:
+            response_content: Response content from API
+            tool_name: Expected tool name
+            response_model: Pydantic model for validation
+
+        Returns:
+            Validated response model instance
+
+        Raises:
+            PlannerException: If tool response not found or validation fails
+        """
+        tool_use = None
+        for content in response_content:
+            if content.type == "tool_use" and content.name == tool_name:
+                tool_use = content
+                break
+
+        if not tool_use:
+            raise PlannerException(f"No tool response found in Anthropic response. Got: {response_content}")
+
+        try:
+            return response_model.model_validate(tool_use.input)
+        except ValidationError as e:
+            raise PlannerException(f"Failed to validate Anthropic response: {e}") from e
+
+    def _extract_text_response(self, response: Any) -> str:
+        """Extract text content from response.
+
+        Args:
+            response: Anthropic API response
+
+        Returns:
+            Text content from response
+        """
+        return response.content[0].text if response.content else ""
+
     def generate_with_schema_text_mode(
         self,
         prompt: str,
@@ -72,7 +198,7 @@ class AnthropicStructuredClient:
         temperature: float = 0.0,
         cache_blocks: Optional[list[dict[str, Any]]] = None,
         force_text_output: bool = False,
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[Any, dict[str, Any]]:
         """Generate output with tools defined but optionally force text output.
 
         This enables cache sharing between nodes that use tools and those that don't.
@@ -86,94 +212,55 @@ class AnthropicStructuredClient:
             force_text_output: If True, use tool_choice='none' for text output
 
         Returns:
-            Tuple of (text_response, usage_metadata)
+            Tuple of (text_response or model_instance, usage_metadata)
         """
-        # Build the tool definition (same as generate_with_schema)
-        tool_name = response_model.__name__.lower()
-        tool_schema = response_model.model_json_schema()
-        tool = {"name": tool_name, "description": f"Generate {response_model.__name__}", "input_schema": tool_schema}
+        # Build the tool definition
+        tool_name, tool = self._build_tool_definition(response_model)
 
-        # Build messages with cache control if provided
-        if cache_blocks:
-            system_parts = []
-            for block in cache_blocks:
-                if block.get("cache_control"):
-                    system_parts.append({
-                        "type": "text",
-                        "text": block["text"],
-                        "cache_control": block["cache_control"],
-                    })
-                else:
-                    system_parts.append({"type": "text", "text": block["text"]})
-            messages = [{"role": "user", "content": prompt}]
-            system = system_parts
-        else:
-            messages = [{"role": "user", "content": prompt}]
-            system = None
+        # Build messages with cache control
+        messages, system = self._build_messages_with_cache(prompt, cache_blocks)
 
-        # Build kwargs
-        kwargs = {
-            "model": self.model,
-            "messages": messages,
-            "tools": [tool],  # Include tools for cache compatibility
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        }
-
-        # Add tool_choice based on force_text_output
-        if force_text_output:
-            # Force text output (for PlanningNode)
-            kwargs["tool_choice"] = {"type": "none"}
-        else:
-            # Force tool use (for WorkflowGeneratorNode)
-            kwargs["tool_choice"] = {"type": "tool", "name": tool_name}
-
-        if system is not None:
-            kwargs["system"] = system
+        # Determine tool_choice based on force_text_output
+        tool_choice = {"type": "none"} if force_text_output else {"type": "tool", "name": tool_name}
 
         try:
-            response = self.client.messages.create(**kwargs)
+            # Call the API with or without system content
+            if system is not None:
+                response = self.client.messages.create(  # type: ignore[call-overload]
+                    model=self.model,
+                    messages=messages,
+                    tools=[tool],
+                    tool_choice=tool_choice,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                )
+            else:
+                response = self.client.messages.create(  # type: ignore[call-overload]
+                    model=self.model,
+                    messages=messages,
+                    tools=[tool],
+                    tool_choice=tool_choice,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
 
             # Extract response based on output type
+            result: Any
             if force_text_output:
-                # Text output expected
-                text_content = response.content[0].text if response.content else ""
-                result = text_content
+                result = self._extract_text_response(response)
             else:
-                # Tool output expected
-                tool_use = None
-                for content in response.content:
-                    if content.type == "tool_use" and content.name == tool_name:
-                        tool_use = content
-                        break
-                if not tool_use:
-                    raise PlannerException("No tool response found")
-                result = response_model.model_validate(tool_use.input)
+                result = self._extract_tool_response(response.content, tool_name, response_model)
 
             # Extract usage metadata
-            usage = response.usage
-            usage_metadata = {
-                "input_tokens": usage.input_tokens,
-                "output_tokens": usage.output_tokens,
-                "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0),
-                "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0),
-                "model": self.model,
-                "temperature": temperature,
-            }
+            usage_metadata = self._extract_usage_metadata(response, temperature)
 
             return (result, usage_metadata)
 
         except Exception as e:
-            if "anthropic" in str(type(e).__module__):
-                error_msg = str(e)
-                if "rate_limit" in error_msg.lower():
-                    raise PlannerException("Anthropic rate limit exceeded. Please wait and try again.") from e
-                elif "invalid_api_key" in error_msg.lower():
-                    raise PlannerException("Invalid Anthropic API key. Please check your configuration.") from e
-                else:
-                    raise PlannerException(f"Anthropic API error: {error_msg}") from e
-            else:
-                raise
+            self._handle_anthropic_exception(e)
+            # This line should never be reached as _handle_anthropic_exception always raises
+            raise  # Make mypy happy
 
     def generate_with_schema(
         self,
@@ -198,96 +285,43 @@ class AnthropicStructuredClient:
         Raises:
             PlannerException: On API errors or validation failures
         """
-        # Build the tool definition from the Pydantic model
-        tool_name = response_model.__name__.lower()
-        tool_schema = response_model.model_json_schema()
+        # Build the tool definition
+        tool_name, tool = self._build_tool_definition(response_model)
 
-        # Create the tool definition
-        tool = {"name": tool_name, "description": f"Generate {response_model.__name__}", "input_schema": tool_schema}
-
-        # Build messages with cache control if provided
-        messages = []
-
-        if cache_blocks:
-            # When using cache blocks, they contain the cacheable context
-            # The prompt parameter contains the non-cacheable instructions
-            # We'll put cache blocks in system and instructions in user message
-            system_parts = []
-            for block in cache_blocks:
-                if block.get("cache_control"):
-                    system_parts.append({
-                        "type": "text",
-                        "text": block["text"],
-                        "cache_control": block["cache_control"],
-                    })
-                else:
-                    system_parts.append({"type": "text", "text": block["text"]})
-
-            # The main prompt goes as user message (instructions)
-            messages = [{"role": "user", "content": prompt}]
-            system = system_parts  # Cacheable context goes in system
-        else:
-            # Simple message without caching
-            messages = [{"role": "user", "content": prompt}]
-            system = None
+        # Build messages with cache control
+        messages, system = self._build_messages_with_cache(prompt, cache_blocks)
 
         try:
             # Make the API call
-            # Note: Thinking is enabled via model selection, not metadata
-            kwargs = {
-                "model": self.model,
-                "messages": messages,
-                "tools": [tool],
-                "tool_choice": {"type": "tool", "name": tool_name},
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            }
-
-            # Only add system if it's not None
             if system is not None:
-                kwargs["system"] = system
+                response = self.client.messages.create(  # type: ignore[call-overload]
+                    model=self.model,
+                    messages=messages,
+                    tools=[tool],
+                    tool_choice={"type": "tool", "name": tool_name},
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                )
+            else:
+                response = self.client.messages.create(  # type: ignore[call-overload]
+                    model=self.model,
+                    messages=messages,
+                    tools=[tool],
+                    tool_choice={"type": "tool", "name": tool_name},
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
 
-            response = self.client.messages.create(**kwargs)
-
-            # Extract the tool response
-            tool_use = None
-            for content in response.content:
-                if content.type == "tool_use" and content.name == tool_name:
-                    tool_use = content
-                    break
-
-            if not tool_use:
-                raise PlannerException(f"No tool response found in Anthropic response. Got: {response.content}")
-
-            # Parse the response with the Pydantic model
-            try:
-                parsed_response = response_model.model_validate(tool_use.input)
-            except ValidationError as e:
-                raise PlannerException(f"Failed to validate Anthropic response: {e}") from e
+            # Extract and validate the tool response
+            parsed_response = self._extract_tool_response(response.content, tool_name, response_model)
 
             # Extract usage metadata
-            usage = response.usage
-            usage_metadata = {
-                "input_tokens": usage.input_tokens,
-                "output_tokens": usage.output_tokens,
-                "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0),
-                "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0),
-                "model": self.model,
-                "temperature": temperature,
-            }
+            usage_metadata = self._extract_usage_metadata(response, temperature)
 
             return parsed_response, usage_metadata
 
         except Exception as e:
-            if "anthropic" in str(type(e).__module__):
-                # Anthropic SDK error - wrap it
-                error_msg = str(e)
-                if "rate_limit" in error_msg.lower():
-                    raise PlannerException("Anthropic rate limit exceeded. Please wait and try again.") from e
-                elif "invalid_api_key" in error_msg.lower():
-                    raise PlannerException("Invalid Anthropic API key. Please check your configuration.") from e
-                else:
-                    raise PlannerException(f"Anthropic API error: {error_msg}") from e
-            else:
-                # Re-raise other exceptions
-                raise
+            self._handle_anthropic_exception(e)
+            # This line should never be reached as _handle_anthropic_exception always raises
+            raise  # Make mypy happy
