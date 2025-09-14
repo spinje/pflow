@@ -218,7 +218,7 @@ class TestParameterIntegration:
 
         # Check that discovered params are in the blocks
         combined_text = "\n".join(block["text"] for block in blocks)
-        assert "Discovered Parameters" in combined_text
+        assert "user_values" in combined_text  # Now uses XML tag instead of header
         assert "filename" in combined_text
         assert "repo" in combined_text
         assert "NEVER be hardcoded" in combined_text  # Warning about not hardcoding

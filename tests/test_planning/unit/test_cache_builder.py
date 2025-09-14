@@ -1,10 +1,12 @@
 """Test cache builder utilities for cross-session caching.
 
 This test suite validates:
-1. Cache block builder functions create correct structures
-2. should_use_caching logic works correctly
-3. Static/dynamic content extraction functions
-4. Cache metrics formatting
+1. should_use_caching logic works correctly
+2. Static/dynamic content extraction functions
+3. Cache metrics formatting
+
+Note: The cache block builder functions (build_discovery_cache_blocks, etc.) 
+were removed and replaced with prompt_cache_helper.py functionality.
 """
 
 from typing import Any
@@ -12,196 +14,10 @@ from typing import Any
 import pytest
 
 from pflow.planning.utils.cache_builder import (
-    build_component_cache_blocks,
-    build_discovery_cache_blocks,
-    build_metadata_cache_blocks,
-    build_simple_cache_blocks,
     extract_static_from_prompt,
     format_cache_metrics,
     should_use_caching,
 )
-
-
-class TestDiscoveryCacheBuilder:
-    """Test build_discovery_cache_blocks function."""
-
-    def test_builds_cache_block_with_valid_content(self):
-        """Discovery context is wrapped in cache block with ephemeral control."""
-        discovery_context = "A" * 200  # Long enough to be cached
-        
-        blocks = build_discovery_cache_blocks(discovery_context)
-        
-        assert len(blocks) == 1
-        assert blocks[0]["text"] == discovery_context
-        assert blocks[0]["cache_control"] == {"type": "ephemeral"}
-
-    def test_skips_caching_for_short_content(self):
-        """Content under 100 chars is not cached (too small to be worth it)."""
-        discovery_context = "Short content"
-        
-        blocks = build_discovery_cache_blocks(discovery_context)
-        
-        assert len(blocks) == 0
-
-    def test_handles_empty_content(self):
-        """Empty or None content returns empty blocks list."""
-        assert build_discovery_cache_blocks("") == []
-        assert build_discovery_cache_blocks(None) == []
-
-
-class TestComponentCacheBuilder:
-    """Test build_component_cache_blocks function."""
-
-    def test_builds_multiple_cache_blocks(self):
-        """Creates separate blocks for nodes, workflows, and prompt."""
-        nodes_context = "N" * 200
-        workflows_context = "W" * 200
-        prompt_template = "P" * 600
-        
-        blocks = build_component_cache_blocks(
-            nodes_context=nodes_context,
-            workflows_context=workflows_context,
-            prompt_template=prompt_template
-        )
-        
-        assert len(blocks) == 3
-        
-        # Block 1: Nodes
-        assert "## Available Nodes" in blocks[0]["text"]
-        assert nodes_context in blocks[0]["text"]
-        assert blocks[0]["cache_control"] == {"type": "ephemeral"}
-        
-        # Block 2: Workflows
-        assert "## Available Workflows" in blocks[1]["text"]
-        assert workflows_context in blocks[1]["text"]
-        assert blocks[1]["cache_control"] == {"type": "ephemeral"}
-        
-        # Block 3: Prompt
-        assert blocks[2]["text"] == prompt_template
-        assert blocks[2]["cache_control"] == {"type": "ephemeral"}
-
-    def test_skips_small_content_blocks(self):
-        """Only includes blocks that are substantial enough to cache."""
-        nodes_context = "N" * 50  # Too short
-        workflows_context = "W" * 200  # Good
-        prompt_template = "P" * 300  # Too short (< 500)
-        
-        blocks = build_component_cache_blocks(
-            nodes_context=nodes_context,
-            workflows_context=workflows_context,
-            prompt_template=prompt_template
-        )
-        
-        # Only workflows should be included
-        assert len(blocks) == 1
-        assert "## Available Workflows" in blocks[0]["text"]
-
-    def test_limits_to_three_blocks_maximum(self):
-        """Never returns more than 3 blocks (Anthropic limit is 4)."""
-        # Create 4 potential blocks (all large enough)
-        nodes_context = "N" * 200
-        workflows_context = "W" * 200
-        prompt_template = "P" * 600
-        
-        blocks = build_component_cache_blocks(
-            nodes_context=nodes_context,
-            workflows_context=workflows_context,
-            prompt_template=prompt_template
-        )
-        
-        # Should cap at 3 blocks
-        assert len(blocks) == 3
-
-    def test_handles_missing_contexts(self):
-        """Handles None or empty contexts gracefully."""
-        blocks = build_component_cache_blocks(
-            nodes_context=None,
-            workflows_context="W" * 200,
-            prompt_template=None
-        )
-        
-        assert len(blocks) == 1
-        assert "## Available Workflows" in blocks[0]["text"]
-
-
-class TestSimpleCacheBuilder:
-    """Test build_simple_cache_blocks function."""
-
-    def test_builds_cache_block_from_prompt_only(self):
-        """Creates cache block from static prompt alone."""
-        static_prompt = "S" * 600
-        
-        blocks = build_simple_cache_blocks(static_prompt)
-        
-        assert len(blocks) == 1
-        assert blocks[0]["text"] == static_prompt
-        assert blocks[0]["cache_control"] == {"type": "ephemeral"}
-
-    def test_combines_prompt_and_context(self):
-        """Combines static context and prompt when both provided."""
-        static_prompt = "S" * 300
-        static_context = "C" * 300
-        
-        blocks = build_simple_cache_blocks(static_prompt, static_context)
-        
-        assert len(blocks) == 1
-        expected = f"{static_context}\n\n{static_prompt}"
-        assert blocks[0]["text"] == expected
-        assert blocks[0]["cache_control"] == {"type": "ephemeral"}
-
-    def test_skips_small_content(self):
-        """Content under 500 chars is not cached."""
-        static_prompt = "Short"
-        
-        blocks = build_simple_cache_blocks(static_prompt)
-        
-        assert len(blocks) == 0
-
-    def test_handles_none_values(self):
-        """Handles None values gracefully."""
-        assert build_simple_cache_blocks(None) == []
-        assert build_simple_cache_blocks("", None) == []
-
-
-class TestMetadataCacheBuilder:
-    """Test build_metadata_cache_blocks function."""
-
-    def test_builds_cache_block_with_prompt_only(self):
-        """Creates cache block from static prompt alone."""
-        static_prompt = "M" * 600
-        
-        blocks = build_metadata_cache_blocks(static_prompt)
-        
-        assert len(blocks) == 1
-        assert blocks[0]["text"] == static_prompt
-        assert blocks[0]["cache_control"] == {"type": "ephemeral"}
-
-    def test_includes_node_descriptions(self):
-        """Adds node descriptions as reference material."""
-        static_prompt = "M" * 400  # Increased to ensure combined > 500
-        node_descriptions = {
-            "read-file": "Reads a file from disk",
-            "write-file": "Writes content to a file",
-        }
-        
-        blocks = build_metadata_cache_blocks(static_prompt, node_descriptions)
-        
-        assert len(blocks) == 1
-        text = blocks[0]["text"]
-        
-        # Check structure
-        assert static_prompt in text
-        assert "## Node Reference" in text
-        assert "**read-file**: Reads a file from disk" in text
-        assert "**write-file**: Writes content to a file" in text
-
-    def test_skips_small_content(self):
-        """Content under 500 chars is not cached."""
-        static_prompt = "Short"
-        
-        blocks = build_metadata_cache_blocks(static_prompt)
-        
-        assert len(blocks) == 0
 
 
 class TestExtractStaticFromPrompt:

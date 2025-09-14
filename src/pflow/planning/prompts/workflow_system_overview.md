@@ -45,19 +45,17 @@ If multiple operations need the same data, pass it through the chain:
 - Second operation can reference BOTH the original data AND first operation's output
 - Example: `generate_viz` can use both `${filter_data.content}` AND `${analyze_trends.response}`
 
+## Node Parameters
+
+Each node has parameters that can be used to configure the node's behavior.
+
+Pay close attention to the specified parameters and their types of the nodes you are using in the <node_details> section.
+
 ## Node Outputs
 
-Each node produces outputs that can be referenced by subsequent nodes:
+Each node produces outputs that can be referenced by subsequent nodes.
 
-### Common Output Patterns:
-- **read-file**: `content` (string) - the file contents
-- **write-file**: `file_path` (string) - where file was written
-- **llm**: `response` (string) - the LLM's generated text
-- **github-list-issues**: `issues` (array) - list of issue objects
-- **github-create-issue**: `issue` (object) - created issue details
-- **git-commit**: `commit_hash` (string) - the commit SHA
-- **shell**: `stdout` (string), `stderr` (string), `exit_code` (int)
-- **http**: `response` (object) - response with body, headers, status
+Pay close attention to the specified outputs and their types of the nodes you are using in the <node_details> section.
 
 ### Referencing Node Outputs:
 - Use `${node_id.output_key}` format
@@ -81,6 +79,17 @@ Each input MUST be a structured object with metadata inside the `inputs` section
 **Never use simple strings:**
 ```json
 "param_name": "Description"  // ❌ WRONG - must be object with type/description/required
+```
+
+**Don't use required: true unnecessarily.**
+If the input is used for a node parameter that is optional, consider setting required: false if you dont have a very good reason to make it required.
+```json
+"repo": {
+  "type": "string",
+  "description": "GitHub repository in format owner/repo",
+  "required": true, // ❌ WRONG - most github nodes have repo as optional parameter and defaults to the current repo if nothing is provided
+  "default": "your/repo" // ❌ WRONG - leave this empty to default to smart defaults of nodes if available
+}
 ```
 
 ## Workflow Output Format

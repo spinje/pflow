@@ -103,9 +103,9 @@ class PlannerContextBuilder:
         
         # Add discovered parameters if available
         if discovered_params:
-            dynamic_sections.append("<discovered_parameters>")
+            dynamic_sections.append("<user_values>")
             dynamic_sections.extend(cls._build_discovered_params_content(discovered_params))
-            dynamic_sections.append("</discovered_parameters>")
+            dynamic_sections.append("</user_values>")
             dynamic_sections.append("")
         
         # Add requirements if available
@@ -117,16 +117,16 @@ class PlannerContextBuilder:
         
         # Add selected components if available
         if browsed_components:
-            dynamic_sections.append("<selected_components>")
+            dynamic_sections.append("<available_nodes>")
             dynamic_sections.extend(cls._build_components_content(browsed_components))
-            dynamic_sections.append("</selected_components>")
+            dynamic_sections.append("</available_nodes>")
             dynamic_sections.append("")
         
         # Add component details if available
         if planning_context:
-            dynamic_sections.append("<component_details>")
+            dynamic_sections.append("<node_details>")
             dynamic_sections.append(planning_context)
-            dynamic_sections.append("</component_details>")
+            dynamic_sections.append("</node_details>")
             dynamic_sections.append("")
         
         dynamic_text = "\n".join(dynamic_sections)
@@ -350,7 +350,7 @@ class PlannerContextBuilder:
         # Add node IDs
         node_ids = browsed_components.get("node_ids", [])
         if node_ids:
-            sections.append(f"Available nodes: {', '.join(node_ids)}")
+            sections.append(f"Available nodes: {', '.join(f'`{node_id}`' for node_id in node_ids)}")
             sections.append("")
 
         # Add reasoning for selection
