@@ -224,8 +224,13 @@ class TestPlanningNode:
             mock_llm.return_value = mock_model
 
             with patch("pflow.planning.nodes.PlannerContextBuilder") as MockBuilder:
-                MockBuilder.build_base_blocks.return_value = [{"text": "BASE CONTEXT BLOCK", "cache_control": {"type": "ephemeral"}}]
-                MockBuilder.append_planning_block.return_value = [{"text": "BASE CONTEXT BLOCK", "cache_control": {"type": "ephemeral"}}, {"text": "EXTENDED CONTEXT BLOCK", "cache_control": {"type": "ephemeral"}}]
+                MockBuilder.build_base_blocks.return_value = [
+                    {"text": "BASE CONTEXT BLOCK", "cache_control": {"type": "ephemeral"}}
+                ]
+                MockBuilder.append_planning_block.return_value = [
+                    {"text": "BASE CONTEXT BLOCK", "cache_control": {"type": "ephemeral"}},
+                    {"text": "EXTENDED CONTEXT BLOCK", "cache_control": {"type": "ephemeral"}},
+                ]
                 MockBuilder.get_context_metrics.return_value = {"estimated_tokens": 1000, "blocks": 2}
 
                 shared = {

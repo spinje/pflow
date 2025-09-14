@@ -99,26 +99,26 @@ class AnthropicLLMModel:
         **kwargs: Any,
     ) -> "AnthropicResponse":
         """Execute prompt with provided cache blocks (optimized path).
-        
+
         This is the new optimized path where cache blocks are provided directly,
         avoiding regex extraction and enabling multi-block caching.
-        
+
         Args:
             prompt: Instructions only (not the full context)
             schema: Optional Pydantic model for structured output
             temperature: Temperature for response generation
             cache_blocks: List of cache blocks with cache_control markers
             **kwargs: Additional arguments
-            
+
         Returns:
             AnthropicResponse wrapping the result
         """
         # Convert prompt to string if needed
         prompt_str = prompt if isinstance(prompt, str) else str(prompt)
-        
+
         # Add model to kwargs for debug wrapper tracking
         kwargs["model"] = self.model_id
-        
+
         if schema:
             # Structured output with provided blocks
             result, usage = self.client.generate_with_schema_text_mode(
@@ -132,7 +132,7 @@ class AnthropicLLMModel:
             # Text output with provided blocks (PlanningNode path)
             # Use the tool-choice hack for cache sharing
             from pflow.planning.ir_models import FlowIR
-            
+
             result, usage = self.client.generate_with_schema_text_mode(
                 prompt=prompt_str,  # Instructions only
                 response_model=FlowIR,  # Tool definition for cache sharing
@@ -140,19 +140,20 @@ class AnthropicLLMModel:
                 cache_blocks=cache_blocks,  # Use provided blocks
                 force_text_output=True,  # Get text output despite tool
             )
-        
+
         # Log cache metrics for debugging
         if usage:
             cache_creation = usage.get("cache_creation_input_tokens", 0)
             cache_read = usage.get("cache_read_input_tokens", 0)
             if cache_creation > 0 or cache_read > 0:
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.info(
                     f"Cache metrics: created={cache_creation} tokens, "
                     f"read={cache_read} tokens, blocks={len(cache_blocks)}"
                 )
-        
+
         return AnthropicResponse(result, usage, is_structured=bool(schema))
 
     def _prompt_without_cache(
@@ -163,22 +164,22 @@ class AnthropicLLMModel:
         **kwargs: Any,
     ) -> "AnthropicResponse":
         """Execute prompt without cache blocks (fallback path for non-cached nodes).
-        
+
         Args:
             prompt: The full prompt text
             schema: Optional Pydantic model for structured output
             temperature: Temperature for response generation
             **kwargs: Additional arguments
-            
+
         Returns:
             AnthropicResponse wrapping the result
         """
         # Convert prompt to string if needed
         prompt_str = prompt if isinstance(prompt, str) else str(prompt)
-        
+
         # Add model to kwargs for debug wrapper tracking
         kwargs["model"] = self.model_id
-        
+
         if schema:
             # Structured output without caching - pass None for cache_blocks
             result, usage = self.client.generate_with_schema_text_mode(
@@ -192,7 +193,7 @@ class AnthropicLLMModel:
             # Text output without caching - still use FlowIR tool for consistency
             # This maintains compatibility with any future caching scenarios
             from pflow.planning.ir_models import FlowIR
-            
+
             result, usage = self.client.generate_with_schema_text_mode(
                 prompt=prompt_str,
                 response_model=FlowIR,  # Tool definition for consistency
@@ -200,7 +201,7 @@ class AnthropicLLMModel:
                 cache_blocks=None,  # No caching for this path
                 force_text_output=True,  # Get text output despite tool
             )
-        
+
         return AnthropicResponse(result, usage, is_structured=bool(schema))
 
 

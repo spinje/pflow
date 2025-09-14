@@ -503,7 +503,7 @@ Moving ParameterDiscovery earlier had a cascade effect:
 ### The Breaking Change We Introduced
 In our zeal to ensure cache blocks worked, we made `cache_blocks` a REQUIRED parameter in `AnthropicLLMModel.prompt()`. This broke 6 out of 8 planner nodes that don't provide cache blocks:
 - WorkflowDiscoveryNode ❌
-- ComponentBrowsingNode ❌  
+- ComponentBrowsingNode ❌
 - RequirementsAnalysisNode ❌
 - ParameterDiscoveryNode ❌
 - ParameterMappingNode ❌
@@ -605,7 +605,7 @@ Created `prompt_cache_helper.py` with intelligent prompt handling:
    )
    ```
 
-3. **Results**: 
+3. **Results**:
    - ALL nodes now properly use .md templates
    - Clean separation of static vs dynamic
    - ~33,000+ tokens cached (vs 594 before fix)
@@ -1083,7 +1083,7 @@ After Task 52 was functionally complete, performed comprehensive refactoring to 
 1. **Dual Caching Architectures**: Two completely different caching systems existed:
    - `prompt_cache_helper.py` with template-based caching for standard nodes
    - `PlannerContextBuilder` with block-based accumulation for planning nodes
-   
+
 2. **Dual Code Paths**: Every node had `if cache_planner:` branches with duplicated logic
 
 3. **Special-Case Constants**: Only 2 nodes (discovery, component_browsing) had cacheable context, requiring 100+ lines of special handling in `prompt_cache_helper.py`
@@ -1116,7 +1116,7 @@ response = model.prompt(
 
 Applied to all 6 standard nodes:
 - WorkflowDiscoveryNode
-- ComponentBrowsingNode  
+- ComponentBrowsingNode
 - RequirementsAnalysisNode
 - ParameterDiscoveryNode
 - ParameterMappingNode
@@ -1175,7 +1175,7 @@ Applied to all 6 standard nodes:
 
 **Code Reduction**: ~460 lines removed total
 - Special-case logic: ~220 lines
-- Dual code paths: ~150 lines  
+- Dual code paths: ~150 lines
 - Dead code and redundancy: ~90 lines
 
 **Complexity Reduction**:
@@ -1208,5 +1208,83 @@ The caching system is now:
 - **Efficient**: Same performance, less code
 - **Extensible**: Easy to add new nodes following established patterns
 - **Production-Ready**: No dead code, clean architecture
+
+## Phase 5: Test Infrastructure Fixes
+
+### Context
+After the refactoring, discovered that 76 tests were failing when run as a suite but passing individually, indicating test isolation issues.
+
+### Root Cause Analysis
+
+**The Problem**: Double-mocking conflict
+- Global mock from `tests/conftest.py::mock_llm_calls` fixture
+- Local patches with `patch("llm.get_model")` in individual tests
+- Monkey-patching from `install_anthropic_model()` in CLI
+
+**Why It Happened**:
+1. The global mock was added to prevent API calls during testing
+2. Individual tests were written with local patches before the global mock existed
+3. The anthropic model monkey-patch was being applied even during tests
+4. When run together, the mocks conflicted causing unpredictable behavior
+
+### Solutions Implemented
+
+1. **Prevented monkey-patching during tests**:
+   ```python
+   # In src/pflow/cli/main.py
+   if not os.environ.get("PYTEST_CURRENT_TEST"):
+       install_anthropic_model()
+   ```
+
+2. **Updated test patterns** to use global mock:
+   - Replaced `with patch("llm.get_model")` with `mock_llm_calls.set_response()`
+   - Added schema imports from `pflow.planning.nodes`
+   - Removed mock assertion checks that were no longer needed
+
+3. **Removed obsolete files**:
+   - Deleted `src/pflow/planning/utils/cache_builder.py` (tombstone file)
+   - Deleted `tests/test_planning/unit/test_cache_builder.py` (obsolete tests)
+
+### Test Fixing Results
+
+**Before**:
+- 1970 tests passing, 76 failing (96.3% pass rate)
+- Tests failed in suite but passed individually
+
+**After**:
+- 2034 tests passing, 0 failing (100% pass rate)
+- All test isolation issues resolved
+- Removed 12 obsolete tests
+
+### Key Insights
+
+1. **Test Infrastructure Matters**: Test isolation issues can mask real problems and create false failures. Proper mock management is crucial.
+
+2. **Global vs Local Mocking**: Having both global and local mocks is an anti-pattern. Choose one approach and stick to it consistently.
+
+3. **Monkey-Patching Dangers**: Runtime modifications like `install_anthropic_model()` should be carefully controlled and disabled during testing.
+
+4. **Clean Test Patterns**: Using a consistent mocking pattern (`mock_llm_calls.set_response()`) across all tests improves maintainability.
+
+5. **Remove Dead Code Immediately**: The cache_builder.py file should have been removed during refactoring, not kept as a tombstone.
+
+### Lessons for Future Development
+
+1. **Test First During Refactoring**: Run tests continuously during refactoring to catch issues early
+2. **Mock at One Level**: Choose either global or local mocking, never both
+3. **Control Side Effects**: Any global modifications should check for test environment
+4. **Clean As You Go**: Remove obsolete code and tests immediately, don't leave tombstones
+5. **Document Test Patterns**: Clear patterns make it easier for multiple developers (and AI agents) to maintain tests
+
+### Team Collaboration Success
+
+This phase demonstrated effective human-AI collaboration:
+- Human identified the high-level problem (tests failing)
+- AI diagnosed the root cause (double-mocking)
+- Subagents handled mechanical fixes (simple test updates)
+- AI handled complex fixes (test isolation issues)
+- Human provided oversight and caught issues (cache_builder.py)
+
+The result: Complete test suite passing with clean, maintainable test infrastructure.
 
 The tracing system now serves as a powerful debugging and optimization tool for the Task 52 cache implementation, making it easy to identify which nodes benefit from caching and quantify the actual savings.

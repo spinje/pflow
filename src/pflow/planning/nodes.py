@@ -124,7 +124,7 @@ class WorkflowDiscoveryNode(Node):
 
         # Get cache_planner flag from shared store
         cache_planner = shared.get("cache_planner", False)
-        
+
         return {
             "user_input": user_input,
             "discovery_context": discovery_context,
@@ -133,58 +133,51 @@ class WorkflowDiscoveryNode(Node):
             "cache_planner": cache_planner,
         }
 
-    def _build_cache_blocks(self, discovery_context: str, user_input: str, cache_planner: bool) -> tuple[list[dict], str]:
+    def _build_cache_blocks(
+        self, discovery_context: str, user_input: str, cache_planner: bool
+    ) -> tuple[list[dict], str]:
         """Build cache blocks for discovery node with special context handling.
-        
+
         Args:
             discovery_context: The workflow descriptions to potentially cache
             user_input: The user's request
             cache_planner: Whether caching is enabled
-            
+
         Returns:
             Tuple of (cache_blocks, formatted_prompt)
         """
         from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
-        
+
         # If caching is disabled, use the standard helper
         if not cache_planner:
             return build_cached_prompt(
-                "discovery",
-                all_variables={
-                    "discovery_context": discovery_context,
-                    "user_input": user_input
-                }
+                "discovery", all_variables={"discovery_context": discovery_context, "user_input": user_input}
             )
-        
+
         # Special caching logic for discovery context
         from pflow.planning.prompts.loader import load_prompt
+
         prompt_template = load_prompt("discovery")
         cache_blocks = []
-        
+
         if "## Context" in prompt_template:
             instructions, _ = prompt_template.split("## Context", 1)
-            
+
             # Cache instructions if substantial
             instructions = instructions.strip()
             if instructions and len(instructions) > 1000:
-                cache_blocks.append({
-                    "text": instructions,
-                    "cache_control": {"type": "ephemeral"}
-                })
-            
+                cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral"}})
+
             # Build and optionally cache the discovery context
             context_block = f"""## Context
 
 <existing_workflows>
 {discovery_context if discovery_context else ""}
 </existing_workflows>"""
-            
+
             if discovery_context and len(discovery_context) > 1000:
-                cache_blocks.append({
-                    "text": context_block,
-                    "cache_control": {"type": "ephemeral"}
-                })
-            
+                cache_blocks.append({"text": context_block, "cache_control": {"type": "ephemeral"}})
+
             # Return dynamic part only
             formatted_prompt = f"""## Inputs
 
@@ -194,11 +187,11 @@ class WorkflowDiscoveryNode(Node):
         else:
             # Fallback if template structure is unexpected
             from pflow.planning.prompts.loader import format_prompt
-            formatted_prompt = format_prompt(prompt_template, {
-                "discovery_context": discovery_context,
-                "user_input": user_input
-            })
-            
+
+            formatted_prompt = format_prompt(
+                prompt_template, {"discovery_context": discovery_context, "user_input": user_input}
+            )
+
         return cache_blocks, formatted_prompt
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -214,25 +207,23 @@ class WorkflowDiscoveryNode(Node):
 
         # Check if caching is enabled for cache_control markers
         cache_planner = prep_res.get("cache_planner", False)
-        
+
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
-        
+
         # Build cache blocks using node-specific logic
         cache_blocks, formatted_prompt = self._build_cache_blocks(
-            prep_res["discovery_context"],
-            prep_res["user_input"],
-            cache_planner
+            prep_res["discovery_context"], prep_res["user_input"], cache_planner
         )
-        
+
         # Make LLM call - conditionally pass cache blocks based on flag
         response = model.prompt(
-            formatted_prompt, 
-            schema=WorkflowDecision, 
+            formatted_prompt,
+            schema=WorkflowDecision,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None
+            cache_blocks=cache_blocks if cache_planner else None,
         )
-        
+
         result = parse_structured_response(response, WorkflowDecision)
 
         logger.info(
@@ -385,7 +376,7 @@ class ComponentBrowsingNode(Node):
 
         # NEW: Get requirements if available (from RequirementsAnalysisNode)
         requirements_result = shared.get("requirements_result", {})
-        
+
         # Get cache_planner flag from shared store
         cache_planner = shared.get("cache_planner", False)
 
@@ -400,22 +391,23 @@ class ComponentBrowsingNode(Node):
             "cache_planner": cache_planner,
         }
 
-    def _build_cache_blocks(self, nodes_context: str, workflows_context: str, user_input: str, 
-                           requirements: str, cache_planner: bool) -> tuple[list[dict], str]:
+    def _build_cache_blocks(
+        self, nodes_context: str, workflows_context: str, user_input: str, requirements: str, cache_planner: bool
+    ) -> tuple[list[dict], str]:
         """Build cache blocks for component browsing with special documentation handling.
-        
+
         Args:
             nodes_context: Node documentation to potentially cache
             workflows_context: Workflow documentation to potentially cache
             user_input: The user's request
             requirements: Extracted requirements
             cache_planner: Whether caching is enabled
-            
+
         Returns:
             Tuple of (cache_blocks, formatted_prompt)
         """
         from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
-        
+
         # If caching is disabled, use the standard helper
         if not cache_planner:
             return build_cached_prompt(
@@ -425,42 +417,37 @@ class ComponentBrowsingNode(Node):
                     "workflows_context": workflows_context,
                     "user_input": user_input,
                     "requirements": requirements,
-                }
+                },
             )
-        
+
         # Special caching logic for node/workflow documentation
         from pflow.planning.prompts.loader import load_prompt
+
         prompt_template = load_prompt("component_browsing")
         cache_blocks = []
-        
+
         if "## Context" in prompt_template:
             instructions, _ = prompt_template.split("## Context", 1)
-            
+
             # Cache instructions if substantial
             instructions = instructions.strip()
             if instructions and len(instructions) > 1000:
-                cache_blocks.append({
-                    "text": instructions,
-                    "cache_control": {"type": "ephemeral"}
-                })
-            
+                cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral"}})
+
             # Build context with cacheable documentation
             context_parts = ["## Context"]
-            
+
             # Add substantial documentation to cache
             if nodes_context and len(nodes_context) > 1000:
                 context_parts.append(f"\n<available_nodes>\n{nodes_context}\n</available_nodes>")
-            
+
             if workflows_context and len(workflows_context) > 1000:
                 context_parts.append(f"\n<available_workflows>\n{workflows_context}\n</available_workflows>")
-            
+
             # Cache context if we have substantial documentation
             if len(context_parts) > 1:
-                cache_blocks.append({
-                    "text": "".join(context_parts),
-                    "cache_control": {"type": "ephemeral"}
-                })
-            
+                cache_blocks.append({"text": "".join(context_parts), "cache_control": {"type": "ephemeral"}})
+
             # Return dynamic part only
             formatted_prompt = f"""## Inputs
 
@@ -474,13 +461,17 @@ class ComponentBrowsingNode(Node):
         else:
             # Fallback if template structure is unexpected
             from pflow.planning.prompts.loader import format_prompt
-            formatted_prompt = format_prompt(prompt_template, {
-                "nodes_context": nodes_context,
-                "workflows_context": workflows_context,
-                "user_input": user_input,
-                "requirements": requirements,
-            })
-            
+
+            formatted_prompt = format_prompt(
+                prompt_template,
+                {
+                    "nodes_context": nodes_context,
+                    "workflows_context": workflows_context,
+                    "user_input": user_input,
+                    "requirements": requirements,
+                },
+            )
+
         return cache_blocks, formatted_prompt
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -502,27 +493,27 @@ class ComponentBrowsingNode(Node):
 
         # Check if caching is enabled for cache_control markers
         cache_planner = prep_res.get("cache_planner", False)
-        
+
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
-        
+
         # Build cache blocks using node-specific logic
         cache_blocks, formatted_prompt = self._build_cache_blocks(
             prep_res["nodes_context"],
             prep_res["workflows_context"],
             prep_res["user_input"],
             requirements_text,
-            cache_planner
+            cache_planner,
         )
-        
+
         # Make LLM call - conditionally pass cache blocks based on flag
         response = model.prompt(
-            formatted_prompt, 
-            schema=ComponentSelection, 
+            formatted_prompt,
+            schema=ComponentSelection,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None
+            cache_blocks=cache_blocks if cache_planner else None,
         )
-        
+
         result = parse_structured_response(response, ComponentSelection)
 
         # IMPORTANT: Clear workflow_names to prevent confusion
@@ -706,7 +697,7 @@ class ParameterDiscoveryNode(Node):
         # Get planning context (might be empty string on error)
         planning_context = shared.get("planning_context", "")
         browsed_components = shared.get("browsed_components", {})
-        
+
         # Get cache_planner flag from shared store
         cache_planner = shared.get("cache_planner", False)
 
@@ -732,7 +723,6 @@ class ParameterDiscoveryNode(Node):
         logger.debug(f"ParameterDiscoveryNode: Discovering parameters from: {prep_res['user_input'][:1000]}...")
 
         # Load prompt from markdown file
-        from pflow.planning.prompts.loader import format_prompt, load_prompt
         from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
 
         # Prepare stdin info for the prompt
@@ -740,10 +730,10 @@ class ParameterDiscoveryNode(Node):
 
         # Check if caching is enabled for cache_control markers
         cache_planner = prep_res.get("cache_planner", False)
-        
+
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
-        
+
         # Prepare only the variables actually used by the prompt
         # Note: planning_context, selected_nodes, selected_workflows are removed
         # as they're always empty at this stage (this node runs before ComponentBrowsingNode)
@@ -751,22 +741,22 @@ class ParameterDiscoveryNode(Node):
             "user_input": prep_res["user_input"],
             "stdin_info": stdin_info,
         }
-        
+
         # Always build cache blocks structure (single code path)
         cache_blocks, formatted_prompt = build_cached_prompt(
             "parameter_discovery",
             all_variables=all_vars,
-            cacheable_variables=None  # No cacheable context for this node
+            cacheable_variables=None,  # No cacheable context for this node
         )
-        
+
         # Make LLM call - conditionally pass cache blocks based on flag
         response = model.prompt(
             formatted_prompt,
             schema=ParameterDiscovery,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None
+            cache_blocks=cache_blocks if cache_planner else None,
         )
-        
+
         result = parse_structured_response(response, ParameterDiscovery)
 
         # Create templatized version of user input
@@ -912,7 +902,7 @@ class RequirementsAnalysisNode(Node):
         # Configuration from params with defaults
         model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
         temperature = self.params.get("temperature", 0.0)
-        
+
         # Get cache_planner flag from shared store
         cache_planner = shared.get("cache_planner", False)
 
@@ -936,34 +926,33 @@ class RequirementsAnalysisNode(Node):
         logger.debug(f"RequirementsAnalysisNode: Extracting requirements from: {prep_res['input_text'][:100]}...")
 
         # Load prompt from markdown file
-        from pflow.planning.prompts.loader import format_prompt, load_prompt
         from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
 
         # Check if caching is enabled for cache_control markers
         cache_planner = prep_res.get("cache_planner", False)
-        
+
         # Load model
         model = llm.get_model(prep_res["model_name"])
-        
+
         # Prepare all variables for the prompt template
         all_vars = {
             "input_text": prep_res["input_text"],
         }
-        
+
         # Always build cache blocks structure (single code path)
         cache_blocks, formatted_prompt = build_cached_prompt(
             "requirements_analysis",
             all_variables=all_vars,
-            cacheable_variables=None  # No cacheable context for this node
+            cacheable_variables=None,  # No cacheable context for this node
         )
-        
+
         # Make LLM call - conditionally pass cache blocks based on flag
         # When cache_planner is False, passing None means no caching happens
         response = model.prompt(
             formatted_prompt,
             schema=RequirementsSchema,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None
+            cache_blocks=cache_blocks if cache_planner else None,
         )
         result = parse_structured_response(response, RequirementsSchema)
 
@@ -1177,9 +1166,7 @@ class PlanningNode(Node):
         parsed = self._parse_plan_assessment(plan_markdown)
 
         # Create extended blocks [A, B, C, D] by appending plan output
-        extended_blocks = PlannerContextBuilder.append_planning_block(
-            base_blocks, plan_markdown, parsed
-        )
+        extended_blocks = PlannerContextBuilder.append_planning_block(base_blocks, plan_markdown, parsed)
 
         # Log extended context metrics
         total_chars = sum(len(block["text"]) for block in extended_blocks)
@@ -1413,7 +1400,7 @@ class ParameterMappingNode(Node):
 
         # Get stdin as fallback parameter source
         stdin_data = shared.get("stdin", "")
-        
+
         # Get cache_planner flag from shared store
         cache_planner = shared.get("cache_planner", False)
 
@@ -1468,40 +1455,39 @@ class ParameterMappingNode(Node):
         Returns:
             Parsed ParameterExtraction result
         """
-        from pflow.planning.prompts.loader import format_prompt, load_prompt
         from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
 
         # Prepare stdin data - truncate if too long, use "None" if empty
         stdin_data = prep_res.get("stdin_data", "")[:500] if prep_res.get("stdin_data") else "None"
-        
+
         # Check if caching is enabled for cache_control markers
         cache_planner = prep_res.get("cache_planner", False)
-        
+
         # Lazy-load model at execution time (PocketFlow best practice)
         model = llm.get_model(prep_res["model_name"])
-        
+
         # Prepare all variables for the prompt template
         all_vars = {
             "inputs_description": inputs_description_text,
             "user_input": prep_res["user_input"],
             "stdin_data": stdin_data,
         }
-        
+
         # Always build cache blocks structure (single code path)
         cache_blocks, formatted_prompt = build_cached_prompt(
             "parameter_mapping",
             all_variables=all_vars,
-            cacheable_variables=None  # No cacheable context for this node
+            cacheable_variables=None,  # No cacheable context for this node
         )
-        
+
         # Make LLM call - conditionally pass cache blocks based on flag
         response = model.prompt(
             formatted_prompt,
             schema=ParameterExtraction,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None
+            cache_blocks=cache_blocks if cache_planner else None,
         )
-        
+
         return parse_structured_response(response, ParameterExtraction)
 
     def _apply_defaults_and_validate(
@@ -1785,7 +1771,9 @@ class WorkflowGeneratorNode(Node):
         return {
             "model_name": self.params.get("model", "anthropic/claude-sonnet-4-0"),
             "temperature": self.params.get("temperature", 0.0),
-            "planning_context": shared.get("planning_context", ""),  # Still used by RequirementsAnalysisNode and PlanningNode
+            "planning_context": shared.get(
+                "planning_context", ""
+            ),  # Still used by RequirementsAnalysisNode and PlanningNode
             "user_input": shared.get("templatized_input", shared.get("user_input", "")),
             "discovered_params": shared.get("discovered_params"),
             "browsed_components": shared.get("browsed_components", {}),
@@ -1819,17 +1807,15 @@ class WorkflowGeneratorNode(Node):
         # Determine which blocks to use (prefer blocks over strings)
         blocks = None
         base_context = None  # For backward compatibility
-        
+
         if is_retry and prep_res.get("planner_accumulated_blocks"):
             # Use accumulated blocks from previous attempt(s)
             blocks = prep_res["planner_accumulated_blocks"]
-            
+
             # Add validation errors as new block
             if prep_res.get("validation_errors"):
-                blocks = PlannerContextBuilder.append_errors_block(
-                    blocks, prep_res["validation_errors"]
-                )
-            
+                blocks = PlannerContextBuilder.append_errors_block(blocks, prep_res["validation_errors"])
+
             logger.info(
                 f"WorkflowGeneratorNode: Using {len(blocks)} accumulated cache blocks for retry (attempt {prep_res['generation_attempts'] + 1})",
                 extra={"phase": "exec", "is_retry": True, "cache_blocks": len(blocks)},
@@ -1946,7 +1932,7 @@ class WorkflowGeneratorNode(Node):
                 exec_res["blocks"], exec_res["workflow"], exec_res["attempt"]
             )
             shared["planner_accumulated_blocks"] = accumulated_blocks
-            
+
             # Log accumulated block metrics
             total_chars = sum(len(block["text"]) for block in accumulated_blocks)
             estimated_tokens = total_chars // 4  # Rough estimate
@@ -2120,7 +2106,7 @@ class MetadataGenerationNode(Node):
         """
         # Get cache_planner flag from shared store
         cache_planner = shared.get("cache_planner", False)
-        
+
         return {
             "workflow": shared.get("generated_workflow", {}),
             "user_input": shared.get("user_input", ""),
@@ -2144,15 +2130,15 @@ class MetadataGenerationNode(Node):
         Returns:
             Dict with rich metadata fields for discovery
         """
+        import json
+
         from pflow.planning.ir_models import WorkflowMetadata
         from pflow.planning.utils.llm_helpers import parse_structured_response
         from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
-        from pflow.planning.prompts.loader import format_prompt, load_prompt
-        import json
 
         workflow = prep_res.get("workflow", {})
         extracted_params = prep_res.get("extracted_params", {})
-        
+
         # DEBUG: Log entry and workflow details
         logger.info(
             "MetadataGenerationNode: Starting exec with workflow containing %d nodes",
@@ -2163,12 +2149,12 @@ class MetadataGenerationNode(Node):
                 "has_extracted_params": bool(extracted_params),
                 "cache_planner": prep_res.get("cache_planner", False),
                 "model_name": prep_res.get("model_name", "unknown"),
-            }
+            },
         )
 
         # Check if caching is enabled
         cache_planner = prep_res.get("cache_planner", False)
-        
+
         # Get LLM to analyze and generate metadata
         try:
             model = llm.get_model(prep_res["model_name"])
@@ -2178,10 +2164,10 @@ class MetadataGenerationNode(Node):
                 "MetadataGenerationNode: Failed to get model %s: %s",
                 prep_res["model_name"],
                 str(e),
-                extra={"phase": "model_init", "error": str(e)}
+                extra={"phase": "model_init", "error": str(e)},
             )
             raise
-        
+
         # Build all variables for the prompt template
         try:
             node_flow = _build_node_flow(workflow)
@@ -2192,10 +2178,10 @@ class MetadataGenerationNode(Node):
             logger.error(
                 "MetadataGenerationNode: Failed to build node flow: %s",
                 str(e),
-                extra={"phase": "node_flow", "error": str(e)}
+                extra={"phase": "node_flow", "error": str(e)},
             )
             node_flow = "empty workflow"
-        
+
         try:
             workflow_stages = self._build_workflow_stages(workflow)
             if not workflow_stages:
@@ -2205,16 +2191,16 @@ class MetadataGenerationNode(Node):
             logger.error(
                 "MetadataGenerationNode: Failed to build workflow stages: %s",
                 str(e),
-                extra={"phase": "workflow_stages", "error": str(e)}
+                extra={"phase": "workflow_stages", "error": str(e)},
             )
             workflow_stages = "No stages defined"
-        
+
         # Format workflow inputs
         workflow_inputs = json.dumps(workflow.get("inputs", {}), indent=2)
-        
+
         # Use templatized input if available
         user_input = prep_res.get("templatized_input", prep_res.get("user_input", ""))
-        
+
         # Prepare all variables for the prompt template
         all_vars = {
             "user_input": user_input,
@@ -2223,27 +2209,27 @@ class MetadataGenerationNode(Node):
             "workflow_inputs": workflow_inputs,
             "parameter_bindings": json.dumps(extracted_params or {}, indent=2),
         }
-        
+
         # Always build cache blocks structure (single code path)
         try:
             cache_blocks, formatted_prompt = build_cached_prompt(
                 "metadata_generation",
                 all_variables=all_vars,
-                cacheable_variables=None  # No cacheable context for this node
+                cacheable_variables=None,  # No cacheable context for this node
             )
             logger.debug(
                 "MetadataGenerationNode: Built prompt structure, %d blocks, prompt length %d",
                 len(cache_blocks) if cache_blocks else 0,
-                len(formatted_prompt)
+                len(formatted_prompt),
             )
         except Exception as e:
             logger.error(
                 "MetadataGenerationNode: Failed to build prompt: %s",
                 str(e),
-                extra={"phase": "build_prompt", "error": str(e)}
+                extra={"phase": "build_prompt", "error": str(e)},
             )
             raise
-        
+
         # Make LLM call - conditionally pass cache blocks based on flag
         logger.info("MetadataGenerationNode: Making LLM call")
         try:
@@ -2251,14 +2237,14 @@ class MetadataGenerationNode(Node):
                 formatted_prompt,
                 schema=WorkflowMetadata,
                 temperature=prep_res["temperature"],
-                cache_blocks=cache_blocks if cache_planner else None
+                cache_blocks=cache_blocks if cache_planner else None,
             )
             logger.debug("MetadataGenerationNode: LLM call successful")
         except Exception as e:
             logger.error(
                 "MetadataGenerationNode: LLM call failed: %s",
                 str(e),
-                extra={"phase": "llm_call", "error": str(e), "error_type": type(e).__name__}
+                extra={"phase": "llm_call", "error": str(e), "error_type": type(e).__name__},
             )
             raise
 
@@ -2270,7 +2256,7 @@ class MetadataGenerationNode(Node):
             logger.error(
                 "MetadataGenerationNode: Failed to parse structured response: %s",
                 str(e),
-                extra={"phase": "parse_response", "error": str(e)}
+                extra={"phase": "parse_response", "error": str(e)},
             )
             raise
 
@@ -2293,7 +2279,7 @@ class MetadataGenerationNode(Node):
             "declared_inputs": list(workflow.get("inputs", {}).keys()),
             "declared_outputs": self._extract_outputs(workflow),
         }
-        
+
         # Log successful completion
         logger.info(
             "MetadataGenerationNode: Successfully generated metadata - name='%s', keywords=%d, capabilities=%d",
@@ -2306,9 +2292,9 @@ class MetadataGenerationNode(Node):
                 "metadata_name": result.get("suggested_name"),
                 "keyword_count": len(result.get("search_keywords", [])),
                 "capability_count": len(result.get("capabilities", [])),
-            }
+            },
         )
-        
+
         return result
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
@@ -2351,11 +2337,11 @@ class MetadataGenerationNode(Node):
                 "cache_planner": prep_res.get("cache_planner", False),
                 "model_name": prep_res.get("model_name", "unknown"),
             },
-            exc_info=True  # Include full traceback
+            exc_info=True,  # Include full traceback
         )
-        
+
         safe_response, planner_error = create_fallback_response("MetadataGenerationNode", exc, prep_res)
-        
+
         # Log what fallback metadata is being generated
         logger.info(
             "MetadataGenerationNode: Generated fallback metadata - name='%s'",
@@ -2366,7 +2352,7 @@ class MetadataGenerationNode(Node):
                 "has_keywords": bool(safe_response.get("search_keywords")),
                 "has_capabilities": bool(safe_response.get("capabilities")),
                 "error_category": planner_error.category.value if planner_error else "unknown",
-            }
+            },
         )
 
         # Note: We cannot store the error in shared store from exec_fallback

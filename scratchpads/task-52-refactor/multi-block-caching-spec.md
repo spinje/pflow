@@ -1,7 +1,7 @@
 # Multi-Block Caching Implementation Specification
 
-**Date**: January 2025  
-**Purpose**: Define comprehensive requirements for refactoring Task 52's Anthropic SDK integration to support proper multi-block incremental caching  
+**Date**: January 2025
+**Purpose**: Define comprehensive requirements for refactoring Task 52's Anthropic SDK integration to support proper multi-block incremental caching
 **Status**: Draft Specification
 
 ## Executive Summary
@@ -32,7 +32,7 @@ Total tokens per workflow: ~8000
 - Currently cached: 2914 (36%)
 - Currently uncached: 5086 (64%)
   - Base context: ~2000 tokens
-  - Planning output: ~1000 tokens  
+  - Planning output: ~1000 tokens
   - Generated workflow: ~2000 tokens
   - Instructions: ~1000 tokens
 ```
@@ -83,7 +83,7 @@ PlanningNode:
   - Stores: planner_extended_blocks = [A, B, C]
 
 WorkflowGenerator (attempt 1):
-  - Reads planner_extended_blocks [A, B, C] 
+  - Reads planner_extended_blocks [A, B, C]
   - After generation, appends Block D₁
   - After validation (if errors), appends Block E₁
   - Stores: planner_accumulated_blocks = [A, B, C, D₁, (E₁)]
@@ -129,7 +129,7 @@ WorkflowGenerator (retry n):
 
 ### Non-Functional Requirements
 
-#### NFR1: Backward Compatibility  
+#### NFR1: Backward Compatibility
 - MUST maintain compatibility with existing `llm.get_model()` interface
 - MUST support fallback to regex extraction if cache_blocks not provided (for other nodes)
 - MUST not break existing tests (32 tests rely on current behavior)
@@ -187,8 +187,8 @@ cache_blocks = [
 When you send separate blocks, Anthropic automatically finds the longest matching prefix:
 
 1. **First call** (PlanningNode): Send [A, B] → Creates cache for prefix [A, B]
-2. **Second call** (WorkflowGenerator): Send [A, B, C] → 
-   - Anthropic checks: Is [A, B] cached? YES! 
+2. **Second call** (WorkflowGenerator): Send [A, B, C] →
+   - Anthropic checks: Is [A, B] cached? YES!
    - Reads [A, B] from cache (90% discount)
    - Only processes C as new content
 3. **Third call** (Retry): Send [A, B, C, D, E] →
@@ -203,7 +203,7 @@ Anthropic allows **maximum 4 cache_control markers** per request. Our design fit
 ```python
 # Our block accumulation pattern:
 PlanningNode:        [A, B]        # 2 breakpoints used
-WorkflowGenerator:   [A, B, C]     # 3 breakpoints used  
+WorkflowGenerator:   [A, B, C]     # 3 breakpoints used
 Retry:              [A, B, C, D, E] # 4-5 blocks, but can use 4 breakpoints
 
 # If we hit the limit, combine D+E:
@@ -299,7 +299,7 @@ WORKFLOW_OVERVIEW_PATTERN = re.compile(
 
 def extract_workflow_overview(text: str) -> Optional[str]:
     """Extract workflow overview from text if it exists and is large enough.
-    
+
     Returns:
         Extracted overview text or None if not found/too small
     """
@@ -312,7 +312,7 @@ def extract_workflow_overview(text: str) -> Optional[str]:
 
 def remove_workflow_overview(text: str) -> str:
     """Remove workflow overview from text, leaving remaining content.
-    
+
     Returns:
         Text with workflow overview removed
     """
@@ -327,7 +327,7 @@ def remove_workflow_overview(text: str) -> str:
 class PlannerContextBuilder:
     # Maximum retry attempts to keep in history
     MAX_RETRY_HISTORY = 3
-    
+
     @classmethod
     def build_base_blocks(
         cls,
@@ -338,7 +338,7 @@ class PlannerContextBuilder:
         discovered_params: Optional[dict] = None
     ) -> list[dict[str, Any]]:
         """Build [Block A, Block B] as cacheable blocks."""
-        
+
     @classmethod
     def append_planning_block(
         cls,
@@ -347,13 +347,13 @@ class PlannerContextBuilder:
         parsed_plan: dict
     ) -> list[dict[str, Any]]:
         """Append Block C to existing blocks.
-        
+
         CRITICAL: Returns NEW list with block appended (immutable pattern)!
         Example: [A, B] + [C] → [A, B, C] as separate list entries
-        
+
         NEVER modify the original blocks list - return blocks + [new_block]
         """
-        
+
     @classmethod
     def append_workflow_block(
         cls,
@@ -362,14 +362,14 @@ class PlannerContextBuilder:
         attempt_number: int
     ) -> list[dict[str, Any]]:
         """Append Block D for retry attempts.
-        
+
         CRITICAL: Returns NEW list with block appended (immutable pattern)!
         Example: [A, B, C] + [D] → [A, B, C, D]
-        
+
         Note: For debugging, keep all attempts in shared store but only
         send recent attempts as cache blocks to respect 4-breakpoint limit.
         """
-        
+
     @classmethod
     def append_errors_block(
         cls,
@@ -377,14 +377,14 @@ class PlannerContextBuilder:
         validation_errors: list[str]
     ) -> list[dict[str, Any]]:
         """Append Block E for retry attempts (max 3 errors shown).
-        
+
         CRITICAL: Returns NEW list with block appended (immutable pattern)!
         Example: [A, B, C, D] + [E] → [A, B, C, D, E]
-        
+
         Only appends if validation_errors is non-empty.
         If approaching 4-breakpoint limit, may combine with Block D.
         """
-        
+
     @classmethod
     def _trim_old_attempts(cls, blocks: list[dict]) -> list[dict]:
         """Remove oldest D/E blocks when exceeding retry limit."""
@@ -426,7 +426,7 @@ shared["planner_accumulated_blocks"] # [A, B, C, D, E] - for next retry
 
 # OLD keys (DELETE these completely):
 shared["planner_base_context"]        # String - DELETE
-shared["planner_extended_context"]    # String - DELETE  
+shared["planner_extended_context"]    # String - DELETE
 shared["planner_accumulated_context"] # String - DELETE
 
 # NEW keys (blocks only):
@@ -549,20 +549,20 @@ shared["planner_accumulated_blocks"] # [A, B, C, D, (E)] - blocks with cache_con
 ## Risks and Mitigations
 
 ### Risk 1: Cache Key Mismatch
-**Risk**: Blocks not byte-identical, cache doesn't share  
+**Risk**: Blocks not byte-identical, cache doesn't share
 **Mitigation**: Strict validation tests, byte comparison in tests
 
 ### Risk 2: Backward Compatibility Break
-**Risk**: Existing code breaks with new implementation  
+**Risk**: Existing code breaks with new implementation
 **Mitigation**: Maintain dual paths, extensive testing
 
 ### Risk 3: Anthropic API Changes
-**Risk**: Cache behavior changes in future API versions  
+**Risk**: Cache behavior changes in future API versions
 **Mitigation**: Version pinning, comprehensive error handling
 
 ### Risk 4: Memory Growth
-**Risk**: Accumulated blocks consume too much memory  
-**Mitigation**: 
+**Risk**: Accumulated blocks consume too much memory
+**Mitigation**:
 - Block size limits enforced
 - MAX_RETRY_HISTORY = 3 (auto-trim old attempts)
 - On-demand string generation from blocks
@@ -570,7 +570,7 @@ shared["planner_accumulated_blocks"] # [A, B, C, D, (E)] - blocks with cache_con
 
 ### Risk 5: Cache Failure Handling
 **Risk**: Caching fails silently or breaks execution
-**Mitigation**: 
+**Mitigation**:
 - Graceful fallback to non-cached execution
 - Comprehensive error logging
 - Metrics tracking for cache failures

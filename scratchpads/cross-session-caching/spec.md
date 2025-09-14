@@ -1,7 +1,7 @@
 # Cross-Session Planner Caching Specification
 
-**Date**: January 2025  
-**Purpose**: Enable cross-session caching for planner LLM calls to dramatically reduce costs and latency during development iteration  
+**Date**: January 2025
+**Purpose**: Enable cross-session caching for planner LLM calls to dramatically reduce costs and latency during development iteration
 **Status**: Design Specification
 
 ## Executive Summary
@@ -71,10 +71,10 @@ class SomePlannerNode(Node):
     def exec(self, prep_res):
         # Check if caching is enabled
         cache_planner = prep_res.get("cache_planner", False)
-        
+
         # Special nodes ALWAYS cache (intra-session benefit)
         force_cache = self.name in ["planning", "workflow-generator"]
-        
+
         if cache_planner or force_cache:
             # Build cache blocks
             blocks = self._build_cache_blocks(prep_res)
@@ -109,7 +109,7 @@ class SomePlannerNode(Node):
 
 ### Phase 4: Update Remaining Nodes (2 hours)
 1. RequirementsAnalysisNode
-2. ParameterDiscoveryNode  
+2. ParameterDiscoveryNode
 3. MetadataGenerationNode
 4. Any other LLM-calling nodes
 
@@ -120,19 +120,19 @@ Each node should follow this pattern:
 ```python
 def _build_cache_blocks(self, prep_res: dict) -> list[dict]:
     """Build cache blocks for cross-session caching.
-    
+
     Returns blocks with static content that doesn't change between queries.
     Dynamic content (user input) will be passed separately.
     """
     blocks = []
-    
+
     # Add static instructions/rules
     static_instructions = load_prompt("node_instructions")
     blocks.append({
         "text": static_instructions,
         "cache_control": {"type": "ephemeral"}
     })
-    
+
     # Add static context (e.g., all workflow descriptions)
     if hasattr(self, '_get_static_context'):
         static_context = self._get_static_context()
@@ -141,25 +141,25 @@ def _build_cache_blocks(self, prep_res: dict) -> list[dict]:
                 "text": static_context,
                 "cache_control": {"type": "ephemeral"}
             })
-    
+
     return blocks
 
 def _get_dynamic_content(self, prep_res: dict) -> str:
     """Extract dynamic content that changes per query.
-    
+
     This includes user input, selected components, etc.
     This content goes in the user message, not cache blocks.
     """
     parts = []
-    
+
     # Add user-specific content
     if prep_res.get("user_input"):
         parts.append(f"User Request: {prep_res['user_input']}")
-    
+
     # Add any dynamic context
     if prep_res.get("selected_components"):
         parts.append(f"Selected: {prep_res['selected_components']}")
-    
+
     return "\n\n".join(parts)
 ```
 
@@ -186,7 +186,7 @@ pflow --cache-planner "create a workflow to analyze GitHub issues"
 # First run: Creates cache for all static content
 # Cost: ~$0.05 (full price + 25% cache creation)
 
-pflow --cache-planner "fetch slack messages and summarize"  
+pflow --cache-planner "fetch slack messages and summarize"
 # Second run: Reuses cache from first run
 # Cost: ~$0.005 (90% discount on cached content)
 
@@ -222,7 +222,7 @@ pflow --cache-planner "deploy to kubernetes"
 2. Test flag propagation
 3. Test cache block building per node
 
-### Integration Tests  
+### Integration Tests
 1. Run planner twice with flag, verify cache metrics
 2. Verify different queries share cache
 3. Test cache expiration after 5 minutes
@@ -265,7 +265,7 @@ pflow --cache-planner "deploy to kubernetes"
 
 ### Phase 3: Critical Nodes
 - [ ] Update WorkflowDiscoveryNode
-- [ ] Update ComponentBrowsingNode  
+- [ ] Update ComponentBrowsingNode
 - [ ] Test cross-session caching
 - [ ] Verify cache metrics
 

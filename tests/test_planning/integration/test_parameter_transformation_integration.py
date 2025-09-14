@@ -81,7 +81,7 @@ class TestParameterTransformationIntegration:
         assert captured_prompt is not None
 
         # Check that the user input section has been templatized with ${} syntax
-        assert "<original_request>" in captured_prompt
+        assert "<user_input>" in captured_prompt
         assert "generate changelog from last ${issue_count} closed issues in ${repo_name} repo" in captured_prompt
 
         # The workflow inputs section will still contain defaults (this is expected)

@@ -55,11 +55,11 @@ class TestContextAccumulation:
 
         # CRITICAL ASSERTIONS - Base context has all foundation blocks
         base_context = "\n".join(block["text"] for block in base_blocks)
-        assert "## User Request" in base_context, "Must include user request"
+        assert "<user_request>" in base_context, "Must include user request"
         assert "fetch ${issue_count} issues" in base_context, "Must show templatized input"
         assert "# Workflow System Overview" in base_context, "Must include shared knowledge"
-        assert "## Requirements Analysis" in base_context, "Must include requirements"
-        assert "## Available Nodes" in base_context, "Must include components"
+        assert "<requirements_analysis>" in base_context, "Must include requirements"
+        assert "<available_nodes>" in base_context, "Must include components"
         assert "github-list-issues" in base_context, "Must list available nodes"
 
         # Count initial blocks
@@ -131,9 +131,9 @@ class TestContextAccumulation:
         with_errors = "\n".join(block["text"] for block in with_errors_blocks)
 
         # CRITICAL ASSERTIONS - ALL context preserved for learning
-        assert "## User Request" in with_errors, "Original request preserved"
+        assert "<user_request>" in with_errors, "Original request preserved"
         assert "Workflow System Overview" in with_errors, "System knowledge preserved"
-        assert "## Requirements Analysis" in with_errors, "Requirements preserved"
+        assert "<requirements_analysis>" in with_errors, "Requirements preserved"
         assert "## Execution Plan" in with_errors, "Plan preserved"
         assert "## Generated Workflow (Attempt 1)" in with_errors, "Previous attempt preserved"
         assert "## Validation Errors" in with_errors, "Errors added"
@@ -147,13 +147,13 @@ class TestContextAccumulation:
         assert with_errors.count("##") >= 6, "Should have at least 6 context blocks"
 
         # Verify order is maintained (critical for caching)
-        # Note: Some sections use # and some use ##, so check for both
+        # Note: Some sections use # and some use ##, and some use XML tags
 
         # Check that key sections exist in order
-        assert with_errors.index("## User Request") < with_errors.index("# Workflow System Overview")
-        assert with_errors.index("# Workflow System Overview") < with_errors.index("## Requirements Analysis")
-        assert with_errors.index("## Requirements Analysis") < with_errors.index("## Available Nodes")
-        assert with_errors.index("## Available Nodes") < with_errors.index("## Execution Plan")
+        assert with_errors.index("# Workflow System Overview") < with_errors.index("<user_request>")
+        assert with_errors.index("<user_request>") < with_errors.index("<requirements_analysis>")
+        assert with_errors.index("<requirements_analysis>") < with_errors.index("<available_nodes>")
+        assert with_errors.index("<available_nodes>") < with_errors.index("## Execution Plan")
         assert with_errors.index("## Execution Plan") < with_errors.index("## Generated Workflow (Attempt 1)")
         assert with_errors.index("## Generated Workflow (Attempt 1)") < with_errors.index("## Validation Errors")
 
@@ -224,7 +224,6 @@ class TestContextAccumulation:
 
         base_context = "\n".join(block["text"] for block in base_blocks)
 
-
         base_metrics = PlannerContextBuilder.get_context_metrics(base_context)
 
         # Add planning
@@ -235,7 +234,6 @@ class TestContextAccumulation:
         )
 
         with_plan = "\n".join(block["text"] for block in with_plan_blocks)
-
 
         plan_metrics = PlannerContextBuilder.get_context_metrics(with_plan)
 
@@ -312,8 +310,8 @@ class TestContextAccumulation:
 
         # Check content is distributed across blocks
         base_context = "\n".join(block["text"] for block in base_blocks)
-        assert "## User Request" in base_context
+        assert "<user_request>" in base_context
         assert "Workflow System Overview" in base_context  # This uses # not ##
-        assert "## Discovered Parameters" in base_context
-        assert "## Requirements Analysis" in base_context
-        assert "Available Nodes" in base_context  # Available Nodes section
+        assert "<user_values>" in base_context  # XML tag for discovered parameters
+        assert "<requirements_analysis>" in base_context
+        assert "<available_nodes>" in base_context  # XML tag for available nodes

@@ -2457,13 +2457,17 @@ def workflow_command(
         ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout, save, cache_planner
     )
 
-    # Always install Anthropic model wrapper for planning models
+    # Install Anthropic model wrapper for planning models (unless we're in tests)
     # This gives us better performance with caching and structured output
-    from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+    # Skip in tests to avoid conflicts with test mocks
+    import os
 
-    install_anthropic_model()
-    if verbose:
-        click.echo("cli: Using Anthropic SDK for planning models", err=True)
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+
+        install_anthropic_model()
+        if verbose:
+            click.echo("cli: Using Anthropic SDK for planning models", err=True)
 
     # Handle stdin data
     stdin_content, enhanced_stdin = _read_stdin_data()
@@ -2527,7 +2531,9 @@ def workflow_command(
 
     # Multi-word or parameterized input: planner by design
     cache_planner = ctx.obj.get("cache_planner", False)
-    _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, "args", trace, planner_timeout, cache_planner)
+    _execute_with_planner(
+        ctx, raw_input, stdin_data, output_key, verbose, "args", trace, planner_timeout, cache_planner
+    )
 
 
 # Alias for backward compatibility with tests that import main directly

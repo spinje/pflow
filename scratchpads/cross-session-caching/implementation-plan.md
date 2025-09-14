@@ -1,7 +1,7 @@
 # Implementation Plan: Cross-Session Caching Feature
 
-**Date**: January 2025  
-**Purpose**: Step-by-step implementation plan to fix planner and add cross-session caching  
+**Date**: January 2025
+**Purpose**: Step-by-step implementation plan to fix planner and add cross-session caching
 **Priority**: URGENT - Planner is currently broken
 
 ## Phase 1: Immediate Fix (15 minutes)
@@ -13,7 +13,7 @@
 ```python
 def prompt(self, prompt, schema=None, temperature=0.0, cache_blocks=None, **kwargs):
     """Execute a prompt using the Anthropic SDK.
-    
+
     Args:
         cache_blocks: Optional list of cache blocks for multi-block caching
     """
@@ -30,7 +30,7 @@ def prompt(self, prompt, schema=None, temperature=0.0, cache_blocks=None, **kwar
     else:
         # No cache blocks - pass None to structured client (it handles it!)
         prompt_str = prompt if isinstance(prompt, str) else str(prompt)
-        
+
         if schema:
             # Structured output without caching
             result, usage = self.client.generate_with_schema(
@@ -49,7 +49,7 @@ def prompt(self, prompt, schema=None, temperature=0.0, cache_blocks=None, **kwar
                 cache_blocks=None,
                 force_text_output=True,
             )
-        
+
         return AnthropicResponse(result, usage, is_structured=bool(schema))
 ```
 
@@ -105,11 +105,11 @@ from typing import Any, Optional
 
 def build_discovery_cache_blocks(discovery_context: str) -> list[dict[str, Any]]:
     """Build cache blocks for WorkflowDiscoveryNode.
-    
+
     Separates static workflow descriptions from dynamic user input.
     """
     blocks = []
-    
+
     # Extract static content (everything except user request)
     # The discovery_context contains workflows overview which is static
     if discovery_context and len(discovery_context) > 100:
@@ -117,7 +117,7 @@ def build_discovery_cache_blocks(discovery_context: str) -> list[dict[str, Any]]
             "text": discovery_context,
             "cache_control": {"type": "ephemeral"}
         })
-    
+
     return blocks
 
 
@@ -127,32 +127,32 @@ def build_component_cache_blocks(
     prompt_template: str
 ) -> list[dict[str, Any]]:
     """Build cache blocks for ComponentBrowsingNode.
-    
+
     Combines all static documentation into cacheable blocks.
     """
     blocks = []
-    
+
     # Block 1: Node documentation (static)
     if nodes_context:
         blocks.append({
             "text": f"## Available Nodes\n\n{nodes_context}",
             "cache_control": {"type": "ephemeral"}
         })
-    
+
     # Block 2: Workflow documentation (static)
     if workflows_context:
         blocks.append({
             "text": f"## Available Workflows\n\n{workflows_context}",
             "cache_control": {"type": "ephemeral"}
         })
-    
+
     # Block 3: Prompt template (static)
     if prompt_template and len(prompt_template) > 500:
         blocks.append({
             "text": prompt_template,
             "cache_control": {"type": "ephemeral"}
         })
-    
+
     return blocks
 
 
@@ -161,24 +161,24 @@ def build_simple_cache_blocks(
     static_context: Optional[str] = None
 ) -> list[dict[str, Any]]:
     """Build cache blocks for simpler nodes.
-    
+
     Used by RequirementsAnalysisNode, ParameterDiscoveryNode, etc.
     """
     blocks = []
-    
+
     # Combine static content if both exist
     if static_context:
         combined = f"{static_context}\n\n{static_prompt}"
     else:
         combined = static_prompt
-    
+
     # Only cache if substantial
     if combined and len(combined) > 500:
         blocks.append({
             "text": combined,
             "cache_control": {"type": "ephemeral"}
         })
-    
+
     return blocks
 ```
 
@@ -194,19 +194,19 @@ Each node needs this pattern in its `exec()` method:
 def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
     # Check if caching is enabled
     cache_planner = prep_res.get("cache_planner", False)
-    
+
     # Special nodes ALWAYS cache (for intra-session benefit)
     force_cache = self.name in ["planning", "workflow-generator"]
-    
+
     model = llm.get_model(prep_res["model_name"])
-    
+
     if cache_planner or force_cache:
         # Build cache blocks for static content
         cache_blocks = self._build_cache_blocks(prep_res)
-        
+
         # Dynamic content only (user-specific)
         dynamic_prompt = self._build_dynamic_prompt(prep_res)
-        
+
         response = model.prompt(
             dynamic_prompt,
             schema=self.schema_class if hasattr(self, 'schema_class') else None,
@@ -216,13 +216,13 @@ def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
     else:
         # Traditional approach - no caching
         full_prompt = self._build_full_prompt(prep_res)
-        
+
         response = model.prompt(
             full_prompt,
             schema=self.schema_class if hasattr(self, 'schema_class') else None,
             temperature=prep_res["temperature"]
         )
-    
+
     return self._parse_response(response)
 ```
 
@@ -252,7 +252,7 @@ def _build_cache_blocks(self, prep_res: dict) -> list[dict]:
     """Build cache blocks with static node/workflow documentation."""
     from pflow.planning.utils.cache_builder import build_component_cache_blocks
     from pflow.planning.prompts.loader import load_prompt
-    
+
     prompt_template = load_prompt("component_browsing")
     return build_component_cache_blocks(
         nodes_context=prep_res.get("nodes_context", ""),
@@ -275,7 +275,7 @@ def _build_cache_blocks(self, prep_res: dict) -> list[dict]:
     """Build cache blocks with static analysis rules."""
     from pflow.planning.utils.cache_builder import build_simple_cache_blocks
     from pflow.planning.prompts.loader import load_prompt
-    
+
     static_prompt = load_prompt("requirements_analysis")
     return build_simple_cache_blocks(static_prompt)
 
@@ -290,7 +290,7 @@ def _build_cache_blocks(self, prep_res: dict) -> list[dict]:
     """Build cache blocks with static extraction rules."""
     from pflow.planning.utils.cache_builder import build_simple_cache_blocks
     from pflow.planning.prompts.loader import load_prompt
-    
+
     static_prompt = load_prompt("parameter_discovery")
     return build_simple_cache_blocks(static_prompt)
 
@@ -305,7 +305,7 @@ def _build_cache_blocks(self, prep_res: dict) -> list[dict]:
     """Build cache blocks with static mapping rules."""
     from pflow.planning.utils.cache_builder import build_simple_cache_blocks
     from pflow.planning.prompts.loader import load_prompt
-    
+
     static_prompt = load_prompt("parameter_mapping")
     return build_simple_cache_blocks(static_prompt)
 
@@ -321,7 +321,7 @@ def _build_cache_blocks(self, prep_res: dict) -> list[dict]:
     """Build cache blocks with static metadata rules."""
     from pflow.planning.utils.cache_builder import build_simple_cache_blocks
     from pflow.planning.prompts.loader import load_prompt
-    
+
     static_prompt = load_prompt("metadata_generation")
     return build_simple_cache_blocks(static_prompt)
 
@@ -381,18 +381,18 @@ if usage:
 
 1. **URGENT - Phase 1**: Fix AnthropicLLMModel (15 min)
    - Makes planner work again
-   
+
 2. **Phase 2**: Add CLI flag (30 min)
    - Sets up infrastructure
-   
+
 3. **Phase 3**: Create cache utilities (45 min)
    - Reusable helpers
-   
+
 4. **Phase 4**: Update nodes incrementally (2 hours)
    - Start with WorkflowDiscoveryNode
    - Then ComponentBrowsingNode
    - Then simpler nodes
-   
+
 5. **Phase 5**: Test thoroughly (30 min)
    - Verify both modes work
 

@@ -29,7 +29,7 @@ We implemented multi-block caching for PlanningNode → WorkflowGeneratorNode (T
 
 ### 2. The Tool-Choice Hack Must Be Preserved
 For cache sharing between PlanningNode and WorkflowGeneratorNode to work:
-- BOTH must import FlowIR 
+- BOTH must import FlowIR
 - PlanningNode uses `force_text_output=True` (tool_choice='none')
 - WorkflowGeneratorNode uses `force_text_output=False` (tool_choice='tool')
 - This tricks Anthropic into sharing cache despite different output formats
@@ -49,7 +49,7 @@ For cache sharing between PlanningNode and WorkflowGeneratorNode to work:
 The monkey-patching in `install_anthropic_model()` (line 216-235 of anthropic_llm_model.py) detects Claude models by:
 ```python
 is_planning_model = model_name and (
-    "claude-sonnet-4" in model_name or 
+    "claude-sonnet-4" in model_name or
     model_name == "anthropic/claude-sonnet-4-0"
 )
 ```
@@ -60,7 +60,7 @@ This ONLY applies AnthropicLLMModel to Claude models. Other models use regular l
 All in `src/pflow/planning/nodes.py`:
 
 1. **WorkflowDiscoveryNode** (line 155) - `model.prompt(prompt, schema=WorkflowDecision, temperature=...)`
-2. **ComponentBrowsingNode** (line 354) - `model.prompt(prompt, schema=ComponentSelection, temperature=...)`  
+2. **ComponentBrowsingNode** (line 354) - `model.prompt(prompt, schema=ComponentSelection, temperature=...)`
 3. **RequirementsAnalysisNode** (line 774) - `model.prompt(prompt, schema=RequirementsSchema, temperature=...)`
 4. **ParameterDiscoveryNode** (line 593) - `model.prompt(prompt, schema=ParameterDiscovery, temperature=...)`
 5. **PlanningNode** (line 974) - `model.prompt(instructions, cache_blocks=base_blocks, temperature=...)` ✅ WORKING
@@ -119,7 +119,7 @@ For each of the 6 nodes without cache support:
 def exec(self, prep_res):
     cache_planner = prep_res.get("cache_planner", False)
     model = llm.get_model(prep_res["model_name"])
-    
+
     if cache_planner:
         # Static content in blocks
         cache_blocks = self._build_cache_blocks(prep_res)
@@ -152,7 +152,7 @@ uv run pflow "create a workflow"
 ### Test 2: Cache Flag (after Phase 2)
 ```bash
 # First run - creates cache
-uv run pflow --cache-planner "create workflow" 
+uv run pflow --cache-planner "create workflow"
 
 # Second run - should use cache (check logs for cache_read > 0)
 uv run pflow --cache-planner "different workflow"

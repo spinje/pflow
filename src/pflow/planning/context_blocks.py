@@ -28,7 +28,7 @@ class PlannerContextBuilder:
 
     # Cached workflow overview (loaded once)
     _workflow_overview_cache: Optional[str] = None
-    
+
     # Maximum retry history to keep in blocks
     MAX_RETRY_HISTORY = 3
 
@@ -64,78 +64,72 @@ class PlannerContextBuilder:
         discovered_params: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """Build cache blocks for Anthropic SDK with proper static/dynamic separation.
-        
+
         Block 1: Workflow System Overview (including introduction) - FULLY STATIC, cacheable across all requests
         Block 2: Dynamic Context - All workflow-specific data in XML tags
-        
+
         This structure ensures Block 1 can be cached and reused across ALL workflow
         planning requests, providing maximum cache efficiency.
-        
+
         Args:
             user_request: The user's request (preferably templatized)
             requirements_result: Requirements analysis output
             browsed_components: Selected components from ComponentBrowsingNode
             planning_context: Detailed component information
             discovered_params: Parameters discovered from user input (optional)
-            
+
         Returns:
             List of cache blocks with cache_control markers
         """
         blocks = []
-        
+
         # Block 1: Workflow System Overview (FULLY STATIC - cacheable across all requests)
         # This now includes the introduction text, making it 100% static
         workflow_overview = cls._load_workflow_overview()
         if workflow_overview:
-            blocks.append({
-                "text": workflow_overview,
-                "cache_control": {"type": "ephemeral"}
-            })
-        
+            blocks.append({"text": workflow_overview, "cache_control": {"type": "ephemeral"}})
+
         # Block 2: ALL Dynamic Context (workflow-specific, wrapped in XML tags)
         dynamic_sections = []
-        
+
         # Add user request in XML tags
         dynamic_sections.append("<user_request>")
         dynamic_sections.append(user_request)
         dynamic_sections.append("</user_request>")
         dynamic_sections.append("")
-        
+
         # Add discovered parameters if available
         if discovered_params:
             dynamic_sections.append("<user_values>")
             dynamic_sections.extend(cls._build_discovered_params_content(discovered_params))
             dynamic_sections.append("</user_values>")
             dynamic_sections.append("")
-        
+
         # Add requirements if available
         if requirements_result:
             dynamic_sections.append("<requirements_analysis>")
             dynamic_sections.extend(cls._build_requirements_content(requirements_result))
             dynamic_sections.append("</requirements_analysis>")
             dynamic_sections.append("")
-        
+
         # Add selected components if available
         if browsed_components:
             dynamic_sections.append("<available_nodes>")
             dynamic_sections.extend(cls._build_components_content(browsed_components))
             dynamic_sections.append("</available_nodes>")
             dynamic_sections.append("")
-        
+
         # Add component details if available
         if planning_context:
             dynamic_sections.append("<node_details>")
             dynamic_sections.append(planning_context)
             dynamic_sections.append("</node_details>")
             dynamic_sections.append("")
-        
+
         dynamic_text = "\n".join(dynamic_sections)
         if dynamic_text:
-            blocks.append({
-                "text": dynamic_text,
-                "cache_control": {"type": "ephemeral"}
-            })
-        
+            blocks.append({"text": dynamic_text, "cache_control": {"type": "ephemeral"}})
+
         return blocks
 
     @classmethod
@@ -146,22 +140,22 @@ class PlannerContextBuilder:
         parsed_plan: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """Append planning output block to existing blocks.
-        
+
         CRITICAL: Returns NEW list with block appended (immutable pattern)!
         Example: [Static, Dynamic] + [Plan] → [Static, Dynamic, Plan] as separate list entries
-        
+
         NEVER modify the original blocks list - return blocks + [new_block]
-        
+
         Args:
             blocks: Existing cache blocks [Static overview, Dynamic context]
             plan_output: Markdown plan from PlanningNode
             parsed_plan: Parsed plan dictionary (for potential metadata)
-            
+
         Returns:
             New list with planning block appended: [Static, Dynamic, Plan]
         """
         plan_text = f"## Execution Plan\n\n{plan_output}"
-        
+
         # Check if we're approaching the 4-breakpoint limit
         # Anthropic allows max 4 cache_control markers
         if len(blocks) >= 4:
@@ -169,12 +163,9 @@ class PlannerContextBuilder:
             last_block = blocks[-1].copy()
             last_block["text"] = last_block["text"] + "\n\n" + plan_text
             return blocks[:-1] + [last_block]
-        
+
         # Return new list with block appended
-        return blocks + [{
-            "text": plan_text,
-            "cache_control": {"type": "ephemeral"}
-        }]
+        return blocks + [{"text": plan_text, "cache_control": {"type": "ephemeral"}}]
 
     @classmethod
     def append_workflow_block(
@@ -184,20 +175,20 @@ class PlannerContextBuilder:
         attempt_number: int,
     ) -> list[dict[str, Any]]:
         """Append Block E (generated workflow) for retry attempts.
-        
+
         CRITICAL: Returns NEW list with block appended (immutable pattern)!
         Example: [A, B, C, D] + [E] → [A, B, C, D, E]
-        
+
         Args:
             blocks: Existing cache blocks
             workflow: Generated workflow JSON
             attempt_number: Which attempt this is (1, 2, 3...)
-            
+
         Returns:
             New list with workflow block appended
         """
         workflow_text = f"## Generated Workflow (Attempt {attempt_number})\n\n{json.dumps(workflow, indent=2)}"
-        
+
         # Check if we're approaching the 4-breakpoint limit
         # Anthropic allows max 4 cache_control markers
         if len(blocks) >= 4:
@@ -206,12 +197,9 @@ class PlannerContextBuilder:
             last_block = blocks[-1].copy()
             last_block["text"] = last_block["text"] + "\n\n" + workflow_text
             return blocks[:-1] + [last_block]
-        
+
         # Return new list with block appended
-        return blocks + [{
-            "text": workflow_text,
-            "cache_control": {"type": "ephemeral"}
-        }]
+        return blocks + [{"text": workflow_text, "cache_control": {"type": "ephemeral"}}]
 
     @classmethod
     def append_errors_block(
@@ -220,41 +208,36 @@ class PlannerContextBuilder:
         validation_errors: list[str],
     ) -> list[dict[str, Any]]:
         """Append Block F (validation errors) for retry attempts.
-        
+
         CRITICAL: Returns NEW list with block appended (immutable pattern)!
         Example: [A, B, C, D, E] + [F] → [A, B, C, D, E, F]
-        
+
         Only appends if validation_errors is non-empty.
         If approaching 4-breakpoint limit, may combine with previous block.
-        
+
         Args:
             blocks: Existing cache blocks
             validation_errors: List of validation error messages
-            
+
         Returns:
             New list with errors block appended (or same list if no errors)
         """
         if not validation_errors:
             return blocks
-        
+
         # Take top 3 errors to avoid bloat
         errors_to_show = validation_errors[:3]
-        errors_text = "## Validation Errors\n\n" + "\n".join(
-            f"{i+1}. {err}" for i, err in enumerate(errors_to_show)
-        )
-        
+        errors_text = "## Validation Errors\n\n" + "\n".join(f"{i + 1}. {err}" for i, err in enumerate(errors_to_show))
+
         # Check if we're at or approaching the 4-breakpoint limit
         if len(blocks) >= 4:
             # Combine with the last block
             last_block = blocks[-1].copy()
             last_block["text"] = last_block["text"] + "\n\n" + errors_text
             return blocks[:-1] + [last_block]
-        
+
         # Return new list with block appended
-        return blocks + [{
-            "text": errors_text,
-            "cache_control": {"type": "ephemeral"}
-        }]
+        return blocks + [{"text": errors_text, "cache_control": {"type": "ephemeral"}}]
 
     # Introduction section removed - now part of workflow_system_overview.md
     # User request section removed - handled directly in build_base_blocks with XML tags
@@ -288,8 +271,10 @@ class PlannerContextBuilder:
         sections = ["These values were extracted from the user's request:"]
 
         # Handle both dict format and nested format with 'parameters' key
-        params_dict = discovered_params.get("parameters", discovered_params) if isinstance(discovered_params, dict) else {}
-        
+        params_dict = (
+            discovered_params.get("parameters", discovered_params) if isinstance(discovered_params, dict) else {}
+        )
+
         for param, value in params_dict.items():
             sections.append(f"- {param}: {json.dumps(value)}")
 

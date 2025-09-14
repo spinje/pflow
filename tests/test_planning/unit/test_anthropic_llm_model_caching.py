@@ -9,7 +9,6 @@ This test suite validates:
 
 from unittest.mock import Mock, patch
 
-import pytest
 from pydantic import BaseModel
 
 from pflow.planning.utils.anthropic_llm_model import AnthropicLLMModel, AnthropicResponse
@@ -17,6 +16,7 @@ from pflow.planning.utils.anthropic_llm_model import AnthropicLLMModel, Anthropi
 
 class MockSchema(BaseModel):
     """Mock schema for structured output testing."""
+
     value: str
 
 
@@ -61,46 +61,35 @@ class TestAnthropicLLMModelPromptRouting:
         """When cache_blocks=None, uses fallback path."""
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient"):
             model = AnthropicLLMModel()
-            
+
             with patch.object(model, "_prompt_without_cache") as mock_fallback:
                 with patch.object(model, "_prompt_with_cache_blocks") as mock_cached:
                     mock_fallback.return_value = Mock(spec=AnthropicResponse)
-                    
+
                     # Call without cache_blocks
                     result = model.prompt("test prompt", temperature=0.5)
-                    
+
                     # Should use fallback path
-                    mock_fallback.assert_called_once_with(
-                        prompt="test prompt",
-                        schema=None,
-                        temperature=0.5
-                    )
+                    mock_fallback.assert_called_once_with(prompt="test prompt", schema=None, temperature=0.5)
                     mock_cached.assert_not_called()
 
     def test_routes_to_cached_when_cache_blocks_provided(self):
         """When cache_blocks provided, uses cached path."""
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient"):
             model = AnthropicLLMModel()
-            
+
             cache_blocks = [{"text": "cached", "cache_control": {"type": "ephemeral"}}]
-            
+
             with patch.object(model, "_prompt_without_cache") as mock_fallback:
                 with patch.object(model, "_prompt_with_cache_blocks") as mock_cached:
                     mock_cached.return_value = Mock(spec=AnthropicResponse)
-                    
+
                     # Call with cache_blocks
-                    result = model.prompt(
-                        "test prompt",
-                        temperature=0.5,
-                        cache_blocks=cache_blocks
-                    )
-                    
+                    result = model.prompt("test prompt", temperature=0.5, cache_blocks=cache_blocks)
+
                     # Should use cached path
                     mock_cached.assert_called_once_with(
-                        prompt="test prompt",
-                        schema=None,
-                        temperature=0.5,
-                        cache_blocks=cache_blocks
+                        prompt="test prompt", schema=None, temperature=0.5, cache_blocks=cache_blocks
                     )
                     mock_fallback.assert_not_called()
 
@@ -108,22 +97,14 @@ class TestAnthropicLLMModelPromptRouting:
         """Schema parameter is passed through correctly."""
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient"):
             model = AnthropicLLMModel()
-            
+
             with patch.object(model, "_prompt_without_cache") as mock_fallback:
                 mock_fallback.return_value = Mock(spec=AnthropicResponse)
-                
+
                 # Call with schema but no cache
-                result = model.prompt(
-                    "test prompt",
-                    schema=MockSchema,
-                    temperature=0.7
-                )
-                
-                mock_fallback.assert_called_once_with(
-                    prompt="test prompt",
-                    schema=MockSchema,
-                    temperature=0.7
-                )
+                result = model.prompt("test prompt", schema=MockSchema, temperature=0.7)
+
+                mock_fallback.assert_called_once_with(prompt="test prompt", schema=MockSchema, temperature=0.7)
 
 
 class TestPromptWithCacheBlocks:
@@ -134,32 +115,26 @@ class TestPromptWithCacheBlocks:
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
-            mock_client.generate_with_schema_text_mode.return_value = (
-                MockSchema(value="test"),
-                {"usage": "metrics"}
-            )
-            
+            mock_client.generate_with_schema_text_mode.return_value = (MockSchema(value="test"), {"usage": "metrics"})
+
             model = AnthropicLLMModel()
             model.client = mock_client
-            
+
             cache_blocks = [{"text": "cached", "cache_control": {"type": "ephemeral"}}]
-            
+
             result = model._prompt_with_cache_blocks(
-                prompt="instructions",
-                schema=MockSchema,
-                temperature=0.5,
-                cache_blocks=cache_blocks
+                prompt="instructions", schema=MockSchema, temperature=0.5, cache_blocks=cache_blocks
             )
-            
+
             # Verify client call
             mock_client.generate_with_schema_text_mode.assert_called_once_with(
                 prompt="instructions",
                 response_model=MockSchema,
                 temperature=0.5,
                 cache_blocks=cache_blocks,
-                force_text_output=False
+                force_text_output=False,
             )
-            
+
             # Verify response
             assert isinstance(result, AnthropicResponse)
             assert result.content == MockSchema(value="test")
@@ -169,34 +144,31 @@ class TestPromptWithCacheBlocks:
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
-            mock_client.generate_with_schema_text_mode.return_value = (
-                "text response",
-                {"usage": "metrics"}
-            )
-            
+            mock_client.generate_with_schema_text_mode.return_value = ("text response", {"usage": "metrics"})
+
             model = AnthropicLLMModel()
             model.client = mock_client
-            
+
             cache_blocks = [{"text": "cached", "cache_control": {"type": "ephemeral"}}]
-            
+
             result = model._prompt_with_cache_blocks(
                 prompt="instructions",
                 schema=None,  # No schema - text mode
                 temperature=0.5,
-                cache_blocks=cache_blocks
+                cache_blocks=cache_blocks,
             )
-            
+
             # Should use FlowIR for cache sharing
             from pflow.planning.ir_models import FlowIR
-            
+
             mock_client.generate_with_schema_text_mode.assert_called_once_with(
                 prompt="instructions",
                 response_model=FlowIR,  # Uses FlowIR for cache key
                 temperature=0.5,
                 cache_blocks=cache_blocks,
-                force_text_output=True  # But forces text output
+                force_text_output=True,  # But forces text output
             )
-            
+
             assert isinstance(result, AnthropicResponse)
             assert result.content == "text response"
 
@@ -205,30 +177,24 @@ class TestPromptWithCacheBlocks:
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
-            
+
             # Include cache metrics in usage
             mock_client.generate_with_schema_text_mode.return_value = (
                 "response",
-                {
-                    "cache_creation_input_tokens": 1000,
-                    "cache_read_input_tokens": 500
-                }
+                {"cache_creation_input_tokens": 1000, "cache_read_input_tokens": 500},
             )
-            
+
             model = AnthropicLLMModel()
             model.client = mock_client
-            
+
             cache_blocks = [{"text": "cached", "cache_control": {"type": "ephemeral"}}]
-            
+
             # The actual code path for logging is in _prompt_with_cache_blocks
             # Let's just verify the cache metrics are passed through correctly
             result = model._prompt_with_cache_blocks(
-                prompt="test",
-                schema=None,
-                temperature=0,
-                cache_blocks=cache_blocks
+                prompt="test", schema=None, temperature=0, cache_blocks=cache_blocks
             )
-            
+
             # Verify response contains the usage data
             assert isinstance(result, AnthropicResponse)
             usage = result.usage()
@@ -244,29 +210,22 @@ class TestPromptWithoutCache:
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
-            mock_client.generate_with_schema_text_mode.return_value = (
-                MockSchema(value="test"),
-                {"usage": "metrics"}
-            )
-            
+            mock_client.generate_with_schema_text_mode.return_value = (MockSchema(value="test"), {"usage": "metrics"})
+
             model = AnthropicLLMModel()
             model.client = mock_client
-            
-            result = model._prompt_without_cache(
-                prompt="full prompt with context",
-                schema=MockSchema,
-                temperature=0.5
-            )
-            
+
+            result = model._prompt_without_cache(prompt="full prompt with context", schema=MockSchema, temperature=0.5)
+
             # Should pass None for cache_blocks
             mock_client.generate_with_schema_text_mode.assert_called_once_with(
                 prompt="full prompt with context",
                 response_model=MockSchema,
                 temperature=0.5,
                 cache_blocks=None,  # No cache blocks in fallback
-                force_text_output=False
+                force_text_output=False,
             )
-            
+
             assert isinstance(result, AnthropicResponse)
             assert result.content == MockSchema(value="test")
 
@@ -275,29 +234,26 @@ class TestPromptWithoutCache:
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
-            mock_client.generate_with_schema_text_mode.return_value = (
-                "text response",
-                {"usage": "metrics"}
-            )
-            
+            mock_client.generate_with_schema_text_mode.return_value = ("text response", {"usage": "metrics"})
+
             model = AnthropicLLMModel()
             model.client = mock_client
-            
+
             result = model._prompt_without_cache(
                 prompt="full prompt",
                 schema=None,  # Text mode
-                temperature=0.5
+                temperature=0.5,
             )
-            
+
             # Should still use FlowIR but without cache blocks
             from pflow.planning.ir_models import FlowIR
-            
+
             mock_client.generate_with_schema_text_mode.assert_called_once_with(
                 prompt="full prompt",
                 response_model=FlowIR,
                 temperature=0.5,
                 cache_blocks=None,  # No cache blocks
-                force_text_output=True
+                force_text_output=True,
             )
 
 
@@ -306,23 +262,15 @@ class TestAnthropicResponse:
 
     def test_response_text_method(self):
         """Response.text() returns string content."""
-        response = AnthropicResponse(
-            content="test content",
-            usage={},
-            is_structured=False
-        )
-        
+        response = AnthropicResponse(content="test content", usage={}, is_structured=False)
+
         assert response.text() == "test content"
 
     def test_response_json_method_with_pydantic(self):
         """Response.json() returns dict from Pydantic model."""
         test_obj = MockSchema(value="test")
-        response = AnthropicResponse(
-            content=test_obj,
-            usage={},
-            is_structured=True
-        )
-        
+        response = AnthropicResponse(content=test_obj, usage={}, is_structured=True)
+
         # Should return in Claude/Anthropic format
         result = response.json()
         assert "content" in result
@@ -335,41 +283,29 @@ class TestAnthropicResponse:
         response = AnthropicResponse(
             content=test_dict,
             usage={},
-            is_structured=False  # Not structured
+            is_structured=False,  # Not structured
         )
-        
+
         assert response.json() == test_dict
 
     def test_response_json_method_with_string(self):
         """Response.json() returns string content for non-structured."""
-        response = AnthropicResponse(
-            content="plain text",
-            usage={},
-            is_structured=False
-        )
-        
+        response = AnthropicResponse(content="plain text", usage={}, is_structured=False)
+
         assert response.json() == "plain text"
 
     def test_response_usage_method(self):
         """Response.usage() returns usage metadata."""
         usage_data = {"tokens": 100}
-        response = AnthropicResponse(
-            content="content",
-            usage=usage_data,
-            is_structured=False
-        )
-        
+        response = AnthropicResponse(content="content", usage=usage_data, is_structured=False)
+
         assert response.usage() == usage_data
 
     def test_response_attributes_delegation(self):
         """Response delegates to content for structured responses."""
         test_obj = MockSchema(value="test_value")
-        response = AnthropicResponse(
-            content=test_obj,
-            usage={},
-            is_structured=True
-        )
-        
+        response = AnthropicResponse(content=test_obj, usage={}, is_structured=True)
+
         # Should delegate to the content object
         assert response.value == "test_value"
 
@@ -382,20 +318,17 @@ class TestBackwardCompatibility:
         with patch("pflow.planning.utils.anthropic_llm_model.AnthropicStructuredClient") as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
-            mock_client.generate_with_schema_text_mode.return_value = (
-                "response",
-                {}
-            )
-            
+            mock_client.generate_with_schema_text_mode.return_value = ("response", {})
+
             model = AnthropicLLMModel()
             model.client = mock_client
-            
+
             # Old-style call without cache_blocks parameter
             result = model.prompt("test prompt")
-            
+
             # Should work fine
             assert isinstance(result, AnthropicResponse)
-            
+
             # Should have called with cache_blocks=None
             call_args = mock_client.generate_with_schema_text_mode.call_args
             assert call_args.kwargs["cache_blocks"] is None
@@ -406,13 +339,13 @@ class TestBackwardCompatibility:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
             mock_client.generate_with_schema_text_mode.return_value = ("response", {})
-            
+
             model = AnthropicLLMModel()
             model.client = mock_client
-            
+
             # Pass prompt as list (some code might do this)
             result = model.prompt(["part1", "part2"])
-            
+
             # Should convert to string
             call_args = mock_client.generate_with_schema_text_mode.call_args
             prompt_arg = call_args.args[0] if call_args.args else call_args.kwargs["prompt"]

@@ -2,14 +2,12 @@
 
 This test suite validates:
 1. All nodes work with cache_planner=False (traditional path)
-2. All nodes work with cache_planner=True (caching path) 
+2. All nodes work with cache_planner=True (caching path)
 3. Cache blocks are built correctly when enabled
 4. Correct parameters are passed to LLM
 """
 
 from unittest.mock import Mock, patch
-
-import pytest
 
 from pflow.planning.nodes import (
     ComponentBrowsingNode,
@@ -33,10 +31,10 @@ class TestWorkflowDiscoveryNodeCaching:
             "user_input": "test input",
             "cache_planner": False,  # Caching disabled
         }
-        
+
         with patch("pflow.planning.context_builder.build_workflows_context") as mock_build_context:
             mock_build_context.return_value = "test context"
-            
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
@@ -48,17 +46,17 @@ class TestWorkflowDiscoveryNodeCaching:
                                 "found": False,
                                 "workflow_name": None,
                                 "confidence": 0.0,
-                                "reasoning": "No matching workflow found"
+                                "reasoning": "No matching workflow found",
                             }
                         }
                     ]
                 }
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared)
                 result = node.exec(prep_res)
-            
+
             # Should call prompt with cache_blocks=None when cache_planner=False
             mock_model.prompt.assert_called_once()
             call_args = mock_model.prompt.call_args
@@ -71,11 +69,11 @@ class TestWorkflowDiscoveryNodeCaching:
             "user_input": "test input",
             "cache_planner": True,  # Caching enabled
         }
-        
+
         # Mock context builder to provide discovery context
         with patch("pflow.planning.context_builder.build_workflows_context") as mock_build_context:
             mock_build_context.return_value = "Long discovery context " * 50  # Make it long enough
-            
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
@@ -87,21 +85,21 @@ class TestWorkflowDiscoveryNodeCaching:
                                 "found": False,
                                 "workflow_name": None,
                                 "confidence": 0.0,
-                                "reasoning": "No matching workflow found"
+                                "reasoning": "No matching workflow found",
                             }
                         }
                     ]
                 }
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared)
                 result = node.exec(prep_res)
-                
+
                 # Should call prompt WITH cache_blocks parameter
                 mock_model.prompt.assert_called_once()
                 call_args = mock_model.prompt.call_args
-                
+
                 # Verify cache_blocks is present and structured correctly
                 assert call_args.kwargs.get("cache_blocks") is not None
                 cache_blocks = call_args.kwargs["cache_blocks"]
@@ -115,10 +113,10 @@ class TestWorkflowDiscoveryNodeCaching:
         """When cache_planner not in shared, defaults to False."""
         node = WorkflowDiscoveryNode()
         shared = {"user_input": "test input"}  # No cache_planner key
-        
+
         with patch("pflow.planning.context_builder.build_workflows_context") as mock_build_context:
             mock_build_context.return_value = "test context"
-            
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
@@ -130,17 +128,17 @@ class TestWorkflowDiscoveryNodeCaching:
                                 "found": False,
                                 "workflow_name": None,
                                 "confidence": 0.0,
-                                "reasoning": "No matching workflow found"
+                                "reasoning": "No matching workflow found",
                             }
                         }
                     ]
                 }
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared)
                 result = node.exec(prep_res)
-                
+
                 # Should pass None for cache_blocks (defaults to False)
                 call_args = mock_model.prompt.call_args
                 assert call_args.kwargs.get("cache_blocks") is None
@@ -157,33 +155,25 @@ class TestComponentBrowsingNodeCaching:
             "selected_path": "PATH_A",
             "cache_planner": False,
         }
-        
+
         with patch("pflow.planning.context_builder.build_nodes_context") as mock_nodes_context:
             with patch("pflow.planning.context_builder.build_workflows_context") as mock_workflows_context:
                 mock_nodes_context.return_value = "nodes context"
                 mock_workflows_context.return_value = "workflows context"
-                
+
                 with patch("llm.get_model") as mock_get_model:
                     mock_model = Mock()
                     mock_response = Mock()
                     # Mock proper response structure for parse_structured_response
                     mock_response.json.return_value = {
-                        "content": [
-                            {
-                                "input": {
-                                    "node_ids": ["read-file"],
-                                    "workflow_names": [],
-                                    "reasoning": "test"
-                                }
-                            }
-                        ]
+                        "content": [{"input": {"node_ids": ["read-file"], "workflow_names": [], "reasoning": "test"}}]
                     }
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
-                    
+
                     prep_res = node.prep(shared)
                     result = node.exec(prep_res)
-                    
+
                     # Should call prompt with cache_blocks=None when cache_planner=False
                     call_args = mock_model.prompt.call_args
                     assert call_args.kwargs.get("cache_blocks") is None
@@ -196,47 +186,43 @@ class TestComponentBrowsingNodeCaching:
             "selected_path": "PATH_A",
             "cache_planner": True,
         }
-        
+
         with patch("pflow.planning.context_builder.build_nodes_context") as mock_nodes_context:
             with patch("pflow.planning.context_builder.build_workflows_context") as mock_workflows_context:
                 # Provide long enough context for caching (>1000 chars)
                 mock_nodes_context.return_value = "nodes " * 200  # 1200 chars
                 mock_workflows_context.return_value = "workflows " * 150  # 1500 chars
-                
+
                 with patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt:
                     # Mock prompt with expected structure for caching
-                    mock_load_prompt.return_value = "Instructions " * 100 + "\n## Context\n{{nodes_context}}\n{{workflows_context}}"
-                    
+                    mock_load_prompt.return_value = (
+                        "Instructions " * 100 + "\n## Context\n{{nodes_context}}\n{{workflows_context}}"
+                    )
+
                     with patch("llm.get_model") as mock_get_model:
                         mock_model = Mock()
                         mock_response = Mock()
                         # Mock proper response structure
                         mock_response.json.return_value = {
                             "content": [
-                                {
-                                    "input": {
-                                        "node_ids": ["read-file"],
-                                        "workflow_names": [],
-                                        "reasoning": "test"
-                                    }
-                                }
+                                {"input": {"node_ids": ["read-file"], "workflow_names": [], "reasoning": "test"}}
                             ]
                         }
                         mock_model.prompt.return_value = mock_response
                         mock_get_model.return_value = mock_model
-                        
+
                         prep_res = node.prep(shared)
                         result = node.exec(prep_res)
-                        
+
                         # Should call prompt WITH cache_blocks
                         call_args = mock_model.prompt.call_args
                         assert call_args.kwargs.get("cache_blocks") is not None
                         cache_blocks = call_args.kwargs["cache_blocks"]
-                        
+
                         # Should have multiple blocks (nodes, workflows, prompt)
                         assert isinstance(cache_blocks, list)
                         assert len(cache_blocks) > 0
-                        
+
                         # Verify structure
                         for block in cache_blocks:
                             assert "text" in block
@@ -254,7 +240,7 @@ class TestRequirementsAnalysisNodeCaching:
             "user_input": "test input",
             "cache_planner": False,
         }
-        
+
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_response = Mock()
@@ -271,10 +257,10 @@ class TestRequirementsAnalysisNodeCaching:
             }
             mock_model.prompt.return_value = mock_response
             mock_get_model.return_value = mock_model
-            
+
             prep_res = node.prep(shared)
             result = node.exec(prep_res)
-            
+
             # Should pass None for cache blocks when cache_planner=False
             call_args = mock_model.prompt.call_args
             assert call_args.kwargs.get("cache_blocks") is None
@@ -286,11 +272,11 @@ class TestRequirementsAnalysisNodeCaching:
             "user_input": "test input",
             "cache_planner": True,
         }
-        
+
         with patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt:
             # Provide template with ## Context marker for caching
             mock_load_prompt.return_value = "Instructions " * 100 + "\n## Context\n{{input_text}}"
-            
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
@@ -303,27 +289,28 @@ class TestRequirementsAnalysisNodeCaching:
                                 "steps": ["req1"],
                                 "estimated_nodes": 1,
                                 "required_capabilities": ["test"],
-                                "complexity_indicators": {}
+                                "complexity_indicators": {},
                             }
                         }
                     ]
                 }
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared)
                 result = node.exec(prep_res)
-                
+
                 # Should use cache blocks
                 call_args = mock_model.prompt.call_args
                 assert call_args.kwargs.get("cache_blocks") is not None
                 cache_blocks = call_args.kwargs["cache_blocks"]
-                
+
                 # Should have one block with the prompt
                 assert len(cache_blocks) == 1
                 # The block should contain either our mocked instructions or the real prompt
-                assert ("Instructions" in cache_blocks[0]["text"] or 
-                        "analyzing a user" in cache_blocks[0]["text"])  # Part of actual prompt
+                assert (
+                    "Instructions" in cache_blocks[0]["text"] or "analyzing a user" in cache_blocks[0]["text"]
+                )  # Part of actual prompt
                 assert cache_blocks[0]["cache_control"] == {"type": "ephemeral"}
 
 
@@ -338,28 +325,20 @@ class TestParameterDiscoveryNodeCaching:
             "browsed_components": {"nodes": ["read-file"]},
             "cache_planner": False,
         }
-        
+
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_response = Mock()
             # Mock proper response structure for parse_structured_response
             mock_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "parameters": {"param1": "value1"},
-                            "stdin_type": None,
-                            "reasoning": "test"
-                        }
-                    }
-                ]
+                "content": [{"input": {"parameters": {"param1": "value1"}, "stdin_type": None, "reasoning": "test"}}]
             }
             mock_model.prompt.return_value = mock_response
             mock_get_model.return_value = mock_model
-            
+
             prep_res = node.prep(shared)
             result = node.exec(prep_res)
-            
+
             # Should pass None for cache blocks when cache_planner=False
             call_args = mock_model.prompt.call_args
             assert call_args.kwargs.get("cache_blocks") is None
@@ -372,32 +351,26 @@ class TestParameterDiscoveryNodeCaching:
             "browsed_components": {"nodes": ["read-file"]},
             "cache_planner": True,
         }
-        
+
         with patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt:
             # Provide template with ## Context marker for caching
             mock_load_prompt.return_value = "Instructions " * 100 + "\n## Context\n{{user_input}}\n{{stdin_info}}"
-            
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure for parse_structured_response
                 mock_response.json.return_value = {
                     "content": [
-                        {
-                            "input": {
-                                "parameters": {"param1": "value1"},
-                                "stdin_type": None,
-                                "reasoning": "test"
-                            }
-                        }
+                        {"input": {"parameters": {"param1": "value1"}, "stdin_type": None, "reasoning": "test"}}
                     ]
                 }
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared)
                 result = node.exec(prep_res)
-                
+
                 # Should use cache blocks
                 call_args = mock_model.prompt.call_args
                 assert call_args.kwargs.get("cache_blocks") is not None
@@ -417,34 +390,24 @@ class TestParameterMappingNodeCaching:
                 "ir_version": "0.1.0",
                 "nodes": [],
                 "edges": [],
-                "inputs": {
-                    "param1": {"type": "string", "description": "Test parameter"}
-                }
+                "inputs": {"param1": {"type": "string", "description": "Test parameter"}},
             },
             "cache_planner": False,
         }
-        
+
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_response = Mock()
             # Mock proper response structure for parse_structured_response
             mock_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {"param1": "value1"},
-                            "missing": [],
-                            "confidence": 1.0
-                        }
-                    }
-                ]
+                "content": [{"input": {"extracted": {"param1": "value1"}, "missing": [], "confidence": 1.0}}]
             }
             mock_model.prompt.return_value = mock_response
             mock_get_model.return_value = mock_model
-            
+
             prep_res = node.prep(shared)
             result = node.exec(prep_res)
-            
+
             # Should pass None for cache blocks when cache_planner=False
             call_args = mock_model.prompt.call_args
             assert call_args.kwargs.get("cache_blocks") is None
@@ -458,38 +421,30 @@ class TestParameterMappingNodeCaching:
                 "ir_version": "0.1.0",
                 "nodes": [],
                 "edges": [],
-                "inputs": {
-                    "param1": {"type": "string", "description": "Test parameter"}
-                }
+                "inputs": {"param1": {"type": "string", "description": "Test parameter"}},
             },
             "cache_planner": True,
         }
-        
+
         with patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt:
             # Provide template with ## Context marker for caching
-            mock_load_prompt.return_value = "Instructions " * 100 + "\n## Context\n{{inputs_description}}\n{{user_input}}\n{{stdin_data}}"
-            
+            mock_load_prompt.return_value = (
+                "Instructions " * 100 + "\n## Context\n{{inputs_description}}\n{{user_input}}\n{{stdin_data}}"
+            )
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure for parse_structured_response
                 mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "extracted": {"param1": "value1"},
-                                "missing": [],
-                                "confidence": 1.0
-                            }
-                        }
-                    ]
+                    "content": [{"input": {"extracted": {"param1": "value1"}, "missing": [], "confidence": 1.0}}]
                 }
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared)
                 result = node.exec(prep_res)
-                
+
                 # Should use cache blocks
                 call_args = mock_model.prompt.call_args
                 assert call_args.kwargs.get("cache_blocks") is not None
@@ -506,7 +461,7 @@ class TestMetadataGenerationNodeCaching:
             "workflow_ir": {"nodes": [], "edges": []},
             "cache_planner": False,
         }
-        
+
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_response = Mock()
@@ -526,10 +481,10 @@ class TestMetadataGenerationNodeCaching:
             }
             mock_model.prompt.return_value = mock_response
             mock_get_model.return_value = mock_model
-            
+
             prep_res = node.prep(shared)
             result = node.exec(prep_res)
-            
+
             # Should pass None for cache blocks when cache_planner=False
             call_args = mock_model.prompt.call_args
             assert call_args.kwargs.get("cache_blocks") is None
@@ -542,11 +497,14 @@ class TestMetadataGenerationNodeCaching:
             "workflow_ir": {"nodes": [], "edges": []},
             "cache_planner": True,
         }
-        
+
         with patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt:
             # Mock prompt with expected variables for metadata generation
-            mock_load_prompt.return_value = "{{user_input}} {{node_flow}} {{workflow_inputs}} {{workflow_stages}} {{parameter_bindings}} Metadata generation " * 100
-            
+            mock_load_prompt.return_value = (
+                "{{user_input}} {{node_flow}} {{workflow_inputs}} {{workflow_stages}} {{parameter_bindings}} Metadata generation "
+                * 100
+            )
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
@@ -566,10 +524,10 @@ class TestMetadataGenerationNodeCaching:
                 }
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared)
                 result = node.exec(prep_res)
-                
+
                 # Should use cache blocks
                 call_args = mock_model.prompt.call_args
                 assert call_args.kwargs.get("cache_blocks") is not None
@@ -581,55 +539,51 @@ class TestPlanningNodeCaching:
     def test_always_uses_caching_regardless_of_flag(self):
         """PlanningNode always uses caching for intra-session benefits."""
         node = PlanningNode()
-        
+
         # Test with cache_planner=False
         shared_false = {
             "user_input": "test input",
             "browsed_components": {"nodes": ["read-file"]},
             "cache_planner": False,  # Should still cache
         }
-        
+
         with patch("pflow.planning.context_blocks.PlannerContextBuilder.build_base_blocks") as mock_build_blocks:
-            mock_build_blocks.return_value = [
-                {"text": "context", "cache_control": {"type": "ephemeral"}}
-            ]
-            
+            mock_build_blocks.return_value = [{"text": "context", "cache_control": {"type": "ephemeral"}}]
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
                 mock_response.text = lambda: "**Status**: FEASIBLE\n**Node Chain**: test"
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared_false)
                 result = node.exec(prep_res)
-                
+
                 # Should STILL use cache blocks even with flag=False
                 call_args = mock_model.prompt.call_args
                 assert call_args.kwargs.get("cache_blocks") is not None
-        
+
         # Test with cache_planner=True (should also cache)
         shared_true = {
             "user_input": "test input",
             "browsed_components": {"nodes": ["read-file"]},
             "cache_planner": True,
         }
-        
+
         with patch("pflow.planning.context_blocks.PlannerContextBuilder.build_base_blocks") as mock_build_blocks:
-            mock_build_blocks.return_value = [
-                {"text": "context", "cache_control": {"type": "ephemeral"}}
-            ]
-            
+            mock_build_blocks.return_value = [{"text": "context", "cache_control": {"type": "ephemeral"}}]
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
                 mock_response.text = lambda: "**Status**: FEASIBLE\n**Node Chain**: test"
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared_true)
                 result = node.exec(prep_res)
-                
+
                 # Should use cache blocks with flag=True
                 call_args = mock_model.prompt.call_args
                 assert call_args.kwargs.get("cache_blocks") is not None
@@ -641,7 +595,7 @@ class TestWorkflowGeneratorNodeCaching:
     def test_always_uses_caching_regardless_of_flag(self):
         """WorkflowGeneratorNode always uses caching for intra-session benefits."""
         node = WorkflowGeneratorNode()
-        
+
         # Test with cache_planner=False
         shared = {
             "user_input": "test input",
@@ -652,12 +606,10 @@ class TestWorkflowGeneratorNodeCaching:
             ],
             "cache_planner": False,  # Should still cache
         }
-        
+
         with patch("pflow.planning.context_blocks.PlannerContextBuilder.build_base_blocks") as mock_build_blocks:
-            mock_build_blocks.return_value = [
-                {"text": "context", "cache_control": {"type": "ephemeral"}}
-            ]
-            
+            mock_build_blocks.return_value = [{"text": "context", "cache_control": {"type": "ephemeral"}}]
+
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
@@ -675,10 +627,10 @@ class TestWorkflowGeneratorNodeCaching:
                 }
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
-                
+
                 prep_res = node.prep(shared)
                 result = node.exec(prep_res)
-                
+
                 # Should STILL use cache blocks even with flag=False
                 call_args = mock_model.prompt.call_args
                 assert call_args.kwargs.get("cache_blocks") is not None
@@ -694,16 +646,19 @@ class TestCacheBlockContent:
             "user_input": "test input",
             "cache_planner": True,
         }
-        
-        with patch("pflow.planning.context_builder.build_workflows_context") as mock_context:
+
+        # Patch where build_workflows_context is imported, not where it's defined
+        with patch("pflow.planning.nodes.build_workflows_context") as mock_context:
             discovery_content = "Available workflows and their descriptions " * 50  # This is already >1000 chars
             mock_context.return_value = discovery_content
-            
+
             # Also need to mock the prompt template
             with patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt:
                 # Mock prompt with Context section for caching logic
-                mock_load_prompt.return_value = "Instructions " * 100 + "\n## Context\n{{discovery_context}}\n## Inputs\n{{user_input}}"
-                
+                mock_load_prompt.return_value = (
+                    "Instructions " * 100 + "\n## Context\n{{discovery_context}}\n## Inputs\n{{user_input}}"
+                )
+
                 with patch("llm.get_model") as mock_get_model:
                     mock_model = Mock()
                     mock_response = Mock()
@@ -715,20 +670,20 @@ class TestCacheBlockContent:
                                     "found": False,
                                     "workflow_name": None,
                                     "confidence": 0.0,
-                                    "reasoning": "No matching workflow found"
+                                    "reasoning": "No matching workflow found",
                                 }
                             }
                         ]
                     }
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
-                    
+
                     prep_res = node.prep(shared)
                     result = node.exec(prep_res)
-                    
+
                     call_args = mock_model.prompt.call_args
                     cache_blocks = call_args.kwargs["cache_blocks"]
-                    
+
                     # Discovery content should be in cache blocks
                     assert cache_blocks, "No cache blocks found"
                     # Check if the content is cached (it might be wrapped in XML tags)
@@ -743,44 +698,39 @@ class TestCacheBlockContent:
             "selected_path": "PATH_A",
             "cache_planner": True,
         }
-        
+
         nodes_content = "Node documentation " * 70  # >1000 chars
         workflows_content = "Workflow documentation " * 60  # >1000 chars
         prompt_content = "Browsing instructions " * 60  # >1000 chars
-        
-        with patch("pflow.planning.context_builder.build_nodes_context") as mock_nodes_context:
-            with patch("pflow.planning.context_builder.build_workflows_context") as mock_workflows_context:
+
+        # Patch where these functions are imported, not where they're defined
+        with patch("pflow.planning.nodes.build_nodes_context") as mock_nodes_context:
+            with patch("pflow.planning.nodes.build_workflows_context") as mock_workflows_context:
                 mock_nodes_context.return_value = nodes_content
                 mock_workflows_context.return_value = workflows_content
-                
+
                 with patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt:
                     # Include expected structure for caching logic
-                    mock_load_prompt.return_value = prompt_content + "\n## Context\n{{nodes_context}}\n{{workflows_context}}"
-                
+                    mock_load_prompt.return_value = (
+                        prompt_content + "\n## Context\n{{nodes_context}}\n{{workflows_context}}"
+                    )
+
                 with patch("llm.get_model") as mock_get_model:
                     mock_model = Mock()
                     mock_response = Mock()
                     # Mock proper response structure for parse_structured_response
                     mock_response.json.return_value = {
-                        "content": [
-                            {
-                                "input": {
-                                    "node_ids": ["test"],
-                                    "workflow_names": [],
-                                    "reasoning": "test"
-                                }
-                            }
-                        ]
+                        "content": [{"input": {"node_ids": ["test"], "workflow_names": [], "reasoning": "test"}}]
                     }
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
-                    
+
                     prep_res = node.prep(shared)
                     result = node.exec(prep_res)
-                    
+
                     call_args = mock_model.prompt.call_args
                     cache_blocks = call_args.kwargs["cache_blocks"]
-                    
+
                     # Check that we have cache blocks with expected content
                     all_text = " ".join(block["text"] for block in cache_blocks)
                     # The node builds its own cache blocks using the mocked context
@@ -788,6 +738,10 @@ class TestCacheBlockContent:
                     assert cache_blocks, "Should have cache blocks"
                     assert len(cache_blocks) > 0, "Should have at least one cache block"
                     # Check for either the mocked content or the actual content markers
-                    assert (nodes_content in all_text or "<available_nodes>" in all_text or 
-                            workflows_content in all_text or "<available_workflows>" in all_text or
-                            prompt_content in all_text)
+                    assert (
+                        nodes_content in all_text
+                        or "<available_nodes>" in all_text
+                        or workflows_content in all_text
+                        or "<available_workflows>" in all_text
+                        or prompt_content in all_text
+                    )

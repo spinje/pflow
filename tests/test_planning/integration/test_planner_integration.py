@@ -208,6 +208,22 @@ class TestPlannerFlowIntegration:
                 ]
             }
 
+            # Parameter discovery response (NEW - Task 52, moved to position 2)
+            param_discovery_response = Mock()
+            param_discovery_response.json.return_value = {
+                "content": [
+                    {
+                        "input": {
+                            "parameters": {
+                                "input_file": {"value": "test.txt", "confidence": 0.9, "source": "explicit"}
+                            },
+                            "stdin_type": None,
+                            "reasoning": "Found parameter in user input",
+                        }
+                    }
+                ]
+            }
+
             # Parameter mapping response - all params available
             param_response = Mock()
             param_response.json.return_value = {
@@ -224,7 +240,8 @@ class TestPlannerFlowIntegration:
             }
 
             # Setup mock to return different responses
-            mock_model.prompt.side_effect = [discovery_response, param_response]
+            # Path A flow: Discovery → ParameterDiscovery → ParameterMapping
+            mock_model.prompt.side_effect = [discovery_response, param_discovery_response, param_response]
             mock_get_model.return_value = mock_model
 
             # Patch context builder's workflow manager
@@ -740,6 +757,20 @@ Creating a simple workflow that will be validated with retries.
                 ]
             }
 
+            # Parameter discovery (NEW - Task 52, position 2)
+            param_discovery = Mock()
+            param_discovery.json.return_value = {
+                "content": [
+                    {
+                        "input": {
+                            "parameters": {},  # No parameters found
+                            "stdin_type": None,
+                            "reasoning": "No specific parameters found in user input",
+                        }
+                    }
+                ]
+            }
+
             # Parameter mapping - missing optional param (limit has default=20)
             # Since limit is optional with default, it shouldn't be in missing list
             param_response = Mock()
@@ -756,7 +787,8 @@ Creating a simple workflow that will be validated with retries.
                 ]
             }
 
-            mock_model.prompt.side_effect = [discovery_response, param_response]
+            # Path A: Discovery → ParameterDiscovery → ParameterMapping
+            mock_model.prompt.side_effect = [discovery_response, param_discovery, param_response]
             mock_get_model.return_value = mock_model
 
             with (
@@ -1107,6 +1139,20 @@ Creating workflow to read file.
                 ]
             }
 
+            # Parameter discovery (NEW - Task 52, position 2)
+            param_discovery = Mock()
+            param_discovery.json.return_value = {
+                "content": [
+                    {
+                        "input": {
+                            "parameters": {"limit": {"value": "30", "confidence": 0.9, "source": "explicit"}},
+                            "stdin_type": None,
+                            "reasoning": "Found limit parameter",
+                        }
+                    }
+                ]
+            }
+
             param_mapping = Mock()
             param_mapping.json.return_value = {
                 "content": [
@@ -1121,7 +1167,8 @@ Creating workflow to read file.
                 ]
             }
 
-            mock_model.prompt.side_effect = [discovery_found, param_mapping]
+            # Path A: Discovery → ParameterDiscovery → ParameterMapping
+            mock_model.prompt.side_effect = [discovery_found, param_discovery, param_mapping]
             mock_get_model.return_value = mock_model
 
             with (
@@ -1529,6 +1576,24 @@ Creating workflow to read file.
                                         "workflow_name": "read-analyze-file",
                                         "confidence": 0.9,
                                         "reasoning": "Found workflow",
+                                    }
+                                }
+                            ]
+                        }
+                    )
+                ),
+                # Parameter discovery (NEW - Task 52, position 2)
+                Mock(
+                    json=Mock(
+                        return_value={
+                            "content": [
+                                {
+                                    "input": {
+                                        "parameters": {
+                                            "input_file": {"value": "test.txt", "confidence": 0.9, "source": "explicit"}
+                                        },
+                                        "stdin_type": None,
+                                        "reasoning": "Found parameter",
                                     }
                                 }
                             ]

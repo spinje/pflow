@@ -5,7 +5,7 @@
 ### 1. Dead Utility File: `cache_builder.py`
 **Problem**: Contains 3 unused functions only referenced by tests
 - `extract_static_from_prompt()` - Never used in production
-- `should_use_caching()` - Logic obsolete after refactoring  
+- `should_use_caching()` - Logic obsolete after refactoring
 - `format_cache_metrics()` - Never used
 
 **Solution**: Delete the file entirely. Tests should test production code, not dead utilities.
@@ -33,7 +33,7 @@
 ### 5. Inconsistent Caching Patterns
 **Problem**: Some nodes have custom `_build_cache_blocks()` methods, others don't
 - WorkflowDiscoveryNode: Has custom method
-- ComponentBrowsingNode: Has custom method  
+- ComponentBrowsingNode: Has custom method
 - Others: Use standard helper
 
 **Solution**: This is actually correct - special nodes need special handling. Document this pattern clearly.

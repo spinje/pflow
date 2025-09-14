@@ -32,7 +32,7 @@ Task 52 successfully implemented requirements analysis and planning steps with p
 
 ### Legacy Context Keys Status
 - **planner_extended_context**: ❌ Dead code - safe to remove
-- **planner_accumulated_context**: ❌ Dead code - safe to remove  
+- **planner_accumulated_context**: ❌ Dead code - safe to remove
 - **planning_context**: ✅ Still actively used - DO NOT remove
 
 ### Cache Blocks Handling
@@ -82,7 +82,7 @@ def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
     # Always build blocks (cache_control conditional)
     cache_blocks = self._build_cache_blocks(prep_res)
     prompt = self._get_prompt_content(prep_res)
-    
+
     # Model handles whether to actually cache
     model = llm.get_model(prep_res["model_name"])
     response = model.prompt(
@@ -96,7 +96,7 @@ def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
 #### Step 2.2: Implement for each node
 Apply pattern to:
 1. WorkflowDiscoveryNode
-2. ComponentBrowsingNode  
+2. ComponentBrowsingNode
 3. RequirementsAnalysisNode
 4. ParameterDiscoveryNode
 5. ParameterMappingNode
@@ -117,7 +117,7 @@ Apply pattern to:
 class WorkflowDiscoveryNode(Node):
     def _build_cache_blocks(self, prep_res: dict[str, Any]) -> list[dict]:
         blocks = []
-        
+
         # Load and cache instructions
         instructions = load_prompt_instructions("discovery")
         if instructions:
@@ -125,7 +125,7 @@ class WorkflowDiscoveryNode(Node):
                 "text": instructions,
                 "cache_control": {"type": "ephemeral"}
             })
-        
+
         # Add discovery context (node knows it's cacheable)
         discovery_context = prep_res.get("discovery_context", "")
         if discovery_context and len(discovery_context) > 1000:
@@ -133,9 +133,9 @@ class WorkflowDiscoveryNode(Node):
                 "text": f"## Context\n\n<existing_workflows>\n{discovery_context}\n</existing_workflows>",
                 "cache_control": {"type": "ephemeral"}
             })
-            
+
         return blocks
-    
+
     def _get_prompt_content(self, prep_res: dict[str, Any]) -> str:
         # Return only the dynamic user input part
         return f"## Inputs\n\n<user_request>\n{prep_res['user_input']}\n</user_request>"
@@ -192,7 +192,7 @@ graph TD
     B --> C[Phase 3: Simplify Special Cases]
     C --> D[Phase 4: Test Cleanup]
     D --> E[Phase 5: Documentation]
-    
+
     A[Low Risk<br/>1-2 hours]
     B[Medium Risk<br/>3-4 hours]
     C[Medium Risk<br/>2-3 hours]

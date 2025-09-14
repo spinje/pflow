@@ -12,7 +12,7 @@ The Natural Language Planner transforms user requests into executable PocketFlow
 
 ```
 1. Requirements Analysis → Extract operational requirements
-2. Parameter Discovery → Find parameters in user input  
+2. Parameter Discovery → Find parameters in user input
 3. Component Browsing → Select nodes/workflows to use
 4. Planning → Create execution plan
 5. Workflow Generation → Generate workflow IR
@@ -45,7 +45,7 @@ Three distinct patterns based on node requirements:
 ### 1. Standard Nodes (Simple Instruction Caching)
 Uses `build_cached_prompt()` from `prompt_cache_helper.py`:
 - RequirementsAnalysisNode
-- ParameterDiscoveryNode  
+- ParameterDiscoveryNode
 - ParameterMappingNode
 - MetadataGenerationNode
 

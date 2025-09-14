@@ -20,7 +20,7 @@ if cache_blocks is None:
 
 def prompt(self, prompt, schema=None, temperature=0.0, cache_blocks=None, **kwargs):
     """Execute a prompt using the Anthropic SDK.
-    
+
     Args:
         cache_blocks: Optional list of cache blocks. If None, no caching is applied.
     """
@@ -37,7 +37,7 @@ def prompt(self, prompt, schema=None, temperature=0.0, cache_blocks=None, **kwar
         # Fallback path without caching
         return self._prompt_without_cache(
             prompt=prompt,
-            schema=schema, 
+            schema=schema,
             temperature=temperature,
             **kwargs
         )
@@ -45,7 +45,7 @@ def prompt(self, prompt, schema=None, temperature=0.0, cache_blocks=None, **kwar
 def _prompt_without_cache(self, prompt, schema, temperature, **kwargs):
     """Execute prompt without cache blocks (fallback path)."""
     prompt_str = prompt if isinstance(prompt, str) else str(prompt)
-    
+
     if schema:
         # Structured output without caching
         result, usage = self.client.generate_with_schema(
@@ -64,7 +64,7 @@ def _prompt_without_cache(self, prompt, schema, temperature, **kwargs):
             temperature=temperature,
             force_text_output=True
         )
-    
+
     return AnthropicResponse(result, usage, is_structured=bool(schema))
 ```
 
@@ -75,7 +75,7 @@ def _prompt_without_cache(self, prompt, schema, temperature, **kwargs):
 
 def generate_with_schema(self, prompt, response_model, temperature=0.0, max_tokens=8192):
     """Generate structured output WITHOUT cache blocks.
-    
+
     This is the fallback method when caching is not needed.
     """
     # Set up tool
@@ -85,10 +85,10 @@ def generate_with_schema(self, prompt, response_model, temperature=0.0, max_toke
         "description": f"Generate a {response_model.__name__}",
         "input_schema": response_model.model_json_schema()
     }
-    
+
     # Create messages without system parameter
     messages = [{"role": "user", "content": prompt}]
-    
+
     # Call Anthropic
     response = self.client.messages.create(
         model=self.model,
@@ -98,10 +98,10 @@ def generate_with_schema(self, prompt, response_model, temperature=0.0, max_toke
         temperature=temperature,
         max_tokens=max_tokens
     )
-    
+
     # Extract result
     # ... (same extraction logic)
-    
+
     return result, usage
 ```
 
@@ -119,12 +119,12 @@ def generate_with_schema(self, prompt, response_model, temperature=0.0, max_toke
 )
 def run(ctx, query, ..., cache_planner):
     """Run a workflow from natural language or workflow name."""
-    
+
     # Store in context for propagation
     ctx.obj["cache_planner"] = cache_planner
-    
+
     # ... existing code ...
-    
+
     # When creating shared store for planner
     shared = {
         "user_input": query,
@@ -141,17 +141,17 @@ Example for WorkflowDiscoveryNode:
 def exec(self, prep_res):
     # Check if caching should be enabled
     cache_planner = prep_res.get("cache_planner", False)
-    
+
     # Get model
     model = llm.get_model(prep_res["model_name"])
-    
+
     if cache_planner:
         # Build cache blocks for static content
         blocks = self._build_cache_blocks(prep_res)
-        
+
         # Dynamic content only
         dynamic_prompt = f"User Request: {prep_res['user_input']}"
-        
+
         response = model.prompt(
             dynamic_prompt,
             cache_blocks=blocks,
@@ -166,24 +166,24 @@ def exec(self, prep_res):
             schema=WorkflowDecision,
             temperature=prep_res["temperature"]
         )
-    
+
     return self._parse_response(response)
 
 def _build_cache_blocks(self, prep_res):
     """Build cache blocks for cross-session caching."""
     blocks = []
-    
+
     # Add static workflow descriptions (this doesn't change between queries)
     static_context = prep_res.get("discovery_context", "")
     # Remove dynamic parts (user query)
     static_parts = self._extract_static_content(static_context)
-    
+
     if static_parts and len(static_parts) > 1024:  # Min for caching
         blocks.append({
             "text": static_parts,
             "cache_control": {"type": "ephemeral"}
         })
-    
+
     return blocks
 ```
 
@@ -223,7 +223,7 @@ logger.info(f"Cache metrics: created={cache_creation}, read={cache_read}")
 - `src/pflow/planning/utils/anthropic_llm_model.py` - Make cache_blocks optional
 - `src/pflow/planning/utils/anthropic_structured_client.py` - Add non-cache method
 
-### Phase 2 (Flag Support)  
+### Phase 2 (Flag Support)
 - `src/pflow/cli/main.py` - Add --cache-planner flag
 - `src/pflow/planning/nodes.py` - Update nodes to check flag
 
