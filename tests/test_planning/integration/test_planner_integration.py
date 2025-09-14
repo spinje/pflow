@@ -179,7 +179,8 @@ class TestPlannerFlowIntegration:
     def test_path_a_complete_flow(self, test_workflow_manager, test_registry_data):
         """Test Path A: Workflow reuse with existing workflow."""
         # Create planner flow
-        flow = create_planner_flow()
+        # ⚠️ ALWAYS use wait=0 in tests to eliminate retry delays (~3s savings)
+        flow = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
 
         # Setup shared store with test manager
         shared = {
@@ -279,7 +280,7 @@ class TestPlannerFlowIntegration:
     def test_path_b_complete_flow(self, test_workflow_manager, test_registry_data):
         """Test Path B: Workflow generation when no existing workflow matches."""
         # Create planner flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
 
         # Setup shared store
         shared = {
@@ -512,7 +513,7 @@ Based on the requirements, I'll create a workflow that reads a file, processes i
 
     def test_retry_mechanism_with_controlled_failures(self, test_workflow_manager, test_registry_data):
         """Test retry mechanism: first 2 attempts fail, 3rd succeeds."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
 
         shared = {
             "user_input": "Generate a workflow that needs validation retries",
@@ -730,7 +731,7 @@ Creating a simple workflow that will be validated with retries.
 
     def test_missing_parameters_scenario_path_a(self, test_workflow_manager, test_registry_data):
         """Test Path A with missing required parameters."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
 
         shared = {
             "user_input": "Generate a changelog",  # Missing limit parameter
@@ -817,7 +818,7 @@ Creating a simple workflow that will be validated with retries.
 
     def test_missing_parameters_scenario_path_b(self, test_workflow_manager, test_registry_data):
         """Test Path B with missing required parameters after generation."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
 
         shared = {
             "user_input": "Create workflow but don't specify all params",
@@ -984,7 +985,7 @@ Creating workflow to read file.
 
     def test_max_retries_exceeded(self, test_workflow_manager, test_registry_data):
         """Test that validation fails after max retries (3 attempts)."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
 
         shared = {
             "user_input": "Create workflow that always fails validation",
@@ -1113,7 +1114,7 @@ Creating workflow to read file.
         # We'll run both paths and verify they both go through parameter mapping
 
         # Path A test
-        flow_a = create_planner_flow()
+        flow_a = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
         shared_a = {
             "user_input": "read and analyze a file",
             "workflow_manager": test_workflow_manager,
@@ -1188,7 +1189,7 @@ Creating workflow to read file.
                 flow_a.run(shared_a)
 
         # Path B test
-        flow_b = create_planner_flow()
+        flow_b = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
         shared_b = {
             "user_input": "create new workflow",
             "workflow_manager": test_workflow_manager,
@@ -1355,7 +1356,7 @@ Creating workflow to read file.
 
     def test_complete_flow_with_stdin_data(self, test_workflow_manager, test_registry_data):
         """Test complete flow with stdin data available."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
 
         # Simulate piped input
         stdin_content = "Data from stdin that should be used"
@@ -1549,7 +1550,7 @@ Creating workflow to read file.
 
     def test_flow_state_consistency(self, test_workflow_manager, test_registry_data):
         """Test that shared store maintains consistency throughout the flow."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)  # Use wait=0 for fast test execution
 
         initial_shared = {
             "user_input": "test consistency",

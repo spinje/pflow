@@ -134,7 +134,7 @@ class TestPlannerWorking:
             mock_get_model.return_value = mock_model
 
             # Create and run the flow
-            flow = create_planner_flow()
+            flow = create_planner_flow(wait=0)
             flow.run(shared)
 
         # Verify the results
@@ -228,7 +228,7 @@ class TestPlannerWorking:
             mock_get_model.return_value = mock_model
 
             # Create and run the flow
-            flow = create_planner_flow()
+            flow = create_planner_flow(wait=0)
             flow.run(shared)
 
         # Verify the results

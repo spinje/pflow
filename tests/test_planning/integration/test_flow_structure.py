@@ -25,7 +25,7 @@ class TestFlowStructure:
 
     def test_flow_has_correct_start_node(self):
         """Test that the flow starts with WorkflowDiscoveryNode."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         assert flow.start_node is not None
         assert isinstance(flow.start_node, WorkflowDiscoveryNode)
@@ -33,7 +33,7 @@ class TestFlowStructure:
 
     def test_all_nodes_are_connected(self):
         """Test that all 11 nodes are connected in the flow."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Collect all nodes by traversing successors
         visited_nodes = set()
@@ -71,7 +71,7 @@ class TestFlowStructure:
 
     def test_path_a_edges(self):
         """Test Path A edges: Discovery → ParameterMapping → Preparation → Result."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Get nodes
         discovery = flow.start_node
@@ -99,7 +99,7 @@ class TestFlowStructure:
 
     def test_path_b_edges(self):
         """Test Path B edges: Discovery → ParamDisc → Requirements → Browse → Planning → Generate → Validate."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Get nodes
         discovery = flow.start_node
@@ -137,7 +137,7 @@ class TestFlowStructure:
 
     def test_retry_loop_edges(self):
         """Test the retry loop: Validator → Generator."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Navigate to validator (NEW PATH: Discovery → ParamDisc → Requirements → Browse → Planning → Generator)
         discovery = flow.start_node
@@ -169,7 +169,7 @@ class TestFlowStructure:
 
     def test_convergence_at_parameter_mapping(self):
         """Test that both paths use ParameterMappingNode (VALIDATION REDESIGN)."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Get nodes from Path A
         discovery = flow.start_node
@@ -195,7 +195,7 @@ class TestFlowStructure:
 
     def test_result_node_has_six_entry_points(self):
         """Test that ResultPreparationNode has six entry points."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Helper to find all predecessors
         def find_predecessors(target_node, all_nodes):
@@ -243,7 +243,7 @@ class TestFlowStructure:
 
     def test_all_action_strings_have_edges(self):
         """Test that all possible action strings have corresponding edges."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Expected action strings for each node type
         expected_actions = {
@@ -291,7 +291,7 @@ class TestFlowStructure:
 
     def test_no_orphaned_nodes(self):
         """Test that there are no orphaned nodes (unreachable from start)."""
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Find all reachable nodes
         reachable = set()
@@ -316,8 +316,8 @@ class TestFlowStructure:
 
     def test_flow_is_deterministic(self):
         """Test that creating the flow multiple times produces same structure."""
-        flow1 = create_planner_flow()
-        flow2 = create_planner_flow()
+        flow1 = create_planner_flow(wait=0)
+        flow2 = create_planner_flow(wait=0)
 
         # Both should start with discovery
         assert isinstance(flow1.start_node, type(flow2.start_node))

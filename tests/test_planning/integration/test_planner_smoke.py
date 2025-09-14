@@ -120,7 +120,7 @@ class TestPlannerSmoke:
             mock_get_model.return_value = mock_model
 
             # Create and run flow
-            flow = create_planner_flow()
+            flow = create_planner_flow(wait=0)
             shared = {"user_input": "run test workflow", "workflow_manager": test_manager}
 
             # Execute flow
@@ -165,7 +165,7 @@ class TestPlannerSmoke:
             mock_get_model.return_value = mock_model
 
             # Create and run flow
-            flow = create_planner_flow()
+            flow = create_planner_flow(wait=0)
             shared = {"user_input": "run test workflow", "workflow_manager": test_manager}
 
             # Execute flow
@@ -183,7 +183,7 @@ class TestPlannerSmoke:
         test_manager = WorkflowManager(workflows_dir=str(tmp_path / "workflows"))
 
         # Create flow without user_input
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
         shared = {"workflow_manager": test_manager}
 
         # Execute flow - should raise ValueError for missing required input

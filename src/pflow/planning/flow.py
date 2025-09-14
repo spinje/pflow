@@ -33,7 +33,7 @@ from pocketflow import Flow, Node
 logger = logging.getLogger(__name__)
 
 
-def create_planner_flow(debug_context: Optional["DebugContext"] = None) -> "Flow":
+def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: float = 1.0) -> "Flow":
     """Create the complete planner meta-workflow.
 
     This flow implements the sophisticated two-path architecture:
@@ -48,24 +48,25 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None) -> "Flow
 
     Args:
         debug_context: Optional DebugContext for debugging capabilities
+        wait: Wait time between retries in seconds (default 1.0, use 0 for tests)
 
     Returns:
         The complete planner flow ready for execution
     """
     logger.debug("Creating planner flow with 11 nodes")
 
-    # Create all nodes (type as Node since DebugWrapper also acts as Node)
-    discovery_node: Node = WorkflowDiscoveryNode()
-    component_browsing: Node = ComponentBrowsingNode()
-    parameter_discovery: Node = ParameterDiscoveryNode()
-    requirements_analysis: Node = RequirementsAnalysisNode()
-    planning: Node = PlanningNode()
-    parameter_mapping: Node = ParameterMappingNode()
-    parameter_preparation: Node = ParameterPreparationNode()
-    workflow_generator: Node = WorkflowGeneratorNode()
-    validator: Node = ValidatorNode()
-    metadata_generation: Node = MetadataGenerationNode()
-    result_preparation: Node = ResultPreparationNode()
+    # Create all nodes with configurable wait time (critical for test performance)
+    discovery_node: Node = WorkflowDiscoveryNode(wait=wait)
+    component_browsing: Node = ComponentBrowsingNode(wait=wait)
+    parameter_discovery: Node = ParameterDiscoveryNode(wait=wait)
+    requirements_analysis: Node = RequirementsAnalysisNode(wait=wait)
+    planning: Node = PlanningNode(wait=wait)
+    parameter_mapping: Node = ParameterMappingNode(wait=wait)
+    parameter_preparation: Node = ParameterPreparationNode()  # Doesn't take wait param
+    workflow_generator: Node = WorkflowGeneratorNode(wait=wait)
+    validator: Node = ValidatorNode()  # Doesn't take wait param
+    metadata_generation: Node = MetadataGenerationNode(wait=wait)
+    result_preparation: Node = ResultPreparationNode()  # Doesn't take wait param
 
     # If debugging context provided, wrap all nodes
     if debug_context:

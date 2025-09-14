@@ -210,13 +210,16 @@ class TestPathADiscoveryToParameter:
 
     def test_path_a_complete_flow(self, mock_workflow_manager, mock_llm_calls, monkeypatch):
         """Test complete Path A flow from discovery to parameter extraction."""
-        # Ensure no leftover patches from previous tests
-        # Force reimport to clear any cached state
+        # ⚠️ CRITICAL: DO NOT REMOVE MODULE RELOADING - IT WILL BREAK TESTS! ⚠️
+        # This module reloading is REQUIRED for test isolation. Without it:
+        # 1. Cached prompt templates persist between tests causing failures
+        # 2. Patches from previous tests contaminate subsequent tests
+        # 3. ~75 tests will fail due to state pollution
+        # The 0.2s performance cost is necessary for correctness.
         import importlib
-
         import pflow.planning.prompts.loader as loader_module
         import pflow.planning.utils.prompt_cache_helper as cache_helper_module
-
+        
         importlib.reload(loader_module)
         importlib.reload(cache_helper_module)
 

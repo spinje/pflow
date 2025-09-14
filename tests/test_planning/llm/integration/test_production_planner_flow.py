@@ -1,7 +1,7 @@
 """PRODUCTION Integration Tests - Real Planner Flow.
 
 Tests the ACTUAL production planner as invoked by the CLI.
-Tests both Path A (reuse) and Path B (generation) through create_planner_flow().
+Tests both Path A (reuse) and Path B (generation) through create_planner_flow(wait=0).
 
 These tests run the entire planner flow as the CLI would invoke it, using actual LLM
 calls instead of mocks. They test both paths through the production integration.
@@ -74,7 +74,7 @@ class TestProductionPlannerFlow:
         )
 
         # Create and run the planner flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
         shared = {
             "user_input": "I need to analyze the file report.txt",
             "workflow_manager": test_workflow_manager,
@@ -109,7 +109,7 @@ class TestProductionPlannerFlow:
         # Don't save any workflows - force generation
 
         # Create and run the planner flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
         shared = {
             "user_input": "I want to count the number of lines in a text file",
             "workflow_manager": test_workflow_manager,
@@ -157,7 +157,7 @@ class TestProductionPlannerFlow:
     def test_path_b_with_specific_parameters(self, test_workflow_manager):
         """Test Path B with a request that includes specific parameter values."""
         # Create and run the planner flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
         shared = {
             "user_input": "Read the file data.csv and extract the first column",
             "workflow_manager": test_workflow_manager,
@@ -214,7 +214,7 @@ class TestProductionPlannerFlow:
         )
 
         # Create and run with vague input (no specific values)
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
         shared = {
             "user_input": "I need to process some data",
             "workflow_manager": test_workflow_manager,
@@ -245,7 +245,7 @@ class TestProductionPlannerFlow:
         """Test that validation now works with extracted parameters (VALIDATION REDESIGN)."""
         # This tests the fix where parameters are extracted BEFORE validation
 
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
         shared = {
             "user_input": "Create a workflow to read input.txt and write to output.txt",
             "workflow_manager": test_workflow_manager,

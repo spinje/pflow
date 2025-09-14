@@ -29,7 +29,7 @@ class TestPlannerSimpleIntegration:
         test_manager.save(name="read-file-workflow", workflow_ir=test_workflow_ir, description="Read a file")
 
         # Create flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Setup shared store
         shared = {
@@ -121,7 +121,7 @@ class TestPlannerSimpleIntegration:
         test_manager.save(name="process-workflow", workflow_ir=test_workflow_ir, description="Process data")
 
         # Create flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Setup shared store - vague input missing parameters
         shared = {
@@ -187,7 +187,7 @@ class TestPlannerSimpleIntegration:
         test_manager = WorkflowManager(workflows_dir=str(tmp_path / "workflows"))
 
         # Create flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Setup shared store
         shared = {
