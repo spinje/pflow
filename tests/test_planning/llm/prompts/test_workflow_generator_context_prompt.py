@@ -1096,8 +1096,8 @@ class TestWorkflowGeneratorContextPrompt:
         # Step 3: Simulate requirements analysis
         requirements_result = simulate_requirements_result(test_case)
 
-        # Step 4: Build base context using PlannerContextBuilder
-        base_context = PlannerContextBuilder.build_base_context(
+        # Step 4: Build base blocks using PlannerContextBuilder
+        base_blocks = PlannerContextBuilder.build_base_blocks(
             user_request=templatized_input,
             requirements_result=requirements_result,
             browsed_components=browsed_components,
@@ -1105,9 +1105,9 @@ class TestWorkflowGeneratorContextPrompt:
             discovered_params=test_case.discovered_params,
         )
 
-        # Step 5: Simulate planning output and extend context
+        # Step 5: Simulate planning output and extend blocks
         plan_markdown, parsed_plan = simulate_planning_output(test_case)
-        extended_context = PlannerContextBuilder.append_planning_output(base_context, plan_markdown, parsed_plan)
+        extended_blocks = PlannerContextBuilder.append_planning_block(base_blocks, plan_markdown, parsed_plan)
 
         # Step 6: Prepare shared store for WorkflowGeneratorNode
         shared = {
@@ -1115,15 +1115,15 @@ class TestWorkflowGeneratorContextPrompt:
             "templatized_input": templatized_input,
             "discovered_params": test_case.discovered_params,
             "browsed_components": browsed_components,
-            "planner_extended_context": extended_context,  # NEW: Extended context from planning
+            "planner_extended_blocks": extended_blocks,  # NEW: Extended blocks from planning
             "generation_attempts": 0,
         }
 
         # Add validation errors for retry tests
         if test_case.validation_errors:
-            # For retry, accumulate context with previous attempt
-            accumulated = PlannerContextBuilder.append_validation_errors(extended_context, test_case.validation_errors)
-            shared["planner_accumulated_context"] = accumulated
+            # For retry, accumulate blocks with previous attempt
+            accumulated_blocks = PlannerContextBuilder.append_errors_block(extended_blocks, test_case.validation_errors)
+            shared["planner_accumulated_blocks"] = accumulated_blocks
             shared["validation_errors"] = test_case.validation_errors
             shared["generation_attempts"] = 1
 

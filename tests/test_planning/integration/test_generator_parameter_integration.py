@@ -18,13 +18,13 @@ from pflow.planning.nodes import (
 )
 
 
-def create_minimal_context(user_input="test request", browsed_components=None):
-    """Create minimal planner context for integration tests."""
+def create_minimal_context_blocks(user_input="test request", browsed_components=None):
+    """Create minimal planner context blocks for integration tests."""
     if browsed_components is None:
         browsed_components = {"node_ids": ["test-node"], "workflow_names": [], "reasoning": "Test reasoning"}
 
-    # Create a simple base context
-    base_context = PlannerContextBuilder.build_base_context(
+    # Create base blocks
+    base_blocks = PlannerContextBuilder.build_base_blocks(
         user_request=user_input,
         requirements_result={
             "is_clear": True,
@@ -37,12 +37,12 @@ def create_minimal_context(user_input="test request", browsed_components=None):
         discovered_params={},
     )
 
-    # Add planning output to make it extended context
-    extended_context = PlannerContextBuilder.append_planning_output(
-        base_context, "Test plan", {"status": "FEASIBLE", "node_chain": "test-node"}
+    # Add planning output to make it extended blocks
+    extended_blocks = PlannerContextBuilder.append_planning_block(
+        base_blocks, "Test plan", {"status": "FEASIBLE", "node_chain": "test-node"}
     )
 
-    return extended_context
+    return extended_blocks
 
 
 @pytest.fixture
@@ -158,7 +158,7 @@ class TestGeneratorParameterConvergence:
             shared = {
                 "user_input": "Generate changelog for pflow since 2024-01-01",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="Generate changelog for pflow since 2024-01-01", browsed_components=browsed_components
                 ),
             }
@@ -231,7 +231,7 @@ class TestGeneratorParameterConvergence:
             shared = {
                 "user_input": "Create issue triage report for repo with bug label",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="Create issue triage report for repo with bug label",
                     browsed_components=browsed_components,
                 ),
@@ -311,7 +311,7 @@ class TestGeneratorParameterConvergence:
             shared = {
                 "user_input": "Process the file data.csv",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="Process the file data.csv", browsed_components=browsed_components
                 ),
             }
@@ -378,7 +378,7 @@ class TestGeneratorParameterConvergence:
             shared = {
                 "user_input": "Process my-repo",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="Process my-repo", browsed_components=browsed_components
                 ),
             }
@@ -447,7 +447,7 @@ class TestGeneratorParameterConvergence:
             shared = {
                 "user_input": "Create release notes for pflow v1.2.0",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="Create release notes for pflow v1.2.0", browsed_components=browsed_components
                 ),
             }
@@ -567,7 +567,7 @@ class TestCompletePathBFlow:
             assert "repository" in shared["discovered_params"]
 
             # Add context for WorkflowGeneratorNode (normally done by RequirementsAnalysisNode and PlanningNode)
-            shared["planner_extended_context"] = create_minimal_context(
+            shared["planner_extended_blocks"] = create_minimal_context_blocks(
                 user_input=shared["user_input"], browsed_components=shared["browsed_components"]
             )
 
@@ -622,7 +622,7 @@ class TestCompletePathBFlow:
                 "user_input": "Format this as markdown",
                 "stdin": "Raw data from pipe",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="Format this as markdown", browsed_components=browsed_components
                 ),
             }
@@ -678,7 +678,7 @@ class TestGeneratorRetryMechanism:
             shared = {
                 "user_input": "test",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="test", browsed_components=browsed_components
                 ),
             }
@@ -743,7 +743,7 @@ class TestGeneratorRetryMechanism:
             shared = {
                 "user_input": "test",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="test", browsed_components=browsed_components
                 ),
             }
@@ -792,7 +792,7 @@ class TestEdgeCases:
             shared = {
                 "user_input": "test",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="test", browsed_components=browsed_components
                 ),
             }
@@ -885,7 +885,7 @@ class TestEdgeCases:
             shared = {
                 "user_input": "test",
                 "browsed_components": browsed_components,
-                "planner_extended_context": create_minimal_context(
+                "planner_extended_blocks": create_minimal_context_blocks(
                     user_input="test", browsed_components=browsed_components
                 ),
                 "discovered_params": {

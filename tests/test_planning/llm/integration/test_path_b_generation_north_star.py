@@ -93,7 +93,7 @@ class TestPathBGenerationNorthStar:
             exec_res = planning_node.exec(prep_res)
             action = planning_node.post(shared, prep_res, exec_res)
 
-            assert "planner_extended_context" in shared, "Should create extended context"
+            assert "planner_extended_blocks" in shared, "Should create extended blocks"
             assert action == "", "Should continue to workflow generation (FEASIBLE)"
 
             # Step 5: Workflow Generation
@@ -291,7 +291,7 @@ class TestPathBGenerationNorthStar:
                 assert "_error" in exec_res or "error" in shared
             else:
                 logger.warning("Planning thinks kubernetes/slack is feasible - checking plan")
-                assert "planner_extended_context" in shared
+                assert "planner_extended_blocks" in shared
 
         except Exception as e:
             if "API" in str(e) or "key" in str(e).lower():
