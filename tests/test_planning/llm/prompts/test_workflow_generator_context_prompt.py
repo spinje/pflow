@@ -32,6 +32,13 @@ from pflow.planning.nodes import WorkflowGeneratorNode
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 
+# For LLM tests, we need to enable the Anthropic model wrapper
+# This gives us cache_blocks support which is required for the new architecture
+if os.getenv("RUN_LLM_TESTS"):
+    from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+
+    install_anthropic_model()
+
 # Set up logger for immediate failure reporting
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -93,6 +100,31 @@ class WorkflowTestCase:
 
 def simulate_planning_output(test_case: WorkflowTestCase) -> tuple[str, dict]:
     """Simulate what PlanningNode would produce.
+
+    TODO: HIGH PRIORITY - Replace with real PlanningNode output
+    -----------------------------------------------------
+    Current approach uses a generic, minimal plan that doesn't provide the rich
+    context that WorkflowGeneratorNode would get in production. This makes the
+    test less representative and forces the generator to work harder.
+
+    Proposed improvement:
+    1. Pre-generate real plans for each test case using PlanningNode (one-time)
+    2. Store these as fixtures in tests/test_planning/llm/fixtures/plans/
+    3. Load the appropriate fixture based on test_case.name
+
+    Benefits:
+    - More realistic testing with actual architectural guidance
+    - Tests would better represent production behavior
+    - WorkflowGeneratorNode gets proper step-by-step execution plans
+    - Still avoids runtime LLM calls (using cached fixtures)
+
+    Similar approach could be applied to other simulated nodes:
+    - RequirementsAnalysisNode output (currently simulated)
+    - ComponentBrowsingNode selections (currently hardcoded)
+    - ParameterDiscoveryNode results (currently provided)
+
+    But PlanningNode is HIGHEST PRIORITY since it provides critical
+    architectural decisions that significantly impact generation quality.
 
     Returns:
         Tuple of (plan_markdown, parsed_result)
