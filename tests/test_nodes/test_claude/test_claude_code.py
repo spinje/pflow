@@ -200,13 +200,12 @@ def test_valid_task_without_schema(claude_node):
         assert result["output_schema"] is None
         assert result["tool_uses"] == []
 
-        # Check post() stores results (now always dict format)
+        # Check post() stores results (now string format without schema)
         claude_node.post(shared, prep_res, result)
         assert "result" in shared
-        assert isinstance(shared["result"], dict)
-        assert "text" in shared["result"]
-        assert "def hello_world()" in shared["result"]["text"]
-        assert "Hello, World!" in shared["result"]["text"]
+        assert isinstance(shared["result"], str)
+        assert "def hello_world()" in shared["result"]
+        assert "Hello, World!" in shared["result"]
 
 
 # Test Criteria 9: Valid task with schema → "success" and schema keys in shared
@@ -532,12 +531,11 @@ def test_invalid_json_response_fallback(claude_node):
 
         assert isinstance(result, dict)
 
-        # Check post() handles invalid JSON (now stores as dict with "text" key)
+        # Check post() handles invalid JSON (now stores as string)
         claude_node.post(shared, prep_res, result)
-        assert isinstance(shared["result"], dict)  # Always dict format now
-        assert "text" in shared["result"]
-        assert shared["result"]["text"] == "This is not JSON at all, just plain text response."
-        assert shared["_schema_error"] == "Failed to parse JSON from response. Raw text stored in result.text"
+        assert isinstance(shared["result"], str)  # Falls back to string when JSON fails
+        assert shared["result"] == "This is not JSON at all, just plain text response."
+        assert shared["_schema_error"] == "Failed to parse JSON from response. Raw text stored in result"
 
 
 # Test Criteria 21: Partial JSON response → Missing keys stored as None
@@ -593,10 +591,10 @@ def test_no_response_content(claude_node):
         assert isinstance(result, dict)
         assert result["result_text"] == ""
 
-        # Check post() handles empty response (now stores as dict)
+        # Check post() handles empty response (now stores as string)
         claude_node.post(shared, prep_res, result)
-        assert isinstance(shared["result"], dict)
-        assert shared["result"] == {"text": ""}
+        assert isinstance(shared["result"], str)
+        assert shared["result"] == ""
 
 
 # Test Criteria 23: Schema merged with user prompt → Both instructions present
@@ -764,8 +762,8 @@ def test_post_method(claude_node):
 
     # Post should always return "default" regardless of execution result
     assert claude_node.post(shared, prep_res, exec_res) == "default"
-    assert isinstance(shared["result"], dict)
-    assert shared["result"] == {"text": "test completed"}
+    assert isinstance(shared["result"], str)
+    assert shared["result"] == "test completed"
 
 
 def test_retry_configuration(claude_node):

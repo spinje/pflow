@@ -23,7 +23,7 @@ pflow run examples/nodes/claude-code/claude-code-basic.json
 
 **Features demonstrated:**
 - Basic task execution
-- Accessing generated text via `${node.result.text}`
+- Accessing generated text via `${node.result}`
 - Cost tracking via `${node._claude_metadata.total_cost_usd}`
 - Duration and token usage tracking
 
@@ -209,7 +209,7 @@ Check for `_schema_error` when using schemas:
 ```bash
 # In a conditional node (future feature)
 if ${node._schema_error}:
-  echo "Failed to parse JSON, raw text available in ${node.result.text}"
+  echo "Failed to parse JSON, raw text available in ${node.result}"
 ```
 
 ## Error Handling

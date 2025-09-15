@@ -78,13 +78,28 @@ class ClaudeCodeNode(Node):
     Features a dynamic schema-driven output system where users provide an output schema that
     gets converted to system prompt instructions, enabling structured outputs.
 
+    Output Schema Format:
+        Each field in the schema is a dict with "type" and "description" keys:
+        - "type": One of "str", "int", "bool", "list", "dict"
+        - "description": Human-readable description of the field
+
+        Example: {"risk_level": {"type": "str", "description": "high/medium/low"},
+                  "score": {"type": "int", "description": "Security score 1-10"}}
+
     Interface:
     - Reads: shared["task"]: str  # Development task description (required)
     - Reads: shared["context"]: Union[str, dict]  # Additional context (optional)
-    - Reads: shared["output_schema"]: dict  # JSON schema for structured outputs (optional)
-    - Writes: shared["result"]: any  # Response - string or dict with schema keys
+    - Reads: shared["output_schema"]: dict  # Schema for structured outputs: {"field": {"type": "str", "description": "..."}}
+    - Writes: shared["result"]: any  # Response - string without schema, dict with schema
     - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
-    - Writes: shared["_claude_metadata"]: dict  # Execution metadata (cost, duration, usage)
+    - Writes: shared["_claude_metadata"]: dict  # Execution metadata
+        - duration_ms: int  # Execution time in milliseconds
+        - total_cost_usd: float  # Total cost in USD
+        - usage: dict  # Token usage information
+            - input_tokens: int  # Number of input tokens
+            - output_tokens: int  # Number of output tokens
+            - cache_creation_input_tokens: int  # Cache creation tokens (if applicable)
+            - cache_read_input_tokens: int  # Cache read tokens (if applicable)
     - Params: working_directory: str  # Project root directory (default: os.getcwd())
     - Params: model: str  # Claude model identifier (default: claude-sonnet-4-20250514)
     - Params: allowed_tools: list  # Permitted tools (default: ["Read", "Write", "Edit", "Bash"])
@@ -107,30 +122,32 @@ class ClaudeCodeNode(Node):
         The SDK automatically runs in headless mode using --output-format json
         and bypasses all permission prompts since workflows run autonomously.
 
-    Note: Result is always a dict for consistent access patterns:
-    - Without schema: shared["result"] = {"text": response_text}
-    - With schema (success): shared["result"] = {"key1": value1, "key2": value2, ...}
-    - With schema (parse failure): shared["result"] = {"text": raw_text}, shared["_schema_error"] = error
+    Note: Result type depends on schema usage:
+    - Without schema: String response in ${node_id.result}
+    - With schema (success): Dict with fields accessible via ${node_id.result.field_name}
+    - With schema (parse failure): Falls back to string in ${node_id.result} with error in _schema_error
 
     Example:
         # Basic task execution
         shared = {"task": "Write a fibonacci function"}
         node = ClaudeCodeNode()
-        node.run(shared)  # Result in shared["result"]["text"]
+        node.run(shared)  # Result in shared["result"] as string
 
         # With schema-driven output
         shared = {
             "task": "Review this code for security issues",
             "output_schema": {
                 "risk_level": {"type": "str", "description": "high/medium/low"},
-                "issues": {"type": "list", "description": "List of security issues"}
+                "issues": {"type": "list", "description": "List of security issues"},
+                "score": {"type": "int", "description": "Security score 1-10"},
+                "needs_fix": {"type": "bool", "description": "True if critical issues found"}
             }
         }
         node = ClaudeCodeNode()
         node.run(shared)
-        # Success: shared["result"] = {"risk_level": "low", "issues": [...]}
-        # Access as: shared["result"]["risk_level"], shared["result"]["issues"]
-        # Parse failure: shared["result"] = {"text": raw_text}, shared["_schema_error"] = error
+        # Success: shared["result"] = {"risk_level": "low", "issues": [...], "score": 8, "needs_fix": False}
+        # Access as: shared["result"]["risk_level"], shared["result"]["issues"], etc.
+        # Parse failure: shared["result"] = raw_text_string, shared["_schema_error"] = error
     """
 
     def __init__(self) -> None:
@@ -705,14 +722,14 @@ class ClaudeCodeNode(Node):
         return prompt
 
     def _store_results(self, shared: dict[str, Any], exec_res: dict[str, Any]) -> None:
-        """Store results in shared store as a dict.
+        """Store results in shared store.
 
         When schema is provided:
         - Success: shared["result"] = dict with parsed JSON values
-        - Failure: shared["result"] = {"text": raw_text}, shared["_schema_error"] = error
+        - Failure: shared["result"] = raw_text, shared["_schema_error"] = error
 
         When no schema:
-        - shared["result"] = {"text": response_text}
+        - shared["result"] = response_text
 
         Also stores standardized LLM usage data for tracing and tool usage details.
 
@@ -739,18 +756,17 @@ class ClaudeCodeNode(Node):
             # Store in standardized llm_usage format for tracing
             usage = metadata.get("usage", {})
 
-            # IMPORTANT: Aggregate ALL input token types for correct cost calculation
+            # Store token counts separately - do NOT aggregate cache tokens into input_tokens
             base_input = usage.get("input_tokens", 0)
             cache_creation = usage.get("cache_creation_input_tokens", 0)
             cache_read = usage.get("cache_read_input_tokens", 0)
-            total_input = base_input + cache_creation + cache_read
             total_output = usage.get("output_tokens", 0)
 
             shared["llm_usage"] = {
                 "model": self.params.get("model", "claude-sonnet-4-20250514"),
-                "input_tokens": total_input,  # Total of ALL input token types
+                "input_tokens": base_input,  # Only non-cached input tokens
                 "output_tokens": total_output,
-                "total_tokens": total_input + total_output,
+                "total_tokens": base_input + total_output,
                 "cache_creation_input_tokens": cache_creation,  # Keep breakdown for visibility
                 "cache_read_input_tokens": cache_read,  # Keep breakdown for visibility
                 # Additional Claude Code specific metrics
@@ -780,14 +796,14 @@ class ClaudeCodeNode(Node):
             ]
             logger.debug(f"Stored {len(tool_uses)} tool uses for tracing")
 
-        # If no result text, store empty dict
+        # If no result text, store empty string
         if not result_text:
-            shared["result"] = {"text": ""}
+            shared["result"] = ""
             return
 
-        # If no schema, store text in a dict
+        # If no schema, store text directly
         if not output_schema:
-            shared["result"] = {"text": result_text}
+            shared["result"] = result_text
             return
 
         # Try to extract and parse JSON
@@ -808,10 +824,10 @@ class ClaudeCodeNode(Node):
             shared["result"] = result_dict
             logger.info(f"Successfully parsed JSON with {len(output_schema)} schema values")
         else:
-            # Failed to parse JSON - fallback to dict with text
-            shared["result"] = {"text": result_text}
-            shared["_schema_error"] = "Failed to parse JSON from response. Raw text stored in result.text"
-            logger.warning("Could not extract JSON from response, stored raw text in result.text")
+            # Failed to parse JSON - fallback to raw text
+            shared["result"] = result_text
+            shared["_schema_error"] = "Failed to parse JSON from response. Raw text stored in result"
+            logger.warning("Could not extract JSON from response, stored raw text in result")
 
     def _extract_json(self, text: str) -> Optional[dict]:
         """Extract JSON from Claude's response with multiple strategies.

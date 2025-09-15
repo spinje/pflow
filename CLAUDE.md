@@ -383,12 +383,12 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 55: Fix Output Control for Interactive vs Non-Interactive Execution
 - ✅ Task 54: Implement HTTP
 - ✅ Task 57: Update planner integration-tests to use better test cases with real world north star examples
+- ✅ Task 58: Update workflow generator prompt-tests to use better real world test cases
+- ✅ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
 
 Next up:
 - ⏳ Task 52: Improve planner with "plan" and "requirements" steps
-- ⏳ Task 58: Update workflow generator prompt-tests to use better real world test cases
 - ⏳ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
-- ⏳ Task 42: Implement Claude Code Agentic Node
 - ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
 - ⏳ Task 47: Support HTTP Transport for MCP Servers
 
@@ -401,6 +401,8 @@ Next version (post-MVP/post-Launch):
 - ⏳ Task 44: Build caching system
 - ⏳ Task 45: Evaluate if wrapping or integratingn8n is worth the effort
 - ⏳ Task 61: Implement Fast Mode for Planner
+- ⏳ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
+- ⏳ Task 64: MCP Orchestration with long running servers
 
 *Update this list as you complete tasks.*
 
