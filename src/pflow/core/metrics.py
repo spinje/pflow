@@ -113,8 +113,8 @@ class MetricsCollector:
                 # input_tokens already excludes cache tokens (per Anthropic API spec)
                 regular_input_cost = (regular_input_tokens / 1_000_000) * pricing["input"]
 
-                # Cache creation tokens (25% premium)
-                cache_creation_cost = (cache_creation_tokens / 1_000_000) * pricing["input"] * 1.25
+                # Cache creation tokens (100% premium / 2x cost)
+                cache_creation_cost = (cache_creation_tokens / 1_000_000) * pricing["input"] * 2.0
 
                 # Cache read tokens (90% discount)
                 cache_read_cost = (cache_read_tokens / 1_000_000) * pricing["input"] * 0.10

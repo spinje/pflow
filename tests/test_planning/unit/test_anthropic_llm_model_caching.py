@@ -76,7 +76,9 @@ class TestAnthropicLLMModelPromptRouting:
                 model.prompt("test prompt", temperature=0.5)
 
                 # Should use fallback path
-                mock_fallback.assert_called_once_with(prompt="test prompt", schema=None, temperature=0.5)
+                mock_fallback.assert_called_once_with(
+                    prompt="test prompt", schema=None, temperature=0.5, thinking_budget=0
+                )
                 mock_cached.assert_not_called()
 
     def test_routes_to_cached_when_cache_blocks_provided(self):
@@ -97,7 +99,7 @@ class TestAnthropicLLMModelPromptRouting:
 
                 # Should use cached path
                 mock_cached.assert_called_once_with(
-                    prompt="test prompt", schema=None, temperature=0.5, cache_blocks=cache_blocks
+                    prompt="test prompt", schema=None, temperature=0.5, cache_blocks=cache_blocks, thinking_budget=0
                 )
                 mock_fallback.assert_not_called()
 
@@ -112,7 +114,9 @@ class TestAnthropicLLMModelPromptRouting:
                 # Call with schema but no cache
                 model.prompt("test prompt", schema=MockSchema, temperature=0.7)
 
-                mock_fallback.assert_called_once_with(prompt="test prompt", schema=MockSchema, temperature=0.7)
+                mock_fallback.assert_called_once_with(
+                    prompt="test prompt", schema=MockSchema, temperature=0.7, thinking_budget=0
+                )
 
 
 class TestPromptWithCacheBlocks:
@@ -141,6 +145,7 @@ class TestPromptWithCacheBlocks:
                 temperature=0.5,
                 cache_blocks=cache_blocks,
                 force_text_output=False,
+                thinking_budget=0,
             )
 
             # Verify response
@@ -175,6 +180,7 @@ class TestPromptWithCacheBlocks:
                 temperature=0.5,
                 cache_blocks=cache_blocks,
                 force_text_output=True,  # But forces text output
+                thinking_budget=0,
             )
 
             assert isinstance(result, AnthropicResponse)
@@ -232,6 +238,7 @@ class TestPromptWithoutCache:
                 temperature=0.5,
                 cache_blocks=None,  # No cache blocks in fallback
                 force_text_output=False,
+                thinking_budget=0,
             )
 
             assert isinstance(result, AnthropicResponse)
@@ -262,6 +269,7 @@ class TestPromptWithoutCache:
                 temperature=0.5,
                 cache_blocks=None,  # No cache blocks
                 force_text_output=True,
+                thinking_budget=0,
             )
 
 

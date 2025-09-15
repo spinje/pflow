@@ -32,6 +32,72 @@ class PlannerContextBuilder:
     # Maximum retry history to keep in blocks
     MAX_RETRY_HISTORY = 3
 
+    # Cache configuration
+    DEFAULT_CACHE_TTL = "1h"
+    DEFAULT_CACHE_TYPE = "ephemeral"
+    MAX_CACHE_BREAKPOINTS = 4  # Anthropic allows max 4 cache_control markers
+
+    @classmethod
+    def _create_cache_block(cls, text: str, cache_type: str | None = None, ttl: str | None = None) -> dict[str, Any]:
+        """Create a cache block with consistent structure.
+
+        Args:
+            text: The text content for the block
+            cache_type: Cache type (default: DEFAULT_CACHE_TYPE)
+            ttl: Time to live (default: DEFAULT_CACHE_TTL)
+
+        Returns:
+            Dictionary with text and cache_control configuration
+        """
+        return {
+            "text": text,
+            "cache_control": {
+                "type": cache_type or cls.DEFAULT_CACHE_TYPE,
+                "ttl": ttl or cls.DEFAULT_CACHE_TTL,
+            },
+        }
+
+    @classmethod
+    def _append_or_merge_block(cls, blocks: list[dict[str, Any]], new_text: str) -> list[dict[str, Any]]:
+        """Append new text as a block or merge with last block when at limit.
+
+        This method handles the Anthropic cache_control limit (max 4 breakpoints)
+        by merging blocks when necessary to stay within the limit.
+
+        Args:
+            blocks: Existing cache blocks
+            new_text: Text to append
+
+        Returns:
+            Updated list of blocks (new list, does not modify input)
+        """
+        if not new_text:
+            return blocks
+
+        # Check if we're at the cache breakpoint limit - MUST merge
+        if len(blocks) >= cls.MAX_CACHE_BREAKPOINTS and blocks:
+            # Merge with the last block
+            last_block = blocks[-1].copy()
+            last_block["text"] = last_block["text"] + "\n\n" + new_text
+            return blocks[:-1] + [last_block]
+
+        # Create new block (original behavior - always create new block unless at limit)
+        new_block = cls._create_cache_block(new_text)
+        return [*blocks, new_block]
+
+    @classmethod
+    def configure_cache(cls, ttl: str | None = None, cache_type: str | None = None) -> None:
+        """Configure default cache settings.
+
+        Args:
+            ttl: Time to live ("5m", "1h")
+            cache_type: Cache type (e.g., "ephemeral")
+        """
+        if ttl:
+            cls.DEFAULT_CACHE_TTL = ttl
+        if cache_type:
+            cls.DEFAULT_CACHE_TYPE = cache_type
+
     @classmethod
     def _load_workflow_overview(cls) -> str:
         """Load the workflow system overview from markdown file.
@@ -87,7 +153,7 @@ class PlannerContextBuilder:
         # This now includes the introduction text, making it 100% static
         workflow_overview = cls._load_workflow_overview()
         if workflow_overview:
-            blocks.append({"text": workflow_overview, "cache_control": {"type": "ephemeral"}})
+            blocks.append(cls._create_cache_block(workflow_overview))
 
         # Block 2: ALL Dynamic Context (workflow-specific, wrapped in XML tags)
         dynamic_sections = []
@@ -128,7 +194,7 @@ class PlannerContextBuilder:
 
         dynamic_text = "\n".join(dynamic_sections)
         if dynamic_text:
-            blocks.append({"text": dynamic_text, "cache_control": {"type": "ephemeral"}})
+            blocks.append(cls._create_cache_block(dynamic_text))
 
         return blocks
 
@@ -156,16 +222,8 @@ class PlannerContextBuilder:
         """
         plan_text = f"## Execution Plan\n\n{plan_output}"
 
-        # Check if we're approaching the 4-breakpoint limit
-        # Anthropic allows max 4 cache_control markers
-        if len(blocks) >= 4:
-            # We're at the limit - combine with the last block
-            last_block = blocks[-1].copy()
-            last_block["text"] = last_block["text"] + "\n\n" + plan_text
-            return blocks[:-1] + [last_block]
-
-        # Return new list with block appended
-        return [*blocks, {"text": plan_text, "cache_control": {"type": "ephemeral"}}]
+        # Use the helper method which handles merging logic
+        return cls._append_or_merge_block(blocks, plan_text)
 
     @classmethod
     def append_workflow_block(
@@ -189,17 +247,8 @@ class PlannerContextBuilder:
         """
         workflow_text = f"## Generated Workflow (Attempt {attempt_number})\n\n{json.dumps(workflow, indent=2)}"
 
-        # Check if we're approaching the 4-breakpoint limit
-        # Anthropic allows max 4 cache_control markers
-        if len(blocks) >= 4:
-            # We're at the limit - combine with the last block
-            # This typically happens on retry 2+
-            last_block = blocks[-1].copy()
-            last_block["text"] = last_block["text"] + "\n\n" + workflow_text
-            return blocks[:-1] + [last_block]
-
-        # Return new list with block appended
-        return [*blocks, {"text": workflow_text, "cache_control": {"type": "ephemeral"}}]
+        # Use the helper method which handles merging logic
+        return cls._append_or_merge_block(blocks, workflow_text)
 
     @classmethod
     def append_errors_block(
@@ -229,15 +278,8 @@ class PlannerContextBuilder:
         errors_to_show = validation_errors[:3]
         errors_text = "## Validation Errors\n\n" + "\n".join(f"{i + 1}. {err}" for i, err in enumerate(errors_to_show))
 
-        # Check if we're at or approaching the 4-breakpoint limit
-        if len(blocks) >= 4:
-            # Combine with the last block
-            last_block = blocks[-1].copy()
-            last_block["text"] = last_block["text"] + "\n\n" + errors_text
-            return blocks[:-1] + [last_block]
-
-        # Return new list with block appended
-        return [*blocks, {"text": errors_text, "cache_control": {"type": "ephemeral"}}]
+        # Use the helper method which handles merging logic
+        return cls._append_or_merge_block(blocks, errors_text)
 
     # Introduction section removed - now part of workflow_system_overview.md
     # User request section removed - handled directly in build_base_blocks with XML tags

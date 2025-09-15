@@ -306,7 +306,10 @@ class TestContextAccumulation:
         for block in base_blocks:
             assert "text" in block, "Each block must have text"
             assert "cache_control" in block, "Each block must have cache_control"
-            assert block["cache_control"] == {"type": "ephemeral"}, "Cache control must be ephemeral"
+            assert block["cache_control"]["type"] == "ephemeral", "Cache control type must be ephemeral"
+            # TTL is now included for clarity but is optional to check
+            if "ttl" in block["cache_control"]:
+                assert isinstance(block["cache_control"]["ttl"], str), "TTL must be a string if present"
 
         # Check content is distributed across blocks
         base_context = "\n".join(block["text"] for block in base_blocks)

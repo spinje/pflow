@@ -91,17 +91,21 @@ def _get_node_emoji(node_name: str) -> str:
     return emoji_map.get(node_name, "📋")
 
 
-def _calculate_token_counts(call: dict) -> tuple[int, int, int, int, int]:
+def _calculate_token_counts(call: dict) -> tuple[int, int, int, int, int, int, int]:
     """Calculate or extract token counts from call.
 
     Returns:
-        tuple: (prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens)
+        tuple: (prompt_tokens, response_tokens, cache_creation, cache_read, thinking_tokens, thinking_budget, total_tokens)
     """
     tokens = call.get("tokens", {})
 
     # Get cache tokens if available
     cache_creation = tokens.get("cache_creation", 0)
     cache_read = tokens.get("cache_read", 0)
+
+    # Get thinking tokens if available
+    thinking_tokens = tokens.get("thinking", 0)
+    thinking_budget = tokens.get("thinking_budget", 0)
 
     if tokens:
         prompt_tokens = tokens.get("input", 0)
@@ -114,14 +118,20 @@ def _calculate_token_counts(call: dict) -> tuple[int, int, int, int, int]:
         response_text, _ = format_response(response) if response else ("", False)
         response_tokens = estimate_tokens(response_text)
 
-    # Total should include ALL tokens processed by the API
-    total_tokens = tokens.get("total", prompt_tokens + cache_creation + cache_read + response_tokens)
+    # Total should include ALL tokens processed by the API including thinking
+    total_tokens = tokens.get("total", prompt_tokens + cache_creation + cache_read + response_tokens + thinking_tokens)
 
-    return prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens
+    return prompt_tokens, response_tokens, cache_creation, cache_read, thinking_tokens, thinking_budget, total_tokens
 
 
 def _format_token_usage_table(
-    prompt_tokens: int, response_tokens: int, cache_creation: int, cache_read: int, total_tokens: int
+    prompt_tokens: int,
+    response_tokens: int,
+    cache_creation: int,
+    cache_read: int,
+    thinking_tokens: int,
+    thinking_budget: int,
+    total_tokens: int,
 ) -> list[str]:
     """Format token usage as a markdown table."""
     md = []
@@ -131,9 +141,12 @@ def _format_token_usage_table(
 
     # Display token breakdown
     if cache_creation > 0:
-        md.append(f"| **Cache Creation** | {cache_creation:,} | +25% | New cache blocks created |")
+        md.append(f"| **Cache Creation** | {cache_creation:,} | +100% | New cache blocks created (2x cost) |")
     if cache_read > 0:
         md.append(f"| **Cache Read** | {cache_read:,} | -90% | Reused from cache |")
+    if thinking_budget > 0 or thinking_tokens > 0:
+        efficiency = f" ({thinking_tokens:,}/{thinking_budget:,} used)" if thinking_budget > 0 else ""
+        md.append(f"| **Thinking** | {thinking_tokens:,} | 100% | Reasoning tokens{efficiency} |")
     md.append(f"| **Input (non-cached)** | {prompt_tokens:,} | 100% | Regular input tokens |")
     md.append(f"| **Output** | {response_tokens:,} | 100% | Generated tokens |")
     md.append(f"| **Total** | {total_tokens:,} | - | All tokens processed |")
@@ -145,11 +158,21 @@ def _format_token_usage_table(
         cache_efficiency = (cache_read / total_input * 100) if total_input > 0 else 0
         md.append(f"**Cache Efficiency:** {cache_efficiency:.1f}% of input was reused from cache\n")
 
+    # Thinking efficiency if applicable
+    if thinking_budget > 0 and thinking_tokens > 0:
+        thinking_efficiency = thinking_tokens / thinking_budget * 100
+        md.append(f"**Thinking Utilization:** {thinking_efficiency:.1f}% of allocated thinking budget used\n")
+
     return md
 
 
 def _calculate_cost_with_cache(
-    prompt_tokens: int, response_tokens: int, cache_creation: int, cache_read: int, total_tokens: int
+    prompt_tokens: int,
+    response_tokens: int,
+    cache_creation: int,
+    cache_read: int,
+    thinking_tokens: int,
+    total_tokens: int,
 ) -> list[str]:
     """Calculate and format cost information with cache-aware pricing."""
     md = []
@@ -160,15 +183,17 @@ def _calculate_cost_with_cache(
     # Anthropic Claude 3.5 Sonnet pricing (per 1K tokens)
     input_cost_per_1k = 0.003  # $3 per 1M tokens
     output_cost_per_1k = 0.015  # $15 per 1M tokens
-    cache_write_cost_per_1k = input_cost_per_1k * 1.25  # 25% premium for cache creation
+    cache_write_cost_per_1k = input_cost_per_1k * 2.0  # 100% premium for cache creation (2x cost)
     cache_read_cost_per_1k = input_cost_per_1k * 0.1  # 90% discount for cache reads
+    thinking_cost_per_1k = output_cost_per_1k  # Thinking tokens billed as output tokens
 
     # Calculate costs
     prompt_cost = (prompt_tokens / 1000) * input_cost_per_1k
     cache_creation_cost = (cache_creation / 1000) * cache_write_cost_per_1k if cache_creation > 0 else 0
     cache_read_cost = (cache_read / 1000) * cache_read_cost_per_1k if cache_read > 0 else 0
     response_cost = (response_tokens / 1000) * output_cost_per_1k
-    total_cost = prompt_cost + cache_creation_cost + cache_read_cost + response_cost
+    thinking_cost = (thinking_tokens / 1000) * thinking_cost_per_1k if thinking_tokens > 0 else 0
+    total_cost = prompt_cost + cache_creation_cost + cache_read_cost + response_cost + thinking_cost
 
     md.append(f"\n**💰 Estimated Cost:** ${total_cost:.6f}\n")
 
@@ -187,7 +212,7 @@ def _calculate_cost_with_cache(
     if cache_creation > 0 or cache_read > 0:
         md.append("*Cost breakdown:*\n")
         if cache_creation > 0:
-            md.append(f"- Cache Creation: ${cache_creation_cost:.6f} (+25% premium)\n")
+            md.append(f"- Cache Creation: ${cache_creation_cost:.6f} (+100% premium / 2x cost)\n")
         if cache_read > 0:
             md.append(f"- Cache Read: ${cache_read_cost:.6f} (-90% discount)\n")
         md.append(f"- Regular Input: ${prompt_cost:.6f}\n")
@@ -290,13 +315,23 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
     md.append(f"**Trace ID:** `{trace_id}`  \n")
 
     # Calculate token counts
-    prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens = _calculate_token_counts(call)
+    prompt_tokens, response_tokens, cache_creation, cache_read, thinking_tokens, thinking_budget, total_tokens = (
+        _calculate_token_counts(call)
+    )
 
     # Add token usage table
-    md.extend(_format_token_usage_table(prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens))
+    md.extend(
+        _format_token_usage_table(
+            prompt_tokens, response_tokens, cache_creation, cache_read, thinking_tokens, thinking_budget, total_tokens
+        )
+    )
 
     # Add cost calculations
-    md.extend(_calculate_cost_with_cache(prompt_tokens, response_tokens, cache_creation, cache_read, total_tokens))
+    md.extend(
+        _calculate_cost_with_cache(
+            prompt_tokens, response_tokens, cache_creation, cache_read, thinking_tokens, total_tokens
+        )
+    )
 
     # Add cache blocks section
     md.extend(_format_cache_blocks(call))
@@ -312,7 +347,7 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
     md.append("- [ ] Token efficiency")
     md.append("- [ ] Potential improvements\n")
 
-    # Metadata for index (include cache information)
+    # Metadata for index (include cache and thinking information)
     metadata = {
         "node": node_name,
         "duration": duration,
@@ -321,6 +356,8 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
         "total_tokens": total_tokens,
         "cache_creation": cache_creation,
         "cache_read": cache_read,
+        "thinking_tokens": thinking_tokens,
+        "thinking_budget": thinking_budget,
     }
 
     return "\n".join(md), metadata
@@ -366,84 +403,133 @@ def _get_user_input(trace: dict) -> str:
     return user_input
 
 
+def _calculate_token_totals(node_files: list) -> dict:
+    """Calculate all token totals from node files."""
+    return {
+        "prompt": sum(f["metadata"]["prompt_tokens"] for f in node_files),
+        "response": sum(f["metadata"]["response_tokens"] for f in node_files),
+        "cache_creation": sum(f["metadata"].get("cache_creation", 0) for f in node_files),
+        "cache_read": sum(f["metadata"].get("cache_read", 0) for f in node_files),
+        "thinking": sum(f["metadata"].get("thinking_tokens", 0) for f in node_files),
+        "thinking_budget": sum(f["metadata"].get("thinking_budget", 0) for f in node_files),
+        "total": sum(f["metadata"]["total_tokens"] for f in node_files),
+        "duration": sum(f["metadata"]["duration"] for f in node_files),
+    }
+
+
+def _add_cache_performance_metrics(md: list, node_files: list, totals: dict) -> None:
+    """Add cache performance metrics to the summary."""
+    if totals["cache_creation"] == 0 and totals["cache_read"] == 0:
+        return
+
+    md.append("\n### 🔒 Cache Performance")
+
+    # Nodes using cache
+    nodes_with_cache_creation = sum(1 for f in node_files if f["metadata"].get("cache_creation", 0) > 0)
+    nodes_with_cache_read = sum(1 for f in node_files if f["metadata"].get("cache_read", 0) > 0)
+
+    md.append(f"- **Nodes Creating Cache:** {nodes_with_cache_creation}/{len(node_files)}")
+    md.append(f"- **Nodes Reading Cache:** {nodes_with_cache_read}/{len(node_files)}")
+
+    # Overall cache efficiency
+    total_input = totals["prompt"] + totals["cache_creation"] + totals["cache_read"]
+    if total_input > 0:
+        cache_efficiency = totals["cache_read"] / total_input * 100
+        md.append(f"- **Overall Cache Efficiency:** {cache_efficiency:.1f}% of input reused from cache")
+
+
+def _add_thinking_performance_metrics(md: list, node_files: list, totals: dict) -> None:
+    """Add thinking performance metrics to the summary."""
+    if totals["thinking_budget"] == 0:
+        return
+
+    md.append("\n### 🧠 Thinking Performance")
+
+    # Nodes using thinking
+    nodes_with_thinking = sum(1 for f in node_files if f["metadata"].get("thinking_tokens", 0) > 0)
+
+    md.append(f"- **Nodes Using Thinking:** {nodes_with_thinking}/{len(node_files)}")
+    md.append(f"- **Total Budget Allocated:** {totals['thinking_budget']:,} tokens")
+    md.append(f"- **Total Thinking Used:** {totals['thinking']:,} tokens")
+
+    if totals["thinking"] > 0:
+        utilization = totals["thinking"] / totals["thinking_budget"] * 100
+        md.append(f"- **Budget Utilization:** {utilization:.1f}%")
+
+
+def _add_cost_analysis(md: list, totals: dict) -> None:
+    """Add cost analysis to the summary."""
+    if totals["total"] == 0:
+        return
+
+    # Anthropic Claude 3.5 Sonnet pricing (per 1K tokens)
+    input_cost_per_1k = 0.003  # $3 per 1M tokens
+    output_cost_per_1k = 0.015  # $15 per 1M tokens
+    cache_write_cost_per_1k = input_cost_per_1k * 2.0  # 100% premium (2x cost)
+    cache_read_cost_per_1k = input_cost_per_1k * 0.1  # 90% discount
+
+    # Calculate actual costs
+    prompt_cost = (totals["prompt"] / 1000) * input_cost_per_1k
+    output_cost = (totals["response"] / 1000) * output_cost_per_1k
+    cache_creation_cost = (totals["cache_creation"] / 1000) * cache_write_cost_per_1k
+    cache_read_cost = (totals["cache_read"] / 1000) * cache_read_cost_per_1k
+    thinking_cost = (totals["thinking"] / 1000) * output_cost_per_1k  # Thinking billed as output
+    total_cost = prompt_cost + output_cost + cache_creation_cost + cache_read_cost + thinking_cost
+
+    md.append("\n### 💰 Cost Analysis")
+    md.append(f"- **Total Cost:** ${total_cost:.4f}")
+
+    # Calculate savings if cache reads exist
+    if totals["cache_read"] > 0:
+        # What it would have cost without caching
+        full_price_for_cached = (totals["cache_read"] / 1000) * input_cost_per_1k
+        savings = full_price_for_cached - cache_read_cost
+        without_cache_cost = total_cost + savings
+        savings_percentage = (savings / without_cache_cost * 100) if without_cache_cost > 0 else 0
+
+        md.append(f"- **Cost Without Cache:** ${without_cache_cost:.4f}")
+        md.append(f"- **💚 Cache Savings:** ${savings:.4f} ({savings_percentage:.1f}% reduction)")
+
+    # Cost breakdown
+    md.append("\n*Cost Breakdown:*")
+    if cache_creation_cost > 0:
+        md.append(f"  - Cache Creation: ${cache_creation_cost:.4f} (+100% premium / 2x cost)")
+    if cache_read_cost > 0:
+        md.append(f"  - Cache Read: ${cache_read_cost:.4f} (-90% discount)")
+    if thinking_cost > 0:
+        utilization = (totals["thinking"] / totals["thinking_budget"] * 100) if totals["thinking_budget"] > 0 else 0
+        md.append(f"  - Thinking: ${thinking_cost:.4f} ({utilization:.1f}% of budget used)")
+    md.append(f"  - Regular Input: ${prompt_cost:.4f}")
+    md.append(f"  - Output: ${output_cost:.4f}\n")
+
+
 def _add_summary_statistics(md: list, node_files: list) -> tuple[int, int, float]:
     """Add summary statistics to the markdown.
 
     Returns:
         tuple: (total_prompt_tokens, total_response_tokens, total_duration)
     """
-    total_prompt_tokens = sum(f["metadata"]["prompt_tokens"] for f in node_files)
-    total_response_tokens = sum(f["metadata"]["response_tokens"] for f in node_files)
-    total_cache_creation = sum(f["metadata"].get("cache_creation", 0) for f in node_files)
-    total_cache_read = sum(f["metadata"].get("cache_read", 0) for f in node_files)
-    total_tokens = sum(f["metadata"]["total_tokens"] for f in node_files)
-    total_duration = sum(f["metadata"]["duration"] for f in node_files)
+    # Calculate all totals
+    totals = _calculate_token_totals(node_files)
 
+    # Add basic statistics
     md.append("## 📊 Summary Statistics\n")
     md.append(f"- **Total LLM Calls:** {len(node_files)}")
-    md.append(f"- **Total Duration:** {total_duration:.2f}s")
-    md.append(f"- **Total Tokens:** {total_tokens:,}")
-    md.append(f"  - Prompt Tokens: {total_prompt_tokens:,}")
-    md.append(f"  - Response Tokens: {total_response_tokens:,}")
-    md.append(f"  - Cache Creation Tokens: {total_cache_creation:,}")
-    md.append(f"  - Cache Read Tokens: {total_cache_read:,}")
+    md.append(f"- **Total Duration:** {totals['duration']:.2f}s")
+    md.append(f"- **Total Tokens:** {totals['total']:,}")
+    md.append(f"  - Prompt Tokens: {totals['prompt']:,}")
+    md.append(f"  - Response Tokens: {totals['response']:,}")
+    md.append(f"  - Cache Creation Tokens: {totals['cache_creation']:,}")
+    md.append(f"  - Cache Read Tokens: {totals['cache_read']:,}")
+    if totals["thinking"] > 0:
+        md.append(f"  - Thinking Tokens: {totals['thinking']:,} / {totals['thinking_budget']:,} budget")
 
-    # Cache efficiency metrics
-    if total_cache_creation > 0 or total_cache_read > 0:
-        md.append("\n### 🔒 Cache Performance")
+    # Add performance metrics sections
+    _add_cache_performance_metrics(md, node_files, totals)
+    _add_thinking_performance_metrics(md, node_files, totals)
+    _add_cost_analysis(md, totals)
 
-        # Nodes using cache
-        nodes_with_cache_creation = sum(1 for f in node_files if f["metadata"].get("cache_creation", 0) > 0)
-        nodes_with_cache_read = sum(1 for f in node_files if f["metadata"].get("cache_read", 0) > 0)
-
-        md.append(f"- **Nodes Creating Cache:** {nodes_with_cache_creation}/{len(node_files)}")
-        md.append(f"- **Nodes Reading Cache:** {nodes_with_cache_read}/{len(node_files)}")
-
-        # Overall cache efficiency
-        total_input = total_prompt_tokens + total_cache_creation + total_cache_read
-        if total_input > 0:
-            cache_efficiency = total_cache_read / total_input * 100
-            md.append(f"- **Overall Cache Efficiency:** {cache_efficiency:.1f}% of input reused from cache")
-
-    # Cost estimation with cache-aware pricing
-    if total_tokens > 0:
-        # Anthropic Claude 3.5 Sonnet pricing (per 1K tokens)
-        input_cost_per_1k = 0.003  # $3 per 1M tokens
-        output_cost_per_1k = 0.015  # $15 per 1M tokens
-        cache_write_cost_per_1k = input_cost_per_1k * 1.25  # 25% premium
-        cache_read_cost_per_1k = input_cost_per_1k * 0.1  # 90% discount
-
-        # Calculate actual costs
-        prompt_cost = (total_prompt_tokens / 1000) * input_cost_per_1k
-        output_cost = (total_response_tokens / 1000) * output_cost_per_1k
-        cache_creation_cost = (total_cache_creation / 1000) * cache_write_cost_per_1k
-        cache_read_cost = (total_cache_read / 1000) * cache_read_cost_per_1k
-        total_cost = prompt_cost + output_cost + cache_creation_cost + cache_read_cost
-
-        md.append("\n### 💰 Cost Analysis")
-        md.append(f"- **Total Cost:** ${total_cost:.4f}")
-
-        # Calculate savings if cache reads exist
-        if total_cache_read > 0:
-            # What it would have cost without caching
-            full_price_for_cached = (total_cache_read / 1000) * input_cost_per_1k
-            savings = full_price_for_cached - cache_read_cost
-            without_cache_cost = total_cost + savings
-            savings_percentage = (savings / without_cache_cost * 100) if without_cache_cost > 0 else 0
-
-            md.append(f"- **Cost Without Cache:** ${without_cache_cost:.4f}")
-            md.append(f"- **💚 Cache Savings:** ${savings:.4f} ({savings_percentage:.1f}% reduction)")
-
-        # Cost breakdown
-        md.append("\n*Cost Breakdown:*")
-        if cache_creation_cost > 0:
-            md.append(f"  - Cache Creation: ${cache_creation_cost:.4f} (+25% premium)")
-        if cache_read_cost > 0:
-            md.append(f"  - Cache Read: ${cache_read_cost:.4f} (-90% discount)")
-        md.append(f"  - Regular Input: ${prompt_cost:.4f}")
-        md.append(f"  - Output: ${output_cost:.4f}\n")
-
-    return total_prompt_tokens, total_response_tokens, total_duration
+    return totals["prompt"], totals["response"], totals["duration"]
 
 
 def _add_execution_flow_table(md: list, node_files: list) -> None:

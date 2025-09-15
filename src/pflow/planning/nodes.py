@@ -166,7 +166,7 @@ class WorkflowDiscoveryNode(Node):
             # Cache instructions if substantial
             instructions = instructions.strip()
             if instructions and len(instructions) > 1000:
-                cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral"}})
+                cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
             # Build and optionally cache the discovery context
             context_block = f"""## Context
@@ -176,7 +176,7 @@ class WorkflowDiscoveryNode(Node):
 </existing_workflows>"""
 
             if discovery_context and len(discovery_context) > 1000:
-                cache_blocks.append({"text": context_block, "cache_control": {"type": "ephemeral"}})
+                cache_blocks.append({"text": context_block, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
             # Return dynamic part only
             formatted_prompt = f"""## Inputs
@@ -432,7 +432,7 @@ class ComponentBrowsingNode(Node):
             # Cache instructions if substantial
             instructions = instructions.strip()
             if instructions and len(instructions) > 1000:
-                cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral"}})
+                cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
             # Build context with cacheable documentation
             context_parts = ["## Context"]
@@ -446,7 +446,10 @@ class ComponentBrowsingNode(Node):
 
             # Cache context if we have substantial documentation
             if len(context_parts) > 1:
-                cache_blocks.append({"text": "".join(context_parts), "cache_control": {"type": "ephemeral"}})
+                cache_blocks.append({
+                    "text": "".join(context_parts),
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                })
 
             # Return dynamic part only
             formatted_prompt = f"""## Inputs
@@ -859,9 +862,11 @@ class RequirementsAnalysisNode(Node):
     Takes templatized input from ParameterDiscoveryNode and extracts WHAT needs to be done
     without implementation details. Abstracts values but keeps services explicit.
 
+    Also calculates complexity score and allocates thinking tokens for downstream nodes.
+
     Interface:
     - Reads: templatized_input (str), user_input (str fallback)
-    - Writes: requirements_result (dict)
+    - Writes: requirements_result (dict), complexity_analysis (dict)
     - Actions: "" (success) or "clarification_needed"
     """
 
@@ -969,6 +974,120 @@ class RequirementsAnalysisNode(Node):
 
         return result
 
+    def _calculate_complexity_score(self, requirements: dict[str, Any]) -> float:
+        """Calculate workflow complexity score based on requirements.
+
+        Improved linear scoring for better predictability:
+        - Each node contributes 2.5 points
+        - Each capability contributes 4 points
+        - Operation patterns add fixed points
+        - Binary indicators have higher weights
+
+        Args:
+            requirements: Requirements analysis result
+
+        Returns:
+            Complexity score (typically 0-150, uncapped)
+        """
+        score = 0.0
+
+        # 1. Linear node contribution (2.5 points per node)
+        # More predictable than buckets, scales naturally
+        estimated_nodes = requirements.get("estimated_nodes", 0)
+        score += estimated_nodes * 2.5
+
+        # 2. Linear capability contribution (4 points per capability)
+        # No artificial cap - complex workflows with many services score appropriately
+        capabilities = requirements.get("required_capabilities", [])
+        score += len(capabilities) * 4
+
+        # 3. Operation complexity from steps (0-25 points)
+        # Keep existing scoring - it works well
+        steps = requirements.get("steps", [])
+        score += self._score_operation_complexity(steps)
+
+        # 4. Binary complexity indicators with higher weights
+        indicators = requirements.get("complexity_indicators", {})
+        if indicators.get("has_conditional"):
+            score += 10  # Conditionals add significant complexity
+        if indicators.get("has_iteration"):
+            score += 12  # Loops are even more complex
+        if indicators.get("has_external_services"):
+            # Each external service adds complexity
+            external_services = indicators.get("external_services", [])
+            score += len(external_services) * 5
+
+        # 5. Multipliers for special complexity patterns
+        # Error handling adds 20% complexity
+        if any("error" in step.lower() or "fallback" in step.lower() for step in requirements.get("steps", [])):
+            score = score * 1.2
+
+        # State management adds complexity (rare but important)
+        if any("state" in step.lower() or "memory" in step.lower() for step in requirements.get("steps", [])):
+            score = score * 1.15
+
+        return float(score)
+
+    def _score_operation_complexity(self, steps: list[str]) -> float:
+        """Score complexity based on operation patterns in steps.
+
+        Args:
+            steps: List of operational requirement steps
+
+        Returns:
+            Operation complexity score (0-25 points)
+        """
+        score = 0
+        complexity_patterns = {
+            # Pattern: (keywords, points)
+            "conditional": (["if", "when", "based on", "depending", "otherwise"], 5),
+            "iteration": (["for each", "iterate", "loop", "batch", "all items"], 5),
+            "aggregation": (["combine", "merge", "aggregate", "collect", "gather"], 4),
+            "transformation": (["transform", "convert", "parse", "extract", "process"], 3),
+            "analysis": (["analyze", "evaluate", "assess", "determine", "calculate"], 4),
+            "orchestration": (["coordinate", "orchestrate", "sequence", "pipeline"], 4),
+        }
+
+        for _, (keywords, points) in complexity_patterns.items():
+            for step in steps:
+                if any(keyword in step.lower() for keyword in keywords):
+                    score += points
+                    break  # Only count each pattern once
+
+        return min(25, score)
+
+    def _calculate_thinking_budget(self, complexity_score: float) -> int:
+        """Calculate thinking token budget based on complexity score.
+
+        Three-tier system optimized for cache sharing:
+        - Most workflows use 4096 tokens (same cache pool)
+        - Only truly trivial workflows use 0
+        - Complex workflows get 16384 or 32768
+
+        CRITICAL: Returns same budget for BOTH Planning and Generator nodes
+        to preserve cache sharing optimization across different user queries.
+
+        Args:
+            complexity_score: Calculated complexity score
+
+        Returns:
+            Number of thinking tokens to allocate
+        """
+        if complexity_score < 20:
+            # Only truly trivial workflows (e.g., "convert CSV to JSON")
+            # ~10-15% of workflows
+            return 0
+        elif complexity_score < 70:
+            # Standard workflows - the majority (~70-75%)
+            # This creates a large cache pool that most workflows share
+            return 4096
+        elif complexity_score < 100:
+            # Complex multi-step pipelines (~10-15%)
+            return 16384
+        else:
+            # Extreme complexity - rare but important (~1-5%)
+            return 32768
+
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store requirements and route based on clarity.
 
@@ -980,6 +1099,38 @@ class RequirementsAnalysisNode(Node):
         Returns:
             "" for success or "clarification_needed" for vague input
         """
+        # Calculate complexity score and thinking budget
+        complexity_score = self._calculate_complexity_score(exec_res)
+        thinking_budget = self._calculate_thinking_budget(complexity_score)
+
+        # Store complexity analysis in shared store
+        shared["complexity_analysis"] = {
+            "score": complexity_score,
+            "thinking_budget": thinking_budget,  # SAME for both Planning and Generator
+            "reasoning": f"Complexity {complexity_score:.1f} based on {exec_res.get('estimated_nodes', 0)} nodes, "
+            f"{len(exec_res.get('steps', []))} steps, {len(exec_res.get('required_capabilities', []))} capabilities",
+        }
+
+        # Log complexity decision
+        if thinking_budget > 0:
+            logger.info(
+                f"RequirementsAnalysisNode: Complexity {complexity_score:.1f} → {thinking_budget} thinking tokens for BOTH nodes",
+                extra={
+                    "phase": "post",
+                    "complexity_score": complexity_score,
+                    "thinking_budget": thinking_budget,
+                },
+            )
+        else:
+            logger.debug(
+                f"RequirementsAnalysisNode: Complexity {complexity_score:.1f} → standard generation (no thinking)",
+                extra={
+                    "phase": "post",
+                    "complexity_score": complexity_score,
+                    "thinking_budget": 0,
+                },
+            )
+
         # Store requirements result with potential error embedded
         shared["requirements_result"] = exec_res
 
@@ -1106,7 +1257,15 @@ class PlanningNode(Node):
 
         # Configuration from params with defaults
         model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
-        temperature = self.params.get("temperature", 0.3)  # Slightly higher for creative planning
+        base_temperature = self.params.get("temperature", 0.3)  # Default for creative planning
+
+        # Get complexity analysis from RequirementsAnalysisNode
+        complexity_analysis = shared.get("complexity_analysis", {})
+        thinking_budget = complexity_analysis.get("thinking_budget", 0)
+
+        # Adjust temperature based on thinking mode
+        # When thinking is enabled, temperature MUST be 1.0 (Anthropic API requirement)
+        temperature = 1.0 if thinking_budget > 0 else base_temperature
 
         return {
             "requirements_result": requirements_result,
@@ -1116,6 +1275,7 @@ class PlanningNode(Node):
             "discovered_params": discovered_params,
             "model_name": model_name,
             "temperature": temperature,
+            "thinking_budget": thinking_budget,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -1153,10 +1313,22 @@ class PlanningNode(Node):
 
         # Get model and generate plan with cache blocks
         model = llm.get_model(prep_res["model_name"])
+
+        # CRITICAL: Use exact same thinking budget as WorkflowGeneratorNode for cache sharing
+        thinking_budget = prep_res.get("thinking_budget", 0)
+
+        # Log thinking usage if enabled
+        if thinking_budget > 0:
+            logger.info(
+                f"PlanningNode: Using {thinking_budget} thinking tokens for complexity analysis",
+                extra={"phase": "exec", "thinking_budget": thinking_budget},
+            )
+
         response = model.prompt(
             planning_instructions,  # Instructions only in user message
             cache_blocks=base_blocks,  # Cache blocks in system parameter
             temperature=prep_res["temperature"],
+            thinking_budget=thinking_budget,  # Same budget as WorkflowGeneratorNode
         )
 
         # Extract text from response
@@ -1768,9 +1940,18 @@ class WorkflowGeneratorNode(Node):
         Returns:
             Dict with all data needed for generation
         """
+        # Get complexity analysis from RequirementsAnalysisNode
+        complexity_analysis = shared.get("complexity_analysis", {})
+        thinking_budget = complexity_analysis.get("thinking_budget", 0)
+
+        # Adjust temperature based on thinking mode
+        # When thinking is enabled, temperature MUST be 1.0 (Anthropic API requirement)
+        base_temperature = self.params.get("temperature", 0.0)
+        temperature = 1.0 if thinking_budget > 0 else base_temperature
+
         return {
             "model_name": self.params.get("model", "anthropic/claude-sonnet-4-0"),
-            "temperature": self.params.get("temperature", 0.0),
+            "temperature": temperature,
             "planning_context": shared.get(
                 "planning_context", ""
             ),  # Still used by RequirementsAnalysisNode and PlanningNode
@@ -1781,6 +1962,7 @@ class WorkflowGeneratorNode(Node):
             "generation_attempts": shared.get("generation_attempts", 0),
             "planner_extended_blocks": shared.get("planner_extended_blocks"),  # Cache blocks from PlanningNode
             "planner_accumulated_blocks": shared.get("planner_accumulated_blocks"),  # Cache blocks for retries
+            "thinking_budget": thinking_budget,  # MUST be same as PlanningNode for cache sharing
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -1851,11 +2033,23 @@ class WorkflowGeneratorNode(Node):
 
         # Generate workflow with cache blocks
         model = llm.get_model(prep_res["model_name"])
+
+        # CRITICAL: Use exact same thinking budget as PlanningNode for cache sharing
+        thinking_budget = prep_res.get("thinking_budget", 0)
+
+        # Log thinking usage if enabled
+        if thinking_budget > 0:
+            logger.info(
+                f"WorkflowGeneratorNode: Using {thinking_budget} thinking tokens (same as PlanningNode)",
+                extra={"phase": "exec", "thinking_budget": thinking_budget},
+            )
+
         response = model.prompt(
             generation_instructions,  # Instructions only in user message
             schema=FlowIR,
             cache_blocks=blocks,  # Cache blocks in system parameter
             temperature=prep_res["temperature"],
+            thinking_budget=thinking_budget,  # Same budget as PlanningNode for cache sharing
         )
 
         # Parse nested Anthropic response

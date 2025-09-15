@@ -57,6 +57,7 @@ class AnthropicLLMModel:
         schema: Optional[type[BaseModel]] = None,
         temperature: float = 0.0,
         cache_blocks: Optional[list[dict[str, Any]]] = None,
+        thinking_budget: int = 0,
         **kwargs: Any,
     ) -> "AnthropicResponse":
         """Execute a prompt using the Anthropic SDK.
@@ -69,6 +70,7 @@ class AnthropicLLMModel:
             schema: Optional Pydantic model for structured output
             temperature: Sampling temperature
             cache_blocks: Optional list of cache blocks for multi-block prompt caching
+            thinking_budget: Number of thinking tokens to allocate (0 = no thinking)
             **kwargs: Additional arguments (model added for debug tracking)
 
         Returns:
@@ -82,6 +84,7 @@ class AnthropicLLMModel:
                 schema=schema,
                 temperature=temperature,
                 cache_blocks=cache_blocks,
+                thinking_budget=thinking_budget,
                 **kwargs,
             )
         else:
@@ -90,6 +93,7 @@ class AnthropicLLMModel:
                 prompt=prompt,
                 schema=schema,
                 temperature=temperature,
+                thinking_budget=thinking_budget,
                 **kwargs,
             )
 
@@ -99,6 +103,7 @@ class AnthropicLLMModel:
         schema: Optional[type[BaseModel]],
         temperature: float,
         cache_blocks: list[dict[str, Any]],
+        thinking_budget: int = 0,
         **kwargs: Any,
     ) -> "AnthropicResponse":
         """Execute prompt with provided cache blocks (optimized path).
@@ -111,6 +116,7 @@ class AnthropicLLMModel:
             schema: Optional Pydantic model for structured output
             temperature: Temperature for response generation
             cache_blocks: List of cache blocks with cache_control markers
+            thinking_budget: Number of thinking tokens to allocate
             **kwargs: Additional arguments
 
         Returns:
@@ -130,6 +136,7 @@ class AnthropicLLMModel:
                 temperature=temperature,
                 cache_blocks=cache_blocks,  # Use provided blocks
                 force_text_output=False,
+                thinking_budget=thinking_budget,
             )
         else:
             # Text output with provided blocks (PlanningNode path)
@@ -142,6 +149,7 @@ class AnthropicLLMModel:
                 temperature=temperature,
                 cache_blocks=cache_blocks,  # Use provided blocks
                 force_text_output=True,  # Get text output despite tool
+                thinking_budget=thinking_budget,
             )
 
         # Log cache metrics for debugging
@@ -161,6 +169,7 @@ class AnthropicLLMModel:
         prompt: Union[str, list],
         schema: Optional[type[BaseModel]],
         temperature: float,
+        thinking_budget: int = 0,
         **kwargs: Any,
     ) -> "AnthropicResponse":
         """Execute prompt without cache blocks (fallback path for non-cached nodes).
@@ -169,6 +178,7 @@ class AnthropicLLMModel:
             prompt: The full prompt text
             schema: Optional Pydantic model for structured output
             temperature: Temperature for response generation
+            thinking_budget: Number of thinking tokens to allocate
             **kwargs: Additional arguments
 
         Returns:
@@ -188,6 +198,7 @@ class AnthropicLLMModel:
                 temperature=temperature,
                 cache_blocks=None,  # No caching for this path
                 force_text_output=False,
+                thinking_budget=thinking_budget,
             )
         else:
             # Text output without caching - still use FlowIR tool for consistency
@@ -200,6 +211,7 @@ class AnthropicLLMModel:
                 temperature=temperature,
                 cache_blocks=None,  # No caching for this path
                 force_text_output=True,  # Get text output despite tool
+                thinking_budget=thinking_budget,
             )
 
         return AnthropicResponse(result, usage, is_structured=bool(schema))

@@ -109,18 +109,47 @@ class AnthropicStructuredClient:
             messages = [{"role": "user", "content": prompt}]
             return messages, None
 
-    def _extract_usage_metadata(self, response: Any, temperature: float) -> dict[str, Any]:
+    def _estimate_visible_tokens(self, response: Any) -> int:
+        """Estimate tokens in the visible response (excluding thinking).
+
+        For Claude 4, we need to count the tokens in the actual response
+        to estimate how many tokens were used for thinking.
+
+        Args:
+            response: Anthropic API response
+
+        Returns:
+            Estimated number of tokens in visible response
+        """
+        # Simple estimation: ~4 chars per token
+        visible_chars = 0
+
+        # Count characters in all content blocks
+        for content_block in response.content:
+            if hasattr(content_block, "text"):
+                visible_chars += len(content_block.text)
+            elif hasattr(content_block, "input"):
+                # Tool use block - estimate from JSON
+                import json
+
+                visible_chars += len(json.dumps(content_block.input))
+
+        # Rough estimation: 4 characters per token on average
+        return visible_chars // 4
+
+    def _extract_usage_metadata(self, response: Any, temperature: float, thinking_budget: int = 0) -> dict[str, Any]:
         """Extract usage metadata from API response.
 
         Args:
             response: Anthropic API response
             temperature: Temperature used in the request
+            thinking_budget: Thinking tokens budget used (for logging)
 
         Returns:
             Dictionary containing usage metadata
         """
         usage = response.usage
-        return {
+        metadata = {
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
             "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0),
@@ -128,6 +157,30 @@ class AnthropicStructuredClient:
             "model": self.model,
             "temperature": temperature,
         }
+
+        # Add thinking tokens information
+        # Always include budget if it was allocated
+        if thinking_budget > 0:
+            metadata["thinking_budget"] = thinking_budget
+
+            # For Claude 4, output_tokens includes thinking
+            # Estimate thinking by subtracting visible response
+            visible_tokens = self._estimate_visible_tokens(response)
+            thinking_estimate = max(0, usage.output_tokens - visible_tokens)
+
+            metadata["thinking_tokens"] = thinking_estimate
+            metadata["thinking_enabled"] = True
+
+            # Log the estimation
+            if thinking_estimate > 0:
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    f"Thinking tokens estimated: {thinking_estimate} "
+                    f"(total output: {usage.output_tokens}, visible: {visible_tokens})"
+                )
+
+        return metadata
 
     def _handle_anthropic_exception(self, e: Exception) -> None:
         """Handle Anthropic-specific exceptions.
@@ -188,7 +241,17 @@ class AnthropicStructuredClient:
         Returns:
             Text content from response
         """
-        return response.content[0].text if response.content else ""
+        if not response.content:
+            return ""
+
+        # Handle responses with thinking blocks
+        # When thinking is enabled, content may contain ThinkingBlock objects
+        for block in response.content:
+            if hasattr(block, "text") or (hasattr(block, "type") and block.type == "text"):
+                return str(block.text)
+
+        # Fallback for unexpected structure
+        return ""
 
     def generate_with_schema_text_mode(
         self,
@@ -198,6 +261,7 @@ class AnthropicStructuredClient:
         temperature: float = 0.0,
         cache_blocks: Optional[list[dict[str, Any]]] = None,
         force_text_output: bool = False,
+        thinking_budget: int = 0,
     ) -> tuple[Any, dict[str, Any]]:
         """Generate output with tools defined but optionally force text output.
 
@@ -210,6 +274,7 @@ class AnthropicStructuredClient:
             temperature: Sampling temperature
             cache_blocks: Optional cache control blocks
             force_text_output: If True, use tool_choice='none' for text output
+            thinking_budget: Number of thinking tokens to allocate (0 = no thinking)
 
         Returns:
             Tuple of (text_response or model_instance, usage_metadata)
@@ -223,27 +288,46 @@ class AnthropicStructuredClient:
         # Determine tool_choice based on force_text_output
         tool_choice = {"type": "none"} if force_text_output else {"type": "tool", "name": tool_name}
 
+        # Build kwargs for API call
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "tools": [tool],
+            "tool_choice": tool_choice,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        # Add system content if present
+        if system is not None:
+            kwargs["system"] = system
+
+        # Add thinking configuration if enabled AND not forcing tool use
+        # Thinking cannot be used when tool_choice forces tool use
+        is_forcing_tool_use = not force_text_output  # When force_text_output=False, we're forcing tool use
+
+        if thinking_budget > 0 and not is_forcing_tool_use:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            # Add beta header for interleaved thinking (Claude 4)
+            kwargs["extra_headers"] = {"anthropic-beta": "interleaved-thinking-2025-05-14"}
+
+            # Debug logging
+            import logging
+
+            logging.getLogger(__name__).info(
+                f"Enabling thinking tokens: budget={thinking_budget}, force_text_output={force_text_output}"
+            )
+        elif thinking_budget > 0 and is_forcing_tool_use:
+            # Log that thinking is disabled when forcing tool use
+            import logging
+
+            logging.getLogger(__name__).debug(
+                f"Thinking tokens ({thinking_budget}) disabled: incompatible with forced tool use"
+            )
+
         try:
-            # Call the API with or without system content
-            if system is not None:
-                response = self.client.messages.create(  # type: ignore[call-overload]
-                    model=self.model,
-                    messages=messages,
-                    tools=[tool],
-                    tool_choice=tool_choice,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system=system,
-                )
-            else:
-                response = self.client.messages.create(  # type: ignore[call-overload]
-                    model=self.model,
-                    messages=messages,
-                    tools=[tool],
-                    tool_choice=tool_choice,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
+            # Call the API with configured parameters
+            response = self.client.messages.create(**kwargs)  # type: ignore[call-overload]
 
             # Extract response based on output type
             result: Any
@@ -253,7 +337,7 @@ class AnthropicStructuredClient:
                 result = self._extract_tool_response(response.content, tool_name, response_model)
 
             # Extract usage metadata
-            usage_metadata = self._extract_usage_metadata(response, temperature)
+            usage_metadata = self._extract_usage_metadata(response, temperature, thinking_budget)
 
             return (result, usage_metadata)
 
@@ -269,6 +353,7 @@ class AnthropicStructuredClient:
         max_tokens: int = 8192,
         temperature: float = 0.0,
         cache_blocks: Optional[list[dict[str, Any]]] = None,
+        thinking_budget: int = 0,
     ) -> tuple[BaseModel, dict[str, Any]]:
         """Generate structured output using Anthropic's tool calling.
 
@@ -278,6 +363,7 @@ class AnthropicStructuredClient:
             max_tokens: Maximum tokens for the response
             temperature: Sampling temperature (0.0 for deterministic)
             cache_blocks: Optional list of cache control blocks for prompt caching
+            thinking_budget: Number of thinking tokens to allocate (0 = no thinking)
 
         Returns:
             Tuple of (parsed_response, usage_metadata)
@@ -291,33 +377,40 @@ class AnthropicStructuredClient:
         # Build messages with cache control
         messages, system = self._build_messages_with_cache(prompt, cache_blocks)
 
+        # Build kwargs for API call
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "tools": [tool],
+            "tool_choice": {"type": "tool", "name": tool_name},
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        # Add system content if present
+        if system is not None:
+            kwargs["system"] = system
+
+        # Thinking cannot be used when tool_choice forces tool use
+        # generate_with_schema ALWAYS forces tool use, so thinking is never available here
+        if thinking_budget > 0:
+            # Log that thinking is disabled when forcing tool use
+            import logging
+
+            logging.getLogger(__name__).debug(
+                f"Thinking tokens ({thinking_budget}) disabled: generate_with_schema forces tool use, "
+                "which is incompatible with thinking"
+            )
+
         try:
             # Make the API call
-            if system is not None:
-                response = self.client.messages.create(  # type: ignore[call-overload]
-                    model=self.model,
-                    messages=messages,
-                    tools=[tool],
-                    tool_choice={"type": "tool", "name": tool_name},
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system=system,
-                )
-            else:
-                response = self.client.messages.create(  # type: ignore[call-overload]
-                    model=self.model,
-                    messages=messages,
-                    tools=[tool],
-                    tool_choice={"type": "tool", "name": tool_name},
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
+            response = self.client.messages.create(**kwargs)  # type: ignore[call-overload]
 
             # Extract and validate the tool response
             parsed_response = self._extract_tool_response(response.content, tool_name, response_model)
 
             # Extract usage metadata
-            usage_metadata = self._extract_usage_metadata(response, temperature)
+            usage_metadata = self._extract_usage_metadata(response, temperature, thinking_budget)
 
             return parsed_response, usage_metadata
 

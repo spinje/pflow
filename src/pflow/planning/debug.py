@@ -75,45 +75,99 @@ class TimedResponse:
 
     def _capture_usage_and_record(self, duration: float, response_data: Any) -> None:
         """Capture usage data after response consumption and record it."""
-        # Now that the response has been consumed, usage() should have data
-        usage_data = None
-        model_name = "unknown"
+        # Extract usage data from the response
+        usage_data = self._extract_usage_data()
 
-        # Get usage data - it's now available after consumption
-        if hasattr(self._response, "usage"):
-            usage_obj = self._response.usage() if callable(self._response.usage) else self._response.usage
-            if usage_obj:
-                # Handle both dict and object forms
-                if isinstance(usage_obj, dict):
-                    usage_data = usage_obj
-                elif hasattr(usage_obj, "input") and hasattr(usage_obj, "output"):
-                    usage_data = {
-                        "input_tokens": getattr(usage_obj, "input", 0),
-                        "output_tokens": getattr(usage_obj, "output", 0),
-                        "total_tokens": getattr(usage_obj, "input", 0) + getattr(usage_obj, "output", 0),
-                    }
-                    # Check for cache-related fields
-                    if hasattr(usage_obj, "details") and usage_obj.details:
-                        details = usage_obj.details
-                        if hasattr(details, "cache_creation_input_tokens"):
-                            usage_data["cache_creation_input_tokens"] = details.cache_creation_input_tokens
-                        if hasattr(details, "cache_read_input_tokens"):
-                            usage_data["cache_read_input_tokens"] = details.cache_read_input_tokens
-
-        # Get model name from current_llm_call (it was stored when request was made)
-        # The model is already in current_llm_call from record_llm_request
-        model_name = "unknown"
-        if hasattr(self._trace, "current_llm_call") and self._trace.current_llm_call:
-            # First try to get from prompt_kwargs where our interceptor put it
-            model_name = self._trace.current_llm_call.get("prompt_kwargs", {}).get("model")
-            # Fallback to top-level model field if not in prompt_kwargs
-            if not model_name:
-                model_name = self._trace.current_llm_call.get("model", "unknown")
+        # Extract model name from the current LLM call
+        model_name = self._extract_model_name()
 
         # Pass the captured data to record_llm_response
         self._trace.record_llm_response_with_data(
             self._current_node, response_data, duration, usage_data, model_name, self._shared
         )
+
+    def _extract_usage_data(self) -> Optional[dict[str, Any]]:
+        """Extract usage data from the response object."""
+        if not hasattr(self._response, "usage"):
+            return None
+
+        # Get the usage object
+        usage_obj = self._response.usage() if callable(self._response.usage) else self._response.usage
+        if not usage_obj:
+            return None
+
+        # Handle dict form
+        if isinstance(usage_obj, dict):
+            return self._process_dict_usage(usage_obj)
+
+        # Handle object form with input/output attributes
+        if hasattr(usage_obj, "input") and hasattr(usage_obj, "output"):
+            return self._process_object_usage(usage_obj)
+
+        return None
+
+    def _process_dict_usage(self, usage_obj: dict[str, Any]) -> dict[str, Any]:
+        """Process usage data when it's already a dictionary."""
+        usage_data = usage_obj.copy()
+
+        # Add thinking-related fields if present
+        for field in ["thinking_tokens", "thinking_budget", "thinking_enabled"]:
+            if field in usage_obj:
+                usage_data[field] = usage_obj[field]
+
+        return usage_data
+
+    def _process_object_usage(self, usage_obj: Any) -> dict[str, Any]:
+        """Process usage data from an object with attributes."""
+        # Extract basic token counts
+        input_tokens = getattr(usage_obj, "input", 0)
+        output_tokens = getattr(usage_obj, "output", 0)
+
+        usage_data = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
+
+        # Add cache-related fields from details
+        self._add_cache_fields(usage_obj, usage_data)
+
+        # Add thinking-related fields
+        self._add_thinking_fields(usage_obj, usage_data)
+
+        return usage_data
+
+    def _add_cache_fields(self, usage_obj: Any, usage_data: dict[str, Any]) -> None:
+        """Add cache-related fields to usage data."""
+        if not hasattr(usage_obj, "details") or not usage_obj.details:
+            return
+
+        details = usage_obj.details
+        if hasattr(details, "cache_creation_input_tokens"):
+            usage_data["cache_creation_input_tokens"] = details.cache_creation_input_tokens
+        if hasattr(details, "cache_read_input_tokens"):
+            usage_data["cache_read_input_tokens"] = details.cache_read_input_tokens
+
+    def _add_thinking_fields(self, usage_obj: Any, usage_data: dict[str, Any]) -> None:
+        """Add thinking-related fields to usage data."""
+        if hasattr(usage_obj, "thinking_tokens"):
+            usage_data["thinking_tokens"] = usage_obj.thinking_tokens
+        if hasattr(usage_obj, "thinking_budget"):
+            usage_data["thinking_budget"] = usage_obj.thinking_budget
+
+    def _extract_model_name(self) -> str:
+        """Extract the model name from the current LLM call."""
+        if not hasattr(self._trace, "current_llm_call") or not self._trace.current_llm_call:
+            return "unknown"
+
+        # First try to get from prompt_kwargs where our interceptor put it
+        model_name = self._trace.current_llm_call.get("prompt_kwargs", {}).get("model")
+
+        # Fallback to top-level model field if not in prompt_kwargs
+        if not model_name:
+            model_name = self._trace.current_llm_call.get("model", "unknown")
+
+        return model_name or "unknown"
 
     def __getattr__(self, name: str) -> Any:
         # Forward other attributes to the wrapped response
@@ -454,16 +508,22 @@ class TraceCollector:
                 output_tokens = usage_data.get("output_tokens", 0)
                 cache_creation_tokens = usage_data.get("cache_creation_input_tokens", 0)
                 cache_read_tokens = usage_data.get("cache_read_input_tokens", 0)
+                thinking_tokens = usage_data.get("thinking_tokens", 0)
+                thinking_budget = usage_data.get("thinking_budget", 0)
 
-                # Calculate total - should include ALL tokens processed
-                # If API provides total_tokens, use it; otherwise calculate including cache
-                calculated_total = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
+                # Calculate total - should include ALL tokens processed including thinking
+                # If API provides total_tokens, use it; otherwise calculate including cache and thinking
+                calculated_total = (
+                    input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens + thinking_tokens
+                )
 
                 self.current_llm_call["tokens"] = {
                     "input": input_tokens,
                     "output": output_tokens,
                     "cache_creation": cache_creation_tokens,
                     "cache_read": cache_read_tokens,
+                    "thinking": thinking_tokens,
+                    "thinking_budget": thinking_budget,
                     "total": usage_data.get("total_tokens", calculated_total),
                 }
 
@@ -485,6 +545,11 @@ class TraceCollector:
                         llm_call_metrics["cache_creation_input_tokens"] = usage_data["cache_creation_input_tokens"]
                     if "cache_read_input_tokens" in usage_data:
                         llm_call_metrics["cache_read_input_tokens"] = usage_data["cache_read_input_tokens"]
+                    # Handle thinking-related fields if present
+                    if "thinking_tokens" in usage_data:
+                        llm_call_metrics["thinking_tokens"] = usage_data["thinking_tokens"]
+                    if "thinking_budget" in usage_data:
+                        llm_call_metrics["thinking_budget"] = usage_data["thinking_budget"]
 
                     shared["__llm_calls__"].append(llm_call_metrics)
 

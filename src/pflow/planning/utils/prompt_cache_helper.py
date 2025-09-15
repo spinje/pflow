@@ -41,9 +41,16 @@ def build_cached_prompt(
         # Cache instructions if substantial
         instructions = instructions.strip()
         if instructions and len(instructions) > 1000:  # ~250 tokens minimum
-            cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral"}})
+            cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
-    # Always format the full template
-    formatted_prompt = format_prompt(prompt_template, all_variables)
+            # When caching instructions, only return the context part as the prompt
+            # to avoid duplication (instructions are in cache block)
+            formatted_prompt = format_prompt("## Context" + context_section, all_variables)
+        else:
+            # If not caching, return the full formatted template
+            formatted_prompt = format_prompt(prompt_template, all_variables)
+    else:
+        # No context marker, return full template
+        formatted_prompt = format_prompt(prompt_template, all_variables)
 
     return cache_blocks, formatted_prompt

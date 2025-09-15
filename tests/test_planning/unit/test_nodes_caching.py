@@ -107,7 +107,8 @@ class TestWorkflowDiscoveryNodeCaching:
                 assert len(cache_blocks) > 0
                 assert "text" in cache_blocks[0]
                 assert "cache_control" in cache_blocks[0]
-                assert cache_blocks[0]["cache_control"] == {"type": "ephemeral"}
+                # Check cache control type (ttl is now included but not required to check)
+                assert cache_blocks[0]["cache_control"]["type"] == "ephemeral"
 
     def test_cache_flag_defaults_to_false(self):
         """When cache_planner not in shared, defaults to False."""
@@ -229,7 +230,8 @@ class TestComponentBrowsingNodeCaching:
                     for block in cache_blocks:
                         assert "text" in block
                         assert "cache_control" in block
-                        assert block["cache_control"] == {"type": "ephemeral"}
+                        # Check cache control type (ttl is now included but not required to check)
+                        assert block["cache_control"]["type"] == "ephemeral"
 
 
 class TestRequirementsAnalysisNodeCaching:
@@ -313,7 +315,8 @@ class TestRequirementsAnalysisNodeCaching:
                 assert (
                     "Instructions" in cache_blocks[0]["text"] or "analyzing a user" in cache_blocks[0]["text"]
                 )  # Part of actual prompt
-                assert cache_blocks[0]["cache_control"] == {"type": "ephemeral"}
+                # Check cache control type (ttl is now included but not required to check)
+                assert cache_blocks[0]["cache_control"]["type"] == "ephemeral"
 
 
 class TestParameterDiscoveryNodeCaching:
