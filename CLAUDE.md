@@ -402,6 +402,7 @@ Next version (post-MVP/post-Launch):
 - ⏳ Task 45: Evaluate if wrapping or integratingn8n is worth the effort
 - ⏳ Task 61: Implement Fast Mode for Planner
 - ⏳ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
+- ⏳ Task 64: MCP Orchestration with long running servers
 
 *Update this list as you complete tasks.*
 
