@@ -146,13 +146,17 @@ class WorkflowDiscoveryNode(Node):
         Returns:
             Tuple of (cache_blocks, formatted_prompt)
         """
-        from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
 
-        # If caching is disabled, use the standard helper
+        # If caching is disabled, return full formatted prompt with no cache blocks
         if not cache_planner:
-            return build_cached_prompt(
-                "discovery", all_variables={"discovery_context": discovery_context, "user_input": user_input}
+            from pflow.planning.prompts.loader import format_prompt, load_prompt
+
+            prompt_template = load_prompt("discovery")
+            formatted_prompt = format_prompt(
+                prompt_template, {"discovery_context": discovery_context, "user_input": user_input}
             )
+            # Return empty cache blocks and full formatted prompt
+            return [], formatted_prompt
 
         # Special caching logic for discovery context
         from pflow.planning.prompts.loader import load_prompt
@@ -163,20 +167,22 @@ class WorkflowDiscoveryNode(Node):
         if "## Context" in prompt_template:
             instructions, _ = prompt_template.split("## Context", 1)
 
-            # Cache instructions if substantial
+            # Always cache instructions when they exist
             instructions = instructions.strip()
-            if instructions and len(instructions) > 1000:
+            if instructions:
                 cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
-            # Build and optionally cache the discovery context
+            # Build and cache the discovery context
+            # Always include as cache block for consistent structure, even if empty
             context_block = f"""## Context
 
 <existing_workflows>
-{discovery_context if discovery_context else ""}
+{discovery_context if discovery_context else "No existing workflows found."}
 </existing_workflows>"""
 
-            if discovery_context and len(discovery_context) > 1000:
-                cache_blocks.append({"text": context_block, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
+            # Always add context as cache block when caching is enabled
+            # This ensures consistent structure whether workflows exist or not
+            cache_blocks.append({"text": context_block, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
             # Return dynamic part only
             formatted_prompt = f"""## Inputs
@@ -408,7 +414,7 @@ class ComponentBrowsingNode(Node):
         """
         from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
 
-        # If caching is disabled, use the standard helper
+        # If caching is disabled, use the standard helper without caching
         if not cache_planner:
             return build_cached_prompt(
                 "component_browsing",
@@ -418,6 +424,7 @@ class ComponentBrowsingNode(Node):
                     "user_input": user_input,
                     "requirements": requirements,
                 },
+                enable_caching=False,  # Don't create cache blocks
             )
 
         # Special caching logic for node/workflow documentation
@@ -429,19 +436,19 @@ class ComponentBrowsingNode(Node):
         if "## Context" in prompt_template:
             instructions, _ = prompt_template.split("## Context", 1)
 
-            # Cache instructions if substantial
+            # Always cache instructions when they exist
             instructions = instructions.strip()
-            if instructions and len(instructions) > 1000:
+            if instructions:
                 cache_blocks.append({"text": instructions, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
             # Build context with cacheable documentation
             context_parts = ["## Context"]
 
-            # Add substantial documentation to cache
-            if nodes_context and len(nodes_context) > 1000:
+            # Always add documentation to cache when it exists
+            if nodes_context:
                 context_parts.append(f"\n<available_nodes>\n{nodes_context}\n</available_nodes>")
 
-            if workflows_context and len(workflows_context) > 1000:
+            if workflows_context:
                 context_parts.append(f"\n<available_workflows>\n{workflows_context}\n</available_workflows>")
 
             # Cache context if we have substantial documentation
@@ -745,11 +752,12 @@ class ParameterDiscoveryNode(Node):
             "stdin_info": stdin_info,
         }
 
-        # Always build cache blocks structure (single code path)
+        # Build cache blocks based on cache_planner flag
         cache_blocks, formatted_prompt = build_cached_prompt(
             "parameter_discovery",
             all_variables=all_vars,
             cacheable_variables=None,  # No cacheable context for this node
+            enable_caching=cache_planner,
         )
 
         # Make LLM call - conditionally pass cache blocks based on flag
@@ -944,11 +952,12 @@ class RequirementsAnalysisNode(Node):
             "input_text": prep_res["input_text"],
         }
 
-        # Always build cache blocks structure (single code path)
+        # Build cache blocks based on cache_planner flag
         cache_blocks, formatted_prompt = build_cached_prompt(
             "requirements_analysis",
             all_variables=all_vars,
             cacheable_variables=None,  # No cacheable context for this node
+            enable_caching=cache_planner,
         )
 
         # Make LLM call - conditionally pass cache blocks based on flag
@@ -1073,16 +1082,16 @@ class RequirementsAnalysisNode(Node):
         Returns:
             Number of thinking tokens to allocate
         """
-        if complexity_score < 20:
-            # Only truly trivial workflows (e.g., "convert CSV to JSON")
-            # ~10-15% of workflows
+        if complexity_score < 40:
+            # Only trivial workflows
+            # ~40% of workflows
             return 0
         elif complexity_score < 70:
-            # Standard workflows - the majority (~70-75%)
+            # Standard workflows - the majority (~40%)
             # This creates a large cache pool that most workflows share
             return 4096
         elif complexity_score < 100:
-            # Complex multi-step pipelines (~10-15%)
+            # Complex multi-step pipelines (~15%)
             return 16384
         else:
             # Extreme complexity - rare but important (~1-5%)
@@ -1645,11 +1654,12 @@ class ParameterMappingNode(Node):
             "stdin_data": stdin_data,
         }
 
-        # Always build cache blocks structure (single code path)
+        # Build cache blocks based on cache_planner flag
         cache_blocks, formatted_prompt = build_cached_prompt(
             "parameter_mapping",
             all_variables=all_vars,
             cacheable_variables=None,  # No cacheable context for this node
+            enable_caching=cache_planner,
         )
 
         # Make LLM call - conditionally pass cache blocks based on flag
@@ -2400,12 +2410,13 @@ class MetadataGenerationNode(Node):
             "parameter_bindings": json.dumps(extracted_params or {}, indent=2),
         }
 
-        # Always build cache blocks structure (single code path)
+        # Build cache blocks based on cache_planner flag
         try:
             cache_blocks, formatted_prompt = build_cached_prompt(
                 "metadata_generation",
                 all_variables=all_vars,
                 cacheable_variables=None,  # No cacheable context for this node
+                enable_caching=cache_planner,
             )
             logger.debug(
                 "MetadataGenerationNode: Built prompt structure, %d blocks, prompt length %d",

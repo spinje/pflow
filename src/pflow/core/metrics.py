@@ -4,26 +4,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-# Model pricing per million tokens (matching test_prompt_accuracy.py)
-MODEL_PRICING = {
-    "anthropic/claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
-    "anthropic/claude-3-sonnet-20240229": {"input": 3.00, "output": 15.00},
-    "anthropic/claude-3-opus-20240229": {"input": 15.00, "output": 75.00},
-    "anthropic/claude-3-5-sonnet-20240620": {"input": 3.00, "output": 15.00},
-    "anthropic/claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
-    "anthropic/claude-sonnet-4-0": {"input": 3.00, "output": 15.00},
-    "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
-    "gpt-4": {"input": 30.0, "output": 60.0},
-    "gpt-4-turbo": {"input": 10.0, "output": 30.0},
-    "gpt-4o": {"input": 5.0, "output": 15.0},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
-    "gemini-1.5-pro": {"input": 3.5, "output": 10.5},
-    "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
-}
-
-# Default pricing for unknown models (using gpt-4o-mini as fallback)
-DEFAULT_PRICING = {"input": 0.15, "output": 0.60}
+# Import pricing from centralized module
+from pflow.core.llm_pricing import calculate_llm_cost
 
 
 @dataclass
@@ -88,46 +70,26 @@ class MetricsCollector:
             if not call:
                 continue
 
-            # PRIORITY 1: Use actual cost if available (e.g., from Claude Code)
+            # PRIORITY 1: Use pre-calculated cost if available
             if "total_cost_usd" in call and call["total_cost_usd"] is not None:
                 total_cost += call["total_cost_usd"]
                 continue
 
-            # PRIORITY 2: Fall back to token-based calculation with cache awareness
+            # PRIORITY 2: Calculate using centralized pricing module
             # Check both model field and prompt_kwargs.model for compatibility
             model = call.get("model") or call.get("prompt_kwargs", {}).get("model", "unknown")
-            pricing = MODEL_PRICING.get(model, DEFAULT_PRICING)
 
-            # Handle cache tokens (Anthropic SDK)
-            cache_creation_tokens = call.get("cache_creation_input_tokens", 0)
-            cache_read_tokens = call.get("cache_read_input_tokens", 0)
-            regular_input_tokens = call.get("input_tokens", 0)
-            output_tokens = call.get("output_tokens", 0)
+            # Use the centralized calculate_llm_cost function
+            cost_breakdown = calculate_llm_cost(
+                model=model,
+                input_tokens=call.get("input_tokens", 0),
+                output_tokens=call.get("output_tokens", 0),
+                cache_creation_tokens=call.get("cache_creation_input_tokens", 0),
+                cache_read_tokens=call.get("cache_read_input_tokens", 0),
+                thinking_tokens=call.get("thinking_tokens", 0),
+            )
 
-            # Calculate input cost with cache discounts
-            # IMPORTANT: input_tokens from Anthropic already EXCLUDES cache tokens
-            # Cache creation costs 25% more than regular input
-            # Cache reads cost 90% less than regular input
-            if cache_creation_tokens or cache_read_tokens:
-                # Anthropic SDK with caching - calculate separately
-                # input_tokens already excludes cache tokens (per Anthropic API spec)
-                regular_input_cost = (regular_input_tokens / 1_000_000) * pricing["input"]
-
-                # Cache creation tokens (100% premium / 2x cost)
-                cache_creation_cost = (cache_creation_tokens / 1_000_000) * pricing["input"] * 2.0
-
-                # Cache read tokens (90% discount)
-                cache_read_cost = (cache_read_tokens / 1_000_000) * pricing["input"] * 0.10
-
-                input_cost = regular_input_cost + cache_creation_cost + cache_read_cost
-            else:
-                # Regular pricing (no caching)
-                input_cost = (regular_input_tokens / 1_000_000) * pricing["input"]
-
-            # Output cost remains the same
-            output_cost = (output_tokens / 1_000_000) * pricing["output"]
-
-            total_cost += input_cost + output_cost
+            total_cost += cost_breakdown["total_cost_usd"]
 
         return round(total_cost, 6)
 
@@ -163,6 +125,8 @@ class MetricsCollector:
             "output": sum(call.get("output_tokens", 0) for call in llm_calls if call),
             "cache_creation": sum(call.get("cache_creation_input_tokens", 0) for call in llm_calls if call),
             "cache_read": sum(call.get("cache_read_input_tokens", 0) for call in llm_calls if call),
+            "thinking": sum(call.get("thinking_tokens", 0) for call in llm_calls if call),
+            "thinking_budget": sum(call.get("thinking_budget", 0) for call in llm_calls if call),
         }
 
     def _build_execution_metrics(
@@ -207,7 +171,50 @@ class MetricsCollector:
         if tokens["cache_read"] > 0:
             metrics["cache_read_tokens"] = tokens["cache_read"]
 
+        # Add thinking tokens if present
+        if tokens["thinking"] > 0:
+            metrics["thinking_tokens"] = tokens["thinking"]
+        if tokens["thinking_budget"] > 0:
+            metrics["thinking_budget"] = tokens["thinking_budget"]
+
         return metrics
+
+    def _add_cache_performance(self, summary: dict[str, Any], total_tokens: dict[str, int]) -> None:
+        """Add cache performance metrics to summary if cache was used.
+
+        Args:
+            summary: Summary dict to update
+            total_tokens: Token counts by type
+        """
+        cache_total = total_tokens["cache_creation"] + total_tokens["cache_read"]
+        if cache_total > 0:
+            # Calculate cache efficiency (read tokens as percentage of total cached)
+            cache_efficiency = (total_tokens["cache_read"] / cache_total) * 100
+
+            summary["cache_performance"] = {
+                "cache_creation_tokens": total_tokens["cache_creation"],
+                "cache_read_tokens": total_tokens["cache_read"],
+                "cache_efficiency_pct": round(cache_efficiency, 1),
+                "cache_total_tokens": cache_total,
+            }
+
+    def _add_thinking_performance(self, summary: dict[str, Any], total_tokens: dict[str, int]) -> None:
+        """Add thinking performance metrics to summary if thinking tokens were used.
+
+        Args:
+            summary: Summary dict to update
+            total_tokens: Token counts by type
+        """
+        if total_tokens["thinking"] > 0 or total_tokens["thinking_budget"] > 0:
+            thinking_utilization = 0.0
+            if total_tokens["thinking_budget"] > 0:
+                thinking_utilization = (total_tokens["thinking"] / total_tokens["thinking_budget"]) * 100
+
+            summary["thinking_performance"] = {
+                "thinking_tokens_used": total_tokens["thinking"],
+                "thinking_budget_allocated": total_tokens["thinking_budget"],
+                "thinking_utilization_pct": round(thinking_utilization, 1),
+            }
 
     def get_summary(self, llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
         """Generate metrics summary for JSON output.
@@ -261,13 +268,25 @@ class MetricsCollector:
         if total_tokens["cache_read"] > 0:
             total_metrics["cache_read_tokens"] = total_tokens["cache_read"]
 
+        # Add thinking tokens if present
+        if total_tokens["thinking"] > 0:
+            total_metrics["thinking_tokens"] = total_tokens["thinking"]
+        if total_tokens["thinking_budget"] > 0:
+            total_metrics["thinking_budget"] = total_tokens["thinking_budget"]
+
         metrics["total"] = total_metrics
 
-        # Return top-level metrics and detailed breakdown
-        return {
+        # Build summary dict
+        summary = {
             "duration_ms": round(total_duration, 2),
             "duration_planner_ms": round(planner_duration, 2) if planner_duration else None,
             "total_cost_usd": total_cost,
             "num_nodes": num_nodes,
             "metrics": metrics,
         }
+
+        # Add performance summaries
+        self._add_cache_performance(summary, total_tokens)
+        self._add_thinking_performance(summary, total_tokens)
+
+        return summary

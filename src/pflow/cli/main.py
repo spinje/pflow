@@ -294,6 +294,7 @@ def _handle_workflow_output(
     metrics_collector: Any | None = None,
     print_flag: bool = False,
     workflow_metadata: dict[str, Any] | None = None,
+    workflow_trace: Any | None = None,
 ) -> bool:
     """Handle output from workflow execution.
 
@@ -306,13 +307,14 @@ def _handle_workflow_output(
         metrics_collector: Optional MetricsCollector for including metrics in JSON output
         print_flag: Whether -p flag is set (suppress warnings)
         workflow_metadata: Optional workflow metadata for JSON output
+        workflow_trace: Optional workflow trace collector for saving JSON output
 
     Returns:
         True if output was produced, False otherwise.
     """
     if output_format == "json":
         return _handle_json_output(
-            shared_storage, output_key, workflow_ir, verbose, metrics_collector, workflow_metadata
+            shared_storage, output_key, workflow_ir, verbose, metrics_collector, workflow_metadata, workflow_trace
         )
     else:  # text format (default)
         return _handle_text_output(shared_storage, output_key, workflow_ir, verbose, print_flag)
@@ -511,6 +513,7 @@ def _handle_json_output(
     verbose: bool,
     metrics_collector: Any | None = None,
     workflow_metadata: dict[str, Any] | None = None,
+    workflow_trace: Any | None = None,
 ) -> bool:
     """Handle JSON formatted output.
 
@@ -541,6 +544,10 @@ def _handle_json_output(
 
         # Also include detailed metrics for compatibility
         result["metrics"] = metrics_summary.get("metrics", {})
+
+    # Save JSON output to trace if available
+    if workflow_trace and hasattr(workflow_trace, "set_json_output"):
+        workflow_trace.set_json_output(result)
 
     return _serialize_json_result(result, verbose)
 
@@ -1050,12 +1057,8 @@ def _handle_workflow_success(
     if verbose and output_format != "json":
         click.echo("cli: Workflow execution completed")
 
-    # Save trace if requested
-    if workflow_trace:
-        trace_file = workflow_trace.save_to_file()
-        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
-
     # Check for output from shared store (now with metrics)
+    # NOTE: We handle output BEFORE saving trace so the JSON output can be included in the trace
     print_flag = ctx.obj.get("print_flag", False)
     workflow_metadata = ctx.obj.get("workflow_metadata")
     output_produced = _handle_workflow_output(
@@ -1067,7 +1070,13 @@ def _handle_workflow_success(
         metrics_collector=metrics_collector,
         print_flag=print_flag,
         workflow_metadata=workflow_metadata,
+        workflow_trace=workflow_trace,
     )
+
+    # Save trace if requested (AFTER handling output so JSON is included)
+    if workflow_trace:
+        trace_file = workflow_trace.save_to_file()
+        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     # Only show success message if we didn't produce output
     if not output_produced:

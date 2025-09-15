@@ -166,59 +166,58 @@ def _format_token_usage_table(
     return md
 
 
-def _calculate_cost_with_cache(
-    prompt_tokens: int,
-    response_tokens: int,
-    cache_creation: int,
-    cache_read: int,
-    thinking_tokens: int,
-    total_tokens: int,
-) -> list[str]:
-    """Calculate and format cost information with cache-aware pricing."""
+def _format_cost_from_trace(call: dict) -> list[str]:
+    """Format pre-calculated cost information from trace data."""
     md = []
 
-    if total_tokens <= 0:
+    # Get pre-calculated cost from trace
+    if "cost" not in call:
+        md.append("\n**💰 Cost:** Not available (old trace format)\n")
         return md
 
-    # Anthropic Claude 3.5 Sonnet pricing (per 1K tokens)
-    input_cost_per_1k = 0.003  # $3 per 1M tokens
-    output_cost_per_1k = 0.015  # $15 per 1M tokens
-    cache_write_cost_per_1k = input_cost_per_1k * 2.0  # 100% premium for cache creation (2x cost)
-    cache_read_cost_per_1k = input_cost_per_1k * 0.1  # 90% discount for cache reads
-    thinking_cost_per_1k = output_cost_per_1k  # Thinking tokens billed as output tokens
+    cost_data = call["cost"]
+    total_cost = cost_data.get("total_cost_usd", 0)
 
-    # Calculate costs
-    prompt_cost = (prompt_tokens / 1000) * input_cost_per_1k
-    cache_creation_cost = (cache_creation / 1000) * cache_write_cost_per_1k if cache_creation > 0 else 0
-    cache_read_cost = (cache_read / 1000) * cache_read_cost_per_1k if cache_read > 0 else 0
-    response_cost = (response_tokens / 1000) * output_cost_per_1k
-    thinking_cost = (thinking_tokens / 1000) * thinking_cost_per_1k if thinking_tokens > 0 else 0
-    total_cost = prompt_cost + cache_creation_cost + cache_read_cost + response_cost + thinking_cost
+    md.append(f"\n**💰 Cost:** ${total_cost:.6f}\n")
 
-    md.append(f"\n**💰 Estimated Cost:** ${total_cost:.6f}\n")
+    # Calculate cache savings if cache was used
+    cache_read_cost = cost_data.get("cache_read_cost", 0)
+    cache_creation_cost = cost_data.get("cache_creation_cost", 0)
 
-    # Calculate savings from cache reuse
-    if cache_read > 0:
-        # What it would have cost without cache
-        full_price_for_cached = (cache_read / 1000) * input_cost_per_1k
-        # What it actually cost with cache
-        actual_cache_cost = (cache_read / 1000) * cache_read_cost_per_1k
-        # Savings
-        savings = full_price_for_cached - actual_cache_cost
-        savings_percentage = (savings / (total_cost + savings) * 100) if (total_cost + savings) > 0 else 0
+    if cache_read_cost > 0:
+        # Cache reads save 90% compared to regular input
+        # So actual cost is 10% of what it would have been
+        full_price = cache_read_cost / 0.1  # What it would have cost at full price
+        savings = full_price - cache_read_cost
+
+        # Calculate savings percentage of total cost without savings
+        total_without_savings = total_cost + savings
+        savings_percentage = (savings / total_without_savings * 100) if total_without_savings > 0 else 0
 
         md.append(f"**💚 Cache Savings:** ${savings:.6f} ({savings_percentage:.1f}% cost reduction)\n")
 
-    if cache_creation > 0 or cache_read > 0:
+    # Show cost breakdown if we have detailed costs
+    has_special_costs = any([cache_creation_cost > 0, cache_read_cost > 0, cost_data.get("thinking_cost", 0) > 0])
+
+    if has_special_costs:
         md.append("*Cost breakdown:*\n")
-        if cache_creation > 0:
-            md.append(f"- Cache Creation: ${cache_creation_cost:.6f} (+100% premium / 2x cost)\n")
-        if cache_read > 0:
+        if cache_creation_cost > 0:
+            md.append(f"- Cache Creation: ${cache_creation_cost:.6f} (+100% premium)\n")
+        if cache_read_cost > 0:
             md.append(f"- Cache Read: ${cache_read_cost:.6f} (-90% discount)\n")
-        md.append(f"- Regular Input: ${prompt_cost:.6f}\n")
-        md.append(f"- Output: ${response_cost:.6f}\n")
+        if cost_data.get("thinking_cost", 0) > 0:
+            md.append(f"- Thinking: ${cost_data['thinking_cost']:.6f}\n")
+        md.append(f"- Regular Input: ${cost_data.get('input_cost', 0):.6f}\n")
+        md.append(f"- Output: ${cost_data.get('output_cost', 0):.6f}\n")
     else:
-        md.append(f"(Input: ${prompt_cost:.6f}, Output: ${response_cost:.6f})\n")
+        # Simple breakdown
+        input_cost = cost_data.get("input_cost", 0)
+        output_cost = cost_data.get("output_cost", 0)
+        md.append(f"(Input: ${input_cost:.6f}, Output: ${output_cost:.6f})\n")
+
+    # Add pricing model info
+    if "pricing_model" in cost_data:
+        md.append(f"*Pricing: {cost_data['pricing_model']}*\n")
 
     return md
 
@@ -326,12 +325,8 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
         )
     )
 
-    # Add cost calculations
-    md.extend(
-        _calculate_cost_with_cache(
-            prompt_tokens, response_tokens, cache_creation, cache_read, thinking_tokens, total_tokens
-        )
-    )
+    # Add cost information from trace
+    md.extend(_format_cost_from_trace(call))
 
     # Add cache blocks section
     md.extend(_format_cache_blocks(call))
@@ -359,6 +354,10 @@ def create_node_markdown(node_num: int, call: dict, trace_id: str) -> tuple[str,
         "thinking_tokens": thinking_tokens,
         "thinking_budget": thinking_budget,
     }
+
+    # Add cost data if available
+    if "cost" in call:
+        metadata["cost"] = call["cost"]
 
     return "\n".join(md), metadata
 
@@ -457,50 +456,71 @@ def _add_thinking_performance_metrics(md: list, node_files: list, totals: dict) 
         md.append(f"- **Budget Utilization:** {utilization:.1f}%")
 
 
-def _add_cost_analysis(md: list, totals: dict) -> None:
-    """Add cost analysis to the summary."""
+def _add_cost_analysis(md: list, totals: dict, node_files: list) -> None:
+    """Add cost analysis to the summary using pre-calculated costs from trace."""
     if totals["total"] == 0:
         return
 
-    # Anthropic Claude 3.5 Sonnet pricing (per 1K tokens)
-    input_cost_per_1k = 0.003  # $3 per 1M tokens
-    output_cost_per_1k = 0.015  # $15 per 1M tokens
-    cache_write_cost_per_1k = input_cost_per_1k * 2.0  # 100% premium (2x cost)
-    cache_read_cost_per_1k = input_cost_per_1k * 0.1  # 90% discount
+    # Sum up pre-calculated costs from trace
+    total_cost = 0.0
+    total_cache_savings = 0.0
+    has_cost_data = False
+    cost_breakdown = {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_creation": 0.0,
+        "cache_read": 0.0,
+        "thinking": 0.0,
+    }
 
-    # Calculate actual costs
-    prompt_cost = (totals["prompt"] / 1000) * input_cost_per_1k
-    output_cost = (totals["response"] / 1000) * output_cost_per_1k
-    cache_creation_cost = (totals["cache_creation"] / 1000) * cache_write_cost_per_1k
-    cache_read_cost = (totals["cache_read"] / 1000) * cache_read_cost_per_1k
-    thinking_cost = (totals["thinking"] / 1000) * output_cost_per_1k  # Thinking billed as output
-    total_cost = prompt_cost + output_cost + cache_creation_cost + cache_read_cost + thinking_cost
+    for file_info in node_files:
+        metadata = file_info.get("metadata", {})
+        if "cost" in metadata:
+            has_cost_data = True
+            cost_data = metadata["cost"]
+            total_cost += cost_data.get("total_cost_usd", 0)
+
+            # Accumulate breakdown
+            cost_breakdown["input"] += cost_data.get("input_cost", 0)
+            cost_breakdown["output"] += cost_data.get("output_cost", 0)
+            cost_breakdown["cache_creation"] += cost_data.get("cache_creation_cost", 0)
+            cost_breakdown["cache_read"] += cost_data.get("cache_read_cost", 0)
+            cost_breakdown["thinking"] += cost_data.get("thinking_cost", 0)
+
+            # Calculate savings from cache reads
+            if cost_data.get("cache_read_cost", 0) > 0:
+                # Cache reads are 10% of regular price, so savings = 90% of what it would have been
+                full_price = cost_data["cache_read_cost"] / 0.1
+                total_cache_savings += full_price - cost_data["cache_read_cost"]
+
+    # Only show cost analysis if we have cost data
+    if not has_cost_data:
+        md.append("\n### 💰 Cost Analysis")
+        md.append("*Cost data not available (trace generated before cost tracking was added)*")
+        return
 
     md.append("\n### 💰 Cost Analysis")
     md.append(f"- **Total Cost:** ${total_cost:.4f}")
 
-    # Calculate savings if cache reads exist
-    if totals["cache_read"] > 0:
-        # What it would have cost without caching
-        full_price_for_cached = (totals["cache_read"] / 1000) * input_cost_per_1k
-        savings = full_price_for_cached - cache_read_cost
-        without_cache_cost = total_cost + savings
-        savings_percentage = (savings / without_cache_cost * 100) if without_cache_cost > 0 else 0
+    # Show cache savings if applicable
+    if total_cache_savings > 0:
+        without_cache_cost = total_cost + total_cache_savings
+        savings_percentage = (total_cache_savings / without_cache_cost * 100) if without_cache_cost > 0 else 0
 
         md.append(f"- **Cost Without Cache:** ${without_cache_cost:.4f}")
-        md.append(f"- **💚 Cache Savings:** ${savings:.4f} ({savings_percentage:.1f}% reduction)")
+        md.append(f"- **💚 Cache Savings:** ${total_cache_savings:.4f} ({savings_percentage:.1f}% reduction)")
 
     # Cost breakdown
     md.append("\n*Cost Breakdown:*")
-    if cache_creation_cost > 0:
-        md.append(f"  - Cache Creation: ${cache_creation_cost:.4f} (+100% premium / 2x cost)")
-    if cache_read_cost > 0:
-        md.append(f"  - Cache Read: ${cache_read_cost:.4f} (-90% discount)")
-    if thinking_cost > 0:
+    if cost_breakdown["cache_creation"] > 0:
+        md.append(f"  - Cache Creation: ${cost_breakdown['cache_creation']:.4f} (+100% premium)")
+    if cost_breakdown["cache_read"] > 0:
+        md.append(f"  - Cache Read: ${cost_breakdown['cache_read']:.4f} (-90% discount)")
+    if cost_breakdown["thinking"] > 0:
         utilization = (totals["thinking"] / totals["thinking_budget"] * 100) if totals["thinking_budget"] > 0 else 0
-        md.append(f"  - Thinking: ${thinking_cost:.4f} ({utilization:.1f}% of budget used)")
-    md.append(f"  - Regular Input: ${prompt_cost:.4f}")
-    md.append(f"  - Output: ${output_cost:.4f}\n")
+        md.append(f"  - Thinking: ${cost_breakdown['thinking']:.4f} ({utilization:.1f}% of budget used)")
+    md.append(f"  - Regular Input: ${cost_breakdown['input']:.4f}")
+    md.append(f"  - Output: ${cost_breakdown['output']:.4f}\n")
 
 
 def _add_summary_statistics(md: list, node_files: list) -> tuple[int, int, float]:
@@ -527,7 +547,7 @@ def _add_summary_statistics(md: list, node_files: list) -> tuple[int, int, float
     # Add performance metrics sections
     _add_cache_performance_metrics(md, node_files, totals)
     _add_thinking_performance_metrics(md, node_files, totals)
-    _add_cost_analysis(md, totals)
+    _add_cost_analysis(md, totals, node_files)
 
     return totals["prompt"], totals["response"], totals["duration"]
 
@@ -688,6 +708,11 @@ def analyze_trace(trace_file: Path, output_dir: Path) -> None:
                     },
                     "model": node["llm_call"].get("model", "unknown"),
                 }
+
+                # Include cost data if available in llm_call
+                if "cost" in node.get("llm_call", {}):
+                    llm_call["cost"] = node["llm_call"]["cost"]
+
                 llm_calls.append(llm_call)
 
     if not llm_calls:

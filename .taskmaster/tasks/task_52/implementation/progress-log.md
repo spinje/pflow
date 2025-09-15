@@ -1460,3 +1460,125 @@ usage_obj = {"thinking_budget": 4096, ...}  # dict, not object
 See `thinking-tokens-implementation.md` for complete technical documentation.
 
 The thinking tokens optimization represents a significant advancement in making the planner both cost-effective for simple tasks and capable for complex workflows, while maintaining the cache sharing benefits from Task 52.
+
+## [2025-01-15] - Cost Tracking Architecture Refactoring
+
+### Problem Discovered: Duplicate Cost Calculation Logic
+Cost calculations existed in 3 different places with inconsistent implementations:
+- `scripts/analyze-trace/analyze.py`: Hardcoded Claude pricing only
+- `src/pflow/core/metrics.py`: Comprehensive 23-model pricing table
+- `tools/test_prompt_accuracy.py`: Limited 5-model subset
+
+### Solution: Centralized LLM Pricing Module
+
+Created `src/pflow/core/llm_pricing.py` as single source of truth:
+- Comprehensive MODEL_PRICING dictionary (14+ models)
+- Unified `calculate_llm_cost()` function
+- Handles all token types: regular, cache, thinking
+- Returns detailed cost breakdown for transparency
+
+### Key Architecture: Calculate Once at Source
+
+**New Flow**:
+```
+LLM Response → debug.py calculates cost → Stores in trace with cost data
+                    ↓
+            Trace includes cost_usd field
+                    ↓
+         analyze-trace just displays (no recalc)
+```
+
+**Benefits**:
+- Costs calculated once at record time, never recalculated
+- Full cost breakdown visible in traces for debugging
+- No more hardcoded pricing in analysis scripts
+- Supports all models with proper fallback
+
+### Critical Fix: Cost in README Generation
+
+Fixed issue where generated README files weren't showing costs:
+- Added cost data to metadata when processing LLM calls
+- Updated `_add_cost_analysis()` to extract from metadata
+- Added graceful handling for old traces without cost data
+- README now shows total cost, cache savings, and detailed breakdown
+
+### Metrics Integration Enhancement
+
+Enhanced `MetricsCollector` to include:
+- **Thinking performance**: Utilization percentage, tokens used vs budget
+- **Cache performance**: Creation vs read tokens, efficiency percentage
+- **Cost summaries**: Top-level summaries for easy access
+- **JSON output**: Complete metrics in `--output-format json`
+
+### Impact
+- Every LLM call in traces now shows exact cost with breakdown
+- README files display comprehensive cost analysis with savings
+- JSON output includes cache and thinking performance metrics
+- Single pricing source eliminates inconsistency bugs
+
+## [2025-01-15] - Critical Bug Fixes in Prompt Caching
+
+### Bug 1: Broken Planner from > 1000 Character Checks
+
+**Problem**: Arbitrary `> 1000` character checks throughout caching logic caused:
+- Instructions missing from prompts when < 1000 chars
+- Inconsistent caching behavior
+- WorkflowDiscoveryNode not caching empty/short workflow lists
+
+**Root Cause**: `build_cached_prompt()` was creating cache blocks even when caching disabled, but those blocks were ignored, causing LLM to never see instructions.
+
+**Fix Applied**:
+1. Removed ALL `> 1000` checks from caching logic
+2. Added `enable_caching` parameter to `build_cached_prompt()`
+3. WorkflowDiscoveryNode: When caching disabled, directly formats full prompt
+4. All nodes: Pass `enable_caching=cache_planner` to control behavior
+
+**Impact**: Consistent, predictable caching behavior with no magic numbers
+
+### Bug 2: Discovery Context Not in Cache Block
+
+**Problem**: WorkflowDiscoveryNode wasn't including existing workflows as cache block when:
+- No workflows existed (empty context)
+- Few workflows (< 1000 characters)
+
+**Fix**: Always include context block with clear message:
+```python
+context_block = f"""## Context
+<existing_workflows>
+{discovery_context if discovery_context else "No existing workflows found."}
+</existing_workflows>"""
+cache_blocks.append({"text": context_block, ...})  # Always add
+```
+
+### Bug 3: Full Prompt Not Provided When Caching Disabled
+
+**Critical Issue**: When `cache_planner=False` but instructions > 1000 chars:
+- Instructions went into cache_blocks (which were ignored with cache_blocks=None)
+- Only context onwards was in formatted_prompt
+- **LLM never saw the instructions!**
+
+**Fix**: Complete separation of caching vs non-caching paths:
+- When caching disabled: Return `([], full_formatted_prompt)`
+- When caching enabled: Return `(cache_blocks, partial_prompt)`
+- No shared logic that could cause confusion
+
+### Architectural Improvements
+
+**Established Clear Patterns**:
+1. **Standard Nodes**: Use `build_cached_prompt()` with `enable_caching` parameter
+2. **Special Context Nodes**: Custom `_build_cache_blocks()` methods
+3. **Planning Nodes**: Use `PlannerContextBuilder` for accumulation
+
+**Benefits**:
+- No arbitrary thresholds
+- Predictable behavior
+- LLM always gets complete information
+- Easier to reason about and debug
+
+### Lessons Learned
+
+1. **Magic numbers are harmful**: The 1000 character threshold was arbitrary and caused bugs
+2. **Explicit over implicit**: `enable_caching` parameter makes intent clear
+3. **Test all paths**: Discovery with caching disabled was completely broken
+4. **Separation of concerns**: Caching logic shouldn't affect prompt completeness
+5. **Always verify assumptions**: "Small content doesn't need caching" was wrong

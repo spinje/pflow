@@ -517,6 +517,18 @@ class TraceCollector:
                     input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens + thinking_tokens
                 )
 
+                # Calculate cost immediately using the centralized pricing module
+                from pflow.core.llm_pricing import calculate_llm_cost
+
+                cost_breakdown = calculate_llm_cost(
+                    model=model_name,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
+                    cache_read_tokens=cache_read_tokens,
+                    thinking_tokens=thinking_tokens,
+                )
+
                 self.current_llm_call["tokens"] = {
                     "input": input_tokens,
                     "output": output_tokens,
@@ -526,6 +538,9 @@ class TraceCollector:
                     "thinking_budget": thinking_budget,
                     "total": usage_data.get("total_tokens", calculated_total),
                 }
+
+                # Add cost breakdown to trace
+                self.current_llm_call["cost"] = cost_breakdown
 
                 # Also accumulate in shared store for metrics if available
                 if shared and "__llm_calls__" in shared:
@@ -539,6 +554,7 @@ class TraceCollector:
                         "node_id": node,
                         "duration_ms": self.current_llm_call["duration_ms"],
                         "is_planner": True,
+                        "total_cost_usd": cost_breakdown["total_cost_usd"],  # Add pre-calculated cost
                     }
                     # Handle cache-related fields if present
                     if "cache_creation_input_tokens" in usage_data:
