@@ -21,6 +21,13 @@ from pathlib import Path
 
 import pytest
 
+# For LLM tests, we need to enable the Anthropic model wrapper
+# This gives us cache_blocks support which is required for the new architecture
+if os.getenv("RUN_LLM_TESTS"):
+    from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+
+    install_anthropic_model()
+
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.planning import create_planner_flow
 
