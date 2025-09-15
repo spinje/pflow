@@ -50,6 +50,7 @@ class WorkflowTraceCollector:
         self.llm_prompts: dict[str, str] = {}  # Store prompts by node_id
         self._llm_interceptor_installed = False
         self._current_node: Optional[str] = None
+        self.json_output: dict[str, Any] | None = None  # Store final JSON output if generated
 
     def record_node_execution(
         self,
@@ -360,6 +361,14 @@ class WorkflowTraceCollector:
             "modified": sorted(modified),
         }
 
+    def set_json_output(self, json_output: dict[str, Any]) -> None:
+        """Store the JSON output that was sent to stdout.
+
+        Args:
+            json_output: The JSON data that was output to the user
+        """
+        self.json_output = json_output
+
     def save_to_file(self) -> Path:
         """Save trace to JSON file in ~/.pflow/debug/.
 
@@ -415,6 +424,10 @@ class WorkflowTraceCollector:
                 "total_tokens": total_tokens,
                 "models_used": list({e["llm_call"].get("model", "unknown") for e in llm_events}),
             }
+
+        # Add JSON output if it was generated (e.g., when --output-format json was used)
+        if self.json_output is not None:
+            trace_data["json_output"] = self.json_output
 
         # Write to file with proper formatting
         with open(filepath, "w") as f:

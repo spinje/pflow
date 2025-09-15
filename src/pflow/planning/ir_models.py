@@ -1,6 +1,6 @@
 """Pydantic models for structured LLM output."""
 
-from typing import Any, Optional
+from typing import Any, Callable, ClassVar, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -21,6 +21,12 @@ class EdgeIR(BaseModel):
     to_node: str = Field(..., alias="to")
     action: str = Field(default="default")
 
+    class Config:
+        populate_by_name = True  # Allow both field names and aliases during parsing
+        use_enum_values = True
+        json_encoders: ClassVar[dict[type, Callable[[Any], Any]]] = {str: lambda v: v}
+        by_alias = True  # CRITICAL: Use aliases when serializing for IR compliance
+
 
 class FlowIR(BaseModel):
     """Flow IR for planner output generation."""
@@ -32,6 +38,10 @@ class FlowIR(BaseModel):
     # Task 21 fields: workflows can declare their expected inputs/outputs
     inputs: Optional[dict[str, Any]] = None
     outputs: Optional[dict[str, Any]] = None
+
+    class Config:
+        # Ensure nested models also use aliases
+        by_alias = True
 
     def to_dict(self) -> dict:
         """Convert to dict for validation with existing schema."""
@@ -56,10 +66,12 @@ class WorkflowMetadata(BaseModel):
     )
 
     search_keywords: list[str] = Field(
-        description="Alternative terms users might search for", min_length=3, max_length=10
+        description="Alternative terms users might search for", min_length=2, max_length=20
     )
 
-    capabilities: list[str] = Field(description="What this workflow can do (bullet points)", min_length=2, max_length=6)
+    capabilities: list[str] = Field(
+        description="What this workflow can do (bullet points)", min_length=2, max_length=20
+    )
 
     typical_use_cases: list[str] = Field(description="When/why someone would use this", min_length=1, max_length=3)
 

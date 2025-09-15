@@ -29,7 +29,7 @@ class TestPlannerSimpleIntegration:
         test_manager.save(name="read-file-workflow", workflow_ir=test_workflow_ir, description="Read a file")
 
         # Create flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Setup shared store
         shared = {
@@ -121,7 +121,7 @@ class TestPlannerSimpleIntegration:
         test_manager.save(name="process-workflow", workflow_ir=test_workflow_ir, description="Process data")
 
         # Create flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Setup shared store - vague input missing parameters
         shared = {
@@ -187,7 +187,7 @@ class TestPlannerSimpleIntegration:
         test_manager = WorkflowManager(workflows_dir=str(tmp_path / "workflows"))
 
         # Create flow
-        flow = create_planner_flow()
+        flow = create_planner_flow(wait=0)
 
         # Setup shared store
         shared = {
@@ -237,21 +237,7 @@ class TestPlannerSimpleIntegration:
                             ]
                         }
                     ),
-                    # 2. Component browsing
-                    Mock(
-                        json=lambda: {
-                            "content": [
-                                {
-                                    "input": {
-                                        "node_ids": ["read-file", "llm", "write-file"],
-                                        "workflow_names": [],
-                                        "reasoning": "Selected file and LLM nodes",
-                                    }
-                                }
-                            ]
-                        }
-                    ),
-                    # 3. Parameter discovery
+                    # 2. Parameter discovery (MOVED earlier in Task 52)
                     Mock(
                         json=lambda: {
                             "content": [
@@ -265,7 +251,47 @@ class TestPlannerSimpleIntegration:
                             ]
                         }
                     ),
-                    # 4. Workflow generation (only 1 needed now!)
+                    # 3. Requirements analysis (NEW in Task 52)
+                    Mock(
+                        json=lambda: {
+                            "content": [
+                                {
+                                    "input": {
+                                        "is_clear": True,
+                                        "clarification_needed": None,
+                                        "steps": ["Read CSV file", "Analyze data", "Generate report"],
+                                        "estimated_nodes": 3,
+                                        "required_capabilities": ["file", "llm"],
+                                        "complexity_indicators": {"has_conditional": False},
+                                    }
+                                }
+                            ]
+                        }
+                    ),
+                    # 4. Component browsing
+                    Mock(
+                        json=lambda: {
+                            "content": [
+                                {
+                                    "input": {
+                                        "node_ids": ["read-file", "llm", "write-file"],
+                                        "workflow_names": [],
+                                        "reasoning": "Selected file and LLM nodes",
+                                    }
+                                }
+                            ]
+                        }
+                    ),
+                    # 5. Planning (NEW in Task 52)
+                    Mock(
+                        text=lambda: """## Execution Plan
+
+Creating workflow to analyze CSV data.
+
+**Status**: FEASIBLE
+**Node Chain**: read-file >> llm >> write-file"""
+                    ),
+                    # 6. Workflow generation
                     Mock(
                         json=lambda: {
                             "content": [
@@ -315,7 +341,7 @@ class TestPlannerSimpleIntegration:
                             ]
                         }
                     ),
-                    # 5. Parameter mapping (BEFORE validation now)
+                    # 7. Parameter mapping (BEFORE validation now)
                     Mock(
                         json=lambda: {
                             "content": [

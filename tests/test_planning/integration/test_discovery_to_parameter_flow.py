@@ -121,12 +121,17 @@ def mock_llm_model(mock_llm_response):
     def prompt_side_effect(prompt, **kwargs):
         # Determine response based on prompt content
         prompt_lower = prompt.lower()
+
+        # Debug: uncomment to see what prompts are being sent
+        # print(f"[DEBUG] Prompt check: router={bool('workflow router' in prompt_lower)}, csv={bool('csv' in prompt_lower)}, json={bool('json' in prompt_lower)}")
+
         if (
             "workflow router" in prompt_lower
             or "workflow discovery" in prompt_lower
             or "existing workflow" in prompt_lower
         ):
             # WorkflowDiscoveryNode response
+            # Check if the user input contains CSV and JSON
             if "csv" in prompt_lower and "json" in prompt_lower:
                 return mock_llm_response(
                     found=True,
@@ -141,6 +146,22 @@ def mock_llm_model(mock_llm_response):
                     confidence=0.2,
                     reasoning="No matching workflow found",
                 )
+        elif "requirements analysis" in prompt_lower or "clarification" in prompt_lower:
+            # RequirementsAnalysisNode response (NEW - Task 52)
+            return mock_llm_response(
+                is_clear=True,
+                clarification_needed=None,
+                steps=["Read CSV file", "Convert to JSON"],
+                estimated_nodes=2,
+                required_capabilities=["file_operations"],
+                complexity_indicators={"complexity": "simple"},
+            )
+        elif "planning agent" in prompt_lower or "node chain" in prompt_lower:
+            # PlanningNode response (NEW - Task 52)
+            # PlanningNode returns .text() not .json() - need special handling
+            response = Mock()
+            response.text.return_value = "**Status**: FEASIBLE\n**Node Chain**: read-file >> write-file"
+            return response
         elif "component browsing system" in prompt_lower or "select all nodes" in prompt_lower:
             # ComponentBrowsingNode response
             return mock_llm_response(
@@ -171,13 +192,13 @@ def mock_llm_model(mock_llm_response):
                 reasoning="All required parameters extracted",
             )
         else:
-            # Default response - since ParameterMappingNode is the one that fails,
-            # provide a default response compatible with it (uses 'extracted')
+            # Default response for unknown prompts - provide a generic structure
+            # that works for WorkflowDiscoveryNode (the first node that gets called)
             return mock_llm_response(
-                extracted={},
-                missing=[],
+                found=False,
+                workflow_name=None,
                 confidence=0.0,
-                reasoning="Default response",
+                reasoning="Default response - no pattern matched",
             )
 
     model.prompt.side_effect = prompt_side_effect
@@ -187,14 +208,52 @@ def mock_llm_model(mock_llm_response):
 class TestPathADiscoveryToParameter:
     """Test Path A flow: Discovery → Parameter Mapping."""
 
-    def test_path_a_complete_flow(self, mock_workflow_manager, mock_llm_model):
+    def test_path_a_complete_flow(self, mock_workflow_manager, mock_llm_calls, monkeypatch):
         """Test complete Path A flow from discovery to parameter extraction."""
-        with (
-            patch("pflow.planning.nodes.WorkflowManager") as mock_wm_class,
-            patch("pflow.planning.nodes.llm.get_model") as mock_get_model,
-        ):
+        # ⚠️ CRITICAL: DO NOT REMOVE MODULE RELOADING - IT WILL BREAK TESTS! ⚠️
+        # This module reloading is REQUIRED for test isolation. Without it:
+        # 1. Cached prompt templates persist between tests causing failures
+        # 2. Patches from previous tests contaminate subsequent tests
+        # 3. ~75 tests will fail due to state pollution
+        # The 0.2s performance cost is necessary for correctness.
+        import importlib
+
+        import pflow.planning.prompts.loader as loader_module
+        import pflow.planning.utils.prompt_cache_helper as cache_helper_module
+
+        importlib.reload(loader_module)
+        importlib.reload(cache_helper_module)
+
+        # Reset the mock to ensure clean state
+        mock_llm_calls.reset()
+
+        # Configure the global mock for this test
+        from pflow.planning.nodes import ParameterExtraction, WorkflowDecision
+
+        # Set up responses for the expected LLM calls
+        mock_llm_calls.set_response(
+            "anthropic/claude-sonnet-4-0",
+            WorkflowDecision,
+            {
+                "found": True,
+                "workflow_name": "csv-to-json",
+                "confidence": 0.95,
+                "reasoning": "Found exact match for CSV to JSON conversion",
+            },
+        )
+        mock_llm_calls.set_response(
+            "anthropic/claude-sonnet-4-0",
+            ParameterExtraction,
+            {
+                "extracted": {"input_file": "data.csv"},
+                "missing": [],
+                "confidence": 0.95,
+                "reasoning": "All required parameters extracted",
+            },
+        )
+
+        with patch("pflow.planning.nodes.WorkflowManager") as mock_wm_class:
             mock_wm_class.return_value = mock_workflow_manager
-            mock_get_model.return_value = mock_llm_model
 
             # Initialize shared store with user input
             shared = {"user_input": "Convert data.csv to JSON format"}

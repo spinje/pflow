@@ -4,25 +4,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-# Model pricing per million tokens (matching test_prompt_accuracy.py)
-MODEL_PRICING = {
-    "anthropic/claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
-    "anthropic/claude-3-sonnet-20240229": {"input": 3.00, "output": 15.00},
-    "anthropic/claude-3-opus-20240229": {"input": 15.00, "output": 75.00},
-    "anthropic/claude-3-5-sonnet-20240620": {"input": 3.00, "output": 15.00},
-    "anthropic/claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
-    "anthropic/claude-sonnet-4-0": {"input": 3.00, "output": 15.00},
-    "gpt-4": {"input": 30.0, "output": 60.0},
-    "gpt-4-turbo": {"input": 10.0, "output": 30.0},
-    "gpt-4o": {"input": 5.0, "output": 15.0},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
-    "gemini-1.5-pro": {"input": 3.5, "output": 10.5},
-    "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
-}
-
-# Default pricing for unknown models (using gpt-4o-mini as fallback)
-DEFAULT_PRICING = {"input": 0.15, "output": 0.60}
+# Import pricing from centralized module
+from pflow.core.llm_pricing import calculate_llm_cost
 
 
 @dataclass
@@ -72,7 +55,7 @@ class MetricsCollector:
         """Calculate total cost from accumulated LLM calls.
 
         Prioritizes actual cost (total_cost_usd) when available,
-        otherwise falls back to token-based calculation.
+        otherwise falls back to token-based calculation with cache awareness.
 
         Args:
             llm_calls: List of LLM call data from shared["__llm_calls__"]
@@ -87,25 +70,151 @@ class MetricsCollector:
             if not call:
                 continue
 
-            # PRIORITY 1: Use actual cost if available (e.g., from Claude Code)
+            # PRIORITY 1: Use pre-calculated cost if available
             if "total_cost_usd" in call and call["total_cost_usd"] is not None:
                 total_cost += call["total_cost_usd"]
                 continue
 
-            # PRIORITY 2: Fall back to token-based calculation
-            model = call.get("model", "unknown")
-            pricing = MODEL_PRICING.get(model, DEFAULT_PRICING)
+            # PRIORITY 2: Calculate using centralized pricing module
+            # Check both model field and prompt_kwargs.model for compatibility
+            model = call.get("model") or call.get("prompt_kwargs", {}).get("model", "unknown")
 
-            input_tokens = call.get("input_tokens", 0)
-            output_tokens = call.get("output_tokens", 0)
+            # Use the centralized calculate_llm_cost function
+            cost_breakdown = calculate_llm_cost(
+                model=model,
+                input_tokens=call.get("input_tokens", 0),
+                output_tokens=call.get("output_tokens", 0),
+                cache_creation_tokens=call.get("cache_creation_input_tokens", 0),
+                cache_read_tokens=call.get("cache_read_input_tokens", 0),
+                thinking_tokens=call.get("thinking_tokens", 0),
+            )
 
-            # Pricing is per million tokens
-            input_cost = (input_tokens / 1_000_000) * pricing["input"]
-            output_cost = (output_tokens / 1_000_000) * pricing["output"]
-
-            total_cost += input_cost + output_cost
+            total_cost += cost_breakdown["total_cost_usd"]
 
         return round(total_cost, 6)
+
+    def _calculate_durations(self) -> tuple[float, Optional[float], Optional[float]]:
+        """Calculate total, planner, and workflow durations.
+
+        Returns:
+            Tuple of (total_duration_ms, planner_duration_ms, workflow_duration_ms)
+        """
+        total_duration = (time.perf_counter() - self.start_time) * 1000
+
+        planner_duration = None
+        if self.planner_start and self.planner_end:
+            planner_duration = (self.planner_end - self.planner_start) * 1000
+
+        workflow_duration = None
+        if self.workflow_start and self.workflow_end:
+            workflow_duration = (self.workflow_end - self.workflow_start) * 1000
+
+        return total_duration, planner_duration, workflow_duration
+
+    def _aggregate_token_counts(self, llm_calls: list[dict[str, Any]]) -> dict[str, int]:
+        """Aggregate token counts from LLM calls.
+
+        Args:
+            llm_calls: List of LLM call data
+
+        Returns:
+            Dictionary with aggregated token counts
+        """
+        return {
+            "input": sum(call.get("input_tokens", 0) for call in llm_calls if call),
+            "output": sum(call.get("output_tokens", 0) for call in llm_calls if call),
+            "cache_creation": sum(call.get("cache_creation_input_tokens", 0) for call in llm_calls if call),
+            "cache_read": sum(call.get("cache_read_input_tokens", 0) for call in llm_calls if call),
+            "thinking": sum(call.get("thinking_tokens", 0) for call in llm_calls if call),
+            "thinking_budget": sum(call.get("thinking_budget", 0) for call in llm_calls if call),
+        }
+
+    def _build_execution_metrics(
+        self,
+        llm_calls: list[dict[str, Any]],
+        node_timings: dict[str, float],
+        duration: Optional[float],
+        is_planner: bool,
+    ) -> dict[str, Any]:
+        """Build metrics for planner or workflow execution.
+
+        Args:
+            llm_calls: Filtered LLM calls for this execution type
+            node_timings: Node execution timings
+            duration: Execution duration in milliseconds
+            is_planner: Whether this is for planner metrics
+
+        Returns:
+            Dictionary with execution metrics
+        """
+        cost = self.calculate_costs(llm_calls)
+        tokens = self._aggregate_token_counts(llm_calls)
+        tokens_total = tokens["input"] + tokens["output"]
+
+        # Extract unique models used
+        models = list({call.get("model", "unknown") for call in llm_calls if call})
+
+        metrics = {
+            "duration_ms": round(duration, 2) if duration else None,
+            "nodes_executed": len(node_timings),
+            "cost_usd": cost,
+            "tokens_input": tokens["input"],
+            "tokens_output": tokens["output"],
+            "tokens_total": tokens_total,
+            "models_used": models,
+            "node_timings": node_timings,
+        }
+
+        # Add cache tokens if present
+        if tokens["cache_creation"] > 0:
+            metrics["cache_creation_tokens"] = tokens["cache_creation"]
+        if tokens["cache_read"] > 0:
+            metrics["cache_read_tokens"] = tokens["cache_read"]
+
+        # Add thinking tokens if present
+        if tokens["thinking"] > 0:
+            metrics["thinking_tokens"] = tokens["thinking"]
+        if tokens["thinking_budget"] > 0:
+            metrics["thinking_budget"] = tokens["thinking_budget"]
+
+        return metrics
+
+    def _add_cache_performance(self, summary: dict[str, Any], total_tokens: dict[str, int]) -> None:
+        """Add cache performance metrics to summary if cache was used.
+
+        Args:
+            summary: Summary dict to update
+            total_tokens: Token counts by type
+        """
+        cache_total = total_tokens["cache_creation"] + total_tokens["cache_read"]
+        if cache_total > 0:
+            # Calculate cache efficiency (read tokens as percentage of total cached)
+            cache_efficiency = (total_tokens["cache_read"] / cache_total) * 100
+
+            summary["cache_performance"] = {
+                "cache_creation_tokens": total_tokens["cache_creation"],
+                "cache_read_tokens": total_tokens["cache_read"],
+                "cache_efficiency_pct": round(cache_efficiency, 1),
+                "cache_total_tokens": cache_total,
+            }
+
+    def _add_thinking_performance(self, summary: dict[str, Any], total_tokens: dict[str, int]) -> None:
+        """Add thinking performance metrics to summary if thinking tokens were used.
+
+        Args:
+            summary: Summary dict to update
+            total_tokens: Token counts by type
+        """
+        if total_tokens["thinking"] > 0 or total_tokens["thinking_budget"] > 0:
+            thinking_utilization = 0.0
+            if total_tokens["thinking_budget"] > 0:
+                thinking_utilization = (total_tokens["thinking"] / total_tokens["thinking_budget"]) * 100
+
+            summary["thinking_performance"] = {
+                "thinking_tokens_used": total_tokens["thinking"],
+                "thinking_budget_allocated": total_tokens["thinking_budget"],
+                "thinking_utilization_pct": round(thinking_utilization, 1),
+            }
 
     def get_summary(self, llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
         """Generate metrics summary for JSON output.
@@ -117,21 +226,12 @@ class MetricsCollector:
             Dictionary with top-level metrics and detailed breakdown
         """
         # Calculate durations
-        total_duration = (time.perf_counter() - self.start_time) * 1000
+        total_duration, planner_duration, workflow_duration = self._calculate_durations()
 
-        planner_duration = None
-        if self.planner_start and self.planner_end:
-            planner_duration = (self.planner_end - self.planner_start) * 1000
+        # Aggregate total token counts
+        total_tokens = self._aggregate_token_counts(llm_calls)
 
-        workflow_duration = None
-        if self.workflow_start and self.workflow_end:
-            workflow_duration = (self.workflow_end - self.workflow_start) * 1000
-
-        # Aggregate token counts
-        total_input = sum(call.get("input_tokens", 0) for call in llm_calls if call)
-        total_output = sum(call.get("output_tokens", 0) for call in llm_calls if call)
-
-        # Calculate costs
+        # Calculate total cost
         total_cost = self.calculate_costs(llm_calls)
 
         # Count nodes
@@ -143,68 +243,50 @@ class MetricsCollector:
         # Add planner metrics if present
         if self.planner_nodes:
             planner_llm_calls = [c for c in llm_calls if c.get("is_planner", False)]
-            planner_cost = self.calculate_costs(planner_llm_calls)
-
-            # Aggregate planner tokens
-            planner_input = sum(call.get("input_tokens", 0) for call in planner_llm_calls if call)
-            planner_output = sum(call.get("output_tokens", 0) for call in planner_llm_calls if call)
-            planner_total = planner_input + planner_output
-
-            # Extract unique models used in planner
-            planner_models = list({
-                call.get("model", "unknown") for call in planner_llm_calls if call and call.get("model")
-            })
-
-            metrics["planner"] = {
-                "duration_ms": round(planner_duration, 2) if planner_duration else None,
-                "nodes_executed": len(self.planner_nodes),
-                "cost_usd": planner_cost,
-                "tokens_input": planner_input,
-                "tokens_output": planner_output,
-                "tokens_total": planner_total,
-                "models_used": planner_models,
-                "node_timings": self.planner_nodes,
-            }
+            metrics["planner"] = self._build_execution_metrics(
+                planner_llm_calls, self.planner_nodes, planner_duration, is_planner=True
+            )
 
         # Add workflow metrics if present
         if self.workflow_nodes:
             workflow_llm_calls = [c for c in llm_calls if not c.get("is_planner", False)]
-            workflow_cost = self.calculate_costs(workflow_llm_calls)
-
-            # Aggregate workflow tokens
-            workflow_input = sum(call.get("input_tokens", 0) for call in workflow_llm_calls if call)
-            workflow_output = sum(call.get("output_tokens", 0) for call in workflow_llm_calls if call)
-            workflow_total = workflow_input + workflow_output
-
-            # Extract unique models used in workflow
-            workflow_models = list({
-                call.get("model", "unknown") for call in workflow_llm_calls if call and call.get("model")
-            })
-
-            metrics["workflow"] = {
-                "duration_ms": round(workflow_duration, 2) if workflow_duration else None,
-                "nodes_executed": len(self.workflow_nodes),
-                "cost_usd": workflow_cost,
-                "tokens_input": workflow_input,
-                "tokens_output": workflow_output,
-                "tokens_total": workflow_total,
-                "models_used": workflow_models,
-                "node_timings": self.workflow_nodes,
-            }
+            metrics["workflow"] = self._build_execution_metrics(
+                workflow_llm_calls, self.workflow_nodes, workflow_duration, is_planner=False
+            )
 
         # Add total metrics
-        metrics["total"] = {
-            "tokens_input": total_input,
-            "tokens_output": total_output,
-            "tokens_total": total_input + total_output,
+        total_metrics = {
+            "tokens_input": total_tokens["input"],
+            "tokens_output": total_tokens["output"],
+            "tokens_total": total_tokens["input"] + total_tokens["output"],
             "cost_usd": total_cost,
         }
 
-        # Return top-level metrics and detailed breakdown
-        return {
+        # Add cache tokens if present
+        if total_tokens["cache_creation"] > 0:
+            total_metrics["cache_creation_tokens"] = total_tokens["cache_creation"]
+        if total_tokens["cache_read"] > 0:
+            total_metrics["cache_read_tokens"] = total_tokens["cache_read"]
+
+        # Add thinking tokens if present
+        if total_tokens["thinking"] > 0:
+            total_metrics["thinking_tokens"] = total_tokens["thinking"]
+        if total_tokens["thinking_budget"] > 0:
+            total_metrics["thinking_budget"] = total_tokens["thinking_budget"]
+
+        metrics["total"] = total_metrics
+
+        # Build summary dict
+        summary = {
             "duration_ms": round(total_duration, 2),
             "duration_planner_ms": round(planner_duration, 2) if planner_duration else None,
             "total_cost_usd": total_cost,
             "num_nodes": num_nodes,
             "metrics": metrics,
         }
+
+        # Add performance summaries
+        self._add_cache_performance(summary, total_tokens)
+        self._add_thinking_performance(summary, total_tokens)
+
+        return summary

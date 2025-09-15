@@ -6,6 +6,7 @@ from .exceptions import (
     WorkflowExecutionError,
 )
 from .ir_schema import FLOW_IR_SCHEMA, ValidationError, validate_ir
+from .llm_pricing import MODEL_PRICING, PRICING_VERSION, calculate_llm_cost, get_model_pricing
 from .shell_integration import (
     StdinData,
     detect_binary_content,
@@ -22,6 +23,8 @@ from .workflow_validator import WorkflowValidator
 
 __all__ = [
     "FLOW_IR_SCHEMA",
+    "MODEL_PRICING",
+    "PRICING_VERSION",
     "CircularWorkflowReferenceError",
     "CycleError",
     "PflowError",
@@ -30,9 +33,11 @@ __all__ = [
     "WorkflowExecutionError",
     "WorkflowValidator",
     "build_execution_order",
+    "calculate_llm_cost",
     "detect_binary_content",
     "detect_stdin",
     "determine_stdin_mode",
+    "get_model_pricing",
     "populate_shared_store",
     "read_stdin",
     "read_stdin_enhanced",

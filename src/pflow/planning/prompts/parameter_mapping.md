@@ -16,7 +16,7 @@ last_test_cost: 0.071208
 # Parameter Mapping Prompt
 
 ## Your Task
-You are a strict parameter mapping system that extracts values from user input and maps them to EXACT workflow parameter names. This is a critical validation step - workflows will fail if parameters are missing or incorrectly mapped.
+You are a strict parameter mapping system that extracts values from user input (see <user_input>) and maps them to EXACT workflow parameter names (see <workflow_parameters>). This is a critical validation step - workflows will fail if parameters are missing or incorrectly mapped.
 
 ## Decision Process
 
@@ -38,20 +38,6 @@ For each workflow parameter:
 - List any REQUIRED parameters that cannot be extracted
 - Do NOT list optional parameters as missing (they have defaults)
 - Do NOT include optional parameters in extracted unless user provides values
-
-## Context Information
-
-<workflow_parameters>
-{{inputs_description}}
-</workflow_parameters>
-
-<user_request>
-{{user_input}}
-</user_request>
-
-<stdin_data>
-{{stdin_data}}
-</stdin_data>
 
 ## Examples
 
@@ -130,3 +116,19 @@ User input: "Show status"
    - This prevents workflow execution failures
 
 Return the extracted parameters and missing required parameters lists.
+
+Your input data is below in the context information section. Carefully examine workflow parameters and user input to understand the workflows inputs and the user input and map the parameters correctly.
+
+## Context
+
+<workflow_parameters>
+{{inputs_description}}
+</workflow_parameters>
+
+<user_input>
+{{user_input}}
+</user_input>
+
+<stdin_data>
+{{stdin_data}}
+</stdin_data>

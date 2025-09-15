@@ -17,11 +17,53 @@ last_test_cost: 0.084984
 
 Analyze this workflow and generate metadata that enables accurate discovery and reuse.
 
-Notice: Values in the user input have been replaced with [parameter_name] to show what's configurable.
+Generate the following metadata:
 
-<original_request>
+1. suggested_name (kebab-case, max 50 chars):
+   - Make it distinctive and searchable
+   - Reflect the primary domain and action
+   - Examples: "github-changelog-generator", "csv-data-analyzer", "file-backup-creator"
+
+2. description (100-500 chars):
+   - Explain what the workflow accomplishes end-to-end
+   - Highlight what's configurable (from optional parameters) and whats required (from required parameters)
+   - Mention key technologies if relevant (GitHub, LLM, CSV, etc.)
+   - Describe what nodes are used, what their purpose is and how the data flows between them.
+   - Focus on value to the user
+   - Make sure to mention everything the workflow does
+
+3. search_keywords (2-10 terms):
+   - Think: What would users type when looking for this functionality?
+   - Extract core concepts from the flow and purposes
+   - Include both specific terms (from nodes) and general concepts (from actions)
+   - Cover different search angles: domain, action, purpose, technology
+   - Dont add too many keywords, just the most relevant ones. Quality over quantity.
+
+4. capabilities (2-10 bullet points):
+   - Focus on what users can achieve with this workflow
+   - Highlight key configurability from optional parameters
+   - Think outcomes, not technical steps
+   - Only add capabilities that are actually possible with the workflow.
+
+5. typical_use_cases (1-3 scenarios):
+   - Concrete situations where this workflow saves time
+   - Focus on the "when" and "why" someone needs this
+
+Goal: Enable users to find this workflow when they need it, understand what it does, and know it fits their use case.
+
+## Notes
+
+Notice: Values in the user input have been replaced with ${parameter_name} to show what's configurable.
+
+Key insight: The workflow stages show WHAT it does, the inputs show WHAT'S CONFIGURABLE.
+
+Important: Keep all metadata generic and reusable. Even though specific values have been replaced with ${parameter_name} in the input, avoid introducing any specific values, time periods, or file names in your metadata.
+
+## Context
+
+<user_input>
 {{user_input}}
-</original_request>
+</user_input>
 
 <workflow_structure>
    <flow>{{node_flow}}</flow>
@@ -39,38 +81,3 @@ Notice: Values in the user input have been replaced with [parameter_name] to sho
    </parameter_bindings>
 </workflow_structure>
 
-Key insight: The workflow stages show WHAT it does, the inputs show WHAT'S CONFIGURABLE.
-
-Important: Keep all metadata generic and reusable. Even though specific values have been replaced with [parameter_name] in the input, avoid introducing any specific values, time periods, or file names in your metadata.
-
-Generate the following metadata:
-
-1. suggested_name (kebab-case, max 50 chars):
-   - Make it distinctive and searchable
-   - Reflect the primary domain and action
-   - Examples: "github-changelog-generator", "csv-data-analyzer", "file-backup-creator"
-
-2. description (100-500 chars):
-   - Explain what the workflow accomplishes end-to-end
-   - Highlight what's configurable (from optional parameters) and whats required (from required parameters)
-   - Mention key technologies if relevant (GitHub, LLM, CSV, etc.)
-   - Describe what nodes are used, what their purpose is and how the data flows between them.
-   - Focus on value to the user
-   - Make sure to mention everything the workflow does
-
-3. search_keywords (5-20 terms):
-   - Think: What would users type when looking for this functionality?
-   - Extract core concepts from the flow and purposes
-   - Include both specific terms (from nodes) and general concepts (from actions)
-   - Cover different search angles: domain, action, purpose, technology
-
-4. capabilities (2-6 bullet points):
-   - Focus on what users can achieve with this workflow
-   - Highlight key configurability from optional parameters
-   - Think outcomes, not technical steps
-
-5. typical_use_cases (1-3 scenarios):
-   - Concrete situations where this workflow saves time
-   - Focus on the "when" and "why" someone needs this
-
-Goal: Enable users to find this workflow when they need it, understand what it does, and know it fits their use case.

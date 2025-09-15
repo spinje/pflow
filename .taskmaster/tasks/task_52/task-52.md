@@ -7,71 +7,89 @@
 Improve planner with "plan" and "requirements" steps
 
 ## Description
-1. The planner needs to make a "plan" before writing the json ir
+Add Requirements Analysis and Planning nodes to the planner pipeline to improve workflow generation success rates. Requirements will extract abstract operations from user input, and Planning will create an execution blueprint before generation. This two-step analysis significantly improves first-attempt success and provides better error messages for impossible requirements.
 
-2. The planner needs to define requirements before starting to write the json ir
-This could include:
-    - How many nodes are needed
-    - Required node types that should be used
-    - The order of the nodes? (might be to strict, im not sure about this)
-    - How many sub workflows are needed (sub workflows are not yet supported but these could be defined as an entry to the json schema with a detailed "prompt" for the sub workflow with clear requirements)
-    - Anything else?
+## Status
+in progress
 
-This will be used in the validator to validate these "dynamic" validation criteria
+## Dependencies
+- Task 17: Implement Natural Language Planner System - The base planner system must exist before we can enhance it with additional planning steps
+- Task 33: Extract planner prompts to markdown files - Prompts must be externalized to add new requirements and planning prompts
+- Task 35: Migrate Template Syntax from $variable to ${variable} - New nodes need to work with the current template syntax
+- Task 36: Update Context Builder for Namespacing Clarity - Requirements and Planning will use the context builder
 
-## Implementation Insights (Added During Discussion)
+## Priority
+high
 
-### Why Requirements and Planning Steps are Critical
+## Details
+The current planner pipeline sometimes fails on complex workflows because it attempts to generate workflows directly without first understanding requirements or creating a plan. This task adds two new nodes to improve the generation process:
 
-The planner is generating structured JSON, which is essentially code. Just like modern AI coding assistants (Claude, Cursor, GitHub Copilot), having explicit requirements and planning steps before implementation dramatically improves output quality.
+### Requirements Analysis Node
+- Extracts abstract operational requirements from templatized user input
+- Identifies what needs to be done (WHAT) without implementation details
+- Abstracts parameter values while keeping services explicit (e.g., "Fetch issues from GitHub" not "Fetch 20 closed issues")
+- Outputs structured requirements list with complexity indicators
+- Can fail fast if user input is too vague
 
-**Evidence from pflow development:**
-- When AI agents working on pflow tasks use requirements + planning, implementation success rate is much higher
-- Requirements catch missing context before expensive generation
-- Planning prevents architectural mistakes that cascade through the pipeline
+### Planning Node
+- Creates execution plan (HOW) based on requirements and available components
+- Uses natural language reasoning with structured ending for parsing
+- Determines feasibility (FEASIBLE/PARTIAL/IMPOSSIBLE)
+- Outputs markdown plan with parseable Node Chain
+- Only uses components selected by Component Browsing
 
-### Proposed Pipeline Enhancement
+### Key Design Decisions (MVP Approach)
+- **Two separate nodes** rather than combined - maintains single responsibility
+- **Requirements before Planning** - natural flow of WHAT before HOW
+- **Multi-turn conversation** for Planning→Generator only (not all nodes)
+- **Standalone LLM calls** for Requirements/Component selection (not in conversation)
+- **Parameter Discovery moved earlier** to provide templatization before Requirements
+- **New conversation per workflow** - clean slate each time
+- **3 retry limit maintained** - no changes to existing retry logic
+- **Path A unchanged** - workflow reuse path skips new nodes entirely
 
-**Current 9-stage pipeline:**
-discovery → browsing → parameter-discovery → generator → parameter-mapping → validation → metadata → param-prep → result-prep
+### Technical Implementation
+The implementation leverages the `llm` library's Conversation class for automatic context accumulation:
+- PlanningNode starts a conversation with requirements/components as context
+- WorkflowGeneratorNode continues the conversation to generate workflow
+- On retry, conversation continues with validation errors for learning
+- Anthropic's context caching provides ~70% cost reduction on retries
 
-**Proposed 11-stage pipeline:**
-discovery → browsing → **requirements** → **planning** → parameter-discovery → generator → parameter-mapping → validation → metadata → param-prep → result-prep
+### Pipeline Changes
+**Current Path B**: Discovery → Component Browsing → Parameter Discovery → Generator → Validation → ...
 
-### What Each New Step Would Do
+**New Path B**: Discovery → Parameter Discovery → Requirements Analysis → Component Browsing → Planning → Generator → Validation → ...
 
-**Requirements Step:**
-- Extract ALL explicit and implied requirements from user input
-- Enumerate constraints and edge cases
-- Define clear success criteria
-- Output: Structured list of requirements the workflow must meet
+### Error Handling
+- Too vague input: Requirements returns `is_clear: false` with clarification message
+- Impossible requirements: Planning returns `Status: IMPOSSIBLE` with alternatives
+- Partial solutions: Planning indicates what can/cannot be done
+- All error states route to existing ResultPreparationNode
 
-**Planning Step:**
-- Design the workflow structure before implementation
-- Decide on specific nodes and their ordering
-- Plan data flow between nodes
-- Consider error handling approach
-- Output: High-level plan that generator will implement
+## Test Strategy
+Comprehensive testing ensures the new nodes integrate smoothly and improve generation quality:
 
-### Expected Benefits
+### Unit Tests
+- RequirementsAnalysisNode: Test extraction with various input complexities
+- PlanningNode: Test feasibility assessment and plan generation
+- Test vague input detection and error messages
+- Test parsing of Planning markdown output
 
-1. **Higher first-time success rate** - Less likely to miss requirements
-2. **Better error messages** - Can trace failures back to specific unmet requirements
-3. **Improved test coverage** - Requirements become test cases
-4. **More maintainable** - Clear separation between "what" (requirements) and "how" (plan/implementation)
+### Integration Tests
+- Full pipeline flow with new nodes
+- Conversation context preservation across Planning→Generator
+- Retry behavior with accumulated context
+- Requirements influence on Component Browsing
 
-### Cost Analysis
+### LLM Prompt Tests
+- Requirements extraction accuracy with templatized input
+- Planning reasoning quality with different component sets
+- Conversation continuity between Planning and Generator
+- Cost tracking to verify context caching benefits
 
-- **Additional cost**: ~$0.001-0.002 per workflow (2 more LLM calls)
-- **Benefit**: Reduces failed generation attempts and retries
-- **ROI**: Since workflows run forever after compilation, the marginal cost is negligible
-
-### Implementation Priority
-
-This could be implemented either:
-1. **v0.1**: If current success rate is <90% on complex workflows
-2. **v0.2**: If current success rate is acceptable, ship first and enhance based on user feedback
-
-The decision depends on current planner reliability metrics and user tolerance for retry attempts.
-
-*This document is a draft and will change a lot as we discuss the task.*
+### Key Test Scenarios
+- Simple linear workflows (should still work efficiently)
+- Complex multi-step workflows (should have higher success rate)
+- Impossible requirements (should fail gracefully with explanation)
+- Vague input (should request clarification)
+- Retry scenarios (should learn from previous attempts)

@@ -294,6 +294,7 @@ def _handle_workflow_output(
     metrics_collector: Any | None = None,
     print_flag: bool = False,
     workflow_metadata: dict[str, Any] | None = None,
+    workflow_trace: Any | None = None,
 ) -> bool:
     """Handle output from workflow execution.
 
@@ -306,13 +307,14 @@ def _handle_workflow_output(
         metrics_collector: Optional MetricsCollector for including metrics in JSON output
         print_flag: Whether -p flag is set (suppress warnings)
         workflow_metadata: Optional workflow metadata for JSON output
+        workflow_trace: Optional workflow trace collector for saving JSON output
 
     Returns:
         True if output was produced, False otherwise.
     """
     if output_format == "json":
         return _handle_json_output(
-            shared_storage, output_key, workflow_ir, verbose, metrics_collector, workflow_metadata
+            shared_storage, output_key, workflow_ir, verbose, metrics_collector, workflow_metadata, workflow_trace
         )
     else:  # text format (default)
         return _handle_text_output(shared_storage, output_key, workflow_ir, verbose, print_flag)
@@ -511,6 +513,7 @@ def _handle_json_output(
     verbose: bool,
     metrics_collector: Any | None = None,
     workflow_metadata: dict[str, Any] | None = None,
+    workflow_trace: Any | None = None,
 ) -> bool:
     """Handle JSON formatted output.
 
@@ -541,6 +544,10 @@ def _handle_json_output(
 
         # Also include detailed metrics for compatibility
         result["metrics"] = metrics_summary.get("metrics", {})
+
+    # Save JSON output to trace if available
+    if workflow_trace and hasattr(workflow_trace, "set_json_output"):
+        workflow_trace.set_json_output(result)
 
     return _serialize_json_result(result, verbose)
 
@@ -1050,12 +1057,8 @@ def _handle_workflow_success(
     if verbose and output_format != "json":
         click.echo("cli: Workflow execution completed")
 
-    # Save trace if requested
-    if workflow_trace:
-        trace_file = workflow_trace.save_to_file()
-        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
-
     # Check for output from shared store (now with metrics)
+    # NOTE: We handle output BEFORE saving trace so the JSON output can be included in the trace
     print_flag = ctx.obj.get("print_flag", False)
     workflow_metadata = ctx.obj.get("workflow_metadata")
     output_produced = _handle_workflow_output(
@@ -1067,7 +1070,13 @@ def _handle_workflow_success(
         metrics_collector=metrics_collector,
         print_flag=print_flag,
         workflow_metadata=workflow_metadata,
+        workflow_trace=workflow_trace,
     )
+
+    # Save trace if requested (AFTER handling output so JSON is included)
+    if workflow_trace:
+        trace_file = workflow_trace.save_to_file()
+        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     # Only show success message if we didn't produce output
     if not output_produced:
@@ -1637,6 +1646,7 @@ def _setup_planner_execution(
     raw_input: str,
     stdin_data: str | StdinData | None,
     verbose: bool,
+    cache_planner: bool,
 ) -> tuple[Any | None, Any, Any, dict[str, Any]]:
     """Set up planner execution environment.
 
@@ -1664,6 +1674,7 @@ def _setup_planner_execution(
         "user_input": raw_input,
         "workflow_manager": WorkflowManager(),  # Uses default ~/.pflow/workflows
         "stdin_data": stdin_data if stdin_data else None,
+        "cache_planner": cache_planner,  # Enable cross-session caching if flag is set
     }
 
     # Initialize LLM calls list when metrics collection is enabled
@@ -1777,11 +1788,12 @@ def _execute_planner_and_workflow(
     create_planner_flow: Any,
     trace: bool,
     planner_timeout: int,
+    cache_planner: bool,
 ) -> None:
     """Execute the planner flow and resulting workflow with optional debugging."""
     # Set up planner execution environment
     metrics_collector, debug_context, trace_collector, shared = _setup_planner_execution(
-        ctx, raw_input, stdin_data, verbose
+        ctx, raw_input, stdin_data, verbose, cache_planner
     )
 
     # Create planner flow with debugging context
@@ -2037,6 +2049,7 @@ def _initialize_context(
     trace_planner: bool,
     planner_timeout: int,
     save: bool,
+    cache_planner: bool,
 ) -> None:
     """Initialize the click context with configuration.
 
@@ -2050,6 +2063,7 @@ def _initialize_context(
         trace_planner: Trace planner flag
         planner_timeout: Planner timeout in seconds
         save: Save workflow flag
+        cache_planner: Enable cross-session caching for planner
     """
     if ctx.obj is None:
         ctx.obj = {}
@@ -2062,6 +2076,7 @@ def _initialize_context(
     ctx.obj["trace_planner"] = trace_planner
     ctx.obj["planner_timeout"] = planner_timeout
     ctx.obj["save"] = save
+    ctx.obj["cache_planner"] = cache_planner
 
     # Create OutputController once and store it for reuse
     ctx.obj["output_controller"] = OutputController(
@@ -2252,6 +2267,7 @@ def _execute_with_planner(
     source: str,
     trace: bool,
     planner_timeout: int,
+    cache_planner: bool,
 ) -> None:
     """Execute workflow using the natural language planner.
 
@@ -2274,7 +2290,7 @@ def _execute_with_planner(
 
         # Execute planner and workflow
         _execute_planner_and_workflow(
-            ctx, raw_input, stdin_data, output_key, verbose, create_planner_flow, trace, planner_timeout
+            ctx, raw_input, stdin_data, output_key, verbose, create_planner_flow, trace, planner_timeout, cache_planner
         )
 
     except ImportError:
@@ -2352,6 +2368,100 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     return False
 
 
+def _install_anthropic_model_if_needed(verbose: bool) -> None:
+    """Install Anthropic model wrapper for planning models unless in tests."""
+    import os
+
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+
+        install_anthropic_model()
+        if verbose:
+            click.echo("cli: Using Anthropic SDK for planning models", err=True)
+
+
+def _try_execute_named_workflow(
+    ctx: click.Context,
+    workflow: tuple[str, ...],
+    stdin_data: StdinData | str | None,
+    output_key: str | None,
+    output_format: str,
+    verbose: bool,
+) -> bool:
+    """Try to execute workflow as a named/file workflow.
+
+    Returns True if workflow was handled (either executed or error shown), False otherwise.
+    """
+    if not workflow:
+        return False
+
+    first_arg = workflow[0]
+    if not is_likely_workflow_name(first_arg, workflow[1:]):
+        return False
+
+    # Resolve once to avoid duplicate calls
+    workflow_ir, source = resolve_workflow(first_arg)
+    # Try to execute as named workflow
+    if _handle_named_workflow(
+        ctx, first_arg, workflow[1:], stdin_data, output_key, output_format, verbose, workflow_ir, source
+    ):
+        return True
+    # If not found, handle the error
+    _handle_workflow_not_found(ctx, first_arg, source or "unknown")
+    return True  # We handled it by showing an error
+
+
+def _handle_single_token_workflow(
+    ctx: click.Context,
+    workflow: tuple[str, ...],
+    stdin_data: StdinData | str | None,
+    output_key: str | None,
+    output_format: str,
+    verbose: bool,
+) -> bool:
+    """Handle single-token workflow input with guardrails.
+
+    Returns True if handled, False if should continue to planner.
+    """
+    if not (workflow and len(workflow) == 1 and (" " not in workflow[0])):
+        return False
+
+    word = workflow[0]
+    # If it's a saved workflow, execute it directly
+    ir, source = resolve_workflow(word)
+    if ir is not None and _handle_named_workflow(
+        ctx, word, (), stdin_data, output_key, output_format, verbose, ir, source
+    ):
+        return True
+    # Otherwise show targeted hints, or not-found guidance
+    hint = _single_word_hint(word)
+    if hint:
+        click.echo(hint, err=True)
+        ctx.exit(1)
+    _handle_workflow_not_found(ctx, word, None)
+    return True
+
+
+def _validate_and_prepare_natural_language_input(workflow: tuple[str, ...]) -> str:
+    """Validate and prepare input for natural language processing.
+
+    Returns the raw input string.
+    Raises ClickException if input is invalid.
+    """
+    raw_input = " ".join(workflow) if workflow else ""
+
+    if not raw_input:
+        raise click.ClickException("cli: No workflow provided. Use --help to see usage examples.")
+
+    # Validate input length (100KB limit)
+    if len(raw_input) > 100 * 1024:
+        raise click.ClickException(
+            "cli: Workflow input too large (max 100KB). Consider breaking it into smaller workflows."
+        )
+
+    return raw_input
+
+
 # NOTE: This MUST be @click.command, not @click.group with catch-all argument.
 # Click groups consume ALL positional args when using @click.argument("workflow", nargs=-1),
 # preventing subcommands from being recognized. The wrapper (main_wrapper.py) handles routing.
@@ -2371,6 +2481,11 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
 @click.option("--trace-planner", is_flag=True, help="Save planner execution trace to file")
 @click.option("--planner-timeout", type=int, default=60, help="Timeout for planner execution (seconds)")
 @click.option("--save/--no-save", default=True, help="Save generated workflow (default: save)")
+@click.option(
+    "--cache-planner",
+    is_flag=True,
+    help="Enable cross-session caching for planner LLM calls (reduces cost for repeated runs)",
+)
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def workflow_command(
     ctx: click.Context,
@@ -2383,6 +2498,7 @@ def workflow_command(
     trace_planner: bool,
     planner_timeout: int,
     save: bool,
+    cache_planner: bool,
     workflow: tuple[str, ...],
 ) -> None:
     """pflow - Plan Once, Run Forever
@@ -2441,8 +2557,11 @@ def workflow_command(
 
     # Initialize context with configuration
     _initialize_context(
-        ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout, save
+        ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout, save, cache_planner
     )
+
+    # Install Anthropic model wrapper for planning models
+    _install_anthropic_model_if_needed(verbose)
 
     # Handle stdin data
     stdin_content, enhanced_stdin = _read_stdin_data()
@@ -2463,49 +2582,21 @@ def workflow_command(
     # _check_mcp_setup(ctx)
 
     # Try to handle as named/file workflow first
-    if workflow:
-        first_arg = workflow[0]
-        if is_likely_workflow_name(first_arg, workflow[1:]):
-            # Resolve once to avoid duplicate calls
-            workflow_ir, source = resolve_workflow(first_arg)
-            # Try to execute as named workflow
-            if _handle_named_workflow(
-                ctx, first_arg, workflow[1:], stdin_data, output_key, output_format, verbose, workflow_ir, source
-            ):
-                return
-            # If not found, handle the error
-            _handle_workflow_not_found(ctx, first_arg, source or "unknown")
+    if _try_execute_named_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
+        return
 
-    # Natural language fallback
-    raw_input = " ".join(workflow) if workflow else ""
-    if not raw_input:
-        raise click.ClickException("cli: No workflow provided. Use --help to see usage examples.")
+    # Validate input for natural language processing
+    raw_input = _validate_and_prepare_natural_language_input(workflow)
 
-    # Validate input length (100KB limit)
-    if len(raw_input) > 100 * 1024:
-        raise click.ClickException(
-            "cli: Workflow input too large (max 100KB). Consider breaking it into smaller workflows."
-        )
-
-    # Single-token guardrails: block accidental planner for generic words
-    if workflow and len(workflow) == 1 and (" " not in workflow[0]):
-        word = workflow[0]
-        # If it's a saved workflow, execute it directly
-        ir, source = resolve_workflow(word)
-        if ir is not None and _handle_named_workflow(
-            ctx, word, (), stdin_data, output_key, output_format, verbose, ir, source
-        ):
-            return
-        # Otherwise show targeted hints, or not-found guidance
-        hint = _single_word_hint(word)
-        if hint:
-            click.echo(hint, err=True)
-            ctx.exit(1)
-        _handle_workflow_not_found(ctx, word, None)
+    # Handle single-token workflow with guardrails
+    if _handle_single_token_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
         return
 
     # Multi-word or parameterized input: planner by design
-    _execute_with_planner(ctx, raw_input, stdin_data, output_key, verbose, "args", trace, planner_timeout)
+    cache_planner = ctx.obj.get("cache_planner", False)
+    _execute_with_planner(
+        ctx, raw_input, stdin_data, output_key, verbose, "args", trace, planner_timeout, cache_planner
+    )
 
 
 # Alias for backward compatibility with tests that import main directly

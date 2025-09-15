@@ -1177,7 +1177,7 @@ def _format_all_parameters_new(node_data: dict, lines: list[str]) -> None:
     all_params, _ = _collect_all_parameters(inputs, params)
 
     if all_params:
-        lines.append("**Parameters** (all go in params field):")
+        lines.append("**Parameters**:")
 
         for param in all_params:
             line = _format_single_param_line(param)
@@ -1202,7 +1202,7 @@ def _format_outputs_with_access(node_data: dict, lines: list[str]) -> None:
     outputs = node_data.get("outputs", [])
 
     if outputs:
-        lines.append("**Outputs** (access as ${node_id.output_key}):")
+        lines.append("**Outputs**:")
 
         for out in outputs:
             if isinstance(out, dict):

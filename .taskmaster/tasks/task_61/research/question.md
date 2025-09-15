@@ -1,0 +1,1 @@
+Can we paralellize the metadata generation step? maybe with parameter-mapping?

@@ -9,12 +9,40 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from pflow.planning.context_blocks import PlannerContextBuilder
 from pflow.planning.nodes import (
     ComponentBrowsingNode,
     ParameterDiscoveryNode,
     ParameterMappingNode,
     WorkflowGeneratorNode,
 )
+
+
+def create_minimal_context_blocks(user_input="test request", browsed_components=None):
+    """Create minimal planner context blocks for integration tests."""
+    if browsed_components is None:
+        browsed_components = {"node_ids": ["test-node"], "workflow_names": [], "reasoning": "Test reasoning"}
+
+    # Create base blocks
+    base_blocks = PlannerContextBuilder.build_base_blocks(
+        user_request=user_input,
+        requirements_result={
+            "is_clear": True,
+            "steps": ["Generate workflow"],
+            "estimated_nodes": 2,
+            "required_capabilities": ["test"],
+        },
+        browsed_components=browsed_components,
+        planning_context="Test planning context",
+        discovered_params={},
+    )
+
+    # Add planning output to make it extended blocks
+    extended_blocks = PlannerContextBuilder.append_planning_block(
+        base_blocks, "Test plan", {"status": "FEASIBLE", "node_chain": "test-node"}
+    )
+
+    return extended_blocks
 
 
 @pytest.fixture
@@ -126,10 +154,13 @@ class TestGeneratorParameterConvergence:
             mock_get_model.return_value = mock_model
 
             # Simulate Path B: browsing → generation → mapping
+            browsed_components = {"node_ids": ["git-log", "llm"]}
             shared = {
                 "user_input": "Generate changelog for pflow since 2024-01-01",
-                "planning_context": "Available nodes: git-log, llm",
-                "browsed_components": {"node_ids": ["git-log", "llm"]},
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="Generate changelog for pflow since 2024-01-01", browsed_components=browsed_components
+                ),
             }
 
             # Step 1: Generate workflow
@@ -196,10 +227,14 @@ class TestGeneratorParameterConvergence:
             mock_model.prompt.return_value = generator_response
             mock_get_model.return_value = mock_model
 
+            browsed_components = {"node_ids": ["github-list-issues", "llm"]}
             shared = {
                 "user_input": "Create issue triage report for repo with bug label",
-                "planning_context": "Available nodes: github-list-issues, llm",
-                "browsed_components": {"node_ids": ["github-list-issues", "llm"]},
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="Create issue triage report for repo with bug label",
+                    browsed_components=browsed_components,
+                ),
             }
 
             generator = WorkflowGeneratorNode(wait=0)
@@ -272,10 +307,13 @@ class TestGeneratorParameterConvergence:
             ]
             mock_get_model.return_value = mock_model
 
+            browsed_components = {"node_ids": ["read-file"]}
             shared = {
                 "user_input": "Process the file data.csv",
-                "browsed_components": {"node_ids": ["read-file"]},
-                "planning_context": "Available: read-file node",
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="Process the file data.csv", browsed_components=browsed_components
+                ),
             }
 
             # Step 1: Parameter discovery finds 'filename'
@@ -336,10 +374,13 @@ class TestGeneratorParameterConvergence:
             mock_model.prompt.side_effect = [generator_response, mapping_response]
             mock_get_model.return_value = mock_model
 
+            browsed_components = {}
             shared = {
                 "user_input": "Process my-repo",
-                "planning_context": "test context",
-                "browsed_components": {},
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="Process my-repo", browsed_components=browsed_components
+                ),
             }
 
             # Generate workflow
@@ -402,10 +443,13 @@ class TestGeneratorParameterConvergence:
             mock_model.prompt.side_effect = [generator_response, mapping_response]
             mock_get_model.return_value = mock_model
 
+            browsed_components = {}
             shared = {
                 "user_input": "Create release notes for pflow v1.2.0",
-                "planning_context": "test context",
-                "browsed_components": {},
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="Create release notes for pflow v1.2.0", browsed_components=browsed_components
+                ),
             }
 
             # Generate and map
@@ -522,6 +566,11 @@ class TestCompletePathBFlow:
             assert "discovered_params" in shared
             assert "repository" in shared["discovered_params"]
 
+            # Add context for WorkflowGeneratorNode (normally done by RequirementsAnalysisNode and PlanningNode)
+            shared["planner_extended_blocks"] = create_minimal_context_blocks(
+                user_input=shared["user_input"], browsed_components=shared["browsed_components"]
+            )
+
             # Step 3: Workflow generation
             generator = WorkflowGeneratorNode(wait=0)
             gen_prep = generator.prep(shared)
@@ -568,11 +617,14 @@ class TestCompletePathBFlow:
             mock_model.prompt.side_effect = [generator_response, mapping_response]
             mock_get_model.return_value = mock_model
 
+            browsed_components = {"node_ids": ["llm"]}
             shared = {
                 "user_input": "Format this as markdown",
                 "stdin": "Raw data from pipe",
-                "planning_context": "test",
-                "browsed_components": {"node_ids": ["llm"]},
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="Format this as markdown", browsed_components=browsed_components
+                ),
             }
 
             # Generate workflow
@@ -622,10 +674,13 @@ class TestGeneratorRetryMechanism:
             mock_model.prompt.side_effect = [first_response, second_response]
             mock_get_model.return_value = mock_model
 
+            browsed_components = {}
             shared = {
                 "user_input": "test",
-                "planning_context": "test context",
-                "browsed_components": {},
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="test", browsed_components=browsed_components
+                ),
             }
 
             generator = WorkflowGeneratorNode(wait=0)
@@ -684,10 +739,13 @@ class TestGeneratorRetryMechanism:
             mock_model.prompt.side_effect = responses
             mock_get_model.return_value = mock_model
 
+            browsed_components = {}
             shared = {
                 "user_input": "test",
-                "planning_context": "test",
-                "browsed_components": {},
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="test", browsed_components=browsed_components
+                ),
             }
 
             generator = WorkflowGeneratorNode(wait=0)
@@ -730,10 +788,13 @@ class TestEdgeCases:
             )
             mock_get_model.return_value = mock_model
 
+            browsed_components = {"node_ids": [], "workflow_names": []}
             shared = {
                 "user_input": "test",
-                "planning_context": "minimal context",
-                "browsed_components": {"node_ids": [], "workflow_names": []},
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="test", browsed_components=browsed_components
+                ),
             }
 
             generator = WorkflowGeneratorNode(wait=0)
@@ -820,10 +881,13 @@ class TestEdgeCases:
             )
             mock_get_model.return_value = mock_model
 
+            browsed_components = {}
             shared = {
                 "user_input": "test",
-                "planning_context": "test",
-                "browsed_components": {},
+                "browsed_components": browsed_components,
+                "planner_extended_blocks": create_minimal_context_blocks(
+                    user_input="test", browsed_components=browsed_components
+                ),
                 "discovered_params": {
                     # Discovery found these names
                     "filename": {"value": "data.txt", "confidence": 0.9},

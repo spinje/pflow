@@ -567,8 +567,8 @@ class TestLLMPlanningIntegration:
         assert "param1" in planning_context
         assert "bool" in planning_context
         # New format: all parameters in one section, clearer output access
-        assert "**Parameters** (all go in params field):" in planning_context
-        assert "**Outputs** (access as" in planning_context
+        assert "**Parameters**:" in planning_context
+        assert "**Outputs**:" in planning_context
         # Note: Removed universal example generation as it was deemed unnecessary
 
         # Context should be well-structured markdown

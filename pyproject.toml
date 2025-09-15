@@ -22,6 +22,7 @@ dependencies = [
     "jsonschema>=4.20.0",  # JSON Schema validation for workflow IR
     "llm>=0.27.1",    # Simon Willison's LLM library for text processing
     "llm-anthropic>=0.17",  # Anthropic Claude models for planner
+    "anthropic>=0.40.0",  # Anthropic SDK for direct API access (thinking/caching)
     "pydantic",       # IR/metadata validation (used in planning/ir_models.py)
     "mcp[cli]>=1.13.1",  # Model Context Protocol for MCP server support
     "requests>=2.32.5",  # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)

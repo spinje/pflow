@@ -42,23 +42,25 @@ class TimedResponse:
         self._trace = trace
         self._current_node = current_node
         self._shared = shared
+        # Record when the response object was created (when prompt() returned)
+        self._request_time = time.perf_counter()
 
     def json(self) -> Any:
         if self._json_cache is None:
-            # Time the actual API call
-            start = time.perf_counter()
+            # Get the response data
             self._json_cache = self._response.json()
-            duration = time.perf_counter() - start
+            # Calculate full request-to-response duration
+            duration = time.perf_counter() - self._request_time
             # Now that response is consumed, capture usage data
             self._capture_usage_and_record(duration, self._json_cache)
         return self._json_cache
 
     def text(self) -> str:
         if self._text_cache is None:
-            # Time the actual API call
-            start = time.perf_counter()
+            # Get the response text
             self._text_cache = self._response.text()
-            duration = time.perf_counter() - start
+            # Calculate full request-to-response duration
+            duration = time.perf_counter() - self._request_time
             # Now that response is consumed, capture usage data
             # For text responses, we need to try to get JSON for metadata
             try:
@@ -73,39 +75,99 @@ class TimedResponse:
 
     def _capture_usage_and_record(self, duration: float, response_data: Any) -> None:
         """Capture usage data after response consumption and record it."""
-        # Now that the response has been consumed, usage() should have data
-        usage_data = None
-        model_name = "unknown"
+        # Extract usage data from the response
+        usage_data = self._extract_usage_data()
 
-        # Get usage data - it's now available after consumption
-        if hasattr(self._response, "usage"):
-            usage_obj = self._response.usage() if callable(self._response.usage) else self._response.usage
-            if usage_obj:
-                # Handle both dict and object forms
-                if isinstance(usage_obj, dict):
-                    usage_data = usage_obj
-                elif hasattr(usage_obj, "input") and hasattr(usage_obj, "output"):
-                    usage_data = {
-                        "input_tokens": getattr(usage_obj, "input", 0),
-                        "output_tokens": getattr(usage_obj, "output", 0),
-                        "total_tokens": getattr(usage_obj, "input", 0) + getattr(usage_obj, "output", 0),
-                    }
-                    # Check for cache-related fields
-                    if hasattr(usage_obj, "details") and usage_obj.details:
-                        details = usage_obj.details
-                        if hasattr(details, "cache_creation_input_tokens"):
-                            usage_data["cache_creation_input_tokens"] = details.cache_creation_input_tokens
-                        if hasattr(details, "cache_read_input_tokens"):
-                            usage_data["cache_read_input_tokens"] = details.cache_read_input_tokens
-
-        # Get model name from response
-        if isinstance(response_data, dict):
-            model_name = response_data.get("model", "unknown")
+        # Extract model name from the current LLM call
+        model_name = self._extract_model_name()
 
         # Pass the captured data to record_llm_response
         self._trace.record_llm_response_with_data(
             self._current_node, response_data, duration, usage_data, model_name, self._shared
         )
+
+    def _extract_usage_data(self) -> Optional[dict[str, Any]]:
+        """Extract usage data from the response object."""
+        if not hasattr(self._response, "usage"):
+            return None
+
+        # Get the usage object
+        usage_obj = self._response.usage() if callable(self._response.usage) else self._response.usage
+        if not usage_obj:
+            return None
+
+        # Handle dict form
+        if isinstance(usage_obj, dict):
+            return self._process_dict_usage(usage_obj)
+
+        # Handle object form with input/output attributes
+        if hasattr(usage_obj, "input") and hasattr(usage_obj, "output"):
+            return self._process_object_usage(usage_obj)
+
+        return None
+
+    def _process_dict_usage(self, usage_obj: dict[str, Any]) -> dict[str, Any]:
+        """Process usage data when it's already a dictionary."""
+        usage_data = usage_obj.copy()
+
+        # Add thinking-related fields if present
+        for field in ["thinking_tokens", "thinking_budget", "thinking_enabled"]:
+            if field in usage_obj:
+                usage_data[field] = usage_obj[field]
+
+        return usage_data
+
+    def _process_object_usage(self, usage_obj: Any) -> dict[str, Any]:
+        """Process usage data from an object with attributes."""
+        # Extract basic token counts
+        input_tokens = getattr(usage_obj, "input", 0)
+        output_tokens = getattr(usage_obj, "output", 0)
+
+        usage_data = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
+
+        # Add cache-related fields from details
+        self._add_cache_fields(usage_obj, usage_data)
+
+        # Add thinking-related fields
+        self._add_thinking_fields(usage_obj, usage_data)
+
+        return usage_data
+
+    def _add_cache_fields(self, usage_obj: Any, usage_data: dict[str, Any]) -> None:
+        """Add cache-related fields to usage data."""
+        if not hasattr(usage_obj, "details") or not usage_obj.details:
+            return
+
+        details = usage_obj.details
+        if hasattr(details, "cache_creation_input_tokens"):
+            usage_data["cache_creation_input_tokens"] = details.cache_creation_input_tokens
+        if hasattr(details, "cache_read_input_tokens"):
+            usage_data["cache_read_input_tokens"] = details.cache_read_input_tokens
+
+    def _add_thinking_fields(self, usage_obj: Any, usage_data: dict[str, Any]) -> None:
+        """Add thinking-related fields to usage data."""
+        if hasattr(usage_obj, "thinking_tokens"):
+            usage_data["thinking_tokens"] = usage_obj.thinking_tokens
+        if hasattr(usage_obj, "thinking_budget"):
+            usage_data["thinking_budget"] = usage_obj.thinking_budget
+
+    def _extract_model_name(self) -> str:
+        """Extract the model name from the current LLM call."""
+        if not hasattr(self._trace, "current_llm_call") or not self._trace.current_llm_call:
+            return "unknown"
+
+        # First try to get from prompt_kwargs where our interceptor put it
+        model_name = self._trace.current_llm_call.get("prompt_kwargs", {}).get("model")
+
+        # Fallback to top-level model field if not in prompt_kwargs
+        if not model_name:
+            model_name = self._trace.current_llm_call.get("model", "unknown")
+
+        return model_name or "unknown"
 
     def __getattr__(self, name: str) -> Any:
         # Forward other attributes to the wrapped response
@@ -134,6 +196,10 @@ class DebugWrapper:
         # CRITICAL: Copy Flow-required attributes
         self.successors = node.successors
         self.params = getattr(node, "params", {})
+
+    def __call__(self, shared: dict[str, Any]) -> Any:
+        """CRITICAL: Flow calls this to execute the node."""
+        return self._run(shared)
 
     def __getattr__(self, name: str) -> Any:
         """CRITICAL: Delegate ALL unknown attributes to wrapped node."""
@@ -234,30 +300,64 @@ class DebugWrapper:
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Wrap prep phase."""
+        # Initialize metrics tracking on first method call
+        # Mark this as planner execution for metrics
+        shared["__is_planner__"] = True
+
+        # Initialize LLM calls list if metrics are being collected
+        if self.metrics and "__llm_calls__" not in shared:
+            shared["__llm_calls__"] = []
+
+        # Store shared reference for LLM interception
+        self._current_shared = shared
+
+        # Store trace collector in shared for access
+        shared["_trace_collector"] = self.trace
+
         start = time.time()
         result = self._wrapped.prep(shared)
         self.trace.record_phase(self._wrapped.__class__.__name__, "prep", time.time() - start)
         return result  # type: ignore[no-any-return]
 
-    def _create_prompt_interceptor(self, original_prompt: Any, trace: "TraceCollector") -> Any:
+    def _create_prompt_interceptor(self, original_prompt: Any, trace: "TraceCollector", model: Any = None) -> Any:
         """Create an interceptor for the LLM prompt method."""
-        # Capture wrapper reference for closure
-        wrapper = self
 
         def intercept_prompt(prompt_text: str, **prompt_kwargs: Any) -> Any:
             # Use current_node from trace collector
             current_node = getattr(trace, "current_node", "Unknown")
 
-            # Record the prompt BEFORE calling
+            # Extract model info before modifying kwargs
+            model_id = None
+            if model is not None:
+                if hasattr(model, "model_id"):
+                    model_id = model.model_id
+                elif hasattr(model, "model_name"):
+                    model_id = model.model_name
+                elif hasattr(model, "name"):
+                    model_id = model.name
+                else:
+                    # Model exists but has no identifying attribute
+                    model_id = str(type(model).__name__)
+
+            # Add model to kwargs for downstream use
+            if model_id:
+                prompt_kwargs["model"] = model_id
+
+            # Record the prompt with model info
             trace.record_llm_request(current_node, prompt_text, prompt_kwargs)
 
             try:
-                # Get the response object (lazy - no API call yet)
+                # Start timing before making the request
+                request_start = time.perf_counter()
+                # Get the response object (may or may not be lazy depending on implementation)
                 response = original_prompt(prompt_text, **prompt_kwargs)
-                # Get shared from wrapper instance or trace
-                shared = getattr(wrapper, "_current_shared", None) or getattr(trace, "_current_shared", None)
-                # Return the wrapped response
-                return TimedResponse(response, trace, current_node, shared)
+                # Get shared from trace (not wrapper, since wrapper is from first node only)
+                shared = getattr(trace, "_current_shared", None)
+                # Return the wrapped response with the request start time
+                timed_response = TimedResponse(response, trace, current_node, shared)
+                # Override the request time with the actual start time
+                timed_response._request_time = request_start
+                return timed_response
             except Exception as e:
                 trace.record_llm_error(current_node, str(e))
                 raise
@@ -270,7 +370,8 @@ class DebugWrapper:
         def intercept_get_model(*args: Any, **kwargs: Any) -> Any:
             model = original_get_model(*args, **kwargs)
             original_prompt = model.prompt
-            model.prompt = self._create_prompt_interceptor(original_prompt, trace)
+            # Pass model to interceptor so it can get model_id
+            model.prompt = self._create_prompt_interceptor(original_prompt, trace, model)
             return model
 
         return intercept_get_model
@@ -302,7 +403,7 @@ class DebugWrapper:
 
         # Set up LLM interception if this node uses LLM
         if "model_name" in prep_res:  # Node uses LLM
-            self._setup_llm_interception(node_name)
+            self._setup_llm_interception(node_name, self._current_shared)
 
         try:
             # CRITICAL FIX: Call _exec() to use retry mechanism, not exec() directly
@@ -374,10 +475,13 @@ class TraceCollector:
     def record_llm_request(self, node: str, prompt: str, kwargs: dict[str, Any]) -> None:
         """Record LLM request before execution."""
         # Store the pending request
+        # Model should be in kwargs from our interceptor
+        model_name = kwargs.get("model", "unknown")
+
         self.current_llm_call = {
             "node": node,
             "timestamp": datetime.utcnow().isoformat(),
-            "model": kwargs.get("model", "unknown"),
+            "model": model_name,
             "prompt": prompt,
             "prompt_kwargs": {k: v for k, v in kwargs.items() if k != "schema"},
         }
@@ -400,10 +504,43 @@ class TraceCollector:
 
             # Add token counts if available
             if usage_data:
+                input_tokens = usage_data.get("input_tokens", 0)
+                output_tokens = usage_data.get("output_tokens", 0)
+                cache_creation_tokens = usage_data.get("cache_creation_input_tokens", 0)
+                cache_read_tokens = usage_data.get("cache_read_input_tokens", 0)
+                thinking_tokens = usage_data.get("thinking_tokens", 0)
+                thinking_budget = usage_data.get("thinking_budget", 0)
+
+                # Calculate total - should include ALL tokens processed including thinking
+                # If API provides total_tokens, use it; otherwise calculate including cache and thinking
+                calculated_total = (
+                    input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens + thinking_tokens
+                )
+
+                # Calculate cost immediately using the centralized pricing module
+                from pflow.core.llm_pricing import calculate_llm_cost
+
+                cost_breakdown = calculate_llm_cost(
+                    model=model_name,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
+                    cache_read_tokens=cache_read_tokens,
+                    thinking_tokens=thinking_tokens,
+                )
+
                 self.current_llm_call["tokens"] = {
-                    "input": usage_data.get("input_tokens", 0),
-                    "output": usage_data.get("output_tokens", 0),
+                    "input": input_tokens,
+                    "output": output_tokens,
+                    "cache_creation": cache_creation_tokens,
+                    "cache_read": cache_read_tokens,
+                    "thinking": thinking_tokens,
+                    "thinking_budget": thinking_budget,
+                    "total": usage_data.get("total_tokens", calculated_total),
                 }
+
+                # Add cost breakdown to trace
+                self.current_llm_call["cost"] = cost_breakdown
 
                 # Also accumulate in shared store for metrics if available
                 if shared and "__llm_calls__" in shared:
@@ -417,12 +554,18 @@ class TraceCollector:
                         "node_id": node,
                         "duration_ms": self.current_llm_call["duration_ms"],
                         "is_planner": True,
+                        "total_cost_usd": cost_breakdown["total_cost_usd"],  # Add pre-calculated cost
                     }
                     # Handle cache-related fields if present
                     if "cache_creation_input_tokens" in usage_data:
                         llm_call_metrics["cache_creation_input_tokens"] = usage_data["cache_creation_input_tokens"]
                     if "cache_read_input_tokens" in usage_data:
                         llm_call_metrics["cache_read_input_tokens"] = usage_data["cache_read_input_tokens"]
+                    # Handle thinking-related fields if present
+                    if "thinking_tokens" in usage_data:
+                        llm_call_metrics["thinking_tokens"] = usage_data["thinking_tokens"]
+                    if "thinking_budget" in usage_data:
+                        llm_call_metrics["thinking_budget"] = usage_data["thinking_budget"]
 
                     shared["__llm_calls__"].append(llm_call_metrics)
 
@@ -533,8 +676,11 @@ class TraceCollector:
         self.final_status = status
         if shared_store:
             # Only save important keys, not internal ones
+            # But keep __llm_calls__ and __is_planner__ as they're needed for metrics
             self.final_shared_store = {
-                k: v for k, v in shared_store.items() if not k.startswith("_") and k not in ["workflow_manager"]
+                k: v
+                for k, v in shared_store.items()
+                if (not k.startswith("_") or k in ["__llm_calls__", "__is_planner__"]) and k not in ["workflow_manager"]
             }
         if error:
             self.error_info = error
@@ -576,6 +722,7 @@ class TraceCollector:
 
     def cleanup_llm_interception(self) -> None:
         """Restore original LLM get_model function if it was intercepted."""
+        # The trace IS the TraceCollector, check it directly
         if hasattr(self, "_original_get_model"):
             import llm
 
