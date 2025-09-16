@@ -172,3 +172,6 @@ node_modules/
 
 # Claude data and logs
 .claude/data/
+
+# MCP servers
+.mcp-servers/
