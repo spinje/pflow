@@ -388,9 +388,9 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 52: Improve planner with "plan" and "requirements" steps + prompt caching + thinking
 
 Next up:
+- ⏳ Task 47: Support HTTP Transport for MCP Servers
 - ⏳ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
 - ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
-- ⏳ Task 47: Support HTTP Transport for MCP Servers
 
 Next version (post-MVP/post-Launch):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
