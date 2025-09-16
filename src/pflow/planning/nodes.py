@@ -449,7 +449,9 @@ class ComponentBrowsingNode(Node):
                 context_parts.append(f"\n<available_nodes>\n{nodes_context}\n</available_nodes>")
 
             if workflows_context:
-                context_parts.append(f"\n<available_workflows>\n{workflows_context}\n</available_workflows>")
+                # TODO: Uncomment this when nested workflows are supported
+                # context_parts.append(f"\n<available_workflows>\n{workflows_context}\n</available_workflows>")
+                pass
 
             # Cache context if we have substantial documentation
             if len(context_parts) > 1:
