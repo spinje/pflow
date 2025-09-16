@@ -524,3 +524,25 @@ More importantly focus on architectural quality and code quality:
 
 - **CLI Development Principle**: never commit code unless explicitly instructed by the user
 - **Expectation Setting**: I think it is important that the agent (you) show what the expected output will be BEFORE you start implementing. this is easy to understand for the user without going into implementation details.
+
+## Running pflow (for debugging, testing and development)
+
+
+```bash
+# Run a workflow from a file (useful for testing without using the planner)
+uv run pflow workflow.json
+```
+
+```bash
+# Output trace file to ~/.pflow/debug/workflow-trace-*.json for workflow execution
+uv run pflow --trace "do a thing, then do another thing"
+```
+
+```bash
+# Output trace file to ~/.pflow/debug/planner-trace-*.json for planner execution
+uv run pflow --trace-planner "do a thing, then do another thing"
+```
+
+Always use the `--trace and --trace-planner` flags when executing workflows for better debugging capabilities.
+
+
