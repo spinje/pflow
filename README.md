@@ -26,9 +26,9 @@ Have you ever asked an AI agent to perform a multi-step task, like analyzing dat
 
 **`pflow` fixes this. Say goodbye to boilerplate and glue code.**
 
-`pflow` is a **workflow compiler**. It lets you describe a complex task in plain English *once*. An AI planner figures out the steps, connects the tools, and saves the result as a permanent, lightning-fast CLI command.
+`pflow` is a **workflow compiler**. It lets you describe a complex task in plain English *once*. An AI planner figures out the steps, connects the tools (yes that includes MCP servers), and saves the result as a permanent, lightning-fast CLI command.
 
-It turns your ideas into your own personal, reusable toolchain.
+It turns your ideas into your own personal, reusable toolchain that you (or your AI agents) can use.
 
 ## The `pflow` Difference: Plan Once, Run Forever
 
@@ -40,7 +40,7 @@ This is not just another AI wrapper. `pflow` fundamentally changes the economics
 
 3.  **EXECUTE (Every Subsequent Run):** You run your new command by name. It executes instantly with no AI, no planning, and no cost, giving you the exact same result, every time.
 
-Workflows adapt to different inputs—analyze last month, this week, or any time period with the same workflow.
+Workflows adapt to different inputs—analyze last month, this week, or any time period with the same workflow. It extracts and uses all dynamic values from the users input and integrates them into the workflow as resuable parameters.
 
 ## License
 
@@ -90,14 +90,56 @@ cat error.log | pflow "extract errors, find related code, suggest fixes" >> fixe
 kubectl logs my-pod | pflow "check for errors and notify if critical"
 ```
 
+## Wait.. my AI agent can already do this and it works great!
+
+Does it? Try this:
+
+```bash
+# Load the GitHub MCP server and check its token usage:
+$ claude --mcp-config ./github.mcp.json --strict-mcp-config --debug "list my PRs"
+> Context used: 46,000 tokens before processing
+```
+
+That's 1/4 of Claude's context window gone just to load GitHub tools. Add Slack and JIRA:
+
+```bash
+$ claude --mcp-config ./github.mcp.json ./jira.mcp.json ./slack.mcp.json \
+         --strict-mcp-config "check PRs, update tickets, post summary"
+> Context: 64,050 tokens loaded
+> Time: 30 seconds
+> Cost: $0.22 per run
+```
+
+**The dirty secret**: Most developers aren't even using MCP servers. They're playing the "training data lottery" instead:
+
+```bash
+# What they should do (but costs 46k tokens):
+$ claude --mcp-config ./github.mcp.json "analyze my PRs"
+
+# What they actually do (and hope it works):
+$ claude "use gh cli to analyze my PRs"
+# Praying the AI remembers 'gh' from 2023 training data
+```
+
+Your agent "works great" until you:
+- Need the same workflow 10x daily ($2.20/day = $803/year)
+- Want deterministic results (not different outputs each run)
+- Load 5+ MCP servers (sessions become unusable)
+- Need it to run in under 30 seconds
+
+pflow compiles what your agent figures out into something that actually works at scale: 2-5 seconds, $0 cost, deterministic execution, every time.
+
+
+
 ## Who is `pflow` for?
 
 `pflow` is for you if you've ever felt the pain in the "messy middle" of automation:
 
   * Your task is **too complex for a simple CLI pipe**, involving multiple tools, APIs, and data transformations.
   * Your workflow is **too ad-hoc and exploratory for a production orchestrator** like Airflow or Prefect.
-  * You find yourself **asking an AI agent to write the same kind of script** over and over.
-  * You have a dozen different CLI tools and wish you could **combine them with a single command.**
+  * You find **asking an AI agent to do the same multi step task** over and over or asking an AI agent to write **the same kind of scripts** again and again.
+  * You have a dozen different CLI tools, mcp servers and custom scripts and wish you could **combine them with a single command.**
+  * You know the negative impact of AI agents context window when using MCPS and wish you could **use them without the performance impact.**
 
 `pflow` is designed to automate the automators.
 
