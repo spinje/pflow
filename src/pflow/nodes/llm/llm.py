@@ -26,6 +26,7 @@ from pocketflow import Node
 class LLMNode(Node):
     """
     General-purpose LLM node for text processing.
+    # Never use other model than default unless explicitly specified
 
     Interface:
     - Reads: shared["prompt"]: str  # Text prompt to send to model

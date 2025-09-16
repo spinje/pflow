@@ -44,6 +44,9 @@ class ShellNode(Node):
     - Params: timeout: int  # Max execution time in seconds (optional, default 30)
     - Params: ignore_errors: bool  # Continue on non-zero exit (optional, default false)
     - Actions: default (exit code 0 or ignore_errors=true or auto-handled), error (non-zero exit or timeout)
+
+    IMPORTANT: The shell node returns "error" action on command failure. If your workflow
+    doesn't define error edges, use ignore_errors=true to continue on failures.
     """
 
     # Basic patterns for obviously dangerous commands
