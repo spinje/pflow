@@ -37,8 +37,19 @@ def _extract_package_name(name: str, metadata: dict) -> str:
 
     if node_type == "mcp":
         # mcp-{server}-{tool} → server
-        parts = name.split("-", 2)
-        return parts[1] if len(parts) > 1 else "unknown"
+        # Use proper parsing that handles server names with hyphens
+        from pflow.mcp.manager import MCPServerManager
+        from pflow.mcp.utils import parse_mcp_node_name
+
+        try:
+            manager = MCPServerManager()
+            known_servers = manager.list_servers()
+            server_name, _ = parse_mcp_node_name(name, known_servers)
+            return server_name
+        except Exception:
+            # Fallback to naive parsing if something goes wrong
+            parts = name.split("-", 2)
+            return parts[1] if len(parts) > 1 else "unknown"
 
     elif node_type == "core":
         # Special handling for file operations

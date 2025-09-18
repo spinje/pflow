@@ -25,56 +25,306 @@ def mcp() -> None:
     pass
 
 
-@mcp.command(name="add")
-@click.argument("name")
-@click.argument("command", nargs=-1, required=True)
-@click.option("--env", "-e", multiple=True, help="Environment variables (KEY=VALUE or KEY=${ENV_VAR})")
-def add(name: str, command: tuple, env: tuple) -> None:
-    """Add a new MCP server configuration.
+def _parse_environment_variables(env: tuple) -> dict[str, str]:
+    """Parse environment variables from command line arguments.
 
-    Examples:
-        pflow mcp add github npx -y @modelcontextprotocol/server-github
-        pflow mcp add github npx -y @modelcontextprotocol/server-github -e GITHUB_TOKEN=${GITHUB_TOKEN}
-        pflow mcp add filesystem npx -y @modelcontextprotocol/server-filesystem /path/to/dir
+    Args:
+        env: Tuple of environment variable strings in KEY=VALUE format
+
+    Returns:
+        Dictionary mapping environment variable names to values
+
+    Raises:
+        SystemExit: If any environment variable has invalid format
     """
-    manager = MCPServerManager()
-
-    # Parse command and args
-    if not command:
-        click.echo("Error: Command is required", err=True)
-        sys.exit(1)
-
-    cmd = command[0]
-    args = list(command[1:]) if len(command) > 1 else []
-
-    # Parse environment variables
     env_dict = {}
     for env_var in env:
         if "=" not in env_var:
             click.echo(f"Error: Invalid environment variable format: {env_var} (expected KEY=VALUE)", err=True)
             sys.exit(1)
-
         key, value = env_var.split("=", 1)
         env_dict[key] = value
+    return env_dict
+
+
+def _parse_headers(headers: tuple) -> dict[str, str]:
+    """Parse HTTP headers from command line arguments.
+
+    Args:
+        headers: Tuple of header strings in KEY=VALUE format
+
+    Returns:
+        Dictionary mapping header names to values
+
+    Raises:
+        SystemExit: If any header has invalid format
+    """
+    header_dict = {}
+    for h in headers:
+        if "=" not in h:
+            click.echo(f"Error: Invalid header format: {h} (expected KEY=VALUE)", err=True)
+            sys.exit(1)
+        key, value = h.split("=", 1)
+        header_dict[key] = value
+    return header_dict
+
+
+def _build_auth_config(
+    auth_type: Optional[str],
+    auth_token: Optional[str],
+    auth_header: str,
+    username: Optional[str],
+    password: Optional[str],
+) -> Optional[dict[str, str]]:
+    """Build authentication configuration for HTTP transport.
+
+    Args:
+        auth_type: Type of authentication (bearer, api_key, or basic)
+        auth_token: Authentication token or API key
+        auth_header: Header name for API key authentication
+        username: Username for basic authentication
+        password: Password for basic authentication
+
+    Returns:
+        Authentication configuration dictionary or None if no auth configured
+
+    Raises:
+        SystemExit: If required authentication parameters are missing
+    """
+    if not auth_type:
+        return None
+
+    if auth_type == "bearer":
+        if not auth_token:
+            click.echo("Error: --auth-token is required for bearer auth", err=True)
+            sys.exit(1)
+        return {"type": "bearer", "token": auth_token}
+
+    if auth_type == "api_key":
+        if not auth_token:
+            click.echo("Error: --auth-token is required for API key auth", err=True)
+            sys.exit(1)
+        return {"type": "api_key", "key": auth_token, "header": auth_header}
+
+    if auth_type == "basic":
+        if not username or not password:
+            click.echo("Error: --username and --password are required for basic auth", err=True)
+            sys.exit(1)
+        return {"type": "basic", "username": username, "password": password}
+
+    return None
+
+
+def _add_http_server(
+    manager: MCPServerManager,
+    name: str,
+    url: str,
+    auth_config: Optional[dict[str, str]],
+    header_dict: dict[str, str],
+    env_dict: dict[str, str],
+    auth_type: Optional[str],
+    timeout: Optional[int],
+    sse_timeout: Optional[int],
+) -> None:
+    """Add an HTTP transport MCP server.
+
+    Args:
+        manager: MCPServerManager instance
+        name: Server name
+        url: Server URL
+        auth_config: Authentication configuration
+        header_dict: HTTP headers
+        env_dict: Environment variables
+        auth_type: Type of authentication for display
+        timeout: HTTP timeout in seconds
+        sse_timeout: SSE read timeout in seconds
+    """
+    manager.add_server(
+        name=name,
+        transport="http",
+        url=url,
+        auth=auth_config,
+        headers=header_dict if header_dict else None,
+        env=env_dict if env_dict else None,
+        timeout=timeout,
+        sse_timeout=sse_timeout,
+    )
+
+    click.echo(f"✓ Added HTTP MCP server '{name}'")
+    click.echo(f"  URL: {url}")
+    if auth_config:
+        click.echo(f"  Authentication: {auth_type}")
+    if header_dict:
+        click.echo(f"  Headers: {', '.join(f'{k}={v}' for k, v in header_dict.items())}")
+
+
+def _add_stdio_server(manager: MCPServerManager, name: str, command: tuple, env_dict: dict[str, str]) -> None:
+    """Add a stdio transport MCP server.
+
+    Args:
+        manager: MCPServerManager instance
+        name: Server name
+        command: Command tuple (command and arguments)
+        env_dict: Environment variables
+
+    Raises:
+        SystemExit: If command is empty
+    """
+    if not command:
+        click.echo("Error: COMMAND is required for stdio transport", err=True)
+        sys.exit(1)
+
+    cmd = command[0]
+    args = list(command[1:]) if len(command) > 1 else []
+
+    manager.add_server(
+        name=name,
+        transport="stdio",
+        command=cmd,
+        args=args,
+        env=env_dict if env_dict else None,
+    )
+
+    click.echo(f"✓ Added stdio MCP server '{name}'")
+    click.echo(f"  Command: {cmd} {' '.join(args)}")
+    if env_dict:
+        click.echo(f"  Environment: {', '.join(f'{k}={v}' for k, v in env_dict.items())}")
+
+
+@mcp.command(name="add")
+@click.argument("name")
+@click.argument("command", nargs=-1, required=False)
+@click.option("--transport", default="stdio", type=click.Choice(["stdio", "http"]), help="Transport type")
+@click.option("--url", help="Server URL for HTTP transport")
+@click.option("--auth-type", type=click.Choice(["bearer", "api_key", "basic"]), help="Authentication type")
+@click.option("--auth-token", help="Authentication token/key (use ${ENV_VAR} for environment variables)")
+@click.option("--auth-header", default="X-API-Key", help="Header name for API key auth")
+@click.option("--username", help="Username for basic auth")
+@click.option("--password", help="Password for basic auth")
+@click.option("--header", "-H", multiple=True, help="Additional HTTP headers (KEY=VALUE)")
+@click.option("--timeout", type=int, help="HTTP timeout in seconds")
+@click.option("--sse-timeout", type=int, help="SSE read timeout in seconds")
+@click.option("--env", "-e", multiple=True, help="Environment variables (KEY=VALUE or KEY=${ENV_VAR})")
+def add(
+    name: str,
+    command: tuple,
+    transport: str,
+    url: Optional[str],
+    auth_type: Optional[str],
+    auth_token: Optional[str],
+    auth_header: str,
+    username: Optional[str],
+    password: Optional[str],
+    header: tuple,
+    timeout: Optional[int],
+    sse_timeout: Optional[int],
+    env: tuple,
+) -> None:
+    """Add a new MCP server configuration.
+
+    Examples:
+        # Stdio transport (default):
+        pflow mcp add github npx -y @modelcontextprotocol/server-github
+        pflow mcp add github npx -y @modelcontextprotocol/server-github -e GITHUB_TOKEN=${GITHUB_TOKEN}
+
+        # HTTP transport:
+        pflow mcp add composio --transport http --url https://api.composio.dev/mcp --auth-type bearer --auth-token ${COMPOSIO_API_KEY}
+        pflow mcp add myapi --transport http --url http://localhost:3000/mcp --header "User-Agent=pflow/1.0"
+    """
+    manager = MCPServerManager()
+
+    # Parse environment variables and headers
+    env_dict = _parse_environment_variables(env)
+    header_dict = _parse_headers(header)
 
     try:
-        # Add server to configuration
-        manager.add_server(
-            name=name,
-            command=cmd,
-            args=args,
-            env=env_dict,
-            transport="stdio",  # MVP only supports stdio
-        )
+        if transport == "http":
+            # HTTP transport configuration
+            if not url:
+                click.echo("Error: --url is required for HTTP transport", err=True)
+                sys.exit(1)
 
-        click.echo(f"✓ Added MCP server '{name}'")
-        click.echo(f"  Command: {cmd} {' '.join(args)}")
-        if env_dict:
-            click.echo(f"  Environment: {', '.join(f'{k}={v}' for k, v in env_dict.items())}")
+            # Build authentication configuration
+            auth_config = _build_auth_config(auth_type, auth_token, auth_header, username, password)
+
+            # Add HTTP server
+            _add_http_server(manager, name, url, auth_config, header_dict, env_dict, auth_type, timeout, sse_timeout)
+        else:
+            # Stdio transport configuration
+            _add_stdio_server(manager, name, command, env_dict)
 
     except Exception as e:
         click.echo(f"Error: Failed to add server: {e}", err=True)
         sys.exit(1)
+
+
+def _format_http_server(config: dict) -> list[str]:
+    """Format HTTP server configuration for display.
+
+    Args:
+        config: Server configuration dictionary
+
+    Returns:
+        List of formatted output lines
+    """
+    lines = []
+    lines.append(f"    URL: {config.get('url', 'N/A')}")
+
+    if config.get("auth"):
+        auth = config["auth"]
+        lines.append(f"    Auth Type: {auth.get('type', 'N/A')}")
+
+    if config.get("headers"):
+        headers_str = ", ".join(f"{k}={v}" for k, v in config["headers"].items())
+        lines.append(f"    Headers: {headers_str}")
+
+    if config.get("timeout"):
+        lines.append(f"    Timeout: {config['timeout']}s")
+
+    return lines
+
+
+def _format_stdio_server(config: dict) -> list[str]:
+    """Format stdio server configuration for display.
+
+    Args:
+        config: Server configuration dictionary
+
+    Returns:
+        List of formatted output lines
+    """
+    command = config.get("command", "")
+    args = " ".join(config.get("args", []))
+    return [f"    Command: {command} {args}".rstrip()]
+
+
+def _format_server_output(name: str, config: dict) -> None:
+    """Format and display a single server's configuration.
+
+    Args:
+        name: Server name
+        config: Server configuration dictionary
+    """
+    click.echo(f"\n  {name}:")
+    transport = config.get("transport", "stdio")
+    click.echo(f"    Transport: {transport}")
+
+    # Format transport-specific configuration
+    lines = _format_http_server(config) if transport == "http" else _format_stdio_server(config)
+
+    for line in lines:
+        click.echo(line)
+
+    # Format common configuration
+    if config.get("env"):
+        env_str = ", ".join(f"{k}={v}" for k, v in config["env"].items())
+        click.echo(f"    Environment: {env_str}")
+
+    if "created_at" in config:
+        click.echo(f"    Created: {config['created_at']}")
+
+    if "updated_at" in config:
+        click.echo(f"    Updated: {config['updated_at']}")
 
 
 @mcp.command(name="list")
@@ -88,22 +338,16 @@ def list_servers(output_json: bool) -> None:
 
         if output_json:
             click.echo(json.dumps(servers, indent=2))
-        else:
-            if not servers:
-                click.echo("No MCP servers configured.")
-                click.echo("Add one with: pflow mcp add <name> <command>")
-            else:
-                click.echo("Configured MCP servers:")
-                for name, config in servers.items():
-                    click.echo(f"\n  {name}:")
-                    click.echo(f"    Command: {config['command']} {' '.join(config.get('args', []))}")
-                    click.echo(f"    Transport: {config.get('transport', 'stdio')}")
-                    if config.get("env"):
-                        click.echo(f"    Environment: {', '.join(f'{k}={v}' for k, v in config['env'].items())}")
-                    if "created_at" in config:
-                        click.echo(f"    Created: {config['created_at']}")
-                    if "updated_at" in config:
-                        click.echo(f"    Updated: {config['updated_at']}")
+            return
+
+        if not servers:
+            click.echo("No MCP servers configured.")
+            click.echo("Add one with: pflow mcp add <name> <command>")
+            return
+
+        click.echo("Configured MCP servers:")
+        for name, config in servers.items():
+            _format_server_output(name, config)
 
     except Exception as e:
         click.echo(f"Error: Failed to list servers: {e}", err=True)
@@ -116,7 +360,7 @@ def list_servers(output_json: bool) -> None:
 def remove(name: str, force: bool) -> None:
     """Remove an MCP server configuration."""
     manager = MCPServerManager()
-    registrar = MCPRegistrar(manager=manager)
+    registrar = MCPRegistrar(registry=None, manager=manager)
 
     try:
         # Check if server exists
@@ -266,7 +510,7 @@ def sync(name: Optional[str], all_servers: bool) -> None:
     _validate_sync_arguments(name, all_servers)
 
     manager = MCPServerManager()
-    registrar = MCPRegistrar(manager=manager)
+    registrar = MCPRegistrar(registry=None, manager=manager)
 
     try:
         if all_servers:

@@ -20,13 +20,19 @@ class TestMetadataInjectionRealBugs:
         Real Bug: GitHub tools use underscores (e.g., list_repositories).
         If we convert underscores to dashes, the MCP call fails.
         """
-        params = _inject_special_parameters(
-            node_type="mcp-github-list_repositories", node_id="test", params={"per_page": 30}, registry=None
-        )
+        # Mock the MCPServerManager to provide the github server
+        with patch("pflow.mcp.manager.MCPServerManager") as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.list_servers.return_value = ["github"]
+            mock_manager_class.return_value = mock_manager
 
-        # CRITICAL: Must preserve underscore in tool name
-        assert params["__mcp_tool__"] == "list_repositories"
-        assert params["__mcp_server__"] == "github"
+            params = _inject_special_parameters(
+                node_type="mcp-github-list_repositories", node_id="test", params={"per_page": 30}, registry=None
+            )
+
+            # CRITICAL: Must preserve underscore in tool name
+            assert params["__mcp_tool__"] == "list_repositories"
+            assert params["__mcp_server__"] == "github"
 
     def test_deeply_nested_tool_names(self):
         """Tools with many segments should preserve everything after server.
@@ -34,13 +40,19 @@ class TestMetadataInjectionRealBugs:
         Real Bug: Slack tools have long names like get-channel-history.
         We must preserve the full tool name structure.
         """
-        params = _inject_special_parameters(
-            node_type="mcp-slack-get-channel-history-with-threads", node_id="test", params={}, registry=None
-        )
+        # Mock the MCPServerManager to provide the slack server
+        with patch("pflow.mcp.manager.MCPServerManager") as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.list_servers.return_value = ["slack"]
+            mock_manager_class.return_value = mock_manager
 
-        assert params["__mcp_server__"] == "slack"
-        # Everything after server name becomes tool name
-        assert params["__mcp_tool__"] == "get-channel-history-with-threads"
+            params = _inject_special_parameters(
+                node_type="mcp-slack-get-channel-history-with-threads", node_id="test", params={}, registry=None
+            )
+
+            assert params["__mcp_server__"] == "slack"
+            # Everything after server name becomes tool name
+            assert params["__mcp_tool__"] == "get-channel-history-with-threads"
 
     def test_numeric_params_preserved_as_numbers(self):
         """Numeric parameters must stay numeric, not become strings.
@@ -48,27 +60,33 @@ class TestMetadataInjectionRealBugs:
         Real Bug: MCP servers validate parameter types. If we pass "30"
         instead of 30 for 'limit', the validation fails with cryptic errors.
         """
-        params = _inject_special_parameters(
-            node_type="mcp-github-list-issues",
-            node_id="test",
-            params={
-                "limit": 30,  # Must stay as integer
-                "page": 1,
-                "is_open": True,  # Must stay as boolean
-                "threshold": 0.5,  # Must stay as float
-            },
-            registry=None,
-        )
+        # Mock the MCPServerManager to provide the github server
+        with patch("pflow.mcp.manager.MCPServerManager") as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.list_servers.return_value = ["github"]
+            mock_manager_class.return_value = mock_manager
 
-        # Types must be preserved
-        assert isinstance(params["limit"], int)
-        assert isinstance(params["page"], int)
-        assert isinstance(params["is_open"], bool)
-        assert isinstance(params["threshold"], float)
+            params = _inject_special_parameters(
+                node_type="mcp-github-list-issues",
+                node_id="test",
+                params={
+                    "limit": 30,  # Must stay as integer
+                    "page": 1,
+                    "is_open": True,  # Must stay as boolean
+                    "threshold": 0.5,  # Must stay as float
+                },
+                registry=None,
+            )
 
-        # Metadata injection shouldn't change types
-        assert params["limit"] == 30
-        assert params["is_open"] is True
+            # Types must be preserved
+            assert isinstance(params["limit"], int)
+            assert isinstance(params["page"], int)
+            assert isinstance(params["is_open"], bool)
+            assert isinstance(params["threshold"], float)
+
+            # Metadata injection shouldn't change types
+            assert params["limit"] == 30
+            assert params["is_open"] is True
 
     def test_empty_server_or_tool_not_injected(self):
         """Malformed node types should not inject broken metadata.
@@ -99,21 +117,27 @@ class TestMetadataInjectionRealBugs:
         Real Bug Prevention: If users could override these, they might
         accidentally use wrong server/tool combinations that don't exist.
         """
-        params = _inject_special_parameters(
-            node_type="mcp-github-create-issue",
-            node_id="test",
-            params={
-                "__mcp_server__": "custom-server",  # Will be overwritten
-                "__mcp_tool__": "custom-tool",  # Will be overwritten
-                "title": "Test",
-            },
-            registry=None,
-        )
+        # Mock the MCPServerManager to provide the github server
+        with patch("pflow.mcp.manager.MCPServerManager") as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.list_servers.return_value = ["github"]
+            mock_manager_class.return_value = mock_manager
 
-        # Verify that node type is the source of truth
-        assert params["__mcp_server__"] == "github"  # From node type
-        assert params["__mcp_tool__"] == "create-issue"  # From node type
-        assert params["title"] == "Test"  # User param preserved
+            params = _inject_special_parameters(
+                node_type="mcp-github-create-issue",
+                node_id="test",
+                params={
+                    "__mcp_server__": "custom-server",  # Will be overwritten
+                    "__mcp_tool__": "custom-tool",  # Will be overwritten
+                    "title": "Test",
+                },
+                registry=None,
+            )
+
+            # Verify that node type is the source of truth
+            assert params["__mcp_server__"] == "github"  # From node type
+            assert params["__mcp_tool__"] == "create-issue"  # From node type
+            assert params["title"] == "Test"  # User param preserved
 
     def test_registry_injection_not_affected_by_mcp(self):
         """Workflow nodes should still get registry injection with MCP nodes present.
@@ -130,12 +154,18 @@ class TestMetadataInjectionRealBugs:
         assert "__mcp_server__" not in params
 
         # MCP node should NOT get registry
-        params = _inject_special_parameters(
-            node_type="mcp-test-tool", node_id="test", params={}, registry=mock_registry
-        )
-        assert "__registry__" not in params
-        assert params["__mcp_server__"] == "test"
-        assert params["__mcp_tool__"] == "tool"
+        # Mock the MCPServerManager to provide the test server
+        with patch("pflow.mcp.manager.MCPServerManager") as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.list_servers.return_value = ["test"]
+            mock_manager_class.return_value = mock_manager
+
+            params = _inject_special_parameters(
+                node_type="mcp-test-tool", node_id="test", params={}, registry=mock_registry
+            )
+            assert "__registry__" not in params
+            assert params["__mcp_server__"] == "test"
+            assert params["__mcp_tool__"] == "tool"
 
 
 class TestMetadataInjectionInWorkflow:
@@ -183,12 +213,18 @@ class TestMetadataInjectionInWorkflow:
             "mcp-filesystem-read-file": {"class_name": "CapturingNode", "module": "test", "file_path": "virtual://mcp"},
         }
 
-        with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
-            mock_module = MagicMock()
-            mock_module.CapturingNode = CapturingNode
-            mock_import.return_value = mock_module
+        # Mock the MCPServerManager to provide the servers
+        with patch("pflow.mcp.manager.MCPServerManager") as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.list_servers.return_value = ["github", "slack", "filesystem"]
+            mock_manager_class.return_value = mock_manager
 
-            compile_ir_to_flow(workflow_ir, mock_registry)
+            with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
+                mock_module = MagicMock()
+                mock_module.CapturingNode = CapturingNode
+                mock_import.return_value = mock_module
+
+                compile_ir_to_flow(workflow_ir, mock_registry)
 
         # Verify each node got correct, independent metadata
         assert len(captured_params) == 3
@@ -217,21 +253,27 @@ class TestMetadataInjectionEdgeCases:
         original_params = {"key": "value", "number": 42}
         original_params_copy = original_params.copy()
 
-        result = _inject_special_parameters(
-            node_type="mcp-test-tool", node_id="test", params=original_params, registry=None
-        )
+        # Mock the MCPServerManager to provide the test server
+        with patch("pflow.mcp.manager.MCPServerManager") as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.list_servers.return_value = ["test"]
+            mock_manager_class.return_value = mock_manager
 
-        # Original must be unchanged
-        assert original_params == original_params_copy
-        assert "__mcp_server__" not in original_params
-        assert "__mcp_tool__" not in original_params
+            result = _inject_special_parameters(
+                node_type="mcp-test-tool", node_id="test", params=original_params, registry=None
+            )
 
-        # Result has metadata (new dict)
-        assert result is not original_params
-        assert result["__mcp_server__"] == "test"
-        assert result["__mcp_tool__"] == "tool"
-        assert result["key"] == "value"
-        assert result["number"] == 42
+            # Original must be unchanged
+            assert original_params == original_params_copy
+            assert "__mcp_server__" not in original_params
+            assert "__mcp_tool__" not in original_params
+
+            # Result has metadata (new dict)
+            assert result is not original_params
+            assert result["__mcp_server__"] == "test"
+            assert result["__mcp_tool__"] == "tool"
+            assert result["key"] == "value"
+            assert result["number"] == 42
 
     def test_malformed_node_types_handled_gracefully(self):
         """Malformed MCP node types should not crash or inject broken metadata.

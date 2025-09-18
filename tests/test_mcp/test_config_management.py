@@ -31,7 +31,7 @@ class TestAtomicWriteProtection:
             manager = MCPServerManager(config_path=config_path)
 
             # Add initial config
-            manager.add_server("github", "npx", ["@modelcontextprotocol/server-github"])
+            manager.add_server("github", "stdio", "npx", ["@modelcontextprotocol/server-github"])
 
             # Read the original content
             original_content = config_path.read_text()
@@ -42,7 +42,7 @@ class TestAtomicWriteProtection:
                 patch("pathlib.Path.replace", side_effect=OSError("Disk full")),
                 pytest.raises(OSError),
             ):  # Should propagate the error
-                manager.add_server("slack", "npx", ["@modelcontextprotocol/server-slack"])
+                manager.add_server("slack", "stdio", "npx", ["@modelcontextprotocol/server-slack"])
 
             # CRITICAL: Original file must be untouched
             assert config_path.exists()
@@ -68,7 +68,7 @@ class TestAtomicWriteProtection:
             manager = MCPServerManager(config_path=config_path)
 
             # Add initial config
-            manager.add_server("test1", "cmd1", ["arg1"])
+            manager.add_server("test1", "stdio", "cmd1", ["arg1"])
             original_mtime = config_path.stat().st_mtime
 
             # Simulate crash during temp file write
@@ -81,7 +81,7 @@ class TestAtomicWriteProtection:
                 raise OSError("Process crashed during write")
 
             with patch("tempfile.mkstemp", side_effect=failing_mkstemp), pytest.raises(OSError):
-                manager.add_server("test2", "cmd2")
+                manager.add_server("test2", "stdio", "cmd2")
 
             # Original file must be unchanged
             assert config_path.stat().st_mtime == original_mtime
@@ -110,7 +110,9 @@ class TestConcurrentAccess:
                 try:
                     time.sleep(delay)  # Create timing variations
                     manager = MCPServerManager(config_path=config_path)
-                    manager.add_server(name, f"cmd_{name}", [f"arg_{name}"], env={f"KEY_{name}": f"value_{name}"})
+                    manager.add_server(
+                        name, "stdio", f"cmd_{name}", [f"arg_{name}"], env={f"KEY_{name}": f"value_{name}"}
+                    )
                     results.append(name)
                 except Exception as e:
                     errors.append((name, str(e)))
@@ -175,7 +177,7 @@ class TestConcurrentAccess:
 
             # Initialize with some data
             manager = MCPServerManager(config_path=config_path)
-            manager.add_server("initial", "cmd", [])
+            manager.add_server("initial", "stdio", "cmd", [])
 
             read_errors = []
 
@@ -195,7 +197,7 @@ class TestConcurrentAccess:
                 """Continuously write to config file."""
                 for i in range(10):
                     manager = MCPServerManager(config_path=config_path)
-                    manager.add_server(f"server_{i}", f"cmd_{i}", [])
+                    manager.add_server(f"server_{i}", "stdio", f"cmd_{i}", [])
                     time.sleep(0.005)
 
             # Start reader and writer simultaneously
@@ -240,7 +242,7 @@ class TestSecurityValidation:
 
             for dangerous_name in dangerous_names:
                 with pytest.raises(ValueError, match="Invalid server name"):
-                    manager.add_server(dangerous_name, "cmd", [])
+                    manager.add_server(dangerous_name, "stdio", "cmd", [])
 
     def test_command_injection_in_env_vars_safe(self):
         """Ensure environment variable templates can't execute commands.
@@ -266,7 +268,7 @@ class TestSecurityValidation:
 
             # Should store these as literal strings, not execute
             for i, pattern in enumerate(dangerous_patterns):
-                manager.add_server(f"test{i}", "safe_cmd", [], env={"POTENTIALLY_DANGEROUS": pattern})
+                manager.add_server(f"test{i}", "stdio", "safe_cmd", [], env={"POTENTIALLY_DANGEROUS": pattern})
 
             # Verify they're stored as-is (not executed or modified)
             config = manager.load()
@@ -318,4 +320,4 @@ class TestSecurityValidation:
 
             for name in invalid_names:
                 with pytest.raises(ValueError):
-                    manager.add_server(name, "cmd", [])
+                    manager.add_server(name, "stdio", "cmd", [])

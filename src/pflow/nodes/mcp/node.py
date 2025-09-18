@@ -182,7 +182,26 @@ class MCPNode(Node):
         return result
 
     async def _exec_async(self, prep_res: dict) -> dict:
-        """Async implementation using MCP SDK.
+        """Route to appropriate transport implementation.
+
+        Args:
+            prep_res: Preparation results containing server, tool, config, arguments
+
+        Returns:
+            Tool execution results
+        """
+        config = prep_res["config"]
+        transport = config.get("transport", "stdio")
+
+        if transport == "http":
+            return await self._exec_async_http(prep_res)
+        elif transport == "stdio":
+            return await self._exec_async_stdio(prep_res)
+        else:
+            raise ValueError(f"Unsupported transport: {transport}")
+
+    async def _exec_async_stdio(self, prep_res: dict) -> dict:
+        """Stdio transport implementation using MCP SDK.
 
         Args:
             prep_res: Preparation results containing server, tool, config, arguments
@@ -241,6 +260,127 @@ class MCPNode(Node):
             else:
                 # Python 3.10 fallback
                 return await asyncio.wait_for(_run_session(), timeout=self._timeout)
+
+    async def _exec_async_http(self, prep_res: dict) -> dict:
+        """HTTP transport implementation using Streamable HTTP.
+
+        Args:
+            prep_res: Preparation results containing server, tool, config, arguments
+
+        Returns:
+            Tool execution results
+        """
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        config = prep_res["config"]
+        url = config.get("url")
+
+        if not url:
+            raise ValueError(f"HTTP transport requires 'url' in config for server {prep_res['server']}")
+
+        # Build authentication headers
+        headers = self._build_auth_headers(config)
+
+        # Get timeout settings
+        timeout = config.get("timeout", 30)
+        sse_timeout = config.get("sse_timeout", 300)
+
+        logger.debug(f"Connecting to HTTP MCP server at {url}")
+
+        # Execute with timeout handling
+        async def _run_session() -> dict:
+            async with (
+                streamablehttp_client(
+                    url=url, headers=headers, timeout=timeout, sse_read_timeout=sse_timeout, terminate_on_close=True
+                ) as (read, write, get_session_id),
+                ClientSession(read, write) as session,
+            ):
+                # Initialize handshake (same as stdio)
+                await session.initialize()
+
+                # Get session ID for debugging
+                session_id = get_session_id()
+                if session_id:
+                    logger.debug(f"HTTP session established: {session_id}")
+
+                # Call the tool (same as stdio)
+                logger.debug(f"Calling MCP tool: {prep_res['tool']} with args: {prep_res['arguments']}")
+                result = await session.call_tool(prep_res["tool"], prep_res["arguments"])
+
+                # Extract content from result (same as stdio)
+                extracted_result = self._extract_result(result)
+
+                return {"result": extracted_result}
+
+        # Use same timeout pattern as stdio
+        timeout_context = getattr(asyncio, "timeout", None)
+        if timeout_context is not None:
+            # Python 3.11+
+            async with timeout_context(self._timeout):
+                return await _run_session()
+        else:
+            # Python 3.10 fallback
+            return await asyncio.wait_for(_run_session(), timeout=self._timeout)
+
+    def _build_auth_headers(self, config: dict) -> dict:
+        """Build authentication headers from configuration.
+
+        Supports bearer token, API key, and basic auth.
+
+        Args:
+            config: Server configuration dictionary
+
+        Returns:
+            Dictionary of HTTP headers including authentication
+        """
+        headers = {}
+
+        # Add custom headers if provided (expand env vars)
+        if "headers" in config:
+            expanded_headers = self._expand_env_vars(config["headers"])
+            headers.update(expanded_headers)
+
+        # Handle authentication
+        auth = config.get("auth", {})
+        if not auth:
+            return headers
+
+        # Expand environment variables in auth config
+        auth = self._expand_env_vars(auth)
+        auth_type = auth.get("type")
+
+        if auth_type == "bearer":
+            token = auth.get("token", "")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            else:
+                logger.warning("Bearer auth configured but token is empty")
+
+        elif auth_type == "api_key":
+            key = auth.get("key", "")
+            header_name = auth.get("header", "X-API-Key")
+            if key:
+                headers[header_name] = key
+            else:
+                logger.warning("API key auth configured but key is empty")
+
+        elif auth_type == "basic":
+            username = auth.get("username", "")
+            password = auth.get("password", "")
+            if username and password:
+                import base64
+
+                credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+                headers["Authorization"] = f"Basic {credentials}"
+            else:
+                logger.warning("Basic auth configured but username or password is empty")
+
+        else:
+            if auth_type:
+                logger.warning(f"Unknown auth type: {auth_type}")
+
+        return headers
 
     def post(self, shared: dict, prep_res: dict, exec_res: dict) -> str:
         """Store results in shared store and determine next action.
@@ -324,6 +464,90 @@ class MCPNode(Node):
 
         return "default"
 
+    def _handle_http_error(self, exc: Exception, prep_res: dict) -> str:
+        """Handle HTTP-specific errors.
+
+        Args:
+            exc: The HTTP exception
+            prep_res: Preparation results for context
+
+        Returns:
+            Human-readable error message
+        """
+        config = prep_res.get("config", {})
+        url = config.get("url", "unknown")
+        exc_type_name = type(exc).__name__
+
+        # Handle httpx exceptions by checking class name to avoid direct import
+        # This avoids deptry complaining about transitive dependency
+        if exc_type_name == "ConnectError":
+            return f"Could not connect to MCP server at {url}. Check if the server is running and accessible."
+        elif exc_type_name == "TimeoutException":
+            return f"HTTP request timed out after {self._timeout} seconds"
+        elif exc_type_name == "HTTPStatusError":
+            return self._handle_http_status_error(exc)
+        elif exc_type_name == "RequestError":
+            return f"HTTP request failed: {exc!s}"
+        else:
+            return f"HTTP error: {exc!s}"
+
+    def _handle_http_status_error(self, exc: Any) -> str:
+        """Handle specific HTTP status code errors.
+
+        Args:
+            exc: HTTPStatusError exception
+
+        Returns:
+            Human-readable error message based on status code
+        """
+        status = exc.response.status_code
+        if status == 401:
+            return "Authentication failed. Check your API credentials."
+        elif status == 403:
+            return "Access forbidden. Check your permissions."
+        elif status == 404:
+            return "Session expired or endpoint not found."
+        elif status == 429:
+            return "Rate limited. Too many requests. Please wait and try again."
+        elif 500 <= status < 600:
+            return f"Server error (HTTP {status}). The server encountered an error."
+        else:
+            response_text = exc.response.text[:200] if hasattr(exc.response, "text") else ""
+            return f"HTTP error {status}: {response_text}"
+
+    def _extract_error_from_exception_group(self, exc_str: str) -> str:
+        """Extract meaningful error from ExceptionGroup.
+
+        Args:
+            exc_str: String representation of the exception
+
+        Returns:
+            Extracted error message
+        """
+        import re
+
+        # Check for specific known error messages
+        if "users cache is not ready yet" in exc_str:
+            return "Slack server is still initializing its user cache (this can take 10-20 seconds). Please wait and try again."
+
+        # Try to extract MCP error
+        match = re.search(r"McpError: (.+?)(?:\n|$)", exc_str)
+        if match:
+            return match.group(1)
+
+        # Look for common error patterns in JSON-like responses
+        patterns = [
+            r'error": "([^"]+)"',  # JSON error field
+            r'message": "([^"]+)"',  # JSON message field
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, exc_str)
+            if match:
+                return match.group(1)
+
+        # Return original string if no pattern matches
+        return exc_str
+
     def exec_fallback(self, prep_res: dict, exc: Exception) -> dict:
         """Handle execution failures gracefully after all retries exhausted.
 
@@ -334,39 +558,17 @@ class MCPNode(Node):
         Returns:
             Error information dictionary
         """
-        # Extract the actual error from nested ExceptionGroups if present
-        actual_error = str(exc)
         exc_str = str(exc)
 
-        # Handle ExceptionGroup wrapping
-        if "ExceptionGroup" in str(type(exc)) or "unhandled errors in a TaskGroup" in exc_str:
-            # Try to extract the actual MCP error message
-            if "users cache is not ready yet" in exc_str:
-                actual_error = "Slack server is still initializing its user cache (this can take 10-20 seconds). Please wait and try again."
-            elif "McpError:" in exc_str:
-                # Extract the actual error message from the MCP error
-                import re
-
-                match = re.search(r"McpError: (.+?)(?:\n|$)", exc_str)
-                if match:
-                    actual_error = match.group(1)
-            else:
-                # Try to find any meaningful error message in the exception
-                import re
-
-                # Look for common error patterns
-                patterns = [
-                    r'error": "([^"]+)"',  # JSON error field
-                    r'message": "([^"]+)"',  # JSON message field
-                    r"McpError: (.+?)(?:\n|$)",  # MCP error
-                ]
-                for pattern in patterns:
-                    match = re.search(pattern, exc_str)
-                    if match:
-                        actual_error = match.group(1)
-                        break
+        # Determine error message based on exception type
+        if "httpx" in str(type(exc).__module__):
+            actual_error = self._handle_http_error(exc, prep_res)
+        elif "ExceptionGroup" in str(type(exc)) or "unhandled errors in a TaskGroup" in exc_str:
+            actual_error = self._extract_error_from_exception_group(exc_str)
         elif isinstance(exc, asyncio.TimeoutError):
             actual_error = f"MCP tool timed out after {self._timeout} seconds"
+        else:
+            actual_error = str(exc)
 
         error_msg = f"MCP tool failed: {actual_error}"
         logger.error(
@@ -422,6 +624,7 @@ class MCPNode(Node):
         """Expand environment variables in configuration.
 
         Supports ${VAR} syntax for environment variable expansion.
+        Now handles nested dictionaries and lists recursively.
 
         Args:
             env_dict: Dictionary with potential ${VAR} references
@@ -429,26 +632,44 @@ class MCPNode(Node):
         Returns:
             Dictionary with expanded environment variables
         """
+        from typing import cast
+
+        result = self._expand_env_vars_nested(env_dict)
+        # Type cast: we know the result is a dict since we pass in a dict
+        return cast(dict, result)
+
+    def _expand_env_vars_nested(self, data: dict | list | str | Any) -> dict | list | str | Any:
+        """Recursively expand environment variables in nested structures.
+
+        Args:
+            data: Any data structure potentially containing ${VAR} references
+
+        Returns:
+            Data with all environment variables expanded
+        """
         import re
 
-        expanded = {}
-        pattern = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+        if isinstance(data, dict):
+            # Recursively process dictionary values
+            return {key: self._expand_env_vars_nested(value) for key, value in data.items()}
+        elif isinstance(data, list):
+            # Recursively process list items
+            return [self._expand_env_vars_nested(item) for item in data]
+        elif isinstance(data, str):
+            # Expand environment variables in strings
+            pattern = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
-        for key, value in env_dict.items():
-            if isinstance(value, str):
-                # Replace ${VAR} with environment variable value
-                def replacer(match: Any) -> str:
-                    env_var = match.group(1)
-                    env_value = os.environ.get(env_var, "")
-                    if not env_value:
-                        logger.warning(f"Environment variable {env_var} not found, using empty string")
-                    return env_value
+            def replacer(match: Any) -> str:
+                env_var = match.group(1)
+                env_value = os.environ.get(env_var, "")
+                if not env_value:
+                    logger.warning(f"Environment variable {env_var} not found, using empty string")
+                return env_value
 
-                expanded[key] = pattern.sub(replacer, value)
-            else:
-                expanded[key] = value
-
-        return expanded
+            return pattern.sub(replacer, data)
+        else:
+            # Return other types unchanged (int, bool, None, etc.)
+            return data
 
     def _extract_text_content(self, content: Any) -> str:
         """Extract text from text content block."""

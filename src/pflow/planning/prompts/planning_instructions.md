@@ -63,15 +63,23 @@ Provide your analysis as natural text, explaining your reasoning. End your respo
 ### Example 1: Feasible Plan
 "The user wants to analyze a file and generate a summary. I have read-file to get the content, llm to analyze it, and write-file to save the result. The data flows naturally: file content → analysis → output file.
 
-### Feasibility Assessment
+#### Feasibility Assessment
 **Status**: FEASIBLE
 **Node Chain**: read-file >> llm >> write-file
 **Missing Capabilities**: None
 
+### Example 2: Partial Plan
+"The user wants to retrieve and send messages to slack but I have no specialized mcp nodes available. I could theoretically use use the http node to retrieve the messages using the slack api but the user has not provided any slack api key or token or any other documentation about how to use the slack api. I should not rely on my own assumptions and internal training data and should instead mark this as PARTIAL and suggest the user to provide the necessary documentation and credentials if needed.
+
+#### Feasibility Assessment
+**Status**: PARTIAL
+**Node Chain**: http >> llm >> http
+**Missing Capabilities**: slack_documentation, slack_api_key, slack_api_token
+
 ### Example 2: Impossible Plan
 "The user wants to deploy to Kubernetes, but I don't have any Kubernetes or deployment nodes available. This requirement cannot be fulfilled with the current components.
 
-### Feasibility Assessment
+#### Feasibility Assessment
 **Status**: IMPOSSIBLE
 **Node Chain**: None
 **Missing Capabilities**: kubernetes_deployment, container_management

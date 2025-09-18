@@ -3,7 +3,7 @@
 Interface:
 - Reads: shared["prompt"]: str  # Text prompt to send to model
 - Reads: shared["system"]: str  # System prompt (optional)
-- Writes: shared["response"]: str  # Model's text response
+- Writes: shared["response"]: Any  # Model's response (auto-parsed JSON or string)
 - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
 - Params: model: str  # Model to use (default: gemini-2.5-flash-lite)
 - Params: temperature: float  # Sampling temperature (default: 1.0)
@@ -11,9 +11,10 @@ Interface:
 - Actions: default (always)
 """
 
+import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 # Add pocketflow to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
@@ -25,13 +26,15 @@ from pocketflow import Node
 
 class LLMNode(Node):
     """
-    General-purpose LLM node for text processing.
-    # Never use other model than default unless explicitly specified
+    General-purpose LLM node for text processing and AI reasoning or data transformation.
+    When using this node, you should always only have it do ONE task. If you need to do multiple AI tasks, you should use multiple LLM nodes.
+    For example, if you need to create both unstructured and structured data, you should use two different LLM nodes not one node that does both.
+
 
     Interface:
     - Reads: shared["prompt"]: str  # Text prompt to send to model
     - Reads: shared["system"]: str  # System prompt (optional)
-    - Writes: shared["response"]: str  # Model's text response
+    - Writes: shared["response"]: any  # Model's response (auto-parsed JSON or string)
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
         - input_tokens: int  # Number of input tokens consumed
@@ -50,6 +53,40 @@ class LLMNode(Node):
     def __init__(self, max_retries: int = 3, wait: float = 1.0):
         """Initialize the LLM node with retry support."""
         super().__init__(max_retries=max_retries, wait=wait)
+
+    @staticmethod
+    def parse_json_response(response: str) -> Union[Any, str]:
+        """Parse JSON from LLM response if possible.
+
+        Handles:
+        - Plain JSON strings
+        - JSON wrapped in markdown code blocks
+        - Regular text (returns as-is)
+
+        Args:
+            response: The raw LLM response string
+
+        Returns:
+            Parsed JSON object/array if valid JSON, otherwise original string
+        """
+        if not isinstance(response, str):
+            return response
+
+        trimmed = response.strip()
+
+        # Extract from markdown code blocks if present
+        if "```" in trimmed:
+            start = trimmed.find("```json") + 7 if "```json" in trimmed else trimmed.find("```") + 3
+            end = trimmed.find("```", start)
+            if end > start:
+                trimmed = trimmed[start:end].strip()
+
+        # Try to parse as JSON
+        try:
+            return json.loads(trimmed)
+        except (json.JSONDecodeError, ValueError):
+            # Not valid JSON, return original string
+            return response
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Extract and prepare inputs from shared store with parameter fallback."""
@@ -108,7 +145,13 @@ class LLMNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results in shared store."""
-        shared["response"] = exec_res["response"]
+        raw_response = exec_res["response"]
+
+        # Parse JSON if possible
+        parsed_response = self.parse_json_response(raw_response)
+
+        # Store the parsed response
+        shared["response"] = parsed_response
 
         # Store usage metrics matching spec structure exactly
         usage_obj = exec_res.get("usage")

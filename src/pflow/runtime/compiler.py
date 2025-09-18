@@ -353,6 +353,75 @@ def _create_mcp_error_suggestion(
     )
 
 
+def _parse_mcp_node_type(node_type: str) -> tuple[str, str]:
+    """Parse an MCP node type into server and tool names.
+
+    Handles server names that contain dashes by checking against known MCP servers.
+    Format: mcp-<server-name>-<tool-name>
+
+    Args:
+        node_type: Full node type like "mcp-local-test-echo"
+
+    Returns:
+        Tuple of (server_name, tool_name)
+
+    Raises:
+        CompilationError: If the server cannot be determined unambiguously
+    """
+    parts = node_type.split("-")
+
+    if len(parts) < 3:
+        raise CompilationError(
+            f"Invalid MCP node type format: {node_type}",
+            phase="node_resolution",
+            suggestion="MCP node types must be in format: mcp-<server>-<tool>",
+        )
+
+    try:
+        from pflow.mcp.manager import MCPServerManager
+
+        manager = MCPServerManager()
+        servers = manager.list_servers()
+    except Exception as e:
+        # If we can't load servers, we can't parse reliably
+        raise CompilationError(
+            f"Failed to load MCP servers for parsing: {e}",
+            phase="node_resolution",
+            node_type=node_type,
+            suggestion="Check MCP server configuration",
+        ) from e
+
+    # Try progressively longer server names to find the longest match
+    # This ensures we get "test-with-dashes" instead of "test"
+    best_match = None
+    best_match_length = 0
+
+    for i in range(2, len(parts) + 1):
+        possible_server = "-".join(parts[1:i])
+        # Keep track of the longest matching server name
+        if possible_server in servers and i - 1 > best_match_length:
+            best_match = (possible_server, "-".join(parts[i:]) if i < len(parts) else "")
+            best_match_length = i - 1
+
+    if best_match:
+        server_name, tool_name = best_match
+        if not tool_name:
+            raise CompilationError(
+                f"Invalid MCP node type: {node_type} - no tool name after server '{server_name}'",
+                phase="node_resolution",
+                suggestion=f"Format should be: mcp-{server_name}-<tool-name>",
+            )
+        return server_name, tool_name
+
+    # No matching server found
+    raise CompilationError(
+        f"MCP server not found for node type: {node_type}",
+        phase="node_resolution",
+        node_type=node_type,
+        suggestion=f"Could not find MCP server from: {parts[1]}. Available servers: {', '.join(sorted(servers))}",
+    )
+
+
 def _inject_special_parameters(
     node_type: str,
     node_id: str,
@@ -409,15 +478,21 @@ def _inject_special_parameters(
 
         # Node exists - inject parameters (copy first to avoid mutating original)
         params = params.copy()  # Create a new dict to avoid mutating the original
-        params["__mcp_server__"] = parts[1]
-        params["__mcp_tool__"] = "-".join(parts[2:])  # Rejoin remaining parts for tool name
+
+        # Parse server and tool names correctly, handling server names with dashes
+        # The format is mcp-<server-name>-<tool-name> where server-name can contain dashes
+        # We need to find the correct split point by checking known MCP servers
+        server_name, tool_name = _parse_mcp_node_type(node_type)
+
+        params["__mcp_server__"] = server_name
+        params["__mcp_tool__"] = tool_name
         logger.debug(
             "Injecting MCP metadata for virtual node",
             extra={
                 "phase": "node_instantiation",
                 "node_id": node_id,
-                "mcp_server": parts[1],
-                "mcp_tool": "-".join(parts[2:]),
+                "mcp_server": server_name,
+                "mcp_tool": tool_name,
             },
         )
         return params

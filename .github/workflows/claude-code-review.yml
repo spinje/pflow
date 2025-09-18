@@ -37,17 +37,42 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
+            You are a seasoned code reviewer responsible for enforcing high standards of quality and safety.
+
             Please review this pull request and provide feedback on:
             - Code quality and best practices
+            - Clarity and ease of understanding.
+            - Descriptive, consistent names for functions, types, and variables.
+            - No copy-pasted or repeated logic.
+            - Defensive error handling and failure paths.
+            - No embedded credentials, tokens, or API keys.
             - Potential bugs or issues
             - Performance considerations
             - Security concerns
             - Test coverage
+            - Test quality (are we testing the right things? Better a few good tests than a lot of bad tests. Always suggest removal of bad tests.)
 
             Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
+
+            Architectural quality and code quality guidelines:
+            - Write code optimized for change: small focused functions with single responsibilities, clear names that
+              explain intent not implementation, and comprehensive tests that document expected behavior - because all
+              successful systems evolve.
+            - Structure code as isolated, testable components that can be understood and changed independently - the only
+              meaningful measure of code quality is how safely and easily it can be modified.
+            - Prefer boring and obvious: The best solution is rarely the clever one. Write code that a tired developer can understand at 3am. Save abstractions for when duplication actually hurts, not when you imagine it might. "Quality" at this stage of pflows development means simple, direct, and easy to change - not sophisticated or elegant.
+
+            *Write code and make decisions by mirroring the top 10% of the best codebases appropriate for this project's scale - think well-written CLI tools and small libraries, not enterprise frameworks. Prefer boring, obvious code over clever abstractions. Ignore the rest. And save the fancy patterns for when they're actually needed.*
+
+            Report format (group by priority):
+            - **Critical — must fix before merge**
+            - **Warnings — should be addressed**
+            - **Suggestions — optional improvements**
+
+            Where helpful, show concrete fixes or minimal patch-style snippets.
 
             Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
 
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.anthropic.com/en/docs/claude-code/sdk#command-line for available options
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          claude_args: '--model opus --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'

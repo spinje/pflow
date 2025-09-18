@@ -55,7 +55,26 @@ class MCPDiscovery:
             raise RuntimeError(f"Tool discovery failed for {server_name}: {e}") from e
 
     async def _discover_async(self, server_name: str, server_config: dict[str, Any]) -> list[dict[str, Any]]:
-        """Async implementation of tool discovery.
+        """Async implementation of tool discovery with transport routing.
+
+        Args:
+            server_name: Name of the server
+            server_config: Server configuration dictionary
+
+        Returns:
+            List of tool definitions
+        """
+        transport = server_config.get("transport", "stdio")
+
+        if transport == "http":
+            return await self._discover_async_http(server_name, server_config)
+        elif transport == "stdio":
+            return await self._discover_async_stdio(server_name, server_config)
+        else:
+            raise ValueError(f"Unsupported transport: {transport}")
+
+    async def _discover_async_stdio(self, server_name: str, server_config: dict[str, Any]) -> list[dict[str, Any]]:
+        """Stdio transport discovery implementation.
 
         Args:
             server_name: Name of the server
@@ -65,7 +84,9 @@ class MCPDiscovery:
             List of tool definitions
         """
         # Expand environment variables
-        env = self._expand_env_vars(server_config.get("env", {}))
+        env_raw = self._expand_env_vars(server_config.get("env", {}))
+        # Type assertion - we know env will be a dict after expansion
+        env = env_raw if isinstance(env_raw, dict) else {}
 
         # Prepare server parameters
         params = StdioServerParameters(
@@ -118,6 +139,135 @@ class MCPDiscovery:
 
         return tools_list
 
+    async def _discover_async_http(self, server_name: str, server_config: dict[str, Any]) -> list[dict[str, Any]]:
+        """HTTP transport discovery implementation.
+
+        Args:
+            server_name: Name of the server
+            server_config: Server configuration dictionary
+
+        Returns:
+            List of tool definitions
+        """
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        url = server_config.get("url")
+        if not url:
+            raise ValueError(f"HTTP transport requires 'url' in config for server {server_name}")
+
+        # Build authentication headers
+        headers = self._build_auth_headers(server_config)
+
+        # Get timeout settings
+        timeout = server_config.get("timeout", 30)
+        sse_timeout = server_config.get("sse_timeout", 300)
+
+        logger.info(f"Connecting to HTTP MCP server '{server_name}' at {url}...")
+
+        tools_list = []
+
+        try:
+            async with (
+                streamablehttp_client(url=url, headers=headers, timeout=timeout, sse_read_timeout=sse_timeout) as (
+                    read,
+                    write,
+                    get_session_id,
+                ),
+                ClientSession(read, write) as session,
+            ):
+                # Initialize handshake
+                await session.initialize()
+
+                session_id = get_session_id()
+                logger.debug(f"Initialized HTTP connection to {server_name}, session: {session_id}")
+
+                # List available tools (same as stdio)
+                tools_response = await session.list_tools()
+
+                for tool in tools_response.tools:
+                    tool_def: dict[str, Any] = {
+                        "name": tool.name,
+                        "description": tool.description or f"MCP tool from {server_name}",
+                        "server": server_name,
+                    }
+
+                    # Extract input schema (same as stdio)
+                    if hasattr(tool, "inputSchema") and tool.inputSchema:
+                        schema = tool.inputSchema
+                        if hasattr(schema, "model_dump"):
+                            schema = schema.model_dump()
+                        tool_def["inputSchema"] = dict(schema)
+                    else:
+                        tool_def["inputSchema"] = {"type": "object", "properties": {}, "required": []}
+
+                    # Extract output schema if available (same as stdio)
+                    if hasattr(tool, "outputSchema") and tool.outputSchema:
+                        schema = tool.outputSchema
+                        if hasattr(schema, "model_dump"):
+                            schema = schema.model_dump()
+                        tool_def["outputSchema"] = dict(schema)
+
+                    tools_list.append(tool_def)
+
+                logger.info(f"Discovered {len(tools_list)} tools from HTTP server {server_name}")
+
+        except Exception:
+            logger.exception(f"Error during HTTP discovery for {server_name}")
+            raise
+
+        return tools_list
+
+    def _build_auth_headers(self, config: dict[str, Any]) -> dict[str, str]:
+        """Build authentication headers from configuration.
+
+        Args:
+            config: Server configuration dictionary
+
+        Returns:
+            Dictionary of HTTP headers including authentication
+        """
+        headers: dict[str, str] = {}
+
+        # Add custom headers if provided (expand env vars)
+        if "headers" in config:
+            expanded_headers = self._expand_env_vars(config["headers"])
+            if isinstance(expanded_headers, dict):
+                headers.update(expanded_headers)
+
+        # Handle authentication
+        auth_raw = config.get("auth", {})
+        if not auth_raw:
+            return headers
+
+        # Expand environment variables in auth config (handles nested dicts)
+        auth_expanded = self._expand_env_vars(auth_raw)
+        # Type assertion - auth should be a dict after expansion
+        auth = auth_expanded if isinstance(auth_expanded, dict) else {}
+        auth_type = auth.get("type")
+
+        if auth_type == "bearer":
+            token = auth.get("token", "")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+        elif auth_type == "api_key":
+            key = auth.get("key", "")
+            header_name = auth.get("header", "X-API-Key")
+            if key:
+                headers[header_name] = key
+
+        elif auth_type == "basic":
+            username = auth.get("username", "")
+            password = auth.get("password", "")
+            if username and password:
+                import base64
+
+                credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+                headers["Authorization"] = f"Basic {credentials}"
+
+        return headers
+
     def discover_all_servers(self) -> dict[str, list[dict[str, Any]]]:
         """Discover tools from all configured MCP servers.
 
@@ -138,37 +288,41 @@ class MCPDiscovery:
 
         return all_tools
 
-    def _expand_env_vars(self, env_dict: dict[str, str]) -> dict[str, str]:
-        """Expand environment variables in configuration.
+    def _expand_env_vars(self, data: dict | list | str | Any) -> dict | list | str | Any:
+        """Expand environment variables in configuration recursively.
 
         Supports ${VAR} syntax for environment variable expansion.
+        Now handles nested dictionaries and lists.
 
         Args:
-            env_dict: Dictionary with potential ${VAR} references
+            data: Any data structure potentially containing ${VAR} references
 
         Returns:
-            Dictionary with expanded environment variables
+            Data with expanded environment variables
         """
         import re
 
-        expanded = {}
-        pattern = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+        if isinstance(data, dict):
+            # Recursively process dictionary values
+            return {key: self._expand_env_vars(value) for key, value in data.items()}
+        elif isinstance(data, list):
+            # Recursively process list items
+            return [self._expand_env_vars(item) for item in data]
+        elif isinstance(data, str):
+            # Expand environment variables in strings
+            pattern = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
-        for key, value in env_dict.items():
-            if isinstance(value, str):
-                # Replace ${VAR} with environment variable value
-                def replacer(match: Any) -> str:
-                    env_var = match.group(1)
-                    env_value = os.environ.get(env_var, "")
-                    if not env_value:
-                        logger.warning(f"Environment variable {env_var} not found, using empty string")
-                    return env_value
+            def replacer(match: Any) -> str:
+                env_var = match.group(1)
+                env_value = os.environ.get(env_var, "")
+                if not env_value:
+                    logger.warning(f"Environment variable {env_var} not found, using empty string")
+                return env_value
 
-                expanded[key] = pattern.sub(replacer, value)
-            else:
-                expanded[key] = value
-
-        return expanded
+            return pattern.sub(replacer, data)
+        else:
+            # Return other types unchanged (int, bool, None, etc.)
+            return data
 
     def convert_to_pflow_params(self, json_schema: dict[str, Any]) -> list[dict[str, Any]]:
         """Convert JSON Schema to pflow parameter format.
@@ -210,11 +364,11 @@ class MCPDiscovery:
 
         return params
 
-    def _json_type_to_python(self, json_type: str) -> str:
+    def _json_type_to_python(self, json_type: str | list[str]) -> str:
         """Convert JSON Schema type to Python type string.
 
         Args:
-            json_type: JSON Schema type
+            json_type: JSON Schema type (can be string or list for union types)
 
         Returns:
             Python type string for pflow
@@ -228,5 +382,15 @@ class MCPDiscovery:
             "object": "dict",
             "null": "None",
         }
+
+        # Handle union types (e.g., ["string", "null"])
+        if isinstance(json_type, list):
+            # Filter out 'null' and take the first non-null type
+            non_null_types = [t for t in json_type if t != "null"]
+            if non_null_types:
+                json_type = non_null_types[0]
+            else:
+                # All null, treat as optional
+                return "None"
 
         return type_map.get(json_type, "str")

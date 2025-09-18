@@ -53,6 +53,7 @@ class MCPServerManager:
 
         Args:
             config_path: Path to MCP config file. Defaults to ~/.pflow/mcp-servers.json
+
         """
         if config_path is None:
             config_path = self.DEFAULT_CONFIG_PATH
@@ -69,6 +70,7 @@ class MCPServerManager:
 
         Returns:
             Configuration dictionary with servers and metadata
+
         """
         if not self.config_path.exists():
             logger.info(f"No MCP server configuration found at {self.config_path}, returning empty config")
@@ -101,6 +103,7 @@ class MCPServerManager:
 
         Args:
             config: Configuration dictionary to save
+
         """
         # Ensure version is set
         if "version" not in config:
@@ -135,60 +138,203 @@ class MCPServerManager:
     def add_server(
         self,
         name: str,
-        command: str,
+        transport: str = "stdio",
+        command: Optional[str] = None,
         args: Optional[list[str]] = None,
         env: Optional[dict[str, str]] = None,
-        transport: str = "stdio",
+        url: Optional[str] = None,
+        auth: Optional[dict[str, Any]] = None,
+        headers: Optional[dict[str, str]] = None,
+        timeout: Optional[int] = None,
+        sse_timeout: Optional[int] = None,
     ) -> None:
         """Add or update an MCP server configuration.
 
         Args:
             name: Server name (e.g., "github")
-            command: Command to execute (e.g., "npx")
-            args: Command arguments (e.g., ["@modelcontextprotocol/server-github"])
+            transport: Transport type ("stdio" or "http")
+            command: Command to execute (required for stdio)
+            args: Command arguments (for stdio)
             env: Environment variables with ${VAR} expansion support
-            transport: Transport type (only "stdio" supported in MVP)
-        """
-        if transport != "stdio":
-            raise ValueError(f"Only 'stdio' transport is supported in MVP, got '{transport}'")
+            url: Server URL (required for HTTP)
+            auth: Authentication config (for HTTP)
+            headers: Custom headers (for HTTP)
+            timeout: HTTP timeout in seconds (default: 30)
+            sse_timeout: SSE read timeout in seconds (default: 300)
 
+        """
         # Validate server name
-        if not name or not name.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                f"Invalid server name: {name}. Use alphanumeric characters, hyphens, and underscores only."
-            )
+        self._validate_server_name(name)
 
         config = self.load()
-
         now = datetime.now(timezone.utc).isoformat()
-
-        # Check if updating existing server
         is_update = name in config["servers"]
 
-        # Create server entry
-        server_config = {
+        # Build configuration based on transport
+        if transport == "stdio":
+            server_config = self._build_stdio_config(command, args, env, now)
+        elif transport == "http":
+            server_config = self._build_http_config(url, auth, headers, timeout, sse_timeout, env, now)
+        else:
+            raise ValueError(f"Unsupported transport: {transport}. Supported: 'stdio', 'http'")
+
+        # Preserve created_at for updates
+        self._set_created_at(server_config, is_update, config.get("servers", {}).get(name, {}), now)
+
+        # Validate the complete configuration
+        self.validate_server_config(server_config)
+
+        config["servers"][name] = server_config
+        self.save(config)
+
+        # Log the action
+        self._log_server_action(is_update, name, transport, command, url)
+
+    def _validate_server_name(self, name: str) -> None:
+        """Validate server name format.
+
+        Args:
+            name: Server name to validate
+
+        Raises:
+            ValueError: If name is invalid
+
+        """
+        if not name or not name.replace("-", "").replace("_", "").isalnum():
+            raise ValueError(
+                f"Invalid server name: {name}. Use alphanumeric characters, hyphens, and underscores only.",
+            )
+
+    def _build_stdio_config(
+        self,
+        command: Optional[str],
+        args: Optional[list[str]],
+        env: Optional[dict[str, str]],
+        now: str,
+    ) -> dict[str, Any]:
+        """Build stdio transport configuration.
+
+        Args:
+            command: Command to execute
+            args: Command arguments
+            env: Environment variables
+            now: Current timestamp
+
+        Returns:
+            Server configuration dict
+
+        Raises:
+            ValueError: If command is missing
+
+        """
+        if not command:
+            raise ValueError("Command is required for stdio transport")
+
+        return {
+            "transport": "stdio",
             "command": command,
             "args": args or [],
             "env": env or {},
-            "transport": transport,
             "updated_at": now,
         }
 
+    def _build_http_config(
+        self,
+        url: Optional[str],
+        auth: Optional[dict[str, Any]],
+        headers: Optional[dict[str, str]],
+        timeout: Optional[int],
+        sse_timeout: Optional[int],
+        env: Optional[dict[str, str]],
+        now: str,
+    ) -> dict[str, Any]:
+        """Build HTTP transport configuration.
+
+        Args:
+            url: Server URL
+            auth: Authentication config
+            headers: Custom headers
+            timeout: HTTP timeout
+            sse_timeout: SSE timeout
+            env: Environment variables
+            now: Current timestamp
+
+        Returns:
+            Server configuration dict
+
+        Raises:
+            ValueError: If URL is missing
+
+        """
+        if not url:
+            raise ValueError("URL is required for HTTP transport")
+
+        server_config: dict[str, Any] = {
+            "transport": "http",
+            "url": url,
+            "updated_at": now,
+        }
+
+        # Add optional fields if provided
+        if auth:
+            server_config["auth"] = auth
+        if headers:
+            server_config["headers"] = headers
+        if timeout is not None:
+            server_config["timeout"] = timeout
+        if sse_timeout is not None:
+            server_config["sse_timeout"] = sse_timeout
+        if env:
+            server_config["env"] = env  # Some HTTP servers may need env vars
+
+        return server_config
+
+    def _set_created_at(
+        self,
+        server_config: dict[str, Any],
+        is_update: bool,
+        existing_config: dict[str, Any],
+        now: str,
+    ) -> None:
+        """Set created_at timestamp for server config.
+
+        Args:
+            server_config: Server configuration to update
+            is_update: Whether this is an update
+            existing_config: Existing server config if updating
+            now: Current timestamp
+
+        """
         if not is_update:
             server_config["created_at"] = now
+        elif "created_at" in existing_config:
+            server_config["created_at"] = existing_config["created_at"]
         else:
-            # Preserve created_at for existing servers
-            if "created_at" in config["servers"][name]:
-                server_config["created_at"] = config["servers"][name]["created_at"]
-            else:
-                server_config["created_at"] = now
+            server_config["created_at"] = now
 
-        config["servers"][name] = server_config
+    def _log_server_action(
+        self,
+        is_update: bool,
+        name: str,
+        transport: str,
+        command: Optional[str],
+        url: Optional[str],
+    ) -> None:
+        """Log server add/update action.
 
-        self.save(config)
+        Args:
+            is_update: Whether this was an update
+            name: Server name
+            transport: Transport type
+            command: Command for stdio transport
+            url: URL for HTTP transport
 
+        """
         action = "Updated" if is_update else "Added"
-        logger.info(f"{action} MCP server '{name}' with command '{command}'")
+        if transport == "stdio":
+            logger.info(f"{action} MCP server '{name}' with command '{command}'")
+        else:
+            logger.info(f"{action} HTTP MCP server '{name}' at {url}")
 
     def remove_server(self, name: str) -> bool:
         """Remove an MCP server configuration.
@@ -198,6 +344,7 @@ class MCPServerManager:
 
         Returns:
             True if server was removed, False if not found
+
         """
         config = self.load()
 
@@ -219,6 +366,7 @@ class MCPServerManager:
 
         Returns:
             Server configuration or None if not found
+
         """
         config = self.load()
         result = config["servers"].get(name)
@@ -229,6 +377,7 @@ class MCPServerManager:
 
         Returns:
             List of server names
+
         """
         config = self.load()
         return list(config["servers"].keys())
@@ -238,6 +387,7 @@ class MCPServerManager:
 
         Returns:
             Dictionary mapping server names to configurations
+
         """
         config = self.load()
         return dict(config["servers"])
@@ -252,6 +402,7 @@ class MCPServerManager:
 
         Returns:
             Tuple of (command, args)
+
         """
         import shlex
 
@@ -265,30 +416,154 @@ class MCPServerManager:
         return command, args
 
     def validate_server_config(self, config: dict[str, Any]) -> None:
-        """Validate a server configuration.
+        """Validate a server configuration for both stdio and HTTP transports.
 
         Args:
             config: Server configuration to validate
 
         Raises:
             ValueError: If configuration is invalid
+
         """
-        required_fields = ["command", "transport"]
+        # Transport is always required
+        if "transport" not in config:
+            raise ValueError("Missing required field: transport")
 
-        for field in required_fields:
-            if field not in config:
-                raise ValueError(f"Missing required field: {field}")
+        transport = config["transport"]
 
-        if config["transport"] != "stdio":
-            raise ValueError(f"Only 'stdio' transport is supported, got '{config['transport']}'")
+        if transport == "stdio":
+            self._validate_stdio_config(config)
+        elif transport == "http":
+            self._validate_http_config(config)
+        else:
+            raise ValueError(f"Unsupported transport type: {transport}. Supported: 'stdio', 'http'")
 
-        if not config["command"]:
-            raise ValueError("Command cannot be empty")
-
+        # Common validation for both transports
         # Validate env is a dictionary if present
         if "env" in config and not isinstance(config["env"], dict):
             raise ValueError("Environment variables must be a dictionary")
 
+    def _validate_stdio_config(self, config: dict[str, Any]) -> None:
+        """Validate stdio transport configuration.
+
+        Args:
+            config: Server configuration to validate
+
+        Raises:
+            ValueError: If configuration is invalid
+
+        """
+        if "command" not in config:
+            raise ValueError("stdio transport requires 'command' field")
+
+        if not config["command"]:
+            raise ValueError("Command cannot be empty")
+
         # Validate args is a list if present
         if "args" in config and not isinstance(config["args"], list):
             raise ValueError("Arguments must be a list")
+
+    def _validate_http_config(self, config: dict[str, Any]) -> None:
+        """Validate HTTP transport configuration.
+
+        Args:
+            config: Server configuration to validate
+
+        Raises:
+            ValueError: If configuration is invalid
+
+        """
+        # Validate required URL field
+        self._validate_http_url(config)
+
+        # Validate optional auth field
+        if "auth" in config:
+            self._validate_auth_config(config["auth"])
+
+        # Validate optional headers field
+        if "headers" in config and not isinstance(config["headers"], dict):
+            raise ValueError("Headers must be a dictionary")
+
+        # Validate timeout fields
+        self._validate_http_timeouts(config)
+
+    def _validate_http_url(self, config: dict[str, Any]) -> None:
+        """Validate HTTP URL field.
+
+        Args:
+            config: Server configuration to validate
+
+        Raises:
+            ValueError: If URL is invalid
+
+        """
+        if "url" not in config:
+            raise ValueError("HTTP transport requires 'url' field")
+
+        url = config["url"]
+        if not url or not isinstance(url, str):
+            raise ValueError("URL must be a non-empty string")
+
+        # Validate URL format
+        if not (url.startswith("http://") or url.startswith("https://")):
+            raise ValueError("URL must start with http:// or https://")
+
+        # Warn about non-HTTPS for non-localhost URLs
+        if url.startswith("http://") and not any(host in url for host in ["localhost", "127.0.0.1", "::1"]):
+            logger.warning(f"Using non-HTTPS URL for remote server: {url}. Consider using HTTPS for security.")
+
+    def _validate_http_timeouts(self, config: dict[str, Any]) -> None:
+        """Validate HTTP timeout fields.
+
+        Args:
+            config: Server configuration to validate
+
+        Raises:
+            ValueError: If timeouts are invalid
+
+        """
+        if "timeout" in config:
+            timeout = config["timeout"]
+            if not isinstance(timeout, (int, float)) or timeout <= 0:
+                raise ValueError("Timeout must be a positive number")
+            if timeout > 600:
+                raise ValueError("Timeout cannot exceed 600 seconds (10 minutes)")
+
+        if "sse_timeout" in config:
+            sse_timeout = config["sse_timeout"]
+            if not isinstance(sse_timeout, (int, float)) or sse_timeout <= 0:
+                raise ValueError("SSE timeout must be a positive number")
+
+    def _validate_auth_config(self, auth: dict[str, Any]) -> None:
+        """Validate authentication configuration.
+
+        Args:
+            auth: Authentication configuration to validate
+
+        Raises:
+            TypeError: If auth is not a dictionary
+            ValueError: If authentication configuration is invalid
+
+        """
+        if not isinstance(auth, dict):
+            raise TypeError("Auth config must be a dictionary")
+
+        if "type" not in auth:
+            raise ValueError("Auth config must specify 'type'")
+
+        auth_type = auth["type"]
+
+        if auth_type == "bearer":
+            if "token" not in auth:
+                raise ValueError("Bearer auth requires 'token' field")
+        elif auth_type == "api_key":
+            if "key" not in auth:
+                raise ValueError("API key auth requires 'key' field")
+            # header is optional, defaults to X-API-Key
+        elif auth_type == "basic":
+            if "username" not in auth:
+                raise ValueError("Basic auth requires 'username' field")
+            if "password" not in auth:
+                raise ValueError("Basic auth requires 'password' field")
+        else:
+            raise ValueError(f"Unsupported auth type: {auth_type}. Supported: 'bearer', 'api_key', 'basic'")
