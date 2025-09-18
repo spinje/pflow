@@ -33,21 +33,28 @@ Currently, the planner must guess API field names and structures without seeing 
 ### Key Components to Build
 
 **1. Enhanced HTTP Node** (or new extraction capability)
-- Support optional `extract` parameter for JSONPath-based field extraction
-- Provide detailed runtime errors with available fields when extraction fails
-- Return both extracted fields and raw response for flexibility
+- Support optional `extract` parameter for dot/array path extraction (e.g., `$.field`, `$.nested.field`, `$.items[0].name`)
+- On success, include an `extracted` object in results while keeping existing `response` semantics (no separate `raw` key)
+- On missing path, raise `RuntimeValidationError` including attempted paths, available top-level keys, and a structure sample
+- HTTP `exec_fallback` MUST re-raise `RuntimeValidationError` unchanged
 
-**2. Runtime Error Feedback Loop**
-- Modify workflow executor to catch specific runtime validation errors
-- Create feedback mechanism to send errors + context back to planner
-- Implement retry logic with corrected workflow (max 2-3 attempts)
-- Distinguish between retriable errors (field not found) and fatal errors
+**2. Runtime Validation Loop (Planner)**
+- Add `RuntimeValidationNode` to the planner after metadata generation
+- Execute the generated workflow once (actual run) and collect runtime issues
+- Populate `shared["runtime_errors"]` for fixable issues and route actions:
+  - `runtime_fix` when fixable issues exist and attempts < 3
+  - `failed_runtime` when only fatal issues exist or attempts ≥ 3
+  - default when no issues are detected
+- Implement retry logic with corrected workflow (max 3 attempts)
 
 **3. Planner Runtime Fix Capability**
 - New planner prompt/mode for fixing runtime errors
 - Include actual data structure in context for correction
-- Generate updated workflow IR with fixed extraction paths
+- Generate updated workflow IR with fixed extraction paths and/or corrected tool arguments using `shared["runtime_errors"]`
 - Preserve original intent while correcting technical details
+
+**4. MCP Runtime Targets (MVP)**
+- Treat namespaced node `error` values and missing downstream `${mcp_node.*}` template paths as fixable when they indicate argument/field mismatches
 
 ### Example Flow
 ```python
@@ -84,7 +91,7 @@ Currently, the planner must guess API field names and structures without seeing 
 
 ### Design Decisions
 - Limit runtime correction attempts to prevent infinite loops (max 3)
-- Only apply to idempotent operations (GET requests, reads) initially
+- Execute all nodes during runtime validation (actual run); double execution on retries is accepted for MVP
 - Runtime validation happens only during initial workflow generation
 - Once saved, workflows remain deterministic (no auto-fixing in production)
 - Focus on field extraction errors first, expand to other error types later
