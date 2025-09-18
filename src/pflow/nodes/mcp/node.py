@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
 from pocketflow import Node
 
 logger = logging.getLogger(__name__)
@@ -334,8 +335,6 @@ class MCPNode(Node):
         Returns:
             Dictionary of HTTP headers including authentication
         """
-        from pflow.mcp.auth_utils import build_auth_headers
-
         return build_auth_headers(config)
 
     def post(self, shared: dict, prep_res: dict, exec_res: dict) -> str:
@@ -589,8 +588,6 @@ class MCPNode(Node):
             Dictionary with expanded environment variables
         """
         from typing import cast
-
-        from pflow.mcp.auth_utils import expand_env_vars_nested
 
         result = expand_env_vars_nested(env_dict)
         # Type cast: we know the result is a dict since we pass in a dict

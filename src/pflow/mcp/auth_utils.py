@@ -8,6 +8,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Compile regex pattern once for performance
+ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+
+# Authentication type constants
+AUTH_TYPE_BEARER = "bearer"
+AUTH_TYPE_API_KEY = "api_key"
+AUTH_TYPE_BASIC = "basic"
+DEFAULT_API_KEY_HEADER = "X-API-Key"
+
 
 def expand_env_vars_nested(data: Any) -> Any:
     """Recursively expand environment variables in nested structures.
@@ -26,8 +35,6 @@ def expand_env_vars_nested(data: Any) -> Any:
         return [expand_env_vars_nested(item) for item in data]
     elif isinstance(data, str):
         # Expand environment variables in strings
-        pattern = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
-
         def replacer(match: Any) -> str:
             env_var = match.group(1)
             env_value = os.environ.get(env_var, "")
@@ -35,7 +42,7 @@ def expand_env_vars_nested(data: Any) -> Any:
                 logger.warning(f"Environment variable {env_var} not found, using empty string")
             return env_value
 
-        return pattern.sub(replacer, data)
+        return ENV_VAR_PATTERN.sub(replacer, data)
     else:
         # Return other types unchanged (int, bool, None, etc.)
         return data
@@ -43,6 +50,16 @@ def expand_env_vars_nested(data: Any) -> Any:
 
 def _validate_auth_value(value: str, field_name: str) -> bool:
     """Validate authentication values don't contain dangerous characters.
+
+    Prevents header injection attacks by rejecting:
+    - Control characters (ASCII < 32)
+    - Newline characters (\\n, \\r)
+    - Null bytes (\\x00)
+
+    Examples of invalid values:
+    - "user\\nInjected-Header: malicious"
+    - "pass\\x00word"
+    - "token\\rSet-Cookie: stolen"
 
     Args:
         value: The authentication value to validate
@@ -74,7 +91,7 @@ def _add_bearer_auth(headers: dict[str, str], auth: dict[str, Any]) -> None:
 def _add_api_key_auth(headers: dict[str, str], auth: dict[str, Any]) -> None:
     """Add API key authentication to headers."""
     key = auth.get("key", "")
-    header_name = auth.get("header", "X-API-Key")
+    header_name = auth.get("header", DEFAULT_API_KEY_HEADER)
     if key:
         if not _validate_auth_value(key, "API key"):
             return
@@ -142,9 +159,9 @@ def build_auth_headers(config: dict[str, Any]) -> dict[str, str]:
 
     # Dispatch to appropriate auth handler
     auth_handlers = {
-        "bearer": _add_bearer_auth,
-        "api_key": _add_api_key_auth,
-        "basic": _add_basic_auth,
+        AUTH_TYPE_BEARER: _add_bearer_auth,
+        AUTH_TYPE_API_KEY: _add_api_key_auth,
+        AUTH_TYPE_BASIC: _add_basic_auth,
     }
 
     handler = auth_handlers.get(auth_type)

@@ -7,6 +7,8 @@ from typing import Any, Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
+
 from .manager import MCPServerManager
 
 logger = logging.getLogger(__name__)
@@ -226,8 +228,6 @@ class MCPDiscovery:
         Returns:
             Dictionary of HTTP headers including authentication
         """
-        from pflow.mcp.auth_utils import build_auth_headers
-
         return build_auth_headers(config)
 
     def discover_all_servers(self) -> dict[str, list[dict[str, Any]]]:
@@ -262,8 +262,6 @@ class MCPDiscovery:
         Returns:
             Data with expanded environment variables
         """
-        from pflow.mcp.auth_utils import expand_env_vars_nested
-
         return expand_env_vars_nested(data)
 
     def convert_to_pflow_params(self, json_schema: dict[str, Any]) -> list[dict[str, Any]]:
