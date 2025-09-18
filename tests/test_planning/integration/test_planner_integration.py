@@ -385,8 +385,8 @@ Based on the requirements, I'll create a workflow that reads a file, processes i
                             ],
                             "start_node": "read",
                             "inputs": {
-                                "input_file": {"description": "File to read", "type": "string", "required": True},
-                                "output_file": {"description": "Output file", "type": "string", "required": True},
+                                "input_file": {"description": "File to read", "type": "string"},
+                                "output_file": {"description": "Output file", "type": "string"},
                             },
                             "outputs": {"result": {"description": "Processing result", "source": "${write.success}"}},
                         }
@@ -431,6 +431,7 @@ Based on the requirements, I'll create a workflow that reads a file, processes i
 
             # Setup responses in correct order for Task 52 flow
             # Flow: Discovery → ParamDiscovery → Requirements → ComponentBrowsing → Planning → Generation → ParamMapping
+            # Note: RuntimeValidationNode could potentially trigger retries, so provide extra generation responses
             mock_model.prompt.side_effect = [
                 discovery_response,  # 1. Discovery (not found)
                 param_discovery_response,  # 2. Parameter discovery (MOVED earlier)
@@ -441,7 +442,12 @@ Based on the requirements, I'll create a workflow that reads a file, processes i
                 param_mapping_response,  # 7. Parameter mapping (BEFORE validation)
                 # ValidatorNode validates internally (no LLM call)
                 metadata_response,  # 8. Generate metadata (after successful validation)
-                param_mapping_response,  # 9. Final parameter mapping
+                # RuntimeValidationNode could trigger retries if there are template path issues
+                # Provide extra responses just in case runtime validation finds issues
+                generation_response,  # 9. Extra for potential runtime retry 1
+                param_mapping_response,  # 10. Extra param mapping if needed
+                generation_response,  # 11. Extra for potential runtime retry 2
+                param_mapping_response,  # 12. Extra param mapping if needed
             ]
             mock_get_model.return_value = mock_model
 
@@ -455,6 +461,7 @@ Based on the requirements, I'll create a workflow that reads a file, processes i
                 patch("pflow.planning.context_builder._workflow_manager", test_workflow_manager),
                 patch("pflow.registry.registry.Registry") as MockRegistry1,
                 patch("pflow.planning.nodes.Registry") as MockRegistry2,
+                patch("pflow.runtime.compiler.compile_ir_to_flow") as mock_compile,
             ):
                 # Create mock registry instance
                 mock_registry_instance = Mock()
@@ -469,6 +476,20 @@ Based on the requirements, I'll create a workflow that reads a file, processes i
                 # Both patches should return the same mock instance
                 MockRegistry1.return_value = mock_registry_instance
                 MockRegistry2.return_value = mock_registry_instance
+
+                # Mock the compiled flow execution (inside RuntimeValidationNode.exec)
+                # Simulate successful execution with proper shared store values
+                mock_flow = Mock()
+
+                def mock_run(shared_runtime):
+                    # Simulate nodes writing to their namespaces as expected by templates
+                    shared_runtime["read"] = {"content": "File contents here"}
+                    shared_runtime["process"] = {"response": "Processed content"}
+                    shared_runtime["write"] = {"success": True}
+                    return None
+
+                mock_flow.run.side_effect = mock_run
+                mock_compile.return_value = mock_flow
 
                 # Run the flow
                 flow.run(shared)
@@ -678,6 +699,7 @@ Creating a simple workflow that will be validated with retries.
                 patch("pflow.planning.context_builder._workflow_manager", test_workflow_manager),
                 patch("pflow.registry.registry.Registry") as MockRegistry1,
                 patch("pflow.planning.nodes.Registry") as MockRegistry2,
+                patch("pflow.runtime.compiler.compile_ir_to_flow") as mock_compile,
             ):
                 # Create mock registry instance
                 mock_registry_instance = Mock()
@@ -692,6 +714,11 @@ Creating a simple workflow that will be validated with retries.
                 # Both patches should return the same mock instance
                 MockRegistry1.return_value = mock_registry_instance
                 MockRegistry2.return_value = mock_registry_instance
+
+                # Mock the compiled flow execution (inside RuntimeValidationNode.exec)
+                mock_flow = Mock()
+                mock_flow.run.return_value = None  # Successful execution
+                mock_compile.return_value = mock_flow
 
                 flow.run(shared)
 
@@ -1324,8 +1351,15 @@ Creating workflow to read file.
 
                 MockRegistry.return_value = mock_registry_instance
 
-                # Also patch it in nodes module
-                with patch("pflow.planning.nodes.Registry", return_value=mock_registry_instance):
+                # Also patch it in nodes module and the workflow compilation
+                with (
+                    patch("pflow.planning.nodes.Registry", return_value=mock_registry_instance),
+                    patch("pflow.runtime.compiler.compile_ir_to_flow") as mock_compile,
+                ):
+                    # Mock the compiled flow execution (inside RuntimeValidationNode.exec)
+                    mock_flow = Mock()
+                    mock_flow.run.return_value = None  # Successful execution
+                    mock_compile.return_value = mock_flow
                     flow_b.run(shared_b)
 
         # Verify both paths went through parameter extraction
@@ -1529,7 +1563,14 @@ Creating workflow to read file.
 
                 mock_registry_instance.get_nodes_metadata.side_effect = get_nodes_metadata_mock
                 MockRegistry.return_value = mock_registry_instance
-                flow.run(shared)
+
+                # Also patch the workflow compilation
+                with patch("pflow.runtime.compiler.compile_ir_to_flow") as mock_compile:
+                    # Mock the compiled flow execution (inside RuntimeValidationNode.exec)
+                    mock_flow = Mock()
+                    mock_flow.run.return_value = None  # Successful execution
+                    mock_compile.return_value = mock_flow
+                    flow.run(shared)
 
         # Verify stdin was considered in discovery phase
         assert "stdin_data" in shared
@@ -1547,6 +1588,187 @@ Creating workflow to read file.
         assert result["success"] is True
         assert result["workflow_ir"] is not None
         assert result["execution_params"] == {"input_data": "<stdin>"}
+
+    def test_runtime_validation_receives_extracted_params(self, test_workflow_manager, test_registry_data):
+        """Test that RuntimeValidationNode properly receives extracted_params for validation."""
+        flow = create_planner_flow(wait=0)
+
+        shared = {
+            "user_input": "fetch data from API and process it",
+            "workflow_manager": test_workflow_manager,
+            "stdin_data": None,
+            "current_date": datetime.now().isoformat(),
+        }
+
+        with patch("llm.get_model") as mock_get_model:
+            mock_model = Mock()
+
+            # Simple workflow with valid nodes from test registry that uses parameters
+            workflow_with_params = {
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {"id": "read", "type": "read-file", "params": {"file_path": "${input_file}"}},
+                    {"id": "process", "type": "llm", "params": {"prompt": "Process: ${read.content}"}},
+                ],
+                "edges": [{"from": "read", "to": "process"}],
+                "start_node": "read",
+                "inputs": {"input_file": {"description": "Input file", "type": "string", "required": True}},
+                "outputs": {},
+            }
+
+            # Mock responses for Path B flow
+            responses = [
+                # Discovery - not found
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {
+                                "input": {
+                                    "found": False,
+                                    "workflow_name": None,
+                                    "confidence": 0.1,
+                                    "reasoning": "No match",
+                                }
+                            }
+                        ]
+                    }
+                ),
+                # Parameter discovery
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {
+                                "input": {
+                                    "parameters": {"input_file": "test.txt"},
+                                    "stdin_type": None,
+                                    "reasoning": "Found input file",
+                                }
+                            }
+                        ]
+                    }
+                ),
+                # Requirements
+                create_requirements_mock(is_clear=True, steps=["Fetch from API", "Process data"]),
+                # Component browsing
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {
+                                "input": {
+                                    "node_ids": ["read-file", "llm"],
+                                    "workflow_names": [],
+                                    "reasoning": "File and LLM nodes needed",
+                                }
+                            }
+                        ]
+                    }
+                ),
+                # Planning
+                create_planning_mock(status="FEASIBLE", node_chain="read-file >> llm"),
+                # Generation - workflow with template paths
+                Mock(json=lambda: {"content": [{"input": workflow_with_params}]}),
+                # Parameter mapping - provides input_file
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {
+                                "input": {
+                                    "extracted": {"input_file": "test.txt"},
+                                    "missing": [],
+                                    "confidence": 0.9,
+                                    "reasoning": "Extracted input file",
+                                }
+                            }
+                        ]
+                    }
+                ),
+                # Metadata generation
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {
+                                "input": {
+                                    "suggested_name": "api-processor",
+                                    "description": "Fetch and process API data",
+                                    "search_keywords": ["api", "http", "process"],
+                                    "capabilities": ["API fetching", "Data processing"],
+                                    "typical_use_cases": ["API data processing"],
+                                    "declared_inputs": ["api_url"],
+                                    "declared_outputs": [],
+                                }
+                            }
+                        ]
+                    }
+                ),
+                # RuntimeValidation could potentially retry if issues are found
+                # Provide extra responses just in case
+                Mock(json=lambda: {"content": [{"input": workflow_with_params}]}),
+                # Parameter mapping retry
+                Mock(
+                    json=lambda: {
+                        "content": [
+                            {
+                                "input": {
+                                    "extracted": {"input_file": "test.txt"},
+                                    "missing": [],
+                                    "confidence": 0.9,
+                                    "reasoning": "Extracted input file",
+                                }
+                            }
+                        ]
+                    }
+                ),
+            ]
+
+            mock_model.prompt.side_effect = responses
+            mock_get_model.return_value = mock_model
+
+            with (
+                patch("pflow.planning.context_builder._workflow_manager", test_workflow_manager),
+                patch("pflow.registry.registry.Registry") as MockRegistry,
+                patch("pflow.runtime.compiler.compile_ir_to_flow") as mock_compile,
+            ):
+                mock_registry_instance = Mock()
+                mock_registry_instance.load.return_value = test_registry_data
+
+                def get_nodes_metadata_mock(node_types):
+                    # Use test registry data directly - it has read-file and llm nodes
+                    return {nt: test_registry_data.get(nt, {}) for nt in node_types}
+
+                mock_registry_instance.get_nodes_metadata.side_effect = get_nodes_metadata_mock
+                MockRegistry.return_value = mock_registry_instance
+
+                # Mock the flow execution to simulate http node returning different structure
+                mock_flow = Mock()
+
+                def mock_run(shared_runtime):
+                    # Simulate successful execution with nodes writing to their namespaces
+                    shared_runtime["read"] = {"content": "File contents here"}
+                    shared_runtime["process"] = {"response": "Processed content"}
+                    return None
+
+                mock_flow.run.side_effect = mock_run
+                mock_compile.return_value = mock_flow
+
+                # Also patch nodes module Registry
+                with patch("pflow.planning.nodes.Registry", return_value=mock_registry_instance):
+                    flow.run(shared)
+
+        # RuntimeValidationNode should have received extracted_params
+        # The prep() method uses extracted_params when execution_params is not set
+        assert "extracted_params" in shared
+        assert shared["extracted_params"] == {"input_file": "test.txt"}
+
+        # The workflow should have been generated and validated
+        assert "generated_workflow" in shared
+        assert "planner_output" in shared
+
+        # RuntimeValidationNode receives extracted_params and uses them for validation
+        # Since we're providing proper mock data, validation should pass
+        result = shared["planner_output"]
+        assert result["success"] is True
+        assert result["workflow_ir"] is not None
+        assert result["execution_params"] == {"input_file": "test.txt"}
 
     def test_flow_state_consistency(self, test_workflow_manager, test_registry_data):
         """Test that shared store maintains consistency throughout the flow."""

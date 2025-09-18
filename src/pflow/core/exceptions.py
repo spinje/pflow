@@ -69,3 +69,45 @@ class CriticalPlanningError(PflowError):
             message = f"{message}\nOriginal error: {original_error!s}"
 
         super().__init__(message)
+
+
+class RuntimeValidationError(PflowError):
+    """Raised when runtime validation fails during workflow execution.
+
+    This error captures structured information about runtime failures,
+    particularly for extraction errors and missing field references.
+    Used by the planner's runtime feedback loop to automatically fix issues.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        source: Optional[str] = None,
+        node_id: Optional[str] = None,
+        node_type: Optional[str] = None,
+        category: Optional[str] = None,
+        attempted: Optional[list[dict]] = None,
+        available: Optional[list[str]] = None,
+        sample: Optional[str] = None,
+    ):
+        """Initialize RuntimeValidationError with structured fields.
+
+        Args:
+            message: Human-readable error description
+            source: Error source (e.g., "http", "mcp", "runtime")
+            node_id: ID of the node that failed
+            node_type: Type of the node (e.g., "http", "mcp_tool")
+            category: Error category (e.g., "extraction_error", "missing_output_path")
+            attempted: List of attempted operations (e.g., [{"key": "username", "path": "$.username"}])
+            available: List of available fields/keys that could be used instead
+            sample: Sample of the actual data structure for reference
+        """
+        self.source = source
+        self.node_id = node_id
+        self.node_type = node_type
+        self.category = category
+        self.attempted = attempted or []
+        self.available = available or []
+        self.sample = sample
+
+        super().__init__(message)

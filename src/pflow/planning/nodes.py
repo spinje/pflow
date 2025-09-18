@@ -1984,13 +1984,14 @@ class WorkflowGeneratorNode(Node):
             "discovered_params": shared.get("discovered_params"),
             "browsed_components": shared.get("browsed_components", {}),
             "validation_errors": shared.get("validation_errors", []),
+            "runtime_errors": shared.get("runtime_errors", []),  # NEW: Runtime errors from RuntimeValidationNode
             "generation_attempts": shared.get("generation_attempts", 0),
             "planner_extended_blocks": shared.get("planner_extended_blocks"),  # Cache blocks from PlanningNode
             "planner_accumulated_blocks": shared.get("planner_accumulated_blocks"),  # Cache blocks for retries
             "thinking_budget": thinking_budget,  # MUST be same as PlanningNode for cache sharing
         }
 
-    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
         """Generate workflow using cache-optimized context blocks.
 
         Args:
@@ -2008,8 +2009,10 @@ class WorkflowGeneratorNode(Node):
         from pflow.planning.ir_models import FlowIR
         from pflow.planning.prompts.loader import load_prompt
 
-        # Determine if this is a retry
-        is_retry = prep_res.get("generation_attempts", 0) > 0 and prep_res.get("validation_errors")
+        # Determine if this is a retry (either validation errors or runtime errors)
+        is_retry = prep_res.get("generation_attempts", 0) > 0 and (
+            prep_res.get("validation_errors") or prep_res.get("runtime_errors")
+        )
 
         # Determine which blocks to use (prefer blocks over strings)
         blocks = None
@@ -2021,6 +2024,20 @@ class WorkflowGeneratorNode(Node):
             # Add validation errors as new block
             if prep_res.get("validation_errors"):
                 blocks = PlannerContextBuilder.append_errors_block(blocks, prep_res["validation_errors"])
+
+            # Add runtime errors as new block
+            if prep_res.get("runtime_errors"):
+                # Format runtime errors for the generator
+                formatted_errors = []
+                for error in prep_res.get("runtime_errors", []):
+                    error_msg = error.get("message", "Runtime error")
+                    if error.get("attempted"):
+                        error_msg += f" - Attempted: {error['attempted']}"
+                    if error.get("available"):
+                        error_msg += f" - Available: {error['available']}"
+                    formatted_errors.append(error_msg)
+
+                blocks = PlannerContextBuilder.append_errors_block(blocks, formatted_errors)
 
             logger.info(
                 f"WorkflowGeneratorNode: Using {len(blocks)} accumulated cache blocks for retry (attempt {prep_res['generation_attempts'] + 1})",
@@ -2738,6 +2755,372 @@ class MetadataGenerationNode(Node):
         return "\n".join(lines)
 
 
+class RuntimeValidationNode(Node):
+    """Validates generated workflows at runtime to detect and fix data structure mismatches.
+
+    Executes the candidate workflow once and detects:
+    - Runtime exceptions
+    - Namespaced errors in shared store
+    - Missing template paths (e.g., ${http.response.username} doesn't exist)
+
+    Routes based on errors found:
+    - default: No issues detected
+    - runtime_fix: Fixable issues found and attempts < 3
+    - failed_runtime: Fatal issues or attempts >= 3
+    """
+
+    def __init__(self, wait: int = 0) -> None:
+        """Initialize runtime validator with direct registry instantiation."""
+        super().__init__(wait=wait)
+        from pflow.registry import Registry
+
+        self.registry = Registry()
+
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """Extract workflow IR, execution params, and attempt count.
+
+        Args:
+            shared: PocketFlow shared store
+
+        Returns:
+            Dict with workflow_ir, execution_params, and runtime_attempts
+        """
+        # Try execution_params first, fall back to extracted_params
+        # This handles the case where ParameterPreparationNode hasn't run yet
+        # or when extracted_params contains the actual values
+        execution_params = shared.get("execution_params")
+        if execution_params is None:
+            execution_params = shared.get("extracted_params", {})
+
+        return {
+            "workflow_ir": shared.get("generated_workflow"),
+            "execution_params": execution_params,
+            "runtime_attempts": shared.get("runtime_attempts", 0),
+        }
+
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Execute the candidate workflow and capture results or errors.
+
+        Args:
+            prep_res: Contains workflow_ir and execution_params
+
+        Returns:
+            Dict with execution results and any errors
+        """
+        from pflow.runtime.compiler import compile_ir_to_flow
+
+        workflow_ir = prep_res.get("workflow_ir")
+        if not workflow_ir:
+            logger.error("No workflow provided for runtime validation")
+            return {"ok": False, "error": "No workflow provided", "exception": None}
+
+        try:
+            # Compile the workflow
+            flow = compile_ir_to_flow(
+                workflow_ir,
+                self.registry,
+                initial_params=prep_res.get("execution_params", {}),
+                validate=False,  # Skip validation, already done by ValidatorNode
+            )
+
+            # Execute with fresh shared store
+            shared_runtime: dict[str, Any] = {}
+            result = flow.run(shared_runtime)
+
+            logger.info("Runtime validation: workflow executed successfully")
+            return {
+                "ok": True,
+                "shared_after": shared_runtime,
+                "result": result,
+            }
+        except Exception as e:
+            logger.info(f"Runtime validation: caught exception during execution: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "exception": e,
+            }
+
+    def _extract_templates_from_ir(self, workflow_ir: dict[str, Any]) -> list[str]:
+        """Extract all template references from workflow IR.
+
+        Args:
+            workflow_ir: The workflow IR
+
+        Returns:
+            List of template references (e.g., ["${http.response.login}", "${http.response.bio}"])
+        """
+        import re
+
+        # Pattern to match ${...} templates
+        pattern = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:\.[\w-]*)*)\}")
+        templates = []
+
+        for node in workflow_ir.get("nodes", []):
+            params = node.get("params", {})
+
+            def extract_from_value(value: Any) -> None:
+                if isinstance(value, str) and "$" in value:
+                    matches = pattern.findall(value)
+                    for match in matches:
+                        templates.append(f"${{{match}}}")
+                elif isinstance(value, dict):
+                    for v in value.values():
+                        extract_from_value(v)
+                elif isinstance(value, list):
+                    for item in value:
+                        extract_from_value(item)
+
+            for param_value in params.values():
+                extract_from_value(param_value)
+
+        return templates
+
+    def _get_available_paths(self, shared: dict[str, Any], node_id: str, partial_path: str) -> list[str]:
+        """Get available paths at a given level in the shared store.
+
+        Example:
+            shared = {"http": {"response": {"login": "torvalds", "bio": "..."}}}
+            node_id = "http"
+            partial_path = "response"
+            Returns: ["login", "bio"]
+
+        Args:
+            shared: The shared store after execution
+            node_id: The node namespace
+            partial_path: The path within the node namespace (e.g., "response.user")
+
+        Returns:
+            List of available keys at that level
+        """
+        # Start with the node namespace
+        current = shared.get(node_id, {})
+
+        # Navigate to the specified level
+        if partial_path:
+            parts = partial_path.split(".")
+            for part in parts:
+                if isinstance(current, dict):
+                    current = current.get(part, {})
+                else:
+                    return []
+
+        # Return available keys at this level
+        if isinstance(current, dict):
+            return list(current.keys())
+        elif isinstance(current, list):
+            return [f"[{i}]" for i in range(len(current))]
+        else:
+            return []
+
+    def _check_template_exists(self, template: str, shared: dict[str, Any]) -> bool:  # noqa: C901
+        """Check if a template path exists in the shared store.
+
+        Args:
+            template: Template like "${http.response.login}"
+            shared: The shared store after execution
+
+        Returns:
+            True if the path exists
+        """
+        import re
+
+        # Extract the variable name from ${...}
+        match = re.match(r"\$\{([^}]+)\}", template)
+        if not match:
+            return False
+
+        path = match.group(1)
+
+        # Split into node_id and field path
+        parts = path.split(".", 1)
+        if len(parts) < 2:
+            # Not a node reference (e.g., ${api_key})
+            # These are workflow inputs, not node outputs
+            return True  # Assume workflow inputs are provided
+
+        node_id = parts[0]
+        field_path = parts[1] if len(parts) > 1 else ""
+
+        # Navigate the shared store
+        current = shared.get(node_id, {})
+
+        if field_path:
+            for part in field_path.split("."):
+                # Handle array notation like [0]
+                if "[" in part and "]" in part:
+                    field_name = part[: part.index("[")]
+                    index_str = part[part.index("[") + 1 : part.index("]")]
+
+                    # Navigate to array field if needed
+                    if field_name and isinstance(current, dict):
+                        current = current.get(field_name)
+
+                    # Access array element
+                    try:
+                        index = int(index_str)
+                        if isinstance(current, list) and 0 <= index < len(current):
+                            current = current[index]
+                        else:
+                            return False
+                    except (ValueError, TypeError):
+                        return False
+                else:
+                    # Regular field access
+                    if isinstance(current, dict):
+                        current = current.get(part)
+                    else:
+                        return False
+
+                if current is None:
+                    return False
+
+        return True
+
+    def _collect_execution_errors(self, exec_res: dict[str, Any]) -> list[dict[str, Any]]:
+        """Collect errors from execution exceptions.
+
+        Args:
+            exec_res: Execution result dictionary
+
+        Returns:
+            List of runtime error dictionaries
+        """
+        errors = []
+        if not exec_res.get("ok", False):
+            error_msg = exec_res.get("error", "Unknown runtime error")
+            # Check if it's a template-related error
+            is_fixable = "template" in error_msg.lower() or "missing" in error_msg.lower()
+
+            errors.append({
+                "source": "runtime",
+                "category": "exception",
+                "message": error_msg,
+                "fixable": is_fixable,
+            })
+        return errors
+
+    def _collect_namespaced_errors(self, shared_after: dict[str, Any]) -> list[dict[str, Any]]:
+        """Collect errors from node namespaces.
+
+        Args:
+            shared_after: Shared store after execution
+
+        Returns:
+            List of runtime error dictionaries
+        """
+        errors = []
+        for node_id, node_data in shared_after.items():
+            if isinstance(node_data, dict) and "error" in node_data:
+                errors.append({
+                    "source": "node",
+                    "node_id": node_id,
+                    "category": "node_error",
+                    "message": str(node_data.get("error")),
+                    "fixable": True,  # Assume node errors might be fixable
+                })
+        return errors
+
+    def _collect_missing_template_errors(
+        self, workflow_ir: dict[str, Any], shared_after: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Collect errors from missing template paths.
+
+        Args:
+            workflow_ir: The workflow IR
+            shared_after: Shared store after execution
+
+        Returns:
+            List of runtime error dictionaries
+        """
+        import re
+
+        errors = []
+        templates = self._extract_templates_from_ir(workflow_ir)
+
+        for template in templates:
+            if not self._check_template_exists(template, shared_after):
+                match = re.match(r"\$\{([^.]+)\.(.+)\}", template)
+                if match:
+                    node_id = match.group(1)
+                    field_path = match.group(2)
+
+                    # Get the parent path (everything except the last part)
+                    path_parts = field_path.rsplit(".", 1)
+                    parent_path = path_parts[0] if len(path_parts) > 1 else ""
+
+                    # Get available fields at that level
+                    available = self._get_available_paths(shared_after, node_id, parent_path)
+
+                    errors.append({
+                        "source": "template",
+                        "node_id": node_id,
+                        "category": "missing_template_path",
+                        "attempted": template,
+                        "available": available,
+                        "message": f"Template path '{template}' not found. Available at '{node_id}.{parent_path if parent_path else '(root)'}': {', '.join(available) if available else '(none)'}",
+                        "fixable": True,
+                    })
+        return errors
+
+    def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
+        """Analyze execution results and route based on errors found.
+
+        Args:
+            shared: PocketFlow shared store
+            prep_res: Prepared data with runtime_attempts
+            exec_res: Execution result with shared_after or error
+
+        Returns:
+            Action string: "default", "runtime_fix", or "failed_runtime"
+        """
+        shared_after = exec_res.get("shared_after", {})
+        workflow_ir = prep_res.get("workflow_ir", {})
+
+        # Collect all types of runtime errors
+        runtime_errors = []
+        runtime_errors.extend(self._collect_execution_errors(exec_res))
+        runtime_errors.extend(self._collect_namespaced_errors(shared_after))
+        runtime_errors.extend(self._collect_missing_template_errors(workflow_ir, shared_after))
+
+        # Determine action based on errors
+        attempts = prep_res.get("runtime_attempts", 0)
+
+        if not runtime_errors:
+            logger.info("Runtime validation: no issues detected")
+            return "default"
+
+        # Check if any errors are fixable
+        has_fixable = any(err.get("fixable", False) for err in runtime_errors)
+
+        if has_fixable and attempts < 3:
+            shared["runtime_errors"] = runtime_errors
+            shared["runtime_attempts"] = attempts + 1
+            logger.info(f"Runtime validation: found {len(runtime_errors)} fixable issues, attempt {attempts + 1}/3")
+            return "runtime_fix"
+        else:
+            shared["runtime_errors"] = runtime_errors
+            logger.warning(f"Runtime validation failed: {len(runtime_errors)} errors, attempts: {attempts}")
+            return "failed_runtime"
+
+    def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
+        """Fallback for unexpected runtime validation failures.
+
+        Args:
+            prep_res: Prepared data
+            exc: The exception that triggered the fallback
+
+        Returns:
+            Dict with critical error
+        """
+        logger.error(f"RuntimeValidationNode exec_fallback triggered: {exc}")
+        return {
+            "ok": False,
+            "error": f"Critical runtime validation failure: {exc}",
+            "exception": exc,
+        }
+
+
 class ResultPreparationNode(Node):
     """Final node that packages the planner output for CLI consumption.
 
@@ -2778,6 +3161,7 @@ class ResultPreparationNode(Node):
             "execution_params": shared.get("execution_params"),
             "missing_params": shared.get("missing_params", []),
             "validation_errors": shared.get("validation_errors", []),
+            "runtime_errors": shared.get("runtime_errors", []),
             "generation_attempts": shared.get("generation_attempts", 0),
             "workflow_metadata": shared.get("workflow_metadata", {}),
             "discovery_result": shared.get("discovery_result"),
@@ -2838,6 +3222,7 @@ class ResultPreparationNode(Node):
             and prep_res["execution_params"] is not None
             and not prep_res["missing_params"]
             and not prep_res["validation_errors"]
+            and not prep_res.get("runtime_errors")
         )
 
         # Build error message if not successful
@@ -2859,6 +3244,12 @@ class ResultPreparationNode(Node):
             if prep_res["validation_errors"]:
                 errors_str = "; ".join(prep_res["validation_errors"][:3])  # Top 3 errors
                 error_parts.append(f"Validation errors: {errors_str}")
+
+            if prep_res.get("runtime_errors"):
+                runtime_errors_str = "; ".join([
+                    e.get("message", "Runtime error") for e in prep_res["runtime_errors"][:3]
+                ])
+                error_parts.append(f"Runtime errors: {runtime_errors_str}")
 
             error = ". ".join(error_parts) if error_parts else "Unknown error occurred"
 

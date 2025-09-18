@@ -24,6 +24,7 @@ from pflow.planning.nodes import (
     PlanningNode,
     RequirementsAnalysisNode,
     ResultPreparationNode,
+    RuntimeValidationNode,
     ValidatorNode,
     WorkflowDiscoveryNode,
     WorkflowGeneratorNode,
@@ -53,7 +54,7 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     Returns:
         The complete planner flow ready for execution
     """
-    logger.debug("Creating planner flow with 11 nodes")
+    logger.debug("Creating planner flow with 12 nodes")
 
     # Create all nodes with configurable wait time (critical for test performance)
     discovery_node: Node = WorkflowDiscoveryNode(wait=wait)
@@ -66,6 +67,7 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     workflow_generator: Node = WorkflowGeneratorNode(wait=wait)
     validator: Node = ValidatorNode()  # Doesn't take wait param
     metadata_generation: Node = MetadataGenerationNode(wait=wait)
+    runtime_validation: Node = RuntimeValidationNode()  # NEW: Runtime validation node
     result_preparation: Node = ResultPreparationNode()  # Doesn't take wait param
 
     # If debugging context provided, wrap all nodes
@@ -84,6 +86,7 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
         workflow_generator = DebugWrapper(workflow_generator, debug_context)  # type: ignore[assignment]
         validator = DebugWrapper(validator, debug_context)  # type: ignore[assignment]
         metadata_generation = DebugWrapper(metadata_generation, debug_context)  # type: ignore[assignment]
+        runtime_validation = DebugWrapper(runtime_validation, debug_context)  # type: ignore[assignment]
         result_preparation = DebugWrapper(result_preparation, debug_context)  # type: ignore[assignment]
 
     # Create flow with start node
@@ -162,10 +165,20 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     # Validation fails after max attempts (attempts >= 3) → end with failure
     validator - "failed" >> result_preparation
 
-    # Metadata generation complete → continue to preparation
+    # ============================================================
+    # Runtime Validation (Path B only - after metadata generation)
+    # ============================================================
+    # Metadata generation complete → runtime validation
     # MetadataGenerationNode returns "" (empty string) so we use default
-    # (Path B now goes directly to preparation since params already extracted)
-    metadata_generation >> parameter_preparation
+    metadata_generation >> runtime_validation
+
+    # Runtime validation routes:
+    # - No issues (default) → parameter preparation
+    runtime_validation >> parameter_preparation
+    # - Fixable issues found → back to generator with runtime_errors
+    runtime_validation - "runtime_fix" >> workflow_generator
+    # - Fatal issues or max attempts → end with failure
+    runtime_validation - "failed_runtime" >> result_preparation
 
     # ============================================================
     # Both Paths Converge at ParameterMappingNode
@@ -192,6 +205,8 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     # 2. From ParameterMappingNode - Missing parameters
     # 3. From ValidatorNode - Generation failed after 3 attempts
 
-    logger.info("Planner flow created with 11 nodes: 2-path architecture with Requirements/Planning enhancement")
+    logger.info(
+        "Planner flow created with 12 nodes: 2-path architecture with Requirements/Planning enhancement and Runtime Validation"
+    )
 
     return flow

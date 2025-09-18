@@ -14,6 +14,7 @@ from pflow.planning.nodes import (
     PlanningNode,
     RequirementsAnalysisNode,
     ResultPreparationNode,
+    RuntimeValidationNode,
     ValidatorNode,
     WorkflowDiscoveryNode,
     WorkflowGeneratorNode,
@@ -63,11 +64,12 @@ class TestFlowStructure:
             "WorkflowGeneratorNode",
             "ValidatorNode",
             "MetadataGenerationNode",
+            "RuntimeValidationNode",  # Added for runtime validation
             "ResultPreparationNode",
         }
 
         assert node_types == expected_types
-        assert len(visited_nodes) == 11
+        assert len(visited_nodes) == 12  # Updated from 11 to 12 nodes
 
     def test_path_a_edges(self):
         """Test Path A edges: Discovery → ParameterMapping → Preparation → Result."""
@@ -194,7 +196,7 @@ class TestFlowStructure:
         assert "params_incomplete" in param_mapping_a.successors  # Both paths
 
     def test_result_node_has_six_entry_points(self):
-        """Test that ResultPreparationNode has six entry points."""
+        """Test that ResultPreparationNode has seven entry points (updated for RuntimeValidationNode)."""
         flow = create_planner_flow(wait=0)
 
         # Helper to find all predecessors
@@ -224,8 +226,8 @@ class TestFlowStructure:
         # Find predecessors
         predecessors = find_predecessors(result_node, all_nodes)
 
-        # Should have 6 entry points (after Task 52 additions)
-        assert len(predecessors) == 6
+        # Should have 7 entry points (after Task 52 additions + RuntimeValidationNode)
+        assert len(predecessors) == 7
 
         # Check the six entry points
         predecessor_types = [(type(node).__name__, action) for node, action in predecessors]
@@ -236,6 +238,7 @@ class TestFlowStructure:
             ("RequirementsAnalysisNode", "clarification_needed"),  # Vague input
             ("PlanningNode", "impossible_requirements"),  # Can't do with available nodes
             ("PlanningNode", "partial_solution"),  # Missing capabilities
+            ("RuntimeValidationNode", "failed_runtime"),  # Runtime validation failed
         ]
 
         for expected in expected_entries:
@@ -261,6 +264,7 @@ class TestFlowStructure:
             WorkflowGeneratorNode: ["validate"],  # Returns "validate"
             ValidatorNode: ["retry", "metadata_generation", "failed"],
             MetadataGenerationNode: ["default"],  # Returns "" so uses default
+            RuntimeValidationNode: ["default", "runtime_fix", "failed_runtime"],  # Runtime validation
             ResultPreparationNode: [],  # Final node, no successors
         }
 
@@ -307,12 +311,12 @@ class TestFlowStructure:
                 if successor not in reachable:
                     nodes_to_visit.append(successor)
 
-        # All 11 nodes should be reachable
-        assert len(reachable) == 11
+        # All 12 nodes should be reachable (includes RuntimeValidationNode)
+        assert len(reachable) == 12
 
         # Check all node types are reachable
         node_types = {type(node).__name__ for node in reachable}
-        assert len(node_types) == 11
+        assert len(node_types) == 12  # Updated from 11 to 12 nodes
 
     def test_flow_is_deterministic(self):
         """Test that creating the flow multiple times produces same structure."""
@@ -335,4 +339,4 @@ class TestFlowStructure:
                 to_visit.extend(node.successors.values())
             return len(nodes)
 
-        assert count_nodes(flow1) == count_nodes(flow2) == 11
+        assert count_nodes(flow1) == count_nodes(flow2) == 12  # Updated from 11 to 12 nodes
