@@ -41,10 +41,31 @@ def expand_env_vars_nested(data: Any) -> Any:
         return data
 
 
+def _validate_auth_value(value: str, field_name: str) -> bool:
+    """Validate authentication values don't contain dangerous characters.
+
+    Args:
+        value: The authentication value to validate
+        field_name: Name of the field for error messages
+
+    Returns:
+        True if valid, False otherwise
+    """
+    if any(ord(c) < 32 for c in value):
+        logger.error(f"{field_name} contains invalid control characters")
+        return False
+    if "\n" in value or "\r" in value:
+        logger.error(f"{field_name} contains newline characters")
+        return False
+    return True
+
+
 def _add_bearer_auth(headers: dict[str, str], auth: dict[str, Any]) -> None:
     """Add Bearer token authentication to headers."""
     token = auth.get("token", "")
     if token:
+        if not _validate_auth_value(token, "Bearer token"):
+            return
         headers["Authorization"] = f"Bearer {token}"
     else:
         logger.warning("Bearer auth configured but token is empty")
@@ -55,6 +76,8 @@ def _add_api_key_auth(headers: dict[str, str], auth: dict[str, Any]) -> None:
     key = auth.get("key", "")
     header_name = auth.get("header", "X-API-Key")
     if key:
+        if not _validate_auth_value(key, "API key"):
+            return
         headers[header_name] = key
     else:
         logger.warning("API key auth configured but key is empty")
@@ -69,9 +92,10 @@ def _add_basic_auth(headers: dict[str, str], auth: dict[str, Any]) -> None:
         logger.warning("Basic auth configured but username or password is empty")
         return
 
-    # Validate credentials don't contain control characters that could break HTTP headers
-    if any(ord(c) < 32 for c in username) or any(ord(c) < 32 for c in password):
-        logger.error("Basic auth credentials contain invalid control characters")
+    # Validate both username and password
+    if not _validate_auth_value(username, "Basic auth username"):
+        return
+    if not _validate_auth_value(password, "Basic auth password"):
         return
 
     # Colon is technically allowed in passwords but not in username for Basic auth
