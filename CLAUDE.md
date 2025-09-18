@@ -386,9 +386,9 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 58: Update workflow generator prompt-tests to use better real world test cases
 - ✅ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
 - ✅ Task 52: Improve planner with "plan" and "requirements" steps + prompt caching + thinking
+- ✅ Task 47: Implement MCP http transport
 
 Next up:
-- ⏳ Task 47: Integrate MCP solution with Composio
 - ⏳ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
 - ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
 
