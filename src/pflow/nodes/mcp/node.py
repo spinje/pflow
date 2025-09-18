@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
 from pocketflow import Node
 
 logger = logging.getLogger(__name__)
@@ -334,53 +335,7 @@ class MCPNode(Node):
         Returns:
             Dictionary of HTTP headers including authentication
         """
-        headers = {}
-
-        # Add custom headers if provided (expand env vars)
-        if "headers" in config:
-            expanded_headers = self._expand_env_vars(config["headers"])
-            headers.update(expanded_headers)
-
-        # Handle authentication
-        auth = config.get("auth", {})
-        if not auth:
-            return headers
-
-        # Expand environment variables in auth config
-        auth = self._expand_env_vars(auth)
-        auth_type = auth.get("type")
-
-        if auth_type == "bearer":
-            token = auth.get("token", "")
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-            else:
-                logger.warning("Bearer auth configured but token is empty")
-
-        elif auth_type == "api_key":
-            key = auth.get("key", "")
-            header_name = auth.get("header", "X-API-Key")
-            if key:
-                headers[header_name] = key
-            else:
-                logger.warning("API key auth configured but key is empty")
-
-        elif auth_type == "basic":
-            username = auth.get("username", "")
-            password = auth.get("password", "")
-            if username and password:
-                import base64
-
-                credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
-                headers["Authorization"] = f"Basic {credentials}"
-            else:
-                logger.warning("Basic auth configured but username or password is empty")
-
-        else:
-            if auth_type:
-                logger.warning(f"Unknown auth type: {auth_type}")
-
-        return headers
+        return build_auth_headers(config)
 
     def post(self, shared: dict, prep_res: dict, exec_res: dict) -> str:
         """Store results in shared store and determine next action.
@@ -634,42 +589,9 @@ class MCPNode(Node):
         """
         from typing import cast
 
-        result = self._expand_env_vars_nested(env_dict)
+        result = expand_env_vars_nested(env_dict)
         # Type cast: we know the result is a dict since we pass in a dict
         return cast(dict, result)
-
-    def _expand_env_vars_nested(self, data: dict | list | str | Any) -> dict | list | str | Any:
-        """Recursively expand environment variables in nested structures.
-
-        Args:
-            data: Any data structure potentially containing ${VAR} references
-
-        Returns:
-            Data with all environment variables expanded
-        """
-        import re
-
-        if isinstance(data, dict):
-            # Recursively process dictionary values
-            return {key: self._expand_env_vars_nested(value) for key, value in data.items()}
-        elif isinstance(data, list):
-            # Recursively process list items
-            return [self._expand_env_vars_nested(item) for item in data]
-        elif isinstance(data, str):
-            # Expand environment variables in strings
-            pattern = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
-
-            def replacer(match: Any) -> str:
-                env_var = match.group(1)
-                env_value = os.environ.get(env_var, "")
-                if not env_value:
-                    logger.warning(f"Environment variable {env_var} not found, using empty string")
-                return env_value
-
-            return pattern.sub(replacer, data)
-        else:
-            # Return other types unchanged (int, bool, None, etc.)
-            return data
 
     def _extract_text_content(self, content: Any) -> str:
         """Extract text from text content block."""
