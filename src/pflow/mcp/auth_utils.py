@@ -113,6 +113,8 @@ def build_auth_headers(config: dict[str, Any]) -> dict[str, str]:
         return headers
 
     auth_type = auth.get("type")
+    if not auth_type:
+        return headers
 
     # Dispatch to appropriate auth handler
     auth_handlers = {
@@ -124,7 +126,7 @@ def build_auth_headers(config: dict[str, Any]) -> dict[str, str]:
     handler = auth_handlers.get(auth_type)
     if handler:
         handler(headers, auth)
-    elif auth_type:
+    else:
         logger.warning(f"Unknown auth type: {auth_type}")
 
     return headers
