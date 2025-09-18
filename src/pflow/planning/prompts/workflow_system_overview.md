@@ -51,6 +51,23 @@ Each node has parameters that can be used to configure the node's behavior.
 
 Pay close attention to the specified parameters and their types of the nodes you are using in the <node_details> section.
 
+**Don't change the default values of nodes if you are not explicitly told to do so in the user request.**
+```json
+"params": {
+  "prompt": "...",
+  "model": "gpt-4", // ❌ WRONG - if not explicitly specified, use the default model of the node (just because you dont know about it is not a good reason, defaults always works. Alot of your trainingdata might be outdated and you might for example not know about new models or things like that)
+  "temperature": 0.3, // ❌ WRONG - if not explicitly specified, use the default values for ALL parameters of ALL nodes if you dont have a very good reason to change it and you are absolutely sure its better
+}
+```
+**Do use defaults as much as possible and leave the field empty for using the default value of the node.**
+```json
+"params": {
+  "prompt": "...",
+  // ✅ CORRECT - leave the field empty for using the default model of any parameters of the node. Writing it out works but is not optimal since it consumes unnecessary tokens
+  ...
+}
+```
+
 ## Node Outputs
 
 Each node produces outputs that can be referenced by subsequent nodes.
@@ -92,6 +109,8 @@ If the input is used for a node parameter that is optional, consider setting req
 }
 ```
 
+> Note: You should never make an input required that could have a sensible default. The goal is as few required inputs as possible.
+
 ## Workflow Output Format
 
 Each output MUST be a structured object with metadata inside the `outputs` section:
@@ -116,7 +135,7 @@ Here's a real workflow showing inputs, nodes with outputs, and complete data flo
     "repo_name": {
       "type": "string",
       "description": "GitHub repository in format owner/repo",
-      "required": true
+      "required": false                     // Uses smart defaults of the node if nothing is provided
     },
     "issue_limit": {
       "type": "number",
@@ -136,7 +155,7 @@ Here's a real workflow showing inputs, nodes with outputs, and complete data flo
       "type": "github-list-issues",
       "purpose": "Fetch recent issues from the repository",
       "params": {
-        "repository": "${repo_name}",        // Uses workflow input
+        "repository": "${repo_name}",        // Uses workflow input (can be empty since repo_name is not required)
         "limit": "${issue_limit}",            // Uses workflow input with default
         "state": "all",                       // Hardcoded value (not from user)
         "sort": "created"                     // Hardcoded value
@@ -149,8 +168,6 @@ Here's a real workflow showing inputs, nodes with outputs, and complete data flo
       "purpose": "Analyze issue patterns and create insights",
       "params": {
         "prompt": "Analyze these GitHub issues and identify patterns, frequent contributors, and trends:\n\n${fetch_issues.issues}",
-        "model": "gpt-4",
-        "temperature": 0.3
       }
       // Outputs: { "response": "Analysis text..." }
     },
@@ -160,7 +177,6 @@ Here's a real workflow showing inputs, nodes with outputs, and complete data flo
       "purpose": "Format analysis as markdown report",
       "params": {
         "prompt": "Convert this analysis into a well-formatted markdown report with sections:\n\n${analyze_patterns.response}",
-        "model": "gpt-3.5-turbo"
       }
       // Outputs: { "response": "# Report\n..." }
     },
@@ -171,7 +187,6 @@ Here's a real workflow showing inputs, nodes with outputs, and complete data flo
       "params": {
         "file_path": "${output_file}",       // Uses workflow input
         "content": "${format_report.response}", // Uses previous node output
-        "encoding": "utf-8"                  // Hardcoded default
       }
       // Outputs: { "file_path": "report.md" }
     }

@@ -39,7 +39,11 @@ class TestMCPRealIntegration:
             # Step 1: Configure MCP server (real config)
             manager = MCPServerManager(config_path=config_path)
             manager.add_server(
-                "github", "npx", ["-y", "@modelcontextprotocol/server-github"], env={"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
+                name="github",
+                transport="stdio",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-github"],
+                env={"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
             )
 
             # Step 2: Create registry entry (real structure)
@@ -89,10 +93,14 @@ class TestMCPRealIntegration:
             def mock_load_config(self, server_name):
                 return manager.get_server(server_name)
 
+            # Mock MCPServerManager creation in compiler to use our test config
             with (
                 patch.object(MCPNode, "_exec_async", mock_exec_async),
                 patch.object(MCPNode, "_load_server_config", mock_load_config),
+                patch("pflow.mcp.manager.MCPServerManager") as MockManager,
             ):
+                # Configure mock to return our test manager
+                MockManager.return_value = manager
                 # Step 5: Compile and run through REAL flow execution
                 flow = compile_ir_to_flow(workflow_ir, registry)
 
@@ -130,8 +138,15 @@ class TestMCPRealIntegration:
 
             # Configure multiple servers
             manager = MCPServerManager(config_path=config_path)
-            manager.add_server("github", "npx", ["-y", "@modelcontextprotocol/server-github"])
-            manager.add_server("filesystem", "npx", ["-y", "@modelcontextprotocol/server-filesystem"])
+            manager.add_server(
+                name="github", transport="stdio", command="npx", args=["-y", "@modelcontextprotocol/server-github"]
+            )
+            manager.add_server(
+                name="filesystem",
+                transport="stdio",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem"],
+            )
 
             # Create registry entries
             registry = Registry(registry_path=registry_path)
@@ -188,10 +203,14 @@ class TestMCPRealIntegration:
             def mock_load_config(self, server_name):
                 return manager.get_server(server_name)
 
+            # Mock MCPServerManager creation in compiler to use our test config
             with (
                 patch.object(MCPNode, "_exec_async", tracking_exec_async),
                 patch.object(MCPNode, "_load_server_config", mock_load_config),
+                patch("pflow.mcp.manager.MCPServerManager") as MockManager,
             ):
+                # Configure mock to return our test manager
+                MockManager.return_value = manager
                 flow = compile_ir_to_flow(workflow_ir, registry)
                 flow.run({})
 
@@ -223,7 +242,9 @@ class TestMCPRealIntegration:
 
             # Configure server with env var
             manager = MCPServerManager(config_path=config_path)
-            manager.add_server("testserver", "test-cmd", [], env={"API_KEY": "${TEST_API_KEY}"})
+            manager.add_server(
+                name="testserver", transport="stdio", command="test-cmd", args=[], env={"API_KEY": "${TEST_API_KEY}"}
+            )
 
             # Verify it's stored as template
             with open(config_path) as f:
@@ -264,10 +285,14 @@ class TestMCPRealIntegration:
                 def mock_load_config(self, server_name):
                     return manager.get_server(server_name)
 
+                # Mock MCPServerManager creation in compiler to use our test config
                 with (
                     patch.object(MCPNode, "_exec_async", capture_env_exec),
                     patch.object(MCPNode, "_load_server_config", mock_load_config),
+                    patch("pflow.mcp.manager.MCPServerManager") as MockManager,
                 ):
+                    # Configure mock to return our test manager
+                    MockManager.return_value = manager
                     flow = compile_ir_to_flow(workflow_ir, registry)
                     flow.run({})
 

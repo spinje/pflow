@@ -68,6 +68,10 @@ Analyze the user request to understand both domain AND workflow pattern:
 - `write-file` for results and reports
 - NO GitHub/Git nodes unless explicitly mentioned
 
+**Integrating with external services**
+- `http` for making HTTP requests to APIs and web services
+- `mcp-*` custom specialized MCP nodes for specific services and their tools
+
 **Cross-Domain Workflows** (GitHub data + local processing):
 - Include GitHub nodes for data gathering
 - Include file/LLM nodes for local processing
@@ -90,8 +94,9 @@ Analyze the user request to understand both domain AND workflow pattern:
 1. **Domain-First**: Stay within the primary workflow domain
 2. **Essential Over-Inclusive**: Include related components within the domain, exclude cross-domain noise
 3. **Support Analysis**: Include LLM node when processing/analysis is implied
-4. **Output Generation**: Include write-file when results need to be saved
-5. **Workflow Reuse**: Select existing workflows that match the domain
+4. **One node, One task**: One node should only do one task.
+5. **Output Generation**: Include write-file when results need to be saved
+6. **Workflow Reuse**: Select existing workflows that match the domain
 
 ## Pattern Recognition Examples
 

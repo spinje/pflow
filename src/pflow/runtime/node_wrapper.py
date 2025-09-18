@@ -121,14 +121,26 @@ class TemplateAwareNodeWrapper:
                 if simple_var_match:
                     # It's a simple variable reference, try to preserve type
                     var_name = simple_var_match.group(1)
-                    resolved_value = TemplateResolver.resolve_value(var_name, context)
-                    if resolved_value is not None:
-                        # Use the resolved value with its original type preserved
+
+                    # Check if variable exists (even if its value is None)
+                    if TemplateResolver.variable_exists(var_name, context):
+                        # Variable exists - resolve and preserve its type (including None)
+                        resolved_value = TemplateResolver.resolve_value(var_name, context)
                         resolved_params[key] = resolved_value
+                        logger.debug(
+                            f"Resolved simple template '{key}': ${{{var_name}}} -> {resolved_value!r} "
+                            f"(type: {type(resolved_value).__name__})",
+                            extra={"node_id": self.node_id, "param": key},
+                        )
                     else:
-                        # Variable not found, keep template as-is
+                        # Variable doesn't exist - keep template as-is for debugging
                         resolved_params[key] = template
                         resolved_value = template
+                        logger.debug(
+                            f"Template variable '${{{var_name}}}' not found in context, "
+                            f"keeping template as-is for param '{key}'",
+                            extra={"node_id": self.node_id, "param": key},
+                        )
                 else:
                     # Complex template with text around it, must be string
                     resolved_value = TemplateResolver.resolve_string(template, context)
@@ -138,22 +150,17 @@ class TemplateAwareNodeWrapper:
                 resolved_params[key] = template
                 resolved_value = template
 
-            if resolved_value != template:
-                logger.debug(
-                    f"Resolved param '{key}': '{template}' -> '{resolved_value}'",
-                    extra={"node_id": self.node_id, "param": key},
-                )
-            else:
-                # Check if it's actually an error or just no template variables
-                if "$" in template:
-                    logger.warning(
-                        f"Template in param '{key}' could not be fully resolved: '{template}'",
+            # Only log complex templates and non-template params
+            # (simple templates already logged above)
+            if not simple_var_match:
+                if resolved_value != template:
+                    logger.debug(
+                        f"Resolved param '{key}': '{template}' -> '{resolved_value}'",
                         extra={"node_id": self.node_id, "param": key},
                     )
-                else:
-                    # No template variables, this is fine
-                    logger.debug(
-                        f"Param '{key}' has no template variables: '{template}'",
+                elif "${" in str(template):
+                    logger.warning(
+                        f"Template in param '{key}' could not be fully resolved: '{template}'",
                         extra={"node_id": self.node_id, "param": key},
                     )
 

@@ -130,15 +130,16 @@ def prepare_inputs(
                 ))
             else:
                 # Optional input is missing, prepare default
-                default_value = input_spec.get("default")
-                if default_value is not None:
+                if "default" in input_spec:
+                    # Has explicit default (including None/null)
+                    default_value = input_spec.get("default")
                     logger.debug(
                         f"Applying default value for optional input '{input_name}'",
                         extra={"phase": "input_validation", "input": input_name, "default": default_value},
                     )
                     defaults[input_name] = default_value
                 else:
-                    # Optional with no default means it can be omitted entirely
+                    # Optional with no default key means it can be omitted entirely
                     logger.debug(
                         f"Optional input '{input_name}' not provided and has no default",
                         extra={"phase": "input_validation", "input": input_name},

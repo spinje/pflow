@@ -48,6 +48,44 @@ class TemplateResolver:
         return set(TemplateResolver.TEMPLATE_PATTERN.findall(value))
 
     @staticmethod
+    def variable_exists(var_name: str, context: dict[str, Any]) -> bool:
+        """Check if a variable exists in context, regardless of its value.
+
+        This method distinguishes between "variable doesn't exist" and
+        "variable exists but has None value".
+
+        Args:
+            var_name: Variable name with optional path (e.g., 'data.field')
+            context: Dictionary containing values to check
+
+        Returns:
+            True if variable exists (even if None), False if not found
+        """
+        if "." in var_name:
+            # Handle path traversal
+            parts = var_name.split(".")
+            current = context
+
+            for i, part in enumerate(parts):
+                if not isinstance(current, dict):
+                    return False  # Can't traverse non-dict
+
+                if part not in current:
+                    return False  # Key doesn't exist
+
+                if i < len(parts) - 1:
+                    # Not the last part - need to continue traversing
+                    current = current[part]
+                    if current is None:
+                        return False  # Can't traverse through None
+                # For the last part, we just check existence, not value
+
+            return True
+        else:
+            # Simple variable - just check if key exists
+            return var_name in context
+
+    @staticmethod
     def resolve_value(var_name: str, context: dict[str, Any]) -> Optional[Any]:
         """Resolve a variable name (possibly with path) from context.
 

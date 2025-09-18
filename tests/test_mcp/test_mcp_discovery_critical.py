@@ -166,7 +166,7 @@ class TestMCPRegistrarCritical:
             registrar = MCPRegistrar(registry=registry, manager=manager, discovery=discovery)
 
             # Configure a test server
-            manager.add_server("test", "test-cmd", [])
+            manager.add_server(name="test", transport="stdio", command="test-cmd", args=[])
 
             # Mock discovery to return tools
             def mock_discover(server_name):
