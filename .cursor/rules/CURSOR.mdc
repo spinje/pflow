@@ -288,6 +288,8 @@ Is this what you're expecting?
 - Always use the `test-writer-fixer` subagent to write or fix broken tests. Remember to give it small tasks, never more than fixes for one file at a time. Provide the subagent with a comprehensive context and instructions and ask it to make a plan first, before it starts implementing.
 - Consider using the `code-implementer` subagent when implementing new features or fixing bugs. This agent should only be used for tasks that require no special knowledge of the codebase and specific implementation details, and only for tasks that are small and isolated.
 
+> Important: When utilizing subagents, you should always deploy them in parallel, never sequentially. This means using ONE function call block to deploy all neeeded subagents simultaneously.
+
 ### Documentation Navigation
 
 **For detailed implementation guidance and documentation navigation**, see `architecture/CLAUDE.md`. This file provides:
@@ -381,20 +383,34 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 32: Unified Metrics and Tracing System for User Workflow Execution
 - ✅ Task 10: Create registry CLI
 - ✅ Task 50: Node Filtering System with Settings Management json file
+- ✅ Task 22: Named workflow execution
+- ✅ Task 53: Add Rerun Command Display
+- ✅ Task 55: Fix Output Control for Interactive vs Non-Interactive Execution
+- ✅ Task 54: Implement HTTP
+- ✅ Task 57: Update planner integration-tests to use better test cases with real world north star examples
+- ✅ Task 58: Update workflow generator prompt-tests to use better real world test cases
+- ✅ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
+- ✅ Task 52: Improve planner with "plan" and "requirements" steps + prompt caching + thinking
+- ✅ Task 47: Implement MCP http transport
 
 Next up:
-- ⏳ Task 22: Named workflow execution
-- ⏳ Task 42: Claude Code Agentic Node
+- ⏳ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
 - ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
-- ⏳ Task 47: Support HTTP Transport for MCP Servers
 
 Next version (post-MVP/post-Launch):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
+- ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
 - ⏳ Task 44: Build caching system
-- ⏳ Task 45: Evaluate if wrapping n8n is worth the effort
+- ⏳ Task 45: Evaluate if wrapping or integratingn8n is worth the effort
+- ⏳ Task 61: Implement Fast Mode for Planner
+- ⏳ Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
+- ⏳ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
+- ⏳ Task 64: MCP Orchestration with long running servers
+- ⏳ Task 60: Support Gemini models for planner
+- ⏳ Task 66: Support structured output for LLM node
 
 *Update this list as you complete tasks.*
 
@@ -514,3 +530,23 @@ More importantly focus on architectural quality and code quality:
 
 - **CLI Development Principle**: never commit code unless explicitly instructed by the user
 - **Expectation Setting**: I think it is important that the agent (you) show what the expected output will be BEFORE you start implementing. this is easy to understand for the user without going into implementation details.
+
+## Running pflow (for debugging, testing and development)
+
+
+```bash
+# Run a workflow from a file (useful for testing without using the planner)
+uv run pflow workflow.json
+```
+
+```bash
+# Output trace file to ~/.pflow/debug/workflow-trace-*.json for workflow execution
+uv run pflow --trace "do a thing, then do another thing"
+```
+
+```bash
+# Output trace file to ~/.pflow/debug/planner-trace-*.json for planner execution
+uv run pflow --trace-planner "do a thing, then do another thing"
+```
+
+Always use the `--trace and --trace-planner` flags when executing workflows for better debugging capabilities.
