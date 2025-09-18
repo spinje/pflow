@@ -405,6 +405,7 @@ Next version (post-MVP/post-Launch):
 - ⏳ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
 - ⏳ Task 64: MCP Orchestration with long running servers
 - ⏳ Task 60: Support Gemini models for planner
+- ⏳ Task 66: Support structured output for LLM node
 
 *Update this list as you complete tasks.*
 
