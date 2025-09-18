@@ -13,7 +13,7 @@ Available inputs:
 
 ## 🎯 **Your Mission**: Implementation Archaeology for AI Agents
 
-You are creating a **task review document** that will be the PRIMARY reference for future AI agents implementing related tasks. This is not a report for humans—it's a **knowledge transfer protocol** for AI systems that need to understand:
+You are creating a **task review document** in .md format that will be the PRIMARY reference for future AI agents implementing related tasks. This is not a report for humans—it's a **knowledge transfer protocol** for AI systems that need to understand:
 
 1. What was ACTUALLY built (vs. what was planned)
 2. HOW it integrates with the existing system
@@ -220,6 +220,9 @@ Save your review to:
 ```
 .taskmaster/tasks/task_{{task_id}}/task-review.md
 ```
+
+> Note: The file location is important. Do not change it.
+> If not task_id is provided, save the document to the scratchpad directory.
 
 ## 🚀 **MVP Context Reminder**
 
