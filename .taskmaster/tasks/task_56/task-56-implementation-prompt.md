@@ -24,7 +24,7 @@ Implement a planner-stage runtime validation loop with a new RuntimeValidationNo
 1. `task-56-spec.md` - The specification (source of truth for requirements and tests)
 2. `task-56-implementation-plan.md` - Step-by-step implementation plan
 
-**Instructions**: Read these files and follow the spec precisely. The spec defines the rules, wiring, error model, and test criteria that MUST be satisfied.
+**Instructions**: Read these files and follow the spec precisely. The spec defines the rules, wiring, error model, and test criteria that MUST be satisfied. Read all these files YOURSELF, do not outsource this to a subagent.
 
 ## What You're Building
 A planner runtime feedback loop:
@@ -86,6 +86,7 @@ Example IR downstream template target after fix:
 - @agent-pflow-codebase-searcher: locate exact integration points, confirm wiring patterns and planner node conventions.
 - @agent-test-writer-fixer: author/fix tests per spec after implementation.
 - Deploy subagents in parallel for read-only discovery and test writing. Keep implementation changes single-agent to avoid conflicts.
+- Always call subagents in ONE function call block to deploy all subagents simultaneously. Do not call subagents sequentially.
 
 ## Critical Technical Details
 
