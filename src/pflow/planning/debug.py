@@ -10,7 +10,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Optional
 
@@ -434,7 +434,7 @@ class TraceCollector:
 
     def __init__(self, user_input: str) -> None:
         self.execution_id: str = str(uuid.uuid4())
-        self.start_time: datetime = datetime.utcnow()
+        self.start_time: datetime = datetime.now(timezone.utc)
         self.user_input: str = user_input
         self.events: list[dict[str, Any]] = []
         self.llm_calls: list[dict[str, Any]] = []
@@ -465,7 +465,7 @@ class TraceCollector:
     def record_phase(self, node: str, phase: str, duration: float, extra: Optional[dict[str, Any]] = None) -> None:
         """Record execution phase details."""
         self.events.append({
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "node": node,
             "phase": phase,
             "duration_ms": int(duration * 1000),
@@ -480,7 +480,7 @@ class TraceCollector:
 
         self.current_llm_call = {
             "node": node,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "model": model_name,
             "prompt": prompt,
             "prompt_kwargs": {k: v for k, v in kwargs.items() if k != "schema"},
@@ -702,7 +702,7 @@ class TraceCollector:
             "timestamp": self.start_time.isoformat(),
             "user_input": self.user_input,
             "status": self.final_status,
-            "duration_ms": int((datetime.utcnow() - self.start_time).total_seconds() * 1000),
+            "duration_ms": int((datetime.now(timezone.utc) - self.start_time).total_seconds() * 1000),
             "path_taken": self.path_taken,
             "llm_calls": self.llm_calls,
             "node_execution": self.node_executions,

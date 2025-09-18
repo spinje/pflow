@@ -1,8 +1,8 @@
 """Pydantic models for structured LLM output."""
 
-from typing import Any, Callable, ClassVar, Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class NodeIR(BaseModel):
@@ -21,11 +21,15 @@ class EdgeIR(BaseModel):
     to_node: str = Field(..., alias="to")
     action: str = Field(default="default")
 
-    class Config:
-        populate_by_name = True  # Allow both field names and aliases during parsing
-        use_enum_values = True
-        json_encoders: ClassVar[dict[type, Callable[[Any], Any]]] = {str: lambda v: v}
-        by_alias = True  # CRITICAL: Use aliases when serializing for IR compliance
+    model_config = ConfigDict(
+        populate_by_name=True,  # Allow both field names and aliases during parsing
+        use_enum_values=True,
+        # Note: json_encoders is deprecated in Pydantic V2
+        # Custom serialization should be handled via field serializers if needed
+        alias_generator=None,
+        # In Pydantic V2, by_alias is used for serialization control
+        # populate_by_name allows accepting aliases during parsing
+    )
 
 
 class FlowIR(BaseModel):
@@ -39,9 +43,11 @@ class FlowIR(BaseModel):
     inputs: Optional[dict[str, Any]] = None
     outputs: Optional[dict[str, Any]] = None
 
-    class Config:
-        # Ensure nested models also use aliases
-        by_alias = True
+    model_config = ConfigDict(
+        # Ensure nested models also use aliases properly during serialization
+        # populate_by_name allows accepting both field names and aliases during parsing
+        populate_by_name=True,
+    )
 
     def to_dict(self) -> dict:
         """Convert to dict for validation with existing schema."""
