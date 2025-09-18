@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 from typing import Any, Optional
 
 from mcp import ClientSession, StdioServerParameters
@@ -227,46 +226,9 @@ class MCPDiscovery:
         Returns:
             Dictionary of HTTP headers including authentication
         """
-        headers: dict[str, str] = {}
+        from pflow.mcp.auth_utils import build_auth_headers
 
-        # Add custom headers if provided (expand env vars)
-        if "headers" in config:
-            expanded_headers = self._expand_env_vars(config["headers"])
-            if isinstance(expanded_headers, dict):
-                headers.update(expanded_headers)
-
-        # Handle authentication
-        auth_raw = config.get("auth", {})
-        if not auth_raw:
-            return headers
-
-        # Expand environment variables in auth config (handles nested dicts)
-        auth_expanded = self._expand_env_vars(auth_raw)
-        # Type assertion - auth should be a dict after expansion
-        auth = auth_expanded if isinstance(auth_expanded, dict) else {}
-        auth_type = auth.get("type")
-
-        if auth_type == "bearer":
-            token = auth.get("token", "")
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-
-        elif auth_type == "api_key":
-            key = auth.get("key", "")
-            header_name = auth.get("header", "X-API-Key")
-            if key:
-                headers[header_name] = key
-
-        elif auth_type == "basic":
-            username = auth.get("username", "")
-            password = auth.get("password", "")
-            if username and password:
-                import base64
-
-                credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
-                headers["Authorization"] = f"Basic {credentials}"
-
-        return headers
+        return build_auth_headers(config)
 
     def discover_all_servers(self) -> dict[str, list[dict[str, Any]]]:
         """Discover tools from all configured MCP servers.
@@ -300,29 +262,9 @@ class MCPDiscovery:
         Returns:
             Data with expanded environment variables
         """
-        import re
+        from pflow.mcp.auth_utils import expand_env_vars_nested
 
-        if isinstance(data, dict):
-            # Recursively process dictionary values
-            return {key: self._expand_env_vars(value) for key, value in data.items()}
-        elif isinstance(data, list):
-            # Recursively process list items
-            return [self._expand_env_vars(item) for item in data]
-        elif isinstance(data, str):
-            # Expand environment variables in strings
-            pattern = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
-
-            def replacer(match: Any) -> str:
-                env_var = match.group(1)
-                env_value = os.environ.get(env_var, "")
-                if not env_value:
-                    logger.warning(f"Environment variable {env_var} not found, using empty string")
-                return env_value
-
-            return pattern.sub(replacer, data)
-        else:
-            # Return other types unchanged (int, bool, None, etc.)
-            return data
+        return expand_env_vars_nested(data)
 
     def convert_to_pflow_params(self, json_schema: dict[str, Any]) -> list[dict[str, Any]]:
         """Convert JSON Schema to pflow parameter format.
