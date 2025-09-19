@@ -5,12 +5,11 @@ ensures nodes with templates in nested structures (dicts, lists) get wrapped
 with TemplateAwareNodeWrapper.
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
-from pocketflow import BaseNode
 from pflow.runtime.compiler import _apply_template_wrapping
 from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+from pocketflow import BaseNode
 
 
 class TestCompilerTemplateWrapping:
@@ -28,8 +27,8 @@ class TestCompilerTemplateWrapping:
             "url": "https://api.example.com",
             "headers": {
                 "Authorization": "Bearer ${token}",  # Template in nested dict!
-                "Content-Type": "application/json"
-            }
+                "Content-Type": "application/json",
+            },
         }
 
         # Apply wrapping
@@ -49,7 +48,7 @@ class TestCompilerTemplateWrapping:
         # Params with templates in list
         params = {
             "items": ["${item1}", "static", "${item2}"],  # Templates in list!
-            "config": {"enabled": True}
+            "config": {"enabled": True},
         }
 
         result = _apply_template_wrapping(node, node_id, params, initial_params)
@@ -90,12 +89,9 @@ class TestCompilerTemplateWrapping:
         # Params without any templates
         params = {
             "url": "https://api.example.com",
-            "headers": {
-                "Authorization": "Bearer hardcoded_token",
-                "Content-Type": "application/json"
-            },
+            "headers": {"Authorization": "Bearer hardcoded_token", "Content-Type": "application/json"},
             "items": ["a", "b", "c"],
-            "config": {"enabled": True, "timeout": 30}
+            "config": {"enabled": True, "timeout": 30},
         }
 
         result = _apply_template_wrapping(node, node_id, params, initial_params)
@@ -111,10 +107,7 @@ class TestCompilerTemplateWrapping:
         initial_params = {"name": "Alice"}
 
         # Simple string template (original case)
-        params = {
-            "message": "Hello ${name}!",
-            "static": "no template here"
-        }
+        params = {"message": "Hello ${name}!", "static": "no template here"}
 
         result = _apply_template_wrapping(node, node_id, params, initial_params)
 
@@ -133,7 +126,7 @@ class TestCompilerTemplateWrapping:
                 "Authorization": "Bearer ${token}"  # Nested template
             },
             "tags": ["${user}", "active"],  # Template in list
-            "static_value": 42  # No template
+            "static_value": 42,  # No template
         }
 
         result = _apply_template_wrapping(node, node_id, params, initial_params)
@@ -164,10 +157,7 @@ class TestCompilerTemplateWrapping:
             "retries": 3,
             "enabled": True,
             "threshold": 0.95,
-            "config": {
-                "max_size": 1000,
-                "active": False
-            }
+            "config": {"max_size": 1000, "active": False},
         }
 
         result = _apply_template_wrapping(node, node_id, params, initial_params)
@@ -179,30 +169,22 @@ class TestCompilerTemplateWrapping:
         """Test the exact Slack/Google Sheets scenario that was failing."""
         node = Mock(spec=BaseNode)
         node_id = "fetch_messages"
-        initial_params = {
-            "slack_channel_id": "C123",
-            "message_count": 10,
-            "slack_bot_token": "xoxb-123"
-        }
+        initial_params = {"slack_channel_id": "C123", "message_count": 10, "slack_bot_token": "xoxb-123"}
 
         # The exact params structure from the failing workflow
         params = {
             "url": "https://slack.com/api/conversations.history",
             "method": "GET",
-            "params": {
-                "channel": "${slack_channel_id}",
-                "limit": "${message_count}"
-            },
-            "headers": {
-                "Authorization": "Bearer ${slack_bot_token}"
-            }
+            "params": {"channel": "${slack_channel_id}", "limit": "${message_count}"},
+            "headers": {"Authorization": "Bearer ${slack_bot_token}"},
         }
 
         result = _apply_template_wrapping(node, node_id, params, initial_params)
 
         # MUST be wrapped - this was the bug!
-        assert isinstance(result, TemplateAwareNodeWrapper), \
+        assert isinstance(result, TemplateAwareNodeWrapper), (
             "Failed to wrap node with nested templates - this was the original bug!"
+        )
 
         # Verify the wrapper has the correct attributes
         assert result.inner_node is node
@@ -222,9 +204,9 @@ class TestCompilerTemplateWrapping:
                 "text": "${message}",
                 "metadata": {
                     "channel_id": "${channel}",  # Nested template in body
-                    "static": "value"
-                }
-            }
+                    "static": "value",
+                },
+            },
         }
 
         result = _apply_template_wrapping(node, node_id, params, initial_params)
@@ -238,6 +220,7 @@ class TestTemplateWrappingIntegration:
 
     def test_wrapped_node_receives_params_correctly(self):
         """Test that wrapped nodes receive and store params correctly."""
+
         # Create a real node class for testing
         class TestNode(BaseNode):
             def __init__(self):
@@ -251,9 +234,7 @@ class TestTemplateWrappingIntegration:
         node_id = "test"
         initial_params = {"key": "value"}
 
-        params_with_templates = {
-            "headers": {"Auth": "Bearer ${key}"}
-        }
+        params_with_templates = {"headers": {"Auth": "Bearer ${key}"}}
 
         # Apply wrapping
         wrapped = _apply_template_wrapping(node, node_id, params_with_templates, initial_params)
@@ -270,6 +251,7 @@ class TestTemplateWrappingIntegration:
 
     def test_no_wrapping_means_direct_param_setting(self):
         """Test that unwrapped nodes get params directly."""
+
         class TestNode(BaseNode):
             def __init__(self):
                 super().__init__()
@@ -282,10 +264,7 @@ class TestTemplateWrappingIntegration:
         node_id = "test"
         initial_params = {}
 
-        params_no_templates = {
-            "url": "https://api.example.com",
-            "timeout": 30
-        }
+        params_no_templates = {"url": "https://api.example.com", "timeout": 30}
 
         # Apply wrapping (should not wrap)
         result = _apply_template_wrapping(node, node_id, params_no_templates, initial_params)

@@ -6,14 +6,13 @@ handles nested template structures from compilation through execution.
 
 import json
 import os
-import pytest
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
-from pocketflow import BaseNode
+from pflow.registry import Registry
 from pflow.runtime.compiler import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
-from pflow.registry import Registry
+from pocketflow import BaseNode
 
 
 class TestNestedTemplateE2E:
@@ -397,13 +396,7 @@ class MockDeepNode(BaseNode):
     def prep(self, shared):
         # Verify deeply nested templates were resolved
         deep = self.params.get("deep_structure", {})
-        level5 = (
-            deep.get("level1", {})
-            .get("level2", {})
-            .get("level3", {})
-            .get("level4", {})
-            .get("level5", {})
-        )
+        level5 = deep.get("level1", {}).get("level2", {}).get("level3", {}).get("level4", {}).get("level5", {})
 
         assert level5.get("value") == "Found me!"
         assert level5.get("items") == ["one", "two", "three"]
