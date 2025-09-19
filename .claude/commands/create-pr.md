@@ -35,6 +35,7 @@ Create a pull request based on the current branch and recent commits:
    - Ensure all changes are committed (check git status above)
    - If any commits are necessary, commit them with a good message (include the session id if available)
    - There should be a issue number associated with the PR if you dont know what it is, ask the user if an existing issue exists before you proceed
+   - There can be a task id associated with the PR. If there is, you should know about it. Don't ask the user if you don't know about it.
 
 3. **Analyze commits to generate PR details:**
    - Show commits that will be in the PR:
@@ -81,6 +82,13 @@ Create a pull request based on the current branch and recent commits:
      ## Changes
      - Key change 1
      - Key change 2
+
+     ## Created Docs
+     If you created any new docs, list them here.
+     If the PR is related to a task, include references to these files (make sure they exist first)
+     - .taskmaster/tasks/<task-id>/task-<task-id>.md
+     - .taskmaster/tasks/<task-id>/task-review.md
+     - .taskmaster/tasks/<task-id>/implementation/progress-log.md
      
      <!-- Include file stats from diff output if available -->
      
