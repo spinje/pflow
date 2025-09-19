@@ -187,6 +187,57 @@ class InstrumentedNodeWrapper:
 
         return llm_prompt
 
+    def _validate_llm_json_output(self, shared_before: dict[str, Any] | None, shared_after: dict[str, Any]) -> None:
+        """Validate LLM JSON output and warn about potential issues.
+
+        Args:
+            shared_before: Shared store before node execution
+            shared_after: Shared store after node execution
+        """
+        # Only validate if this looks like an LLM node
+        if not shared_before:
+            return
+
+        # Check if this node had a prompt (indicating it's likely an LLM node)
+        prompt = self._find_llm_prompt(shared_before)
+        if not prompt:
+            return
+
+        # Check if JSON was likely expected based on prompt content
+        prompt_lower = prompt.lower()
+        expects_json = "json" in prompt_lower
+
+        if not expects_json:
+            return
+
+        # Check if response exists and is a string (not parsed JSON)
+        response = shared_after.get("response")
+
+        # Also check namespaced response
+        if not response and self.node_id in shared_after:
+            ns_data = shared_after[self.node_id]
+            if isinstance(ns_data, dict):
+                response = ns_data.get("response")
+
+        # If response is a string and JSON was expected, likely parsing failed
+        if isinstance(response, str) and expects_json:
+            # Check if it looks like it should be JSON
+            trimmed = response.strip()
+            if not (trimmed.startswith("{") or trimmed.startswith("[")):
+                # Get model info if available
+                model = "unknown"
+                if "llm_usage" in shared_after:
+                    usage = shared_after["llm_usage"]
+                    if isinstance(usage, dict):
+                        model = usage.get("model", "unknown")
+
+                logger.warning(
+                    f"Node '{self.node_id}' with model '{model}' may have failed to generate valid JSON. "
+                    f"Prompt requested JSON but response appears to be plain text. "
+                    f"Response starts with: {response[:100]}... "
+                    f"Consider using a stronger model like 'gpt-5', 'claude-4-sonnet' or 'gemini-2.5-pro', and adding clearer JSON instructions."
+                )
+
     def _record_trace(
         self,
         duration_ms: float,
@@ -265,6 +316,9 @@ class InstrumentedNodeWrapper:
 
             # Capture LLM usage if present
             self._capture_llm_usage(shared, shared_before, duration_ms, is_planner)
+
+            # Validate LLM JSON output if applicable
+            self._validate_llm_json_output(shared_before, shared)
 
             # Record trace if collector present
             self._record_trace(duration_ms, shared_before, dict(shared), success=True)

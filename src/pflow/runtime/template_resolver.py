@@ -244,7 +244,16 @@ class TemplateResolver:
                     continue
 
             # Variable doesn't exist - leave template as-is for debugging
-            logger.debug(f"Template variable '${{{var_name}}}' could not be resolved", extra={"var_name": var_name})
+            # Provide more helpful warnings for common patterns
+            if ".response." in var_name:
+                # This pattern often indicates LLM didn't generate expected JSON structure
+                logger.warning(
+                    f"Template variable '${{{var_name}}}' could not be resolved. "
+                    f"This often indicates the LLM node didn't generate the expected JSON structure. "
+                    f"Check that the LLM response contains the field '{var_name.split('.')[-1]}'"
+                )
+            else:
+                logger.debug(f"Template variable '${{{var_name}}}' could not be resolved", extra={"var_name": var_name})
 
         return result
 
