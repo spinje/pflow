@@ -211,6 +211,19 @@ class WorkflowDiscoveryNode(Node):
         """
         logger.debug(f"WorkflowDiscoveryNode: Matching request: {prep_res['user_input'][:100]}...")
 
+        # Early return if no workflows exist - skip expensive LLM call
+        if not prep_res["discovery_context"]:  # Empty string when no workflows
+            logger.info(
+                "WorkflowDiscoveryNode: No workflows exist, skipping LLM call",
+                extra={"phase": "exec", "optimization": "zero_workflows"},
+            )
+            return {
+                "found": False,
+                "workflow_name": None,
+                "confidence": 1.0,
+                "reasoning": "No existing workflows in the system to match against",
+            }
+
         # Check if caching is enabled for cache_control markers
         cache_planner = prep_res.get("cache_planner", False)
 

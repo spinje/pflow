@@ -985,13 +985,23 @@ class TestWorkflowDiscoveryHappyPath:
                 assert shared["found_workflow"]["name"] == "process-csv-data"
 
     def test_path_a_performance_advantage(self, setup_workflow_directory):
-        """Verify Path A is actually faster than Path B would be."""
+        """Verify Path A is actually faster than Path B would be.
+
+        FIX HISTORY:
+        - 2025-01-19: Test was using empty discovery_context due to missing
+          _workflow_manager patch. Now patches both WorkflowManager class
+          and context_builder._workflow_manager to ensure workflows are
+          discoverable.
+        """
         workflows_dir, workflows = setup_workflow_directory
 
         # Create a real WorkflowManager with our test directory
         test_manager = WorkflowManager(workflows_dir=workflows_dir)
 
-        with patch("pflow.planning.nodes.WorkflowManager") as mock_wm_class:
+        with (
+            patch("pflow.planning.nodes.WorkflowManager") as mock_wm_class,
+            patch("pflow.planning.context_builder._workflow_manager", test_manager),
+        ):
             mock_wm_class.return_value = test_manager
 
             node = WorkflowDiscoveryNode()
@@ -1047,13 +1057,22 @@ class TestWorkflowDiscoveryHappyPath:
         """Test that shared store contains all required data for Path A execution.
 
         Validates that downstream nodes have everything they need.
+
+        FIX HISTORY:
+        - 2025-01-19: Test was using empty discovery_context due to missing
+          _workflow_manager patch. Now patches both WorkflowManager class
+          and context_builder._workflow_manager to ensure workflows are
+          discoverable.
         """
         workflows_dir, workflows = setup_workflow_directory
 
         # Create a real WorkflowManager with our test directory
         test_manager = WorkflowManager(workflows_dir=workflows_dir)
 
-        with patch("pflow.planning.nodes.WorkflowManager") as mock_wm_class:
+        with (
+            patch("pflow.planning.nodes.WorkflowManager") as mock_wm_class,
+            patch("pflow.planning.context_builder._workflow_manager", test_manager),
+        ):
             mock_wm_class.return_value = test_manager
 
             node = WorkflowDiscoveryNode()

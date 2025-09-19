@@ -19,16 +19,35 @@ class TestCachingIntegration:
     """Test end-to-end caching functionality."""
 
     def test_discovery_node_uses_cache_when_enabled(self):
-        """Test that WorkflowDiscoveryNode properly uses caching when enabled."""
+        """Test that WorkflowDiscoveryNode properly uses caching when enabled.
+
+        FIX HISTORY:
+        - 2025-01-19: Fixed to provide non-empty discovery_context. The optimization in
+          WorkflowDiscoveryNode.exec() skips the LLM call when discovery_context is empty
+          (no workflows exist). Tests must provide workflows to test caching behavior.
+        """
         node = WorkflowDiscoveryNode()
         shared = {
             "user_input": "Build me a workflow to process files",
             "cache_planner": True,  # Enable caching
         }
 
-        # Mock dependencies
-        with patch("pflow.planning.context_builder.build_workflows_context") as mock_build_context:
-            mock_build_context.return_value = "A" * 1001  # Must be > 1000 to trigger caching
+        # Mock dependencies - MUST return non-empty context to trigger LLM call
+        with patch("pflow.planning.nodes.build_workflows_context") as mock_build_context:
+            # Return workflow context that would trigger LLM call (> 1000 chars for caching)
+            workflow_context = (
+                """**1. `test-workflow`** - A test workflow for processing files
+   **Flow:** `read-file → transform → write-file`
+   **Can:** read files, transform data, write output
+   **For:** file processing, data transformation
+
+**2. `another-workflow`** - Another workflow for testing
+   **Flow:** `fetch-data → process → store`
+   **Can:** fetch remote data, process it, store results
+   **For:** data fetching, processing pipelines"""
+                + "A" * 700
+            )  # Pad to ensure > 1000 chars
+            mock_build_context.return_value = workflow_context
 
             # Patch at both locations to ensure proper cleanup
             with (
@@ -112,15 +131,34 @@ class TestCachingIntegration:
                         assert block["cache_control"]["type"] == "ephemeral"
 
     def test_discovery_node_no_cache_when_disabled(self):
-        """Test that WorkflowDiscoveryNode doesn't use caching when disabled."""
+        """Test that WorkflowDiscoveryNode doesn't use caching when disabled.
+
+        FIX HISTORY:
+        - 2025-01-19: Fixed to provide non-empty discovery_context. The optimization in
+          WorkflowDiscoveryNode.exec() skips the LLM call when discovery_context is empty
+          (no workflows exist). Tests must provide workflows to test caching behavior.
+        """
         node = WorkflowDiscoveryNode()
         shared = {
             "user_input": "Build me a workflow to process files",
             "cache_planner": False,  # Caching disabled
         }
 
-        with patch("pflow.planning.context_builder.build_workflows_context") as mock_build_context:
-            mock_build_context.return_value = "A" * 1000
+        with patch("pflow.planning.nodes.build_workflows_context") as mock_build_context:
+            # Return workflow context that would trigger LLM call (> 1000 chars for potential caching)
+            workflow_context = (
+                """**1. `test-workflow`** - A test workflow for processing files
+   **Flow:** `read-file → transform → write-file`
+   **Can:** read files, transform data, write output
+   **For:** file processing, data transformation
+
+**2. `another-workflow`** - Another workflow for testing
+   **Flow:** `fetch-data → process → store`
+   **Can:** fetch remote data, process it, store results
+   **For:** data fetching, processing pipelines"""
+                + "A" * 700
+            )  # Pad to ensure > 1000 chars
+            mock_build_context.return_value = workflow_context
 
             # Patch at both locations to ensure proper cleanup
             with (

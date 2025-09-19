@@ -25,15 +25,21 @@ class TestWorkflowDiscoveryNodeCaching:
     """Test WorkflowDiscoveryNode caching behavior."""
 
     def test_traditional_path_without_caching(self):
-        """Node works normally when cache_planner=False."""
+        """Node works normally when cache_planner=False.
+
+        FIX HISTORY:
+        - 2025-09-19: Fixed patch path to use pflow.planning.nodes.build_workflows_context
+                      where the function is actually imported into the nodes module.
+        """
         node = WorkflowDiscoveryNode()
         shared = {
             "user_input": "test input",
             "cache_planner": False,  # Caching disabled
         }
 
-        with patch("pflow.planning.context_builder.build_workflows_context") as mock_build_context:
-            mock_build_context.return_value = "test context"
+        with patch("pflow.planning.nodes.build_workflows_context") as mock_build_context:
+            # Provide non-empty context to test caching behavior (not optimization path)
+            mock_build_context.return_value = "test workflow context"
 
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
@@ -63,7 +69,12 @@ class TestWorkflowDiscoveryNodeCaching:
             assert call_args.kwargs.get("cache_blocks") is None
 
     def test_caching_path_with_cache_blocks(self):
-        """Node uses cache blocks when cache_planner=True."""
+        """Node uses cache blocks when cache_planner=True.
+
+        FIX HISTORY:
+        - 2025-09-19: Fixed patch path to use pflow.planning.nodes.build_workflows_context
+                      where the function is actually imported into the nodes module.
+        """
         node = WorkflowDiscoveryNode()
         shared = {
             "user_input": "test input",
@@ -71,7 +82,7 @@ class TestWorkflowDiscoveryNodeCaching:
         }
 
         # Mock context builder to provide discovery context
-        with patch("pflow.planning.context_builder.build_workflows_context") as mock_build_context:
+        with patch("pflow.planning.nodes.build_workflows_context") as mock_build_context:
             mock_build_context.return_value = "Long discovery context " * 50  # Make it long enough
 
             with patch("llm.get_model") as mock_get_model:
@@ -111,12 +122,20 @@ class TestWorkflowDiscoveryNodeCaching:
                 assert cache_blocks[0]["cache_control"]["type"] == "ephemeral"
 
     def test_cache_flag_defaults_to_false(self):
-        """When cache_planner not in shared, defaults to False."""
+        """When cache_planner not in shared, defaults to False.
+
+        FIX HISTORY:
+        - 2025-09-19: Fixed patch path to use pflow.planning.nodes.build_workflows_context
+                      where the function is actually imported into the nodes module.
+                      Also fixed AttributeError by ensuring mock_model.prompt is actually called
+                      (requires non-empty discovery_context).
+        """
         node = WorkflowDiscoveryNode()
         shared = {"user_input": "test input"}  # No cache_planner key
 
-        with patch("pflow.planning.context_builder.build_workflows_context") as mock_build_context:
-            mock_build_context.return_value = "test context"
+        with patch("pflow.planning.nodes.build_workflows_context") as mock_build_context:
+            # Must provide non-empty context or optimization skips LLM call entirely
+            mock_build_context.return_value = "test workflow context"
 
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
@@ -158,8 +177,8 @@ class TestComponentBrowsingNodeCaching:
         }
 
         with (
-            patch("pflow.planning.context_builder.build_nodes_context") as mock_nodes_context,
-            patch("pflow.planning.context_builder.build_workflows_context") as mock_workflows_context,
+            patch("pflow.planning.nodes.build_nodes_context") as mock_nodes_context,
+            patch("pflow.planning.nodes.build_workflows_context") as mock_workflows_context,
         ):
             mock_nodes_context.return_value = "nodes context"
             mock_workflows_context.return_value = "workflows context"
@@ -191,8 +210,8 @@ class TestComponentBrowsingNodeCaching:
         }
 
         with (
-            patch("pflow.planning.context_builder.build_nodes_context") as mock_nodes_context,
-            patch("pflow.planning.context_builder.build_workflows_context") as mock_workflows_context,
+            patch("pflow.planning.nodes.build_nodes_context") as mock_nodes_context,
+            patch("pflow.planning.nodes.build_workflows_context") as mock_workflows_context,
         ):
             # Provide long enough context for caching (>1000 chars)
             mock_nodes_context.return_value = "nodes " * 200  # 1200 chars

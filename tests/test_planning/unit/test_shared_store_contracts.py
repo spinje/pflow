@@ -230,8 +230,13 @@ class TestSharedStoreContracts:
             with patch("pflow.planning.nodes.Registry") as mock_reg_class:
                 mock_reg_class.return_value = mock_registry
 
-                with patch("pflow.planning.nodes.build_planning_context") as mock_build:
+                with (
+                    patch("pflow.planning.nodes.build_planning_context") as mock_build,
+                    patch("pflow.planning.nodes.build_workflows_context") as mock_build_workflows,
+                ):
                     mock_build.return_value = "planning context for generation"
+                    # Provide non-empty workflows context to trigger LLM call, not optimization
+                    mock_build_workflows.return_value = "workflow1: Test workflow"
 
                     # Run discovery node (Path B decision)
                     discovery_node = WorkflowDiscoveryNode()
@@ -274,8 +279,13 @@ class TestSharedStoreContracts:
             with patch("pflow.planning.nodes.Registry") as mock_reg_class:
                 mock_reg_class.return_value = Mock(load=Mock(return_value={}))
 
-                with patch("pflow.planning.nodes.build_planning_context") as mock_build:
+                with (
+                    patch("pflow.planning.nodes.build_planning_context") as mock_build,
+                    patch("pflow.planning.nodes.build_workflows_context") as mock_build_workflows,
+                ):
                     mock_build.return_value = "context"
+                    # Provide non-empty workflows context to trigger LLM call, not optimization
+                    mock_build_workflows.return_value = "workflow1: Test workflow"
 
                     shared = {"user_input": "test"}
 

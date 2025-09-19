@@ -18,9 +18,19 @@ from pflow.planning.nodes import (
 
 @pytest.fixture
 def mock_workflow_manager():
-    """Mock workflow manager for testing workflow loading."""
+    """Mock workflow manager for testing workflow loading.
+
+    FIX HISTORY:
+    - 2025-09-19: Added list_all() method to provide workflows for discovery context.
+      Without this, build_workflows_context() returns empty string, triggering the
+      optimization that skips LLM call and always returns "not_found".
+
+    LESSON LEARNED:
+    - When mocking WorkflowManager for Path A tests, must provide both load() and
+      list_all() methods since discovery needs to list workflows first.
+    """
     manager = Mock()
-    manager.load.return_value = {
+    workflow_data = {
         "name": "csv-to-json",
         "description": "Convert CSV file to JSON",
         "ir": {
@@ -45,6 +55,11 @@ def mock_workflow_manager():
         "updated_at": "2024-01-30T10:00:00Z",
         "version": "1.0.0",
     }
+
+    # Mock both load() and list_all() methods
+    manager.load.return_value = workflow_data
+    manager.list_all.return_value = [workflow_data]  # Must return list of workflows for discovery
+
     return manager
 
 
@@ -209,7 +224,12 @@ class TestPathADiscoveryToParameter:
     """Test Path A flow: Discovery → Parameter Mapping."""
 
     def test_path_a_complete_flow(self, mock_workflow_manager, mock_llm_calls, monkeypatch):
-        """Test complete Path A flow from discovery to parameter extraction."""
+        """Test complete Path A flow from discovery to parameter extraction.
+
+        Note: This test requires mock_workflow_manager to provide list_all() method.
+        Without it, WorkflowDiscoveryNode's optimization (lines 215-225 in nodes.py)
+        will skip LLM call and return "not_found" when discovery_context is empty.
+        """
         # ⚠️ CRITICAL: DO NOT REMOVE MODULE RELOADING - IT WILL BREAK TESTS! ⚠️
         # This module reloading is REQUIRED for test isolation. Without it:
         # 1. Cached prompt templates persist between tests causing failures
@@ -255,8 +275,11 @@ class TestPathADiscoveryToParameter:
         with patch("pflow.planning.nodes.WorkflowManager") as mock_wm_class:
             mock_wm_class.return_value = mock_workflow_manager
 
-            # Initialize shared store with user input
-            shared = {"user_input": "Convert data.csv to JSON format"}
+            # Initialize shared store with user input and workflow manager
+            shared = {
+                "user_input": "Convert data.csv to JSON format",
+                "workflow_manager": mock_workflow_manager,  # Pass manager to avoid empty discovery context
+            }
 
             # Step 1: WorkflowDiscoveryNode finds existing workflow
             discovery_node = WorkflowDiscoveryNode(wait=0)
@@ -527,6 +550,7 @@ class TestSharedStoreIntegration:
                 "user_input": "Convert data.csv to JSON",
                 "stdin_data": "test,data\n1,2",  # Test stdin preservation
                 "current_date": "2024-01-30",  # Test metadata preservation
+                "workflow_manager": mock_workflow_manager,  # Pass manager to avoid empty discovery context
             }
 
             # Run discovery
