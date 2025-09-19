@@ -120,7 +120,7 @@ class LLMNode(Node):
         # Use llm library directly - NO try/except! Let exceptions bubble up
         model = llm.get_model(prep_res["model"])
 
-        kwargs = {"temperature": prep_res["temperature"]}
+        kwargs = {"stream": False, "temperature": prep_res["temperature"]}
 
         # Only add optional parameters if not None
         if prep_res["system"] is not None:
