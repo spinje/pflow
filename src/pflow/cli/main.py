@@ -2396,6 +2396,15 @@ def _handle_named_workflow(
 
         metrics_collector = MetricsCollector()
 
+    # Set workflow metadata based on source
+    # This ensures proper action field in JSON output
+    if source == "saved":
+        # Workflow from registry - it's being reused
+        ctx.obj["workflow_metadata"] = _create_workflow_metadata(first_arg, "reused")
+    else:
+        # Workflow from file - it's unsaved
+        ctx.obj["workflow_metadata"] = _create_workflow_metadata(first_arg, "unsaved")
+
     # Execute workflow
     execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, None, output_format, metrics_collector)
     return True
