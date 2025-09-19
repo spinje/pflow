@@ -387,6 +387,7 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
 - ✅ Task 52: Improve planner with "plan" and "requirements" steps + prompt caching + thinking
 - ✅ Task 47: Implement MCP http transport
+- ✅ Task 67: Use MCP Standard Format
 
 Next up:
 - ⏳ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
