@@ -2897,6 +2897,99 @@ class RuntimeValidationNode(Node):
         else:
             return []
 
+    def _is_error_fixable(self, exception: Optional[Exception], error_msg: str) -> bool:
+        """Determine if an error can be fixed by regenerating the workflow.
+
+        Returns False only for infrastructure/auth issues that need user action.
+        Everything else might be fixable by adjusting the workflow.
+        """
+        error_lower = error_msg.lower()
+
+        # Check for definitely non-fixable infrastructure/auth issues
+        non_fixable_keywords = [
+            # Authentication
+            "api key",
+            "authentication",
+            "unauthorized",
+            "forbidden",
+            "invalid credentials",
+            "token expired",
+            "401",
+            "403",
+            # Rate limiting
+            "rate limit",
+            "quota",
+            "too many requests",
+            "429",
+            # Network issues
+            "connection refused",
+            "network unreachable",
+            "dns",
+            "ssl error",
+            "certificate",
+            "connection timeout",
+            "timeout",
+            # Service down
+            "service unavailable",
+            "maintenance",
+            "502",
+            "503",
+            "504",
+            # System resources
+            "out of memory",
+            "disk full",
+            "permission denied",
+        ]
+
+        for keyword in non_fixable_keywords:
+            if keyword in error_lower:
+                return False
+
+        # Check exception type if available
+        if exception:
+            # These exceptions usually mean wrong field/parameter names - fixable
+            if isinstance(exception, (KeyError, AttributeError, NameError)):
+                return True
+
+            # Check for structured category if available
+            if hasattr(exception, "category"):
+                fixable_categories = {
+                    "missing_template_path",
+                    "missing_field",
+                    "extraction_error",
+                    "wrong_parameter_name",
+                }
+                return exception.category in fixable_categories
+
+        # Look for patterns that suggest fixable issues
+        fixable_keywords = [
+            "template path",
+            "missing path",
+            "field not found",
+            "key error",
+            "attribute error",
+            "undefined variable",
+            "unknown parameter",
+            "required field",
+            "unexpected argument",
+            "json",
+            "parsing",
+            "invalid format",
+            "${",  # Template syntax issues
+        ]
+
+        for keyword in fixable_keywords:
+            if keyword in error_lower:
+                return True
+
+        # HTTP 4xx errors (except auth) are often fixable
+        if any(code in error_lower for code in ["400", "404", "405", "422"]):
+            return True
+
+        # Default: assume it might be fixable (optimistic)
+        # Better to try 3 times than give up immediately
+        return True
+
     def _check_template_exists(self, template: str, shared: dict[str, Any]) -> bool:  # noqa: C901
         """Check if a template path exists in the shared store.
 
@@ -2973,8 +3066,12 @@ class RuntimeValidationNode(Node):
         errors = []
         if not exec_res.get("ok", False):
             error_msg = exec_res.get("error", "Unknown runtime error")
-            # Check if it's a template-related error
-            is_fixable = "template" in error_msg.lower() or "missing" in error_msg.lower()
+
+            # Get the actual exception object if available
+            exception = exec_res.get("exception")
+
+            # Determine if error is fixable based on exception type and category
+            is_fixable = self._is_error_fixable(exception, error_msg)
 
             errors.append({
                 "source": "runtime",
@@ -3074,17 +3171,28 @@ class RuntimeValidationNode(Node):
             logger.info("Runtime validation: no issues detected")
             return "default"
 
-        # Check if any errors are fixable
-        has_fixable = any(err.get("fixable", False) for err in runtime_errors)
+        # Check if ALL errors are fixable (abort if any are not fixable)
+        has_non_fixable = any(not err.get("fixable", False) for err in runtime_errors)
 
-        if has_fixable and attempts < 3:
+        if has_non_fixable:
+            # If any error is not fixable, abort immediately
+            shared["runtime_errors"] = runtime_errors
+            logger.warning(
+                f"Runtime validation failed: found non-fixable errors among {len(runtime_errors)} total errors"
+            )
+            return "failed_runtime"
+        elif attempts < 3:
+            # All errors are fixable and we haven't exceeded attempts
             shared["runtime_errors"] = runtime_errors
             shared["runtime_attempts"] = attempts + 1
             logger.info(f"Runtime validation: found {len(runtime_errors)} fixable issues, attempt {attempts + 1}/3")
             return "runtime_fix"
         else:
+            # Exceeded maximum attempts
             shared["runtime_errors"] = runtime_errors
-            logger.warning(f"Runtime validation failed: {len(runtime_errors)} errors, attempts: {attempts}")
+            logger.warning(
+                f"Runtime validation failed: exceeded maximum attempts (3), had {len(runtime_errors)} errors"
+            )
             return "failed_runtime"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:

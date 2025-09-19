@@ -230,6 +230,44 @@ Successfully implemented runtime validation feedback loop that enables workflows
 4. **Respects Limits**: Correctly stops after 3 retry attempts
 5. **Node Independence**: Maintained clean separation - nodes don't depend on pflow.core
 
+### Critical Post-Implementation Fix: Unknown Model Handling (2025-01-19)
+
+**The Problem We Discovered**:
+After updating LLM pricing to be strict (no fallback pricing for unknown models), we had 11 failing tests. More importantly, this would cause workflows to crash at the very end just for cost calculation - a terrible user experience.
+
+**The Architectural Solution**:
+- **Core modules (llm_pricing.py)**: Remain strict - raise errors for unknown models (safety first)
+- **User-facing modules (metrics.py, debug.py)**: Handle errors gracefully - never crash workflows
+- **Clear communication**: Return `pricing_available: false` with list of unavailable models
+
+**Implementation Pattern**:
+```python
+# User-facing module pattern
+try:
+    cost = calculate_llm_cost(model, tokens)
+except ValueError:
+    # Don't crash, but communicate clearly
+    return {
+        "total_cost_usd": None,
+        "pricing_available": False,
+        "unavailable_models": [model]
+    }
+```
+
+**Why This Matters**:
+- Users with custom models (Ollama, local LLMs) can still use pflow
+- No silent incorrect pricing (main safety goal achieved)
+- Workflows complete successfully even with pricing errors
+- Clear indication when pricing is unavailable
+
+**Test Philosophy Insight**:
+Instead of adding dozens of tests for coverage, we added ONE focused test file (`test_unknown_model_user_experience.py`) that validates what truly matters:
+1. Workflows don't crash with unknown models
+2. Pricing is clearly marked as unavailable
+3. Users get actionable information
+
+This approach values user experience over strict enforcement at the workflow level.
+
 ### Implementation Validation (2025-09-18)
 
 **Comprehensive Test Scripts Created & Verified**:
@@ -375,5 +413,44 @@ Instead of maintaining our own array notation detection alongside main's utiliti
 - All 96 integration tests pass
 - Array notation works in: template validation, resolution, and runtime validation
 - Code is significantly simpler and more maintainable
+
+---
+
+## Critical Bug Discovery: Debug Wrapper Breaking Gemini Models (2025-01-19)
+
+**Symptom**: RuntimeValidationNode failing with error:
+```
+1 validation error for OptionsWithThinkingBudget
+model
+  Extra inputs are not permitted [type=extra_forbidden, input_value='gemini/gemini-2.5-flash-lite', input_type=str]
+```
+
+**Initial Misdiagnosis**: Error message suggested `thinking_budget` was being passed to non-Anthropic models. Spent significant time investigating:
+- Monkeypatch implementation (working correctly)
+- RuntimeValidationNode execution (not the issue)
+- LLM node implementation (clean)
+
+**Root Cause Discovery**: The debug/tracing system (`--trace-planner`) was the culprit:
+1. DebugWrapper intercepted ALL `model.prompt()` calls
+2. Added `model='gemini/gemini-2.5-flash-lite'` to kwargs for tracing (line 344 in debug.py)
+3. Gemini's `OptionsWithThinkingBudget` pydantic model doesn't accept `model` field
+4. This only happened during traced execution, making it hard to reproduce
+
+**The Fix**: Modified debug.py to store model info for tracing without polluting the actual LLM call:
+```python
+# Store model_id for tracing, but DON'T add to prompt_kwargs
+trace_kwargs = prompt_kwargs.copy()
+if model_id:
+    trace_kwargs["model"] = model_id
+# Use trace_kwargs for recording, original kwargs for prompt
+```
+
+**Key Lessons**:
+1. **Error messages can be deeply misleading** - The error about `OptionsWithThinkingBudget` had nothing to do with thinking_budget
+2. **Debug/tracing systems can introduce their own bugs** - The very system meant to help debug was causing the failure
+3. **System interactions matter** - The bug only manifested when RuntimeValidationNode + Debug Wrapper + Gemini models interacted
+4. **Always verify assumptions** - The monkeypatch and thinking_budget implementation were working perfectly; the issue was elsewhere
+
+This wasn't a Task 56 bug but a pre-existing issue in the debug system that Task 56's runtime validation exposed.
 
 ---

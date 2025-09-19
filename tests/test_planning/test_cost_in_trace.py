@@ -139,10 +139,9 @@ class TestCostInTrace:
         call = collector.llm_calls[0]
         cost_data = call["cost"]
 
-        # Should use default pricing (gpt-4o-mini)
-        # Input: 1000 * $0.15/1M = 0.00015
-        # Output: 500 * $0.60/1M = 0.0003
-        assert cost_data["input_cost"] == 0.00015
-        assert cost_data["output_cost"] == 0.0003
-        assert cost_data["total_cost_usd"] == 0.00045
-        assert cost_data["pricing_model"] == "default"
+        # Should gracefully handle unknown model
+        assert cost_data["total_cost_usd"] is None
+        assert cost_data["pricing_model"] == "unavailable"
+        assert cost_data["input_cost"] is None
+        assert cost_data["output_cost"] is None
+        assert "error" in cost_data  # Should contain error message

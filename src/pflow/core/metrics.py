@@ -51,7 +51,7 @@ class MetricsCollector:
         else:
             self.workflow_nodes[node_id] = duration_ms
 
-    def calculate_costs(self, llm_calls: list[dict[str, Any]]) -> float:
+    def calculate_costs(self, llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
         """Calculate total cost from accumulated LLM calls.
 
         Prioritizes actual cost (total_cost_usd) when available,
@@ -61,9 +61,13 @@ class MetricsCollector:
             llm_calls: List of LLM call data from shared["__llm_calls__"]
 
         Returns:
-            Total cost in USD
+            Dict with total_cost_usd and pricing availability info
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
         total_cost = 0.0
+        unavailable_models = set()
 
         for call in llm_calls:
             # Skip empty usage dicts
@@ -80,18 +84,34 @@ class MetricsCollector:
             model = call.get("model") or call.get("prompt_kwargs", {}).get("model", "unknown")
 
             # Use the centralized calculate_llm_cost function
-            cost_breakdown = calculate_llm_cost(
-                model=model,
-                input_tokens=call.get("input_tokens", 0),
-                output_tokens=call.get("output_tokens", 0),
-                cache_creation_tokens=call.get("cache_creation_input_tokens", 0),
-                cache_read_tokens=call.get("cache_read_input_tokens", 0),
-                thinking_tokens=call.get("thinking_tokens", 0),
-            )
+            try:
+                cost_breakdown = calculate_llm_cost(
+                    model=model,
+                    input_tokens=call.get("input_tokens", 0),
+                    output_tokens=call.get("output_tokens", 0),
+                    cache_creation_tokens=call.get("cache_creation_input_tokens", 0),
+                    cache_read_tokens=call.get("cache_read_input_tokens", 0),
+                    thinking_tokens=call.get("thinking_tokens", 0),
+                )
+                total_cost += cost_breakdown["total_cost_usd"]
+            except ValueError as e:
+                # Track unknown models but don't crash
+                unavailable_models.add(model)
+                logger.warning(f"Pricing not available for model '{model}': {e}")
 
-            total_cost += cost_breakdown["total_cost_usd"]
-
-        return round(total_cost, 6)
+        # Return structured result
+        if unavailable_models:
+            return {
+                "total_cost_usd": None,
+                "pricing_available": False,
+                "unavailable_models": sorted(unavailable_models),
+                "partial_cost_usd": round(total_cost, 6) if total_cost > 0 else None,
+            }
+        else:
+            return {
+                "total_cost_usd": round(total_cost, 6),
+                "pricing_available": True,
+            }
 
     def _calculate_durations(self) -> tuple[float, Optional[float], Optional[float]]:
         """Calculate total, planner, and workflow durations.
@@ -147,7 +167,7 @@ class MetricsCollector:
         Returns:
             Dictionary with execution metrics
         """
-        cost = self.calculate_costs(llm_calls)
+        cost_data = self.calculate_costs(llm_calls)
         tokens = self._aggregate_token_counts(llm_calls)
         tokens_total = tokens["input"] + tokens["output"]
 
@@ -157,7 +177,7 @@ class MetricsCollector:
         metrics = {
             "duration_ms": round(duration, 2) if duration else None,
             "nodes_executed": len(node_timings),
-            "cost_usd": cost,
+            "cost_usd": cost_data.get("total_cost_usd"),
             "tokens_input": tokens["input"],
             "tokens_output": tokens["output"],
             "tokens_total": tokens_total,
@@ -232,7 +252,7 @@ class MetricsCollector:
         total_tokens = self._aggregate_token_counts(llm_calls)
 
         # Calculate total cost
-        total_cost = self.calculate_costs(llm_calls)
+        cost_data = self.calculate_costs(llm_calls)
 
         # Count nodes
         num_nodes = len(self.planner_nodes) + len(self.workflow_nodes)
@@ -259,8 +279,15 @@ class MetricsCollector:
             "tokens_input": total_tokens["input"],
             "tokens_output": total_tokens["output"],
             "tokens_total": total_tokens["input"] + total_tokens["output"],
-            "cost_usd": total_cost,
+            "cost_usd": cost_data.get("total_cost_usd"),
         }
+
+        # Add pricing availability info if pricing was unavailable
+        if not cost_data.get("pricing_available", True):
+            total_metrics["pricing_available"] = False
+            total_metrics["unavailable_models"] = cost_data.get("unavailable_models", [])
+            if cost_data.get("partial_cost_usd") is not None:
+                total_metrics["partial_cost_usd"] = cost_data["partial_cost_usd"]
 
         # Add cache tokens if present
         if total_tokens["cache_creation"] > 0:
@@ -280,10 +307,15 @@ class MetricsCollector:
         summary = {
             "duration_ms": round(total_duration, 2),
             "duration_planner_ms": round(planner_duration, 2) if planner_duration else None,
-            "total_cost_usd": total_cost,
+            "total_cost_usd": cost_data.get("total_cost_usd"),
             "num_nodes": num_nodes,
             "metrics": metrics,
         }
+
+        # Add pricing availability info to top-level summary
+        if not cost_data.get("pricing_available", True):
+            summary["pricing_available"] = False
+            summary["unavailable_models"] = cost_data.get("unavailable_models", [])
 
         # Add performance summaries
         self._add_cache_performance(summary, total_tokens)

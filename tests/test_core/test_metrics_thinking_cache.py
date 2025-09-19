@@ -181,10 +181,11 @@ class TestMetricsThinkingCache:
             },
         ]
 
-        total_cost = collector.calculate_costs(llm_calls)
+        cost_data = collector.calculate_costs(llm_calls)
 
         # Expected: 0.003 + 0.0075 + 0.015 = 0.0255
-        assert total_cost == pytest.approx(0.0255, rel=1e-5)
+        assert cost_data["pricing_available"] is True
+        assert cost_data["total_cost_usd"] == pytest.approx(0.0255, rel=1e-5)
 
     def test_cache_cost_calculation(self):
         """Test that cache tokens affect cost calculation correctly."""
@@ -202,7 +203,8 @@ class TestMetricsThinkingCache:
             },
         ]
 
-        total_cost = collector.calculate_costs(llm_calls)
+        cost_data = collector.calculate_costs(llm_calls)
 
         # Expected: 0.003 + 0.0075 + 0.006 + 0.0003 = 0.0168
-        assert total_cost == pytest.approx(0.0168, rel=1e-5)
+        assert cost_data["pricing_available"] is True
+        assert cost_data["total_cost_usd"] == pytest.approx(0.0168, rel=1e-5)
