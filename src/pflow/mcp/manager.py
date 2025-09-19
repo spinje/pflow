@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -16,37 +15,44 @@ class MCPServerManager:
     """Manages MCP server configurations.
 
     This class handles loading, saving, and managing MCP server configurations
-    stored in ~/.pflow/mcp-servers.json. It follows the same patterns as
-    WorkflowManager and Registry for consistency.
+    stored in ~/.pflow/mcp-servers.json using the standard MCP format.
 
-    ## Configuration Format
+    ## Standard MCP Configuration Format
 
     ```json
     {
-        "servers": {
+        "mcpServers": {
             "github": {
-                "command": "npx -y @modelcontextprotocol/server-github",
-                "args": [],
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-github"],
                 "env": {
                     "GITHUB_TOKEN": "${GITHUB_TOKEN}"
-                },
-                "transport": "stdio",
-                "created_at": "2024-01-01T00:00:00Z",
-                "updated_at": "2024-01-01T00:00:00Z"
+                }
+            },
+            "http-server": {
+                "type": "http",
+                "url": "https://api.example.com/mcp",
+                "headers": {
+                    "Authorization": "Bearer ${TOKEN}"
+                }
             }
-        },
-        "version": "1.0.0"
+        }
     }
     ```
 
+    ## Key Format Rules
+    - All servers are under the "mcpServers" key
+    - The "type" field is optional for stdio servers (absence means stdio)
+    - The "type" field must be "http" for HTTP servers
+    - No timestamps, version numbers, or other metadata
+
     ## Environment Variable Expansion
 
-    The `env` field supports `${VAR}` syntax for environment variable expansion.
-    This expansion happens at runtime when the server is started, not when saved.
+    The `env` field supports `${VAR}` and `${VAR:-default}` syntax for environment
+    variable expansion. This expansion happens at runtime when the server is started.
     """
 
     DEFAULT_CONFIG_PATH = Path("~/.pflow/mcp-servers.json")
-    CONFIG_VERSION = "1.0.0"
 
     def __init__(self, config_path: Optional[Path] = None):
         """Initialize MCPServerManager.
@@ -69,24 +75,22 @@ class MCPServerManager:
         """Load MCP server configuration from disk.
 
         Returns:
-            Configuration dictionary with servers and metadata
+            Configuration dictionary in standard MCP format
 
         """
         if not self.config_path.exists():
             logger.info(f"No MCP server configuration found at {self.config_path}, returning empty config")
-            return {"servers": {}, "version": self.CONFIG_VERSION}
+            return {"mcpServers": {}}
 
         try:
             with open(self.config_path) as f:
                 config = json.load(f)
 
-            # Ensure required fields exist
-            if "servers" not in config:
-                config["servers"] = {}
-            if "version" not in config:
-                config["version"] = self.CONFIG_VERSION
+            # Ensure mcpServers exists
+            if "mcpServers" not in config:
+                config["mcpServers"] = {}
 
-            logger.debug(f"Loaded {len(config['servers'])} MCP servers from configuration")
+            logger.debug(f"Loaded {len(config.get('mcpServers', {}))} MCP servers from configuration")
             return dict(config)
 
         except json.JSONDecodeError as e:
@@ -102,16 +106,12 @@ class MCPServerManager:
         Uses atomic file operations to prevent corruption.
 
         Args:
-            config: Configuration dictionary to save
+            config: Configuration dictionary in standard MCP format
 
         """
-        # Ensure version is set
-        if "version" not in config:
-            config["version"] = self.CONFIG_VERSION
-
         # Validate structure
-        if "servers" not in config:
-            raise ValueError("Configuration must have 'servers' field")
+        if "mcpServers" not in config:
+            raise ValueError("Configuration must have 'mcpServers' field")
 
         # Create temporary file in same directory for atomic write
         temp_fd, temp_path = tempfile.mkstemp(dir=self.config_path.parent, prefix=".mcp-servers-", suffix=".tmp")
@@ -125,7 +125,7 @@ class MCPServerManager:
             # Atomic rename (overwrites existing file)
             Path(temp_path).replace(self.config_path)
 
-            logger.info(f"Saved {len(config['servers'])} MCP servers to configuration")
+            logger.info(f"Saved {len(config.get('mcpServers', {}))} MCP servers to configuration")
 
         except Exception:
             # Clean up temporary file on error
@@ -150,6 +150,10 @@ class MCPServerManager:
     ) -> None:
         """Add or update an MCP server configuration.
 
+        Creates a standard MCP configuration format entry.
+        For stdio servers, the "type" field is omitted (defaults to stdio).
+        For HTTP servers, "type": "http" is added.
+
         Args:
             name: Server name (e.g., "github")
             transport: Transport type ("stdio" or "http")
@@ -159,32 +163,30 @@ class MCPServerManager:
             url: Server URL (required for HTTP)
             auth: Authentication config (for HTTP)
             headers: Custom headers (for HTTP)
-            timeout: HTTP timeout in seconds (default: 30)
-            sse_timeout: SSE read timeout in seconds (default: 300)
+            timeout: HTTP timeout in seconds (not part of standard format)
+            sse_timeout: SSE read timeout in seconds (not part of standard format)
 
         """
         # Validate server name
         self._validate_server_name(name)
 
         config = self.load()
-        now = datetime.now(timezone.utc).isoformat()
-        is_update = name in config["servers"]
+        servers = config.get("mcpServers", {})
+        is_update = name in servers
 
         # Build configuration based on transport
         if transport == "stdio":
-            server_config = self._build_stdio_config(command, args, env, now)
+            server_config = self._build_stdio_config(command, args, env)
         elif transport == "http":
-            server_config = self._build_http_config(url, auth, headers, timeout, sse_timeout, env, now)
+            server_config = self._build_http_config(url, auth, headers, timeout, sse_timeout, env)
         else:
             raise ValueError(f"Unsupported transport: {transport}. Supported: 'stdio', 'http'")
-
-        # Preserve created_at for updates
-        self._set_created_at(server_config, is_update, config.get("servers", {}).get(name, {}), now)
 
         # Validate the complete configuration
         self.validate_server_config(server_config)
 
-        config["servers"][name] = server_config
+        servers[name] = server_config
+        config["mcpServers"] = servers
         self.save(config)
 
         # Log the action
@@ -210,18 +212,16 @@ class MCPServerManager:
         command: Optional[str],
         args: Optional[list[str]],
         env: Optional[dict[str, str]],
-        now: str,
     ) -> dict[str, Any]:
-        """Build stdio transport configuration.
+        """Build stdio configuration in standard MCP format.
 
         Args:
             command: Command to execute
             args: Command arguments
             env: Environment variables
-            now: Current timestamp
 
         Returns:
-            Server configuration dict
+            Server configuration in standard format
 
         Raises:
             ValueError: If command is missing
@@ -230,13 +230,18 @@ class MCPServerManager:
         if not command:
             raise ValueError("Command is required for stdio transport")
 
-        return {
-            "transport": "stdio",
+        config: dict[str, Any] = {
             "command": command,
-            "args": args or [],
-            "env": env or {},
-            "updated_at": now,
         }
+
+        if args:
+            config["args"] = args
+
+        if env:
+            config["env"] = env
+
+        # type is optional for stdio (it's the default)
+        return config
 
     def _build_http_config(
         self,
@@ -246,9 +251,8 @@ class MCPServerManager:
         timeout: Optional[int],
         sse_timeout: Optional[int],
         env: Optional[dict[str, str]],
-        now: str,
     ) -> dict[str, Any]:
-        """Build HTTP transport configuration.
+        """Build HTTP configuration in standard MCP format.
 
         Args:
             url: Server URL
@@ -257,10 +261,9 @@ class MCPServerManager:
             timeout: HTTP timeout
             sse_timeout: SSE timeout
             env: Environment variables
-            now: Current timestamp
 
         Returns:
-            Server configuration dict
+            Server configuration in standard format
 
         Raises:
             ValueError: If URL is missing
@@ -269,48 +272,21 @@ class MCPServerManager:
         if not url:
             raise ValueError("URL is required for HTTP transport")
 
-        server_config: dict[str, Any] = {
-            "transport": "http",
+        config: dict[str, Any] = {
+            "type": "http",
             "url": url,
-            "updated_at": now,
         }
 
         # Add optional fields if provided
         if auth:
-            server_config["auth"] = auth
+            config["auth"] = auth
         if headers:
-            server_config["headers"] = headers
-        if timeout is not None:
-            server_config["timeout"] = timeout
-        if sse_timeout is not None:
-            server_config["sse_timeout"] = sse_timeout
+            config["headers"] = headers
         if env:
-            server_config["env"] = env  # Some HTTP servers may need env vars
+            config["env"] = env
 
-        return server_config
-
-    def _set_created_at(
-        self,
-        server_config: dict[str, Any],
-        is_update: bool,
-        existing_config: dict[str, Any],
-        now: str,
-    ) -> None:
-        """Set created_at timestamp for server config.
-
-        Args:
-            server_config: Server configuration to update
-            is_update: Whether this is an update
-            existing_config: Existing server config if updating
-            now: Current timestamp
-
-        """
-        if not is_update:
-            server_config["created_at"] = now
-        elif "created_at" in existing_config:
-            server_config["created_at"] = existing_config["created_at"]
-        else:
-            server_config["created_at"] = now
+        # Note: timeout fields are not part of the standard, skip them
+        return config
 
     def _log_server_action(
         self,
@@ -347,12 +323,14 @@ class MCPServerManager:
 
         """
         config = self.load()
+        servers = config.get("mcpServers", {})
 
-        if name not in config["servers"]:
+        if name not in servers:
             logger.warning(f"MCP server '{name}' not found in configuration")
             return False
 
-        del config["servers"][name]
+        del servers[name]
+        config["mcpServers"] = servers
         self.save(config)
 
         logger.info(f"Removed MCP server '{name}' from configuration")
@@ -369,8 +347,9 @@ class MCPServerManager:
 
         """
         config = self.load()
-        result = config["servers"].get(name)
-        return dict(result) if result else None
+        servers = config.get("mcpServers", {})
+        server_config = servers.get(name)
+        return server_config if server_config is not None else None
 
     def list_servers(self) -> list[str]:
         """List all configured MCP server names.
@@ -380,7 +359,7 @@ class MCPServerManager:
 
         """
         config = self.load()
-        return list(config["servers"].keys())
+        return list(config.get("mcpServers", {}).keys())
 
     def get_all_servers(self) -> dict[str, dict[str, Any]]:
         """Get all server configurations.
@@ -390,7 +369,7 @@ class MCPServerManager:
 
         """
         config = self.load()
-        return dict(config["servers"])
+        return dict(config["mcpServers"])
 
     def parse_command_string(self, command_str: str) -> tuple[str, list[str]]:
         """Parse a command string into command and arguments.
@@ -419,24 +398,22 @@ class MCPServerManager:
         """Validate a server configuration for both stdio and HTTP transports.
 
         Args:
-            config: Server configuration to validate
+            config: Server configuration to validate (in standard MCP format)
 
         Raises:
             ValueError: If configuration is invalid
 
         """
-        # Transport is always required
-        if "transport" not in config:
-            raise ValueError("Missing required field: transport")
+        # Determine transport type from config
+        # type field is optional for stdio, required and must be "http" for HTTP
+        transport_type = config.get("type", "stdio")
 
-        transport = config["transport"]
-
-        if transport == "stdio":
+        if transport_type == "stdio" or transport_type is None:
             self._validate_stdio_config(config)
-        elif transport == "http":
+        elif transport_type == "http":
             self._validate_http_config(config)
         else:
-            raise ValueError(f"Unsupported transport type: {transport}. Supported: 'stdio', 'http'")
+            raise ValueError(f"Unsupported transport type: {transport_type}. Supported: 'stdio' (default), 'http'")
 
         # Common validation for both transports
         # Validate env is a dictionary if present
@@ -447,14 +424,14 @@ class MCPServerManager:
         """Validate stdio transport configuration.
 
         Args:
-            config: Server configuration to validate
+            config: Server configuration to validate (in standard MCP format)
 
         Raises:
             ValueError: If configuration is invalid
 
         """
         if "command" not in config:
-            raise ValueError("stdio transport requires 'command' field")
+            raise ValueError("stdio configuration requires 'command' field")
 
         if not config["command"]:
             raise ValueError("Command cannot be empty")
@@ -467,7 +444,7 @@ class MCPServerManager:
         """Validate HTTP transport configuration.
 
         Args:
-            config: Server configuration to validate
+            config: Server configuration to validate (in standard MCP format)
 
         Raises:
             ValueError: If configuration is invalid
@@ -498,7 +475,7 @@ class MCPServerManager:
 
         """
         if "url" not in config:
-            raise ValueError("HTTP transport requires 'url' field")
+            raise ValueError("HTTP configuration requires 'url' field")
 
         url = config["url"]
         if not url or not isinstance(url, str):
@@ -567,3 +544,131 @@ class MCPServerManager:
                 raise ValueError("Basic auth requires 'password' field")
         else:
             raise ValueError(f"Unsupported auth type: {auth_type}. Supported: 'bearer', 'api_key', 'basic'")
+
+    def parse_standard_mcp_config(self, config_path: Path) -> dict[str, dict[str, Any]]:
+        """Parse a standard MCP JSON config file with mcpServers wrapper.
+
+        Standard MCP config format:
+        {
+            "mcpServers": {
+                "server-name": {
+                    "command": "node",
+                    "args": ["server.js"],
+                    "env": {"KEY": "${VALUE}"}
+                },
+                "http-server": {
+                    "type": "http",
+                    "url": "https://api.example.com/mcp",
+                    "headers": {"Authorization": "Bearer ${TOKEN}"}
+                }
+            }
+        }
+
+        Args:
+            config_path: Path to the MCP config file
+
+        Returns:
+            Dictionary of server configurations in standard MCP format
+
+        Raises:
+            ValueError: If file format is invalid
+            FileNotFoundError: If config file doesn't exist
+        """
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in {config_path}: {e}") from e
+
+        # Check for mcpServers wrapper
+        if "mcpServers" not in data:
+            raise ValueError(f"Invalid MCP config format in {config_path}: missing 'mcpServers' key")
+
+        servers = data["mcpServers"]
+        if not isinstance(servers, dict):
+            raise TypeError(f"Invalid MCP config format in {config_path}: 'mcpServers' must be an object")
+
+        # Validate each server config but keep in standard format
+        validated_servers = {}
+        for name, config in servers.items():
+            try:
+                # Just validate, don't convert
+                self._validate_standard_config(name, config)
+                validated_servers[name] = config
+            except Exception as e:
+                logger.exception(f"Failed to validate server '{name}' from {config_path}")
+                raise ValueError(f"Failed to validate server '{name}': {e}") from e
+
+        return validated_servers
+
+    def _validate_standard_config(self, name: str, config: dict[str, Any]) -> None:
+        """Validate a standard MCP server config.
+
+        Args:
+            name: Server name
+            config: Standard MCP server configuration
+
+        Raises:
+            ValueError: If configuration is invalid or unsupported
+        """
+        # Determine transport type from standard format
+        # type field is optional for stdio (absence means stdio)
+        # type field must be "http" for HTTP servers
+        transport_type = config.get("type", "stdio")
+
+        # Validate based on transport type
+        if transport_type == "stdio" or transport_type is None:
+            if "command" not in config:
+                raise ValueError(f"Server '{name}' requires 'command' field for stdio configuration")
+        elif transport_type == "http":
+            if "url" not in config:
+                raise ValueError(f"Server '{name}' requires 'url' field for HTTP configuration")
+        else:
+            raise ValueError(
+                f"Unsupported type '{transport_type}' for server '{name}'. Supported: 'stdio' (default), 'http'"
+            )
+
+    def add_servers_from_file(self, config_path: Path) -> list[str]:
+        """Add servers from a standard MCP config file.
+
+        Args:
+            config_path: Path to the MCP config file
+
+        Returns:
+            List of server names that were added/updated
+
+        Raises:
+            ValueError: If file format is invalid
+            FileNotFoundError: If config file doesn't exist
+        """
+        # Parse the standard config
+        new_servers = self.parse_standard_mcp_config(config_path)
+
+        # Load existing config
+        existing_config = self.load()
+        servers = existing_config.get("mcpServers", {})
+
+        # Add/update each server
+        added_servers = []
+
+        for name, server_config in new_servers.items():
+            # The configs are already in standard format from parse_standard_mcp_config
+            # Just validate before adding
+            self.validate_server_config(server_config)
+
+            # Add to servers (in standard format, no timestamps)
+            is_update = name in servers
+            servers[name] = server_config
+            added_servers.append(name)
+
+            action = "Updated" if is_update else "Added"
+            logger.info(f"{action} server '{name}' from {config_path}")
+
+        # Save the updated configuration
+        existing_config["mcpServers"] = servers
+        self.save(existing_config)
+
+        return added_servers

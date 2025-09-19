@@ -1,4 +1,4 @@
-# Task 47: Integrate MCP solution with Composio
+# Task 47: Implement MCP http transport
 
 Support HTTP Transport for MCP Servers?
 

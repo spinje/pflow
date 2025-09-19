@@ -34,6 +34,7 @@ Create a pull request based on the current branch and recent commits:
    - Ensure we're on a feature branch (not main/master)
    - Ensure all changes are committed (check git status above)
    - If any commits are necessary, commit them with a good message (include the session id if available)
+   - There should be a issue number associated with the PR if you dont know what it is, ask the user if an existing issue exists before you proceed
 
 3. **Analyze commits to generate PR details:**
    - Show commits that will be in the PR:
@@ -48,6 +49,7 @@ Create a pull request based on the current branch and recent commits:
      git diff --stat origin/$DEFAULT_BRANCH...HEAD
      ```
    - Review the commit history
+   - Rely on your own knowledge about what changes that has been made (your should have a pretty good idea about this)
    - If single commit: use its message as PR title (if no user args provided)
    - If multiple commits: synthesize a title from the changes
    - Identify the type of change (feature, fix, refactor, etc.)
@@ -64,7 +66,7 @@ Create a pull request based on the current branch and recent commits:
    If user provided arguments, use them as guidance for the title/description.
    
    Otherwise, generate from commits:
-   - **Title format:** `<type>: <concise description>`
+   - **Title format:** `<type>: <concise description> <fixes/resolves/closes/addresses/... #issue-number>`
      - feat: New feature
      - fix: Bug fix
      - docs: Documentation

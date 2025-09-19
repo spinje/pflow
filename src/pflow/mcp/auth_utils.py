@@ -9,7 +9,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Compile regex pattern once for performance
-ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+# Updated to support ${VAR} and ${VAR:-default} syntax
+ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}")
 
 # Authentication type constants
 AUTH_TYPE_BEARER = "bearer"
@@ -37,10 +38,19 @@ def expand_env_vars_nested(data: Any) -> Any:
         # Expand environment variables in strings
         def replacer(match: Any) -> str:
             env_var = match.group(1)
-            env_value = os.environ.get(env_var, "")
-            if not env_value:
+            default_value = match.group(2)  # Will be None if no default specified
+
+            env_value = os.environ.get(env_var)
+
+            if env_value is not None:
+                return env_value
+            elif default_value is not None:
+                # Use the default value if provided
+                return str(default_value)
+            else:
+                # No value and no default - log warning and use empty string
                 logger.warning(f"Environment variable {env_var} not found, using empty string")
-            return env_value
+                return ""
 
         return ENV_VAR_PATTERN.sub(replacer, data)
     else:

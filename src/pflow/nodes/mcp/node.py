@@ -192,14 +192,15 @@ class MCPNode(Node):
             Tool execution results
         """
         config = prep_res["config"]
-        transport = config.get("transport", "stdio")
+        # Standard format: use "type" field, default to stdio if not present
+        transport_type = config.get("type", "stdio")
 
-        if transport == "http":
+        if transport_type == "http":
             return await self._exec_async_http(prep_res)
-        elif transport == "stdio":
+        elif transport_type == "stdio" or transport_type is None:
             return await self._exec_async_stdio(prep_res)
         else:
-            raise ValueError(f"Unsupported transport: {transport}")
+            raise ValueError(f"Unsupported transport type: {transport_type}")
 
     async def _exec_async_stdio(self, prep_res: dict) -> dict:
         """Stdio transport implementation using MCP SDK.
@@ -563,7 +564,8 @@ class MCPNode(Node):
         with open(config_path) as f:
             config = json.load(f)
 
-        servers = config.get("servers", {})
+        # Use standard MCP format key
+        servers = config.get("mcpServers", {})
 
         if server_name not in servers:
             available = ", ".join(servers.keys()) if servers else "none"
