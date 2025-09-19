@@ -347,7 +347,9 @@ class MCPServerManager:
 
         """
         config = self.load()
-        return config.get("mcpServers", {}).get(name)
+        servers = config.get("mcpServers", {})
+        server_config = servers.get(name)
+        return server_config if server_config is not None else None
 
     def list_servers(self) -> list[str]:
         """List all configured MCP server names.

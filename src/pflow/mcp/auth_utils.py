@@ -46,7 +46,7 @@ def expand_env_vars_nested(data: Any) -> Any:
                 return env_value
             elif default_value is not None:
                 # Use the default value if provided
-                return default_value
+                return str(default_value)
             else:
                 # No value and no default - log warning and use empty string
                 logger.warning(f"Environment variable {env_var} not found, using empty string")
