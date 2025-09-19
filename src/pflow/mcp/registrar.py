@@ -45,6 +45,53 @@ class MCPRegistrar:
             self._settings_manager = SettingsManager()
         return self._settings_manager
 
+    def register_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None:
+        """Register discovered tools in the registry.
+
+        This is the method called by auto-discovery to register tools
+        without re-discovering them.
+
+        Args:
+            server_name: Name of the MCP server
+            tools: List of tool definitions discovered from the server
+        """
+        # Load complete registry (unfiltered) to avoid persisting a filtered subset
+        nodes = self.registry.load(include_filtered=True)
+
+        registered_count = 0
+        filtered_count = 0
+
+        for tool in tools:
+            # Create node name following mcp-{server}-{tool} pattern
+            node_name = f"mcp-{server_name}-{tool['name']}"
+
+            # Check if node should be included based on settings
+            if not self.settings_manager.should_include_node(node_name):
+                filtered_count += 1
+                logger.debug(f"Filtering out MCP tool '{node_name}' based on settings")
+                # Remove from registry if it was previously registered
+                if node_name in nodes:
+                    del nodes[node_name]
+                continue
+
+            # Check if already exists
+            if node_name in nodes:
+                logger.debug(f"Updating existing registry entry for {node_name}")
+            else:
+                logger.debug(f"Creating new registry entry for {node_name}")
+
+            # Create virtual registry entry
+            nodes[node_name] = self._create_registry_entry(server_name, tool)
+            registered_count += 1
+
+        # Save updated registry
+        self.registry.save(nodes)
+
+        if filtered_count > 0:
+            logger.info(f"Registered {registered_count} tools from {server_name} ({filtered_count} filtered out)")
+        else:
+            logger.info(f"Registered {registered_count} tools from {server_name}")
+
     def sync_server(self, server_name: str) -> dict[str, Any]:
         """Sync tools from an MCP server to the registry.
 
@@ -61,7 +108,8 @@ class MCPRegistrar:
 
         # Discover tools from server
         try:
-            tools = self.discovery.discover_tools(server_name)
+            # Don't show server output during sync (not verbose)
+            tools = self.discovery.discover_tools(server_name, verbose=False)
         except Exception as e:
             logger.exception("Failed to discover tools")
             return {"server": server_name, "tools_discovered": 0, "tools_registered": 0, "error": str(e)}

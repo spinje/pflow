@@ -1,8 +1,11 @@
 """MCP tool discovery for pflow."""
 
 import asyncio
+import contextlib
 import logging
-from typing import Any, Optional
+import sys
+from collections.abc import Iterator
+from typing import Any, Optional, TextIO
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -29,11 +32,31 @@ class MCPDiscovery:
         """
         self.manager = manager or MCPServerManager()
 
-    def discover_tools(self, server_name: str) -> list[dict[str, Any]]:
+    @contextlib.contextmanager
+    def _get_stderr_handler(self, verbose: bool) -> Iterator[TextIO]:
+        """Get stderr handler for MCP server output.
+
+        Args:
+            verbose: Whether to show server stderr
+
+        Yields:
+            File-like object for stderr output
+        """
+        import os
+
+        if verbose:
+            yield sys.stderr
+        else:
+            # Properly manage devnull file handle
+            with open(os.devnull, "w") as devnull:
+                yield devnull
+
+    def discover_tools(self, server_name: str, verbose: bool = False) -> list[dict[str, Any]]:
         """Discover tools from an MCP server (synchronous wrapper).
 
         Args:
             server_name: Name of the configured MCP server
+            verbose: Whether to show server output to stderr
 
         Returns:
             List of tool definitions with metadata
@@ -50,36 +73,43 @@ class MCPDiscovery:
 
         try:
             # Run async discovery in sync context
-            return asyncio.run(self._discover_async(server_name, server_config))
+            return asyncio.run(self._discover_async(server_name, server_config, verbose))
         except Exception as e:
             logger.exception(f"Failed to discover tools from {server_name}")
             raise RuntimeError(f"Tool discovery failed for {server_name}: {e}") from e
 
-    async def _discover_async(self, server_name: str, server_config: dict[str, Any]) -> list[dict[str, Any]]:
+    async def _discover_async(
+        self, server_name: str, server_config: dict[str, Any], verbose: bool = False
+    ) -> list[dict[str, Any]]:
         """Async implementation of tool discovery with transport routing.
 
         Args:
             server_name: Name of the server
             server_config: Server configuration dictionary
+            verbose: Whether to show server output to stderr
 
         Returns:
             List of tool definitions
         """
-        transport = server_config.get("transport", "stdio")
+        # Standard format: use "type" field, default to stdio if not present
+        transport_type = server_config.get("type", "stdio")
 
-        if transport == "http":
+        if transport_type == "http":
             return await self._discover_async_http(server_name, server_config)
-        elif transport == "stdio":
-            return await self._discover_async_stdio(server_name, server_config)
+        elif transport_type == "stdio" or transport_type is None:
+            return await self._discover_async_stdio(server_name, server_config, verbose)
         else:
-            raise ValueError(f"Unsupported transport: {transport}")
+            raise ValueError(f"Unsupported transport type: {transport_type}")
 
-    async def _discover_async_stdio(self, server_name: str, server_config: dict[str, Any]) -> list[dict[str, Any]]:
+    async def _discover_async_stdio(
+        self, server_name: str, server_config: dict[str, Any], verbose: bool = False
+    ) -> list[dict[str, Any]]:
         """Stdio transport discovery implementation.
 
         Args:
             server_name: Name of the server
             server_config: Server configuration dictionary
+            verbose: Whether to show server output to stderr
 
         Returns:
             List of tool definitions
@@ -98,8 +128,10 @@ class MCPDiscovery:
 
         tools_list = []
 
-        try:
-            async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        # Use the stderr handler context manager for proper file management
+        with self._get_stderr_handler(verbose) as errlog:
+            # Now use the configured errlog with stdio_client
+            async with stdio_client(params, errlog=errlog) as (read, write), ClientSession(read, write) as session:
                 # Initialize handshake
                 await session.initialize()
                 logger.debug(f"Initialized connection to {server_name}")
@@ -133,10 +165,6 @@ class MCPDiscovery:
                     tools_list.append(tool_def)
 
                 logger.info(f"Discovered {len(tools_list)} tools from {server_name}")
-
-        except Exception:
-            logger.exception("Error during tool discovery")
-            raise
 
         return tools_list
 

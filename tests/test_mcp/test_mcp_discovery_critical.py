@@ -169,7 +169,7 @@ class TestMCPRegistrarCritical:
             manager.add_server(name="test", transport="stdio", command="test-cmd", args=[])
 
             # Mock discovery to return tools
-            def mock_discover(server_name):
+            def mock_discover(server_name, verbose=False):
                 return [
                     {
                         "name": "tool1",

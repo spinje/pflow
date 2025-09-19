@@ -7,9 +7,11 @@ this group, allowing normal Click command processing for the subcommands.
 Architecture: main_wrapper.py -> mcp() group -> individual commands (add, list, sync, etc.)
 """
 
+import hashlib
 import json
 import logging
 import sys
+import time
 from typing import Optional
 
 import click
@@ -25,237 +27,69 @@ def mcp() -> None:
     pass
 
 
-def _parse_environment_variables(env: tuple) -> dict[str, str]:
-    """Parse environment variables from command line arguments.
-
-    Args:
-        env: Tuple of environment variable strings in KEY=VALUE format
-
-    Returns:
-        Dictionary mapping environment variable names to values
-
-    Raises:
-        SystemExit: If any environment variable has invalid format
-    """
-    env_dict = {}
-    for env_var in env:
-        if "=" not in env_var:
-            click.echo(f"Error: Invalid environment variable format: {env_var} (expected KEY=VALUE)", err=True)
-            sys.exit(1)
-        key, value = env_var.split("=", 1)
-        env_dict[key] = value
-    return env_dict
-
-
-def _parse_headers(headers: tuple) -> dict[str, str]:
-    """Parse HTTP headers from command line arguments.
-
-    Args:
-        headers: Tuple of header strings in KEY=VALUE format
-
-    Returns:
-        Dictionary mapping header names to values
-
-    Raises:
-        SystemExit: If any header has invalid format
-    """
-    header_dict = {}
-    for h in headers:
-        if "=" not in h:
-            click.echo(f"Error: Invalid header format: {h} (expected KEY=VALUE)", err=True)
-            sys.exit(1)
-        key, value = h.split("=", 1)
-        header_dict[key] = value
-    return header_dict
-
-
-def _build_auth_config(
-    auth_type: Optional[str],
-    auth_token: Optional[str],
-    auth_header: str,
-    username: Optional[str],
-    password: Optional[str],
-) -> Optional[dict[str, str]]:
-    """Build authentication configuration for HTTP transport.
-
-    Args:
-        auth_type: Type of authentication (bearer, api_key, or basic)
-        auth_token: Authentication token or API key
-        auth_header: Header name for API key authentication
-        username: Username for basic authentication
-        password: Password for basic authentication
-
-    Returns:
-        Authentication configuration dictionary or None if no auth configured
-
-    Raises:
-        SystemExit: If required authentication parameters are missing
-    """
-    if not auth_type:
-        return None
-
-    if auth_type == "bearer":
-        if not auth_token:
-            click.echo("Error: --auth-token is required for bearer auth", err=True)
-            sys.exit(1)
-        return {"type": "bearer", "token": auth_token}
-
-    if auth_type == "api_key":
-        if not auth_token:
-            click.echo("Error: --auth-token is required for API key auth", err=True)
-            sys.exit(1)
-        return {"type": "api_key", "key": auth_token, "header": auth_header}
-
-    if auth_type == "basic":
-        if not username or not password:
-            click.echo("Error: --username and --password are required for basic auth", err=True)
-            sys.exit(1)
-        return {"type": "basic", "username": username, "password": password}
-
-    return None
-
-
-def _add_http_server(
-    manager: MCPServerManager,
-    name: str,
-    url: str,
-    auth_config: Optional[dict[str, str]],
-    header_dict: dict[str, str],
-    env_dict: dict[str, str],
-    auth_type: Optional[str],
-    timeout: Optional[int],
-    sse_timeout: Optional[int],
-) -> None:
-    """Add an HTTP transport MCP server.
-
-    Args:
-        manager: MCPServerManager instance
-        name: Server name
-        url: Server URL
-        auth_config: Authentication configuration
-        header_dict: HTTP headers
-        env_dict: Environment variables
-        auth_type: Type of authentication for display
-        timeout: HTTP timeout in seconds
-        sse_timeout: SSE read timeout in seconds
-    """
-    manager.add_server(
-        name=name,
-        transport="http",
-        url=url,
-        auth=auth_config,
-        headers=header_dict if header_dict else None,
-        env=env_dict if env_dict else None,
-        timeout=timeout,
-        sse_timeout=sse_timeout,
-    )
-
-    click.echo(f"✓ Added HTTP MCP server '{name}'")
-    click.echo(f"  URL: {url}")
-    if auth_config:
-        click.echo(f"  Authentication: {auth_type}")
-    if header_dict:
-        click.echo(f"  Headers: {', '.join(f'{k}={v}' for k, v in header_dict.items())}")
-
-
-def _add_stdio_server(manager: MCPServerManager, name: str, command: tuple, env_dict: dict[str, str]) -> None:
-    """Add a stdio transport MCP server.
-
-    Args:
-        manager: MCPServerManager instance
-        name: Server name
-        command: Command tuple (command and arguments)
-        env_dict: Environment variables
-
-    Raises:
-        SystemExit: If command is empty
-    """
-    if not command:
-        click.echo("Error: COMMAND is required for stdio transport", err=True)
-        sys.exit(1)
-
-    cmd = command[0]
-    args = list(command[1:]) if len(command) > 1 else []
-
-    manager.add_server(
-        name=name,
-        transport="stdio",
-        command=cmd,
-        args=args,
-        env=env_dict if env_dict else None,
-    )
-
-    click.echo(f"✓ Added stdio MCP server '{name}'")
-    click.echo(f"  Command: {cmd} {' '.join(args)}")
-    if env_dict:
-        click.echo(f"  Environment: {', '.join(f'{k}={v}' for k, v in env_dict.items())}")
-
-
 @mcp.command(name="add")
-@click.argument("name")
-@click.argument("command", nargs=-1, required=False)
-@click.option("--transport", default="stdio", type=click.Choice(["stdio", "http"]), help="Transport type")
-@click.option("--url", help="Server URL for HTTP transport")
-@click.option("--auth-type", type=click.Choice(["bearer", "api_key", "basic"]), help="Authentication type")
-@click.option("--auth-token", help="Authentication token/key (use ${ENV_VAR} for environment variables)")
-@click.option("--auth-header", default="X-API-Key", help="Header name for API key auth")
-@click.option("--username", help="Username for basic auth")
-@click.option("--password", help="Password for basic auth")
-@click.option("--header", "-H", multiple=True, help="Additional HTTP headers (KEY=VALUE)")
-@click.option("--timeout", type=int, help="HTTP timeout in seconds")
-@click.option("--sse-timeout", type=int, help="SSE read timeout in seconds")
-@click.option("--env", "-e", multiple=True, help="Environment variables (KEY=VALUE or KEY=${ENV_VAR})")
-def add(
-    name: str,
-    command: tuple,
-    transport: str,
-    url: Optional[str],
-    auth_type: Optional[str],
-    auth_token: Optional[str],
-    auth_header: str,
-    username: Optional[str],
-    password: Optional[str],
-    header: tuple,
-    timeout: Optional[int],
-    sse_timeout: Optional[int],
-    env: tuple,
-) -> None:
-    """Add a new MCP server configuration.
+@click.argument("config_files", nargs=-1, required=True, type=click.Path(exists=True))
+def add(config_files: tuple) -> None:
+    """Add MCP servers from standard JSON config files.
 
     Examples:
-        # Stdio transport (default):
-        pflow mcp add github npx -y @modelcontextprotocol/server-github
-        pflow mcp add github npx -y @modelcontextprotocol/server-github -e GITHUB_TOKEN=${GITHUB_TOKEN}
+        # Add single config:
+        pflow mcp add ./github.mcp.json
 
-        # HTTP transport:
-        pflow mcp add composio --transport http --url https://api.composio.dev/mcp --auth-type bearer --auth-token ${COMPOSIO_API_KEY}
-        pflow mcp add myapi --transport http --url http://localhost:3000/mcp --header "User-Agent=pflow/1.0"
+        # Add multiple configs:
+        pflow mcp add ./github.mcp.json ./jira.mcp.json ./slack.mcp.json
+
+    Config file format (standard MCP format):
+    {
+        "mcpServers": {
+            "github": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-github"],
+                "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
+            },
+            "composio": {
+                "type": "http",
+                "url": "https://api.composio.dev/mcp",
+                "headers": {"Authorization": "Bearer ${COMPOSIO_API_KEY}"}
+            }
+        }
+    }
     """
+    from pathlib import Path
+
     manager = MCPServerManager()
+    total_added = []
 
-    # Parse environment variables and headers
-    env_dict = _parse_environment_variables(env)
-    header_dict = _parse_headers(header)
+    for config_file in config_files:
+        config_path = Path(config_file)
 
-    try:
-        if transport == "http":
-            # HTTP transport configuration
-            if not url:
-                click.echo("Error: --url is required for HTTP transport", err=True)
-                sys.exit(1)
+        try:
+            # Add servers from this file
+            added_servers = manager.add_servers_from_file(config_path)
+            total_added.extend(added_servers)
 
-            # Build authentication configuration
-            auth_config = _build_auth_config(auth_type, auth_token, auth_header, username, password)
+            if added_servers:
+                click.echo(f"✓ Added/updated {len(added_servers)} server(s) from {config_path.name}:")
+                for server_name in added_servers:
+                    click.echo(f"  - {server_name}")
+            else:
+                click.echo(f"⚠ No servers found in {config_path.name}")
 
-            # Add HTTP server
-            _add_http_server(manager, name, url, auth_config, header_dict, env_dict, auth_type, timeout, sse_timeout)
-        else:
-            # Stdio transport configuration
-            _add_stdio_server(manager, name, command, env_dict)
+        except FileNotFoundError:
+            click.echo(f"Error: File not found: {config_path}", err=True)
+            sys.exit(1)
+        except ValueError as e:
+            click.echo(f"Error in {config_path.name}: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            click.echo(f"Error: Failed to add servers from {config_path.name}: {e}", err=True)
+            sys.exit(1)
 
-    except Exception as e:
-        click.echo(f"Error: Failed to add server: {e}", err=True)
-        sys.exit(1)
+    if total_added:
+        click.echo(f"\nSuccessfully configured {len(total_added)} MCP server(s).")
+        click.echo("Run 'pflow mcp sync --all' to discover available tools from all servers.")
+    else:
+        click.echo("No servers were added.")
 
 
 def _format_http_server(config: dict) -> list[str]:
@@ -422,6 +256,10 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar) -> Non
         manager: MCPServerManager instance
         registrar: MCPRegistrar instance
     """
+    import json
+
+    from pflow.registry import Registry
+
     servers = manager.list_servers()
     if not servers:
         click.echo("No MCP servers configured.")
@@ -447,6 +285,15 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar) -> Non
             click.echo(f"  ✓ {server}: {discovered} discovered, {registered} registered")
 
     click.echo(f"\nTotal: {total_discovered} tools discovered, {total_registered} registered")
+
+    # Update sync metadata after successful sync
+    registry = Registry()
+    registry.set_metadata("mcp_last_sync_time", time.time())
+
+    # Store hash of current servers
+    current_servers = sorted(servers)
+    servers_hash = hashlib.sha256(json.dumps(current_servers).encode()).hexdigest()
+    registry.set_metadata("mcp_servers_hash", servers_hash)
 
 
 def _sync_single_server(name: str, manager: MCPServerManager, registrar: MCPRegistrar) -> None:

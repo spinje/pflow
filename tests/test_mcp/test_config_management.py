@@ -8,7 +8,6 @@ import json
 import os
 import tempfile
 import threading
-import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -51,8 +50,8 @@ class TestAtomicWriteProtection:
             # Verify content is still valid
             current_data = json.loads(config_path.read_text())
             assert current_data == original_data
-            assert "github" in current_data["servers"]
-            assert "slack" not in current_data["servers"]
+            assert "github" in current_data["mcpServers"]
+            assert "slack" not in current_data["mcpServers"]
 
             # Verify no temp files left behind (cleanup happened)
             temp_files = list(Path(tmpdir).glob(".mcp-servers-*.tmp"))
@@ -86,8 +85,8 @@ class TestAtomicWriteProtection:
             # Original file must be unchanged
             assert config_path.stat().st_mtime == original_mtime
             config = manager.load()
-            assert "test1" in config["servers"]
-            assert "test2" not in config["servers"]
+            assert "test1" in config["mcpServers"]
+            assert "test2" not in config["mcpServers"]
 
 
 class TestConcurrentAccess:
@@ -105,10 +104,16 @@ class TestConcurrentAccess:
             results = []
             errors = []
 
-            def add_server_concurrent(name: str, delay: float = 0):
-                """Add server with random delay to create race conditions."""
+            # Use a barrier to ensure all threads start at the same time
+            num_servers = 10
+            barrier = threading.Barrier(num_servers)
+
+            def add_server_concurrent(name: str):
+                """Add server with barrier synchronization for true concurrency."""
                 try:
-                    time.sleep(delay)  # Create timing variations
+                    # Wait at barrier until all threads are ready
+                    barrier.wait()
+                    # Now all threads proceed simultaneously
                     manager = MCPServerManager(config_path=config_path)
                     manager.add_server(
                         name, "stdio", f"cmd_{name}", [f"arg_{name}"], env={f"KEY_{name}": f"value_{name}"}
@@ -132,13 +137,11 @@ class TestConcurrentAccess:
                 "kafka",
             ]
 
-            for i, server in enumerate(servers):
-                # Vary timing to create race conditions
-                delay = 0.001 * (i % 3)  # 0, 0.001, or 0.002 seconds
-                t = threading.Thread(target=add_server_concurrent, args=(server, delay))
+            for server in servers:
+                t = threading.Thread(target=add_server_concurrent, args=(server,))
                 threads.append(t)
 
-            # Start all threads at once
+            # Start all threads - they'll wait at the barrier
             for t in threads:
                 t.start()
 
@@ -154,14 +157,14 @@ class TestConcurrentAccess:
                 final_config = json.load(f)  # Should not raise
 
             # Should have servers (last-write-wins means some may be overwritten)
-            assert "servers" in final_config
-            assert len(final_config["servers"]) > 0
+            assert "mcpServers" in final_config
+            assert len(final_config["mcpServers"]) > 0
 
             # At minimum one server should exist
-            assert len(final_config["servers"]) >= 1
+            assert len(final_config["mcpServers"]) >= 1
 
             # Verify structure is intact
-            for _server_name, server_config in final_config["servers"].items():
+            for _server_name, server_config in final_config["mcpServers"].items():
                 assert "command" in server_config
                 assert "args" in server_config
                 assert isinstance(server_config["args"], list)
@@ -181,32 +184,58 @@ class TestConcurrentAccess:
 
             read_errors = []
 
+            # Use events to coordinate reader/writer threads
+            start_event = threading.Event()
+            stop_event = threading.Event()
+            write_count = 10
+            writes_completed = 0
+            write_lock = threading.Lock()
+
             def reader_thread():
                 """Continuously read config file."""
-                for _ in range(50):
+                # Wait for start signal
+                start_event.wait()
+
+                while not stop_event.is_set():
                     try:
                         manager = MCPServerManager(config_path=config_path)
                         config = manager.load()
                         # Should always be valid
-                        assert "servers" in config
-                        time.sleep(0.001)
+                        assert "mcpServers" in config
+                        # Yield to other threads without sleep
+                        threading.current_thread()._target = None  # Dummy operation to yield
                     except Exception as e:
                         read_errors.append(str(e))
 
             def writer_thread():
                 """Continuously write to config file."""
-                for i in range(10):
+                nonlocal writes_completed
+
+                # Wait for start signal
+                start_event.wait()
+
+                for i in range(write_count):
                     manager = MCPServerManager(config_path=config_path)
                     manager.add_server(f"server_{i}", "stdio", f"cmd_{i}", [])
-                    time.sleep(0.005)
 
-            # Start reader and writer simultaneously
+                    with write_lock:
+                        writes_completed += 1
+                        if writes_completed >= write_count:
+                            # Signal reader to stop after all writes complete
+                            stop_event.set()
+
+            # Create threads
             reader = threading.Thread(target=reader_thread)
             writer = threading.Thread(target=writer_thread)
 
+            # Start threads
             reader.start()
             writer.start()
 
+            # Signal both threads to begin work simultaneously
+            start_event.set()
+
+            # Wait for completion
             reader.join(timeout=5)
             writer.join(timeout=5)
 
@@ -273,7 +302,7 @@ class TestSecurityValidation:
             # Verify they're stored as-is (not executed or modified)
             config = manager.load()
             for i, pattern in enumerate(dangerous_patterns):
-                stored_value = config["servers"][f"test{i}"]["env"]["POTENTIALLY_DANGEROUS"]
+                stored_value = config["mcpServers"][f"test{i}"]["env"]["POTENTIALLY_DANGEROUS"]
                 assert stored_value == pattern, f"Pattern was modified: {pattern} -> {stored_value}"
 
             # The patterns should be stored as literal strings

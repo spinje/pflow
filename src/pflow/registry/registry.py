@@ -132,14 +132,78 @@ class Registry:
         # Ensure parent directory exists
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Preserve metadata if it exists
+        metadata = {}
+        if self.registry_path.exists():
+            try:
+                with open(self.registry_path) as f:
+                    existing_data = json.load(f)
+                    metadata = existing_data.get("__metadata__", {})
+            except Exception as e:
+                logger.debug(f"Could not read existing metadata, starting fresh: {e}")
+
+        # Create structure with metadata
+        registry_data = dict(nodes)
+        if metadata:
+            registry_data["__metadata__"] = metadata
+
         # Write JSON with pretty formatting
         try:
-            content = json.dumps(nodes, indent=2, sort_keys=True)
+            content = json.dumps(registry_data, indent=2, sort_keys=True)
             self.registry_path.write_text(content)
             logger.info(f"Saved {len(nodes)} nodes to registry")
         except Exception:
             logger.exception("Failed to save registry")
             raise
+
+    def get_metadata(self, key: str, default: Any = None) -> Any:
+        """Get metadata value from registry.
+
+        Args:
+            key: The metadata key to retrieve
+            default: Default value if key not found
+
+        Returns:
+            The metadata value or default if not found
+        """
+        config = self.load()
+        metadata = config.get("__metadata__", {})
+        return metadata.get(key, default)
+
+    def set_metadata(self, key: str, value: Any) -> None:
+        """Set metadata value in registry.
+
+        Args:
+            key: The metadata key to set
+            value: The value to store
+        """
+        config = self.load(include_filtered=True)
+        if "__metadata__" not in config:
+            config["__metadata__"] = {}
+        config["__metadata__"][key] = value
+
+        # Extract nodes and metadata separately for save
+        metadata = config.pop("__metadata__", {})
+        nodes = config  # Everything else is nodes
+
+        # Save nodes, but first update the metadata directly
+        # We need to handle this specially since save() only takes nodes
+        if self.registry_path.exists():
+            # Read existing registry to preserve structure
+            with open(self.registry_path) as f:
+                existing = json.load(f)
+                existing["__metadata__"] = metadata
+                # Write back with updated metadata
+                content = json.dumps(existing, indent=2, sort_keys=True)
+                self.registry_path.write_text(content)
+                logger.debug(f"Updated metadata key '{key}' in registry")
+        else:
+            # No existing registry, create new with metadata
+            registry_data = dict(nodes)
+            registry_data["__metadata__"] = metadata
+            content = json.dumps(registry_data, indent=2, sort_keys=True)
+            self.registry_path.write_text(content)
+            logger.debug(f"Created registry with metadata key '{key}'")
 
     def update_from_scanner(self, scan_results: list[dict[str, Any]]) -> None:
         """Update registry with scanner results.
