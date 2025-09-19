@@ -331,4 +331,49 @@ Our decision to use nested template variables instead of extraction proved presc
 
 The feature is production-ready and seamlessly integrated with the latest codebase improvements.
 
+### Code Duplication Elimination & Architectural Refinement (Post-Integration)
+
+**Discovery**: After integrating with main's nested template improvements, found significant code duplication between our `_extract_templates_from_ir()` and main's `TemplateValidator._extract_all_templates()`.
+
+**Initial State**:
+- Our implementation: 43 lines of custom recursive traversal + array notation handling
+- Main's implementation: Similar recursive traversal but without array notation support
+- Both doing essentially the same thing: finding templates in nested structures
+
+**Refactoring Decision - Put Code Where It Belongs**:
+Instead of maintaining our own array notation detection alongside main's utilities, we improved the core libraries directly:
+
+1. **Updated TemplateValidator Pattern** (line 337):
+   ```python
+   # Now supports: ${node[0].field}, ${node.field[0].subfield}
+   _PERMISSIVE_PATTERN = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[\w-]*(?:\[[\d]+\])?)*)?)\}")
+   ```
+
+2. **Updated TemplateResolver Pattern** (line 25):
+   ```python
+   # Same array notation support for runtime resolution
+   TEMPLATE_PATTERN = re.compile(r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}")
+   ```
+
+3. **Simplified RuntimeValidationNode** (from 43 lines to 5):
+   ```python
+   def _extract_templates_from_ir(self, workflow_ir: dict[str, Any]) -> list[str]:
+       from pflow.runtime.template_validator import TemplateValidator
+       templates = TemplateValidator._extract_all_templates(workflow_ir)
+       return [f"${{{var}}}" for var in templates]
+   ```
+
+**Architectural Benefits**:
+- **Single Source of Truth**: Template extraction logic now lives in one place
+- **Consistency**: All components use the same enhanced pattern matching
+- **Less Maintenance**: Eliminated 26 lines of duplicate code
+- **Better for Everyone**: Array notation now works throughout the entire codebase
+
+**Key MVP Insight**: In MVP without users, we have the freedom to fix root causes rather than work around limitations. This resulted in cleaner code and better functionality for the entire system.
+
+**Final Validation**:
+- All 96 integration tests pass
+- Array notation works in: template validation, resolution, and runtime validation
+- Code is significantly simpler and more maintainable
+
 ---

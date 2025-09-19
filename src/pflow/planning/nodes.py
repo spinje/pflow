@@ -2844,38 +2844,21 @@ class RuntimeValidationNode(Node):
     def _extract_templates_from_ir(self, workflow_ir: dict[str, Any]) -> list[str]:
         """Extract all template references from workflow IR.
 
+        Uses TemplateValidator from runtime module which now handles array notation.
+
         Args:
             workflow_ir: The workflow IR
 
         Returns:
-            List of template references (e.g., ["${http.response.login}", "${http.response.bio}"])
+            List of template references (e.g., ["${http.response.login}", "${http.response[0].bio}"])
         """
-        import re
+        from pflow.runtime.template_validator import TemplateValidator
 
-        # Pattern to match ${...} templates including array notation
-        # Matches: ${node.field}, ${node[0].field}, ${node.field[0].subfield}
-        pattern = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[\w-]*(?:\[[\d]+\])?)*)?)\}")
-        templates = []
+        # Use the existing TemplateValidator which now handles array notation
+        templates = TemplateValidator._extract_all_templates(workflow_ir)
 
-        for node in workflow_ir.get("nodes", []):
-            params = node.get("params", {})
-
-            def extract_from_value(value: Any) -> None:
-                if isinstance(value, str) and "$" in value:
-                    matches = pattern.findall(value)
-                    for match in matches:
-                        templates.append(f"${{{match}}}")
-                elif isinstance(value, dict):
-                    for v in value.values():
-                        extract_from_value(v)
-                elif isinstance(value, list):
-                    for item in value:
-                        extract_from_value(item)
-
-            for param_value in params.values():
-                extract_from_value(param_value)
-
-        return templates
+        # Format with ${} wrapper
+        return [f"${{{var}}}" for var in templates]
 
     def _get_available_paths(self, shared: dict[str, Any], node_id: str, partial_path: str) -> list[str]:
         """Get available paths at a given level in the shared store.

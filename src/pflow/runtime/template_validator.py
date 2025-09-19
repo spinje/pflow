@@ -333,7 +333,8 @@ class TemplateValidator:
         return TemplateValidator._create_simple_template_error(template, workflow_ir)
 
     # More permissive pattern to catch malformed templates for validation
-    _PERMISSIVE_PATTERN = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:\.[\w-]*)*)\}")
+    # Now supports array notation: ${node[0].field}, ${node.field[0].subfield}
+    _PERMISSIVE_PATTERN = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[\w-]*(?:\[[\d]+\])?)*)?)\}")
 
     @staticmethod
     def _extract_node_outputs(workflow_ir: dict[str, Any], registry: Registry) -> dict[str, Any]:

@@ -21,7 +21,10 @@ class TemplateResolver:
     # Must not be preceded by $ (to avoid $${var} escapes)
     # Identifiers must start with letter or underscore
     # Supports hyphens in variable names
-    TEMPLATE_PATTERN = re.compile(r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:\.[a-zA-Z_][\w-]*)*)\}")
+    # Pattern supports array notation: ${node[0].field}, ${node.field[0].subfield}
+    TEMPLATE_PATTERN = re.compile(
+        r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}"
+    )
 
     @staticmethod
     def has_templates(value: Any) -> bool:
