@@ -292,3 +292,43 @@ Result:    Workflow saved with correct paths
 This implementation achieves "Plan Once, Run Forever" by learning from reality rather than documentation.
 
 ---
+
+## Post-Rebase Integration with Main Branch (2025-01-19)
+
+### Nested Template Resolution Enhancement
+Successfully integrated with main branch changes that added comprehensive nested template resolution (commit 4379bad):
+
+**Main Branch Improvements**:
+1. **Template Validator**: Now recursively traverses nested dicts/lists at any depth
+2. **Template Resolver**: Added `resolve_nested()` method for recursive resolution
+3. **Compiler**: Fixed to check ALL param values (not just strings) when wrapping nodes
+4. **Node Wrapper**: Uses `resolve_nested()` for dict/list params
+
+**Compatibility Work Required**:
+- **Array Notation Support**: Updated our template extraction regex to handle array indices:
+  ```python
+  # Old: r"\$\{([a-zA-Z_][\w-]*(?:\.[\w-]*)*)\}"
+  # New: r"\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[\w-]*(?:\[[\d]+\])?)*)?)\}"
+  ```
+  This enables detection of templates like `${github.response[0].commit.message}`
+
+**Enhanced Capabilities**:
+The nested template improvements from main actually strengthen our runtime validation:
+- Can detect missing paths in deeply nested structures (headers, body, params)
+- Properly handles array notation in template references
+- Works with complex real-world APIs (Slack blocks, Google Sheets, GitHub arrays)
+
+**Test Verification**:
+- Created `test_runtime_validation_nested.py` with 3 comprehensive tests
+- All tests pass including: nested templates, deeply nested structures, array templates
+- 96 total integration tests passing after rebase
+
+### Key Integration Insight
+Our decision to use nested template variables instead of extraction proved prescient - it aligned perfectly with the main branch's improvements to template handling. The runtime validation feature now benefits from:
+1. **Better detection** of missing paths in complex structures
+2. **Array support** for real-world API responses that return lists
+3. **Deep nesting** compatibility with modern API structures
+
+The feature is production-ready and seamlessly integrated with the latest codebase improvements.
+
+---

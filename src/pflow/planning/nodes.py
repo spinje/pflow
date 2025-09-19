@@ -2852,8 +2852,9 @@ class RuntimeValidationNode(Node):
         """
         import re
 
-        # Pattern to match ${...} templates
-        pattern = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:\.[\w-]*)*)\}")
+        # Pattern to match ${...} templates including array notation
+        # Matches: ${node.field}, ${node[0].field}, ${node.field[0].subfield}
+        pattern = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[\w-]*(?:\[[\d]+\])?)*)?)\}")
         templates = []
 
         for node in workflow_ir.get("nodes", []):
