@@ -27,13 +27,22 @@ class TemplateResolver:
     def has_templates(value: Any) -> bool:
         """Check if value contains template variables.
 
+        Recursively checks nested dictionaries and lists for template strings.
+
         Args:
-            value: The value to check for templates
+            value: The value to check for templates (string, dict, list, or any)
 
         Returns:
-            True if value is a string containing '${', False otherwise
+            True if value contains template variables anywhere in its structure
         """
-        return isinstance(value, str) and "${" in value
+        if isinstance(value, str):
+            return "${" in value
+        elif isinstance(value, dict):
+            return any(TemplateResolver.has_templates(v) for v in value.values())
+        elif isinstance(value, list):
+            return any(TemplateResolver.has_templates(item) for item in value)
+        else:
+            return False
 
     @staticmethod
     def extract_variables(value: str) -> set[str]:
@@ -238,3 +247,38 @@ class TemplateResolver:
             logger.debug(f"Template variable '${{{var_name}}}' could not be resolved", extra={"var_name": var_name})
 
         return result
+
+    @staticmethod
+    def resolve_nested(value: Any, context: dict[str, Any]) -> Any:
+        """Recursively resolve template variables in nested structures.
+
+        Handles dictionaries, lists, and nested combinations while preserving
+        the original structure and types of non-template values.
+
+        Args:
+            value: The value to resolve (can be string, dict, list, or any type)
+            context: Dictionary containing values to resolve from
+
+        Returns:
+            The value with all template variables resolved, maintaining structure
+
+        Examples:
+            >>> context = {"token": "abc123", "channel": "C123"}
+            >>> params = {"headers": {"Authorization": "Bearer ${token}"}}
+            >>> TemplateResolver.resolve_nested(params, context)
+            {'headers': {'Authorization': 'Bearer abc123'}}
+        """
+        if isinstance(value, str):
+            # Resolve string templates
+            if "${" in value:
+                return TemplateResolver.resolve_string(value, context)
+            return value
+        elif isinstance(value, dict):
+            # Recursively resolve dictionary values
+            return {k: TemplateResolver.resolve_nested(v, context) for k, v in value.items()}
+        elif isinstance(value, list):
+            # Recursively resolve list items
+            return [TemplateResolver.resolve_nested(item, context) for item in value]
+        else:
+            # Return other types unchanged (int, float, bool, None, etc.)
+            return value

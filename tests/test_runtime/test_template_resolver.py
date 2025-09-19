@@ -13,12 +13,19 @@ class TestTemplateDetection:
         assert TemplateResolver.has_templates("Path: ${data.field}")
 
     def test_ignores_non_string_values(self):
-        """Test that non-string values are ignored."""
+        """Test that non-string/collection values are ignored, but collections are checked recursively."""
+        # Non-collection types should return False
         assert not TemplateResolver.has_templates(42)
         assert not TemplateResolver.has_templates(True)
         assert not TemplateResolver.has_templates(None)
-        assert not TemplateResolver.has_templates(["${item}"])
-        assert not TemplateResolver.has_templates({"key": "${value}"})
+
+        # Collections with templates should now return True (new behavior)
+        assert TemplateResolver.has_templates(["${item}"])  # Now detects templates in lists
+        assert TemplateResolver.has_templates({"key": "${value}"})  # Now detects templates in dicts
+
+        # Collections without templates should return False
+        assert not TemplateResolver.has_templates(["item"])
+        assert not TemplateResolver.has_templates({"key": "value"})
 
     def test_detects_absence_of_templates(self):
         """Test that strings without templates are not flagged."""

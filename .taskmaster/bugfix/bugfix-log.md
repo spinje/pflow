@@ -1,5 +1,114 @@
 <!-- ===== BUGFIX ENTRY START ===== -->
 
+## [BUGFIX] Fix nested template resolution for HTTP headers, body, and params — 2025-01-19
+
+Meta:
+- id: BF-20250119-nested-template-resolution
+- area: runtime
+- severity: incorrect-output
+- status: fixed
+- versions: uncommitted (working tree)
+- affects: workflow validation, HTTP nodes, planner output, any node with nested parameters
+- owner: ai-agent
+- links: src/pflow/runtime/template_validator.py, src/pflow/runtime/template_resolver.py, src/pflow/runtime/compiler.py, src/pflow/runtime/node_wrapper.py
+- session_id: current
+
+Summary:
+- Problem: Template variables in nested structures (headers, body, params) reported as "unused inputs" and not resolved at runtime
+- Root cause: Multiple components only checked/resolved templates in top-level strings, not recursively in dicts/lists
+- Fix: Added recursive traversal to validator, resolver, compiler wrapping logic, and node wrapper
+
+Repro:
+- Steps:
+  1) Create workflow with HTTP node using templates in headers/body
+  2) Run planner or validate workflow
+  3) Validator incorrectly reports inputs as unused
+- Commands:
+  ```bash
+  # This incorrectly reported unused inputs before fix:
+  uv run pflow --trace-planner "get the last 10 messages from slack channel C09C16NAU5B \
+    and use AI to answer questions, then update google sheets 1abc with Q&A pairs"
+  ```
+- Expected vs actual:
+  - Expected: Workflow validates and executes with resolved nested templates
+  - Actual: "Declared input(s) never used as template variable: slack_bot_token, slack_channel_id, etc."
+
+Implementation:
+- Changed files:
+  - `src/pflow/runtime/template_validator.py`:
+    - Modified `_extract_all_templates()` to recursively traverse dicts/lists (lines 531-551)
+  - `src/pflow/runtime/template_resolver.py`:
+    - Updated `has_templates()` to check nested structures (lines 27-45)
+    - Added `resolve_nested()` method for recursive resolution (lines 251-284)
+  - `src/pflow/runtime/compiler.py`:
+    - Fixed `_apply_template_wrapping()` to check all param values, not just strings (line 257)
+  - `src/pflow/runtime/node_wrapper.py`:
+    - Updated to use `resolve_nested()` for dict/list params (lines 115-124)
+  - `src/pflow/planning/context_builder.py`:
+    - Skip `__metadata__` entries that aren't nodes (lines 46-48)
+- Tests: 56 new test cases across 5 files
+  - `tests/test_runtime/test_template_validator_unused_inputs.py`: 9 nested validation tests
+  - `tests/test_runtime/test_template_resolver_nested.py`: 14 resolution tests
+  - `tests/test_runtime/test_compiler_template_wrapping.py`: 12 wrapping tests
+  - `tests/test_runtime/test_node_wrapper_nested_resolution.py`: 8 runtime tests
+  - `tests/test_runtime/test_nested_template_e2e.py`: 2 e2e tests
+
+Verification:
+- Manual:
+  ```bash
+  # Create test workflow with nested templates
+  cat > /tmp/http_test.json << 'EOF'
+  {
+    "ir_version": "1.0.0",
+    "inputs": {
+      "api_token": {"type": "string", "required": true},
+      "channel_id": {"type": "string", "required": true}
+    },
+    "nodes": [{
+      "id": "api_call",
+      "type": "http",
+      "params": {
+        "url": "https://api.example.com",
+        "headers": {
+          "Authorization": "Bearer ${api_token}",
+          "X-Channel-ID": "${channel_id}"
+        }
+      }
+    }]
+  }
+  EOF
+
+  # Should validate without errors:
+  uv run pflow --validate /tmp/http_test.json --params api_token=test channel_id=C123
+  ```
+  Output: Validation successful, no unused input warnings
+- CI: 140 template tests passing, 385 runtime tests passing
+
+Risks & rollbacks:
+- Risk flags: Template resolution, nested parameter structures, type conversion (numbers to strings)
+- Rollback plan: Revert changes to all 5 files; most critical is compiler.py line 257
+
+Lessons & heuristics:
+- Lessons learned:
+  - When handling tree-like data, always consider recursive traversal at ALL layers
+  - Wrapper chain order matters: template wrapper must be applied before namespace/instrumentation
+  - The compiler's wrapping decision is the critical control point - without wrapping, no resolution occurs
+- Heuristics to detect recurrence:
+  - Grep for `isinstance(value, str)` near template checks - may indicate missing recursion
+  - Look for `has_templates` or template validation that doesn't handle nested structures
+  - Check if new node types with nested params (like HTTP) are properly handled
+- Related pitfalls: Consider adding pitfall about recursive data structure handling in template systems
+
+Follow-ups:
+- TODOs: None - fix is complete
+
+Implementer details:
+- Claude Code Session ID: a4ec0a76-2691-40c0-a378-62aec992a40b
+
+<!-- ===== BUGFIX ENTRY END ===== -->
+
+<!-- ===== BUGFIX ENTRY START ===== -->
+
 ## [BUGFIX] Fix stdin hang when piped through grep in non-TTY environments — 2025-01-12
 
 Meta:

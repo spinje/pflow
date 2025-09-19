@@ -43,6 +43,10 @@ def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[s
     skipped_count = 0
 
     for node_type, node_info in registry_metadata.items():
+        # Skip metadata entries that are not actual nodes
+        if node_type.startswith("__") and node_type.endswith("__"):
+            continue
+
         # Skip test nodes - check for nodes in test directory or test_node files
         # We check the module path, not the full file path to avoid issues with
         # project directories that contain "test" in their name

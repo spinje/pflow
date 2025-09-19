@@ -52,6 +52,42 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
+## Pitfall: Partial Recursive Data Structure Handling in Multi-Layer Systems
+- **Date**: 2025-01-19
+- **Discovered in**: Nested template resolution bug fix
+- **What we tried**: Adding recursive template checking to just the validator component
+- **Why it seemed good**: The validator was reporting the error, so fixing it there seemed sufficient
+- **Why it failed**: Template processing happens across multiple layers - detection, validation, compilation, and runtime resolution. Missing ANY layer breaks the entire feature.
+- **Symptoms**:
+  - Validator says templates are "unused" even though they're in nested structures
+  - Templates in headers/body/params remain unresolved at runtime
+  - Nodes with nested templates don't get wrapped, so resolution never happens
+- **Better approach**: When adding recursive handling, audit ALL components in the processing pipeline and update each one
+- **Example of failure**:
+  ```python
+  # DON'T DO THIS - Only fixing one layer
+  # template_validator.py
+  def check_templates(value):
+      if isinstance(value, dict):
+          for v in value.values():
+              check_templates(v)  # Added recursion here
+
+  # compiler.py - BUT FORGOT THIS CRITICAL PIECE!
+  def should_wrap(params):
+      # Still only checking top-level strings!
+      return any(has_templates(v) for v in params.values() if isinstance(v, str))
+      # Result: Nodes with nested templates never get wrapped, resolution never happens
+
+  # DO THIS - Update ALL layers
+  # 1. Validator: Recursive detection
+  # 2. Resolver: has_templates() and resolve_nested()
+  # 3. Compiler: Check ALL param values for wrapping decision (most critical!)
+  # 4. Node wrapper: Handle nested structures at runtime
+  ```
+- **Critical insight**: The compiler's wrapping decision is the control point - if nodes don't get wrapped with TemplateAwareNodeWrapper, no resolution occurs regardless of other fixes
+
+---
+
 ## Pitfall: Catching Exceptions in PocketFlow Node exec() Method
 - **Date**: 2025-07-07
 - **Discovered in**: PocketFlow anti-pattern investigation

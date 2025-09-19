@@ -528,17 +528,27 @@ class TemplateValidator:
             node_id = node.get("id", "unknown")
             params = node.get("params", {})
 
-            for param_key, param_value in params.items():
-                if isinstance(param_value, str) and "$" in param_value:
+            def extract_from_value(value: Any, node_id: str, path: str = "") -> None:
+                """Recursively extract templates from any value type."""
+                if isinstance(value, str) and "$" in value:
                     # Use permissive pattern to catch malformed templates
-                    matches = TemplateValidator._PERMISSIVE_PATTERN.findall(param_value)
+                    matches = TemplateValidator._PERMISSIVE_PATTERN.findall(value)
                     templates.update(matches)
 
                     if matches:
                         logger.debug(
-                            f"Found templates in node '{node_id}' param '{param_key}'",
-                            extra={"node_id": node_id, "param_key": param_key, "templates": sorted(matches)},
+                            f"Found templates in node '{node_id}' at path '{path}'",
+                            extra={"node_id": node_id, "path": path, "templates": sorted(matches)},
                         )
+                elif isinstance(value, dict):
+                    for key, val in value.items():
+                        extract_from_value(val, node_id, f"{path}.{key}" if path else key)
+                elif isinstance(value, list):
+                    for idx, item in enumerate(value):
+                        extract_from_value(item, node_id, f"{path}[{idx}]")
+
+            for param_key, param_value in params.items():
+                extract_from_value(param_value, node_id, param_key)
 
         return templates
 

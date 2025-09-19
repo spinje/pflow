@@ -74,6 +74,100 @@ class TemplateAwareNodeWrapper:
             },
         )
 
+    def _build_resolution_context(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """Build the context for template resolution.
+
+        Combines shared store data with initial parameters from planner.
+        Planner parameters have higher priority.
+
+        Args:
+            shared: The shared store containing runtime data
+
+        Returns:
+            Combined context dictionary
+        """
+        context = dict(shared)  # Start with shared store data
+        context.update(self.initial_params)  # Planner parameters override
+
+        # Debug: Log context keys when we have template params
+        if self.template_params and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"Template resolution context for node '{self.node_id}' has keys: {list(context.keys())[:20]}",
+                extra={"node_id": self.node_id, "initial_params_keys": list(self.initial_params.keys())},
+            )
+
+        return context
+
+    def _resolve_simple_template(self, template: str, context: dict[str, Any]) -> tuple[Any, bool]:
+        """Resolve a simple template variable like '${var}'.
+
+        Args:
+            template: Template string to resolve
+            context: Resolution context
+
+        Returns:
+            Tuple of (resolved_value, was_simple_template)
+        """
+        import re
+
+        simple_var_match = re.match(r"^\$\{([^}]+)\}$", template)
+        if not simple_var_match:
+            return None, False
+
+        var_name = simple_var_match.group(1)
+
+        # Check if variable exists (even if its value is None)
+        if TemplateResolver.variable_exists(var_name, context):
+            # Variable exists - resolve and preserve its type (including None)
+            resolved_value = TemplateResolver.resolve_value(var_name, context)
+            logger.debug(
+                f"Resolved simple template: ${{{var_name}}} -> {resolved_value!r} "
+                f"(type: {type(resolved_value).__name__})",
+                extra={"node_id": self.node_id},
+            )
+            return resolved_value, True
+        else:
+            # Variable doesn't exist - keep template as-is for debugging
+            logger.debug(
+                f"Template variable '${{{var_name}}}' not found in context, keeping template as-is",
+                extra={"node_id": self.node_id},
+            )
+            return template, True
+
+    def _resolve_template_parameter(self, key: str, template: Any, context: dict[str, Any]) -> tuple[Any, bool]:
+        """Resolve a single template parameter.
+
+        Args:
+            key: Parameter name
+            template: Template value to resolve
+            context: Resolution context
+
+        Returns:
+            Tuple of (resolved_value, is_simple_template)
+        """
+        # Handle nested structures (dict or list)
+        if isinstance(template, (dict, list)):
+            resolved_value = TemplateResolver.resolve_nested(template, context)
+            logger.debug(
+                f"Resolved nested template param '{key}' (type: {type(template).__name__})",
+                extra={"node_id": self.node_id, "param": key},
+            )
+            return resolved_value, False
+
+        # Handle string templates
+        if isinstance(template, str) and "${" in template:
+            # Try simple template first
+            resolved_value, is_simple = self._resolve_simple_template(template, context)
+            if is_simple:
+                return resolved_value, True
+
+            # Complex template with text around it, must be string
+            resolved_value = TemplateResolver.resolve_string(template, context)
+            return resolved_value, False
+
+        # No template variables present, preserve original type
+        return template, False
+
     def _run(self, shared: dict[str, Any]) -> Any:
         """Execute with template resolution.
 
@@ -96,63 +190,17 @@ class TemplateAwareNodeWrapper:
             extra={"node_id": self.node_id},
         )
 
-        # Build resolution context: shared store + planner parameters
-        # Planner parameters have higher priority (come second in update)
-        context = dict(shared)  # Start with shared store data
-        context.update(self.initial_params)  # Planner parameters override
-
-        # Debug: Log context keys when we have template params
-        if self.template_params and logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                f"Template resolution context for node '{self.node_id}' has keys: {list(context.keys())[:20]}",
-                extra={"node_id": self.node_id, "initial_params_keys": list(self.initial_params.keys())},
-            )
+        # Build resolution context
+        context = self._build_resolution_context(shared)
 
         # Resolve all template parameters
         resolved_params = {}
         for key, template in self.template_params.items():
-            # Check if this is actually a template string or just a value
-            if isinstance(template, str) and "${" in template:
-                # It's a template string that needs resolution
-                # Check if it's a simple variable reference like "${limit}"
-                import re
+            resolved_value, is_simple_template = self._resolve_template_parameter(key, template, context)
+            resolved_params[key] = resolved_value
 
-                simple_var_match = re.match(r"^\$\{([^}]+)\}$", template)
-                if simple_var_match:
-                    # It's a simple variable reference, try to preserve type
-                    var_name = simple_var_match.group(1)
-
-                    # Check if variable exists (even if its value is None)
-                    if TemplateResolver.variable_exists(var_name, context):
-                        # Variable exists - resolve and preserve its type (including None)
-                        resolved_value = TemplateResolver.resolve_value(var_name, context)
-                        resolved_params[key] = resolved_value
-                        logger.debug(
-                            f"Resolved simple template '{key}': ${{{var_name}}} -> {resolved_value!r} "
-                            f"(type: {type(resolved_value).__name__})",
-                            extra={"node_id": self.node_id, "param": key},
-                        )
-                    else:
-                        # Variable doesn't exist - keep template as-is for debugging
-                        resolved_params[key] = template
-                        resolved_value = template
-                        logger.debug(
-                            f"Template variable '${{{var_name}}}' not found in context, "
-                            f"keeping template as-is for param '{key}'",
-                            extra={"node_id": self.node_id, "param": key},
-                        )
-                else:
-                    # Complex template with text around it, must be string
-                    resolved_value = TemplateResolver.resolve_string(template, context)
-                    resolved_params[key] = resolved_value
-            else:
-                # No template variables present, preserve original type!
-                resolved_params[key] = template
-                resolved_value = template
-
-            # Only log complex templates and non-template params
-            # (simple templates already logged above)
-            if not simple_var_match:
+            # Log complex templates and unresolved templates
+            if not is_simple_template:
                 if resolved_value != template:
                     logger.debug(
                         f"Resolved param '{key}': '{template}' -> '{resolved_value}'",

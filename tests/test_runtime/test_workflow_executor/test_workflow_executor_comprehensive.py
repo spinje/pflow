@@ -45,6 +45,11 @@ class TestWorkflowExecutorComprehensive:
                 "class_name": "ExampleNode",
                 "docstring": "Test node",
                 "file_path": "/test/path.py",
+                "interface": {
+                    "inputs": [],
+                    "outputs": [{"key": "output", "type": "string"}],
+                    "parameters": [],
+                },
             }
         }
 

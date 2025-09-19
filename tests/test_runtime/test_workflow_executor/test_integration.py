@@ -123,12 +123,25 @@ class TestWorkflowExecutorIntegration:
                 "class_name": "ExampleNode",
                 "docstring": "Test node for testing",
                 "file_path": "/mock/path/test_node.py",
+                "interface": {
+                    "inputs": [],
+                    "outputs": [{"key": "test_output", "type": "string"}],
+                    "parameters": [],
+                },
             },
             "pflow.runtime.workflow_executor": {
                 "module": "pflow.runtime.workflow_executor",
                 "class_name": "WorkflowExecutor",
                 "docstring": "Runtime executor for nested workflow execution",
                 "file_path": "/mock/path/workflow_executor.py",
+                "interface": {
+                    "inputs": [],
+                    "outputs": [],
+                    "parameters": [
+                        {"key": "workflow_ref", "type": "string", "required": False},
+                        {"key": "parameter_mapping", "type": "dict", "required": False},
+                    ],
+                },
             },
             "pflow.nodes.file.write_file": {
                 "module": "pflow.nodes.file.write_file",
@@ -136,15 +149,12 @@ class TestWorkflowExecutorIntegration:
                 "docstring": "Write content to a file",
                 "file_path": "/mock/path/write_file.py",
                 "interface": {
-                    "inputs": {
-                        "file_path": {"type": "str", "required": True},
-                        "content": {"type": "str", "required": True},
-                    },
-                    "outputs": {},
-                    "parameters": {
-                        "file_path": {"type": "str", "required": True},
-                        "content": {"type": "str", "required": True},
-                    },
+                    "inputs": [],
+                    "outputs": [],
+                    "parameters": [
+                        {"key": "file_path", "type": "string", "required": True},
+                        {"key": "content", "type": "string", "required": True},
+                    ],
                 },
             },
         }
@@ -167,6 +177,7 @@ class TestWorkflowExecutorIntegration:
         # Create parent workflow with WorkflowExecutor
         parent_ir = {
             "ir_version": "0.1.0",
+            "inputs": {},  # No inputs, message comes from shared store at runtime
             "nodes": [
                 {
                     "id": "sub",
@@ -179,12 +190,13 @@ class TestWorkflowExecutorIntegration:
                 }
             ],
             "edges": [],
+            "outputs": {},
         }
 
         # Use the helper to setup mocks
         with self._setup_mock_imports():
-            # Compile and run
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
+            # Compile and run (skip validation since ${message} comes from shared store)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
             shared = {"message": "Hello from parent"}
             result = flow.run(shared)
 
@@ -205,7 +217,7 @@ class TestWorkflowExecutorIntegration:
         }
 
         with self._setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
             shared = {"__registry__": mock_registry}
             result = flow.run(shared)
 
@@ -228,7 +240,7 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(TrackingExampleNode):
-            flow = compile_ir_to_flow(nested_workflow_ir, registry=mock_registry)
+            flow = compile_ir_to_flow(nested_workflow_ir, registry=mock_registry, validate=False)
             shared = {"outer_input": "test_value", "__registry__": mock_registry}
             result = flow.run(shared)
 
@@ -261,7 +273,7 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(FailingExampleNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
             shared = {"__registry__": mock_registry}
             result = flow.run(shared)
 
@@ -303,7 +315,7 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(StorageCapturingNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
             shared = {"parent_data": "should_not_see", "__registry__": mock_registry}
             result = flow.run(shared)
 
@@ -364,7 +376,7 @@ class TestWorkflowExecutorIntegration:
                 return mock_module
 
         with patch("importlib.import_module", side_effect=side_effect):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
             shared = {"message": "Hello, World!"}
             result = flow.run(shared)
 

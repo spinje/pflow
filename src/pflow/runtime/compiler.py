@@ -253,8 +253,8 @@ def _apply_template_wrapping(
     Returns:
         The original node or a wrapped version if templates are detected
     """
-    # Check if any parameters contain templates
-    has_templates = any(TemplateResolver.has_templates(value) for value in params.values() if isinstance(value, str))
+    # Check if any parameters contain templates (including nested structures)
+    has_templates = any(TemplateResolver.has_templates(value) for value in params.values())
 
     if has_templates:
         # Wrap node for template support (runtime proxy)
