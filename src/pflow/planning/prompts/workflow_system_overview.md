@@ -111,7 +111,37 @@ If the input is used for a node parameter that is optional, consider setting req
 
 > Note: You should never make an input required that could have a sensible default. The goal is as few required inputs as possible.
 
-## Workflow Output Format
+## WorkflowOutput Selection Guidelines
+
+When selecting workflow outputs, consider the workflow's purpose:
+
+### File Creation/Saving Workflows
+When the workflow saves content to files (reports, changelogs, documentation):
+- **DO**: Select confirmation outputs like `"Saved to ${write.file_path}"` or `${write.success_message}`
+- **DON'T**: Return the full content being saved (e.g., avoid `${llm.response}` when it's being written to file or saved to external service)
+- **Why**: Users want confirmation, not a wall of text they're already saving
+- **Rule**: If output is saved to any source, don't include the full content in the workflow output unless specifically asked for it by the user
+
+### Analysis/Query Workflows
+When the workflow answers questions or performs analysis for immediate viewing:
+- **DO**: Select the actual analysis result (e.g., `${llm.response}` for "summarize this issue")
+- **Why**: The LLM output IS the desired result in these cases
+- **Rule**: If output is not saved anywhere else, always include the full content in the workflow output
+
+### General Output Rules
+1. **Prefer specific over verbose**: Choose `${node.status_code}`or `${node.response.status_code}` over `${node.response}` when only status matters
+2. **Avoid intermediate outputs**: Select from final operations, not intermediate processing steps
+3. **Skip metadata outputs**: Avoid outputs like `response_headers`, `response_time`, `llm_usage` unless specifically needed
+4. **When multiple outputs exist**: Choose the *most semantically relevant one* for the task as *THE FIRST* output, this is the output that will be used by the user to understand the result of the workflow
+5. **For 'any' type from nodes**: Be extra careful - these are untyped and may contain complex nested and should be avoided if possible
+
+### Common Patterns
+- File operations → Use path confirmations: `"File saved to ${write.file_path}"`
+- HTTP requests → Use specific fields: `${http.status_code}` not entire `${http.response}`
+- Git operations → Use success messages: `${commit.message}` not verbose git output
+- Shell commands → Prefer `${shell.stdout}` over `${shell.stderr}` unless errors are expected
+
+### Workflow Output Format
 
 Each output MUST be a structured object with metadata inside the `outputs` section:
 
@@ -124,6 +154,18 @@ Each output MUST be a structured object with metadata inside the `outputs` secti
 
 **Only description and source are allowed in the output object. Nothing else.**
 **All workflow must have at least one output. Always put the most relevant output at the top of the outputs object.**
+
+```json
+"outputs": {
+    "analysis_report": { // Make sure the first output is the most relevant one for the task at hand
+      "description": "The formatted markdown analysis report",
+      "source": "${format_report.response}"
+    },
+    "issues_count": {
+      "description": "Number of issues that were analyzed",
+      "source": "${fetch_issues.issues.length}"
+    },
+  }
 
 ## Complete Example Workflow
 

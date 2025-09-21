@@ -2,14 +2,14 @@
 name: workflow_generator_instructions
 test_path: tests/test_planning/llm/prompts/test_workflow_generator_context_prompt.py::TestWorkflowGeneratorContextPrompt
 test_command: uv run python tools/test_prompt_accuracy.py workflow_generator_instructions
-version: 1.0
+version: '1.1'
 latest_accuracy: 100.0
-test_runs: [100.0, 53.3, 80.0, 100.0, 100.0]
-average_accuracy: 86.7
+test_runs: [100.0]
+average_accuracy: 100.0
 test_count: 15
-previous_version_accuracy: 0.0
-last_tested: '2025-09-10'
-prompt_hash: '31794092'
+previous_version_accuracy: 86.7
+last_tested: '2025-09-21'
+prompt_hash: 48cf6632
 last_test_cost: 0.455727
 ---
 
@@ -66,3 +66,4 @@ Every node MUST have a "purpose" field (10-200 chars) that:
 - Follow the **Execution Plan** for the node sequence
 - Use the **Selected Components** for node types
 - Map **Discovered Parameters** to workflow inputs
+- Select outputs based on workflow purpose (save vs display)
