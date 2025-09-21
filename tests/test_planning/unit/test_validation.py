@@ -77,8 +77,8 @@ class TestValidatorNode:
             },
         }
 
-    def test_valid_workflow_returns_metadata_generation(self, validator_node, valid_workflow):
-        """Test that valid workflow routes to metadata_generation."""
+    def test_valid_workflow_returns_runtime_validation(self, validator_node, valid_workflow):
+        """Test that valid workflow routes to runtime_validation."""
         shared = {"generated_workflow": valid_workflow, "generation_attempts": 1}
 
         # Mock validate_ir to pass
@@ -92,7 +92,7 @@ class TestValidatorNode:
             exec_res = validator_node.exec(prep_res)
             action = validator_node.post(shared, prep_res, exec_res)
 
-            assert action == "metadata_generation"
+            assert action == "runtime_validation"
             assert "workflow_metadata" in shared
             assert shared["workflow_metadata"] == {}
             assert exec_res["errors"] == []
@@ -307,8 +307,8 @@ class TestValidatorNode:
             # Run post to check routing and side effects
             action = validator_node.post(shared, prep_res, exec_res)
 
-            # Should route to metadata generation
-            assert action == "metadata_generation"
+            # Should route to runtime validation
+            assert action == "runtime_validation"
 
             # CRITICAL: validation_errors should be cleared
             assert "validation_errors" not in shared, (

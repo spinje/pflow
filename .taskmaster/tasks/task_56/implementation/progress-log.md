@@ -454,3 +454,83 @@ if model_id:
 This wasn't a Task 56 bug but a pre-existing issue in the debug system that Task 56's runtime validation exposed.
 
 ---
+
+## Task 68 Created: Architectural Enhancement (2025-01-21)
+
+### Transition from Task 56 to Task 68
+
+After successfully completing Task 56's RuntimeValidationNode implementation, we identified a significant architectural improvement opportunity through extensive discussion about the current implementation's behavior.
+
+**Task 68: Refactor RuntimeValidation into Separate Repair Service**
+
+**Current State (Task 56 Complete)**:
+- RuntimeValidationNode successfully detects and fixes template path issues
+- Works in production, all tests passing
+- BUT: Executes workflows during planning phase, causing:
+  - Duplicate execution (once during planning, once for real)
+  - Potential side effects during planning (messages sent, files created)
+  - Tight coupling between planning and execution
+
+**Proposed Solution (Task 68)**:
+Transform RuntimeValidationNode into a separate repair service that:
+- Only runs AFTER workflow execution fails (not during planning)
+- Enables self-healing workflows that adapt to environment changes
+- Provides transparent auto-repair with visible progress
+- Clean separation of planning and repair concerns
+
+**Implementation Strategy**:
+- **Phase 1**: Extract WorkflowExecutorService (safe refactoring, no behavior change)
+- **Phase 2**: Create repair service and remove RuntimeValidationNode
+- **Timeline**: ~20 hours total
+- **User Experience**: Auto-repair by default with transparent progress
+
+**Benefits of Task 68**:
+1. **No duplicate side effects** - Workflows execute only once on success path
+2. **Self-healing workflows** - Automatically adapt to:
+   - API changes (field renames)
+   - Environment differences (Mac vs Linux)
+   - Credential updates
+3. **Better architecture** - Clean separation between planning and repair
+4. **Future-proof** - Workflows can be repaired months later without re-planning
+
+**Important Note**:
+Task 56 is COMPLETE and production-ready. The current RuntimeValidationNode implementation works well and can ship as-is. Task 68 is an architectural enhancement that builds on what we learned but represents a separate effort to improve the system further.
+
+**Decision Point**:
+- Ship with Task 56 (current implementation) for faster MVP delivery
+- OR implement Task 68 for better architecture and user experience
+- Both approaches are valid depending on priorities
+
+The creation of Task 68 demonstrates how Task 56's implementation revealed deeper architectural insights that can lead to even better solutions.
+
+---
+
+## Metadata Generation Reordering Fix (2025-01-21)
+
+### Problem Identified
+After completing Task 56, discovered that MetadataGenerationNode was being called multiple times (up to 4x) during runtime validation retries. This was because metadata generation happened BEFORE runtime validation, and retries went through the entire pipeline again.
+
+### Solution Implemented
+Reordered the planner flow to generate metadata ONLY after runtime validation succeeds:
+- **Before**: ValidatorNode → MetadataGenerationNode → RuntimeValidationNode
+- **After**: ValidatorNode → RuntimeValidationNode → MetadataGenerationNode → ParameterPreparationNode
+
+### Changes Made
+1. Updated flow wiring in `flow.py` - Changed connections to new order
+2. Updated ValidatorNode action string - Returns `"runtime_validation"` instead of `"metadata_generation"`
+3. Fixed 4 tests that expected the old flow order
+
+### Benefits
+- **Performance**: Metadata generated only once (not 1-4 times)
+- **Efficiency**: Fewer LLM calls, faster retries
+- **Logic**: Metadata describes the final, validated workflow
+- **Cost**: Reduced API costs from eliminated duplicate calls
+
+### Verification
+- All 449 planning tests pass
+- No functional regressions
+- Clean architectural improvement
+
+This optimization completes the runtime validation feature with optimal efficiency.
+
+---

@@ -155,8 +155,8 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     # ValidatorNode tracks generation_attempts and prevents infinite loops
     # NOW validates with extracted parameters instead of empty {}
 
-    # Validation succeeds → generate metadata
-    validator - "metadata_generation" >> metadata_generation
+    # Validation succeeds → runtime validation (changed from metadata_generation)
+    validator - "runtime_validation" >> runtime_validation
 
     # Validation fails but can retry (attempts < 3) → retry generation
     # The validator stores validation_errors for the generator to use
@@ -166,19 +166,24 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     validator - "failed" >> result_preparation
 
     # ============================================================
-    # Runtime Validation (Path B only - after metadata generation)
+    # Runtime Validation (Path B only - after validation)
     # ============================================================
-    # Metadata generation complete → runtime validation
-    # MetadataGenerationNode returns "" (empty string) so we use default
-    metadata_generation >> runtime_validation
+    # Runtime validation succeeds → generate metadata (only once after success!)
+    # RuntimeValidationNode returns "" (empty string) on success so we use default
+    runtime_validation >> metadata_generation
 
-    # Runtime validation routes:
-    # - No issues (default) → parameter preparation
-    runtime_validation >> parameter_preparation
+    # Runtime validation routes for failures:
     # - Fixable issues found → back to generator with runtime_errors
     runtime_validation - "runtime_fix" >> workflow_generator
     # - Fatal issues or max attempts → end with failure
     runtime_validation - "failed_runtime" >> result_preparation
+
+    # ============================================================
+    # Metadata Generation (Path B only - after runtime validation)
+    # ============================================================
+    # Metadata generation complete → parameter preparation
+    # MetadataGenerationNode returns "" (empty string) so we use default
+    metadata_generation >> parameter_preparation
 
     # ============================================================
     # Both Paths Converge at ParameterMappingNode

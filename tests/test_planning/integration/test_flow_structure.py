@@ -155,14 +155,18 @@ class TestFlowStructure:
 
         # Check validator has all three edges
         assert "retry" in validator.successors
-        assert "metadata_generation" in validator.successors
+        assert "runtime_validation" in validator.successors
         assert "failed" in validator.successors
 
         # Check retry loops back to generator
         assert validator.successors["retry"] is generator
 
-        # Check metadata_generation leads to metadata node
-        metadata = validator.successors["metadata_generation"]
+        # Check runtime_validation leads to runtime validation node
+        runtime = validator.successors["runtime_validation"]
+        assert isinstance(runtime, RuntimeValidationNode)
+
+        # Check runtime validation success leads to metadata node
+        metadata = runtime.successors["default"]
         assert isinstance(metadata, MetadataGenerationNode)
 
         # Check failed leads to result
@@ -262,7 +266,7 @@ class TestFlowStructure:
             ],  # VALIDATION REDESIGN
             ParameterPreparationNode: ["default"],  # Returns "" so uses default
             WorkflowGeneratorNode: ["validate"],  # Returns "validate"
-            ValidatorNode: ["retry", "metadata_generation", "failed"],
+            ValidatorNode: ["retry", "runtime_validation", "failed"],
             MetadataGenerationNode: ["default"],  # Returns "" so uses default
             RuntimeValidationNode: ["default", "runtime_fix", "failed_runtime"],  # Runtime validation
             ResultPreparationNode: [],  # Final node, no successors
