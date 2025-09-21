@@ -153,3 +153,17 @@ class TestIsLikelyWorkflowName:
         assert not is_likely_workflow_name(long_name, ())
         # With spaces never a workflow name
         assert not is_likely_workflow_name("has spaces", ("param=value",))
+
+    def test_help_flag_handling(self):
+        """Test that --help flag is allowed with workflow names."""
+        # --help is special-cased to allow showing workflow help
+        assert is_likely_workflow_name("my-workflow", ("--help",))
+        assert is_likely_workflow_name("read-file", ("--help",))
+        assert is_likely_workflow_name("test-workflow-name", ("--help",))
+
+        # Other flags still indicate natural language
+        assert not is_likely_workflow_name("my-workflow", ("--verbose",))
+        assert not is_likely_workflow_name("my-workflow", ("--force",))
+
+        # --help with other arguments
+        assert is_likely_workflow_name("my-workflow", ("--help", "param=value"))

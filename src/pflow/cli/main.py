@@ -2377,6 +2377,24 @@ def _handle_named_workflow(
     if not workflow_ir:
         return False
 
+    # Check for --help request
+    if remaining_args and "--help" in remaining_args:
+        # Import display helpers
+        from pflow.cli.commands.workflow import _display_example_usage, _display_inputs, _display_outputs
+
+        # Display workflow information
+        name = os.path.basename(first_arg) if "/" in first_arg else first_arg
+        click.echo(f"\nWorkflow: {name}")
+        if source == "saved":
+            click.echo("Source: Saved workflow")
+        else:
+            click.echo(f"Source: {first_arg}")
+
+        _display_inputs(workflow_ir)
+        _display_outputs(workflow_ir)
+        _display_example_usage(name, workflow_ir)
+        return True
+
     # Validate and prepare parameters
     params = _validate_and_prepare_workflow_params(ctx, workflow_ir, remaining_args)
 
@@ -2541,7 +2559,10 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     # Single kebab-case word is likely a workflow name
     # But exclude if followed by CLI operators or flags
     if "-" in text and not text.startswith("--"):
-        # Check if followed by CLI syntax
+        # Special case: --help is allowed with workflow names
+        if remaining_args and len(remaining_args) > 0 and remaining_args[0] == "--help":
+            return True
+        # Check if followed by other CLI syntax
         return not (
             remaining_args and ("=>" in remaining_args or any(arg.startswith("--") for arg in remaining_args[:2]))
         )
