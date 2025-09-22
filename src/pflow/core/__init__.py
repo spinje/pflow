@@ -3,6 +3,7 @@
 from .exceptions import (
     CircularWorkflowReferenceError,
     PflowError,
+    RuntimeValidationError,
     WorkflowExecutionError,
 )
 from .ir_schema import FLOW_IR_SCHEMA, ValidationError, validate_ir
@@ -28,6 +29,7 @@ __all__ = [
     "CircularWorkflowReferenceError",
     "CycleError",
     "PflowError",
+    "RuntimeValidationError",
     "StdinData",
     "ValidationError",
     "WorkflowExecutionError",

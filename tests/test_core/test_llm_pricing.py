@@ -1,6 +1,8 @@
 """Test LLM pricing calculations."""
 
-from pflow.core.llm_pricing import DEFAULT_PRICING, MODEL_PRICING, calculate_llm_cost, get_model_pricing
+import pytest
+
+from pflow.core.llm_pricing import MODEL_PRICING, PRICING_VERSION, calculate_llm_cost, get_model_pricing
 
 
 class TestLLMPricing:
@@ -86,19 +88,18 @@ class TestLLMPricing:
         assert cost["thinking_cost"] == 0.0225
         assert cost["total_cost_usd"] == 0.0459
 
-    def test_unknown_model_uses_default(self):
-        """Test that unknown models use default pricing."""
-        cost = calculate_llm_cost(
-            model="unknown-model-xyz",
-            input_tokens=1000,
-            output_tokens=500,
-        )
+    def test_unknown_model_raises_error(self):
+        """Test that unknown models raise helpful errors."""
+        with pytest.raises(ValueError) as exc_info:
+            calculate_llm_cost(
+                model="unknown-model-xyz",
+                input_tokens=1000,
+                output_tokens=500,
+            )
 
-        # Default (gpt-4o-mini): $0.15/1M input, $0.60/1M output
-        assert cost["input_cost"] == 0.00015
-        assert cost["output_cost"] == 0.0003
-        assert cost["total_cost_usd"] == 0.00045
-        assert cost["pricing_model"] == "default"
+        error_msg = str(exc_info.value)
+        assert "Unknown model 'unknown-model-xyz'" in error_msg
+        assert "pricing not available" in error_msg
 
     def test_zero_tokens(self):
         """Test with zero tokens."""
@@ -148,9 +149,13 @@ class TestLLMPricing:
         assert pricing["input"] == 5.0
         assert pricing["output"] == 15.0
 
-        # Unknown model gets default
-        pricing = get_model_pricing("unknown-model")
-        assert pricing == DEFAULT_PRICING
+        # Unknown model raises error
+        with pytest.raises(ValueError) as exc_info:
+            get_model_pricing("unknown-model")
+
+        error_msg = str(exc_info.value)
+        assert "Unknown model 'unknown-model'" in error_msg
+        assert "pricing not available" in error_msg
 
     def test_all_models_have_pricing(self):
         """Test that all models in MODEL_PRICING have valid pricing."""
@@ -170,4 +175,50 @@ class TestLLMPricing:
         )
 
         assert "pricing_version" in cost
-        assert cost["pricing_version"] == "2025-01-15"
+        assert cost["pricing_version"] == PRICING_VERSION
+
+    def test_model_aliases(self):
+        """Test that model aliases resolve correctly."""
+        # Test OpenAI aliases
+        cost_alias = calculate_llm_cost(model="4o", input_tokens=1000)
+        cost_canonical = calculate_llm_cost(model="gpt-4o", input_tokens=1000)
+        assert cost_alias["total_cost_usd"] == cost_canonical["total_cost_usd"]
+        assert cost_alias["pricing_model"] == "gpt-4o"  # Both resolve to canonical
+
+        # Test Anthropic aliases
+        cost_alias = calculate_llm_cost(model="claude-3.5-sonnet", input_tokens=1000)
+        cost_canonical = calculate_llm_cost(model="anthropic/claude-3-5-sonnet-20241022", input_tokens=1000)
+        assert cost_alias["total_cost_usd"] == cost_canonical["total_cost_usd"]
+        assert cost_alias["pricing_model"] == "anthropic/claude-3-5-sonnet-20241022"
+
+        # Test Gemini aliases
+        cost_alias = calculate_llm_cost(model="gemini-1.5-flash", input_tokens=1000)
+        cost_canonical = calculate_llm_cost(model="gemini/gemini-1.5-flash", input_tokens=1000)
+        assert cost_alias["total_cost_usd"] == cost_canonical["total_cost_usd"]
+        # Note: "gemini-1.5-flash" maps to "gemini/gemini-1.5-flash" which is in MODEL_PRICING
+        assert cost_alias["pricing_model"] == "gemini/gemini-1.5-flash"
+
+    def test_error_message_suggestions(self):
+        """Test that error messages provide helpful suggestions for partial matches."""
+        # Test with a truly unknown model that contains a partial match
+        with pytest.raises(ValueError) as exc_info:
+            calculate_llm_cost(model="anthropic/claude", input_tokens=1000)  # Partial match
+
+        error_msg = str(exc_info.value)
+        assert "Unknown model 'anthropic/claude'" in error_msg
+        # The suggestions would show models containing "anthropic/claude" in their name
+        assert "Did you mean" in error_msg  # Should suggest similar models like anthropic/claude-3-opus-20240229
+
+    def test_model_alias_resolution(self):
+        """Test that model aliases work correctly without raising errors."""
+        # "claude-3-opus" is an alias that should work
+        cost = calculate_llm_cost(model="claude-3-opus", input_tokens=1000)
+        assert cost["pricing_model"] == "anthropic/claude-3-opus-20240229"
+
+        # "gpt-4" is directly in MODEL_PRICING, not an alias
+        cost = calculate_llm_cost(model="gpt-4", input_tokens=1000)
+        assert cost["pricing_model"] == "gpt-4"
+
+        # "4o" is an alias for "gpt-4o"
+        cost = calculate_llm_cost(model="4o", input_tokens=1000)
+        assert cost["pricing_model"] == "gpt-4o"

@@ -26,19 +26,60 @@ MODEL_PRICING = {
     "gpt-4o": {"input": 5.0, "output": 15.0},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
-    # Google models
+    # Google models (support both short and full format)
     "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
+    "gemini/gemini-1.5-pro": {"input": 1.25, "output": 5.00},
     "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
+    "gemini/gemini-1.5-flash": {"input": 0.075, "output": 0.30},
     "gemini-1.5-flash-8b": {"input": 0.0375, "output": 0.15},
+    "gemini/gemini-1.5-flash-8b": {"input": 0.0375, "output": 0.15},
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+    "gemini/gemini-2.0-flash": {"input": 0.10, "output": 0.40},
     "gemini-2.0-flash-lite": {"input": 0.075, "output": 0.30},
+    "gemini/gemini-2.0-flash-lite": {"input": 0.075, "output": 0.30},
     "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
+    "gemini/gemini-2.5-pro": {"input": 1.25, "output": 10.00},
     "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
+    "gemini/gemini-2.5-flash": {"input": 0.30, "output": 2.50},
     "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
+    "gemini/gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
 }
 
-# Default pricing for unknown models (using gpt-4o-mini as fallback)
-DEFAULT_PRICING = {"input": 0.15, "output": 0.60}
+# Model aliases mapping - maps common aliases to their canonical names
+MODEL_ALIASES = {
+    # Anthropic aliases
+    "claude-3-opus": "anthropic/claude-3-opus-20240229",
+    "claude-3-sonnet": "anthropic/claude-3-sonnet-20240229",
+    "claude-3-haiku": "anthropic/claude-3-haiku-20240307",
+    "claude-3.5-sonnet": "anthropic/claude-3-5-sonnet-20241022",
+    "claude-3.5-sonnet-latest": "anthropic/claude-3-5-sonnet-20241022",
+    "anthropic/claude-3-5-sonnet-latest": "anthropic/claude-3-5-sonnet-20241022",
+    "claude-3.5-haiku": "anthropic/claude-3-5-haiku-latest",
+    "claude-4-opus": "anthropic/claude-opus-4-0",
+    "claude-4-sonnet": "anthropic/claude-sonnet-4-0",
+    # OpenAI aliases
+    "4o": "gpt-4o",
+    "4o-mini": "gpt-4o-mini",
+    "3.5": "gpt-3.5-turbo",
+    "chatgpt": "gpt-3.5-turbo",
+    "4": "gpt-4",
+    "gpt4": "gpt-4",
+    "4t": "gpt-4-turbo",
+    "4-turbo": "gpt-4-turbo",
+    # Gemini aliases (without prefix)
+    "gemini-pro": "gemini/gemini-pro",
+    "gemini-1.5-pro": "gemini/gemini-1.5-pro",
+    "gemini-1.5-pro-latest": "gemini/gemini-1.5-pro",
+    "gemini-1.5-flash": "gemini/gemini-1.5-flash",
+    "gemini-1.5-flash-latest": "gemini/gemini-1.5-flash",
+    "gemini-1.5-flash-8b": "gemini/gemini-1.5-flash-8b",
+    "gemini-1.5-flash-8b-latest": "gemini/gemini-1.5-flash-8b",
+    "gemini-2.0-flash": "gemini/gemini-2.0-flash",
+    "gemini-2.0-flash-lite": "gemini/gemini-2.0-flash-lite",
+    "gemini-2.5-pro": "gemini/gemini-2.5-pro",
+    "gemini-2.5-flash": "gemini/gemini-2.5-flash",
+    "gemini-2.5-flash-lite": "gemini/gemini-2.5-flash-lite",
+}
 
 
 def calculate_llm_cost(
@@ -78,8 +119,22 @@ def calculate_llm_cost(
             "pricing_version": Version of pricing data
         }
     """
-    # Get pricing for model or use default
-    pricing = MODEL_PRICING.get(model, DEFAULT_PRICING)
+    # Resolve aliases first
+    canonical_model = MODEL_ALIASES.get(model, model)  # Use alias if exists, otherwise use original
+
+    # Get pricing or fail with helpful error
+    if canonical_model not in MODEL_PRICING:
+        # Check if it's close to a known model (common typos)
+        suggestions = [m for m in MODEL_PRICING if model.lower() in m.lower()][:3]
+
+        error_msg = f"Unknown model '{model}' - pricing not available. "
+        if suggestions:
+            error_msg += f"Did you mean one of: {', '.join(suggestions)}? "
+        error_msg += "Please update MODEL_PRICING in llm_pricing.py or use a known model."
+
+        raise ValueError(error_msg)
+
+    pricing = MODEL_PRICING[canonical_model]
 
     # Calculate each cost component
     # Note: Anthropic's input_tokens already EXCLUDES cache tokens per API spec
@@ -105,7 +160,7 @@ def calculate_llm_cost(
         "cache_read_cost": round(cache_read_cost, 6),
         "thinking_cost": round(thinking_cost, 6),
         "total_cost_usd": round(total, 6),
-        "pricing_model": model if model in MODEL_PRICING else "default",
+        "pricing_model": canonical_model if canonical_model in MODEL_PRICING else "default",
         "pricing_version": PRICING_VERSION,
     }
 
@@ -114,9 +169,27 @@ def get_model_pricing(model: str) -> dict[str, float]:
     """Get pricing for a specific model.
 
     Args:
-        model: Model identifier
+        model: Model identifier (supports aliases)
 
     Returns:
         Dictionary with "input" and "output" prices per million tokens
+
+    Raises:
+        ValueError: If model is not in the pricing table
     """
-    return MODEL_PRICING.get(model, DEFAULT_PRICING)
+    # Resolve aliases first
+    canonical_model = MODEL_ALIASES.get(model, model)
+
+    # Get pricing or fail with helpful error
+    if canonical_model not in MODEL_PRICING:
+        # Check if it's close to a known model (common typos)
+        suggestions = [m for m in MODEL_PRICING if model.lower() in m.lower()][:3]
+
+        error_msg = f"Unknown model '{model}' - pricing not available. "
+        if suggestions:
+            error_msg += f"Did you mean one of: {', '.join(suggestions)}? "
+        error_msg += "Please update MODEL_PRICING in llm_pricing.py or use a known model."
+
+        raise ValueError(error_msg)
+
+    return MODEL_PRICING[canonical_model]

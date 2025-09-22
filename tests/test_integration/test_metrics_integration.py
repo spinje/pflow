@@ -569,8 +569,9 @@ class TestWrapperIntegration:
             assert len(llm_calls) >= 3, f"Expected at least 3 LLM calls, got {len(llm_calls)}"
 
             # Calculate total cost to verify it's positive
-            total_cost = metrics.calculate_costs(llm_calls)
-            assert total_cost > 0, "Total cost should be positive"
+            cost_data = metrics.calculate_costs(llm_calls)
+            assert cost_data["pricing_available"] is True
+            assert cost_data["total_cost_usd"] > 0, "Total cost should be positive"
         else:
             # Even if __llm_calls__ isn't populated, we can verify nodes executed
             # by checking that all three nodes have timing data
@@ -865,7 +866,11 @@ class TestMetricsAccuracy:
                 {"model": case["model"], "input_tokens": case["input_tokens"], "output_tokens": case["output_tokens"]}
             ]
 
-            cost = collector.calculate_costs(llm_calls)
+            cost_data = collector.calculate_costs(llm_calls)
+
+            # Check pricing is available
+            assert cost_data["pricing_available"] is True
+            cost = cost_data["total_cost_usd"]
 
             # Check within 10% accuracy (floating point)
             assert abs(cost - case["expected_cost"]) < case["expected_cost"] * 0.1

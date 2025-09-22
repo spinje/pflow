@@ -339,12 +339,14 @@ class DebugWrapper:
                     # Model exists but has no identifying attribute
                     model_id = str(type(model).__name__)
 
-            # Add model to kwargs for downstream use
+            # Store model_id for tracing, but DON'T add to prompt_kwargs
+            # (Adding it breaks Gemini models which don't accept 'model' as a parameter)
+            trace_kwargs = prompt_kwargs.copy()
             if model_id:
-                prompt_kwargs["model"] = model_id
+                trace_kwargs["model"] = model_id
 
-            # Record the prompt with model info
-            trace.record_llm_request(current_node, prompt_text, prompt_kwargs)
+            # Record the prompt with model info (use trace_kwargs with model)
+            trace.record_llm_request(current_node, prompt_text, trace_kwargs)
 
             try:
                 # Start timing before making the request
@@ -518,16 +520,34 @@ class TraceCollector:
                 )
 
                 # Calculate cost immediately using the centralized pricing module
+                import logging
+
                 from pflow.core.llm_pricing import calculate_llm_cost
 
-                cost_breakdown = calculate_llm_cost(
-                    model=model_name,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_creation_tokens=cache_creation_tokens,
-                    cache_read_tokens=cache_read_tokens,
-                    thinking_tokens=thinking_tokens,
-                )
+                logger = logging.getLogger(__name__)
+
+                try:
+                    cost_breakdown = calculate_llm_cost(
+                        model=model_name,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cache_creation_tokens=cache_creation_tokens,
+                        cache_read_tokens=cache_read_tokens,
+                        thinking_tokens=thinking_tokens,
+                    )
+                except ValueError as e:
+                    # Don't crash trace collection for unknown models
+                    logger.warning(f"Pricing not available for model '{model_name}': {e}")
+                    cost_breakdown = {
+                        "total_cost_usd": None,
+                        "pricing_model": "unavailable",
+                        "input_cost": None,
+                        "output_cost": None,
+                        "cache_creation_cost": None,
+                        "cache_read_cost": None,
+                        "thinking_cost": None,
+                        "error": str(e),
+                    }
 
                 self.current_llm_call["tokens"] = {
                     "input": input_tokens,

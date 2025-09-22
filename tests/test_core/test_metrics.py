@@ -38,8 +38,9 @@ class TestMetricsCollector:
         expected_output_cost = (225 / 1_000_000) * 0.60
         expected_total = round(expected_input_cost + expected_output_cost, 6)
 
-        total_cost = collector.calculate_costs(llm_calls)
-        assert total_cost == expected_total
+        cost_data = collector.calculate_costs(llm_calls)
+        assert cost_data["pricing_available"] is True
+        assert cost_data["total_cost_usd"] == expected_total
 
     def test_cost_calculation_for_different_models(self):
         """Test that pricing is accurate for different models."""
@@ -82,20 +83,21 @@ class TestMetricsCollector:
                 }
             ]
 
-            cost = collector.calculate_costs(llm_calls)
-            assert cost == test_case["expected_cost"], f"Failed for model {test_case['model']}"
+            cost_data = collector.calculate_costs(llm_calls)
+            assert cost_data["pricing_available"] is True
+            assert cost_data["total_cost_usd"] == test_case["expected_cost"], f"Failed for model {test_case['model']}"
 
     def test_unknown_model_uses_default_pricing(self):
-        """Test that unknown models use default pricing."""
+        """Test that unknown models are handled gracefully."""
         collector = MetricsCollector()
 
         llm_calls = [{"model": "unknown-model-xyz", "input_tokens": 1000, "output_tokens": 500}]
 
-        # Should use default pricing (gpt-4o-mini): $0.15/M input, $0.60/M output
-        expected_cost = round((1000 / 1_000_000 * 0.15) + (500 / 1_000_000 * 0.60), 6)
-
-        cost = collector.calculate_costs(llm_calls)
-        assert cost == expected_cost
+        # Should return unavailable pricing info
+        cost_data = collector.calculate_costs(llm_calls)
+        assert cost_data["pricing_available"] is False
+        assert cost_data["total_cost_usd"] is None
+        assert "unknown-model-xyz" in cost_data["unavailable_models"]
 
     def test_summary_generation_without_planner_metrics(self):
         """Test summary generation when only workflow metrics are present."""
@@ -226,8 +228,9 @@ class TestMetricsCollector:
         collector = MetricsCollector()
 
         # Test with empty list
-        cost = collector.calculate_costs([])
-        assert cost == 0.0
+        cost_data = collector.calculate_costs([])
+        assert cost_data["pricing_available"] is True
+        assert cost_data["total_cost_usd"] == 0.0
 
         # Test summary with empty list
         summary = collector.get_summary([])
@@ -244,8 +247,8 @@ class TestMetricsCollector:
         llm_calls = [
             {},  # Empty dict
             {"model": "gpt-4o-mini"},  # Missing token counts
-            {"input_tokens": 100},  # Missing model and output tokens
-            {"output_tokens": 50},  # Missing model and input tokens
+            {"input_tokens": 100},  # Missing model and output tokens (will be "unknown")
+            {"output_tokens": 50},  # Missing model and input tokens (will be "unknown")
             {  # Complete valid entry
                 "model": "gpt-4o-mini",
                 "input_tokens": 200,
@@ -253,24 +256,26 @@ class TestMetricsCollector:
             },
         ]
 
-        # Calculate expected cost for all entries with missing fields treated as 0
+        # With new behavior:
         # Entry 1: Empty dict - skipped
-        # Entry 2: gpt-4o-mini with 0 tokens - no cost
-        # Entry 3: unknown model with 100 input, 0 output
-        cost3 = round((100 / 1_000_000 * 0.15), 6)  # Default pricing
-        # Entry 4: unknown model with 0 input, 50 output
-        cost4 = round((50 / 1_000_000 * 0.60), 6)  # Default pricing
-        # Entry 5: Complete entry
+        # Entry 2: gpt-4o-mini with 0 tokens - no cost (valid model)
+        # Entry 3: unknown model - pricing unavailable
+        # Entry 4: unknown model - pricing unavailable
+        # Entry 5: Complete entry - valid
+
+        # Should have partial cost from valid models only
         cost5 = round((200 / 1_000_000 * 0.15) + (100 / 1_000_000 * 0.60), 6)
 
-        expected_cost = round(cost3 + cost4 + cost5, 6)
-
-        cost = collector.calculate_costs(llm_calls)
-        assert cost == expected_cost
+        cost_data = collector.calculate_costs(llm_calls)
+        assert cost_data["pricing_available"] is False  # Has unknown models
+        assert cost_data["total_cost_usd"] is None
+        assert "unknown" in cost_data["unavailable_models"]
+        assert cost_data["partial_cost_usd"] == cost5  # Partial cost from valid models
 
         # Test summary generation - tokens from all entries are summed
         summary = collector.get_summary(llm_calls)
-        assert summary["total_cost_usd"] == expected_cost
+        assert summary["total_cost_usd"] is None  # Because of unknown models
+        assert summary["pricing_available"] is False
         assert summary["metrics"]["total"]["tokens_input"] == 300  # 0 + 100 + 0 + 200
         assert summary["metrics"]["total"]["tokens_output"] == 150  # 0 + 0 + 50 + 100
 
@@ -287,9 +292,11 @@ class TestMetricsCollector:
             }
         ]
 
-        cost = collector.calculate_costs(llm_calls)
+        cost_data = collector.calculate_costs(llm_calls)
+        assert cost_data["pricing_available"] is True
 
         # Check that the cost has at most 6 decimal places
+        cost = cost_data["total_cost_usd"]
         cost_str = str(cost)
         if "." in cost_str:
             decimal_places = len(cost_str.split(".")[1])
@@ -399,8 +406,8 @@ class TestMetricsCollector:
 
         llm_calls = [
             # Planner calls
-            {"model": "claude-3-sonnet-20240229", "input_tokens": 1000, "output_tokens": 500, "is_planner": True},
-            {"model": "claude-3-sonnet-20240229", "input_tokens": 2000, "output_tokens": 800, "is_planner": True},
+            {"model": "claude-3-5-sonnet-latest", "input_tokens": 1000, "output_tokens": 500, "is_planner": True},
+            {"model": "claude-3-5-sonnet-latest", "input_tokens": 2000, "output_tokens": 800, "is_planner": True},
             # Workflow calls
             {"model": "gpt-4", "input_tokens": 3000, "output_tokens": 1500, "is_planner": False},
             {"model": "gpt-4o-mini", "input_tokens": 500, "output_tokens": 200, "is_planner": False},
@@ -429,9 +436,9 @@ class TestMetricsCollector:
 
         llm_calls = [
             # Same model used 3 times in planner
-            {"model": "claude-3-sonnet-20240229", "input_tokens": 100, "output_tokens": 50, "is_planner": True},
-            {"model": "claude-3-sonnet-20240229", "input_tokens": 200, "output_tokens": 100, "is_planner": True},
-            {"model": "claude-3-sonnet-20240229", "input_tokens": 300, "output_tokens": 150, "is_planner": True},
+            {"model": "claude-3-5-sonnet-latest", "input_tokens": 100, "output_tokens": 50, "is_planner": True},
+            {"model": "claude-3-5-sonnet-latest", "input_tokens": 200, "output_tokens": 100, "is_planner": True},
+            {"model": "claude-3-5-sonnet-latest", "input_tokens": 300, "output_tokens": 150, "is_planner": True},
             # Same model used 2 times in workflow
             {"model": "gpt-4", "input_tokens": 400, "output_tokens": 200, "is_planner": False},
             {"model": "gpt-4", "input_tokens": 500, "output_tokens": 250, "is_planner": False},
@@ -440,7 +447,7 @@ class TestMetricsCollector:
         summary = collector.get_summary(llm_calls)
 
         # Each model should appear only once despite multiple uses
-        assert summary["metrics"]["planner"]["models_used"] == ["claude-3-sonnet-20240229"]
+        assert summary["metrics"]["planner"]["models_used"] == ["claude-3-5-sonnet-latest"]
         assert summary["metrics"]["workflow"]["models_used"] == ["gpt-4"]
 
     def test_multiple_models_in_same_section(self):
@@ -452,9 +459,9 @@ class TestMetricsCollector:
 
         llm_calls = [
             # Different models in planner
-            {"model": "claude-3-sonnet-20240229", "input_tokens": 100, "output_tokens": 50, "is_planner": True},
-            {"model": "claude-3-haiku-20240307", "input_tokens": 200, "output_tokens": 100, "is_planner": True},
-            {"model": "claude-3-opus-20240229", "input_tokens": 300, "output_tokens": 150, "is_planner": True},
+            {"model": "claude-3-5-sonnet-latest", "input_tokens": 100, "output_tokens": 50, "is_planner": True},
+            {"model": "claude-3-5-haiku-latest", "input_tokens": 200, "output_tokens": 100, "is_planner": True},
+            {"model": "claude-3-opus-latest", "input_tokens": 300, "output_tokens": 150, "is_planner": True},
             # Different models in workflow
             {"model": "gpt-4", "input_tokens": 400, "output_tokens": 200, "is_planner": False},
             {"model": "gpt-4o-mini", "input_tokens": 500, "output_tokens": 250, "is_planner": False},
@@ -465,7 +472,7 @@ class TestMetricsCollector:
 
         # All unique models should be present (order doesn't matter, so use sets)
         planner_models = set(summary["metrics"]["planner"]["models_used"])
-        assert planner_models == {"claude-3-sonnet-20240229", "claude-3-haiku-20240307", "claude-3-opus-20240229"}
+        assert planner_models == {"claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"}
 
         workflow_models = set(summary["metrics"]["workflow"]["models_used"])
         assert workflow_models == {"gpt-4", "gpt-4o-mini", "gpt-3.5-turbo"}
