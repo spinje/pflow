@@ -388,13 +388,14 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 52: Improve planner with "plan" and "requirements" steps + prompt caching + thinking
 - ✅ Task 47: Implement MCP http transport
 - ✅ Task 67: Use MCP Standard Format
+- ✅ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
 
 Next up:
-- ⏳ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
-- ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
+- ⏳ Task 68: Refactor RuntimeValidation and Workflow Execution
 
 Next version (post-MVP/post-Launch):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
+- ⏳ Task 48: Implement MCP Server for pflow (expose pflow workflows as tools to AI agents)
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
