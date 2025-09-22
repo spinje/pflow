@@ -16,6 +16,7 @@ Every test you write should:
 2. Enable confident refactoring by validating behavior
 3. Provide clear feedback about what broke and why
 4. Run fast enough for immediate feedback (<100ms for unit tests)
+5. Dont be a duplicate of existing tests
 
 When tests fail, you must:
 1. Find and fix the ROOT CAUSE, not just make tests green
