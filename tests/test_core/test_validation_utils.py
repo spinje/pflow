@@ -37,6 +37,13 @@ def test_invalid_parameter_names():
     assert not is_valid_parameter_name("  ")
     assert not is_valid_parameter_name("\t")
 
+    # Spaces and tabs (NEW: these break CLI parsing and template regex)
+    assert not is_valid_parameter_name("api key")  # Space in middle
+    assert not is_valid_parameter_name("my param")  # Space in middle
+    assert not is_valid_parameter_name("tab\there")  # Tab in middle
+    assert not is_valid_parameter_name(" leading")  # Leading space (caught by strip)
+    assert not is_valid_parameter_name("trailing ")  # Trailing space (caught by strip)
+
     # Shell special characters
     assert not is_valid_parameter_name("my$var")  # Dollar sign
     assert not is_valid_parameter_name("cmd|pipe")  # Pipe
@@ -62,6 +69,15 @@ def test_parameter_validation_error_messages():
     # Empty string
     error = get_parameter_validation_error("", "input")
     assert "cannot be empty" in error
+
+    # Spaces (with helpful suggestion)
+    error = get_parameter_validation_error("api key", "input")
+    assert "cannot contain spaces" in error
+    assert "use hyphens or underscores instead" in error
+
+    # Tabs
+    error = get_parameter_validation_error("tab\there", "output")
+    assert "cannot contain tabs" in error
 
     # Dollar sign
     error = get_parameter_validation_error("my$var", "input")

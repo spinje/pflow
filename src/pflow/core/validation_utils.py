@@ -22,9 +22,10 @@ def is_valid_parameter_name(name: str) -> bool:
     if not name or not name.strip():
         return False
 
-    # Disallow shell special characters that could cause security issues
-    # These could be dangerous in shell commands or template expansion
-    dangerous_chars = ["$", "|", ">", "<", "&", ";", "`", "\n", "\r", "\0", '"', "'", "\\"]
+    # Disallow shell special characters and whitespace that could cause issues
+    # - Shell special chars: dangerous in commands or template expansion
+    # - Spaces/tabs: break CLI parsing, incompatible with template regex
+    dangerous_chars = ["$", "|", ">", "<", "&", ";", "`", "\n", "\r", "\0", '"', "'", "\\", " ", "\t"]
     return not any(char in name for char in dangerous_chars)
 
 
@@ -42,7 +43,11 @@ def get_parameter_validation_error(name: str, param_type: str = "parameter") -> 
         return f"Invalid {param_type} name - cannot be empty"
 
     # Check for specific dangerous characters and provide helpful messages
-    if "$" in name:
+    if " " in name:
+        return f"Invalid {param_type} name '{name}' - cannot contain spaces (use hyphens or underscores instead)"
+    elif "\t" in name:
+        return f"Invalid {param_type} name '{name}' - cannot contain tabs"
+    elif "$" in name:
         return f"Invalid {param_type} name '{name}' - cannot contain '$' (conflicts with template syntax)"
     elif any(char in name for char in ["|", ">", "<", "&", ";", "`"]):
         return f"Invalid {param_type} name '{name}' - cannot contain shell special characters"
