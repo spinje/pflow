@@ -23,6 +23,7 @@ from pflow.core.shell_integration import (
 from pflow.core.shell_integration import (
     read_stdin_enhanced,
 )
+from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.registry import Registry
 from pflow.runtime import compile_ir_to_flow
@@ -2318,11 +2319,11 @@ def _validate_and_prepare_workflow_params(
     # Parse parameters
     params = parse_workflow_params(remaining_args)
 
-    # Validate parameter keys are valid identifiers
-    invalid_keys = [k for k in params if not k.isidentifier()]
+    # Validate parameter keys (now more permissive than Python identifiers)
+    invalid_keys = [k for k in params if not is_valid_parameter_name(k)]
     if invalid_keys:
         click.echo(f"❌ Invalid parameter name(s): {', '.join(invalid_keys)}", err=True)
-        click.echo("   👉 Parameter names must be valid Python identifiers", err=True)
+        click.echo("   👉 Parameter names cannot contain shell special characters ($, |, >, <, &, ;, etc.)", err=True)
         ctx.exit(1)
 
     # Import prepare_inputs from the right module

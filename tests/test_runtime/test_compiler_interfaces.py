@@ -194,28 +194,51 @@ class TestCompilerInterfaces:
         assert "target_file" in error.message
         assert "Target file path" in error.message
 
-    def test_invalid_input_name_raises_error(self, registry_with_nodes, mock_node_import):
-        """Test that invalid input names (not valid Python identifiers) raise errors."""
+    def test_hyphenated_input_names_now_allowed(self, registry_with_nodes, mock_node_import):
+        """Test that hyphenated input names are now allowed."""
         ir = {
             "ir_version": "0.1.0",
             "inputs": {
-                "123-invalid": {  # Invalid: starts with number and has hyphen
+                "api-key": {  # Now allowed: hyphens are OK
+                    "description": "Valid hyphenated input name",
+                    "required": True,
+                    "type": "string",
+                },
+                "user-email": {  # Another hyphenated name
+                    "description": "User's email address",
+                    "required": False,
+                    "type": "string",
+                },
+            },
+            "nodes": [{"id": "node1", "type": "transform", "params": {"key": "${api-key}", "email": "${user-email}"}}],
+            "edges": [],
+        }
+
+        # Should compile successfully now
+        flow = compile_ir_to_flow(ir, registry_with_nodes, {"api-key": "test_value", "user-email": "test@example.com"})
+        assert flow is not None  # Compilation succeeded
+
+    def test_shell_special_chars_in_input_name_raises_error(self, registry_with_nodes, mock_node_import):
+        """Test that input names with shell special characters raise errors."""
+        ir = {
+            "ir_version": "0.1.0",
+            "inputs": {
+                "my$input": {  # Invalid: contains $ which conflicts with template syntax
                     "description": "Invalid input name",
                     "required": True,
                     "type": "string",
                 }
             },
-            "nodes": [{"id": "node1", "type": "transform", "params": {}}],
+            "nodes": [{"id": "node1", "type": "transform", "params": {"value": "${my$input}"}}],
             "edges": [],
         }
 
         with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir, registry_with_nodes, {"123-invalid": "value"})
+            compile_ir_to_flow(ir, registry_with_nodes, {"my$input": "value"})
 
         error = exc_info.value
-        assert "Invalid input name '123-invalid'" in error.message
-        assert "must be a valid Python identifier" in error.message
-        assert error.path == "inputs.123-invalid"
+        assert "Invalid input name 'my$input'" in error.message
+        assert "shell special characters" in error.message or "template syntax" in error.message
 
     def test_empty_initial_params_with_required_inputs(self, registry_with_nodes, mock_node_import):
         """Test that empty initial_params dict with required inputs raises error."""
@@ -272,12 +295,34 @@ class TestCompilerInterfaces:
 
         assert warning_found, "Expected warning about untraceable output not found"
 
-    def test_invalid_output_name_raises_error(self, registry_with_nodes, mock_node_import):
-        """Test that invalid output names raise ValidationError."""
+    def test_hyphenated_output_names_now_allowed(self, registry_with_nodes, mock_node_import):
+        """Test that hyphenated output names are now allowed."""
         ir = {
             "ir_version": "0.1.0",
             "outputs": {
-                "invalid-output": {  # Invalid: contains hyphen
+                "valid-output": {  # Now allowed: contains hyphen
+                    "description": "Valid hyphenated output name",
+                    "type": "string",
+                },
+                "another-output": {
+                    "description": "Another hyphenated output",
+                    "type": "string",
+                },
+            },
+            "nodes": [{"id": "node1", "type": "transform", "params": {}}],
+            "edges": [],
+        }
+
+        # Should compile successfully now
+        flow = compile_ir_to_flow(ir, registry_with_nodes)
+        assert flow is not None  # Compilation succeeded
+
+    def test_shell_special_chars_in_output_name_raises_error(self, registry_with_nodes, mock_node_import):
+        """Test that output names with shell special characters raise errors."""
+        ir = {
+            "ir_version": "0.1.0",
+            "outputs": {
+                "my$output": {  # Invalid: contains $ which conflicts with template syntax
                     "description": "Invalid output name",
                     "type": "string",
                 }
@@ -290,9 +335,8 @@ class TestCompilerInterfaces:
             compile_ir_to_flow(ir, registry_with_nodes)
 
         error = exc_info.value
-        assert "Invalid output name 'invalid-output'" in error.message
-        assert "must be a valid Python identifier" in error.message
-        assert error.path == "outputs.invalid-output"
+        assert "Invalid output name 'my$output'" in error.message
+        assert "shell special characters" in error.message or "template syntax" in error.message
 
     def test_nested_workflow_outputs_via_output_mapping(self, registry_with_nodes, mock_node_import):
         """Test that nested workflow outputs are recognized through output_mapping."""

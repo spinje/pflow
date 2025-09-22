@@ -13,6 +13,7 @@ import logging
 from typing import Any, Optional, Union, cast
 
 from pflow.core.ir_schema import ValidationError
+from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 from pflow.registry import Registry
 from pocketflow import BaseNode, Flow
 
@@ -869,11 +870,12 @@ def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
 
     # First validate all output names are valid Python identifiers
     for output_name, _output_spec in outputs.items():
-        if not output_name.isidentifier():
+        if not is_valid_parameter_name(output_name):
+            error_msg = get_parameter_validation_error(output_name, "output")
             raise ValidationError(
-                message=f"Invalid output name '{output_name}' - must be a valid Python identifier",
+                message=error_msg,
                 path=f"outputs.{output_name}",
-                suggestion="Use only letters, numbers, and underscores. Cannot start with a number.",
+                suggestion="Avoid shell special characters like $, |, >, <, &, ;",
             )
 
     # Get all possible outputs from nodes in the workflow

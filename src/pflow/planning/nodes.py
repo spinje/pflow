@@ -12,6 +12,7 @@ PocketFlow Node Best Practices Applied:
 """
 
 import logging
+import re
 from typing import Any, Optional
 
 import llm
@@ -2115,18 +2116,18 @@ class WorkflowGeneratorNode(Node):
         }
 
     def _post_process_workflow(self, workflow: dict) -> dict:
-        """Add system fields that don't need LLM generation.
+        """Post-process the generated workflow to fix structural issues.
 
-        Currently adds:
-        - ir_version: Always set to "1.0" (required field)
-
-        Note: start_node is optional and handled by the compiler if missing.
+        Handles:
+        - Adding ir_version (always)
+        - Removing unused inputs (cleanup)
+        - Adding empty edges for single-node workflows
 
         Args:
             workflow: The LLM-generated workflow dict
 
         Returns:
-            The workflow with system fields added
+            The workflow with system fields added and structural issues fixed
         """
         if not workflow:
             return workflow
@@ -2136,10 +2137,133 @@ class WorkflowGeneratorNode(Node):
         # Note: Must be semantic version (X.Y.Z) per IR schema
         workflow["ir_version"] = "1.0.0"
 
+        # Remove unused inputs to avoid unnecessary validation errors
+        workflow = self._remove_unused_inputs(workflow)
+
+        # Add empty edges for single-node workflows (they don't need edges)
+        workflow = self._fix_missing_edges(workflow)
+
         # Note: We don't need to handle start_node here because:
         # 1. It's optional in the IR schema
         # 2. The compiler automatically uses the first node if missing
         # 3. This follows the "principle of least surprise" design
+
+        return workflow
+
+    def _remove_unused_inputs(self, workflow: dict) -> dict:
+        """Remove declared inputs that are never used in templates.
+
+        This prevents validation errors for inputs the LLM declared but never referenced.
+        These are harmless structural issues that don't affect functionality.
+
+        Args:
+            workflow: The workflow dict
+
+        Returns:
+            The workflow with unused inputs removed
+        """
+        if "inputs" not in workflow:
+            return workflow
+
+        # If inputs is empty, remove it
+        if not workflow["inputs"]:
+            del workflow["inputs"]
+            return workflow
+
+        # Find all template variables used in the workflow
+        used_vars = self._find_used_template_variables(workflow)
+
+        # Find unused inputs
+        declared_inputs = set(workflow["inputs"].keys())
+        unused = declared_inputs - used_vars
+
+        # Remove unused inputs
+        if unused:
+            logger.debug(f"Auto-removing unused inputs: {', '.join(sorted(unused))}")
+            for input_name in unused:
+                del workflow["inputs"][input_name]
+
+            # Remove inputs key entirely if now empty
+            if not workflow["inputs"]:
+                del workflow["inputs"]
+
+        return workflow
+
+    def _find_used_template_variables(self, workflow: dict) -> set[str]:
+        """Find all template variables used in the workflow.
+
+        Args:
+            workflow: The workflow dict
+
+        Returns:
+            Set of variable names used in templates
+        """
+        used_vars: set[str] = set()
+        template_pattern = re.compile(r"\$\{([^}]+)\}")
+
+        # Search through all node parameters
+        for node in workflow.get("nodes", []):
+            params = node.get("params", {})
+            self._find_templates_in_value(params, template_pattern, used_vars)
+
+        # Check workflow outputs too
+        for _output_name, output_spec in workflow.get("outputs", {}).items():
+            if isinstance(output_spec, dict):
+                # Could have templates in the spec
+                self._find_templates_in_value(output_spec, template_pattern, used_vars)
+            elif isinstance(output_spec, str):
+                # Direct string output might be a template
+                matches = template_pattern.findall(output_spec)
+                for match in matches:
+                    # Extract base variable (before any dots)
+                    base_var = match.split(".")[0]
+                    used_vars.add(base_var)
+
+        return used_vars
+
+    def _find_templates_in_value(self, value: Any, pattern: re.Pattern, used_vars: set[str]) -> None:
+        """Recursively find template variables in a value.
+
+        Args:
+            value: The value to search (could be str, dict, list, etc.)
+            pattern: Compiled regex pattern for templates
+            used_vars: Set to add found variables to
+        """
+        if isinstance(value, str):
+            matches = pattern.findall(value)
+            for match in matches:
+                # Extract base variable (before any dots or paths)
+                # This handles both ${var} and ${var.field}
+                base_var = match.split(".")[0]
+
+                # We track all base variables here.
+                # Later we'll filter to only those that are declared inputs.
+                # This way we don't incorrectly treat node IDs as inputs.
+                used_vars.add(base_var)
+        elif isinstance(value, dict):
+            for v in value.values():
+                self._find_templates_in_value(v, pattern, used_vars)
+        elif isinstance(value, list):
+            for item in value:
+                self._find_templates_in_value(item, pattern, used_vars)
+
+    def _fix_missing_edges(self, workflow: dict) -> dict:
+        """Add empty edges array for single-node workflows.
+
+        Single-node workflows don't need edges, but validation requires the key.
+        Only auto-fix for single nodes - multi-node workflows without edges are likely errors.
+
+        Args:
+            workflow: The workflow dict
+
+        Returns:
+            The workflow with edges added if appropriate
+        """
+        # Only auto-fix if there's exactly one node
+        nodes = workflow.get("nodes", [])
+        if len(nodes) == 1 and "edges" not in workflow:
+            logger.debug("Auto-adding empty edges array for single-node workflow")
+            workflow["edges"] = []
 
         return workflow
 

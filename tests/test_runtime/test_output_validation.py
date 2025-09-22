@@ -26,22 +26,24 @@ class TestOutputValidation:
         registry.get_nodes_metadata.assert_not_called()
 
     def test_invalid_output_name(self):
-        """Test that invalid Python identifiers raise ValidationError."""
+        """Test that output names with shell special characters raise ValidationError."""
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "n1", "type": "test-node"}],
             "outputs": {
-                "123invalid": {"description": "Starts with number"},
+                "my$output": {"description": "Contains dollar sign"},
                 "valid_name": {"description": "Valid identifier"},
             },
         }
         registry = Mock()
+        # Mock get_nodes_metadata to avoid TypeError
+        registry.get_nodes_metadata.return_value = {"test-node": {"interface": {"outputs": []}}}
 
         with pytest.raises(ValidationError) as exc_info:
             _validate_outputs(workflow_ir, registry)
 
-        assert "Invalid output name '123invalid'" in str(exc_info.value)
-        assert "must be a valid Python identifier" in str(exc_info.value)
+        assert "Invalid output name 'my$output'" in str(exc_info.value)
+        assert "shell special characters" in str(exc_info.value) or "template syntax" in str(exc_info.value)
 
     def test_traceable_outputs(self, caplog):
         """Test validation when outputs can be traced to nodes."""
@@ -172,22 +174,27 @@ class TestOutputValidation:
 class TestOutputValidationIntegration:
     """Test output validation as part of compile_ir_to_flow."""
 
-    def test_compile_with_invalid_output_names(self):
-        """Test that compilation fails with invalid output names."""
+    def test_compile_with_hyphenated_output_names_now_allowed(self):
+        """Test that compilation succeeds with hyphenated output names."""
         ir_dict = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "n1", "type": "test-node", "params": {}}],
             "edges": [],
-            "outputs": {"invalid-name": {"description": "Contains hyphen"}},
+            "outputs": {"valid-name": {"description": "Contains hyphen - now allowed"}},
         }
 
         registry = Mock()
         registry.load.return_value = {"test-node": {"module": "test", "class_name": "ExampleNode"}}
+        # Mock get_nodes_metadata to avoid TypeError
+        registry.get_nodes_metadata.return_value = {"test-node": {"interface": {"outputs": []}}}
 
-        with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir_dict, registry)
+        # Import the mock node class
+        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
+            mock_import.return_value = type("ExampleNode", (Mock,), {})
 
-        assert "Invalid output name 'invalid-name'" in str(exc_info.value)
+            # Should compile successfully now
+            flow = compile_ir_to_flow(ir_dict, registry)
+            assert flow is not None  # Compilation succeeded
 
     @patch("pflow.runtime.compiler.import_node_class")
     def test_compile_with_output_warnings(self, mock_import, caplog):

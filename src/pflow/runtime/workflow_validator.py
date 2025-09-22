@@ -12,6 +12,8 @@ Key functions:
 import logging
 from typing import Any
 
+from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -106,12 +108,13 @@ def prepare_inputs(
 
     # Validate each declared input
     for input_name, input_spec in inputs.items():
-        # First validate the input name is a valid Python identifier
-        if not input_name.isidentifier():
+        # Validate the input name (now more permissive than Python identifiers)
+        if not is_valid_parameter_name(input_name):
+            error_msg = get_parameter_validation_error(input_name, "input")
             errors.append((
-                f"Invalid input name '{input_name}' - must be a valid Python identifier",
+                error_msg,
                 f"inputs.{input_name}",
-                "Use only letters, numbers, and underscores. Cannot start with a number.",
+                "Avoid shell special characters like $, |, >, <, &, ;",
             ))
             continue
 
