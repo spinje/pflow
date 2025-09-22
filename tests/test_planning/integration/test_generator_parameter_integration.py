@@ -129,12 +129,12 @@ class TestGeneratorParameterConvergence:
                     {
                         "id": "fetch_commits",
                         "type": "git-log",
-                        "params": {"repo": "{{repo}}", "since": "{{since_date}}"},
+                        "params": {"repo": "${repo}", "since": "${since_date}"},
                     },
                     {
                         "id": "format_changelog",
                         "type": "llm",
-                        "params": {"prompt": "Format commits from {{commits.data}}"},
+                        "params": {"prompt": "Format commits from ${fetch_commits.data}"},
                     },
                 ],
                 edges=[{"from": "fetch_commits", "to": "format_changelog"}],
@@ -208,16 +208,16 @@ class TestGeneratorParameterConvergence:
                         "type": "github-list-issues",
                         # Template variables MUST match inputs keys
                         "params": {
-                            "repo": "{{repo}}",
-                            "labels": "{{labels}}",
-                            "state": "{{state}}",
-                            "limit": "{{limit}}",
+                            "repo": "${repo}",
+                            "labels": "${labels}",
+                            "state": "${state}",
+                            "limit": "${limit}",
                         },
                     },
                     {
                         "id": "analyze",
                         "type": "llm",
-                        "params": {"prompt": "Analyze {{issues.data}}"},
+                        "params": {"prompt": "Analyze ${fetch_issues.data}"},
                     },
                 ],
                 edges=[{"from": "fetch_issues", "to": "analyze"}],
@@ -246,9 +246,9 @@ class TestGeneratorParameterConvergence:
 
             # Verify template variables match inputs
             fetch_node = workflow["nodes"][0]
-            assert "{{repo}}" in str(fetch_node["params"])
-            assert "{{labels}}" in str(fetch_node["params"])
-            assert "{{state}}" in str(fetch_node["params"])
+            assert "${repo}" in str(fetch_node["params"])
+            assert "${labels}" in str(fetch_node["params"])
+            assert "${state}" in str(fetch_node["params"])
 
             # Verify inputs define all template variables
             assert set(workflow["inputs"].keys()) >= {"repo", "labels", "state", "limit"}
@@ -285,7 +285,7 @@ class TestGeneratorParameterConvergence:
                     {
                         "id": "read",
                         "type": "read-file",
-                        "params": {"path": "{{input_file}}"},
+                        "params": {"path": "${input_file}"},
                     }
                 ],
                 edges=[],
@@ -358,7 +358,13 @@ class TestGeneratorParameterConvergence:
                     "token": {"type": "string", "required": True},
                     "format": {"type": "string", "required": False},
                 },
-                nodes=[{"id": "n1", "type": "test"}],
+                nodes=[
+                    {
+                        "id": "n1",
+                        "type": "test",
+                        "params": {"repository": "${repo}", "auth": "${token}", "output_format": "${format}"},
+                    }
+                ],
                 edges=[],
             )
 
@@ -421,7 +427,7 @@ class TestGeneratorParameterConvergence:
                     {
                         "id": "fetch",
                         "type": "git-log",
-                        "params": {"repo": "{{repo}}", "tag": "{{version}}"},
+                        "params": {"repo": "${repo}", "tag": "${version}"},
                     }
                 ],
                 edges=[],
@@ -518,12 +524,12 @@ class TestCompletePathBFlow:
                     {
                         "id": "get_commits",
                         "type": "git-log",
-                        "params": {"repo": "{{repo}}", "since": "{{since_date}}"},
+                        "params": {"repo": "${repo}", "since": "${since_date}"},
                     },
                     {
                         "id": "format",
                         "type": "llm",
-                        "params": {"prompt": "Format as changelog: {{commits}}"},
+                        "params": {"prompt": "Format as changelog: ${fetch_commits}"},
                     },
                 ],
                 edges=[{"from": "get_commits", "to": "format"}],
@@ -602,7 +608,7 @@ class TestCompletePathBFlow:
                 ir_version="0.1.0",
                 name="process-stdin",
                 inputs={"format": {"type": "string", "required": False}},
-                nodes=[{"id": "process", "type": "llm", "params": {"data": "{{stdin}}"}}],
+                nodes=[{"id": "process", "type": "llm", "params": {"data": "${stdin}", "format": "${format}"}}],
                 edges=[],
             )
 
@@ -666,7 +672,7 @@ class TestGeneratorRetryMechanism:
                 ir_version="0.1.0",
                 name="test",
                 inputs={"param": {"type": "string", "required": True}},
-                nodes=[{"id": "n1", "type": "test"}],
+                nodes=[{"id": "n1", "type": "test", "params": {"value": "${param}"}}],
                 edges=[],
             )
 
@@ -730,7 +736,7 @@ class TestGeneratorRetryMechanism:
                     ir_version="0.1.0",
                     name="test",
                     inputs={"repo": {"type": "string", "required": True}},
-                    nodes=[{"id": "n1", "type": "git-log", "params": {"repo": "{{repo}}"}}],
+                    nodes=[{"id": "n1", "type": "git-log", "params": {"repo": "${repo}"}}],
                     edges=[],
                 ),
             ]
@@ -768,7 +774,7 @@ class TestGeneratorRetryMechanism:
             generator.post(shared, prep2, exec2)
 
             second_workflow = shared["generated_workflow"]
-            assert "{{repo}}" in str(second_workflow["nodes"][0]["params"])
+            assert "${repo}" in str(second_workflow["nodes"][0]["params"])
             assert "hardcoded" not in str(second_workflow["nodes"][0]["params"])
 
 
@@ -876,7 +882,9 @@ class TestEdgeCases:
                     "input_file": {"type": "string", "required": True},
                     "output_format": {"type": "string", "required": False},
                 },
-                nodes=[],
+                nodes=[
+                    {"id": "process", "type": "test", "params": {"file": "${input_file}", "format": "${output_format}"}}
+                ],
                 edges=[],
             )
             mock_get_model.return_value = mock_model
