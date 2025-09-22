@@ -10,4 +10,4 @@ Start by reading these files:
 
 $ARGUMENTS
 
-   
+Create a todo to make sure you read all files. Remember we are not implementing anything. Let me know when you have understood the existing material and is ready to move on!
