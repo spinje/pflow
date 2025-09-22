@@ -2834,6 +2834,24 @@ class RuntimeValidationNode(Node):
                 "result": result,
             }
         except Exception as e:
+            # Exception Handling Philosophy:
+            # We intentionally catch ALL exceptions here (not just specific types) because:
+            # 1. This runs during planning - if we crash, the entire planner fails (terrible UX)
+            # 2. Our job is to detect runtime issues, not to be picky about exception types
+            # 3. Custom nodes might raise custom exceptions we can't anticipate
+            # 4. Robustness > Precision for this use case
+            #
+            # For debugging: Exception details are added to the trace when --trace-planner is used.
+            # This gives developers full visibility without polluting stdout/stderr or breaking
+            # JSON output mode (--output-format json) or headless execution (-p flag).
+
+            # Add exception details to trace if available (for debugging with --trace-planner)
+            trace = prep_res.get("_trace_collector")
+            if trace and hasattr(trace, "record_phase"):
+                trace.record_phase(
+                    "RuntimeValidationNode", "exception", 0, {"type": type(e).__name__, "message": str(e)}
+                )
+
             logger.info(f"Runtime validation: caught exception during execution: {e}")
             return {
                 "ok": False,

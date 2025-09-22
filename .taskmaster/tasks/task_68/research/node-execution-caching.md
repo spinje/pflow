@@ -216,48 +216,100 @@ class OutputController:
 
 ## Integration with Repair Service (Task 68)
 
-### Repair Flow with Caching
+### Critical Architectural Decision: Unified Execution Flow
+
+**Key Insight**: When auto-repair is enabled, the repair flow should BE the primary execution flow, not a separate fallback. This prevents losing the cache from the initial CLI execution.
+
+#### The Problem with Separate Flows
 ```python
-def repair_workflow(workflow_ir, execution_params, execution_errors):
-    """Repair workflow using cached results from failed execution."""
+# BAD: Current approach loses CLI execution cache
+cli_result = executor.execute_workflow(...)  # Builds cache
+if failed:
+    repair_result = repair_workflow(...)      # Starts fresh, rebuilds cache!
+    # Result: Duplicate executions of successful nodes
+```
 
-    # First execution (may fail)
+#### The Solution: Unified Flow
+```python
+# GOOD: Repair flow is the primary flow
+def execute_with_auto_repair(workflow_ir, execution_params):
+    """Primary execution path with automatic repair capability."""
+
+    # First execution with caching
+    cache = NodeExecutionCache()
     executor = WorkflowExecutorService()
-    result1 = executor.execute_workflow(workflow_ir, execution_params)
 
-    if not result1.success:
-        # Repair the workflow
-        repaired_ir = generate_repair(workflow_ir, result1.errors)
+    result = executor.execute_workflow(
+        workflow_ir,
+        execution_params,
+        execution_cache=cache,  # Build cache during execution
+    )
 
-        # Re-execute with cache from first run
-        # Nodes that succeeded before will use cached results
-        result2 = executor.execute_workflow(
+    if result.success:
+        return result  # Happy path - no repair needed
+
+    # Repair needed - we already have the cache from CLI execution!
+    attempt = 1
+    while attempt <= 3 and not result.success:
+        # Generate repair
+        repaired_ir = generate_repair(workflow_ir, result.errors)
+
+        # Execute repair WITH CACHE from original CLI execution
+        result = executor.execute_workflow(
             repaired_ir,
             execution_params,
-            execution_cache=result1.execution_cache  # ← Reuse cache!
+            execution_cache=cache,  # ← Reuses ALL successful nodes from first run!
         )
+        attempt += 1
 
-        return result2
+    return result
 ```
 
-### User Experience During Repair
+### CLI Integration
+```python
+# In CLI's execute_json_workflow function
+def execute_json_workflow(ctx, ir_data, params, ...):
+    if ctx.obj.get('auto_repair', True):
+        # Use unified repair flow for ALL executions
+        from pflow.repair import execute_with_auto_repair
+
+        result = execute_with_auto_repair(
+            workflow_ir=ir_data,
+            execution_params=params,
+            # First execution builds cache
+            # Repair automatically uses that cache if needed
+            # No duplicate executions ever!
+        )
+    else:
+        # Traditional execution without repair capability
+        result = executor.execute_workflow(ir_data, params)
 ```
-❌ Workflow failed at node 4 of 6
+
+### User Experience with Unified Flow
+```
+$ pflow "create workflow"
+
+Executing workflow (6 nodes):
+  fetch_messages... ✓ 1.8s              # First execution
+  analyze_questions... ✓ 0.9s           # First execution
+  send_answers... ✓ 1.9s                # Sends message once
+  get_timestamp... ✗ Failed              # Fails here
 
 🔧 Auto-repairing workflow...
   • Issue: Shell command syntax error
-  • Generating fix...
 
 Executing workflow (6 nodes):
-  fetch_messages... ✓ 0.0s (cached)    # No Slack API call
-  analyze_questions... ✓ 0.0s (cached)  # No LLM call
+  fetch_messages... ✓ 0.0s (cached)     # From FIRST execution!
+  analyze_questions... ✓ 0.0s (cached)  # From FIRST execution!
   send_answers... ✓ 0.0s (cached)       # No duplicate message!
   get_timestamp... ✓ 0.1s               # Actually executes (testing fix)
   format_data... ✓ 0.5s                 # Continues normally
   update_sheet... ✓ 2.1s                # Completes
 
-✅ Workflow repaired successfully!
+✅ Workflow completed successfully!
 ```
+
+Note how the cache from the initial CLI execution is preserved and used during repair, preventing ALL duplicate side effects.
 
 ## Benefits
 
@@ -314,29 +366,38 @@ Executing workflow (6 nodes):
 
 ## Implementation Roadmap
 
-### Phase 1: Basic Caching (2-3 hours)
+### Phase 1: Basic Caching in WorkflowExecutorService (2-3 hours)
 1. Implement `NodeExecutionCache` class
 2. Create `CachingNodeWrapper`
 3. Add cache key generation
-4. Basic integration with WorkflowExecutorService
+4. Integrate caching into WorkflowExecutorService
 
-### Phase 2: Progress Display (1-2 hours)
+### Phase 2: Unified Repair Flow (3-4 hours)
+1. Create `execute_with_auto_repair` function as primary execution path
+2. Ensure cache is built during first execution
+3. Pass cache through repair attempts
+4. Update CLI to use unified flow when auto-repair is enabled
+
+### Phase 3: Progress Display (1-2 hours)
 1. Update OutputController for cached indicator
 2. Add timing for cached vs non-cached
 3. Improve visual feedback
 
-### Phase 3: Repair Integration (2-3 hours)
-1. Integrate with repair service
-2. Pass cache between execution attempts
-3. Test with real workflows
+### Phase 4: Testing & Validation (2-3 hours)
+1. Test cache correctness with various node types
+2. Verify no duplicate side effects
+3. Performance benchmarking
+4. Edge case testing
 
-### Phase 4: Optimization (Optional, 2-3 hours)
+### Phase 5: Optimization (Optional, 2-3 hours)
 1. Add cache size limits
 2. Implement LRU eviction
 3. Add metrics/monitoring
-4. Performance testing
+4. Consider persistent cache for workflow resumption
 
-**Total Estimate**: 6-8 hours for full implementation
+**Total Estimate**: 8-10 hours for full implementation with unified flow
+
+**Critical Success Factor**: The unified flow approach (where repair flow IS the primary execution when auto-repair is enabled) is essential to prevent duplicate executions from the initial CLI run.
 
 ## Comparison: Before vs After
 
