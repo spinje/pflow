@@ -1180,6 +1180,15 @@ def test_data_processing():
 # pytest -n auto  # Uses all CPU cores
 ```
 
+## Before creating a new test
+
+Before starting to write a new test or creating a new test file:
+- You need to make absolutely sure that the test is not a duplicate of an existing test.
+- Make a thorough search of the codebase to make sure that the test you are going to write does not exist already.
+- A duplicated test is huge waste of time and energy and should be avoided at all costs. 
+- It also creates a lot of noise in the test suite and degrades the quality of the test suite.
+- Do not rely on documentation in CLAUDE. or other documentation files to be accurate, always verify the information by searching the codebase.
+
 ## Quality Checklist
 
 Before submitting any test, ask yourself:
