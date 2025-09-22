@@ -2990,25 +2990,35 @@ class RuntimeValidationNode(Node):
         # Better to try 3 times than give up immediately
         return True
 
-    def _check_template_exists(self, template: str, shared: dict[str, Any]) -> bool:  # noqa: C901
-        """Check if a template path exists in the shared store.
+    def _extract_template_path(self, template: str) -> Optional[str]:
+        """Extract the variable path from a template string.
 
         Args:
             template: Template like "${http.response.login}"
+
+        Returns:
+            The variable path (e.g., "http.response.login") or None if invalid
+        """
+        from pflow.runtime.template_resolver import TemplateResolver
+
+        # Use TemplateResolver to extract variables
+        variables = TemplateResolver.extract_variables(template)
+        if not variables:
+            return None
+
+        # Should only have one variable per template
+        return next(iter(variables))
+
+    def _navigate_shared_store(self, path: str, shared: dict[str, Any]) -> bool:
+        """Navigate the shared store to check if a path exists.
+
+        Args:
+            path: Path like "http.response.login" or "http.items[0].name"
             shared: The shared store after execution
 
         Returns:
-            True if the path exists
+            True if the path exists in the shared store
         """
-        import re
-
-        # Extract the variable name from ${...}
-        match = re.match(r"\$\{([^}]+)\}", template)
-        if not match:
-            return False
-
-        path = match.group(1)
-
         # Split into node_id and field path
         parts = path.split(".", 1)
         if len(parts) < 2:
@@ -3022,37 +3032,58 @@ class RuntimeValidationNode(Node):
         # Navigate the shared store
         current = shared.get(node_id, {})
 
-        if field_path:
-            for part in field_path.split("."):
-                # Handle array notation like [0]
-                if "[" in part and "]" in part:
-                    field_name = part[: part.index("[")]
-                    index_str = part[part.index("[") + 1 : part.index("]")]
+        if not field_path:
+            return True  # Node exists
 
-                    # Navigate to array field if needed
-                    if field_name and isinstance(current, dict):
-                        current = current.get(field_name)
+        # Parse the field path handling array notation
+        for part in field_path.split("."):
+            # Handle array notation like [0]
+            if "[" in part and "]" in part:
+                field_name = part[: part.index("[")]
+                index_str = part[part.index("[") + 1 : part.index("]")]
 
-                    # Access array element
-                    try:
-                        index = int(index_str)
-                        if isinstance(current, list) and 0 <= index < len(current):
-                            current = current[index]
-                        else:
-                            return False
-                    except (ValueError, TypeError):
-                        return False
-                else:
-                    # Regular field access
-                    if isinstance(current, dict):
-                        current = current.get(part)
+                # Navigate to array field if needed
+                if field_name and isinstance(current, dict):
+                    current = current.get(field_name)
+
+                # Access array element
+                try:
+                    index = int(index_str)
+                    if isinstance(current, list) and 0 <= index < len(current):
+                        current = current[index]
                     else:
                         return False
-
-                if current is None:
+                except (ValueError, TypeError):
+                    return False
+            else:
+                # Regular field access
+                if isinstance(current, dict):
+                    current = current.get(part)
+                else:
                     return False
 
+            if current is None:
+                return False
+
         return True
+
+    def _check_template_exists(self, template: str, shared: dict[str, Any]) -> bool:
+        """Check if a template path exists in the shared store.
+
+        Args:
+            template: Template like "${http.response.login}"
+            shared: The shared store after execution
+
+        Returns:
+            True if the path exists
+        """
+        # Extract the variable path from the template
+        path = self._extract_template_path(template)
+        if not path:
+            return False
+
+        # Navigate the shared store to check if the path exists
+        return self._navigate_shared_store(path, shared)
 
     def _collect_execution_errors(self, exec_res: dict[str, Any]) -> list[dict[str, Any]]:
         """Collect errors from execution exceptions.
