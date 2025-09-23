@@ -58,6 +58,7 @@ dev = [
     "types-PyYAML>=6.0.0",
     "types-jsonschema>=4.25.0.20250809",
     "types-requests>=2.32.4.20250809",
+    "llm-gemini==0.25",  # Gemini extension for Simon Willison's LLM library
 ]
 
 [build-system]
