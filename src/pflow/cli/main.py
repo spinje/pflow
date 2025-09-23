@@ -25,8 +25,7 @@ from pflow.core.shell_integration import (
 )
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow_manager import WorkflowManager
-from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.execution import DisplayManager, ExecutionResult
 
 # Import MCP CLI commands
 
@@ -883,52 +882,6 @@ def _prompt_workflow_save(
             return (False, None)  # Other error, don't retry
 
 
-def _prepare_shared_storage(
-    execution_params: dict[str, Any] | None,
-    planner_llm_calls: list[dict[str, Any]] | None,
-    stdin_data: str | StdinData | None,
-    verbose: bool,
-    output_controller: OutputController | None = None,
-) -> dict[str, Any]:
-    """Prepare shared storage with execution params and stdin data.
-
-    Args:
-        execution_params: Optional parameters from planner for template resolution
-        planner_llm_calls: Optional LLM calls from planner for metrics
-        stdin_data: Optional stdin data to inject
-        verbose: Whether to show verbose output
-        output_controller: Optional OutputController for progress callbacks
-
-    Returns:
-        Prepared shared storage dictionary
-    """
-    shared_storage: dict[str, Any] = {}
-
-    # Preserve LLM calls from planner if provided
-    if planner_llm_calls:
-        shared_storage["__llm_calls__"] = planner_llm_calls
-
-    # Inject execution parameters from planner (for template resolution)
-    if execution_params:
-        shared_storage.update(execution_params)
-        if verbose:
-            click.echo(f"cli: Injected {len(execution_params)} execution parameters into shared storage")
-
-    # Inject stdin data if present (may override execution params)
-    _inject_stdin_data(shared_storage, stdin_data, verbose)
-
-    # Add verbose flag for nodes to check
-    shared_storage["__verbose__"] = verbose
-
-    # Add output controller callback if provided
-    if output_controller:
-        callback = output_controller.create_progress_callback()
-        if callback:
-            shared_storage["__progress_callback__"] = callback
-
-    return shared_storage
-
-
 def _validate_workflow_structure(ir_data: dict[str, Any], ctx: click.Context) -> bool:
     """Validate the workflow structure.
 
@@ -939,20 +892,46 @@ def _validate_workflow_structure(ir_data: dict[str, Any], ctx: click.Context) ->
     return isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data
 
 
-def _ensure_registry_loaded(ctx: click.Context) -> Registry:
-    """Load registry with helpful error if missing.
+def _validate_and_handle_workflow_errors(
+    ir_data: dict[str, Any],
+    ctx: click.Context,
+    output_format: str,
+    verbose: bool,
+    metrics_collector: Any | None = None,
+) -> None:
+    """Validate workflow structure and IR schema, handling errors appropriately.
 
-    Returns:
-        Loaded Registry instance.
+    Raises SystemExit on validation failure after outputting appropriate error messages.
+
+    Args:
+        ir_data: Workflow IR data to validate
+        ctx: Click context
+        output_format: Output format (json or text)
+        verbose: Verbose flag
+        metrics_collector: Optional metrics collector for JSON output
     """
-    registry = Registry()
-    try:
-        # This will auto-discover core nodes if registry doesn't exist
-        registry.load()
-    except Exception as e:
-        output_format = ctx.obj.get("output_format", "text")
-        verbose = ctx.obj.get("verbose", False)
+    # Validate workflow structure first
+    if not _validate_workflow_structure(ir_data, ctx):
+        error_msg = "Invalid workflow - missing required fields (ir_version, nodes)"
+        if output_format == "json":
+            # Create a simple exception for the error
+            error = ValueError(error_msg)
+            workflow_metadata = ctx.obj.get("workflow_metadata")
+            error_output = _create_json_error_output(
+                error,
+                None,  # No metrics collector
+                None,  # No shared storage
+                workflow_metadata,
+            )
+            _serialize_json_result(error_output, verbose)
+        else:
+            click.echo(f"cli: {error_msg}", err=True)
+        ctx.exit(1)
 
+    # Validate IR schema
+    try:
+        validate_ir(ir_data)
+    except ValidationError as e:
         if output_format == "json":
             workflow_metadata = ctx.obj.get("workflow_metadata")
             error_output = _create_json_error_output(
@@ -963,58 +942,89 @@ def _ensure_registry_loaded(ctx: click.Context) -> Registry:
             )
             _serialize_json_result(error_output, verbose)
         else:
-            click.echo(f"cli: Error - Failed to load registry: {e}", err=True)
-            click.echo("cli: Try 'pflow registry list' to see available nodes.", err=True)
-            click.echo("cli: Or 'pflow registry scan <path>' to add custom nodes.", err=True)
+            click.echo(f"cli: Invalid workflow - {e}", err=True)
         ctx.exit(1)
-    return registry
 
 
-def _setup_workflow_collectors(
+def _prepare_execution_environment(
     ctx: click.Context,
     ir_data: dict[str, Any],
     output_format: str,
-    metrics_collector: Any | None,
-) -> tuple[Any | None, Any | None]:
-    """Set up metrics and trace collectors.
+    verbose: bool,
+    execution_params: dict[str, Any] | None,
+    planner_llm_calls: list[dict[str, Any]] | None,
+) -> tuple[Any, Any, Any, dict[str, Any], bool]:
+    """Prepare the execution environment for workflow execution.
 
     Returns:
-        Tuple of (metrics_collector, workflow_trace).
+        Tuple of (cli_output, display, workflow_trace, enhanced_params, effective_verbose)
     """
+    from pflow.cli.cli_output import CliOutput
+
+    # Extract context values
+    print_flag = ctx.obj.get("print_flag", False)
+
+    # Determine effective verbose flag for nodes
+    # MCP server output should only show when -v is set AND not in print mode or JSON output
+    effective_verbose = verbose and not print_flag and output_format != "json"
+
+    # Create output interface
+    cli_output = CliOutput(
+        output_controller=_get_output_controller(ctx),
+        verbose=verbose,
+        output_format=output_format,
+    )
+
+    # Create display manager
+    display = DisplayManager(output=cli_output)
+
+    # Get workflow trace if requested
     workflow_trace = None
-
-    # Only create new metrics collector if not provided and JSON output is requested
-    if output_format == "json" and not metrics_collector:
-        from pflow.core.metrics import MetricsCollector
-
-        metrics_collector = MetricsCollector()
-
-    if metrics_collector:
-        metrics_collector.record_workflow_start()
-
     if ctx.obj.get("trace", False):
         from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
         workflow_trace = WorkflowTraceCollector(ir_data.get("name", "workflow"))
+        ctx.obj["workflow_trace"] = workflow_trace
 
-    return metrics_collector, workflow_trace
+    # Prepare execution params with verbose flag and LLM calls
+    enhanced_params = execution_params or {}
+    enhanced_params["__verbose__"] = effective_verbose
+    if planner_llm_calls:
+        enhanced_params["__llm_calls__"] = planner_llm_calls
+
+    return cli_output, display, workflow_trace, enhanced_params, effective_verbose
 
 
-def _compile_workflow(
-    ir_data: dict[str, Any],
-    registry: Registry,
-    execution_params: dict[str, Any] | None,
-    metrics_collector: Any | None,
+def _handle_compilation_error(
+    ctx: click.Context,
+    error: Exception,
+    output_format: str,
+    verbose: bool,
     workflow_trace: Any | None,
-) -> Any:
-    """Compile IR to Flow with parameters and collectors."""
-    return compile_ir_to_flow(
-        ir_data,
-        registry,
-        initial_params=execution_params,
-        metrics_collector=metrics_collector,
-        trace_collector=workflow_trace,
-    )
+    metrics_collector: Any | None,
+) -> None:
+    """Handle compilation errors specially.
+
+    Args:
+        ctx: Click context
+        error: Compilation error
+        output_format: Output format (json or text)
+        verbose: Verbose flag
+        workflow_trace: Optional workflow trace
+        metrics_collector: Optional metrics collector
+    """
+    if output_format == "json":
+        _handle_compilation_error_json(ctx, error, metrics_collector)
+    else:
+        _format_compilation_error_text(error, verbose)
+
+    # Save trace if requested
+    if workflow_trace:
+        trace_path = workflow_trace.save_to_file()
+        if trace_path and verbose and output_format != "json":
+            click.echo(f"cli: Trace saved to {trace_path}", err=True)
+
+    ctx.exit(1)
 
 
 def _handle_workflow_error(
@@ -1086,61 +1096,6 @@ def _handle_workflow_success(
         click.echo("Workflow executed successfully")
 
 
-def _validate_and_load_registry(ctx: click.Context, ir_data: dict[str, Any]) -> Registry:
-    """Validate workflow structure and load registry.
-
-    Args:
-        ctx: Click context
-        ir_data: Workflow IR data
-
-    Returns:
-        Loaded Registry instance
-
-    Raises:
-        SystemExit: If validation fails
-    """
-    output_format = ctx.obj.get("output_format", "text")
-    verbose = ctx.obj.get("verbose", False)
-
-    # Check if it's valid JSON with workflow structure
-    if not _validate_workflow_structure(ir_data, ctx):
-        error_msg = "Invalid workflow - missing required fields (ir_version, nodes)"
-        if output_format == "json":
-            # Create a simple exception for the error
-            error = ValueError(error_msg)
-            workflow_metadata = ctx.obj.get("workflow_metadata")
-            error_output = _create_json_error_output(
-                error,
-                None,  # No metrics collector
-                None,  # No shared storage
-                workflow_metadata,
-            )
-            _serialize_json_result(error_output, verbose)
-        else:
-            click.echo(f"cli: {error_msg}", err=True)
-        ctx.exit(1)
-
-    # Load registry and validate IR
-    registry = _ensure_registry_loaded(ctx)
-    try:
-        validate_ir(ir_data)
-    except ValidationError as e:
-        if output_format == "json":
-            workflow_metadata = ctx.obj.get("workflow_metadata")
-            error_output = _create_json_error_output(
-                e,
-                None,  # No metrics collector
-                None,  # No shared storage
-                workflow_metadata,
-            )
-            _serialize_json_result(error_output, verbose)
-        else:
-            click.echo(f"cli: Invalid workflow - {e}", err=True)
-        ctx.exit(1)
-
-    return registry
-
-
 def _format_compilation_error_text(e: Exception, verbose: bool) -> None:
     """Format and display compilation error in text mode.
 
@@ -1193,92 +1148,63 @@ def _handle_compilation_error_json(
     _serialize_json_result(error_output, verbose)
 
 
-def _compile_workflow_with_error_handling(
-    ctx: click.Context,
-    ir_data: dict[str, Any],
-    registry: Registry,
-    execution_params: dict[str, Any] | None,
-    metrics_collector: Any | None,
-    workflow_trace: Any | None,
-) -> Any:
-    """Compile workflow with error handling.
-
-    Args:
-        ctx: Click context
-        ir_data: Workflow IR data
-        registry: Loaded registry
-        execution_params: Optional execution parameters
-        metrics_collector: Optional metrics collector
-        workflow_trace: Optional workflow trace
-
-    Returns:
-        Compiled Flow object
-
-    Raises:
-        SystemExit: If compilation fails
-    """
-    try:
-        flow = _compile_workflow(ir_data, registry, execution_params, metrics_collector, workflow_trace)
-        return flow
-    except Exception as e:
-        verbose = ctx.obj.get("verbose", False)
-        output_format = ctx.obj.get("output_format", "text")
-
-        # Handle error based on output format
-        if output_format == "json":
-            _handle_compilation_error_json(ctx, e, metrics_collector)
-        else:
-            _format_compilation_error_text(e, verbose)
-
-        # Save trace if requested
-        if workflow_trace:
-            trace_path = workflow_trace.save_to_file()
-            # Combine conditions to avoid nested if
-            if trace_path and verbose and output_format != "json":
-                click.echo(f"cli: Trace saved to {trace_path}", err=True)
-        ctx.exit(1)
-
-
 def _execute_workflow_and_handle_result(
     ctx: click.Context,
-    flow: Any,
+    result: ExecutionResult,  # NEW: Accept ExecutionResult
     shared_storage: dict[str, Any],
-    metrics_collector: Any | None,
     workflow_trace: Any | None,
     output_key: str | None,
     ir_data: dict[str, Any],
     output_format: str,
+    metrics_collector: Any | None,
     verbose: bool,
+    display: DisplayManager,  # NEW: Accept DisplayManager
 ) -> None:
-    """Execute workflow and handle the result.
+    """Intermediate function that routes to appropriate handlers.
+
+    This MUST be preserved for compatibility.
 
     Args:
         ctx: Click context
-        flow: Compiled Flow object
-        shared_storage: Shared storage dictionary
-        metrics_collector: Optional metrics collector
+        result: ExecutionResult from workflow execution
+        shared_storage: Shared storage dictionary after execution
         workflow_trace: Optional workflow trace
         output_key: Optional output key
         ir_data: Workflow IR data
         output_format: Output format
+        metrics_collector: Optional metrics collector
         verbose: Verbose flag
+        display: DisplayManager for output
     """
-    result = flow.run(shared_storage)
 
-    # Record workflow end if metrics are being collected
-    if metrics_collector:
-        metrics_collector.record_workflow_end()
+    # Note: Display output is handled by the handlers below, not here
+    # This preserves the existing behavior where output format and
+    # interactive mode determine what gets displayed
 
     # Clean up LLM interception after successful run
     if workflow_trace and hasattr(workflow_trace, "cleanup_llm_interception"):
         workflow_trace.cleanup_llm_interception()
 
-    # Route to appropriate handler based on result
-    if result and isinstance(result, str) and result.startswith("error"):
-        _handle_workflow_error(ctx, workflow_trace, output_format, metrics_collector, shared_storage, verbose)
-    else:
+    # Route based on result to display output data
+    if result.success:
         _handle_workflow_success(
-            ctx, workflow_trace, shared_storage, output_key, ir_data, output_format, metrics_collector, verbose
+            ctx=ctx,
+            workflow_trace=workflow_trace,
+            shared_storage=shared_storage,
+            output_key=output_key,
+            ir_data=ir_data,
+            output_format=output_format,
+            metrics_collector=metrics_collector,
+            verbose=verbose,
+        )
+    else:
+        _handle_workflow_error(
+            ctx=ctx,
+            workflow_trace=workflow_trace,
+            output_format=output_format,
+            metrics_collector=metrics_collector,
+            shared_storage=shared_storage,
+            verbose=verbose,
         )
 
 
@@ -1376,9 +1302,16 @@ def _handle_workflow_exception(
             error_message = e.format_for_cli(verbose=verbose)
             click.echo(error_message, err=True)
         else:
-            # Fallback to generic error message
-            click.echo(f"cli: Workflow execution failed - {e}", err=True)
-            click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
+            # Check if this is a registry load error
+            error_str = str(e)
+            if isinstance(e, RuntimeError) and "registry" in error_str.lower():
+                click.echo(f"cli: Error - Failed to load registry: {e}", err=True)
+                click.echo("cli: Try 'pflow registry list' to see available nodes.", err=True)
+                click.echo("cli: Or 'pflow registry scan <path>' to add custom nodes.", err=True)
+            else:
+                # Fallback to generic error message
+                click.echo(f"cli: Workflow execution failed - {e}", err=True)
+                click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
 
     # Save trace on error if requested
     if workflow_trace:
@@ -1398,66 +1331,88 @@ def execute_json_workflow(
     output_format: str = "text",
     metrics_collector: Any | None = None,
 ) -> None:
-    """Execute a JSON workflow if it's valid.
+    """Thin CLI wrapper for workflow execution.
 
-    Args:
-        ctx: Click context
-        ir_data: Parsed workflow IR data
-        stdin_data: Optional stdin data (string or StdinData) to inject into shared storage
-        output_key: Optional key to output from shared storage after execution
-        execution_params: Optional parameters from planner for template resolution
-        planner_llm_calls: Optional LLM calls from planner for metrics attribution
-        output_format: Output format - "text" (default) or "json"
-        metrics_collector: Optional existing MetricsCollector to use (from planner)
+    All logic delegated to WorkflowExecutorService.
     """
-    # Validate workflow and load registry
-    registry = _validate_and_load_registry(ctx, ir_data)
+    from pflow.core.workflow_manager import WorkflowManager
+    from pflow.execution import WorkflowExecutorService
 
-    # Set up collectors
-    metrics_collector, workflow_trace = _setup_workflow_collectors(ctx, ir_data, output_format, metrics_collector)
-
-    # Compile workflow with error handling
-    flow = _compile_workflow_with_error_handling(
-        ctx, ir_data, registry, execution_params, metrics_collector, workflow_trace
-    )
-
-    # Show verbose execution info if requested
+    # Extract context values
     verbose = ctx.obj.get("verbose", False)
-    if verbose and ctx.obj.get("output_format", "text") != "json":
-        node_count = len(ir_data.get("nodes", []))
-        click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
+    workflow_name = ctx.obj.get("workflow_name")
 
-    # Get output controller for interactive vs non-interactive mode
-    output_controller = _get_output_controller(ctx)
+    # Set up metrics collector if JSON output and not provided
+    if output_format == "json" and not metrics_collector:
+        from pflow.core.metrics import MetricsCollector
 
-    # Show workflow execution header if interactive
-    if output_controller.is_interactive():
-        node_count = len(ir_data.get("nodes", []))
-        callback = output_controller.create_progress_callback()
-        if callback:
-            callback(str(node_count), "workflow_start", None, 0)
+        metrics_collector = MetricsCollector()
 
-    # Determine effective verbose flag for nodes
-    # MCP server output should only show when -v is set AND not in print mode or JSON output
-    print_flag = ctx.obj.get("print_flag", False)
-    output_format = ctx.obj.get("output_format", "text")
-    effective_verbose = verbose and not print_flag and output_format != "json"
+    # Validate workflow
+    _validate_and_handle_workflow_errors(ir_data, ctx, output_format, verbose, metrics_collector)
 
-    # Prepare shared storage with params and stdin
-    shared_storage = _prepare_shared_storage(
-        execution_params, planner_llm_calls, stdin_data, effective_verbose, output_controller
+    # Prepare execution environment
+    cli_output, display, workflow_trace, enhanced_params, effective_verbose = _prepare_execution_environment(
+        ctx, ir_data, output_format, verbose, execution_params, planner_llm_calls
     )
+
+    # Create executor service
+    executor = WorkflowExecutorService(
+        output_interface=cli_output,
+        workflow_manager=WorkflowManager() if workflow_name else None,
+    )
+
+    # Show execution starting
+    node_count = len(ir_data.get("nodes", []))
+    if verbose and output_format != "json":
+        click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
+    display.show_execution_start(node_count)
 
     try:
-        # Execute workflow and handle result
-        _execute_workflow_and_handle_result(
-            ctx, flow, shared_storage, metrics_collector, workflow_trace, output_key, ir_data, output_format, verbose
+        # Execute workflow
+        result = executor.execute_workflow(
+            workflow_ir=ir_data,
+            execution_params=enhanced_params,
+            shared_store=None,  # Fresh execution
+            workflow_name=workflow_name,
+            stdin_data=stdin_data,
+            output_key=output_key,
+            metrics_collector=metrics_collector,
+            trace_collector=workflow_trace,
         )
-    except (click.ClickException, SystemExit):
-        # Let Click exceptions and exits propagate normally
-        raise
+
+        # Handle result
+        _execute_workflow_and_handle_result(
+            ctx=ctx,
+            result=result,
+            shared_storage=result.shared_after,
+            workflow_trace=workflow_trace,
+            output_key=output_key,
+            ir_data=ir_data,
+            output_format=output_format,
+            metrics_collector=metrics_collector,
+            verbose=verbose,
+            display=display,
+        )
+
     except Exception as e:
-        _handle_workflow_exception(ctx, e, workflow_trace, output_format, metrics_collector, shared_storage, verbose)
+        from pflow.runtime.compiler import CompilationError
+
+        # Handle compilation errors specially
+        if isinstance(e, CompilationError):
+            _handle_compilation_error(ctx, e, output_format, verbose, workflow_trace, metrics_collector)
+
+        # Handle other exceptions
+        _handle_workflow_exception(
+            ctx,
+            e,
+            workflow_trace,
+            output_format,
+            metrics_collector,
+            result.shared_after if "result" in locals() else {},
+            verbose,
+        )
+
     finally:
         _cleanup_workflow_resources(workflow_trace, stdin_data, verbose)
 
