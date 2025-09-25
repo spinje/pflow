@@ -199,9 +199,12 @@ class TestGitCommitNode:
 
         action = node.post(shared, prep_res, exec_res)
 
+        # The node should return "error" action to trigger repair
         assert shared["commit_sha"] == ""
         assert shared["commit_message"] == "Test commit"
-        assert action == "default"
+        assert shared["error"] == "Some error occurred"
+        assert shared["commit_status"] == "error"
+        assert action == "error"  # CORRECT: Returns error to trigger repair
 
     @patch("subprocess.run")
     def test_exec_enforces_security_flags(self, mock_run):
@@ -287,8 +290,8 @@ class TestGitCommitNode:
             assert shared["commit_sha"] == "def5678"
             assert shared["commit_message"] == "Test commit"
 
-    def test_retry_exhaustion_raises_error(self):
-        """Test that error is raised after all retries are exhausted."""
+    def test_retry_exhaustion_returns_error(self):
+        """Test that error action is returned after all retries are exhausted."""
         node = GitCommitNode()
         node.max_retries = 1
         node.wait = 0  # Only 1 retry, wait=0 for fast testing
@@ -321,8 +324,11 @@ class TestGitCommitNode:
             # Should have tried max_retries times
             assert attempt_count == 1  # max_retries=1 means 1 attempt total
 
-            # Check that error was handled and stored
-            assert action == "default"
+            # Check that error was handled correctly
+            assert action == "error"  # CORRECT: Returns error to trigger repair
             assert "commit_sha" in shared
             assert shared["commit_sha"] == ""
             assert shared["commit_message"] == "Test commit"
+            assert shared["commit_status"] == "error"
+            assert "error" in shared
+            assert "not a git repository" in shared["error"]

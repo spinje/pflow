@@ -271,9 +271,9 @@ class TestLLMNode:
 
             assert action == "default"
 
-    # Test Criteria 14: UnknownModelError raised → ValueError with "llm models" message
+    # Test Criteria 14: UnknownModelError raised → Returns error action with helpful message
     def test_unknown_model_error_handling(self):
-        """Test that UnknownModelError is transformed to helpful ValueError."""
+        """Test that UnknownModelError is handled correctly with error action."""
         with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
             mock_get_model.side_effect = Exception("UnknownModelError: bad-model not found")
 
@@ -281,16 +281,21 @@ class TestLLMNode:
             node.set_params({"prompt": "Test", "model": "bad-model"})
             shared = {}
 
-            with pytest.raises(ValueError) as exc_info:
-                node.run(shared)
+            # Node should return "error" action and set error in shared
+            action = node.run(shared)
 
-            error_msg = str(exc_info.value)
+            assert action == "error"
+            assert "error" in shared
+            error_msg = shared["error"]
             assert "Unknown model: bad-model" in error_msg
             assert "llm models" in error_msg
+            # Verify empty response and usage as per spec
+            assert shared["response"] == ""
+            assert shared["llm_usage"] == {}
 
-    # Test Criteria 15: NeedsKeyException raised → ValueError with "llm keys" message
+    # Test Criteria 15: NeedsKeyException raised → Returns error action with helpful message
     def test_needs_key_exception_handling(self):
-        """Test that NeedsKeyException is transformed to helpful ValueError."""
+        """Test that NeedsKeyException is handled correctly with error action."""
         with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_model.prompt.side_effect = Exception("NeedsKeyException: API key required")
@@ -300,16 +305,21 @@ class TestLLMNode:
             node.set_params({"prompt": "Test"})
             shared = {}
 
-            with pytest.raises(ValueError) as exc_info:
-                node.run(shared)
+            # Node should return "error" action and set error in shared
+            action = node.run(shared)
 
-            error_msg = str(exc_info.value)
+            assert action == "error"
+            assert "error" in shared
+            error_msg = shared["error"]
             assert "API key required" in error_msg
             assert "llm keys set" in error_msg
+            # Verify empty response and usage as per spec
+            assert shared["response"] == ""
+            assert shared["llm_usage"] == {}
 
-    # Test Criteria 16: Generic exception → ValueError with retry count
+    # Test Criteria 16: Generic exception → Returns error action with retry count
     def test_generic_exception_handling(self):
-        """Test that generic exceptions include retry count."""
+        """Test that generic exceptions include retry count in error."""
         with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_model.prompt.side_effect = RuntimeError("Network error")
@@ -319,12 +329,16 @@ class TestLLMNode:
             node.set_params({"prompt": "Test"})
             shared = {}
 
-            with pytest.raises(ValueError) as exc_info:
-                node.run(shared)
+            # Node should return "error" action and set error in shared
+            action = node.run(shared)
 
-            error_msg = str(exc_info.value)
+            assert action == "error"
+            assert "error" in shared
+            error_msg = shared["error"]
             assert "failed after 2 attempts" in error_msg
-            assert "Network error" in error_msg
+            # Verify empty response and usage as per spec
+            assert shared["response"] == ""
+            assert shared["llm_usage"] == {}
 
     # Test Criteria 17: Empty prompt → ValueError raised
     def test_empty_prompt_raises_error(self):

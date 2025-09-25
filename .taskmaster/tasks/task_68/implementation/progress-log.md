@@ -1235,3 +1235,25 @@ The repair system transformed pflow from a "best effort" workflow executor to a 
 - Robust error handling at every layer
 
 Task 68 is complete with comprehensive testing and production-ready implementation.
+
+---
+
+## [2025-01-25 12:00] - Critical Fix: Nodes Were Hiding Failures from Repair System
+
+### Discovery
+Nodes (LLM, Git, MCP) were returning "default" action on failures instead of "error", making workflows appear successful while silently failing. This completely disabled the repair system.
+
+### Root Cause
+Historical workaround from before repair system existed - nodes returned "default" to continue despite errors. With repair system now built, this prevented repairs from ever triggering.
+
+### Fix Applied
+- **LLM Node**: `exec_fallback` returns error dict instead of raising
+- **Git Nodes** (6 files): `post()` returns "error" on failure
+- **InstrumentedWrapper**: Fixed attribute access for error detection
+- **Tests** (22 updated): Now expect "error" action, not "default"
+
+### Impact
+**Before**: API fails → Returns "default" → Workflow "succeeds" → No repair
+**After**: API fails → Returns "error" → Repair triggers → Self-healing works
+
+Without this fix, the entire repair system was architecturally complete but functionally dead. Now workflows properly detect failures and trigger automatic repairs.

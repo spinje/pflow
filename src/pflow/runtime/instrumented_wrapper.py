@@ -390,9 +390,12 @@ class InstrumentedNodeWrapper:
         # TODO: Capture template resolutions if they were logged
         template_resolutions: dict[str, Any] = {}
 
+        # Get the actual node class, not wrapper class
+        actual_node_class = self._get_actual_node_class()
+
         self.trace.record_node_execution(
             node_id=self.node_id,
-            node_type=type(self.inner_node).__name__,
+            node_type=actual_node_class.__name__,
             duration_ms=duration_ms,
             shared_before=shared_before,
             shared_after=shared_after,
@@ -407,13 +410,23 @@ class InstrumentedNodeWrapper:
         Returns:
             Dictionary containing node type and parameters
         """
-        # Get the actual node (might be wrapped multiple times)
-        actual_node = self.inner_node
-        while hasattr(actual_node, "_inner_node") or hasattr(actual_node, "inner_node"):
-            actual_node = actual_node._inner_node if hasattr(actual_node, "_inner_node") else actual_node.inner_node
+        # Get the actual node class using our helper method
+        actual_node_class = self._get_actual_node_class()
 
         # Build configuration dictionary
-        node_config = {"type": actual_node.__class__.__name__, "params": {}}
+        node_config = {"type": actual_node_class.__name__, "params": {}}
+
+        # Get the actual node instance to access params
+        actual_node = self.inner_node
+        while hasattr(actual_node, "_inner_node") or hasattr(actual_node, "inner_node") or hasattr(actual_node, "_wrapped"):
+            if hasattr(actual_node, "_inner_node"):
+                actual_node = actual_node._inner_node
+            elif hasattr(actual_node, "inner_node"):
+                actual_node = actual_node.inner_node
+            elif hasattr(actual_node, "_wrapped"):
+                actual_node = actual_node._wrapped
+            else:
+                break
 
         # Include parameters if present
         if hasattr(actual_node, "params") and actual_node.params:
@@ -666,14 +679,52 @@ class InstrumentedNodeWrapper:
             # Re-raise the exception
             raise
 
+    def _get_actual_node_class(self) -> type:
+        """Get the actual node class by traversing the wrapper chain.
+
+        Returns:
+            The class of the actual node (not a wrapper)
+        """
+        current = self.inner_node
+
+        # Traverse down the wrapper chain to find the actual node
+        while current:
+            # Check if this is another wrapper and continue traversing
+            if hasattr(current, "inner_node"):
+                current = current.inner_node
+            elif hasattr(current, "_inner_node"):
+                current = current._inner_node
+            elif hasattr(current, "_wrapped"):
+                current = current._wrapped
+            else:
+                # Found the actual node
+                return type(current)
+
+        # Fallback to inner_node's type if we can't traverse
+        return type(self.inner_node)
+
     def _setup_llm_interception(self) -> None:
         """Set up LLM interception if trace collector is present and node uses LLM."""
         if not self.trace or not hasattr(self.trace, "setup_llm_interception"):
             return
 
-        # Check if this node might use LLM (has prompt in params or is llm type)
+        # Check if this node might use LLM in various ways:
+        # 1. Has prompt in params (some nodes)
+        # 2. Is an llm-type node (node type contains 'llm')
+        # 3. Has model configuration (likely uses LLM)
         node_params = self._get_node_params()
-        if node_params and "prompt" in node_params:
+
+        # Check node type for 'llm' indicator - get the actual node class, not wrapper
+        actual_node_class = self._get_actual_node_class()
+        node_type = actual_node_class.__name__.lower()
+        is_llm_node = "llm" in node_type
+
+        # Check if params suggest LLM usage
+        has_prompt_param = node_params and "prompt" in node_params
+        has_model_param = node_params and "model" in node_params
+
+        if is_llm_node or has_prompt_param or has_model_param:
+            logger.debug(f"Setting up LLM interception for node {self.node_id} (type: {node_type})")
             self.trace.setup_llm_interception(self.node_id)
 
     def _detect_api_warning(self, shared: dict) -> Optional[str]:

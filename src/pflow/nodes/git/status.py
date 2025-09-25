@@ -219,12 +219,14 @@ class GitStatusNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: str, exec_res: dict[str, Any]) -> Optional[str]:
         """Update shared store with git status and return action."""
-        # Store the git status in shared store
+        # Check for error first
+        if "error" in exec_res:
+            shared["error"] = exec_res["error"]
+            shared["git_status"] = exec_res
+            logger.error("Git status failed", extra={"error": exec_res["error"], "phase": "post"})
+            return "error"  # Return error to trigger repair
+
+        # Store the git status in shared store for success
         shared["git_status"] = exec_res
 
-        # Log if there was an error
-        if "error" in exec_res:
-            logger.error("Git status failed", extra={"error": exec_res["error"], "phase": "post"})
-
-        # Always return default action
         return "default"

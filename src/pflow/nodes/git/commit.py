@@ -188,15 +188,21 @@ class GitCommitNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> Optional[str]:
         """Update shared store with commit results and return action."""
-        # Store the commit SHA and message in shared store
+        # Check for error status first
+        if exec_res.get("status") == "error":
+            shared["error"] = exec_res.get("error", "Git operation failed")
+            shared["commit_sha"] = ""
+            shared["commit_message"] = exec_res.get("commit_message", "")
+            shared["commit_status"] = "error"
+            logger.error("Git commit failed", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"})
+            return "error"  # Return error to trigger repair
+
+        # Store the commit SHA and message in shared store for success
         shared["commit_sha"] = exec_res.get("commit_sha", "")
         shared["commit_message"] = exec_res.get("commit_message", "")
 
-        # Log if there was an error
-        if exec_res.get("status") == "error":
-            logger.error("Git commit failed", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"})
-        elif exec_res.get("status") == "nothing_to_commit":
+        if exec_res.get("status") == "nothing_to_commit":
             logger.info("No changes to commit", extra={"phase": "post"})
+            shared["commit_status"] = "nothing_to_commit"
 
-        # Always return default action
         return "default"

@@ -561,7 +561,12 @@ class TestGitCheckoutNode:
         assert action == "default"
 
     def test_post_error(self, git_checkout_node, shared_store):
-        """Test post method with error."""
+        """Test post method with error.
+
+        FIXED: The node now correctly returns "error" action when
+        exec_res.get("status") == "error", enabling the repair system
+        to handle failures properly.
+        """
         prep_res = {}
         exec_res = {
             "current_branch": "",
@@ -578,7 +583,10 @@ class TestGitCheckoutNode:
         assert shared_store["previous_branch"] == ""
         assert shared_store["branch_created"] is False
         assert "stash_created" not in shared_store
-        assert action == "default"
+        # Node correctly returns "error" action for error status
+        assert action == "error"
+        # Verify error message was stored in shared store
+        assert shared_store["error"] == "Test error"
 
 
 class TestGitCheckoutNodeHelperMethods:
@@ -851,8 +859,13 @@ class TestGitCheckoutNodeSecurity:
             assert attempt_count == 2  # Failed once, succeeded on retry
             assert shared_store["current_branch"] == "feature"
 
-    def test_retry_exhaustion_raises_error(self, git_checkout_node, shared_store):
-        """Test that error is handled correctly after all retries are exhausted."""
+    def test_retry_exhaustion_returns_error(self, git_checkout_node, shared_store):
+        """Test that error action is returned after all retries are exhausted.
+
+        FIXED: When exec_fallback is triggered after retries are exhausted,
+        it returns a dict with status="error". The post() method then correctly
+        returns "error" action, enabling the repair system to handle the failure.
+        """
         git_checkout_node.max_retries = 1
         git_checkout_node.wait = 0  # Fast testing
 
@@ -872,12 +885,16 @@ class TestGitCheckoutNodeSecurity:
             shared_store["branch"] = "feature"
             shared_store["working_directory"] = "/not/a/repo"
 
-            # exec_fallback returns a dict with error info
+            # exec_fallback returns a dict with error info, post() returns "error" action
             action = git_checkout_node.run(shared_store)
 
-            assert action == "default"
+            # Node correctly returns "error" action after retries exhausted
+            assert action == "error"
             assert shared_store["current_branch"] == ""
             assert shared_store["branch_created"] is False
+            # Verify error message was set in shared store
+            assert "error" in shared_store
+            assert "not a git repository" in shared_store["error"]
 
 
 class TestGitCheckoutNodeEdgeCases:
