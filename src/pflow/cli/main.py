@@ -6,9 +6,11 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import signal
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Any, cast
 
@@ -953,6 +955,7 @@ def _prepare_execution_environment(
     verbose: bool,
     execution_params: dict[str, Any] | None,
     planner_llm_calls: list[dict[str, Any]] | None,
+    planner_cache_chunks: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, Any, Any, dict[str, Any], bool]:
     """Prepare the execution environment for workflow execution.
 
@@ -991,6 +994,8 @@ def _prepare_execution_environment(
     enhanced_params["__verbose__"] = effective_verbose
     if planner_llm_calls:
         enhanced_params["__llm_calls__"] = planner_llm_calls
+    if planner_cache_chunks:
+        enhanced_params["__planner_cache_chunks__"] = planner_cache_chunks
 
     return cli_output, display, workflow_trace, enhanced_params, effective_verbose
 
@@ -1321,6 +1326,84 @@ def _handle_workflow_exception(
     ctx.exit(1)
 
 
+def _save_repaired_workflow(
+    ctx: click.Context,
+    repaired_workflow_ir: dict[str, Any],
+) -> None:
+    """Save repaired workflow to file if applicable.
+
+    Args:
+        ctx: Click context containing source_file_path and update_in_place
+        repaired_workflow_ir: The repaired workflow IR to save
+    """
+    source_file_path = ctx.obj.get("source_file_path")
+    update_in_place = ctx.obj.get("update_in_place", False)
+
+    if not source_file_path:
+        return
+
+    try:
+        if update_in_place:
+            # Create backup of original
+            backup_path = f"{source_file_path}.backup"
+            shutil.copy2(source_file_path, backup_path)
+
+            # Update original file with repaired workflow
+            with open(source_file_path, "w") as f:
+                json.dump(repaired_workflow_ir, f, indent=2)
+
+            # Notify user
+            click.echo(click.style(f"\n✅ Updated {source_file_path} with repairs", fg="green"))
+            click.echo(f"   Backup saved to: {backup_path}")
+        else:
+            # Create separate repaired file
+            base_name = source_file_path.rsplit(".json", 1)[0]
+            repaired_path = f"{base_name}.repaired.json"
+
+            # Save repaired workflow with nice formatting
+            with open(repaired_path, "w") as f:
+                json.dump(repaired_workflow_ir, f, indent=2)
+
+            # Notify user
+            click.echo(click.style(f"\n✅ Repaired workflow saved to: {repaired_path}", fg="green"))
+    except Exception as e:
+        # Non-fatal - just warn
+        logger.warning(f"Could not save repaired workflow: {e}")
+
+
+def _setup_execution_context(
+    ctx: click.Context,
+    ir_data: dict[str, Any],
+    output_format: str,
+    metrics_collector: Any | None,
+) -> tuple[bool, bool, Any | None]:
+    """Setup execution context and return configuration values.
+
+    Args:
+        ctx: Click context
+        ir_data: Workflow IR data
+        output_format: Output format
+        metrics_collector: Optional metrics collector
+
+    Returns:
+        Tuple of (verbose, no_repair, metrics_collector)
+    """
+    verbose = ctx.obj.get("verbose", False)
+    no_repair = ctx.obj.get("no_repair", False)
+
+    # Set up metrics collector if JSON output and not provided
+    if output_format == "json" and not metrics_collector:
+        from pflow.core.metrics import MetricsCollector
+
+        metrics_collector = MetricsCollector()
+
+    # Only validate if repair is disabled (execute_workflow will handle validation when repair is enabled)
+    if no_repair:
+        _validate_and_handle_workflow_errors(ir_data, ctx, output_format, verbose, metrics_collector)
+
+    return verbose, no_repair, metrics_collector
+
+
 def execute_json_workflow(
     ctx: click.Context,
     ir_data: dict[str, Any],
@@ -1330,36 +1413,25 @@ def execute_json_workflow(
     planner_llm_calls: list[dict[str, Any]] | None = None,
     output_format: str = "text",
     metrics_collector: Any | None = None,
+    planner_cache_chunks: list[dict[str, Any]] | None = None,
 ) -> None:
     """Thin CLI wrapper for workflow execution.
 
     All logic delegated to WorkflowExecutorService.
     """
     from pflow.core.workflow_manager import WorkflowManager
-    from pflow.execution import WorkflowExecutorService
+    from pflow.execution.workflow_execution import execute_workflow
 
-    # Extract context values
-    verbose = ctx.obj.get("verbose", False)
+    # Setup execution context
+    verbose, no_repair, metrics_collector = _setup_execution_context(ctx, ir_data, output_format, metrics_collector)
+
+    # Extract additional context values
     workflow_name = ctx.obj.get("workflow_name")
-
-    # Set up metrics collector if JSON output and not provided
-    if output_format == "json" and not metrics_collector:
-        from pflow.core.metrics import MetricsCollector
-
-        metrics_collector = MetricsCollector()
-
-    # Validate workflow
-    _validate_and_handle_workflow_errors(ir_data, ctx, output_format, verbose, metrics_collector)
+    original_request = ctx.obj.get("workflow_text")  # From planner
 
     # Prepare execution environment
     cli_output, display, workflow_trace, enhanced_params, effective_verbose = _prepare_execution_environment(
-        ctx, ir_data, output_format, verbose, execution_params, planner_llm_calls
-    )
-
-    # Create executor service
-    executor = WorkflowExecutorService(
-        output_interface=cli_output,
-        workflow_manager=WorkflowManager() if workflow_name else None,
+        ctx, ir_data, output_format, verbose, execution_params, planner_llm_calls, planner_cache_chunks
     )
 
     # Show execution starting
@@ -1368,18 +1440,30 @@ def execute_json_workflow(
         click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
     display.show_execution_start(node_count)
 
+    # Hide PocketFlow warnings in non-verbose mode
+    if not verbose:
+        warnings.filterwarnings("ignore", message="Flow ends:*", module="pocketflow")
+
     try:
-        # Execute workflow
-        result = executor.execute_workflow(
+        # Execute workflow with unified function (includes repair capability)
+        result = execute_workflow(
             workflow_ir=ir_data,
             execution_params=enhanced_params,
-            shared_store=None,  # Fresh execution
+            enable_repair=not no_repair,  # Enable repair by default
+            resume_state=None,  # Fresh execution
+            original_request=original_request,
+            output=cli_output,
+            workflow_manager=WorkflowManager() if workflow_name else None,
             workflow_name=workflow_name,
             stdin_data=stdin_data,
             output_key=output_key,
             metrics_collector=metrics_collector,
             trace_collector=workflow_trace,
         )
+
+        # Save repaired workflow if applicable
+        if result.success and result.repaired_workflow_ir:
+            _save_repaired_workflow(ctx, result.repaired_workflow_ir)
 
         # Handle result
         _execute_workflow_and_handle_result(
@@ -1871,6 +1955,24 @@ def _handle_post_execution_display(
                 display_rerun_commands(saved_name, execution_params)
 
 
+def _extract_planner_cache_chunks(planner_shared: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Extract cache chunks from planner shared store in priority order."""
+    # Priority 1: Most complete context (has retry history)
+    if accumulated := planner_shared.get("planner_accumulated_blocks"):
+        return cast(list[dict[str, Any]], accumulated)
+
+    # Priority 2: Planning context (has execution plan)
+    if extended := planner_shared.get("planner_extended_blocks"):
+        return cast(list[dict[str, Any]], extended)
+
+    # Priority 3: Base context (minimal but better than nothing)
+    if base := planner_shared.get("planner_base_blocks"):
+        return cast(list[dict[str, Any]], base)
+
+    # No planner context available
+    return None
+
+
 def _execute_successful_workflow(
     ctx: click.Context,
     planner_output: dict,
@@ -1889,6 +1991,9 @@ def _execute_successful_workflow(
     _determine_workflow_metadata(ctx, planner_output, output_controller)
 
     # Execute the workflow
+    # Extract cache chunks for repair context
+    planner_cache_chunks = _extract_planner_cache_chunks(planner_shared) if planner_shared else None
+
     execute_json_workflow(
         ctx,
         planner_output["workflow_ir"],
@@ -1898,6 +2003,7 @@ def _execute_successful_workflow(
         planner_shared.get("__llm_calls__", []) if planner_shared else None,  # Pass planner LLM calls
         ctx.obj.get("output_format", "text"),
         metrics_collector,
+        planner_cache_chunks,  # NEW: Pass cache chunks for repair context
     )
 
     # Handle post-execution actions (prompts and display for interactive mode)
@@ -2180,6 +2286,8 @@ def _initialize_context(
     planner_timeout: int,
     save: bool,
     cache_planner: bool,
+    no_repair: bool,
+    update_in_place: bool,
 ) -> None:
     """Initialize the click context with configuration.
 
@@ -2194,6 +2302,8 @@ def _initialize_context(
         planner_timeout: Planner timeout in seconds
         save: Save workflow flag
         cache_planner: Enable cross-session caching for planner
+        no_repair: Disable automatic workflow repair on failure
+        update_in_place: Update original workflow with repairs
     """
     if ctx.obj is None:
         ctx.obj = {}
@@ -2207,6 +2317,8 @@ def _initialize_context(
     ctx.obj["planner_timeout"] = planner_timeout
     ctx.obj["save"] = save
     ctx.obj["cache_planner"] = cache_planner
+    ctx.obj["no_repair"] = no_repair
+    ctx.obj["update_in_place"] = update_in_place
 
     # Create OutputController once and store it for reuse
     ctx.obj["output_controller"] = OutputController(
@@ -2303,6 +2415,76 @@ def _validate_and_prepare_workflow_params(
     return params
 
 
+def _show_workflow_help(
+    first_arg: str,
+    workflow_ir: dict[str, Any],
+    source: str | None,
+) -> None:
+    """Display workflow help information.
+
+    Args:
+        first_arg: First workflow argument (name or path)
+        workflow_ir: Workflow IR data
+        source: Workflow source ("saved", "file", etc.)
+    """
+    # Import display helpers
+    from pflow.cli.commands.workflow import _display_example_usage, _display_inputs, _display_outputs
+
+    # Display workflow information
+    name = os.path.basename(first_arg) if "/" in first_arg else first_arg
+    click.echo(f"\nWorkflow: {name}")
+    if source == "saved":
+        click.echo("Source: Saved workflow")
+    else:
+        click.echo(f"Source: {first_arg}")
+
+    _display_inputs(workflow_ir)
+    _display_outputs(workflow_ir)
+    _display_example_usage(name, workflow_ir)
+
+
+def _setup_workflow_execution(
+    ctx: click.Context,
+    first_arg: str,
+    source: str | None,
+    output_format: str,
+) -> Any | None:
+    """Setup workflow execution context and metrics.
+
+    Args:
+        ctx: Click context
+        first_arg: First workflow argument (name or path)
+        source: Workflow source ("saved", "file", etc.)
+        output_format: Output format
+
+    Returns:
+        Metrics collector if JSON output, otherwise None
+    """
+    # Create metrics collector if needed
+    metrics_collector = None
+    if output_format == "json":
+        from pflow.core.metrics import MetricsCollector
+
+        metrics_collector = MetricsCollector()
+
+    # Set workflow metadata based on source
+    # This ensures proper action field in JSON output
+    if source == "saved":
+        # Workflow from registry - it's being reused
+        ctx.obj["workflow_metadata"] = _create_workflow_metadata(first_arg, "reused")
+    else:
+        # Workflow from file - it's unsaved
+        ctx.obj["workflow_metadata"] = _create_workflow_metadata(first_arg, "unsaved")
+
+    # Store source file path for potential repair saving
+    if source == "file" and first_arg.endswith(".json"):
+        ctx.obj["source_file_path"] = first_arg
+    else:
+        ctx.obj["source_file_path"] = None
+
+    return metrics_collector
+
+
 def _handle_named_workflow(
     ctx: click.Context,
     first_arg: str,
@@ -2335,20 +2517,7 @@ def _handle_named_workflow(
 
     # Check for --help request
     if remaining_args and "--help" in remaining_args:
-        # Import display helpers
-        from pflow.cli.commands.workflow import _display_example_usage, _display_inputs, _display_outputs
-
-        # Display workflow information
-        name = os.path.basename(first_arg) if "/" in first_arg else first_arg
-        click.echo(f"\nWorkflow: {name}")
-        if source == "saved":
-            click.echo("Source: Saved workflow")
-        else:
-            click.echo(f"Source: {first_arg}")
-
-        _display_inputs(workflow_ir)
-        _display_outputs(workflow_ir)
-        _display_example_usage(name, workflow_ir)
+        _show_workflow_help(first_arg, workflow_ir, source)
         return True
 
     # Validate and prepare parameters
@@ -2363,21 +2532,8 @@ def _handle_named_workflow(
         if params:
             click.echo(f"cli: With parameters: {params}")
 
-    # Create metrics collector if needed
-    metrics_collector = None
-    if output_format == "json":
-        from pflow.core.metrics import MetricsCollector
-
-        metrics_collector = MetricsCollector()
-
-    # Set workflow metadata based on source
-    # This ensures proper action field in JSON output
-    if source == "saved":
-        # Workflow from registry - it's being reused
-        ctx.obj["workflow_metadata"] = _create_workflow_metadata(first_arg, "reused")
-    else:
-        # Workflow from file - it's unsaved
-        ctx.obj["workflow_metadata"] = _create_workflow_metadata(first_arg, "unsaved")
+    # Setup workflow execution context
+    metrics_collector = _setup_workflow_execution(ctx, first_arg, source, output_format)
 
     # Execute workflow
     execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, None, output_format, metrics_collector)
@@ -2646,6 +2802,8 @@ def _validate_and_prepare_natural_language_input(workflow: tuple[str, ...]) -> s
     is_flag=True,
     help="Enable cross-session caching for planner LLM calls (reduces cost for repeated runs)",
 )
+@click.option("--no-repair", is_flag=True, help="Disable automatic workflow repair on failure")
+@click.option("--update-in-place", is_flag=True, help="Update original workflow file with repairs (creates .backup)")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def workflow_command(
     ctx: click.Context,
@@ -2659,6 +2817,8 @@ def workflow_command(
     planner_timeout: int,
     save: bool,
     cache_planner: bool,
+    no_repair: bool,
+    update_in_place: bool,
     workflow: tuple[str, ...],
 ) -> None:
     """pflow - Plan Once, Run Forever
@@ -2717,7 +2877,18 @@ def workflow_command(
 
     # Initialize context with configuration
     _initialize_context(
-        ctx, verbose, output_key, output_format, print_flag, trace, trace_planner, planner_timeout, save, cache_planner
+        ctx,
+        verbose,
+        output_key,
+        output_format,
+        print_flag,
+        trace,
+        trace_planner,
+        planner_timeout,
+        save,
+        cache_planner,
+        no_repair,
+        update_in_place,
     )
 
     # Install Anthropic model wrapper for planning models

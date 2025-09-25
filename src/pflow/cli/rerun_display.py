@@ -81,6 +81,11 @@ def format_rerun_command(workflow_name: str, params: dict[str, Any] | None) -> s
             if value is None:
                 continue
 
+            # Skip internal parameters (those starting with __)
+            # These are internal pflow parameters that shouldn't be exposed to users
+            if key.startswith("__"):
+                continue
+
             # Check if this is a sensitive parameter
             if key.lower() in SENSITIVE_KEYS:
                 # Mask the value

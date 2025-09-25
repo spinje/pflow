@@ -1,11 +1,44 @@
 """Click-based implementation of OutputInterface."""
 
-from typing import Callable, Optional
+from typing import Any, Callable, ClassVar, Optional
 
 import click
 
 from pflow.core.output_controller import OutputController
 from pflow.execution.output_interface import OutputInterface
+
+
+class Colors:
+    """Terminal color constants using Click styling."""
+
+    SUCCESS: ClassVar[dict] = {"fg": "green"}
+    ERROR: ClassVar[dict] = {"fg": "red"}
+    WARNING: ClassVar[dict] = {"fg": "yellow"}
+    INFO: ClassVar[dict] = {"fg": "cyan"}
+    CACHED: ClassVar[dict] = {"fg": "blue", "dim": True}
+    MODIFIED: ClassVar[dict] = {"fg": "cyan"}
+    DIM: ClassVar[dict] = {"dim": True}
+
+
+def styled_text(text: str, **style_kwargs: Any) -> str:
+    """Apply color styling if terminal supports it.
+
+    Args:
+        text: The text to style
+        **style_kwargs: Click style parameters (fg, bg, bold, dim, etc.)
+
+    Returns:
+        Styled text if color is supported, plain text otherwise
+    """
+    try:
+        # Check if color is disabled
+        ctx = click.get_current_context(silent=True)
+        if ctx and not ctx.color:
+            return text
+    except RuntimeError:
+        # No context available, assume color is ok
+        pass
+    return click.style(text, **style_kwargs)
 
 
 class CliOutput(OutputInterface):

@@ -88,3 +88,11 @@ class DisplayManager:
             self.output.show_progress("  ✅ Workflow repaired successfully!")
         else:
             self.output.show_progress("  ❌ Could not repair automatically")
+
+    def show_progress(self, message: str) -> None:
+        """Show general progress message.
+
+        Args:
+            message: Progress message to display
+        """
+        self.output.show_progress(message)

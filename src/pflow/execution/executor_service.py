@@ -25,6 +25,7 @@ class ExecutionResult:
     duration: float = 0.0
     output_data: Optional[str] = None
     metrics_summary: Optional[dict[str, Any]] = None
+    repaired_workflow_ir: Optional[dict] = None  # Repaired workflow IR if repair occurred
 
 
 class WorkflowExecutorService:
@@ -59,6 +60,7 @@ class WorkflowExecutorService:
         output_key: Optional[str] = None,
         metrics_collector: Optional[Any] = None,
         trace_collector: Optional[Any] = None,
+        validate: bool = True,
     ) -> ExecutionResult:
         """Execute a workflow and return structured result.
 
@@ -98,7 +100,7 @@ class WorkflowExecutorService:
                 ir_json=workflow_ir,
                 registry=registry,
                 initial_params=execution_params,
-                validate=True,
+                validate=validate,
                 metrics_collector=metrics_collector,
                 trace_collector=trace_collector,
             )

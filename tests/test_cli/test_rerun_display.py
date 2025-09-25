@@ -547,6 +547,62 @@ class TestEdgeCases:
         assert "output_file=output/test.txt" in result
         assert "max_retries=3" in result
 
+    def test_internal_parameters_filtered(self):
+        """Test that internal parameters starting with __ are filtered out."""
+        params = {
+            "user_param": "value1",
+            "count": 42,
+            "__verbose__": False,
+            "__planner_cache_chunks__": ["chunk1", "chunk2"],
+            "__internal_flag__": True,
+            "normal_param": "normal_value",
+        }
+
+        result = format_rerun_command("my-workflow", params)
+
+        # Should include normal parameters
+        assert "user_param=value1" in result
+        assert "count=42" in result
+        assert "normal_param=normal_value" in result
+
+        # Should NOT include internal parameters
+        assert "__verbose__" not in result
+        assert "__planner_cache_chunks__" not in result
+        assert "__internal_flag__" not in result
+        assert "chunk1" not in result  # Content from internal params
+
+    def test_real_world_internal_params_bug(self):
+        """Test the specific bug where __verbose__ and __planner_cache_chunks__ were shown."""
+        # This reproduces the exact scenario from the bug report
+        params = {
+            "message_count": 10,
+            "slack_channel_id": "C09C16NAU5B",
+            "google_sheets_id": "1rWrTSw0XT1D-e5XsrerWgupqEs-1Mtj-fT6e_kKYjek",
+            "sheet_name": "Sheet1",
+            "date_format": "%Y-%m-%d",
+            "time_format": "%H:%M:%S",
+            "__verbose__": False,
+            "__planner_cache_chunks__": [
+                {"text": "# Workflow System Overview\n\nYou are a specialized workflow planner..."},
+            ],
+        }
+
+        result = format_rerun_command("slack-ai-qa-logger", params)
+
+        # Should include user parameters
+        assert "message_count=10" in result
+        assert "slack_channel_id=C09C16NAU5B" in result
+        assert "google_sheets_id=1rWrTSw0XT1D-e5XsrerWgupqEs-1Mtj-fT6e_kKYjek" in result
+        assert "sheet_name=Sheet1" in result
+        assert "%Y-%m-%d" in result  # Date format
+        assert "%H:%M:%S" in result  # Time format
+
+        # Should NOT include internal parameters
+        assert "__verbose__" not in result
+        assert "__planner_cache_chunks__" not in result
+        assert "false" not in result  # __verbose__ value
+        assert "Workflow System Overview" not in result  # Content from cache chunks
+
     def test_float_precision(self):
         """Test that float precision is preserved."""
         params = {"pi": 3.14159265359, "large": 1234567.89}
