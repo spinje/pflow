@@ -178,6 +178,15 @@ class PlannerContextBuilder:
             dynamic_sections.append("</requirements_analysis>")
             dynamic_sections.append("")
 
+            # Add iteration handling guide if needed (has_iteration: True)
+            if cls._should_include_iteration_guide(requirements_result):
+                iteration_content = cls._load_prompt_part("iteration_handling")
+                if iteration_content:
+                    dynamic_sections.append("<iteration_handling>")
+                    dynamic_sections.append(iteration_content)
+                    dynamic_sections.append("</iteration_handling>")
+                    dynamic_sections.append("")
+
         # Add selected components if available
         if browsed_components:
             dynamic_sections.append("<available_nodes>")
@@ -361,6 +370,36 @@ class PlannerContextBuilder:
                 sections.append(f"- {key}: {value}")
 
         return sections if sections else ["No requirements analysis available"]
+
+    @classmethod
+    def _load_prompt_part(cls, part_name: str) -> Optional[str]:
+        """Load a prompt part from the sections directory.
+
+        Args:
+            part_name: Name of the part file (without .md extension)
+
+        Returns:
+            The content of the part file, or None if not found
+        """
+        sections_dir = Path(__file__).parent / "prompts" / "sections"
+        part_path = sections_dir / f"{part_name}.md"
+
+        if part_path.exists():
+            return part_path.read_text()
+        return None
+
+    @classmethod
+    def _should_include_iteration_guide(cls, requirements_result: dict[str, Any]) -> bool:
+        """Check if iteration handling guide should be included.
+
+        Args:
+            requirements_result: Requirements analysis output
+
+        Returns:
+            True if has_iteration is True in complexity_indicators
+        """
+        complexity = requirements_result.get("complexity_indicators", {})
+        return complexity.get("has_iteration", False)
 
     @classmethod
     def _build_components_content(cls, browsed_components: dict[str, Any]) -> list[str]:
