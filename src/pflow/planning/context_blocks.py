@@ -399,7 +399,7 @@ class PlannerContextBuilder:
             True if has_iteration is True in complexity_indicators
         """
         complexity = requirements_result.get("complexity_indicators", {})
-        return complexity.get("has_iteration", False)
+        return bool(complexity.get("has_iteration", False))
 
     @classmethod
     def _build_components_content(cls, browsed_components: dict[str, Any]) -> list[str]:
