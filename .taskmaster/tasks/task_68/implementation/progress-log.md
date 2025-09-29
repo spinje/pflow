@@ -299,6 +299,43 @@ The test failures confirm checkpoint tracking is working correctly - the `__exec
 
 ---
 
+## [2025-01-25 16:00] - Critical Repair System Fixes
+
+Fixed multiple fundamental issues preventing the repair system from working:
+
+### 1. **Error Details Not Captured** (executor_service.py)
+- **Issue**: Repair prompts showed generic "Workflow failed with action: error" instead of actual error messages
+- **Root Cause**: `_build_error_list()` wasn't extracting error details from shared store
+- **Fix**: Enhanced error extraction to check `shared["error"]` and node output for MCP/API errors
+- **Impact**: Repair system can now see actual error messages like "Input should be a valid list on parameter `values.0`"
+
+### 2. **Failed Node Not Tracked** (instrumented_wrapper.py)
+- **Issue**: Repair context showed "Failed at node: None" for all failures
+- **Root Cause**: `failed_node` only set on exceptions, not when nodes return "error" action
+- **Fix**: Set `shared["__execution__"]["failed_node"]` when nodes return "error" (lines 268, 227)
+- **Impact**: Repair system now knows which node failed, critical for targeted fixes
+
+### 3. **Repair Traces Not Visible** (workflow_trace.py, analyze.py)
+- **Issue**: Repair LLM calls weren't captured or displayed in trace analysis
+- **Fix**: Added `record_repair_llm_call()` method and updated analyze.py to extract repair events
+- **Impact**: Can now debug why repairs succeed or fail
+
+### 4. **Repair Philosophy Evolution**
+- **Old**: Fix the node that failed
+- **New**: "The error occurred at one node, but the fix might be in a different node"
+- **Example**: If `update_sheets` fails on bad input format, fix the upstream `analyze_questions` LLM prompt
+- **Implementation**: Repair prompt explicitly guides to check upstream nodes and data flow
+
+### 5. **Dynamic Category Guidance** (repair_service.py)
+- **Feature**: Repair prompts now include targeted guidance based on error categories present
+- **Categories**: `api_validation`, `execution_failure`, `template_error`, `static_validation`, etc.
+- **Impact**: Repair LLM gets specific, actionable guidance for the exact type of error it's facing
+
+### Critical Insight:
+The repair system was fundamentally broken before these fixes. It was attempting repairs blind - without knowing what error occurred or where. The shift from node-centric to flow-centric repair thinking is essential for fixing data transformation issues, especially with LLM nodes.
+
+---
+
 ## [2025-01-25 10:30] - API Warning System Implemented
 
 Successfully implemented API warning detection to prevent wasted repair attempts on non-repairable API errors:
@@ -1257,3 +1294,260 @@ Historical workaround from before repair system existed - nodes returned "defaul
 **After**: API fails → Returns "error" → Repair triggers → Self-healing works
 
 Without this fix, the entire repair system was architecturally complete but functionally dead. Now workflows properly detect failures and trigger automatic repairs.
+
+---
+
+## [2025-01-25 15:30] - Post-Task 68 Enhancements
+
+### MCP Parameter Preservation Fix
+
+**Problem**: Google Sheets repair was fixing values format but removing sheet_name parameter.
+
+**Root Cause**: Generic repair prompts didn't understand MCP tools require preserving unrelated parameters.
+
+**Solution**:
+- Simplified to single universal repair prompt with core principle: "fix ONLY what's mentioned in error"
+- Removed three separate prompt branches (MCP/validation/runtime), now one general prompt
+- More maintainable and works for all error types
+- Lines changed: `repair_service.py:347-385`
+
+### LLM Trace Capture for Workflows
+
+**Problem**: `scripts/analyze-trace/latest.sh` worked for planner but not workflow LLM calls.
+
+**Root Causes**:
+1. LLM node detection only checked for `"prompt"` in params (but LLM nodes read from shared store)
+2. Missing prompt capture in `__llm_calls__` data structure
+3. Analyze script didn't extract repair LLM calls
+
+**Solutions Implemented**:
+
+1. **Enhanced LLM Node Detection** (`instrumented_wrapper.py:669-690`):
+   - Now checks for node type containing "llm"
+   - Checks for "model" parameter
+   - Multiple detection patterns for better coverage
+
+2. **Added Prompt Capture** (`instrumented_wrapper.py:149-190`):
+   - Created `_find_llm_prompt()` method
+   - Captures from `shared_before["prompt"]` (both namespaced and non-namespaced)
+   - Adds captured prompt to `__llm_calls__` data structure
+
+3. **Repair LLM Call Tracking**:
+   - Added `record_repair_llm_call()` to WorkflowTraceCollector (`workflow_trace.py:135-164`)
+   - Passes trace_collector through repair call chain
+   - Captures repair prompts and responses in trace events
+
+4. **Fixed Analyze Script** (`analyze.py:718-732`):
+   - Added extraction for events with `type: "repair_llm_call"`
+   - Repair calls now appear in analysis output as separate files
+   - Fixed repair response format: `json.dumps(repaired_ir, indent=2)` instead of `str(result)` for proper JSON display
+
+### Architectural Insights
+
+1. **Trace Data Structure Complexity**: Workflow traces store data differently than planner traces:
+   - Planner: `llm_calls` at root level
+   - Workflow: LLM data embedded in node events
+   - Repair: Special event types in events array
+   - Each requires different extraction logic
+
+2. **LLM Interception Challenges**:
+   - Thread-based interception is fragile compared to direct method interception
+   - Node type detection needs multiple heuristics
+   - Prompt location varies (params vs shared store)
+
+3. **Parameter Preservation Pattern**: When fixing validation errors, must distinguish between:
+   - Parameters to fix (explicitly mentioned in error)
+   - Parameters to preserve (everything else)
+   - Critical for MCP tools with many required fields
+
+### Testing Notes
+
+The repair system now properly:
+- ✅ Preserves MCP parameters during repair
+- ✅ Captures all LLM calls (workflow, repair, and planner)
+- ✅ Shows comprehensive traces via analyze script
+- ✅ Repair prompts visible in trace analysis
+
+All fixes have been tested and integrated into the main codebase. The trace analysis system is now comprehensive and captures all LLM interactions across the entire workflow lifecycle.
+
+---
+
+## [2025-01-25 16:30] - Critical Repair System Debugging Session
+
+Fixed fundamental issues that were preventing the repair system from functioning:
+
+### 1. **Error Details Not Being Captured**
+- **Discovery**: Repair prompts showed "Workflow failed with action: error" instead of actual error messages
+- **Root Cause**: `executor_service._build_error_list()` wasn't extracting error details from shared store
+- **Fix**: Enhanced to check `shared["error"]` and extract MCP/API error messages
+- **Impact**: Repair system can now see actual errors like "Input should be a valid list on parameter `values.0`"
+
+### 2. **Failed Node Not Being Tracked**
+- **Discovery**: Repair context showed "Failed at node: None" for all failures
+- **Root Cause**: `failed_node` only set on exceptions, NOT when nodes return "error" action
+- **Fix**: Set `shared["__execution__"]["failed_node"]` in both error paths (lines 268, 227)
+- **Impact**: Repair knows exactly which node failed, enabling targeted fixes
+
+### 3. **Repair Philosophy Evolution**
+- **Old Thinking**: "Fix the node that failed"
+- **New Insight**: "The error occurred at one node, but the fix might be in a different node"
+- **Example**: When `update_sheets` fails on malformed input, the fix is improving upstream `analyze_questions` LLM prompt
+- **Implementation**: Repair prompt now explicitly guides checking upstream nodes and data flow
+
+### 4. **Dynamic Category Guidance System**
+- **Innovation**: Repair prompts dynamically include guidance ONLY for error categories present
+- **Categories**: `api_validation`, `execution_failure`, `template_error`, `static_validation`, etc.
+- **Architecture**: Category detection in executor → guidance mapping in repair service → dynamic prompt building
+- **Impact**: Targeted, actionable guidance without prompt bloat
+
+### Critical Architectural Insight
+
+The repair system was attempting blind repairs - it couldn't see what actually failed or why. The shift from node-centric to flow-centric thinking is fundamental: most "node failures" are actually data transformation issues that require upstream fixes. This is especially true for LLM nodes whose output format drives downstream success.
+
+### Validation of Task 68 Success
+
+With these fixes, the self-healing workflow system is now fully operational:
+- ✅ Errors are properly captured and categorized
+- ✅ Failed nodes are correctly identified
+- ✅ Repair prompts have full context and targeted guidance
+- ✅ Repair attempts are visible in traces for debugging
+- ✅ The system understands data flow relationships
+
+The repair system can now intelligently fix workflows by understanding root causes rather than just patching symptoms.
+
+---
+
+## [2025-09-29] - Workflow Repair Default Behavior Change
+
+### Critical Issue Discovered
+**Problem**: Planner-generated workflows that got repaired were never saved, causing complete loss of repair work.
+
+### Solution: Changed Default Save Behavior
+
+**Old Default Behavior**:
+- Created `.repaired.json` files (preserved original)
+- Required `--update-in-place` flag to overwrite original
+
+**New Default Behavior**:
+- Overwrites original workflow file (with `.backup` created)
+- Added `--no-update` flag for old behavior (separate `.repaired.json` files)
+
+**Rationale**: Users are expected to use version control (git) for workflow history. Overwriting makes changes visible in git diff and avoids file proliferation.
+
+### Planner Workflow Repair Saving
+When planner-generated workflows are repaired (no source file):
+- Saves to `workflow-repaired-TIMESTAMP.json` in current directory
+- Clear message about where it was saved
+- Prevents loss of repair work
+
+### Implementation Details
+- Modified `_save_repaired_workflow()` in `cli/main.py`
+- Flipped the flag logic from `--update-in-place` to `--no-update`
+- Added timestamp-based saving for planner repairs
+
+**Impact**: Repair work is never lost, workflow fixes are immediately visible in version control.
+
+---
+
+## [2025-09-29] - Repair Prompt Philosophy Simplification
+
+### Evolution of Repair Prompts
+**Old Approach**: Three separate prompt templates:
+- MCP-specific prompt with parameter preservation instructions
+- Validation error prompt with edge format rules
+- Runtime error prompt with template fixes
+
+**New Approach**: Single universal prompt with core principle:
+```
+"Read the error message carefully and fix ONLY what it mentions. Keep everything else unchanged."
+```
+
+### Why This Change Matters
+1. **Maintainability**: One prompt to update instead of three
+2. **Scalability**: Works for any error type without special cases
+3. **Clarity**: Simple principle that LLMs can follow consistently
+4. **Effectiveness**: Prevents over-correction and unintended changes
+
+### Implementation
+- Unified `_build_repair_prompt()` in `repair_service.py`
+- Removed conditional prompt branching
+- Core principle prominently stated at the beginning
+
+**Impact**: More reliable repairs with fewer unintended side effects, easier to maintain and extend.
+
+---
+
+## [2025-09-29] - Repair Save Architecture Completion
+
+### Saved Workflow Repair Handling
+Implemented comprehensive repair save system for ALL workflow sources:
+
+**Workflow Sources & Behaviors**:
+1. **File-based workflows** (.json files)
+   - Default: Overwrites original file
+   - With `--no-update`: Creates `.repaired.json`
+
+2. **Saved workflows** (from workflow manager) ← NEW
+   - Default: Updates in workflow manager preserving metadata
+   - With `--no-update`: Saves to `~/.pflow/workflows/repaired/` subfolder
+
+3. **Planner-generated workflows** (no source)
+   - Always saves to `workflow-repaired-TIMESTAMP.json`
+
+### WorkflowManager.update_ir() Method
+Added new API method to update workflow IR while preserving all metadata:
+- Preserves execution history, counters, timestamps
+- Atomic file operations with temp files
+- Critical for maintaining workflow analytics when repairing
+
+### Parameter Display in Repair Saves
+Repair saves now show actual parameter values used:
+```bash
+✨ Run again with:
+  $ pflow repaired/workflow.json channel_id='C123' message_count=10
+```
+
+**Implementation**:
+- Captures execution params in context (filtered to remove internal `__` params)
+- Uses `display_file_rerun_commands()` for consistent UX
+- Shows redacted values for sensitive parameters (passwords, tokens)
+
+### Architectural Improvements
+1. **Separation of concerns**: Three distinct handlers for different workflow sources
+2. **Metadata preservation**: Updates don't lose execution history
+3. **User feedback**: Visible warnings on save failures (not just logs)
+4. **Backup removal**: No more `.backup` files - relies on version control
+
+**Impact**: Complete repair save system that handles all workflow types consistently, preserves important metadata, and provides clear user feedback with actual parameter values.
+
+---
+
+## [2025-09-29] - Critical Shared Store Keys Documentation
+
+### Checkpoint Data Structure (`__execution__`)
+The repair system relies on these shared store keys for checkpoint/resume:
+
+**Core Keys**:
+- `__execution__.completed_nodes[]` - List of successfully executed node IDs
+- `__execution__.node_actions{}` - Map of node_id to action taken
+- `__execution__.node_hashes{}` - Configuration hashes for cache invalidation
+- `__execution__.failed_node` - ID of the node that caused failure (preserved for audit)
+
+**Control Flags**:
+- `__non_repairable_error__` - Boolean preventing futile repair attempts
+- `__warnings__` - Map of node_id to API warning messages
+- `__modified_nodes__` - List of nodes modified by repair
+
+### Critical Edge Cases Discovered
+1. **MCP nodes returning "default" on errors** - Completely disabled repair system
+2. **GraphQL always returns HTTP 200** - Even for errors (check response body)
+3. **Template resolution returns unchanged templates** - As "success" when failing
+4. **Repair dropping parameters** - Fixed one param but removed others
+
+### Repair System Cost/Performance
+- **Repair adds 10-30s latency** per failure (Sonnet LLM calls)
+- **3-attempt limit** balances cost vs success rate
+- **Checkpoint data grows O(n)** with workflow size
+- **Loop detection prevents 27→1-2 attempts** (massive cost savings)
+
+**Impact**: These details are critical for debugging, monitoring, and understanding repair system behavior in production.
