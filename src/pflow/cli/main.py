@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import os
-import shutil
 import signal
 import sys
 import time
@@ -1330,45 +1329,15 @@ def _save_repaired_workflow(
     ctx: click.Context,
     repaired_workflow_ir: dict[str, Any],
 ) -> None:
-    """Save repaired workflow to file if applicable.
+    """Save repaired workflow based on source type.
 
     Args:
-        ctx: Click context containing source_file_path and update_in_place
+        ctx: Click context containing workflow_source, workflow_name, etc.
         repaired_workflow_ir: The repaired workflow IR to save
     """
-    source_file_path = ctx.obj.get("source_file_path")
-    update_in_place = ctx.obj.get("update_in_place", False)
+    from .repair_save_handlers import save_repaired_workflow
 
-    if not source_file_path:
-        return
-
-    try:
-        if update_in_place:
-            # Create backup of original
-            backup_path = f"{source_file_path}.backup"
-            shutil.copy2(source_file_path, backup_path)
-
-            # Update original file with repaired workflow
-            with open(source_file_path, "w") as f:
-                json.dump(repaired_workflow_ir, f, indent=2)
-
-            # Notify user
-            click.echo(click.style(f"\n✅ Updated {source_file_path} with repairs", fg="green"))
-            click.echo(f"   Backup saved to: {backup_path}")
-        else:
-            # Create separate repaired file
-            base_name = source_file_path.rsplit(".json", 1)[0]
-            repaired_path = f"{base_name}.repaired.json"
-
-            # Save repaired workflow with nice formatting
-            with open(repaired_path, "w") as f:
-                json.dump(repaired_workflow_ir, f, indent=2)
-
-            # Notify user
-            click.echo(click.style(f"\n✅ Repaired workflow saved to: {repaired_path}", fg="green"))
-    except Exception as e:
-        # Non-fatal - just warn
-        logger.warning(f"Could not save repaired workflow: {e}")
+    save_repaired_workflow(ctx, repaired_workflow_ir)
 
 
 def _setup_execution_context(
@@ -1994,12 +1963,18 @@ def _execute_successful_workflow(
     # Extract cache chunks for repair context
     planner_cache_chunks = _extract_planner_cache_chunks(planner_shared) if planner_shared else None
 
+    # Store execution params for potential repair save (strip internal params)
+    from .rerun_display import filter_user_params
+
+    execution_params = planner_output.get("execution_params")
+    ctx.obj["execution_params"] = filter_user_params(execution_params)
+
     execute_json_workflow(
         ctx,
         planner_output["workflow_ir"],
         stdin_data,
         output_key,
-        planner_output.get("execution_params"),  # CRITICAL: Pass params for templates!
+        execution_params,  # CRITICAL: Pass params for templates!
         planner_shared.get("__llm_calls__", []) if planner_shared else None,  # Pass planner LLM calls
         ctx.obj.get("output_format", "text"),
         metrics_collector,
@@ -2287,7 +2262,7 @@ def _initialize_context(
     save: bool,
     cache_planner: bool,
     no_repair: bool,
-    update_in_place: bool,
+    no_update: bool,
 ) -> None:
     """Initialize the click context with configuration.
 
@@ -2303,7 +2278,7 @@ def _initialize_context(
         save: Save workflow flag
         cache_planner: Enable cross-session caching for planner
         no_repair: Disable automatic workflow repair on failure
-        update_in_place: Update original workflow with repairs
+        no_update: Save repairs to separate file instead of updating original
     """
     if ctx.obj is None:
         ctx.obj = {}
@@ -2318,7 +2293,7 @@ def _initialize_context(
     ctx.obj["save"] = save
     ctx.obj["cache_planner"] = cache_planner
     ctx.obj["no_repair"] = no_repair
-    ctx.obj["update_in_place"] = update_in_place
+    ctx.obj["no_update"] = no_update
 
     # Create OutputController once and store it for reuse
     ctx.obj["output_controller"] = OutputController(
@@ -2476,11 +2451,15 @@ def _setup_workflow_execution(
         # Workflow from file - it's unsaved
         ctx.obj["workflow_metadata"] = _create_workflow_metadata(first_arg, "unsaved")
 
-    # Store source file path for potential repair saving
+    # Store workflow source and name for potential repair saving
+    ctx.obj["workflow_source"] = source
+
     if source == "file" and first_arg.endswith(".json"):
         ctx.obj["source_file_path"] = first_arg
-    else:
-        ctx.obj["source_file_path"] = None
+    elif source == "saved":
+        # Extract clean workflow name (strip any .json extension if present)
+        workflow_name = first_arg.replace(".json", "") if first_arg.endswith(".json") else first_arg
+        ctx.obj["workflow_name"] = workflow_name
 
     return metrics_collector
 
@@ -2522,6 +2501,11 @@ def _handle_named_workflow(
 
     # Validate and prepare parameters
     params = _validate_and_prepare_workflow_params(ctx, workflow_ir, remaining_args)
+
+    # Store execution params for potential repair save (strip internal params)
+    from .rerun_display import filter_user_params
+
+    ctx.obj["execution_params"] = filter_user_params(params)
 
     # Show what we're doing if verbose (but not in JSON mode)
     if verbose and output_format != "json":
@@ -2803,7 +2787,9 @@ def _validate_and_prepare_natural_language_input(workflow: tuple[str, ...]) -> s
     help="Enable cross-session caching for planner LLM calls (reduces cost for repeated runs)",
 )
 @click.option("--no-repair", is_flag=True, help="Disable automatic workflow repair on failure")
-@click.option("--update-in-place", is_flag=True, help="Update original workflow file with repairs (creates .backup)")
+@click.option(
+    "--no-update", is_flag=True, help="Save repairs to separate .repaired.json file instead of updating original"
+)
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def workflow_command(
     ctx: click.Context,
@@ -2818,7 +2804,7 @@ def workflow_command(
     save: bool,
     cache_planner: bool,
     no_repair: bool,
-    update_in_place: bool,
+    no_update: bool,
     workflow: tuple[str, ...],
 ) -> None:
     """pflow - Plan Once, Run Forever
@@ -2888,7 +2874,7 @@ def workflow_command(
         save,
         cache_planner,
         no_repair,
-        update_in_place,
+        no_update,
     )
 
     # Install Anthropic model wrapper for planning models

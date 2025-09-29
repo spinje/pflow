@@ -58,7 +58,11 @@ class TestNoRepairFlag:
                 patch("pflow.execution.workflow_execution.execute_workflow") as mock_execute,
             ):
                 mock_execute.return_value = MagicMock(
-                    success=False, errors=[{"message": "Failed"}], shared_after={}, output_data=None
+                    success=False,
+                    errors=[{"message": "Failed"}],
+                    shared_after={},
+                    output_data=None,
+                    repaired_workflow_ir=None,
                 )
 
                 # Run without --no-repair flag
@@ -87,7 +91,11 @@ class TestNoRepairFlag:
                 patch("pflow.execution.workflow_execution.execute_workflow") as mock_execute,
             ):
                 mock_execute.return_value = MagicMock(
-                    success=False, errors=[{"message": "Failed"}], shared_after={}, output_data=None
+                    success=False,
+                    errors=[{"message": "Failed"}],
+                    shared_after={},
+                    output_data=None,
+                    repaired_workflow_ir=None,
                 )
 
                 # Run WITH --no-repair flag
@@ -120,7 +128,9 @@ class TestNoRepairFlag:
                 patch("pflow.cli.main.validate_ir"),
                 patch("pflow.execution.workflow_execution.execute_workflow") as mock_execute,
             ):
-                mock_execute.return_value = MagicMock(success=True, errors=[], shared_after={}, output_data=None)
+                mock_execute.return_value = MagicMock(
+                    success=True, errors=[], shared_after={}, output_data=None, repaired_workflow_ir=None
+                )
 
                 # Run with --no-repair (shouldn't matter for success)
                 result = runner.invoke(main, ["--no-repair", workflow_file])
@@ -147,7 +157,11 @@ class TestNoRepairFlag:
                 patch("pflow.execution.workflow_execution.execute_workflow") as mock_execute,
             ):
                 mock_execute.return_value = MagicMock(
-                    success=False, errors=[{"message": "Failed"}], shared_after={}, output_data=None
+                    success=False,
+                    errors=[{"message": "Failed"}],
+                    shared_after={},
+                    output_data=None,
+                    repaired_workflow_ir=None,
                 )
 
                 # Run with both --no-repair and --verbose

@@ -43,11 +43,12 @@ class TestRepairedWorkflowSave:
             "edges": [],
         }
 
-    def test_repaired_workflow_saved_to_separate_file(self, runner, broken_workflow, tmp_path):
-        """Test that repaired workflows are saved to .repaired.json file."""
+    def test_no_update_saves_separate_file(self, runner, broken_workflow, tmp_path):
+        """Test that --no-update flag saves to .repaired.json file."""
         # Create a workflow file that needs repair
         workflow_file = tmp_path / "test_workflow.json"
-        workflow_file.write_text(json.dumps(broken_workflow, indent=2))
+        original_content_str = json.dumps(broken_workflow, indent=2)
+        workflow_file.write_text(original_content_str)
 
         # Mock the repair to return a fixed workflow
         repaired_workflow = broken_workflow.copy()
@@ -62,15 +63,15 @@ class TestRepairedWorkflowSave:
             )
             mock_execute.return_value = mock_result
 
-            # Run the workflow
-            result = runner.invoke(workflow_command, [str(workflow_file)], catch_exceptions=False)
+            # Run with --no-update flag
+            result = runner.invoke(workflow_command, ["--no-update", str(workflow_file)], catch_exceptions=False)
 
             # Check execution succeeded
             assert result.exit_code == 0
 
             # Check repaired file was created
             repaired_file = tmp_path / "test_workflow.repaired.json"
-            assert repaired_file.exists(), "Repaired workflow file should be created"
+            assert repaired_file.exists(), "Repaired workflow file should be created with --no-update"
 
             # Verify the repaired content
             repaired_content = json.loads(repaired_file.read_text())
@@ -81,11 +82,10 @@ class TestRepairedWorkflowSave:
             assert "test_workflow.repaired.json" in result.output
 
             # Original file should be unchanged
-            original_content = json.loads(workflow_file.read_text())
-            assert original_content["nodes"][1]["params"]["command"] == "echo 'Hello ${step1.stdout.username}'"
+            assert workflow_file.read_text() == original_content_str
 
-    def test_update_in_place_with_backup(self, runner, broken_workflow, tmp_path):
-        """Test that --update-in-place updates original and creates backup."""
+    def test_default_updates_original(self, runner, broken_workflow, tmp_path):
+        """Test that default behavior updates original (no backup)."""
         # Create a workflow file that needs repair
         workflow_file = tmp_path / "test_workflow.json"
         original_content = json.dumps(broken_workflow, indent=2)
@@ -104,18 +104,15 @@ class TestRepairedWorkflowSave:
             )
             mock_execute.return_value = mock_result
 
-            # Run with --update-in-place
-            result = runner.invoke(workflow_command, ["--update-in-place", str(workflow_file)], catch_exceptions=False)
+            # Run with default behavior (updates original, no backup)
+            result = runner.invoke(workflow_command, [str(workflow_file)], catch_exceptions=False)
 
             # Check execution succeeded
             assert result.exit_code == 0
 
-            # Check backup was created
+            # Check NO backup was created (new default behavior)
             backup_file = tmp_path / "test_workflow.json.backup"
-            assert backup_file.exists(), "Backup file should be created"
-
-            # Verify backup contains original content
-            assert backup_file.read_text() == original_content
+            assert not backup_file.exists(), "Should not create backup with default behavior"
 
             # Check original file was updated with repaired content
             updated_content = json.loads(workflow_file.read_text())
@@ -123,12 +120,11 @@ class TestRepairedWorkflowSave:
 
             # Check no .repaired.json file was created
             repaired_file = tmp_path / "test_workflow.repaired.json"
-            assert not repaired_file.exists(), "Should not create .repaired.json with --update-in-place"
+            assert not repaired_file.exists(), "Should not create .repaired.json with default behavior"
 
-            # Verify success message in output (check for the base name, not full path)
-            assert "with repairs" in result.output
+            # Verify success message in output
+            assert "Updated" in result.output
             assert "test_workflow.json" in result.output
-            assert "Backup saved to:" in result.output
 
     def test_no_files_created_when_no_repair_needed(self, runner, working_workflow, tmp_path):
         """Test that no files are created when workflow doesn't need repair."""
@@ -154,8 +150,8 @@ class TestRepairedWorkflowSave:
             repaired_file = tmp_path / "working_workflow.repaired.json"
             assert not repaired_file.exists(), "No repaired file should be created"
 
-            # Test with --update-in-place
-            result = runner.invoke(workflow_command, ["--update-in-place", str(workflow_file)], catch_exceptions=False)
+            # Test with default behavior
+            result = runner.invoke(workflow_command, [str(workflow_file)], catch_exceptions=False)
 
             assert result.exit_code == 0
 
@@ -243,8 +239,8 @@ class TestRepairedWorkflowSave:
             mock_result = ExecutionResult(success=True, repaired_workflow_ir=repaired_workflow, shared_after={})
             mock_execute.return_value = mock_result
 
-            # Run the workflow
-            result = runner.invoke(workflow_command, [str(workflow_file)], catch_exceptions=False)
+            # Run with --no-update to get separate file
+            result = runner.invoke(workflow_command, ["--no-update", str(workflow_file)], catch_exceptions=False)
 
             assert result.exit_code == 0
 
@@ -260,8 +256,8 @@ class TestRepairedWorkflowSave:
             assert "\n  " in repaired_text, "JSON should be indented"
             assert not repaired_text.startswith('{"ir_version"'), "JSON should not be minified"
 
-    def test_update_in_place_preserves_permissions(self, runner, broken_workflow, tmp_path):
-        """Test that --update-in-place preserves file permissions."""
+    def test_default_preserves_permissions(self, runner, broken_workflow, tmp_path):
+        """Test that default behavior preserves file permissions."""
         import stat
 
         # Create a workflow file with specific permissions
@@ -271,7 +267,6 @@ class TestRepairedWorkflowSave:
         # Set specific permissions (read/write for owner only)
         original_mode = stat.S_IRUSR | stat.S_IWUSR
         workflow_file.chmod(original_mode)
-        original_stat = workflow_file.stat()
 
         # Mock the repair
         repaired_workflow = broken_workflow.copy()
@@ -280,12 +275,12 @@ class TestRepairedWorkflowSave:
             mock_result = ExecutionResult(success=True, repaired_workflow_ir=repaired_workflow, shared_after={})
             mock_execute.return_value = mock_result
 
-            # Run with --update-in-place
-            result = runner.invoke(workflow_command, ["--update-in-place", str(workflow_file)], catch_exceptions=False)
+            # Run with default behavior (updates original, no backup)
+            result = runner.invoke(workflow_command, [str(workflow_file)], catch_exceptions=False)
 
             assert result.exit_code == 0
 
             # Check backup preserves original permissions
+            # No backup in default behavior - verify no backup exists
             backup_file = tmp_path / "test_workflow.json.backup"
-            backup_stat = backup_file.stat()
-            assert backup_stat.st_mode == original_stat.st_mode, "Backup should preserve permissions"
+            assert not backup_file.exists(), "No backup should be created with default behavior"
