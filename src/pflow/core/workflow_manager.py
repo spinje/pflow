@@ -339,3 +339,49 @@ class WorkflowManager:
             raise
         except Exception as e:
             raise WorkflowValidationError(f"Failed to update workflow metadata: {e}") from e
+
+    def update_ir(self, name: str, new_ir: dict[str, Any]) -> None:
+        """Update just the IR of an existing workflow, preserving metadata.
+
+        Args:
+            name: Workflow name
+            new_ir: New workflow IR to replace the existing one
+
+        Raises:
+            WorkflowNotFoundError: If workflow doesn't exist
+            WorkflowValidationError: If update fails
+        """
+        if not self.exists(name):
+            raise WorkflowNotFoundError(f"Workflow '{name}' does not exist")
+
+        try:
+            # Load existing workflow
+            workflow_data = self.load(name)
+
+            # Update the IR while preserving all metadata
+            workflow_data["ir"] = new_ir
+            workflow_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+            # Write atomically using temp file
+            file_path = self.workflows_dir / f"{name}.json"
+            temp_fd, temp_path = tempfile.mkstemp(dir=self.workflows_dir, prefix=f".{name}.", suffix=".tmp")
+
+            try:
+                with open(temp_fd, "w", encoding="utf-8") as f:
+                    json.dump(workflow_data, f, indent=2)
+
+                # Atomic replace
+                os.replace(temp_path, file_path)
+
+                logger.info(f"Updated IR for workflow '{name}'")
+
+            except Exception:
+                # Clean up temp file on failure
+                Path(temp_path).unlink(missing_ok=True)
+                raise
+
+        except WorkflowNotFoundError:
+            # Re-raise workflow not found
+            raise
+        except Exception as e:
+            raise WorkflowValidationError(f"Failed to update workflow IR: {e}") from e
