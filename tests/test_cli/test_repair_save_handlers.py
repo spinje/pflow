@@ -215,8 +215,13 @@ class TestSaveRepairedPlannerWorkflow:
 
     @patch("pflow.cli.rerun_display.display_file_rerun_commands")
     @patch("click.echo")
-    def test_saves_with_timestamp(self, mock_echo, mock_display, mock_ctx, sample_workflow_ir):
+    @patch("builtins.open", new_callable=MagicMock)
+    def test_saves_with_timestamp(self, mock_open, mock_echo, mock_display, mock_ctx, sample_workflow_ir):
         """Test that planner workflows are saved with timestamp."""
+        # Mock the file write operation
+        mock_file = MagicMock()
+        mock_open.return_value.__enter__.return_value = mock_file
+
         with patch("pflow.cli.repair_save_handlers.datetime") as mock_dt:
             mock_dt.now.return_value.strftime.return_value = "20240101-120000"
 
@@ -226,9 +231,17 @@ class TestSaveRepairedPlannerWorkflow:
             expected_filename = "workflow-repaired-20240101-120000.json"
             assert any(expected_filename in str(call) for call in mock_echo.call_args_list)
 
+            # Verify open was called with correct filename
+            mock_open.assert_called_once_with(expected_filename, "w")
+
     @patch("pflow.cli.rerun_display.display_file_rerun_commands")
-    def test_includes_execution_params(self, mock_display, mock_ctx, sample_workflow_ir):
+    @patch("builtins.open", new_callable=MagicMock)
+    def test_includes_execution_params(self, mock_open, mock_display, mock_ctx, sample_workflow_ir):
         """Test that execution params are included in display."""
+        # Mock the file write operation
+        mock_file = MagicMock()
+        mock_open.return_value.__enter__.return_value = mock_file
+
         mock_ctx.obj["execution_params"] = {"param1": "value1", "param2": 123}
 
         with patch("pflow.cli.repair_save_handlers.datetime") as mock_dt:
@@ -243,8 +256,13 @@ class TestSaveRepairedPlannerWorkflow:
             assert call_kwargs["show_save_tip"] is False  # Planner workflows can't be saved without execution
 
     @patch("pflow.cli.rerun_display.display_file_rerun_commands")
-    def test_handles_no_params(self, mock_display, mock_ctx, sample_workflow_ir):
+    @patch("builtins.open", new_callable=MagicMock)
+    def test_handles_no_params(self, mock_open, mock_display, mock_ctx, sample_workflow_ir):
         """Test that it works without execution params."""
+        # Mock the file write operation
+        mock_file = MagicMock()
+        mock_open.return_value.__enter__.return_value = mock_file
+
         # Don't set execution_params, which means there are none
 
         with patch("pflow.cli.repair_save_handlers.datetime") as mock_dt:
@@ -319,13 +337,19 @@ class TestIntegration:
         with (
             patch("pflow.cli.rerun_display.display_file_rerun_commands"),
             patch("pflow.cli.repair_save_handlers.datetime") as mock_dt,
+            patch("builtins.open", new_callable=MagicMock) as mock_open,
         ):
+            # Mock the file write operation
+            mock_file = MagicMock()
+            mock_open.return_value.__enter__.return_value = mock_file
+
             mock_dt.now.return_value.strftime.return_value = "20240101-120000"
 
             save_repaired_workflow(mock_ctx, sample_workflow_ir)
 
             # Would create workflow-repaired-20240101-120000.json
             mock_dt.now.assert_called()
+            mock_open.assert_called_once_with("workflow-repaired-20240101-120000.json", "w")
 
 
 class TestEdgeCases:
