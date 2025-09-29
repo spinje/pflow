@@ -16,6 +16,7 @@ def repair_workflow(
     original_request: Optional[str] = None,
     shared_store: Optional[dict[str, Any]] = None,
     planner_cache_chunks: Optional[list[dict[str, Any]]] = None,
+    trace_collector: Optional[Any] = None,
 ) -> tuple[bool, Optional[dict]]:
     """
     Attempt to repair a broken workflow using LLM.
@@ -25,6 +26,8 @@ def repair_workflow(
         errors: List of error dictionaries from execution
         original_request: Original user request for context
         shared_store: Execution state for additional context
+        planner_cache_chunks: Cache chunks from planner for context
+        trace_collector: Optional trace collector for debugging
 
     Returns:
         (success, repaired_workflow_ir or None)
@@ -39,6 +42,10 @@ def repair_workflow(
 
         # Build repair prompt (no cache chunks in prompt text!)
         prompt = _build_repair_prompt(workflow_ir, errors, repair_context, original_request)
+
+        # Set up LLM interception for trace if available
+        if trace_collector and hasattr(trace_collector, "setup_llm_interception"):
+            trace_collector.setup_llm_interception("repair_workflow")
 
         # Test Sonnet using the exact same pattern as planner
         model = llm.get_model("anthropic/claude-sonnet-4-0")
@@ -66,6 +73,12 @@ def repair_workflow(
         # Convert to dict if it's a Pydantic model
         repaired_ir = result.model_dump() if hasattr(result, "model_dump") else result
 
+        # Record repair LLM call in trace if available
+        if trace_collector and hasattr(trace_collector, "record_repair_llm_call"):
+            # Convert to JSON string for proper formatting in traces
+            response_json = json.dumps(repaired_ir, indent=2) if repaired_ir else None
+            trace_collector.record_repair_llm_call(prompt=prompt, response=response_json, success=bool(result))
+
         logger.debug(f"Structured repair result: {str(repaired_ir)[:500]}...")
 
         if not repaired_ir:
@@ -92,6 +105,7 @@ def repair_workflow_with_validation(
     shared_store: Optional[dict[str, Any]] = None,
     execution_params: Optional[dict[str, Any]] = None,
     max_attempts: int = 3,
+    trace_collector: Optional[Any] = None,
 ) -> tuple[bool, Optional[dict], Optional[list[dict[str, Any]]]]:
     """
     Repair workflow with static validation loop.
@@ -133,6 +147,7 @@ def repair_workflow_with_validation(
             original_request=original_request,
             shared_store=shared_store,
             planner_cache_chunks=planner_cache_chunks,
+            trace_collector=trace_collector,
         )
 
         if not success or not repaired_ir:
@@ -268,15 +283,60 @@ def _analyze_errors_for_repair(errors: list[dict[str, Any]], shared_store: Optio
         "completed_nodes": [],
         "failed_node": None,
         "template_issues": [],
+        "is_mcp_tool": False,  # Track if this is an MCP tool error
+        "mcp_server": None,
+        "mcp_tool": None,
     }
 
     # Extract checkpoint information if available
+    _extract_checkpoint_info(context, shared_store)
+
+    # Check if failed node is an MCP tool
+    _check_mcp_tool_error(context, shared_store)
+
+    # Analyze template errors (most common issue)
+    _analyze_template_errors(context, errors)
+
+    return context
+
+
+def _extract_checkpoint_info(context: dict[str, Any], shared_store: Optional[dict[str, Any]]) -> None:
+    """Extract checkpoint information from shared store into context."""
     if shared_store and "__execution__" in shared_store:
         execution_data = shared_store["__execution__"]
         context["completed_nodes"] = execution_data.get("completed_nodes", [])
         context["failed_node"] = execution_data.get("failed_node")
 
-    # Analyze template errors (most common issue)
+
+def _check_mcp_tool_error(context: dict[str, Any], shared_store: Optional[dict[str, Any]]) -> None:
+    """Check if the failed node is an MCP tool and update context."""
+    failed_node = context.get("failed_node")
+    if not (failed_node and shared_store and failed_node in shared_store):
+        return
+
+    node_data = shared_store[failed_node]
+    # Check for MCP error pattern in the result
+    if not (isinstance(node_data, dict) and "result" in node_data):
+        return
+
+    import json
+
+    try:
+        # MCP nodes often store result as JSON string
+        if isinstance(node_data["result"], str):
+            result_data = json.loads(node_data["result"])
+            # Fix nested if: combine conditions with 'and'
+            if isinstance(result_data, dict) and ("successfull" in result_data or "successful" in result_data):
+                context["is_mcp_tool"] = True
+                # Try to extract server/tool info from error logs
+                if "logs" in result_data:
+                    context["mcp_context"] = "MCP tool execution"
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+
+def _analyze_template_errors(context: dict[str, Any], errors: list[dict[str, Any]]) -> None:
+    """Analyze template errors and extract relevant information into context."""
     for error in errors:
         msg = error.get("message", "").lower()
         category = error.get("category", "")
@@ -301,7 +361,112 @@ def _analyze_errors_for_repair(errors: list[dict[str, Any]], shared_store: Optio
                     "node_id": context.get("failed_node"),
                 })
 
-    return context
+
+# Category-specific guidance for repair
+# TODO: Improve CATEGORY_GUIDANCE prompts to be more actionable and LLM-friendly
+# Current issues:
+# 1. Guidance is too generic and doesn't provide concrete step-by-step instructions
+# 2. Missing examples of actual error patterns and their fixes
+# 3. Should include code snippets showing before/after transformations
+# 4. Need better decision trees (e.g., "if error contains X, then check Y")
+# 5. Should reference specific node types that commonly cause each error type
+# 6. Missing guidance on how to verify the fix will work
+# 7. Could benefit from common antipatterns to avoid
+# See GitHub issue for detailed improvement plan
+CATEGORY_GUIDANCE = {
+    "execution_failure": {
+        "title": "Runtime Execution Failures",
+        "guidance": [
+            "Data format mismatch between what a node receives vs what it expects",
+            "Check the UPSTREAM node that produces the failing input",
+            "If an LLM node produces the data, its output format likely needs fixing",
+            "Solution: Add clear format instructions and examples to LLM prompts",
+            "Solution: Add intermediate transformation nodes if needed",
+        ],
+    },
+    "api_validation": {
+        "title": "API Parameter Validation Errors",
+        "guidance": [
+            "External API/tool rejecting the parameter format",
+            "Error message usually shows expected format (e.g., 'should be a list')",
+            "Check how the data is prepared in upstream nodes",
+            "Solution: Match the exact format the API expects",
+            "Solution: If LLM prepares data, show it example of correct format",
+            "Important: Preserve all working parameters when fixing format issues",
+        ],
+    },
+    "template_error": {
+        "title": "Template Variable Resolution Errors",
+        "guidance": [
+            "Template path ${node.field} references non-existent data",
+            "Check what fields the referenced node ACTUALLY outputs",
+            "Common issue: Assuming a field exists when it doesn't",
+            "Solution: Correct the template path to match actual output",
+            "Solution: Modify upstream node to produce the expected field",
+            "Tip: Check if the node uses namespacing (data might be at ${node.result.field})",
+        ],
+    },
+    "static_validation": {
+        "title": "Workflow Structure Validation Errors",
+        "guidance": [
+            "Workflow IR structure issues detected before execution",
+            "Common issues: Invalid edges, missing required fields",
+            "These must be fixed in the workflow structure itself",
+            "Solution: Ensure edges use 'from' and 'to' (not 'from_node'/'to_node')",
+            "Solution: Check all node IDs referenced in edges actually exist",
+        ],
+    },
+    "edge_format": {
+        "title": "Edge Format Errors",
+        "guidance": [
+            "Edge structure doesn't match expected format",
+            "Edges must have 'from' and 'to' fields",
+            "Solution: Change {'from_node': 'a', 'to_node': 'b'} to {'from': 'a', 'to': 'b'}",
+            "Solution: Ensure all referenced nodes exist",
+        ],
+    },
+    "invalid_node_type": {
+        "title": "Invalid Node Type Errors",
+        "guidance": [
+            "Node type doesn't exist in the registry",
+            "Check for typos in the node type",
+            "Solution: Use a valid node type from the registry",
+            "Solution: Check if you need a different node that provides similar functionality",
+        ],
+    },
+}
+
+
+def _get_category_guidance(errors: list[dict[str, Any]]) -> str:
+    """Build category-specific guidance based on error categories present.
+
+    Args:
+        errors: List of error dictionaries with 'category' field
+
+    Returns:
+        Formatted guidance text for categories present in errors
+    """
+    # Extract unique categories from errors
+    categories = set()
+    for error in errors:
+        category = error.get("category")
+        if category and category in CATEGORY_GUIDANCE:
+            categories.add(category)
+
+    if not categories:
+        return ""
+
+    # Build guidance section
+    sections = ["\n## Guidance for Error Categories Present\n"]
+
+    for category in sorted(categories):
+        guidance_info = CATEGORY_GUIDANCE[category]
+        sections.append(f"### {guidance_info['title']}")
+        for item in guidance_info["guidance"]:
+            sections.append(f"- {item}")
+        sections.append("")  # Empty line between categories
+
+    return "\n".join(sections)
 
 
 def _build_repair_prompt(
@@ -309,48 +474,20 @@ def _build_repair_prompt(
 ) -> str:
     """Create prompt for LLM repair."""
 
-    # Check if these are validation errors
-    has_validation_errors = any(e.get("source") == "validation" for e in errors)
-
     # Format errors for prompt
     error_text = _format_errors_for_prompt(errors, repair_context)
 
-    if has_validation_errors:
-        # Validation-focused prompt
-        prompt = f"""Fix this workflow that has validation errors.
+    # Get category-specific guidance
+    category_guidance = _get_category_guidance(errors)
 
-## Original Request
-{original_request or "Not available"}
+    # Single unified repair prompt that works for all error types
+    prompt = f"""Fix this workflow that has errors.
 
-## Workflow with Validation Issues
-```json
-{json.dumps(workflow_ir, indent=2)}
-```
-
-## Validation Errors to Fix
-{error_text}
-
-## Important Requirements
-1. Edges must use "from" and "to" keys (NOT "from_node", "to_node", "from_node_id" or "to_node_id")
-2. All template variables must reference actual node outputs
-3. Node types must exist in the registry
-4. JSON must be valid and properly formatted
-5. Template format is ${{node_id.field}} - make sure node_id exists
-
-## Common Validation Fixes
-- Change edge format: {{"from_node": "a", "to_node": "b"}} → {{"from": "a", "to": "b"}}
-- Fix template paths: ${{node.wrong_field}} → ${{node.correct_field}}
-- Use valid node types from registry
-- Ensure all referenced node IDs exist
-
-Return ONLY the corrected workflow JSON. Do not include explanations.
-
-## Corrected Workflow
-```json
-"""
-    else:
-        # Runtime error prompt
-        prompt = f"""Fix this workflow that failed during execution.
+## Core Repair Principle
+The error occurred at one node, but the fix might be in a different node. Consider the data flow:
+- If a node fails because of bad input format, fix the UPSTREAM node that produces that data
+- If an LLM node's output causes downstream failures, improve its prompt with clear formatting instructions and examples
+- Read the error carefully to understand what data format is expected vs what was received
 
 ## Original Request
 {original_request or "Not available"}
@@ -360,26 +497,17 @@ Return ONLY the corrected workflow JSON. Do not include explanations.
 {json.dumps(workflow_ir, indent=2)}
 ```
 
-## Execution Errors
+## Errors to Fix
 {error_text}
 
 ## Repair Context
 - Completed nodes: {", ".join(repair_context.get("completed_nodes", [])) or "none"}
 - Failed at node: {repair_context.get("failed_node", "unknown")}
-
+{category_guidance}
 ## Your Task
-Analyze the errors and generate a corrected workflow that fixes the issues.
+Analyze the error and fix the root cause, which may be in an upstream node. Only modify what's necessary to fix the issue.
 
-Common fixes needed:
-1. Template variable corrections (e.g., ${{data.username}} → ${{data.login}})
-2. Missing parameters in node configs
-3. Incorrect field references
-4. Shell command syntax errors
-5. API response structure changes
-
-Focus on fixing the specific error that occurred. Do not change parts of the workflow that were working correctly.
-
-Return ONLY the corrected workflow JSON. Do not include explanations.
+Return ONLY the corrected workflow JSON.
 
 ## Corrected Workflow
 ```json

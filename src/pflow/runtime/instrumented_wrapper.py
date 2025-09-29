@@ -224,6 +224,7 @@ class InstrumentedNodeWrapper:
         # Record as completed (to prevent re-execution) but return error to stop workflow
         shared["__execution__"]["completed_nodes"].append(self.node_id)
         shared["__execution__"]["node_actions"][self.node_id] = "error"
+        shared["__execution__"]["failed_node"] = self.node_id
 
         # Calculate duration for metrics
         duration_ms = (time.perf_counter() - start_time) * 1000
@@ -264,6 +265,8 @@ class InstrumentedNodeWrapper:
         else:
             # Don't cache error results - they should be retryable
             logger.debug(f"Node {self.node_id} returned error, not caching")
+            # Record the failed node for repair context
+            shared["__execution__"]["failed_node"] = self.node_id
 
     def _call_completion_callback(
         self,
@@ -418,7 +421,11 @@ class InstrumentedNodeWrapper:
 
         # Get the actual node instance to access params
         actual_node = self.inner_node
-        while hasattr(actual_node, "_inner_node") or hasattr(actual_node, "inner_node") or hasattr(actual_node, "_wrapped"):
+        while (
+            hasattr(actual_node, "_inner_node")
+            or hasattr(actual_node, "inner_node")
+            or hasattr(actual_node, "_wrapped")
+        ):
             if hasattr(actual_node, "_inner_node"):
                 actual_node = actual_node._inner_node
             elif hasattr(actual_node, "inner_node"):

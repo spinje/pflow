@@ -85,6 +85,7 @@ def _handle_validation_phase(
     output: OutputInterface,
     display: DisplayManager,
     resume_state: Optional[dict],
+    trace_collector: Optional[Any] = None,
 ) -> tuple[bool, dict, Optional[dict]]:
     """Handle the validation phase with repair if needed.
 
@@ -121,6 +122,7 @@ def _handle_validation_phase(
         shared_store=None,  # No execution state yet
         execution_params=execution_params,
         max_attempts=3,
+        trace_collector=trace_collector,
     )
 
     if not success or not repaired_ir:
@@ -269,6 +271,7 @@ def _attempt_repair(
     output: OutputInterface,
     display: DisplayManager,
     runtime_attempt: int,
+    trace_collector: Optional[Any] = None,
 ) -> tuple[bool, Optional[dict]]:
     """Attempt to repair a failed workflow execution.
 
@@ -291,6 +294,12 @@ def _attempt_repair(
         else:
             display.show_progress(f"Runtime repair attempt {runtime_attempt}/3...")
 
+    # Capture repair attempt in trace if available
+    if trace_collector and hasattr(trace_collector, "record_repair_attempt"):
+        trace_collector.record_repair_attempt(
+            attempt_number=runtime_attempt, errors=result.errors, workflow_before=current_workflow_ir
+        )
+
     # Repair with validation
     success, repaired_ir, validation_errors = repair_workflow_with_validation(
         workflow_ir=current_workflow_ir,
@@ -299,11 +308,32 @@ def _attempt_repair(
         shared_store=result.shared_after,  # Pass checkpoint state
         execution_params=execution_params,
         max_attempts=3,
+        trace_collector=trace_collector,
     )
 
     if not success or not repaired_ir:
         logger.warning(f"Runtime repair failed at attempt {runtime_attempt}")
+        # Record failed repair attempt in trace
+        if trace_collector and hasattr(trace_collector, "record_repair_attempt"):
+            trace_collector.record_repair_attempt(
+                attempt_number=runtime_attempt,
+                errors=result.errors,
+                workflow_before=current_workflow_ir,
+                workflow_after=None,
+                success=False,
+                validation_errors=validation_errors,
+            )
         return False, None
+
+    # Record successful repair in trace
+    if trace_collector and hasattr(trace_collector, "record_repair_attempt"):
+        trace_collector.record_repair_attempt(
+            attempt_number=runtime_attempt,
+            errors=result.errors,
+            workflow_before=current_workflow_ir,
+            workflow_after=repaired_ir,
+            success=True,
+        )
 
     return True, repaired_ir
 
@@ -399,6 +429,7 @@ def _execute_with_repair_loop(
             output=output,
             display=display,
             runtime_attempt=runtime_attempt,
+            trace_collector=trace_collector,
         )
 
         if not success:
@@ -492,6 +523,7 @@ def execute_workflow(
             output=output,
             display=display,
             resume_state=resume_state,
+            trace_collector=trace_collector,
         )
 
         # Check if validation failed completely

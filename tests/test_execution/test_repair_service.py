@@ -13,6 +13,7 @@ from pflow.execution.repair_service import (
     _analyze_errors_for_repair,
     _build_repair_prompt,
     _extract_workflow_from_response,
+    _get_category_guidance,
     repair_workflow,
 )
 
@@ -232,3 +233,35 @@ class TestRepairService:
         assert context["primary_error"]["category"] == "shell_error"
         assert context["failed_node"] is None  # No checkpoint data
         assert len(context["template_issues"]) == 0  # Not a template error
+
+    def test_category_guidance_inclusion(self):
+        """Test that category-specific guidance is included for known categories."""
+        # Test with api_validation error
+        errors = [{"category": "api_validation", "message": "Input should be a list"}]
+
+        guidance = _get_category_guidance(errors)
+
+        # Should include API validation guidance
+        assert "API Parameter Validation Errors" in guidance
+        assert "expected format" in guidance
+        assert "upstream nodes" in guidance
+
+        # Test with multiple categories
+        errors = [
+            {"category": "template_error", "message": "Template not found"},
+            {"category": "execution_failure", "message": "Node failed"},
+        ]
+
+        guidance = _get_category_guidance(errors)
+
+        # Should include both categories
+        assert "Template Variable Resolution Errors" in guidance
+        assert "Runtime Execution Failures" in guidance
+
+        # Test with unknown/no category
+        errors = [{"message": "Some random error"}]
+
+        guidance = _get_category_guidance(errors)
+
+        # Should return empty string for unknown categories
+        assert guidance == ""

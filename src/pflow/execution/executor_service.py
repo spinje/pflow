@@ -109,7 +109,7 @@ class WorkflowExecutorService:
             # Process execution results
             success = self._is_execution_successful(action_result)
             output_data = self._extract_output_data(shared_store, workflow_ir, output_key, success)
-            errors = self._build_error_list(success, action_result)
+            errors = self._build_error_list(success, action_result, shared_store)
 
             # Update metadata if successful
             self._update_workflow_metadata(success, workflow_name, execution_params)
@@ -215,12 +215,15 @@ class WorkflowExecutorService:
             return self._extract_default_output(shared_store, workflow_ir)
         return None
 
-    def _build_error_list(self, success: bool, action_result: Optional[str]) -> list[dict[str, Any]]:
+    def _build_error_list(
+        self, success: bool, action_result: Optional[str], shared_store: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Build error list if execution failed.
 
         Args:
             success: Whether execution was successful
             action_result: The action result from flow execution
+            shared_store: The shared store containing error details
 
         Returns:
             List of error dictionaries
@@ -228,15 +231,169 @@ class WorkflowExecutorService:
         if success:
             return []
 
+        # Extract error information
+        error_info = self._extract_error_info(action_result, shared_store)
+
+        # Determine error category
+        category = self._determine_error_category(error_info["message"] or "")
+
         return [
             {
                 "source": "runtime",
-                "category": "execution_failure",
-                "message": f"Workflow failed with action: {action_result}",
+                "category": category,
+                "message": error_info["message"],
                 "action": action_result,
+                "node_id": error_info["failed_node"],
                 "fixable": True,  # Assume fixable for repair
             }
         ]
+
+    def _extract_error_info(
+        self, action_result: Optional[str], shared_store: dict[str, Any]
+    ) -> dict[str, Optional[str]]:
+        """Extract error message and failed node from shared store.
+
+        Args:
+            action_result: The action result from flow execution
+            shared_store: The shared store containing error details
+
+        Returns:
+            Dictionary with 'message' and 'failed_node' keys
+        """
+        error_message = f"Workflow failed with action: {action_result}"
+        failed_node = self._get_failed_node_from_execution(shared_store)
+
+        # Try multiple sources for error message
+        root_error = self._extract_root_level_error(shared_store)
+        if root_error:
+            error_message = root_error["message"]
+            if not failed_node:
+                failed_node = root_error.get("node")
+        else:
+            # Try node-level error
+            node_error = self._extract_node_level_error(failed_node, shared_store)
+            if node_error:
+                error_message = node_error
+
+        return {"message": error_message, "failed_node": failed_node}
+
+    def _get_failed_node_from_execution(self, shared_store: dict[str, Any]) -> Optional[str]:
+        """Get failed node from execution checkpoint.
+
+        Args:
+            shared_store: The shared store
+
+        Returns:
+            Failed node ID or None
+        """
+        if "__execution__" in shared_store:
+            execution_data = shared_store.get("__execution__", {})
+            failed_node = execution_data.get("failed_node")
+            return failed_node if isinstance(failed_node, str) else None
+        return None
+
+    def _extract_root_level_error(self, shared_store: dict[str, Any]) -> Optional[dict[str, str]]:
+        """Extract error from root level of shared store.
+
+        Args:
+            shared_store: The shared store
+
+        Returns:
+            Dictionary with error details or None
+        """
+        if "error" not in shared_store:
+            return None
+
+        result = {"message": str(shared_store["error"])}
+
+        # Try to extract node from error_details
+        if "error_details" in shared_store:
+            error_details = shared_store.get("error_details", {})
+            if isinstance(error_details, dict) and "server" in error_details and "tool" in error_details:
+                result["node"] = f"{error_details['server']}_{error_details['tool']}"
+
+        return result
+
+    def _extract_node_level_error(self, failed_node: Optional[str], shared_store: dict[str, Any]) -> Optional[str]:
+        """Extract error from failed node's output.
+
+        Args:
+            failed_node: The failed node ID
+            shared_store: The shared store
+
+        Returns:
+            Error message or None
+        """
+        if not failed_node or failed_node not in shared_store:
+            return None
+
+        node_output = shared_store.get(failed_node, {})
+        if not isinstance(node_output, dict):
+            return None
+
+        # Check direct error field
+        if "error" in node_output:
+            return str(node_output["error"])
+
+        # Check MCP result format
+        if "result" in node_output:
+            return self._extract_error_from_mcp_result(node_output["result"])
+
+        return None
+
+    def _extract_error_from_mcp_result(self, result: Any) -> Optional[str]:
+        """Extract error from MCP result format.
+
+        Args:
+            result: The MCP result field
+
+        Returns:
+            Error message or None
+        """
+        if not isinstance(result, str):
+            return None
+
+        import json
+
+        try:
+            result_data = json.loads(result)
+            if isinstance(result_data, dict) and "error" in result_data:
+                error = result_data["error"]
+                return error if isinstance(error, str) else str(error)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        return None
+
+    def _determine_error_category(self, error_message: str) -> str:
+        """Determine error category based on message content.
+
+        Args:
+            error_message: The error message
+
+        Returns:
+            Error category string
+        """
+        error_lower = error_message.lower()
+
+        # Check for API validation errors
+        api_patterns = [
+            "input should be",
+            "field required",
+            "invalid request data",
+            "following fields are missing",
+            "validation error",
+            "parameter `",
+        ]
+
+        if any(pattern in error_lower for pattern in api_patterns):
+            return "api_validation"
+
+        # Check for template errors
+        if "${" in error_message or "template" in error_lower:
+            return "template_error"
+
+        return "execution_failure"
 
     def _update_workflow_metadata(
         self,
