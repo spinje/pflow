@@ -100,12 +100,14 @@ class TestMCPNodeCriticalBehaviors:
         # Should return "default" action
         assert action == "default"
 
-    def test_error_handling_returns_default_not_error(self):
-        """Test that errors return 'default' action, not 'error'.
+    def test_error_handling_returns_error_for_repair_system(self):
+        """Test that errors return 'error' action to enable repair system.
 
-        CRITICAL: The planner doesn't generate error handling edges.
-        Returning "error" causes "Flow ends: 'error' not found" crashes.
-        This is a documented workaround in the code.
+        CRITICAL: Nodes MUST return "error" on failures to enable the repair system.
+        The InstrumentedNodeWrapper handles error actions properly by:
+        1. Detecting if it's a repairable validation error (allows repair)
+        2. Detecting if it's a non-repairable resource error (stops workflow)
+        3. Caching results and preventing infinite loops
         """
         node = MCPNode()
         node.set_params({"__mcp_server__": "test", "__mcp_tool__": "failing-tool"})
@@ -113,22 +115,22 @@ class TestMCPNodeCriticalBehaviors:
         shared = {}
         prep_res = {"server": "test", "tool": "failing-tool"}
 
-        # Test protocol error
+        # Test protocol error - should return "default" for connection issues
         exec_res = {"error": "Connection failed"}
         action = node.post(shared, prep_res, exec_res)
 
-        # CRITICAL: Must return "default" not "error"
+        # Protocol errors return "default" (lines 370-372 in node.py)
         assert action == "default"
         assert "error" in shared
         assert shared["error"] == "Connection failed"
 
-        # Test tool-level error
+        # Test tool-level error - should return "error" for repair system
         shared = {}
         exec_res = {"result": {"error": "Repository not found", "is_tool_error": True}}
         action = node.post(shared, prep_res, exec_res)
 
-        # CRITICAL: Must return "default" even for tool errors
-        assert action == "default"
+        # Tool errors return "error" to trigger repair system (line 384 in node.py)
+        assert action == "error"
         assert "error" in shared
         assert shared["error"] == "Repository not found"
 

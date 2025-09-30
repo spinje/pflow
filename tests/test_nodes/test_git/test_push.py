@@ -260,8 +260,8 @@ class TestGitPushNode:
             assert shared["push_result"]["branch"] == "main"
             assert shared["push_result"]["remote"] == "origin"
 
-    def test_retry_exhaustion_raises_error(self):
-        """Test that error is raised after all retries are exhausted."""
+    def test_retry_exhaustion_returns_error(self):
+        """Test that error action is returned after all retries are exhausted."""
         node = GitPushNode()
         node.max_retries = 1
         node.wait = 0  # Only 1 retry, wait=0 for fast testing
@@ -290,10 +290,13 @@ class TestGitPushNode:
             # Should have tried max_retries times
             assert attempt_count == 1  # max_retries=1 means 1 attempt total
 
-            # Check that error was handled and stored
-            assert action == "default"
+            # Check that error action is returned to trigger repair
+            assert action == "error"
+            # Error should be stored in shared store
+            assert "error" in shared
+            assert "not a git repository" in shared["error"]
+            # Push result should also be stored with failure status
             assert "push_result" in shared
             assert shared["push_result"]["success"] is False
-            # The post() method only copies success, branch, remote - not details
             assert shared["push_result"]["branch"] == "main"
             assert shared["push_result"]["remote"] == "origin"

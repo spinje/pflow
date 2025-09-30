@@ -9,6 +9,10 @@ The `core` module is responsible for:
 - **Workflow Validation**: Defining and validating the JSON schema for pflow's Intermediate Representation (IR)
 - **Shell Integration**: Handling stdin/stdout operations for CLI pipe syntax support
 - **Error Handling**: Providing a structured exception hierarchy for the entire pflow system
+- **Metrics & Costs**: Tracking execution performance and LLM usage costs
+- **Output Control**: Managing interactive vs non-interactive execution modes
+- **Settings Management**: Node filtering and configuration with environment overrides
+- **User Experience**: User-friendly error formatting with actionable suggestions
 - **Public API**: Exposing core functionality through a clean interface
 
 ## Module Structure
@@ -18,10 +22,16 @@ src/pflow/core/
 ├── __init__.py              # Public API exports - aggregates functionality from all modules
 ├── exceptions.py            # Custom exception hierarchy for structured error handling
 ├── ir_schema.py             # JSON schema definition and validation for workflow IR
+├── llm_pricing.py           # Centralized LLM pricing and cost calculations
+├── metrics.py               # Lightweight metrics collection for workflow execution
+├── output_controller.py     # Central output control for interactive vs non-interactive modes
+├── settings.py              # Settings management with node filtering
 ├── shell_integration.py     # Unix pipe and stdin/stdout handling for CLI integration
+├── user_errors.py           # User-friendly error formatting for CLI
+├── validation_utils.py      # Shared validation utilities for parameters
+├── workflow_data_flow.py    # Data flow and execution order validation (NEW)
 ├── workflow_manager.py      # Workflow lifecycle management with format transformation
 ├── workflow_validator.py    # Unified workflow validation orchestrator (NEW)
-├── workflow_data_flow.py    # Data flow and execution order validation (NEW)
 └── CLAUDE.md               # This file
 ```
 
@@ -32,14 +42,19 @@ src/pflow/core/
 Defines the exception hierarchy used throughout pflow:
 
 **Exception Classes**:
-- **`PflowError`**: Base exception for all pflow-specific errors
+- **`PflowError`**: Base exception for all pflow-specific errors (base class for all others)
 - **`WorkflowExecutionError`**: Tracks execution failures with workflow path chain
-  - Preserves original error details
-  - Shows execution hierarchy (e.g., "main.json → sub-workflow.json → failing-node")
+  - **⚠️ DEAD CODE**: Defined but never raised anywhere in codebase
+  - Designed to show execution hierarchy (e.g., "main.json → sub-workflow.json → failing-node")
 - **`CircularWorkflowReferenceError`**: Detects and reports circular workflow references
-- **`WorkflowExistsError`**: Raised when attempting to save a workflow with existing name
-- **`WorkflowNotFoundError`**: Raised when requested workflow doesn't exist
-- **`WorkflowValidationError`**: Raised when workflow structure or name is invalid
+  - **⚠️ DEAD CODE**: Defined but never raised (should replace ValueError in WorkflowExecutor)
+- **`WorkflowExistsError`**: ✅ ACTIVELY USED in WorkflowManager.save() (line 112)
+- **`WorkflowNotFoundError`**: ✅ ACTIVELY USED in WorkflowManager (lines 188, 274, 299, 355)
+- **`WorkflowValidationError`**: ✅ ACTIVELY USED in WorkflowManager (multiple locations)
+- **`CriticalPlanningError`**: ✅ ACTIVELY USED in 5 planning nodes
+  - WorkflowDiscoveryNode, RequirementsAnalysisNode, PlanningNode, ParameterDiscoveryNode, WorkflowGeneratorNode
+- **`RuntimeValidationError`**:
+  - **⚠️ DEAD CODE**: Complex structured error class never raised by any nodes
 
 **Usage Pattern**:
 ```python
@@ -110,23 +125,21 @@ Enables pflow to work seamlessly in Unix pipelines:
 
 **Core Functions**:
 - **`detect_stdin()`**: Checks if stdin is piped (not TTY)
+- **`stdin_has_data()`**: Non-blocking check for available stdin data (prevents hanging)
 - **`determine_stdin_mode()`**: Identifies stdin content (workflow JSON vs data)
+  - **⚠️ UNUSED**: Function exists but never called in CLI
 - **`read_stdin_enhanced()`**: Reads stdin with binary/size handling
 - **`populate_shared_store()`**: Adds stdin content to workflow shared store
+  - **🐛 BUG**: Only accepts `str` but CLI passes `StdinData` objects for binary/large data
 
 **Memory Management**:
 - Default limit: 10MB (configurable via `PFLOW_STDIN_MEMORY_LIMIT`)
 - Automatic temp file creation for large inputs
-- Binary detection using null byte sampling
+- Binary detection using null byte sampling in first 8KB
 
-**Dual-Mode Operation**:
-```bash
-# Mode 1: Workflow from stdin
-echo '{"ir_version": "0.1.0", ...}' | pflow run
-
-# Mode 2: Data from stdin (workflow from file)
-cat data.txt | pflow run workflow.json
-```
+**Critical Issues**:
+- **Data Loss Bug**: Binary/large file data not properly passed to nodes due to type mismatch
+- **Missing Integration**: StdinData objects created but execution layer only handles strings
 
 ### 4. workflow_manager.py - Workflow Lifecycle Management
 
@@ -139,13 +152,15 @@ Centralizes all workflow operations and bridges the format gap between component
 - **Storage Location**: `~/.pflow/workflows/*.json`
 
 **Core Methods**:
-- **`save(name, workflow_ir, description)`**: Wraps IR in metadata, saves atomically
+- **`save(name, workflow_ir, description)`**: Wraps IR in metadata, saves atomically using `os.link()`
 - **`load(name)`**: Returns full metadata wrapper (for Context Builder)
 - **`load_ir(name)`**: Returns just the IR (for WorkflowExecutor)
 - **`list_all()`**: Lists all saved workflows with metadata
 - **`exists(name)`**: Checks if workflow exists
 - **`delete(name)`**: Removes workflow
 - **`get_path(name)`**: Returns absolute file path
+- **`update_metadata(name, updates)`**: Updates execution metadata after successful runs
+- **`update_ir(name, new_ir)`**: Updates workflow IR while preserving metadata (used by repair)
 
 **Storage Format**:
 ```json
@@ -155,7 +170,13 @@ Centralizes all workflow operations and bridges the format gap between component
   "ir": { /* actual workflow IR */ },
   "created_at": "2025-01-29T10:00:00+00:00",
   "updated_at": "2025-01-29T10:00:00+00:00",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "rich_metadata": {
+    "execution_count": 5,
+    "last_execution_timestamp": "2025-01-29T15:30:00",
+    "last_execution_success": true,
+    "last_execution_params": {"repo": "owner/repo"}
+  }
 }
 ```
 
@@ -203,7 +224,139 @@ Ensures workflows will execute correctly at runtime:
 
 **Algorithm**: Uses Kahn's algorithm for topological sort to determine valid execution order.
 
-### 7. __init__.py - Public API
+### 7. llm_pricing.py - Centralized LLM Cost Calculations
+
+Single source of truth for all LLM pricing and cost calculations:
+
+**Key Components**:
+- **`MODEL_PRICING`**: Dictionary with pricing for 46+ models (Anthropic, OpenAI, Google)
+- **`MODEL_ALIASES`**: 20+ common aliases mapping (e.g., "4o" → "gpt-4o")
+- **`calculate_llm_cost()`**: Calculate costs with cache and thinking token support
+
+**Pricing Rules** (Anthropic's model):
+- Regular input/output: Standard model rates
+- Cache creation: 2x input rate (100% premium)
+- Cache reads: 0.1x input rate (90% discount)
+- Thinking tokens: Output rate
+
+**Known Issues**:
+- **⚠️ 2 Broken Aliases**: `"claude-3.5-haiku"` and `"claude-4-opus"` point to non-existent pricing entries
+- Missing models referenced in docs: `claude-opus-4-1-20250805`
+
+**Usage Pattern**:
+```python
+cost_breakdown = calculate_llm_cost(
+    model="anthropic/claude-sonnet-4-0",
+    input_tokens=1000,
+    output_tokens=500,
+    cache_read_tokens=2000
+)
+# Returns: {"total_cost_usd": 0.001234, ...}
+```
+
+### 8. metrics.py - Execution Metrics Collection
+
+Lightweight metrics aggregation for tracking performance and costs:
+
+**Key Class**:
+- **`MetricsCollector`**: Tracks planner vs workflow execution phases
+
+**Features**:
+- Separate timing for planner and workflow phases
+- Per-node execution duration tracking
+- LLM token usage and cost aggregation
+- Cache efficiency metrics (cache hit rate)
+- Thinking token utilization tracking
+
+**Metrics Flow**:
+1. LLM calls accumulate in `shared["__llm_calls__"]`
+2. MetricsCollector aggregates costs using `calculate_llm_cost()`
+3. Summary includes phase breakdown and performance metrics
+
+### 9. output_controller.py - Interactive Mode Management
+
+Controls output behavior based on execution context:
+
+**Key Class**:
+- **`OutputController`**: Determines interactive vs non-interactive mode
+
+**5 Rules for Interactive Mode**:
+1. If `-p/--print` flag → non-interactive
+2. If output format is `json` → non-interactive
+3. If stdin is not TTY → non-interactive
+4. If stdout is not TTY → non-interactive
+5. Only if all pass → interactive
+
+**Progress Indicators**:
+- ✓ Success (green), ❌ Error (red), ⚠️ Warning (yellow)
+- ↻ Cached (blue, dimmed), [repaired] Modified (cyan)
+
+### 10. settings.py - Node Filtering Configuration
+
+Manages settings with environment variable override support:
+
+**Key Classes**:
+- **`SettingsManager`**: Manages `~/.pflow/settings.json`
+- **`PflowSettings`**: Settings data model
+
+**Features**:
+- Node allow/deny patterns with fnmatch support
+- Test node filtering (`PFLOW_INCLUDE_TEST_NODES` env var)
+- MCP node pattern matching with aliases
+- Atomic save operations
+
+**Settings Structure**:
+```json
+{
+  "registry": {
+    "nodes": {
+      "allow": ["*"],
+      "deny": ["test*", "debug*"]
+    }
+  }
+}
+```
+
+### 11. user_errors.py - User-Friendly Error Formatting
+
+Provides structured, actionable error messages for CLI users:
+
+**Key Class**:
+- **`UserFriendlyError`**: Base class with three-part structure
+  1. WHAT went wrong (title)
+  2. WHY it failed (explanation)
+  3. HOW to fix it (suggestions)
+
+**Specialized Errors**:
+- **`MCPError`**: ✅ ACTIVELY USED in MCP nodes for tool availability issues
+- **`NodeNotFoundError`**: **⚠️ UNUSED** - Should be used in registry CLI and compiler
+- **`MissingParametersError`**: **⚠️ UNUSED** - Should be used in planning parameter validation
+- **`TemplateVariableError`**: **⚠️ UNUSED** - Should be used in template validator
+
+### 12. validation_utils.py - Parameter Validation Utilities
+
+Security-aware parameter name validation:
+
+**Key Functions**:
+- **`is_valid_parameter_name()`**: Validates parameter names for security
+- **`get_parameter_validation_error()`**: Descriptive error messages with guidance
+
+**Security Rules** (prevents injection attacks):
+- **Forbidden**: `$` (template conflict), `|><&;` (shell injection), spaces/tabs (CLI parsing)
+- **Allowed**: Hyphens, dots, numbers at start (e.g., `api-key`, `2fa.token`)
+
+**Current Usage** (3 locations):
+- ✅ CLI parameter processing (`cli/main.py:503`)
+- ✅ Workflow input validation (`runtime/workflow_validator.py:35`)
+- ✅ Workflow output validation (`runtime/compiler.py:515`)
+
+**Security Gaps Identified**:
+- **🚨 Template variables NOT validated** - Could contain dangerous characters
+- **🚨 Node parameters in IR NOT validated** - Could bypass security
+- **🚨 LLM-extracted parameters NOT validated** - Could suggest dangerous names
+- **🚨 MCP tool parameters NOT validated** - External servers could provide dangerous names
+
+### 13. __init__.py - Public API
 
 Aggregates and exposes the module's functionality:
 
@@ -211,14 +364,19 @@ Aggregates and exposes the module's functionality:
 - `PflowError`
 - `WorkflowExecutionError`
 - `CircularWorkflowReferenceError`
-- `WorkflowExistsError`
-- `WorkflowNotFoundError`
-- `WorkflowValidationError`
+- `CriticalPlanningError`
+- `RuntimeValidationError`
 
 **Exported from ir_schema.py**:
 - `FLOW_IR_SCHEMA`
 - `ValidationError`
 - `validate_ir`
+
+**Exported from llm_pricing.py**:
+- `MODEL_PRICING`
+- `PRICING_VERSION`
+- `calculate_llm_cost`
+- `get_model_pricing`
 
 **Exported from shell_integration.py**:
 - `StdinData`
@@ -226,18 +384,17 @@ Aggregates and exposes the module's functionality:
 - `determine_stdin_mode`
 - `read_stdin`
 - `read_stdin_enhanced`
+- `read_stdin_with_limit`
 - `populate_shared_store`
-
-**Exported from workflow_manager.py**:
-- `WorkflowManager`
-
-**Exported from workflow_validator.py**:
-- `WorkflowValidator`
+- `stdin_has_data`
 
 **Exported from workflow_data_flow.py**:
 - `CycleError`
 - `build_execution_order`
 - `validate_data_flow`
+
+**Exported from workflow_validator.py**:
+- `WorkflowValidator`
 
 ## Connection to Examples
 
@@ -352,6 +509,13 @@ Each component has comprehensive test coverage:
 - `tests/test_core/test_ir_examples.py` - Real-world example validation
 - `tests/test_core/test_workflow_validator.py` - Unified validation system tests
 - `tests/test_core/test_workflow_data_flow.py` - Execution order and dependency validation
+- `tests/test_core/test_workflow_manager.py` - Concurrent access and atomic operations
+- `tests/test_core/test_metrics.py` - Metrics aggregation and cost calculation
+- `tests/test_core/test_metrics_thinking_cache.py` - Cache and thinking token metrics
+- `tests/test_core/test_settings.py` - Settings management and node filtering
+- `tests/test_core/test_output_controller.py` - Interactive mode detection
+- `tests/test_core/test_user_errors.py` - User-friendly error formatting
+- `tests/test_core/test_validation_utils.py` - Parameter validation
 
 ### Running Tests
 ```bash
@@ -368,40 +532,62 @@ The core module is used throughout pflow:
 - **CLI** (`cli/main.py`):
   - Uses shell integration for pipe support
   - Uses WorkflowManager for saving workflows after execution
-  - Handles workflow exceptions during execution
+  - Uses OutputController for interactive mode detection
+  - Uses MetricsCollector for tracking execution performance
+  - Handles UserFriendlyError formatting with `format_for_cli()`
 - **Compiler** (`runtime/compiler.py`): Validates IR before compilation
 - **Context Builder** (`planning/context_builder.py`): Uses WorkflowManager.list_all() for workflow discovery
 - **WorkflowExecutor** (`runtime/workflow_executor.py`): Uses WorkflowManager.load_ir() for name-based workflow loading
-- **ValidatorNode** (`planning/nodes.py`): Now uses WorkflowValidator for all validation
+- **Registry** (`registry/registry.py`): Uses SettingsManager for node filtering
+- **Execution Module** (`execution/`):
+  - Uses WorkflowValidator in validation phase
+  - Creates CliOutput wrapping OutputController
+  - Updates WorkflowManager metadata after execution
+- **Planning Nodes** (`planning/nodes.py`):
+  - Uses WorkflowValidator for validation
+  - Raises CriticalPlanningError for unrecoverable failures
+- **InstrumentedNodeWrapper** (`runtime/instrumented_wrapper.py`):
+  - Captures LLM usage for MetricsCollector
+  - Calls progress callbacks from OutputController
+- **Repair Service** (`execution/repair_service.py`): Uses WorkflowValidator to validate repairs
 - **Tests** (`tests/test_planning/llm/prompts/`): Now use WorkflowValidator for production-consistent validation
-- **Planner** (`planning/`): Will generate valid IR and use WorkflowManager to save workflows
-- **Nodes**: Use exceptions for error reporting
+- **Nodes**: Use exceptions for error reporting, MCPError for MCP issues
 
 ## Design Decisions
 
 1. **Dual-Mode Stdin**: Supports both workflow JSON and data input via stdin
-2. **Memory-Aware**: Handles large inputs without exhausting memory
-3. **Helpful Errors**: ValidationError includes paths and fix suggestions
+2. **Memory-Aware**: Handles large inputs without exhausting memory (10MB default, temp files for larger)
+3. **Helpful Errors**: ValidationError includes paths and fix suggestions; UserFriendlyError follows WHAT-WHY-HOW structure
 4. **Clean API**: __init__.py provides single import point for consumers
 5. **Type Annotations**: Full type hints for better IDE support
 6. **Format Bridging**: WorkflowManager handles metadata wrapper vs raw IR transformation transparently
-7. **Atomic Operations**: WorkflowManager uses atomic file operations to prevent race conditions
+7. **Atomic Operations**: WorkflowManager uses `os.link()` for creates, `os.replace()` for updates
 8. **Kebab-Case Names**: Workflow names use kebab-case for CLI friendliness (e.g., "fix-issue")
-9. **Unified Validation**: WorkflowValidator provides single source of truth for all validation, eliminating duplication and ensuring consistency between production and tests
-10. **Data Flow Validation**: Critical addition that ensures workflows will execute correctly at runtime by validating execution order and dependencies
+9. **Unified Validation**: WorkflowValidator provides single source of truth for all validation
+10. **Data Flow Validation**: Critical addition that ensures workflows will execute correctly at runtime
+11. **Centralized Pricing**: Single llm_pricing.py module for all cost calculations with cache token support
+12. **Interactive Mode Rules**: 5-rule hierarchy determines output behavior (print flag, json format, TTY detection)
+13. **Settings Filtering**: Node visibility controlled at Registry load time, not storage time
+14. **Test Node Isolation**: Test nodes hidden by default, exposed only via environment variable
+15. **Security-Aware Validation**: Parameter names disallow shell special characters for safety
 
 ## Best Practices
 
-1. **Always validate early**: Validate IR as soon as it's loaded or generated to catch errors before execution
-2. **Use helpful error messages**: Include suggestions for fixing common mistakes in ValidationError
+1. **Always validate early**: Validate IR as soon as it's loaded or generated using WorkflowValidator
+2. **Use helpful error messages**: UserFriendlyError for CLI, include fix suggestions in ValidationError
 3. **Test edge cases**: Ensure validation catches all invalid states (missing fields, wrong types, bad references)
 4. **Keep examples updated**: Examples serve as both documentation and tests - maintain them carefully
-5. **Building MVP**: We do not need to worry about backward compatibility for now, no migrations are needed since we dont have any users yet.
+5. **Building MVP**: We do not need to worry about backward compatibility for now, no migrations are needed
 6. **Handle stdin modes explicitly**: Always check if stdin contains workflow JSON or data before processing
-7. **Preserve error context**: Use WorkflowExecutionError to maintain the full error chain and workflow path
-8. **Use WorkflowManager for all workflow operations**: Don't implement custom file loading/saving for workflows
+7. **Preserve error context**: Use appropriate exception classes (though note some are underutilized)
+8. **Use WorkflowManager for all workflow operations**: Don't implement custom file loading/saving
 9. **Test concurrent access**: Always test with real threads when dealing with file operations
 10. **Handle format differences**: Use load() for metadata needs, load_ir() for execution needs
+11. **Track metrics properly**: Initialize `shared["__llm_calls__"]` list for LLM usage tracking
+12. **Use OutputController**: Create once, reuse throughout CLI command execution
+13. **Update pricing promptly**: Keep MODEL_PRICING current as providers change rates
+14. **Filter at load time**: SettingsManager filters nodes when Registry loads, not when scanning
+15. **Validate parameter names**: Use validation_utils for security-aware parameter validation
 
 ## Related Documentation
 
@@ -412,6 +598,21 @@ The core module is used throughout pflow:
 - **Task 24 Review**: `.taskmaster/tasks/task_24/task-review.md` - Comprehensive WorkflowManager implementation details
 - **Workflow Management**: All workflow lifecycle operations should use WorkflowManager
 
+## Critical Issues and Gaps
+
+### 🚨 Security Vulnerabilities
+1. **Parameter Validation Gaps**: Template variables, node parameters, and LLM/MCP parameters not validated for dangerous characters
+2. **Shell Injection Risk**: Unvalidated parameters could contain shell special characters
+
+### 🐛 Active Bugs
+1. **Stdin Data Loss**: Binary/large files not properly passed to nodes (type mismatch in `populate_shared_store()`)
+2. **Broken LLM Aliases**: Two aliases point to non-existent pricing entries
+
+### ⚠️ Dead Code
+1. **Unused Exceptions**: WorkflowExecutionError, CircularWorkflowReferenceError, RuntimeValidationError defined but never raised
+2. **Unused Error Classes**: NodeNotFoundError, MissingParametersError, TemplateVariableError defined but never used
+3. **Unused Function**: `determine_stdin_mode()` exists but never called
+
 ## Key Lessons from Task 24
 
 1. **The Race Condition Discovery**: Initial tests were too shallow. Only when proper concurrent tests were written was a critical race condition discovered in WorkflowManager.save(). This was fixed using atomic file operations with os.link().
@@ -419,5 +620,7 @@ The core module is used throughout pflow:
 2. **Format Bridging is Critical**: The system has a fundamental format mismatch - Context Builder expects metadata wrapper while WorkflowExecutor expects raw IR. WorkflowManager transparently handles this transformation.
 
 3. **Test Quality Matters**: Always write real tests with actual threading, file I/O, and error conditions. Mocking too much can hide real bugs.
+
+4. **Data Flow Validation Gap**: Tests had execution order validation that production lacked - workflows could pass validation but fail at runtime with forward references or circular dependencies.
 
 Remember: This module provides the foundation for pflow's reliability and CLI-first design. Changes here affect the entire system, so verify thoroughly against existing tests and usage patterns.

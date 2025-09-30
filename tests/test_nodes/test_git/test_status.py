@@ -274,7 +274,11 @@ class TestGitStatusNode:
         assert action == "default"
 
     def test_post_with_error(self, git_status_node, shared_store):
-        """Test post with error in exec_res."""
+        """Test post with error in exec_res returns error action.
+
+        FIXED: The node correctly returns "error" action when exec_res contains
+        an error. This enables the repair system to handle failures properly.
+        """
         exec_res = {
             "modified": [],
             "untracked": [],
@@ -288,7 +292,7 @@ class TestGitStatusNode:
         action = git_status_node.post(shared_store, "/test", exec_res)
 
         assert shared_store["git_status"] == exec_res
-        assert action == "default"  # Still returns default
+        assert action == "error"  # Correctly returns error to trigger repair
 
     @patch("subprocess.run")
     def test_integration_full_flow(self, mock_run, git_status_node, shared_store):
@@ -400,8 +404,13 @@ class TestGitStatusNode:
             assert shared_store["git_status"]["branch"] == "main"
             assert shared_store["git_status"]["staged"] == ["file.py"]
 
-    def test_retry_exhaustion_raises_error(self, git_status_node, shared_store):
-        """Test that error is raised after all retries are exhausted."""
+    def test_retry_exhaustion_returns_error(self, git_status_node, shared_store):
+        """Test that error action is returned after all retries are exhausted.
+
+        FIXED: When retries are exhausted, exec_fallback returns an error dict
+        which causes post() to return "error" action, not "default".
+        This enables the repair system to handle persistent failures.
+        """
         git_status_node.max_retries = 1
         git_status_node.wait = 0  # wait=0 for fast testing
 
@@ -425,7 +434,10 @@ class TestGitStatusNode:
             assert attempt_count == 1  # max_retries=1 means 1 attempt total
 
             # Check that error was handled and stored
-            assert action == "default"
+            assert action == "error"  # Correctly returns error action
             assert "git_status" in shared_store
             assert "error" in shared_store["git_status"]
             assert "not a git repository" in shared_store["git_status"]["error"].lower()
+            # Also check that error is in shared store directly (set by post())
+            assert "error" in shared_store
+            assert shared_store["error"] == shared_store["git_status"]["error"]

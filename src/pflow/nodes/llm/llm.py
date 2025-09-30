@@ -145,6 +145,13 @@ class LLMNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results in shared store."""
+        # Check for error first
+        if isinstance(exec_res, dict) and exec_res.get("status") == "error":
+            shared["error"] = exec_res.get("error", "Unknown error")
+            shared["response"] = ""
+            shared["llm_usage"] = {}
+            return "error"  # Return error to trigger repair
+
         raw_response = exec_res["response"]
 
         # Parse JSON if possible
@@ -175,22 +182,26 @@ class LLMNode(Node):
 
         return "default"  # Always return "default"
 
-    def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> None:
+    def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
         """Handle errors after all retries exhausted."""
         # Enhanced error messages
         error_msg = str(exc)
 
         if "UnknownModelError" in error_msg:
-            raise ValueError(
-                f"Unknown model: {prep_res['model']}. Run 'llm models' to see available models. Original error: {exc}"
-            )
+            error_detail = f"Unknown model: {prep_res['model']}. Run 'llm models' to see available models."
         elif "NeedsKeyException" in error_msg:
-            raise ValueError(
+            error_detail = (
                 f"API key required for model: {prep_res['model']}. "
-                f"Set up with 'llm keys set <provider>' or environment variable. "
-                f"Original error: {exc}"
+                f"Set up with 'llm keys set <provider>' or environment variable."
             )
         else:
-            raise ValueError(
-                f"LLM call failed after {self.max_retries} attempts. Model: {prep_res['model']}, Error: {exc}"
-            )
+            error_detail = f"LLM call failed after {self.max_retries} attempts. Model: {prep_res['model']}"
+
+        # Return error dict instead of raising
+        return {
+            "response": "",
+            "error": error_detail,
+            "model": prep_res.get("model", "unknown"),
+            "usage": {},
+            "status": "error",
+        }

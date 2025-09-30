@@ -6,6 +6,11 @@ from unittest.mock import patch
 from pflow.core.output_controller import OutputController
 
 
+def mock_click_style(text, **kwargs):
+    """Mock click.style to return plain text without ANSI codes."""
+    return text
+
+
 class TestOutputController:
     """Test suite for OutputController class."""
 
@@ -90,8 +95,9 @@ class TestOutputController:
 
     # Test requirements 11-15: Progress callback behavior
 
+    @patch("click.style", side_effect=mock_click_style)
     @patch("click.echo")
-    def test_progress_callback_handles_events(self, mock_echo):
+    def test_progress_callback_handles_events(self, mock_echo, mock_style):
         """Test requirement 11: Progress callback handles node_start, node_complete, workflow_start events correctly."""
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
@@ -134,8 +140,9 @@ class TestOutputController:
         callback("node3", "node_start", depth=2)
         mock_echo.assert_called_with("      node3...", err=True, nl=False)
 
+    @patch("click.style", side_effect=mock_click_style)
     @patch("click.echo")
-    def test_progress_format_matches_specification(self, mock_echo):
+    def test_progress_format_matches_specification(self, mock_echo, mock_style):
         """Test requirement 13: Progress format matches: '{name}... ✓ {duration:.1f}s'."""
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
@@ -273,8 +280,9 @@ class TestOutputController:
         assert controller.stdout_tty is False
         assert controller.is_interactive() is False
 
+    @patch("click.style", side_effect=mock_click_style)
     @patch("click.echo")
-    def test_node_complete_without_duration(self, mock_echo):
+    def test_node_complete_without_duration(self, mock_echo, mock_style):
         """Test node_complete event without duration shows only checkmark."""
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
@@ -292,8 +300,9 @@ class TestOutputController:
         controller = OutputController(print_flag=True, output_format="json", stdin_tty=False, stdout_tty=False)
         assert controller.is_interactive() is False
 
+    @patch("click.style", side_effect=mock_click_style)
     @patch("click.echo")
-    def test_complete_workflow_execution_flow(self, mock_echo):
+    def test_complete_workflow_execution_flow(self, mock_echo, mock_style):
         """Test a complete workflow execution flow with progress callbacks."""
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()

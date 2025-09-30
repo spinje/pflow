@@ -207,10 +207,13 @@ class TemplateAwareNodeWrapper:
                         extra={"node_id": self.node_id, "param": key},
                     )
                 elif "${" in str(template):
-                    logger.warning(
-                        f"Template in param '{key}' could not be fully resolved: '{template}'",
+                    error_msg = f"Template in param '{key}' could not be fully resolved: '{template}'"
+                    logger.error(
+                        error_msg,
                         extra={"node_id": self.node_id, "param": key},
                     )
+                    # Make template errors fatal to trigger repair
+                    raise ValueError(error_msg)
 
         # Temporarily update inner node params with resolved values
         original_params = self.inner_node.params

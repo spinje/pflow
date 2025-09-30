@@ -187,16 +187,19 @@ class GitGetLatestTagNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> Optional[str]:
         """Update shared store with latest tag and return action."""
-        # Store the latest tag in shared store
-        shared["latest_tag"] = exec_res.get("latest_tag", {})
-
-        # Log based on status
+        # Check for error status first
         if exec_res.get("status") == "error":
+            shared["error"] = exec_res.get("error", "Git operation failed")
+            shared["latest_tag"] = {}
             logger.error(
                 "Failed to get latest tag", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"}
             )
-        elif not exec_res.get("latest_tag"):
+            return "error"  # Return error to trigger repair
+
+        # Store the latest tag in shared store for success
+        shared["latest_tag"] = exec_res.get("latest_tag", {})
+
+        if not exec_res.get("latest_tag"):
             logger.info("No tags found in repository", extra={"phase": "post"})
 
-        # Always return default action
         return "default"

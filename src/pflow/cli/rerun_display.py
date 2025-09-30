@@ -9,6 +9,23 @@ from typing import Any
 import click
 
 
+def filter_user_params(params: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Filter out internal parameters (those starting with __).
+
+    Args:
+        params: Raw execution parameters
+
+    Returns:
+        Filtered params with only user-facing parameters, or None if empty
+    """
+    if not params:
+        return None
+
+    # Filter out internal params
+    user_params = {k: v for k, v in params.items() if not k.startswith("__")}
+    return user_params if user_params else None
+
+
 def format_param_value(value: Any) -> str:
     """Convert a Python value to its CLI string representation.
 
@@ -81,6 +98,11 @@ def format_rerun_command(workflow_name: str, params: dict[str, Any] | None) -> s
             if value is None:
                 continue
 
+            # Skip internal parameters (those starting with __)
+            # These are internal pflow parameters that shouldn't be exposed to users
+            if key.startswith("__"):
+                continue
+
             # Check if this is a sensitive parameter
             if key.lower() in SENSITIVE_KEYS:
                 # Mask the value
@@ -116,3 +138,31 @@ def display_rerun_commands(workflow_name: str, params: dict[str, Any] | None) ->
 
     click.echo("\n📖 Learn more:")
     click.echo(f"  $ pflow workflow describe {workflow_name}")
+
+
+def display_file_rerun_commands(
+    file_path: str,
+    params: dict[str, Any] | None,
+    show_save_tip: bool = False,
+    suggested_name: str | None = None,
+) -> None:
+    """Display rerun commands for file-based workflows (including repaired ones).
+
+    Args:
+        file_path: Path to the workflow file
+        params: Execution parameters (None or empty dict for no params)
+        show_save_tip: Whether to show tip about saving as named workflow
+        suggested_name: Suggested name for saving (used in save tip)
+    """
+    # Build the rerun command with file path
+    rerun_command = format_rerun_command(str(file_path), params)
+
+    # Display rerun command
+    click.echo("\n✨ Run again with:")
+    click.echo(f"  $ {rerun_command}")
+
+    # Optionally show save tip
+    if show_save_tip:
+        save_name = suggested_name or "my-workflow"
+        click.echo("\n💡 Save as named workflow for easier access:")
+        click.echo(f"  $ pflow --save {file_path} {save_name}")

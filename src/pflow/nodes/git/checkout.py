@@ -466,7 +466,18 @@ class GitCheckoutNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> Optional[str]:
         """Update shared store with checkout results and return action."""
-        # Store results in shared store
+        # Check for error status first
+        if exec_res.get("status") == "error":
+            shared["error"] = exec_res.get("error", "Git operation failed")
+            shared["current_branch"] = exec_res.get("current_branch", "")
+            shared["previous_branch"] = exec_res.get("previous_branch", "")
+            shared["branch_created"] = False
+            logger.error(
+                "Branch checkout failed", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"}
+            )
+            return "error"  # Return error to trigger repair
+
+        # Store results in shared store for success
         shared["current_branch"] = exec_res.get("current_branch", "")
         shared["previous_branch"] = exec_res.get("previous_branch", "")
         shared["branch_created"] = exec_res.get("branch_created", False)
@@ -474,11 +485,4 @@ class GitCheckoutNode(Node):
         if exec_res.get("stash_created"):
             shared["stash_created"] = exec_res["stash_created"]
 
-        # Log if there was an error
-        if exec_res.get("status") == "error":
-            logger.error(
-                "Branch checkout failed", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"}
-            )
-
-        # Always return default action
         return "default"

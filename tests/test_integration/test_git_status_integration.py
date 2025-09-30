@@ -170,11 +170,15 @@ class TestGitStatusIntegration:
             action = node.post(shared, prep_res, exec_res)
 
             # Verify error handling
-            assert action == "default"
+            # Node should return "error" action to trigger repair system
+            assert action == "error"
             status = shared["git_status"]
             assert "error" in status
             assert "not a git repository" in status["error"]
             assert status["branch"] == "unknown"
+            # Also check error is in shared for repair system
+            assert "error" in shared
+            assert "not a git repository" in shared["error"]
 
     def test_current_directory_default(self):
         """Test GitStatusNode using pflow repository directory."""

@@ -14,9 +14,10 @@ import click.testing
 import pytest
 
 from pflow.cli.main import main
+from pocketflow import BaseNode
 
 
-class MockOutputNode:
+class MockOutputNode(BaseNode):
     """Mock node that outputs data to the shared store."""
 
     def __init__(self):
@@ -79,46 +80,55 @@ def mock_registry():
 
 @pytest.fixture
 def mock_compile():
-    """Mock the compile_ir_to_flow function."""
-    with patch("pflow.cli.main.compile_ir_to_flow") as mock:
-        # Create a mock flow that executes our test node
-        mock_flow = Mock()
+    """Mock the workflow execution to bypass validation."""
+    # Patch at the execution level to bypass all validation
+    with patch("pflow.execution.workflow_execution.execute_workflow") as mock_execute:
+        # Shared storage for IR data
+        shared_data = {"last_ir": None}
 
-        def run_flow(shared_storage):
+        def execute_mock(workflow_ir, execution_params, **kwargs):
+            # Store the IR for reference
+            shared_data["last_ir"] = workflow_ir
+
+            # Create result with our test node's output
+            shared_storage = {}
+
             # Create and run our test node
             node = MockOutputNode()
             # Extract params from the IR if available
-            if hasattr(mock, "_last_ir"):
-                node_params = mock._last_ir.get("nodes", [{}])[0].get("params", {})
+            if workflow_ir:
+                node_params = workflow_ir.get("nodes", [{}])[0].get("params", {})
                 node.set_params(node_params)
             node.run(shared_storage)
-            return "success"
 
-        mock_flow.run = run_flow
+            # Create a successful result
+            from pflow.execution.executor_service import ExecutionResult
 
-        # Store IR for params extraction
-        def compile_with_ir(
-            ir_data, registry, initial_params=None, validate=True, metrics_collector=None, trace_collector=None
-        ):
-            mock._last_ir = ir_data
-            return mock_flow
+            return ExecutionResult(success=True, errors=[], shared_after=shared_storage, output_data=None)
 
-        mock.side_effect = compile_with_ir
-        yield mock
+        mock_execute.side_effect = execute_mock
+        yield mock_execute
 
 
 @pytest.fixture
 def mock_validate_ir():
     """Mock IR validation to always pass."""
     with patch("pflow.cli.main.validate_ir") as mock:
-        mock.return_value = None
+        # Mock to add edges if missing and pass validation
+        def validate_with_edges(ir_data):
+            if isinstance(ir_data, dict) and "edges" not in ir_data:
+                ir_data["edges"] = []
+            return None
+
+        mock.side_effect = validate_with_edges
         yield mock
 
 
 @pytest.fixture
 def mock_registry_instance(mock_registry):
     """Mock the Registry class instantiation."""
-    with patch("pflow.cli.main.Registry") as MockRegistry:
+    # Patch Registry at the source module
+    with patch("pflow.registry.Registry") as MockRegistry:
         MockRegistry.return_value = mock_registry
         yield MockRegistry
 

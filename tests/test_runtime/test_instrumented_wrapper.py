@@ -2,7 +2,7 @@
 
 import copy
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 
@@ -409,8 +409,21 @@ class TestCollectorIntegration:
         assert call_kwargs["node_type"] == "SimpleTestNode"
         assert isinstance(call_kwargs["duration_ms"], float)
         assert call_kwargs["shared_before"] == {"input": "data"}
-        # shared_after will include __llm_calls__ list added by wrapper
-        assert call_kwargs["shared_after"] == {"input": "data", "test_output": "executed", "__llm_calls__": []}
+        # shared_after will include __llm_calls__ list and __execution__ checkpoint added by wrapper
+        expected_shared = {
+            "input": "data",
+            "test_output": "executed",
+            "__llm_calls__": [],
+            "__execution__": {
+                "completed_nodes": ["test_node"],
+                "node_actions": {"test_node": "test_result"},
+                "node_hashes": {"test_node": ANY},  # Hash value depends on config
+                "failed_node": None,
+            },
+        }
+        assert call_kwargs["shared_after"] == expected_shared
+        # Verify that a hash was computed
+        assert isinstance(call_kwargs["shared_after"]["__execution__"]["node_hashes"]["test_node"], str)
         assert call_kwargs["success"]
         assert call_kwargs["error"] is None
         assert call_kwargs["template_resolutions"] == {}

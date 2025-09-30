@@ -24,7 +24,6 @@ from pflow.planning.nodes import (
     PlanningNode,
     RequirementsAnalysisNode,
     ResultPreparationNode,
-    RuntimeValidationNode,
     ValidatorNode,
     WorkflowDiscoveryNode,
     WorkflowGeneratorNode,
@@ -54,7 +53,7 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     Returns:
         The complete planner flow ready for execution
     """
-    logger.debug("Creating planner flow with 12 nodes")
+    logger.debug("Creating planner flow with 11 nodes")
 
     # Create all nodes with configurable wait time (critical for test performance)
     discovery_node: Node = WorkflowDiscoveryNode(wait=wait)
@@ -67,7 +66,6 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     workflow_generator: Node = WorkflowGeneratorNode(wait=wait)
     validator: Node = ValidatorNode()  # Doesn't take wait param
     metadata_generation: Node = MetadataGenerationNode(wait=wait)
-    runtime_validation: Node = RuntimeValidationNode()  # NEW: Runtime validation node
     result_preparation: Node = ResultPreparationNode()  # Doesn't take wait param
 
     # If debugging context provided, wrap all nodes
@@ -86,7 +84,6 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
         workflow_generator = DebugWrapper(workflow_generator, debug_context)  # type: ignore[assignment]
         validator = DebugWrapper(validator, debug_context)  # type: ignore[assignment]
         metadata_generation = DebugWrapper(metadata_generation, debug_context)  # type: ignore[assignment]
-        runtime_validation = DebugWrapper(runtime_validation, debug_context)  # type: ignore[assignment]
         result_preparation = DebugWrapper(result_preparation, debug_context)  # type: ignore[assignment]
 
     # Create flow with start node
@@ -155,8 +152,8 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     # ValidatorNode tracks generation_attempts and prevents infinite loops
     # NOW validates with extracted parameters instead of empty {}
 
-    # Validation succeeds → runtime validation (changed from metadata_generation)
-    validator - "runtime_validation" >> runtime_validation
+    # Validation succeeds → metadata generation
+    validator - "metadata_generation" >> metadata_generation
 
     # Validation fails but can retry (attempts < 3) → retry generation
     # The validator stores validation_errors for the generator to use
@@ -166,20 +163,7 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     validator - "failed" >> result_preparation
 
     # ============================================================
-    # Runtime Validation (Path B only - after validation)
-    # ============================================================
-    # Runtime validation succeeds → generate metadata (only once after success!)
-    # RuntimeValidationNode returns "" (empty string) on success so we use default
-    runtime_validation >> metadata_generation
-
-    # Runtime validation routes for failures:
-    # - Fixable issues found → back to generator with runtime_errors
-    runtime_validation - "runtime_fix" >> workflow_generator
-    # - Fatal issues or max attempts → end with failure
-    runtime_validation - "failed_runtime" >> result_preparation
-
-    # ============================================================
-    # Metadata Generation (Path B only - after runtime validation)
+    # Metadata Generation (Path B only - after validation)
     # ============================================================
     # Metadata generation complete → parameter preparation
     # MetadataGenerationNode returns "" (empty string) so we use default
@@ -210,8 +194,6 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     # 2. From ParameterMappingNode - Missing parameters
     # 3. From ValidatorNode - Generation failed after 3 attempts
 
-    logger.info(
-        "Planner flow created with 12 nodes: 2-path architecture with Requirements/Planning enhancement and Runtime Validation"
-    )
+    logger.info("Planner flow created with 11 nodes: 2-path architecture with Requirements/Planning enhancement")
 
     return flow

@@ -233,14 +233,17 @@ class GitLogNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> Optional[str]:
         """Update shared store with commits and return action."""
-        # Store the commits in shared store
+        # Check for error status first
+        if exec_res.get("status") == "error":
+            shared["error"] = exec_res.get("error", "Git operation failed")
+            shared["commits"] = []
+            logger.error("Git log failed", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"})
+            return "error"  # Return error to trigger repair
+
+        # Store the commits in shared store for success
         shared["commits"] = exec_res.get("commits", [])
 
-        # Log based on status
-        if exec_res.get("status") == "error":
-            logger.error("Git log failed", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"})
-        elif exec_res.get("status") == "empty_repository":
+        if exec_res.get("status") == "empty_repository":
             logger.info("Repository has no commits", extra={"phase": "post"})
 
-        # Always return default action
         return "default"

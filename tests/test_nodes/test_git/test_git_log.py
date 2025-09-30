@@ -372,8 +372,10 @@ class TestGitLogNode:
 
         action = node.post(shared, prep_res, exec_res)
 
-        assert action == "default"
+        # Node correctly returns "error" action on failures to enable repair system
+        assert action == "error"
         assert shared["commits"] == []
+        assert shared["error"] == "Test error"
 
     def test_post_empty_repository(self):
         """Test post method with empty repository status."""

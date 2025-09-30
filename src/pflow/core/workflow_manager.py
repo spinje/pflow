@@ -278,3 +278,110 @@ class WorkflowManager:
             logger.info(f"Deleted workflow '{name}'")
         except Exception as e:
             raise WorkflowValidationError(f"Failed to delete workflow '{name}': {e}") from e
+
+    def update_metadata(self, name: str, updates: dict[str, Any]) -> None:
+        """Update workflow metadata after execution.
+
+        Args:
+            name: Workflow name
+            updates: Dictionary of metadata fields to update
+                - execution_count: Will be incremented from current value
+                - last_execution_timestamp: Timestamp will be updated
+                - Any other rich_metadata fields
+
+        Raises:
+            WorkflowNotFoundError: If workflow doesn't exist
+            WorkflowValidationError: If update fails
+        """
+        file_path = self.workflows_dir / f"{name}.json"
+
+        if not file_path.exists():
+            raise WorkflowNotFoundError(f"Workflow '{name}' not found")
+
+        try:
+            # Load existing workflow
+            workflow_data = self.load(name)
+
+            # Ensure rich_metadata exists
+            if "rich_metadata" not in workflow_data:
+                workflow_data["rich_metadata"] = {}
+
+            # Handle execution_count increment specially
+            if "execution_count" in updates:
+                current_count = workflow_data["rich_metadata"].get("execution_count", 0)
+                workflow_data["rich_metadata"]["execution_count"] = current_count + 1
+                del updates["execution_count"]  # Remove from updates dict
+
+            # Apply other updates
+            workflow_data["rich_metadata"].update(updates)
+            workflow_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+            # Atomic save using temp file + replace pattern
+            temp_fd, temp_path = tempfile.mkstemp(dir=self.workflows_dir, prefix=f".{name}.", suffix=".tmp")
+
+            try:
+                # Write to temp file
+                with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                    json.dump(workflow_data, f, indent=2)
+
+                # Atomic replace (unlike save(), this replaces existing file)
+                os.replace(temp_path, file_path)
+
+                logger.debug(f"Updated metadata for workflow '{name}'")
+
+            except Exception:
+                # Clean up temp file on failure
+                Path(temp_path).unlink(missing_ok=True)
+                raise
+
+        except WorkflowNotFoundError:
+            # Re-raise workflow not found
+            raise
+        except Exception as e:
+            raise WorkflowValidationError(f"Failed to update workflow metadata: {e}") from e
+
+    def update_ir(self, name: str, new_ir: dict[str, Any]) -> None:
+        """Update just the IR of an existing workflow, preserving metadata.
+
+        Args:
+            name: Workflow name
+            new_ir: New workflow IR to replace the existing one
+
+        Raises:
+            WorkflowNotFoundError: If workflow doesn't exist
+            WorkflowValidationError: If update fails
+        """
+        if not self.exists(name):
+            raise WorkflowNotFoundError(f"Workflow '{name}' does not exist")
+
+        try:
+            # Load existing workflow
+            workflow_data = self.load(name)
+
+            # Update the IR while preserving all metadata
+            workflow_data["ir"] = new_ir
+            workflow_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+            # Write atomically using temp file
+            file_path = self.workflows_dir / f"{name}.json"
+            temp_fd, temp_path = tempfile.mkstemp(dir=self.workflows_dir, prefix=f".{name}.", suffix=".tmp")
+
+            try:
+                with open(temp_fd, "w", encoding="utf-8") as f:
+                    json.dump(workflow_data, f, indent=2)
+
+                # Atomic replace
+                os.replace(temp_path, file_path)
+
+                logger.info(f"Updated IR for workflow '{name}'")
+
+            except Exception:
+                # Clean up temp file on failure
+                Path(temp_path).unlink(missing_ok=True)
+                raise
+
+        except WorkflowNotFoundError:
+            # Re-raise workflow not found
+            raise
+        except Exception as e:
+            raise WorkflowValidationError(f"Failed to update workflow IR: {e}") from e

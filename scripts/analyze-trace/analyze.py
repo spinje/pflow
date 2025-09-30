@@ -693,6 +693,7 @@ def analyze_trace(trace_file: Path, output_dir: Path) -> None:
     elif "nodes" in trace:
         # Extract LLM calls from node events
         for node in trace.get("nodes", []):
+            # Handle regular node LLM calls
             if node.get("llm_call"):
                 # Convert workflow trace format to match planner format
                 # Now we can extract the prompt from the trace!
@@ -713,6 +714,20 @@ def analyze_trace(trace_file: Path, output_dir: Path) -> None:
                 if "cost" in node.get("llm_call", {}):
                     llm_call["cost"] = node["llm_call"]["cost"]
 
+                llm_calls.append(llm_call)
+
+            # Handle repair LLM calls (stored as special event types)
+            elif node.get("type") == "repair_llm_call":
+                # Extract repair LLM call data
+                llm_call = {
+                    "node": "repair_service",
+                    "duration_ms": 0,  # repair events don't track duration
+                    "prompt": node.get("llm_prompt", node.get("llm_prompt_truncated", "")),
+                    "response": node.get("llm_response", node.get("llm_response_truncated", "")),
+                    "tokens": {"input": 0, "output": 0},  # repair events don't track tokens yet
+                    "model": "claude-sonnet-4-0",  # repair uses Sonnet
+                    "is_repair": True,  # flag to identify repair calls
+                }
                 llm_calls.append(llm_call)
 
     if not llm_calls:

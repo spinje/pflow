@@ -379,8 +379,9 @@ class MCPNode(Node):
             shared["error"] = result.get("error", "Tool execution failed")
             shared["error_details"] = {"server": prep_res["server"], "tool": prep_res["tool"], "is_tool_error": True}
             logger.warning(f"MCP tool returned error: {shared['error']}", extra=shared["error_details"])
-            # Still return "default" due to planner limitation
-            return "default"
+            # Return "error" to trigger repair system
+            # The API warning detection in InstrumentedNodeWrapper will determine if it's repairable
+            return "error"
 
         # Store successful result
         shared["result"] = result

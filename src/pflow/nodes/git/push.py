@@ -171,20 +171,14 @@ class GitPushNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> Optional[str]:
         """Update shared store with push results and return action."""
-        # Store the push result in shared store
-        shared["push_result"] = {
-            "success": exec_res.get("success", False),
-            "branch": exec_res.get("branch", ""),
-            "remote": exec_res.get("remote", ""),
-        }
-
-        # Log result
-        if exec_res.get("success"):
-            logger.info(
-                "Push operation succeeded",
-                extra={"branch": exec_res.get("branch"), "remote": exec_res.get("remote"), "phase": "post"},
-            )
-        else:
+        # Check for error first
+        if not exec_res.get("success") and exec_res.get("reason") == "error":
+            shared["error"] = exec_res.get("details", "Git push failed")
+            shared["push_result"] = {
+                "success": False,
+                "branch": exec_res.get("branch", ""),
+                "remote": exec_res.get("remote", ""),
+            }
             logger.warning(
                 "Push operation failed",
                 extra={
@@ -193,6 +187,19 @@ class GitPushNode(Node):
                     "phase": "post",
                 },
             )
+            return "error"  # Return error to trigger repair
 
-        # Always return default action
+        # Store the push result in shared store for success
+        shared["push_result"] = {
+            "success": exec_res.get("success", False),
+            "branch": exec_res.get("branch", ""),
+            "remote": exec_res.get("remote", ""),
+        }
+
+        if exec_res.get("success"):
+            logger.info(
+                "Push operation succeeded",
+                extra={"branch": exec_res.get("branch"), "remote": exec_res.get("remote"), "phase": "post"},
+            )
+
         return "default"

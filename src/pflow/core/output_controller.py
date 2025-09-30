@@ -70,6 +70,79 @@ class OutputController:
         # Rules 3 & 4: Both stdin AND stdout must be TTY for interactive
         return self.stdin_tty and self.stdout_tty
 
+    def _handle_node_start(self, node_id: str, indent: str) -> None:
+        """Handle node_start event display.
+
+        Args:
+            node_id: The node identifier
+            indent: Indentation string based on depth
+        """
+        click.echo(f"{indent}  {node_id}...", err=True, nl=False)
+
+    def _handle_node_complete(
+        self,
+        duration_ms: Optional[float],
+        error_message: Optional[str],
+        ignore_errors: bool,
+        is_modified: bool,
+        is_error: bool,
+    ) -> None:
+        """Handle node_complete event display.
+
+        Args:
+            duration_ms: Execution duration in milliseconds
+            error_message: Error message for failed nodes
+            ignore_errors: Whether errors are being ignored
+            is_modified: Whether node was modified during repair
+            is_error: Whether this is a fatal error
+        """
+        if is_error:
+            # Fatal error - the shell node already logged the error message
+            # Don't print anything else as the line is already broken
+            return
+
+        if error_message and ignore_errors:
+            # Warning - command failed but continuing
+            warning_text = click.style(f" ⚠️  {error_message} but continuing", fg="yellow")
+            if duration_ms is not None:
+                success_text = click.style(f" | ✓ {duration_ms / 1000:.1f}s", fg="green")
+                click.echo(f"{warning_text}{success_text}", err=True)
+            else:
+                click.echo(warning_text, err=True)
+        elif is_modified and duration_ms is not None:
+            # Modified node during repair
+            success_text = click.style(f" ✓ {duration_ms / 1000:.1f}s", fg="green")
+            mod_text = click.style(" [repaired]", fg="cyan")
+            click.echo(f"{success_text}{mod_text}", err=True)
+        elif duration_ms is not None:
+            # Normal success
+            click.echo(click.style(f" ✓ {duration_ms / 1000:.1f}s", fg="green"), err=True)
+        else:
+            click.echo(click.style(" ✓", fg="green"), err=True)
+
+    def _handle_node_cached(self) -> None:
+        """Handle node_cached event display."""
+        click.echo(click.style(" ↻ cached", fg="blue", dim=True), err=True)
+
+    def _handle_node_warning(self, duration_ms: Optional[float]) -> None:
+        """Handle node_warning event display.
+
+        Args:
+            duration_ms: Contains warning message when event is node_warning
+        """
+        warning_msg = duration_ms if isinstance(duration_ms, str) else "API warning"
+        warning_text = click.style(f" ⚠️  {warning_msg}", fg="yellow")
+        click.echo(warning_text, err=True)
+
+    def _handle_workflow_start(self, node_id: str, indent: str) -> None:
+        """Handle workflow_start event display.
+
+        Args:
+            node_id: Contains node count for workflow_start
+            indent: Indentation string based on depth
+        """
+        click.echo(f"{indent}Executing workflow ({node_id} nodes):", err=True)
+
     def create_progress_callback(self) -> Optional[Callable]:
         """Create progress callback for workflow execution.
 
@@ -84,29 +157,36 @@ class OutputController:
             event: str,
             duration_ms: Optional[float] = None,
             depth: int = 0,
+            error_message: Optional[str] = None,
+            ignore_errors: bool = False,
+            is_modified: bool = False,
+            is_error: bool = False,
         ) -> None:
             """Display progress for node execution.
 
             Args:
                 node_id: The node identifier or count for workflow_start
-                event: Event type (node_start, node_complete, workflow_start)
+                event: Event type (node_start, node_complete, node_cached, workflow_start, node_error)
                 duration_ms: Execution duration in milliseconds (for complete events)
                 depth: Nesting depth for indentation
+                error_message: Error message for failed nodes
+                ignore_errors: Whether errors are being ignored (warning vs error)
+                is_modified: Whether node was modified during repair
+                is_error: Whether this is a fatal error
             """
             indent = "  " * depth
 
+            # Dispatch to appropriate handler based on event type
             if event == "node_start":
-                # Display node start with indentation
-                click.echo(f"{indent}  {node_id}...", err=True, nl=False)
+                self._handle_node_start(node_id, indent)
             elif event == "node_complete":
-                # Display completion checkmark and duration
-                if duration_ms is not None:
-                    click.echo(f" ✓ {duration_ms / 1000:.1f}s", err=True)
-                else:
-                    click.echo(" ✓", err=True)
+                self._handle_node_complete(duration_ms, error_message, ignore_errors, is_modified, is_error)
+            elif event == "node_cached":
+                self._handle_node_cached()
+            elif event == "node_warning":
+                self._handle_node_warning(duration_ms)
             elif event == "workflow_start":
-                # Display workflow execution header with node count
-                click.echo(f"{indent}Executing workflow ({node_id} nodes):", err=True)
+                self._handle_workflow_start(node_id, indent)
 
         return progress_callback
 

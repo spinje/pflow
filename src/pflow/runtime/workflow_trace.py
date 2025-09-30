@@ -89,6 +89,80 @@ class WorkflowTraceCollector:
 
         self.events.append(event)
 
+    def record_repair_attempt(
+        self,
+        attempt_number: int,
+        errors: list[dict[str, Any]],
+        workflow_before: dict[str, Any],
+        workflow_after: Optional[dict[str, Any]] = None,
+        success: bool = False,
+        validation_errors: Optional[list[Any]] = None,
+    ) -> None:
+        """Record a repair attempt for debugging.
+
+        Args:
+            attempt_number: The repair attempt number
+            errors: List of errors that triggered repair
+            workflow_before: The workflow before repair
+            workflow_after: The workflow after repair (if successful)
+            success: Whether the repair succeeded
+            validation_errors: Any validation errors from repair
+        """
+        repair_event = {
+            "type": "repair_attempt",
+            "attempt_number": attempt_number,
+            "timestamp": datetime.now().isoformat(),
+            "errors": errors[:3] if errors else [],  # Limit to first 3 errors
+            "workflow_nodes_before": len(workflow_before.get("nodes", [])),
+            "success": success,
+        }
+
+        # Add workflow changes summary if repair was made
+        if workflow_after and workflow_before:
+            from pflow.execution.workflow_diff import compute_workflow_diff
+
+            modifications = compute_workflow_diff(workflow_before, workflow_after)
+            repair_event["modified_nodes"] = list(modifications.keys()) if modifications else []
+            repair_event["workflow_nodes_after"] = len(workflow_after.get("nodes", []))
+
+        # Add validation errors if present
+        if validation_errors:
+            repair_event["validation_errors"] = validation_errors[:3]
+
+        # Store in events list with special marker
+        self.events.append(repair_event)
+
+    def record_repair_llm_call(
+        self,
+        prompt: str,
+        response: Optional[str] = None,
+        success: bool = False,
+    ) -> None:
+        """Record an LLM call made during repair.
+
+        Args:
+            prompt: The repair prompt sent to the LLM
+            response: The LLM's response (if available)
+            success: Whether the repair was successful
+        """
+        repair_llm_event = {
+            "type": "repair_llm_call",
+            "node_id": "repair_service",
+            "timestamp": datetime.now().isoformat(),
+            "success": success,
+        }
+
+        # Add truncated prompt
+        if prompt:
+            self._add_truncated_field(repair_llm_event, "llm_prompt", prompt, TRACE_PROMPT_MAX_LENGTH)
+
+        # Add truncated response
+        if response:
+            self._add_truncated_field(repair_llm_event, "llm_response", response, TRACE_RESPONSE_MAX_LENGTH)
+
+        # Store in events list
+        self.events.append(repair_llm_event)
+
     def _build_base_event(
         self,
         node_id: str,

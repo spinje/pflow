@@ -387,8 +387,9 @@ class TestGitGetLatestTagNode:
 
         action = node.post(shared, prep_res, exec_res)
 
-        assert action == "default"
+        assert action == "error"  # Should return "error" to trigger repair
         assert shared["latest_tag"] == {}
+        assert shared["error"] == "Test error"  # Error should be stored in shared
 
     @patch("subprocess.run")
     def test_retry_on_transient_failure(self, mock_run):
