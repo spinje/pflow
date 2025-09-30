@@ -1,7 +1,7 @@
 ---
 name: test-writer-fixer
 description: Use this agent when you need to write new tests or fix failing tests in the pflow project. This includes creating unit tests, integration tests, or end-to-end tests for new features, as well as debugging and fixing tests that are failing. The agent specializes in writing tests that serve as guardrails for AI-driven development, ensuring tests catch real bugs rather than just achieving coverage metrics.
-model: opus
+model: sonnet
 color: yellow
 ---
 
