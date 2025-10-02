@@ -1,10 +1,10 @@
-# Task 68: Refactor RuntimeValidation into Separate Repair Service
+# Task 68: Separate RuntimeValidation from planner and refactor Workflow Execution
 
 ## ID
 68
 
 ## Title
-Refactor RuntimeValidation into Separate Repair Service
+Separate RuntimeValidation from planner and refactor Workflow Execution
 
 ## Description
 Remove RuntimeValidationNode from the planner flow and create a separate repair service that fixes broken workflows after execution. This eliminates duplicate execution during planning, reduces side effects, and enables self-healing workflows that can adapt to API changes and environment differences without re-planning.

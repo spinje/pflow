@@ -3,188 +3,201 @@
 ## Metadata
 <!-- Implementation Date: 2025-01-30 -->
 <!-- Session: MCP Pivot Validation Phase -->
-<!-- Commit: Not applicable - validation/research task -->
+<!-- Commit: af22ddd - feat: Restructure Task 71 for CLI-first agent enablement -->
+<!-- Final Resolution: CLI-first with intelligent discovery -->
 
 ## Executive Summary
-Validated the architectural pivot from pflow as standalone CLI to MCP-based infrastructure through comprehensive research, discovering that pflow is exceptionally well-positioned with only minor additions needed (~1.5 hours of code changes). The validation revealed a critical simplification from 14 tools to just 5, fundamentally changing the implementation approach.
+Validated the architectural approach for agent enablement, ultimately discovering that CLI-first with intelligent discovery is superior to MCP server implementation. Through comprehensive research, we found pflow already has 95% of needed functionality. The validation led to a fundamental paradigm shift: from 14 MCP tools to 5, then finally to CLI commands with LLM-powered discovery that mirrors the planner's approach.
 
 ## Implementation Overview
 
 ### What Was Built
-This was a validation and research task that produced:
+This validation and research task produced:
 - 6 parallel deep-dive investigations into pflow's architecture
-- Complete integration point analysis for MCP server implementation
-- Discovery that Task 68 already solved the hard problems
-- Architectural patterns and security requirements
-- Go/no-go decision: **GO** with high confidence
-- Complete documentation package for Task 71 implementation
+- Complete integration point analysis for both MCP and CLI approaches
+- Discovery that Task 68 already solved the hard problems (service extraction)
+- **Critical insight**: Agents need discovery like the planner, not catalogs
+- Go/no-go decision: **GO with CLI-first** approach
+- Complete restructuring of Task 71 and creation of Task 72
 
-**Major deviation from spec**: Originally analyzed 14 potential MCP tools, but user intervention led to radical simplification to just 5 tools, leveraging agent file editing capabilities.
+**Major evolution**:
+1. Started with 14 MCP tools
+2. Simplified to 5 focused tools
+3. **Final pivot**: CLI-first with `discover-nodes` and `discover-workflows` commands
 
 ### Implementation Approach
 Used parallel subagent deployment to investigate:
-1. Planner architecture and state management
+1. Planner architecture and discovery patterns
 2. Repair system integration (Task 68)
 3. MCP client patterns (Task 43)
-4. Performance characteristics
-5. External MCP best practices
-6. Testing infrastructure
+4. Existing CLI command analysis
+5. Service layer architecture assessment
+6. Context builder and discovery node functionality
 
-Each investigation targeted specific unknowns that could block implementation.
+Each investigation revealed that CLI approach would be simpler and more powerful.
 
 ## Files Modified/Created
 
 ### Core Changes
-No code changes - this was a validation task. Created documentation:
+Created comprehensive documentation package:
 - `.taskmaster/tasks/task_70/task-70.md` - Task overview
 - `.taskmaster/tasks/task_70/starting-context/research-findings.md` - Consolidated research
-- `.taskmaster/tasks/task_71/task-71.md` - Next task definition
-- `.taskmaster/tasks/task_71/starting-context/task-71-spec.md` - Detailed specification
-- `.taskmaster/tasks/task_71/starting-context/task-71-comprehensive-research.md` - Implementation guide
-- `.taskmaster/tasks/task_71/starting-context/task-71-handover.md` - Tacit knowledge transfer
+- `.taskmaster/tasks/task_70/task-review.md` - This review (updated with final resolution)
+
+### Task 71 Restructuring (CLI-first)
+- `.taskmaster/tasks/task_71/task-71.md` - Redefined as CLI discovery commands
+- `.taskmaster/tasks/task_71/starting-context/task-71-spec.md` - Specification for discovery approach
+- `.taskmaster/tasks/task_71/CLI_COMMANDS_SPEC.md` - Detailed command specifications
+- `.taskmaster/tasks/task_71/IMPLEMENTATION_GUIDE.md` - Implementation guide
+
+### Task 72 Creation (MCP deferred)
+- `.taskmaster/tasks/task_72/task-72.md` - MCP server deferred for future
+- `.taskmaster/tasks/task_72/starting-context/` - All MCP research preserved
 
 ### Test Files
-No test files created - testing strategy documented for Task 71.
+No test files created - testing strategies documented for both approaches.
 
 ## Integration Points & Dependencies
 
 ### Incoming Dependencies
-- Task 71 (MCP Server Implementation) -> This validation research
-- Future MCP enhancements -> Architectural patterns established here
+- Task 71 (CLI Discovery Commands) -> This validation research
+- Task 72 (Future MCP if needed) -> Architectural patterns established here
 
 ### Outgoing Dependencies
-- This Task -> Task 68 (Execution service APIs needed)
-- This Task -> Task 43 (MCP client patterns to mirror)
-- This Task -> Task 21 (Workflow input/output declarations)
+- This Task -> Task 68 (Service layer APIs already exist)
+- This Task -> Planning nodes (ComponentBrowsingNode, WorkflowDiscoveryNode patterns)
+- This Task -> Context builders (build_nodes_context, build_workflows_context)
 
-### Shared Store Keys
-Discovered critical shared store keys used by execution:
-- `__execution__` - Checkpoint data structure with completed_nodes, node_actions, node_hashes
-- `__non_repairable_error__` - Flag preventing futile repair attempts
-- `__warnings__` - API warning messages by node_id
+### Key Discoveries
+- `execute` command already supports file paths perfectly
+- `WorkflowManager` and `Registry` provide clean service layer
+- Context builders can provide full details for discovery
+- LLM-based selection is more powerful than keyword search
 
 ## Architectural Decisions & Tradeoffs
 
 ### Key Decisions
-1. **5 tools instead of 14** -> Simplicity over completeness -> (Alternative: Full feature exposure)
-2. **Agent-orchestrated repair** -> Leverage agent context -> (Alternative: Internal repair loop)
-3. **Stateless server design** -> Correctness over performance -> (Alternative: Cached instances)
-4. **File-based workflow creation** -> Use agent's native capabilities -> (Alternative: MCP tool for generation)
-5. **asyncio.to_thread() bridge** -> Minimal changes -> (Alternative: Rewrite as async)
+1. **CLI-first over MCP** -> Simplicity and immediate value -> (Alternative: Complex infrastructure)
+2. **Discovery over browsing** -> Agents describe intent, get curated info -> (Alternative: Return everything)
+3. **LLM-powered selection** -> Intelligent matching -> (Alternative: Keyword search)
+4. **Complete information** -> Full details in one command -> (Alternative: Multiple lookups)
+5. **Reuse planner patterns** -> Proven approach -> (Alternative: New patterns)
 
-### Technical Debt Incurred
-- WorkflowManager needs 4 small additions (search, for_drafts, interface extraction, duration tracking)
-- No unified draft/library directory structure yet
-- No progress events for long-running workflows
-- Security validation needs comprehensive testing
+### Technical Insights
+- Service layer from Task 68 eliminates need for extraction
+- Discovery approach mirrors successful planner pattern
+- File-based workflow creation leverages agent strengths
+- Explicit file paths eliminate ambiguity
 
 ## Testing Implementation
 
 ### Test Strategy Applied
-Used parallel subagent investigations to validate assumptions without implementing code. Each investigation had specific validation criteria.
+Used parallel subagent investigations to validate both MCP and CLI approaches. Discovery that existing CLI has most functionality led to pivot.
 
-### Critical Test Cases
-Identified critical tests for Task 71:
-- Stateless isolation verification
-- Path traversal attack prevention
-- Checkpoint resume functionality
-- Claude Code natural discovery
+### Critical Test Cases for Task 71
+- LLM-based discovery returns relevant components only
+- Full interface details included in responses
+- File path resolution works correctly
+- Workflow save validates and stores properly
+- Agent can complete full discovery → create → test → save cycle
 
 ## Unexpected Discoveries
 
-### Gotchas Encountered
-1. **ComponentBrowsingNode is wrong abstraction** - Returns IDs not metadata, needs LLM
-2. **Registry already has full interface data** - Parsed at scan time, no extraction needed
-3. **execute_workflow API is perfect as-is** - Task 68 already solved everything
-4. **MCP nodes return "default" on error** - Hides failures from repair system
-5. **Planner cache chunks needed for repair** - Critical context connection
+### Breakthrough Insights
+1. **95% functionality exists** - ~24 CLI commands already present
+2. **Discovery > Browse** - Agents need intent-based discovery, not catalogs
+3. **Planner pattern is key** - ComponentBrowsingNode and WorkflowDiscoveryNode show the way
+4. **Service layer complete** - Task 68 already extracted everything needed
+5. **File paths work** - Execute command already handles all path formats
 
-### Edge Cases Found
-- Template resolution can return unchanged strings on failure
-- WorkflowManager.load() vs load_ir() confusion
-- Registry filtering via settings.json
-- Concurrent execution isolation requirements
+### Paradigm Shift
+From: "Build infrastructure for agents"
+To: "Complete CLI and show agents how to use it with discovery"
 
 ## Patterns Established
 
+### Discovery Pattern (New)
+```bash
+# Agent describes what they want
+pflow discover-nodes "I need to analyze GitHub PRs and create reports"
+# Returns: Complete interface specs for relevant nodes only
+
+pflow discover-workflows "PR analysis"
+# Returns: Full workflow details with capabilities and examples
+```
+
 ### Reusable Patterns
-```python
-# Stateless MCP tool pattern
-async def tool_handler(**params):
-    return await asyncio.to_thread(_sync_handler, params)
-
-def _sync_handler(params):
-    # Fresh instances every time
-    manager = WorkflowManager()
-    registry = Registry()
-    # Use and discard
-```
-
-```python
-# Security validation pattern
-FORBIDDEN = [r'\.\.', r'^/', r'^~', r'[\\/]']
-for pattern in FORBIDDEN:
-    if re.search(pattern, name):
-        raise SecurityError()
-```
+- LLM-based selection from planner nodes
+- Context builders for full details
+- Service layer wrappers for CLI commands
+- File path resolution (/ or .json = path)
 
 ### Anti-Patterns to Avoid
-- Never cache Registry or WorkflowManager instances
-- Don't use ComponentBrowsingNode for browse_components
-- Don't enable internal repair in execute
-- Don't trust workflow names without validation
+- Building infrastructure when CLI suffices
+- Returning catalogs instead of curated results
+- Keyword matching when LLM selection available
+- Multiple commands when one discovery suffices
 
 ## Breaking Changes
 
 ### API/Interface Changes
-None - validation task only.
+None - validation task only. CLI commands are additions, not changes.
 
-### Behavioral Changes
-Philosophical shift: Repair becomes agent-orchestrated rather than internally automated.
+### Philosophical Changes
+Major shift: Agent enablement through discovery-first CLI rather than protocol-based tools.
 
 ## Future Considerations
 
-### Extension Points
-- Add progress events for long-running workflows
-- Implement HTTP transport after stdio works
-- Add workflow template generation tool
-- Consider authentication for multi-tenant future
+### When MCP Might Be Needed (Task 72)
+- Performance issues with CLI spawning
+- Stateful session management required
+- Concurrent operations on same workflow
+- Direct programmatic integration
 
-### Scalability Concerns
-- Thread pool exhaustion under high concurrent load
-- Large workflow message size limits
-- MCP protocol stability assumptions
+### Extension Points
+- Cache common discovery queries
+- Add fallback keyword search if LLM unavailable
+- Progress events for long workflows
+- Semantic workflow generation (beyond discovery)
 
 ## AI Agent Guidance
 
-### Quick Start for Related Tasks
-**For Task 71 implementer**:
-1. Read the handover memo first - it has the tacit knowledge
-2. Start with browse_components - it's stateless and proves the pattern
-3. Copy code snippets from comprehensive research doc
-4. Test stateless isolation before anything else
+### Quick Start for Task 71 Implementer
+**Critical understanding**:
+1. This is about discovery, not browsing - agents describe intent
+2. Reuse ComponentBrowsingNode and WorkflowDiscoveryNode logic
+3. Context builders need to return FULL details
+4. Implementation is ~4-5 hours, not 20
 
 **Key files to understand**:
-- `src/pflow/execution/workflow_execution.py` - The execute_workflow API
-- `src/pflow/nodes/mcp/node.py` - MCP client patterns to mirror
-- `src/pflow/registry/registry.py` - How to access node metadata
-- `src/pflow/core/workflow_manager.py` - Workflow lifecycle operations
+- `src/pflow/planning/nodes.py` - Discovery node patterns
+- `src/pflow/planning/context_builder.py` - How to build full details
+- `src/pflow/core/workflow_manager.py` - Workflow save operations
+- `src/pflow/cli/main.py` - File path resolution (already works!)
 
 ### Common Pitfalls
-1. **Forgetting stateless design** - Every request needs fresh instances
-2. **Using ComponentBrowsingNode** - Wrong abstraction, use Registry directly
-3. **Enabling repair in execute** - Agent should orchestrate repair
-4. **Not validating paths** - Multiple attack vectors exist
-5. **Caching for "performance"** - Will break isolation
+1. **Thinking simple browse is enough** - Agents need intelligent discovery
+2. **Returning just names** - Full interface details needed
+3. **Keyword matching** - LLM selection is far superior
+4. **Building MCP first** - CLI approach is simpler and faster
 
-### Test-First Recommendations
-Test in this order:
-1. Verify stateless isolation with concurrent requests
-2. Test all path traversal attack vectors
-3. Verify checkpoint data in error responses
-4. Test that second execution uses cache (via checkpoint)
-5. Finally test with Claude Code
+### The Key Insight
+"Even more simple" led us from:
+- 14 MCP tools → 5 MCP tools → CLI with discovery
+
+Agents don't need protocols. They need:
+1. A way to discover what they need (rich queries)
+2. Complete information (full details)
+3. Simple commands (CLI they already use)
+4. Clear file organization (local drafts, global library)
 
 ---
 
+## Resolution
+
+Task 70 successfully validated that agent enablement should be CLI-first with intelligent discovery, deferring MCP to Task 72 for future needs. The research revealed that exposing the planner's discovery approach via CLI commands provides maximum value with minimal complexity.
+
+**Final approach**: Task 71 implements `discover-nodes` and `discover-workflows` commands that accept rich natural language queries and return complete, curated information - exactly what agents need.
+
 *Generated from implementation context of Task 70*
+*Updated with final CLI-first resolution*
