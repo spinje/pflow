@@ -236,42 +236,60 @@ def workflow_command(
 ```python
     # After loading workflow_data and before execution
     if validate_only:
-        from pflow.planning.nodes import ValidatorNode
+        from pflow.runtime.workflow_validator import WorkflowValidator
+        from pflow.registry.registry import Registry
 
-        click.echo("Validating workflow...")
+        click.echo("Validating workflow (static validation)...")
 
-        # Run validation using ValidatorNode
-        node = ValidatorNode()
-        shared = {
-            "generated_workflow": workflow_data,  # The loaded IR
-            "workflow_inputs": params  # Parsed parameters
-        }
+        # ✅ VERIFIED: Static validation only - no params required
+        # Pass extracted_params=None to skip template validation layer
+        # Validates: schema, data flow, node types - NOT template resolution
+        # See scratchpads/task-71/STATIC_VALIDATION_VERIFICATION.md
+
+        registry = Registry()
+        registry_metadata = registry.load()
 
         try:
-            action = node.run(shared)
+            errors = WorkflowValidator.validate(
+                workflow_ir=workflow_data,
+                extracted_params=None,  # None = skip template validation (static only)
+                registry=registry_metadata,
+                skip_node_types=False
+            )
         except Exception as e:
             click.echo(f"✗ Validation error: {e}", err=True)
             ctx.exit(1)
 
-        validation_result = shared.get("validation_result", {})
-
-        if validation_result.get("valid", False):
+        if not errors:
             click.echo("✓ Schema validation passed")
-            click.echo("✓ Template resolution passed")
-            click.echo("✓ Compilation check passed")
-            click.echo("✓ Runtime validation passed")
-            click.echo("\nWorkflow is ready for execution!")
+            click.echo("✓ Data flow validation passed")
+            click.echo("✓ Node types validation passed")
+            click.echo("\nWorkflow structure is valid!")
+            click.echo("\nNote: Static validation only - template resolution not checked.")
+            click.echo("  Run workflow with actual parameters to validate template variables.")
             ctx.exit(0)
         else:
             # Display validation errors
-            errors = validation_result.get("errors", ["Unknown validation error"])
-            click.echo("✗ Validation failed:", err=True)
+            click.echo("✗ Static validation failed:", err=True)
             for error in errors[:10]:  # Show first 10 errors
                 click.echo(f"  - {error}", err=True)
             if len(errors) > 10:
                 click.echo(f"  ... and {len(errors) - 10} more errors", err=True)
             ctx.exit(1)
 ```
+
+**What Gets Validated** (static only, no params needed):
+- ✅ JSON schema structure
+- ✅ Required fields present
+- ✅ Node/edge references valid
+- ✅ Execution order is acyclic
+- ✅ Template syntax correct (`${...}`)
+- ✅ Node types exist in registry
+
+**What Does NOT Get Validated** (requires params):
+- ❌ Template variables resolve to values
+- ❌ Required inputs are provided
+- ❌ Parameter types match expectations
 
 ---
 
@@ -310,7 +328,10 @@ def save_workflow(file_path: str, name: str, description: str,
     from pflow.core.ir_schema import validate_ir
     import json
 
-    # Validate name format
+    # Validate name format (CLI enforces stricter rules than WorkflowManager)
+    # Pattern: lowercase letters, numbers, and hyphens only (agent-friendly)
+    # Max: 30 characters (WorkflowManager allows 50)
+    # Rationale: Shell-safe, URL-safe, git-branch-compatible names for agents
     if not re.match(r'^[a-z0-9-]+$', name):
         click.echo(f"Error: Name must be lowercase letters, numbers, and hyphens only", err=True)
         click.echo(f"  Got: '{name}'", err=True)
@@ -343,12 +364,20 @@ def save_workflow(file_path: str, name: str, description: str,
         raise click.Abort()
 
     # Generate metadata if requested
+    # ✅ VERIFIED: MetadataGenerationNode works with just workflow IR (see VERIFIED_RESEARCH_FINDINGS.md section 4)
+    # Does NOT need ValidatorNode output - just needs raw IR in shared["generated_workflow"]
     metadata = None
     if generate_metadata:
         click.echo("Generating rich metadata...")
         try:
             node = MetadataGenerationNode()
-            shared = {"validated_workflow": validated_ir}
+            # MetadataGenerationNode only needs workflow IR
+            # It accesses standard IR fields: nodes, inputs, outputs
+            shared = {
+                "generated_workflow": validated_ir,  # All it needs
+                "user_input": "",                    # Optional
+                "cache_planner": False,
+            }
             node.run(shared)
             metadata = shared.get("workflow_metadata", {})
             if metadata:
@@ -356,7 +385,7 @@ def save_workflow(file_path: str, name: str, description: str,
                 click.echo(f"  Generated {len(metadata.get('capabilities', []))} capabilities")
         except Exception as e:
             click.echo(f"Warning: Could not generate metadata: {e}", err=True)
-            # Continue without metadata
+            # Continue without metadata - not critical for save operation
 
     # Save to library
     manager = WorkflowManager()
@@ -397,13 +426,85 @@ def save_workflow(file_path: str, name: str, description: str,
 
 ## 6. Enhanced Error Output
 
+✅ **VERIFIED**: Error data is available in `shared[failed_node]` when `_build_error_list()` executes due to NamespacedNodeWrapper pattern.
+
+### Step 0: Enhance Error Extraction (REQUIRED FIRST)
+
+**File**: `src/pflow/execution/executor_service.py`
+
+**Function**: `_build_error_list()` at line 218 (verified - `_extract_error_from_shared()` does not exist)
+
+**Add rich error data extraction AFTER line 248** where the base error dict is created.
+
+**Verified Storage Patterns**:
+- HTTP nodes store: `shared[node_id]["status_code"]`, `shared[node_id]["response"]`, `shared[node_id]["response_headers"]`
+- MCP nodes store: `shared[node_id]["error_details"]`, `shared[node_id]["result"]`
+- All data written to `shared[node_id]` due to NamespacedNodeWrapper (verified in `src/pflow/runtime/namespaced_wrapper.py:47`)
+
+**Implementation**:
+
+```python
+def _build_error_list(
+    shared: dict[str, Any],
+    action_result: str,
+    succeeded_nodes: list[str],
+) -> list[dict[str, Any]]:
+    """Build list of error dictionaries from execution failure."""
+
+    # ... existing logic through line 248 ...
+
+    # Build base error dict (existing code, lines 240-248)
+    error = {
+        "source": "runtime",
+        "category": category,
+        "message": error_info["message"],
+        "action": action_result,
+        "node_id": error_info["failed_node"],
+        "fixable": True,
+    }
+
+    # ===== ADD THESE ENHANCEMENTS AFTER LINE 248 =====
+
+    failed_node = error_info.get("failed_node")
+
+    # Extract rich error data from namespaced node output
+    if failed_node:
+        node_output = shared.get(failed_node, {})
+        if isinstance(node_output, dict):
+            # HTTP node data (verified in src/pflow/nodes/http/http.py:168-183)
+            if "status_code" in node_output:
+                error["status_code"] = node_output["status_code"]
+                error["raw_response"] = node_output.get("response")
+                error["response_headers"] = node_output.get("response_headers")
+                error["response_time"] = node_output.get("response_time")
+
+            # MCP node data (verified in src/pflow/nodes/mcp/node.py:341-422)
+            if "error_details" in node_output:
+                error["mcp_error_details"] = node_output["error_details"]
+
+            # MCP result data
+            if "result" in node_output and isinstance(node_output["result"], dict):
+                if "error" in node_output["result"]:
+                    error["mcp_error"] = node_output["result"]["error"]
+
+            # For template errors, capture available fields
+            if category == "template_error":
+                error["available_fields"] = list(node_output.keys())[:20]
+
+    return [error]  # Existing return statement
+```
+
+**Verification**: See `scratchpads/error-data-availability/storage-pattern-analysis.md` for complete evidence.
+
+### Step 1: Update CLI Error Display
+
 **File**: `src/pflow/cli/main.py`
 
-**Step 1: Update _handle_workflow_error signature** (around line 1034):
+**Update _handle_workflow_error signature** (around line 1034):
 ```python
 def _handle_workflow_error(
     ctx: click.Context,
-    result: ExecutionResult | None,  # ADD THIS PARAMETER
+    result: ExecutionResult,  # ADD THIS PARAMETER (always exists, never None - verified)
     workflow_trace: Any | None,
     output_format: str,
     workflow_name: str,
@@ -411,6 +512,8 @@ def _handle_workflow_error(
     no_repair: bool,  # ADD THIS TOO
 ) -> None:
 ```
+
+**Note**: `result` is ALWAYS ExecutionResult (verified - all code paths return ExecutionResult, never None). See `scratchpads/task-71-executionresult-analysis/` for verification.
 
 **Step 2: Replace error display logic** (in _handle_workflow_error):
 ```python
@@ -502,47 +605,7 @@ def _handle_workflow_error(
         )
 ```
 
-**Step 4: Enhance error extraction** in `src/pflow/execution/executor_service.py`
-
-**Find _extract_error_from_shared** (around line 251) and enhance:
-```python
-def _extract_error_from_shared(
-    shared: dict[str, Any], failed_node: str | None
-) -> dict[str, Any]:
-    """Extract error information from shared store."""
-    # ... existing extraction logic ...
-
-    # After getting basic error info, add raw responses
-    error = {
-        "source": "runtime",
-        "category": category,
-        "message": error_msg,
-        "node_id": failed_node,
-        "fixable": True,
-    }
-
-    # ADD: Capture raw HTTP responses
-    if "response" in shared:
-        error["raw_response"] = shared["response"]
-        if "status_code" in shared:
-            error["status_code"] = shared["status_code"]
-
-    # ADD: Capture MCP results
-    if failed_node and failed_node in shared:
-        node_data = shared[failed_node]
-        if isinstance(node_data, dict):
-            if "result" in node_data and isinstance(node_data["result"], dict):
-                if "error" in node_data["result"]:
-                    error["mcp_error"] = node_data["result"]["error"]
-
-    # ADD: For template errors, note available fields
-    if category == "template_error" and failed_node:
-        if node_output := shared.get(failed_node):
-            if isinstance(node_output, dict):
-                error["available_fields"] = list(node_output.keys())[:20]
-
-    return error
-```
+**Note**: Error extraction enhancement is done in Step 0 above. Must be completed BEFORE Step 1-3.
 
 ---
 

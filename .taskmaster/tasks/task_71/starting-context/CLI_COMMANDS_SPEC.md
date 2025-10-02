@@ -183,37 +183,50 @@ pflow --validate-only WORKFLOW [PARAMS...]
 
 #### Arguments
 - `WORKFLOW`: Path to workflow file or saved workflow name
-- `PARAMS`: Parameters as key=value pairs (same as normal execution)
+- `PARAMS`: ~~Parameters as key=value pairs~~ **NOT REQUIRED** - static validation only
 
 #### Implementation Approach
 
-Reuses ValidatorNode's 4-layer validation:
-1. Schema validation (IR structure)
-2. Template resolution (with provided params)
-3. Compilation check (can build Flow object)
-4. Runtime validation (ready for execution)
+✅ **VERIFIED**: Uses WorkflowValidator.validate() with `extracted_params=None` for static validation only.
+
+**Static Validation Layers** (NO params required):
+1. Schema validation (IR structure, required fields)
+2. Data flow validation (execution order, acyclic graph)
+3. ~~Template resolution~~ **SKIPPED** when params=None
+4. Node types validation (node types exist in registry)
+
+**What Gets Validated**:
+- ✅ JSON schema structure
+- ✅ Node/edge references valid
+- ✅ No circular dependencies
+- ✅ Template syntax correct (`${...}`)
+- ✅ Node types exist in registry
+
+**What Does NOT Get Validated** (requires params):
+- ❌ Template variables resolve to values
+- ❌ Required inputs are provided
+- ❌ Parameter types match expectations
 
 #### Output Format
 
+**Success** (static validation):
 ```
 ✓ Schema validation passed
-✓ Template resolution passed
-✓ Compilation check passed
-✓ Runtime validation passed
+✓ Data flow validation passed
+✓ Node types validation passed
 
-Workflow is ready for execution!
+Workflow structure is valid!
+
+Note: Static validation only - template resolution not checked.
+  Run workflow with actual parameters to validate template variables.
 ```
 
-Or with errors:
-
+**Failure**:
 ```
-✗ Template resolution failed
-
-Error in node 'process-data':
-  Template variable ${input_file} is not resolved
-  Available variables: output_dir, model_name
-
-Fix the template variables and try again.
+✗ Static validation failed:
+  - Node 'process-data' references non-existent node 'missing-node'
+  - Circular dependency detected: fetch → process → fetch
+  - Unknown node type: 'invalid-node-type'
 ```
 
 ### Implementation Code
@@ -464,11 +477,19 @@ def describe_nodes(node_ids):
 ### Purpose
 Display detailed error context when workflow execution fails, especially with --no-repair flag.
 
-### Location
-`src/pflow/cli/main.py` (enhance existing error display logic)
+### Locations (BOTH REQUIRED)
+1. **Data Layer**: `src/pflow/execution/executor_service.py` - Extract rich error data from shared store
+2. **Display Layer**: `src/pflow/cli/main.py` - Display the extracted error data
 
 ### Implementation
-Enhance the CLI to show ExecutionResult.errors details instead of generic messages:
+
+⚠️ **CRITICAL**: Must enhance BOTH layers. The error data doesn't currently exist in ExecutionResult.errors - it must be extracted first.
+
+**Step 1: Enhance error extraction in executor_service.py**
+Modify `_extract_error_from_shared()` to capture `raw_response`, `mcp_error`, and `available_fields` from shared store. See IMPLEMENTATION_REFERENCE.md Step 0 for details.
+
+**Step 2: Enhance CLI display in main.py**
+Update `_handle_workflow_error()` to show the newly extracted error details:
 
 ```python
 # When execution fails, display rich error context:

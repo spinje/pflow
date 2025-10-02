@@ -180,7 +180,7 @@ $ pflow my-pr-analyzer repo=owner/repo pr_number=456
 - [ ] All 4 validation layers work
 - [ ] Returns specific error messages
 - [ ] No side effects occur
-- [ ] Works with partial parameters
+- [ ] Requires all required parameters (fails with clear error if missing)
 
 ### Save Command
 - [ ] Name validation works (lowercase, hyphens, max 30 chars)

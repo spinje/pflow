@@ -39,7 +39,9 @@ Expose the planner's internal discovery capabilities as CLI commands, add pre-fl
 5. `CLI_COMMANDS_SPEC.md` - Detailed command specifications
 6. `IMPLEMENTATION_GUIDE.md` - Quick implementation guide with patterns
 7. `technical-implementation-reference.md` - Additional technical details
-8. `research-findings.md` - Historical research context
+8. `VERIFIED_RESEARCH_FINDINGS.md` - Codebase verification findings
+9. `task-71-handover.md` - Critical knowledge from design phase
+10. `IMPLEMENTATION_READY.md` - Implementation ready
 
 **Instructions**: Read EACH file listed above. After reading each file, pause to consider:
 - What this document tells you about the task
@@ -120,11 +122,19 @@ pflow workflow save draft.json my-workflow "Description"
 3. Add --generate-metadata option using MetadataGenerationNode
 4. Include --delete-draft and --force options
 
-### Phase 6: Enhanced Error Output (30 min)
-1. Back to `src/pflow/cli/main.py`
-2. Update _handle_workflow_error to accept ExecutionResult parameter
-3. Display rich error context from result.errors
-4. Show raw API responses, template context, available fields
+### Phase 6: Enhanced Error Output (45 min) - TWO LAYERS REQUIRED
+**CRITICAL**: This enhancement requires changes to BOTH files (see VERIFIED_RESEARCH_FINDINGS.md)
+
+**Part A - Data Layer (REQUIRED FIRST)**:
+1. Open `src/pflow/execution/executor_service.py`
+2. Modify `_build_error_list()` function at line 218 (NOT `_extract_error_from_shared` - that doesn't exist)
+3. After line 248, enhance error dict with `raw_response`, `mcp_error`, `available_fields`
+
+**Part B - Display Layer (AFTER Part A)**:
+4. Open `src/pflow/cli/main.py`
+5. Update _handle_workflow_error to accept ExecutionResult parameter
+6. Display rich error context from result.errors (which now contains the enhanced data)
+7. Show raw API responses, template context, available fields
 
 ### Phase 7: Create AGENT_INSTRUCTIONS.md (45 min)
 1. Create comprehensive guide in `docs/AGENT_INSTRUCTIONS.md`
@@ -188,7 +198,7 @@ Nodes handle all LLM calls internally - just run them:
 The research proved nodes can run standalone. DO NOT create wrapper functions or extract logic. Use nodes directly with `node.run(shared)`. The test suite has 350+ examples proving this works.
 
 ### Error Context Already Exists
-The error information is already captured in shared store and ExecutionResult.errors. You're not creating new error capture - just displaying what's already there but hidden.
+The error information is already captured in shared store. You need to extract it into ExecutionResult.errors and then display it. See Phase 6 for the two-layer approach required.
 
 ### Validation Must Not Execute
 The --validate-only flag must perform pure validation with NO side effects. Use ValidatorNode's 4-layer validation but exit before any execution.

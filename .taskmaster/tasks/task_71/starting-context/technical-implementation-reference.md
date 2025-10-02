@@ -309,11 +309,17 @@ def save(
 
 ### Built-in Features
 
-**Name Validation** (automatic):
+**Name Validation in WorkflowManager** (automatic, permissive):
 - Cannot be empty
 - Max 50 characters
 - No path separators (`/` or `\`)
-- Only alphanumeric, dots, hyphens, underscores: `^[a-zA-Z0-9._-]+$`
+- Pattern: `^[a-zA-Z0-9._-]+$` (allows uppercase, dots, underscores)
+
+**CLI Validation for Task 71** (stricter, agent-friendly):
+- Pattern: `^[a-z0-9-]+$` (lowercase, numbers, hyphens only)
+- Max 30 characters
+- Rationale: Shell-safe, URL-safe, git-branch-compatible for agents
+- WorkflowManager provides backup validation
 
 **Atomicity**:
 - Uses `tempfile.mkstemp()` + `os.link()` for atomic saves

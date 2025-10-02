@@ -4,6 +4,14 @@
 
 Agents using `--no-repair` get almost no error context, making it impossible to fix issues autonomously. This document details the complete error flow and what needs to be exposed.
 
+## ⚠️ IMPLEMENTATION REQUIREMENT: Both Layers Must Be Enhanced
+
+**CRITICAL**: Rich error data is captured in shared store but NOT extracted to ExecutionResult.errors. This enhancement requires changes to BOTH:
+1. **Data Layer**: `src/pflow/execution/executor_service.py` - Extract rich error data
+2. **Display Layer**: `src/pflow/cli/main.py` - Display the extracted data
+
+Simply updating the CLI display will NOT work - the data doesn't exist in `result.errors` yet.
+
 ## Error Information Flow
 
 ### 1. Node Level - Rich Error Capture
@@ -344,6 +352,18 @@ See examples above for each error type.
 
 ## Summary
 
-The key finding is that **all the error information we need is already captured** - it's just not being displayed. By passing ExecutionResult to the error handler and extracting the raw responses, we can give agents the same detailed error context that a human developer would need to debug issues.
+The key finding is that **all the error information we need is already captured in the shared store** - but it's NOT being extracted into ExecutionResult.errors OR displayed. This requires a two-layer enhancement:
 
-This is critical for Task 71 because without this error visibility, agents can't effectively use the discovery commands to understand and fix workflow problems.
+**Layer 1 (Data - REQUIRED)**: Modify `_extract_error_from_shared()` in executor_service.py to:
+- Capture `raw_response` from HTTP nodes
+- Capture `mcp_error` details from MCP nodes
+- Capture `available_fields` for template errors
+- Add these fields to the error dict returned to ExecutionResult
+
+**Layer 2 (Display - REQUIRED)**: Modify `_handle_workflow_error()` in main.py to:
+- Accept ExecutionResult parameter
+- Display the newly extracted error fields
+- Show field-level details for API errors
+- Show available fields for template errors
+
+This is critical for Task 71 because without this error visibility, agents can't effectively use the discovery commands to understand and fix workflow problems. The enhancement must happen at BOTH layers - simply updating the CLI won't work without the data extraction.

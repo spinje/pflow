@@ -281,7 +281,7 @@ $ pflow workflow save .pflow/workflows/draft.json my-pr-analyzer "Analyzes PRs" 
 4. registry discover returns full interface details via planning context
 5. workflow validate performs 4-layer validation without side effects
 6. workflow validate returns specific errors for each layer
-7. workflow validate works with partial parameters
+7. workflow validate requires all required parameters (fails if missing required inputs)
 8. workflow save creates file in ~/.pflow/workflows/
 9. workflow save with invalid name "My Workflow" returns error
 10. workflow save with name over 30 characters returns error

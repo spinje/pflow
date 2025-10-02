@@ -151,8 +151,10 @@ pflow workflow save .pflow/workflows/draft.json my-workflow "Description" [--gen
 
 **Features**:
 - Uses WorkflowManager.save()
-- Optional --generate-metadata for rich discovery
+- Optional --generate-metadata for rich discovery ✅ **Verified: Can be in MVP**
 - --delete-draft option
+
+**Note on --generate-metadata**: ✅ Research confirmed MetadataGenerationNode only needs raw workflow IR, NOT ValidatorNode-specific output. Simple to implement - just pass workflow IR via shared store. See VERIFIED_RESEARCH_FINDINGS.md section 4 for details.
 
 #### 5. `pflow registry describe` Command (NEW)
 
@@ -365,3 +367,17 @@ The key insight: Agents need pre-flight validation! The planner's nodes can be r
 3. **Pre-flight Validation** - Catch errors before execution
 4. **Complete Information** - Full details, no follow-ups
 5. **Proven Pattern** - Reuses planner's successful approach
+
+## Implementation Notes
+
+### LLM Model Configuration
+✅ **Verified**: Discovery commands (workflow discover, registry discover) use planner nodes that have built-in defaults.
+
+**Research findings** (see VERIFIED_RESEARCH_FINDINGS.md section 5):
+1. ✅ WorkflowDiscoveryNode and ComponentBrowsingNode HAVE default model configs
+2. ✅ CAN run without explicit `node.set_params()` calls
+3. ✅ Default to: `anthropic/claude-sonnet-4-0` @ temperature `0.0`
+
+**Implementation approach**: Proceed without explicit config - defaults are production-ready. Tests confirm this pattern works correctly.
+
+**Optional enhancement**: Can add `--model` flag later if users need to override defaults.
