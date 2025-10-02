@@ -2,17 +2,18 @@
 
 ## Objective
 
-Add CLI commands enabling AI agents to discover pflow capabilities.
+Add CLI commands enabling AI agents to discover pflow capabilities through intelligent LLM-powered discovery and validate workflows before execution.
 
 ## Requirements
 
 - LLM integration must be available for discovery selection
+- Planner nodes (WorkflowDiscoveryNode, ComponentBrowsingNode, ValidatorNode) must be available
 - Registry module must expose node metadata via Registry.load()
 - WorkflowManager must support list_all() and save() operations
 - Context builder must provide build_nodes_context() with full details
 - Context builder must provide build_workflows_context() with rich metadata
+- Context builder must provide build_planning_context() for detailed specs
 - Click command framework must be available
-- Existing workflow describe command must be present
 - File system must support ~/.pflow/workflows/ for global library
 - File system must support ./.pflow/workflows/ for local drafts
 
@@ -21,83 +22,90 @@ Add CLI commands enabling AI agents to discover pflow capabilities.
 - Does not implement MCP server integration
 - Does not modify existing execute command (already supports file paths)
 - Does not implement nested workflow execution
-- Does not modify existing MCP discovery commands
-- Does not implement workflow generation (only discovery)
+- Does not implement workflow generation (only discovery and validation)
+- Does not add --json option to workflow describe (agents can parse text)
 
 ## Inputs
 
-- `command`: str - CLI command name (discover-nodes, discover-workflows, workflow save, workflow describe)
+- `command`: str - CLI command name (workflow discover, registry discover, workflow save, registry describe)
 - `query`: str - Rich natural language description for discover commands
-- `file_path`: str - Path to workflow JSON file for save command
+- `file_path`: str - Path to workflow JSON file for save commands
 - `workflow_name`: str - Name for saved workflow (lowercase with hyphens)
 - `description`: str - Human-readable workflow description
-- `output_json`: bool - Flag to output as JSON instead of text
+- `node_ids`: list[str] - Node IDs for registry describe command
+- `validate_only`: bool - Flag to validate workflow without execution
+- `no_repair`: bool - Flag to disable automatic repair on failure
 - `delete_draft`: bool - Flag to delete source file after save
 - `force`: bool - Flag to overwrite existing workflow
+- `generate_metadata`: bool - Flag to generate rich discovery metadata
 
 ## Outputs
 
 Returns: Command-specific outputs via stdout
 
-For `discover-nodes`:
-- Markdown-formatted detailed node specifications for all relevant nodes
-- Includes full interface details (inputs, outputs, descriptions, examples)
+For `pflow workflow discover`:
+- Markdown-formatted matching workflow details
+- Includes description, node flow, inputs, outputs, capabilities
+- Shows confidence score from LLM matching
+
+For `pflow registry discover`:
+- Markdown-formatted relevant node specifications
+- Full interface details via planning context
 - Grouped by category
 
-For `discover-workflows`:
-- Markdown-formatted complete workflow details for all relevant workflows
-- Includes node flow, inputs, outputs, capabilities, keywords, usage examples
-- Includes execution statistics and metadata
+For `pflow --validate-only`:
+- Validation status for 4 layers (schema, templates, compilation, runtime)
+- Specific error messages for failures
+- Success confirmation when all layers pass
+- Exits without execution
 
-For `workflow save`:
+For `pflow workflow save`:
 - Success: Confirmation message with saved location in ~/.pflow/workflows/
 - Failure: Error message with reason
 
-For `workflow describe --json`:
-- JSON: {"name": str, "description": str, "inputs": dict, "outputs": dict, "nodes": list}
+For `pflow registry describe`:
+- Complete node specifications for requested node IDs
+- Full interface details including examples
+
+For enhanced error output (with --no-repair):
+- Node ID where failure occurred
+- Error category and message
+- Template resolution attempts and available fields
+- Whether error is fixable with repair
 
 Side effects:
 - `workflow save` creates file in ~/.pflow/workflows/ (global library)
 - `workflow save --delete-draft` removes source file
-- Creates AGENT_INSTRUCTIONS.md documentation file
+- `workflow save --generate-metadata` enriches with discovery metadata
 
 ## Structured Formats
 
 ```json
 {
-  "discover_nodes_output": {
-    "format": "markdown",
-    "sections": [
-      {
-        "category": "string",
-        "nodes": [
-          {
-            "name": "string",
-            "description": "string",
-            "inputs": [{"key": "string", "type": "string", "required": "boolean", "description": "string"}],
-            "outputs": [{"key": "string", "type": "string", "description": "string"}],
-            "params": [{"key": "string", "type": "string", "default": "any", "description": "string"}],
-            "examples": "string"
-          }
-        ]
-      }
-    ]
-  },
-  "discover_workflows_output": {
+  "workflow_discover_output": {
     "format": "markdown",
     "workflows": [
       {
         "name": "string",
         "description": "string",
-        "version": "string",
         "node_flow": "string",
         "inputs": {},
         "outputs": {},
         "capabilities": ["string"],
-        "keywords": ["string"],
-        "example_usage": "string",
-        "execution_stats": {}
+        "confidence": "float"
       }
+    ]
+  },
+  "registry_discover_output": {
+    "format": "markdown",
+    "planning_context": "string with full node interface details"
+  },
+  "workflow_validate_output": {
+    "layers": [
+      {"name": "schema", "passed": "boolean", "errors": ["string"]},
+      {"name": "templates", "passed": "boolean", "errors": ["string"]},
+      {"name": "compilation", "passed": "boolean", "errors": ["string"]},
+      {"name": "runtime", "passed": "boolean", "errors": ["string"]}
     ]
   },
   "file_path_resolution": {
@@ -116,7 +124,8 @@ Side effects:
 
 ## State/Flow Changes
 
-- `query` → `llm_selection` → `filtered_components` when discover commands process
+- `query` → `node.run(shared)` → `filtered_components` when discover commands process
+- `workflow_ir` → `validation` → `errors|success` when validate command runs
 - `draft_workflow` → `saved_workflow` when save command succeeds
 - `local_file (./.pflow/workflows/)` → `global_file (~/.pflow/workflows/)` on save
 - `local_file` → `deleted` when --delete-draft flag is used
@@ -127,33 +136,36 @@ Side effects:
 - Query must be descriptive enough for LLM to understand intent
 - Workflow names must match regex: ^[a-z0-9-]+$
 - Workflow names must be ≤ 30 characters
-- File path must exist and be readable for save command
-- JSON output must be valid parseable JSON
+- File path must exist and be readable for save/validate commands
+- Validation runs 4 layers in sequence
 - Local drafts must be in ./.pflow/workflows/ directory
 - Global library must be in ~/.pflow/workflows/ directory
+- Nodes must be run directly via node.run(shared) pattern
 
 ## Rules
 
-1. discover-nodes must accept rich natural language query
-2. discover-nodes must use LLM to select relevant nodes
-3. discover-nodes must return full interface details for each node
-4. discover-nodes must group nodes by category in output
-5. discover-workflows must accept rich natural language query
-6. discover-workflows must use LLM to select relevant workflows
-7. discover-workflows must return complete workflow metadata
-8. discover-workflows must include node flow and capabilities
-9. Both discover commands must reuse planner's context building functions
+1. workflow discover must use WorkflowDiscoveryNode directly
+2. registry discover must use ComponentBrowsingNode directly
+3. --validate-only flag must use ValidatorNode's 4-layer validation
+4. workflow save must use WorkflowManager.save() directly
+5. registry describe must use build_planning_context() directly
+6. All discovery commands must accept rich natural language queries
+7. All nodes must be run via node.run(shared) pattern
+8. Validation must check schema, templates, compilation, and runtime
+9. Validation must not have side effects (pure validation)
 10. workflow save must validate name format as lowercase with hyphens
 11. workflow save must reject names over 30 characters
-12. workflow save must load and validate workflow IR using validate_ir() before saving
-13. workflow save must save to ~/.pflow/workflows/ directory using WorkflowManager.save()
+12. workflow save must validate workflow IR before saving
+13. workflow save --generate-metadata must use MetadataGenerationNode
 14. workflow save --force must overwrite existing workflows
-15. workflow save --delete-draft must remove source file after successful save
-16. workflow describe --json must add JSON output to existing describe command
+15. workflow save --delete-draft must remove source file after success
+16. registry describe must accept multiple node IDs
 17. File path detection must check for "/" or ".json" extension
-18. Non-path arguments to execute must resolve as workflow names from library
-19. Commands must be added to src/pflow/cli/commands/workflow.py and new discover.py
-20. AGENT_INSTRUCTIONS.md must document discovery and creation flow
+18. Commands must be added to existing command groups (workflow.py, registry.py)
+19. --validate-only flag must be added to main CLI command
+20. Enhanced error output must show ExecutionResult.errors details
+21. AGENT_INSTRUCTIONS.md must document complete workflow with validation
+22. Direct node reuse without extraction or wrapper functions
 
 ## Edge Cases
 
@@ -164,63 +176,40 @@ Side effects:
 - Invalid workflow name format → reject with error message
 - Duplicate workflow name without --force → reject with error message
 - Invalid JSON in source file → reject with parse error
-- LLM service unavailable → return error with fallback suggestion
-- Query exceeds token limit → truncate intelligently
-- Path with ~ expansion → expand to home directory
+- LLM service unavailable → nodes handle gracefully with fallback
+- Validation finds errors → return specific actionable messages
+- Unknown node IDs in describe → error with list of valid nodes
 
 ## Error Handling
 
-- LLM failure → Exit with error suggesting to retry or use simpler query
+- LLM failure → Nodes handle internally, may return empty results
 - File not found → Exit with error message to stderr
 - Invalid JSON → Exit with parse error details
 - Permission denied → Exit with file access error
-- Workflow validation failure → Exit with validation errors from validate_ir()
+- Workflow validation failure → Return specific errors from each layer
 - Name already exists → Exit with conflict error unless --force
 - Missing ~/.pflow/workflows/ directory → Create directory automatically
+- Node execution failure → Access error info from shared dict
 
 ## Non-Functional Criteria
 
-- Discover commands should complete within 2 seconds (including LLM call)
+- Discovery commands should complete within 2 seconds (including LLM call)
+- Validation should be near-instant (no LLM required)
 - Full details must be complete enough for agent to build workflows
 - Output must be formatted for readability (markdown sections)
 - Commands must preserve backward compatibility
-- Must reuse existing planner context building functions
+- Must reuse planner nodes directly without extraction
+- Error messages must be specific and actionable
 
 ## Examples
 
-### Example 1: Discover nodes for GitHub automation
+### Example 1: Discover workflows
 ```bash
-$ pflow discover-nodes "I need to fetch GitHub issues, analyze them with AI, and save reports"
-
-## GitHub Operations
-
-### github-get-issue
-**Description**: Fetch a specific GitHub issue with details
-**Inputs**:
-  - repo: str (required) - Repository in owner/repo format
-  - issue_number: int (required) - Issue number to fetch
-**Outputs**:
-  - issue_title: str - Title of the issue
-  - issue_body: str - Full issue description
-  - issue_state: str - Current state (open/closed)
-
-## AI/LLM Operations
-
-### llm
-**Description**: Process text using a language model
-**Inputs**:
-  - prompt: str (required) - The prompt to send
-  - model: str (optional, default: "gpt-4") - Model to use
-[...]
-```
-
-### Example 2: Discover existing workflows
-```bash
-$ pflow discover-workflows "I need to analyze pull requests"
+$ pflow workflow discover "I need to analyze pull requests"
 
 ## pr-analyzer
 **Description**: Comprehensive PR analysis workflow
-**Node Flow**: github-get-pr >> extract-diff >> llm >> format-report >> write-file
+**Node Flow**: github-get-pr >> llm >> write-file
 **Inputs**:
   - repo: str (required) - GitHub repository
   - pr_number: int (required) - Pull request number
@@ -229,137 +218,171 @@ $ pflow discover-workflows "I need to analyze pull requests"
 **Capabilities**:
   - Analyzes code changes
   - Identifies potential issues
-  - Suggests improvements
-**Example Usage**:
-  pflow execute pr-analyzer --param repo="owner/repo" --param pr_number=123
+**Confidence**: 95%
 ```
 
-### Example 3: Complete agent workflow
+### Example 2: Discover nodes
+```bash
+$ pflow registry discover "I need to fetch GitHub issues and analyze them"
+
+## GitHub Operations
+
+### github-get-issue
+**Description**: Fetch a specific GitHub issue
+**Inputs**:
+  - repo: str (required) - Repository in owner/repo format
+  - issue_number: int (required) - Issue number
+**Outputs**:
+  - issue_title: str - Title of the issue
+  - issue_body: str - Full issue description
+[...]
+```
+
+### Example 3: Validate workflow
+```bash
+$ pflow --validate-only .pflow/workflows/draft.json repo=owner/repo pr_number=123
+
+✓ Schema validation passed
+✓ Template resolution passed
+✓ Compilation check passed
+✓ Runtime validation passed
+
+Workflow is ready for execution!
+```
+
+### Example 4: Complete agent workflow
 ```bash
 # Discover what's needed
-$ pflow discover-nodes "analyze GitHub PRs and create reports"
-$ pflow discover-workflows "PR analysis"
+$ pflow workflow discover "analyze GitHub PRs"
+$ pflow registry discover "GitHub and LLM operations"
+
+# Get specific details
+$ pflow registry describe github-get-pr llm
 
 # Create workflow locally
 $ mkdir -p .pflow/workflows
 # [Agent creates .pflow/workflows/draft.json]
 
+# Validate before execution
+$ pflow --validate-only .pflow/workflows/draft.json repo=owner/repo pr_number=123
+
 # Test it
-$ pflow execute .pflow/workflows/draft.json --param repo="owner/repo"
+$ pflow --no-repair .pflow/workflows/draft.json repo=owner/repo pr_number=123
 
 # Save when working
-$ pflow workflow save .pflow/workflows/draft.json my-pr-analyzer "Analyzes PRs" --delete-draft
+$ pflow workflow save .pflow/workflows/draft.json my-pr-analyzer "Analyzes PRs" --generate-metadata --delete-draft
 ```
 
 ## Test Criteria
 
-1. discover-nodes with rich query returns relevant nodes only
-2. discover-nodes returns full interface details not just names
-3. discover-nodes groups output by category
-4. discover-workflows with rich query returns relevant workflows only
-5. discover-workflows returns complete metadata including flow
-6. discover-workflows includes capabilities and keywords
-7. Both discover commands use LLM for selection
-8. Both discover commands handle LLM failures gracefully
-9. workflow save creates file in ~/.pflow/workflows/ via WorkflowManager.save()
-10. workflow save with invalid name "My Workflow" returns error
-11. workflow save with name over 30 characters returns error
+1. workflow discover with rich query returns relevant workflows only
+2. workflow discover shows confidence score from LLM
+3. registry discover with rich query returns relevant nodes only
+4. registry discover returns full interface details via planning context
+5. workflow validate performs 4-layer validation without side effects
+6. workflow validate returns specific errors for each layer
+7. workflow validate works with partial parameters
+8. workflow save creates file in ~/.pflow/workflows/
+9. workflow save with invalid name "My Workflow" returns error
+10. workflow save with name over 30 characters returns error
+11. workflow save --generate-metadata enriches with discovery metadata
 12. workflow save --force overwrites existing workflow
 13. workflow save --delete-draft removes source file
-14. workflow describe --json returns valid JSON with all metadata fields
-15. File path "draft.json" is detected as path not workflow name
-16. File path "./test.json" is detected and resolved correctly
-17. Workflow name "my-workflow" resolves from ~/.pflow/workflows/
-18. AGENT_INSTRUCTIONS.md is created with discovery examples
-19. Commands complete within performance thresholds
-20. All outputs provide sufficient detail for workflow creation
+14. registry describe accepts multiple node IDs
+15. registry describe returns complete specifications
+16. Unknown node IDs in describe return helpful error
+17. Direct node execution via node.run(shared) works
+18. File path "draft.json" is detected as path not workflow name
+19. Workflow name "my-workflow" resolves from ~/.pflow/workflows/
+20. AGENT_INSTRUCTIONS.md includes validation in workflow
 
 ## Notes (Why)
 
+- Direct node reuse eliminates code duplication and complexity
+- Pre-flight validation critical for agent iteration speed
 - LLM-based discovery mimics planner's proven approach
 - Rich queries enable single-shot discovery
 - Full details eliminate need for follow-up commands
+- Validation without execution prevents partial state
 - Grouping and formatting aid comprehension
-- Reusing planner functions ensures consistency
 - Local vs global separation enables testing before saving
 
 ## Compliance Matrix
 
 | Rule # | Covered By Test Criteria # |
 | ------ | -------------------------- |
-| 1      | 1                          |
-| 2      | 7                          |
-| 3      | 2                          |
-| 4      | 3                          |
-| 5      | 4                          |
-| 6      | 7                          |
-| 7      | 5                          |
-| 8      | 6                          |
-| 9      | 7                          |
-| 10     | 10                         |
-| 11     | 11                         |
-| 12     | 9                          |
-| 13     | 9                          |
+| 1      | 1, 2                       |
+| 2      | 3, 4                       |
+| 3      | 5, 6, 7                    |
+| 4      | 8                          |
+| 5      | 14, 15                     |
+| 6      | 1, 3                       |
+| 7      | 17                         |
+| 8      | 5, 6                       |
+| 9      | 5                          |
+| 10     | 9                          |
+| 11     | 10                         |
+| 12     | 8                          |
+| 13     | 11                         |
 | 14     | 12                         |
 | 15     | 13                         |
 | 16     | 14                         |
-| 17     | 15, 16                     |
-| 18     | 17                         |
-| 19     | Implementation tests       |
-| 20     | 18                         |
+| 17     | 18                         |
+| 18     | Implementation tests       |
+| 19     | 20                         |
+| 20     | 17                         |
 
 ## Versioning & Evolution
 
-- v1.0.0 - Initial CLI commands with LLM-based discovery
+- v1.0.0 - Initial CLI commands with LLM-based discovery and validation
 - v1.1.0 - (Future) Add caching for repeated queries
-- v1.2.0 - (Future) Add fallback keyword search when LLM unavailable
+- v1.2.0 - (Future) Add workflow generation from natural language
 - v2.0.0 - (Future) MCP server integration from Task 72
 
 ## Epistemic Appendix
 
 ### Assumptions & Unknowns
 
-- Assumes LLM service is available and configured
+- Assumes planner nodes can run standalone (proven by tests)
 - Assumes agents can process detailed markdown output effectively
-- Assumes build_nodes_context() and build_workflows_context() can return full details
+- Assumes build_planning_context() provides sufficient detail
 - Unknown optimal LLM model for discovery selection
 - Unknown whether 2-second target achievable with LLM latency
-- Unknown how well LLM will match vague queries
+- Unknown how well agents will use validation feedback
 
 ### Conflicts & Resolutions
 
-- Original design had simple browse/search vs rich discovery - Resolution: Rich discovery matches planner approach better
-- Keyword search vs LLM selection - Resolution: LLM provides superior matching for natural language
-- JSON output vs markdown - Resolution: Markdown with full details more useful for LLM agents
+- Original design had separate discover commands vs under existing groups - Resolution: Under existing groups for consistency
+- JSON output for describe vs markdown only - Resolution: Markdown only, agents can parse
+- Extract logic vs direct node reuse - Resolution: Direct reuse proven simpler
 
 ### Decision Log / Tradeoffs
 
-- Chose LLM-based discovery: Better matching vs added dependency and latency
-- Chose full details in output: Complete information vs larger response size
-- Chose to reuse planner functions: Consistency vs potential coupling
-- Chose discover-* naming: Clarity of intent vs longer command names
+- Chose direct node reuse: Simpler implementation vs potential coupling
+- Chose pre-flight validation: Better UX vs additional command
+- Chose markdown output: Human-readable vs structured JSON
+- Chose under existing command groups: Consistency vs new namespace
 
 ### Ripple Effects / Impact Map
 
 - Requires LLM configuration for CLI commands
-- May need to modify context builders to return richer details
-- Discovery functions from planner may need to be exposed
-- Agent instructions must explain discovery-first workflow
+- Planner nodes become part of CLI interface contract
+- Agent workflow patterns change to include validation
 - Performance testing needed with LLM integration
+- Documentation must explain node reuse pattern
 
 ### Residual Risks & Confidence
 
-- Risk: LLM latency makes commands slow - Mitigation: Cache common queries
-- Risk: LLM misunderstands queries - Mitigation: Provide query examples in help text
-- Risk: Too much detail overwhelms agents - Mitigation: Test with actual agents
-- Risk: LLM service unavailable - Mitigation: Document fallback approaches
-- Confidence: High for functionality, Medium for performance
+- Risk: Direct node coupling - Mitigation: Nodes designed for reuse
+- Risk: LLM latency - Mitigation: Cache common queries
+- Risk: Validation complexity - Mitigation: Reuse ValidatorNode directly
+- Confidence: High for functionality, High for implementation simplicity
 
 ### Epistemic Audit (Checklist Answers)
 
-1. Assumed LLM availability, stable context builder functions, agent markdown processing
-2. LLM unavailability would require fallback; context builders may need enhancement
-3. Chose effectiveness (LLM matching) over simplicity (keyword search)
+1. Assumed node reuse feasible, agent markdown processing, sufficient context detail
+2. Node API changes would affect CLI; LLM unavailability needs fallback
+3. Chose simplicity (direct reuse) over abstraction (extraction)
 4. All rules have corresponding test coverage in compliance matrix
-5. Affects planner code exposure, LLM configuration, agent workflow patterns
-6. LLM performance uncertain; query matching quality uncertain; Confidence: High for value, Medium for implementation
+5. Affects CLI interface, agent patterns, planner node contracts
+6. Node reuse proven by tests; Confidence: Very High for implementation
