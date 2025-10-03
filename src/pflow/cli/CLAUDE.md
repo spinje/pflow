@@ -79,6 +79,7 @@ else:                      → Route to workflow_command()
 --cache-planner        # Use cached planner results
 --no-repair            # Disable auto-repair
 --no-update            # Save repairs separately
+--validate-only        # Validate workflow without executing (NEW in Task 71)
 workflow (nargs=-1)    # Catch-all for natural language or file path
 ```
 
@@ -110,13 +111,15 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 **Output Handling**:
 - `_handle_workflow_output()` - Route output based on format (text/json)
 - `_handle_text_output()` - Display text results with auto-detection
-- `_handle_json_output()` - Structure JSON response
+- `_handle_json_output()` - Structure JSON response (enhanced in Task 71)
 - `_find_auto_output()` - Smart output detection
+- `_build_execution_steps()` - Build detailed execution state (NEW in Task 71)
 
 **Error Handling**:
 - `_handle_compilation_error()` - Compilation failures
-- `_handle_workflow_error()` - Execution failures
+- `_handle_workflow_error()` - Execution failures (enhanced in Task 71)
 - `_handle_workflow_exception()` - Unexpected errors
+- `_handle_discovery_error()` - Discovery command errors (NEW in Task 71)
 
 **Workflow Management**:
 - `resolve_workflow()` - Load from file/registry/string
@@ -177,14 +180,23 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 
 **Subcommands**:
 - `list` - List all nodes with grouping
-- `describe` - Show node metadata
+- `describe` - Show node metadata (with MCP tool normalization - NEW in Task 71)
 - `search` - Find nodes by keyword
 - `scan` - Force registry rescan
+- `discover` - LLM-powered node selection (NEW in Task 71)
 
 **Display Features**:
 - Groups nodes by package
 - Shows interface metadata
 - Filters test nodes by default
+
+**NEW: MCP Tool Normalization** (Task 71):
+- `_normalize_node_id()` handles multiple formats:
+  - Exact match: `mcp-slack-composio-SLACK_SEND_MESSAGE`
+  - Hyphen/underscore conversion: `SLACK-SEND-MESSAGE` → `SLACK_SEND_MESSAGE`
+  - Short form matching: `SLACK_SEND_MESSAGE` → `mcp-slack-composio-SLACK_SEND_MESSAGE`
+- Ambiguity detection with helpful error messages
+- 3-tier matching strategy (lines 709-773)
 
 ### 7. Workflow Commands (`commands/workflow.py`)
 
@@ -193,11 +205,27 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 - `describe` - Show workflow interface
 - `show` - Display workflow content
 - `delete` - Remove saved workflow
+- `discover` - LLM-powered workflow discovery (NEW in Task 71)
+- `save` - Save workflow to global library (NEW in Task 71)
 
 **Interface Display**:
 - Shows inputs (required/optional)
 - Shows outputs
 - Provides example usage
+
+**NEW: Workflow Discovery** (Task 71, lines 234-376):
+- Uses `WorkflowDiscoveryNode` for intelligent matching
+- Returns workflow with metadata, flow, inputs, outputs, confidence
+- Anthropic monkey patch installed for LLM calls
+- Agent-friendly error handling (auth errors → alternatives)
+
+**NEW: Workflow Save** (Task 71, lines 405-442):
+- Name validation: lowercase, numbers, hyphens only (max 30 chars)
+- Auto-normalization: adds `ir_version`, `edges` if missing
+- Optional `--generate-metadata` using `MetadataGenerationNode`
+- Optional `--delete-draft` with safety check (only `.pflow/workflows/`)
+- Optional `--force` to overwrite existing workflows
+- Extracted to helper functions for clarity (lines 132-403)
 
 ### 8. Settings Commands (`commands/settings.py`)
 
@@ -254,12 +282,13 @@ planner_flow.run(shared)  # Populates shared["workflow"]
 
 ### 3. Context Management
 
-**Click Context (`ctx.obj`) Storage** (lines 2286-2299):
+**Click Context (`ctx.obj`) Storage**:
 - `verbose`: Verbose output flag
 - `output_format`: "text" or "json"
 - `print_flag`: Force non-interactive
 - `no_repair`: Disable auto-repair
 - `no_update`: Save repairs separately
+- `validate_only`: Validate without executing (NEW in Task 71)
 - `output_controller`: OutputController instance
 - `workflow_source`: "file", "saved", or None
 - `workflow_name`: For saved workflows
@@ -501,6 +530,262 @@ Two save methods create format confusion. Pattern matching checks multiple field
 ### 5. Click Testing Limitation
 `CliRunner` always returns `False` for `isatty()`, preventing interactive mode testing in unit tests.
 
+## Task 71 Enhancements: Agent-First CLI
+
+### Overview
+
+Task 71 added comprehensive agent enablement features to make pflow CLI AI-agent-friendly. All changes maintain backward compatibility while adding powerful discovery and validation tools.
+
+### New Features
+
+#### 1. Static Validation (`--validate-only` flag)
+
+**Location**: `main.py` lines 2912-2990
+
+**Purpose**: Validate workflow structure without executing, enabling agents to catch errors early.
+
+**Implementation**:
+```python
+# Flag added to workflow_command
+@click.option("--validate-only", is_flag=True)
+
+# Validation logic (lines 2912-2990)
+if validate_only:
+    # Generate dummy values for declared inputs
+    dummy_params = {k: "__validation_placeholder__" for k in ir_data.get("inputs", {})}
+
+    # Full structural validation
+    errors = WorkflowValidator.validate(workflow_ir=ir_data, extracted_params=dummy_params)
+
+    # Display results and exit
+    if errors: exit(1)
+    else: exit(0)
+```
+
+**What Gets Validated**:
+- ✅ Schema compliance (JSON structure, required fields)
+- ✅ Data flow correctness (execution order, no cycles)
+- ✅ Template structure (`${node.output}` references)
+- ✅ Node types exist in registry
+- ❌ Runtime values (that's execution-time)
+- ❌ API credentials
+- ❌ File existence
+
+**Auto-Normalization** (lines 2931-2935):
+- Adds `ir_version: "0.1.0"` if missing
+- Adds `edges: []` if no connections
+- Reduces friction for agent-generated workflows
+
+#### 2. Workflow Discovery (`pflow workflow discover`)
+
+**Location**: `commands/workflow.py` lines 234-376
+
+**Purpose**: LLM-powered intelligent workflow matching based on natural language description.
+
+**Implementation**:
+```python
+@workflow.command(name="discover")
+def discover_workflows(query: str):
+    # Install Anthropic model for LLM calls
+    install_anthropic_model()
+
+    # Use WorkflowDiscoveryNode directly
+    node = WorkflowDiscoveryNode()
+    shared = {"user_input": query, "workflow_manager": WorkflowManager()}
+    action = node.run(shared)
+
+    # Display results
+    if action == "found_existing":
+        _format_discovery_result(result, workflow)
+```
+
+**Extracted Helper Functions** (lines 132-232):
+- `_handle_discovery_error()` - Agent-friendly error messages
+- `_display_workflow_metadata()` - Metadata section
+- `_display_workflow_flow()` - Node flow visualization
+- `_display_workflow_inputs_outputs()` - I/O specs
+- `_format_discovery_result()` - Complete result formatting
+
+**Error Handling**:
+- Detects authentication errors → shows alternatives
+- No internal jargon or stack traces
+- Actionable guidance (export ANTHROPIC_API_KEY, use alternatives)
+
+#### 3. Workflow Save (`pflow workflow save`)
+
+**Location**: `commands/workflow.py` lines 405-442
+
+**Purpose**: Promote draft workflows to global library with metadata generation.
+
+**Implementation**:
+```python
+@workflow.command(name="save")
+def save_workflow(file_path, name, description, delete_draft, force, generate_metadata):
+    _validate_workflow_name(name)  # Lines 178-197
+    validated_ir = _load_and_normalize_workflow(file_path)  # Lines 200-302
+    metadata = _generate_metadata_if_requested(validated_ir, generate_metadata)  # Lines 305-336
+    saved_path = _save_with_overwrite_check(...)  # Lines 339-376
+    _delete_draft_if_requested(file_path, delete_draft)  # Lines 379-402
+```
+
+**Name Validation Rules** (lines 178-197):
+- Lowercase letters, numbers, hyphens only
+- Max 30 characters
+- Shell-safe, URL-safe, git-branch-compatible
+
+**Auto-Normalization** (lines 291-294):
+- Same as `--validate-only` (ir_version, edges)
+
+**Metadata Generation** (lines 305-336):
+- Uses `MetadataGenerationNode` for rich metadata
+- Generates keywords, capabilities, use cases
+- Optional via `--generate-metadata` flag
+
+**Safety Features** (lines 379-402):
+- `--delete-draft` only works in `.pflow/workflows/` directory
+- `--force` requires explicit confirmation
+- Deletes existing before save to avoid conflicts
+
+#### 4. Node Discovery (`pflow registry discover`)
+
+**Location**: `registry.py` lines 646-723
+
+**Purpose**: LLM-powered node selection based on task description.
+
+**Implementation**:
+```python
+@registry.command(name="discover")
+def discover_nodes(query: str):
+    # Install Anthropic model
+    install_anthropic_model()
+
+    # Create complete context (required by ComponentBrowsingNode)
+    shared = {
+        "user_input": query,
+        "workflow_manager": WorkflowManager(),  # Required for workflow context
+        "current_date": datetime.now().strftime("%Y-%m-%d"),
+        "cache_planner": False
+    }
+
+    # Use ComponentBrowsingNode directly
+    node = ComponentBrowsingNode()
+    node.run(shared)
+
+    # Display planning_context (already formatted markdown)
+    click.echo(shared["planning_context"])
+```
+
+**Context Requirements**:
+- `workflow_manager` - Required by ComponentBrowsingNode
+- `current_date` - Standard planning context
+- `cache_planner` - Disabled for CLI
+
+#### 5. Enhanced Node Description (`pflow registry describe`)
+
+**Location**: `registry.py` lines 837-870
+
+**Purpose**: Detailed node specifications with MCP tool normalization.
+
+**MCP Tool Normalization** (lines 709-773):
+
+**3-Tier Matching Strategy**:
+1. **Exact match**: `mcp-slack-composio-SLACK_SEND_MESSAGE`
+2. **Hyphen/underscore conversion**: `SLACK-SEND-MESSAGE` → `SLACK_SEND_MESSAGE`
+3. **Short form matching**: `SLACK_SEND_MESSAGE` → searches for unique tool ending with this
+
+**Example**:
+```bash
+# All these work:
+pflow registry describe mcp-slack-composio-SLACK_SEND_MESSAGE
+pflow registry describe SLACK-SEND-MESSAGE  # Normalized
+pflow registry describe SLACK_SEND_MESSAGE  # Short form
+```
+
+**Ambiguity Handling** (lines 818-833):
+- Detects multiple matches
+- Shows all matching full IDs
+- Suggests using full format or `{server}-{tool}`
+
+**Validation Helper Functions** (lines 776-833):
+- `_validate_and_normalize_node_ids()` - Batch validation
+- `_handle_node_validation_errors()` - Error display with guidance
+
+#### 6. Enhanced Error Output
+
+**Location**: `main.py` lines 1153-1269
+
+**Purpose**: Show rich error context to help agents debug failures.
+
+**Implementation**:
+```python
+def _handle_workflow_error(ctx, result, ...):
+    if output_format == "json":
+        # Include structured errors from ExecutionResult
+        error_output["errors"] = result.errors  # Rich error data
+
+        # Add execution state
+        error_output["execution"] = {
+            "duration_ms": ...,
+            "nodes_executed": ...,
+            "steps": [...]  # Per-node status, cache, duration
+        }
+    else:
+        # Text mode: Display rich error details
+        for error in result.errors:
+            click.echo(f"Error at node '{error['node_id']}':")
+            click.echo(f"  Category: {error['category']}")
+
+            # Show API response details
+            if raw := error.get('raw_response'):
+                # Field-level errors
+
+            # Show template suggestions
+            if available := error.get('available_fields'):
+                # List available fields
+```
+
+**Error Data Extracted** (executor_service.py lines 240-275):
+- HTTP nodes: status_code, raw_response, response_headers
+- MCP nodes: mcp_error_details, mcp_error
+- Template errors: available_fields
+
+**Execution State** (main.py lines 548-697):
+- Added `_build_execution_steps()` function
+- Per-node: status (completed/failed/not_executed), duration, cached, repaired
+- Cache tracking via `__cache_hits__` (instrumented_wrapper.py lines 542-601)
+
+### Integration Pattern: Direct Node Reuse
+
+**Philosophy**: Planning nodes are designed for standalone execution - no extraction needed.
+
+**Pattern**:
+```python
+# Discovery commands use nodes directly
+node = WorkflowDiscoveryNode()  # or ComponentBrowsingNode, MetadataGenerationNode
+shared = {"user_input": query, "workflow_manager": WorkflowManager()}
+action = node.run(shared)
+# Result in shared["discovery_result"], shared["found_workflow"], etc.
+```
+
+**Why This Works**:
+- Nodes are self-contained with clear inputs/outputs
+- No need to extract logic into separate functions
+- Reuses existing battle-tested implementations
+- Maintains consistency with planning system
+
+### Backward Compatibility
+
+**All changes are additive**:
+- New flags are optional
+- New commands don't affect existing commands
+- JSON output enhancements are additive (old fields preserved)
+- Error messages remain for non-agent users
+
+**No Breaking Changes**:
+- Existing workflows still work
+- Existing parameters unchanged
+- Existing output formats preserved
+
 ## AI Agent Guidance
 
 ### When Working in CLI Module
@@ -515,6 +800,8 @@ Two save methods create format confusion. Pattern matching checks multiple field
 
 5. **Interactive vs Non-interactive**: Always check before showing progress or prompts.
 
+6. **Direct Node Reuse** (Task 71): Discovery commands use planning nodes directly - no extraction needed.
+
 ### Common Pitfalls to Avoid
 
 1. **Don't Import Execution Directly in __init__**: Use lazy imports to avoid circular dependencies
@@ -522,6 +809,7 @@ Two save methods create format confusion. Pattern matching checks multiple field
 3. **Don't Assume TTY**: Check interactive mode for progress displays
 4. **Don't Mix Output Streams**: Errors to stderr, results to stdout
 5. **Don't Forget Parameter Types**: Support type hints in parameters
+6. **Don't Extract Node Logic** (Task 71): Use nodes directly, they're designed for standalone execution
 
 ### Integration Points to Remember
 
@@ -531,5 +819,28 @@ Two save methods create format confusion. Pattern matching checks multiple field
 - **Workflow Manager**: Via WorkflowManager for saves
 - **Settings**: Via SettingsManager
 - **MCP**: Via MCPServerManager and MCPRegistrar
+- **Planning Nodes** (Task 71): WorkflowDiscoveryNode, ComponentBrowsingNode, MetadataGenerationNode
 
-This module is the user-facing interface that orchestrates all other pflow components, handling everything from natural language input to structured command execution.
+### Task 71 Specific Notes
+
+**Anthropic Monkey Patch**:
+- Required for discovery commands (WorkflowDiscoveryNode, ComponentBrowsingNode)
+- Installed per-command in command groups (bypasses main CLI setup)
+- Check for `PYTEST_CURRENT_TEST` to skip during testing
+
+**MCP Tool Normalization**:
+- 3-tier matching strategy handles multiple formats
+- Ambiguity detection prevents silent failures
+- Short form matching requires unique tool names
+
+**Execution State Visibility**:
+- Enables intelligent agent repair decisions
+- Complete per-node status, timing, cache information
+- Additive JSON output (doesn't break existing consumers)
+
+**Helper Function Extraction**:
+- Large commands split into focused helper functions
+- Improves readability and testability
+- Follows single-responsibility principle
+
+This module is the user-facing interface that orchestrates all other pflow components, handling everything from natural language input to structured command execution. Task 71 enhancements make it AI-agent-first while maintaining full backward compatibility.

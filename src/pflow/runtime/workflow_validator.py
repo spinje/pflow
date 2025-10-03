@@ -127,9 +127,9 @@ def prepare_inputs(
                 # Required input is missing
                 description = input_spec.get("description", "No description provided")
                 errors.append((
-                    f"Workflow requires input '{input_name}' ({description})",
+                    f"Workflow requires input '{input_name}': {description}",
                     f"inputs.{input_name}",
-                    "Provide this parameter in initial_params when compiling the workflow",
+                    "",  # No suggestion needed - agent knows how to pass parameters
                 ))
             else:
                 # Optional input is missing, prepare default

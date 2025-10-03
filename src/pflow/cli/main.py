@@ -181,9 +181,18 @@ def _try_load_workflow_from_file(path: Path) -> tuple[dict | None, str | None]:
         with open(path, encoding="utf-8") as f:
             content = f.read()
             data = json.loads(content)
-            if isinstance(data, dict) and "ir" in data:
-                return data["ir"], "file"
-            return data, "file"
+
+            # Extract IR if wrapped
+            workflow_ir = data["ir"] if isinstance(data, dict) and "ir" in data else data
+
+            # Auto-normalize: add missing boilerplate fields
+            # This reduces friction for agent-generated workflows
+            if isinstance(workflow_ir, dict):
+                from pflow.core import normalize_ir
+
+                normalize_ir(workflow_ir)
+
+            return workflow_ir, "file"
     except json.JSONDecodeError as e:
         _show_json_syntax_error(path, content, e)
         return None, "json_error"
@@ -548,6 +557,26 @@ def _handle_json_output(
         # Also include detailed metrics for compatibility
         result["metrics"] = metrics_summary.get("metrics", {})
 
+    # Add execution state if workflow IR available
+    if workflow_ir and shared_storage:
+        steps = _build_execution_steps(workflow_ir, shared_storage, metrics_summary)
+        if steps:
+            # Count nodes by status
+            completed_count = sum(1 for s in steps if s["status"] == "completed")
+            nodes_total = len(steps)
+
+            result["execution"] = {
+                "duration_ms": metrics_summary.get("duration_ms") if metrics_summary else None,
+                "nodes_executed": completed_count,
+                "nodes_total": nodes_total,
+                "steps": steps,
+            }
+
+            # Add repaired flag if any nodes were modified
+            modified_nodes = shared_storage.get("__modified_nodes__", [])
+            if modified_nodes:
+                result["repaired"] = True
+
     # Save JSON output to trace if available
     if workflow_trace and hasattr(workflow_trace, "set_json_output"):
         workflow_trace.set_json_output(result)
@@ -572,28 +601,40 @@ def _collect_json_outputs(
     Returns:
         Dictionary of outputs to serialize as JSON
     """
+    import json
+
+    def _parse_if_json(value: Any) -> Any:
+        """Parse value if it's a JSON string, otherwise return as-is."""
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                return value
+        return value
+
     result = {}
 
     if output_key:
         # Specific key requested
         if output_key in shared_storage:
-            result[output_key] = shared_storage[output_key]
+            result[output_key] = _parse_if_json(shared_storage[output_key])
         # In JSON mode, don't output warnings to stderr
 
     elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
-        # Collect ALL declared outputs
+        # Collect ALL declared outputs (JSON mode provides complete data)
+        # Text mode only shows the first output for human readability
         declared = workflow_ir["outputs"]
 
         for output_name in declared:
             if output_name in shared_storage:
-                result[output_name] = shared_storage[output_name]
+                result[output_name] = _parse_if_json(shared_storage[output_name])
         # In JSON mode, don't output warnings to stderr
 
     else:
         # Fallback: Use auto-detection (using unified function)
         key_found, value = _find_auto_output(shared_storage)
         if key_found:
-            result[key_found] = value
+            result[key_found] = _parse_if_json(value)
 
     return result
 
@@ -634,6 +675,68 @@ def _extract_workflow_node_count(metrics_summary: dict[str, Any]) -> int:
     workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
     node_count = workflow_metrics.get("nodes_executed", 0)
     return int(node_count)  # Ensure we return an int
+
+
+def _build_execution_steps(
+    workflow_ir: dict[str, Any] | None,
+    shared_storage: dict[str, Any],
+    metrics_summary: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Build detailed execution steps array for JSON output.
+
+    Args:
+        workflow_ir: The workflow IR with nodes list
+        shared_storage: Shared store after execution
+        metrics_summary: Metrics summary from collector
+
+    Returns:
+        List of step dictionaries with status, timing, cache info
+    """
+    if not workflow_ir or "nodes" not in workflow_ir:
+        return []
+
+    # Get execution state
+    exec_state = shared_storage.get("__execution__", {})
+    completed = exec_state.get("completed_nodes", [])
+    failed = exec_state.get("failed_node")
+    cache_hits = shared_storage.get("__cache_hits__", [])
+    modified_nodes = shared_storage.get("__modified_nodes__", [])
+
+    # Get node timings from metrics
+    node_timings = {}
+    if metrics_summary:
+        workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
+        node_timings = workflow_metrics.get("node_timings", {})
+
+    # Build steps array
+    steps = []
+    for node in workflow_ir["nodes"]:
+        node_id = node["id"]
+
+        # Determine status
+        # Check completed first - if a node failed then was repaired, it's completed
+        if node_id in completed:
+            status = "completed"
+        elif node_id == failed:
+            status = "failed"
+        else:
+            status = "not_executed"
+
+        # Build step dict
+        step = {
+            "node_id": node_id,
+            "status": status,
+            "duration_ms": node_timings.get(node_id),
+            "cached": node_id in cache_hits,
+        }
+
+        # Mark repaired nodes
+        if node_id in modified_nodes:
+            step["repaired"] = True
+
+        steps.append(step)
+
+    return steps
 
 
 def _create_json_error_output(
@@ -711,6 +814,44 @@ def _create_json_error_output(
 
         # Include detailed metrics
         result["metrics"] = metrics_summary.get("metrics", {})
+
+        # Add execution state if available
+        if shared_storage and "__execution__" in shared_storage:
+            exec_state = shared_storage["__execution__"]
+            completed = exec_state.get("completed_nodes", [])
+            failed = exec_state.get("failed_node")
+            cache_hits = shared_storage.get("__cache_hits__", [])
+
+            # Get node timings if available
+            node_timings = {}
+            workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
+            node_timings = workflow_metrics.get("node_timings", {})
+
+            # Build simplified steps for completed/failed nodes only
+            # (we don't have workflow_ir here to know all nodes)
+            steps = []
+            for node_id in completed:
+                steps.append({
+                    "node_id": node_id,
+                    "status": "completed",
+                    "duration_ms": node_timings.get(node_id),
+                    "cached": node_id in cache_hits,
+                })
+
+            if failed and failed not in completed:
+                steps.append({
+                    "node_id": failed,
+                    "status": "failed",
+                    "duration_ms": node_timings.get(failed),
+                    "cached": False,
+                })
+
+            if steps:
+                result["execution"] = {
+                    "duration_ms": metrics_summary.get("duration_ms"),
+                    "nodes_executed": len(completed),
+                    "steps": steps,
+                }
 
     return result
 
@@ -1031,31 +1172,263 @@ def _handle_compilation_error(
     ctx.exit(1)
 
 
+def _build_execution_state_from_ir(
+    ir_data: dict[str, Any],
+    shared_storage: dict[str, Any],
+    metrics_summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Build execution state using workflow IR for complete step information.
+
+    Args:
+        ir_data: Workflow IR containing node definitions
+        shared_storage: Shared store with execution state
+        metrics_summary: Metrics summary with node timings
+
+    Returns:
+        Execution state dict with steps, or None if no steps
+    """
+    steps = _build_execution_steps(ir_data, shared_storage, metrics_summary)
+    if not steps:
+        return None
+
+    completed_count = sum(1 for s in steps if s["status"] == "completed")
+    return {
+        "duration_ms": metrics_summary.get("duration_ms"),
+        "nodes_executed": completed_count,
+        "nodes_total": len(steps),
+        "steps": steps,
+    }
+
+
+def _build_execution_state_fallback(
+    shared_storage: dict[str, Any],
+    metrics_summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Build simplified execution state from shared store only (no IR).
+
+    Args:
+        shared_storage: Shared store with execution state
+        metrics_summary: Metrics summary with node timings
+
+    Returns:
+        Execution state dict with steps, or None if no steps
+    """
+    exec_state = shared_storage["__execution__"]
+    completed = exec_state.get("completed_nodes", [])
+    failed = exec_state.get("failed_node")
+    cache_hits = shared_storage.get("__cache_hits__", [])
+
+    # Get node timings
+    workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
+    node_timings = workflow_metrics.get("node_timings", {})
+
+    # Build steps for completed and failed nodes only
+    steps = []
+    for node_id in completed:
+        steps.append({
+            "node_id": node_id,
+            "status": "completed",
+            "duration_ms": node_timings.get(node_id),
+            "cached": node_id in cache_hits,
+        })
+
+    if failed and failed not in completed:
+        steps.append({
+            "node_id": failed,
+            "status": "failed",
+            "duration_ms": node_timings.get(failed),
+            "cached": False,
+        })
+
+    if not steps:
+        return None
+
+    return {
+        "duration_ms": metrics_summary.get("duration_ms"),
+        "nodes_executed": len(completed),
+        "steps": steps,
+    }
+
+
+def _build_json_error_response(
+    result: Any,
+    metrics_collector: Any | None,
+    shared_storage: dict[str, Any],
+    ir_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build structured JSON error response.
+
+    Args:
+        result: ExecutionResult from workflow execution
+        metrics_collector: Metrics collector instance
+        shared_storage: Shared store with execution data
+        ir_data: Optional workflow IR for complete execution state
+
+    Returns:
+        Structured error response dict
+    """
+    error_output: dict[str, Any] = {
+        "success": False,
+        "error": "Workflow execution failed",
+        "is_error": True,
+    }
+
+    # Add error details from result
+    if result and hasattr(result, "errors") and result.errors:
+        error_output["errors"] = result.errors
+        if result.errors:
+            error_output["failed_node"] = result.errors[0].get("node_id")
+
+    # Add metrics if available
+    if metrics_collector:
+        llm_calls = shared_storage.get("__llm_calls__", [])
+        metrics_summary = metrics_collector.get_summary(llm_calls)
+
+        # Top-level metrics
+        error_output["duration_ms"] = metrics_summary.get("duration_ms")
+        error_output["total_cost_usd"] = metrics_summary.get("total_cost_usd")
+        error_output["nodes_executed"] = _extract_workflow_node_count(metrics_summary)
+        error_output["metrics"] = metrics_summary.get("metrics", {})
+
+        # Add execution state if available
+        if shared_storage and "__execution__" in shared_storage:
+            if ir_data:
+                exec_state = _build_execution_state_from_ir(ir_data, shared_storage, metrics_summary)
+            else:
+                exec_state = _build_execution_state_fallback(shared_storage, metrics_summary)
+
+            if exec_state:
+                error_output["execution"] = exec_state
+
+    return error_output
+
+
+def _display_api_error_response(raw_response: dict[str, Any]) -> None:
+    """Display API error response details.
+
+    Args:
+        raw_response: Raw API response dict
+    """
+    click.echo("\n  API Response:", err=True)
+
+    # GitHub/API errors often have 'errors' array
+    if errors_list := raw_response.get("errors"):
+        for api_err in errors_list[:3]:
+            field = api_err.get("field", "unknown")
+            msg = api_err.get("message", api_err.get("code", "error"))
+            click.echo(f"    - Field '{field}': {msg}", err=True)
+    elif msg := raw_response.get("message"):
+        click.echo(f"    {msg}", err=True)
+
+    if doc_url := raw_response.get("documentation_url"):
+        click.echo(f"\n  Documentation: {doc_url}", err=True)
+
+
+def _display_mcp_error_details(mcp_error: dict[str, Any]) -> None:
+    """Display MCP tool error details.
+
+    Args:
+        mcp_error: MCP error dict
+    """
+    click.echo("\n  MCP Tool Error:", err=True)
+
+    if details := mcp_error.get("details"):
+        click.echo(f"    Field: {details.get('field')}", err=True)
+        click.echo(f"    Expected: {details.get('expected')}", err=True)
+        click.echo(f"    Received: {details.get('received')}", err=True)
+    elif msg := mcp_error.get("message"):
+        click.echo(f"    {msg}", err=True)
+
+
+def _display_single_error(
+    error: dict[str, Any],
+    error_number: int,
+    no_repair: bool,
+) -> None:
+    """Display a single workflow error with all details.
+
+    Args:
+        error: Error dict from ExecutionResult
+        error_number: Error number for display (1-indexed)
+        no_repair: Whether repair is disabled
+    """
+    if error_number == 1:
+        click.echo("❌ Workflow execution failed", err=True)
+
+    node_id = error.get("node_id", "unknown")
+    category = error.get("category", "unknown")
+    message = error.get("message", "Unknown error")
+
+    click.echo(f"\nError {error_number} at node '{node_id}':", err=True)
+    click.echo(f"  Category: {category}", err=True)
+    click.echo(f"  Message: {message}", err=True)
+
+    # Show raw API response if available
+    if (raw := error.get("raw_response")) and isinstance(raw, dict):
+        _display_api_error_response(raw)
+
+    # Show MCP error details
+    if (mcp := error.get("mcp_error")) and isinstance(mcp, dict):
+        _display_mcp_error_details(mcp)
+
+    # Show available fields for template errors
+    if category == "template_error" and (available := error.get("available_fields")):
+        click.echo("\n  Available fields in node:", err=True)
+        for field in available[:5]:
+            click.echo(f"    - {field}", err=True)
+        if len(available) > 5:
+            click.echo(f"    ... and {len(available) - 5} more", err=True)
+
+    # Fixable hint
+    if error.get("fixable") and no_repair:
+        click.echo("\n  💡 Tip: Remove --no-repair flag to attempt automatic fix", err=True)
+
+
+def _display_text_error_details(
+    result: Any,
+    no_repair: bool,
+) -> None:
+    """Display detailed text error output.
+
+    Args:
+        result: ExecutionResult with error details
+        no_repair: Whether repair is disabled
+    """
+    if not result or not hasattr(result, "errors") or not result.errors:
+        # Fallback to generic message
+        click.echo("cli: Workflow execution failed - Node returned error action", err=True)
+        click.echo("cli: Check node output above for details", err=True)
+        return
+
+    for i, error in enumerate(result.errors, 1):
+        _display_single_error(error, i, no_repair)
+
+
 def _handle_workflow_error(
     ctx: click.Context,
+    result: Any,  # ExecutionResult
     workflow_trace: Any | None,
     output_format: str,
     metrics_collector: Any | None,
     shared_storage: dict[str, Any],
     verbose: bool,
+    no_repair: bool,
+    ir_data: dict[str, Any] | None = None,
 ) -> None:
-    """Handle workflow execution error."""
-    # Only show error messages if not in JSON mode
-    if output_format != "json":
-        click.echo("cli: Workflow execution failed - Node returned error action", err=True)
-        click.echo("cli: Check node output above for details", err=True)
+    """Handle workflow execution error with rich error context."""
+    # Display rich error details
+    if output_format == "json":
+        # JSON mode: Include structured errors
+        error_output = _build_json_error_response(result, metrics_collector, shared_storage, ir_data)
+        _serialize_json_result(error_output, verbose)
+    else:
+        # Text mode: Show detailed rich error context
+        _display_text_error_details(result, no_repair)
 
     # Save trace even on error
     if workflow_trace:
         trace_file = workflow_trace.save_to_file()
         _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
-
-    # Include metrics in error JSON if applicable
-    if output_format == "json" and metrics_collector:
-        llm_calls = shared_storage.get("__llm_calls__", [])
-        metrics_summary = metrics_collector.get_summary(llm_calls)
-        error_output = {"error": "Workflow execution failed", "is_error": True, **metrics_summary}
-        _serialize_json_result(error_output, verbose)
 
     ctx.exit(1)
 
@@ -1204,11 +1577,14 @@ def _execute_workflow_and_handle_result(
     else:
         _handle_workflow_error(
             ctx=ctx,
+            result=result,
             workflow_trace=workflow_trace,
             output_format=output_format,
             metrics_collector=metrics_collector,
             shared_storage=shared_storage,
             verbose=verbose,
+            no_repair=ctx.obj.get("no_repair", False),
+            ir_data=ir_data,
         )
 
 
@@ -1373,6 +1749,118 @@ def _setup_execution_context(
     return verbose, no_repair, metrics_collector
 
 
+def _perform_validation(
+    ir_data: dict[str, Any],
+    output_format: str,
+) -> list[str]:
+    """Perform static workflow validation.
+
+    Args:
+        ir_data: Workflow IR data
+        output_format: Output format for error display
+
+    Returns:
+        List of validation errors (empty if valid)
+
+    Raises:
+        SystemExit: If validation raises an exception
+    """
+    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.registry.registry import Registry
+
+    registry = Registry()
+
+    # Generate dummy values for declared inputs to enable structural template validation
+    dummy_params = {}
+    declared_inputs = ir_data.get("inputs", {})
+    for input_name in declared_inputs:
+        dummy_params[input_name] = "__validation_placeholder__"
+
+    try:
+        errors = WorkflowValidator.validate(
+            workflow_ir=ir_data,
+            extracted_params=dummy_params,  # Dummy values enable structural validation
+            registry=registry,  # Pass Registry object, not metadata dict
+            skip_node_types=False,
+        )
+    except Exception as e:
+        if output_format == "json":
+            click.echo(json.dumps({"success": False, "error": f"Validation error: {e}"}))
+        else:
+            click.echo(f"✗ Validation error: {e}", err=True)
+        import sys
+
+        sys.exit(1)
+
+    return errors
+
+
+def _display_validation_results(
+    errors: list[str],
+    output_format: str,
+) -> None:
+    """Display validation results and exit.
+
+    Args:
+        errors: List of validation errors (empty if valid)
+        output_format: Output format (text or json)
+
+    Note:
+        This function calls sys.exit() and never returns
+    """
+    import sys
+
+    if not errors:
+        if output_format == "json":
+            click.echo(json.dumps({"success": True, "message": "Workflow structure is valid"}))
+        else:
+            click.echo("✓ Schema validation passed")
+            click.echo("✓ Data flow validation passed")
+            click.echo("✓ Template structure validation passed")
+            click.echo("✓ Node types validation passed")
+            click.echo("\nWorkflow is valid and ready to execute!")
+        sys.exit(0)
+    else:
+        # Display validation errors
+        if output_format == "json":
+            click.echo(json.dumps({"success": False, "errors": errors}))
+        else:
+            click.echo("✗ Static validation failed:", err=True)
+            for error in errors[:10]:  # Show first 10 errors
+                click.echo(f"  - {error}", err=True)
+            if len(errors) > 10:
+                click.echo(f"  ... and {len(errors) - 10} more errors", err=True)
+        sys.exit(1)
+
+
+def _handle_validate_only_mode(
+    ctx: click.Context,
+    ir_data: dict[str, Any],
+    output_format: str,
+) -> None:
+    """Handle --validate-only flag by performing static validation and exiting.
+
+    Args:
+        ctx: Click context
+        ir_data: Workflow IR data (will be normalized in-place)
+        output_format: Output format (text or json)
+
+    Note:
+        This function calls sys.exit() and never returns
+    """
+    if output_format != "json":
+        click.echo("Validating workflow (static validation)...")
+
+    # Note: Normalization already happened in _try_load_workflow_from_file()
+    # No need to normalize again here
+
+    # Perform static validation
+    errors = _perform_validation(ir_data, output_format)
+
+    # Display results and exit
+    _display_validation_results(errors, output_format)
+
+
 def execute_json_workflow(
     ctx: click.Context,
     ir_data: dict[str, Any],
@@ -1393,6 +1881,16 @@ def execute_json_workflow(
 
     # Setup execution context
     verbose, no_repair, metrics_collector = _setup_execution_context(ctx, ir_data, output_format, metrics_collector)
+
+    # Suppress logging in JSON mode (except CRITICAL) to keep output clean
+    if output_format == "json":
+        logging.getLogger().setLevel(logging.CRITICAL)
+
+    # Check for validate-only flag
+    validate_only = ctx.obj.get("validate_only", False)
+    if validate_only:
+        _handle_validate_only_mode(ctx, ir_data, output_format)
+        # Never reaches here - _handle_validate_only_mode calls ctx.exit()
 
     # Extract additional context values
     workflow_name = ctx.obj.get("workflow_name")
@@ -1450,6 +1948,10 @@ def execute_json_workflow(
 
     except Exception as e:
         from pflow.runtime.compiler import CompilationError
+
+        # Re-raise Click exceptions (Exit, Abort) - don't handle them
+        if isinstance(e, click.exceptions.Exit):
+            raise
 
         # Handle compilation errors specially
         if isinstance(e, CompilationError):
@@ -2263,6 +2765,7 @@ def _initialize_context(
     cache_planner: bool,
     no_repair: bool,
     no_update: bool,
+    validate_only: bool,
 ) -> None:
     """Initialize the click context with configuration.
 
@@ -2279,6 +2782,7 @@ def _initialize_context(
         cache_planner: Enable cross-session caching for planner
         no_repair: Disable automatic workflow repair on failure
         no_update: Save repairs to separate file instead of updating original
+        validate_only: Validate workflow without executing
     """
     if ctx.obj is None:
         ctx.obj = {}
@@ -2294,6 +2798,7 @@ def _initialize_context(
     ctx.obj["cache_planner"] = cache_planner
     ctx.obj["no_repair"] = no_repair
     ctx.obj["no_update"] = no_update
+    ctx.obj["validate_only"] = validate_only
 
     # Create OutputController once and store it for reuse
     ctx.obj["output_controller"] = OutputController(
@@ -2368,24 +2873,27 @@ def _validate_and_prepare_workflow_params(
         click.echo("   👉 Parameter names cannot contain shell special characters ($, |, >, <, &, ;, etc.)", err=True)
         ctx.exit(1)
 
-    # Import prepare_inputs from the right module
-    from pflow.runtime.workflow_validator import prepare_inputs
+    # Skip input validation if --validate-only (handled separately with dummy values)
+    validate_only = ctx.obj.get("validate_only", False)
+    if not validate_only:
+        # Import prepare_inputs from the right module
+        from pflow.runtime.workflow_validator import prepare_inputs
 
-    # Validate with prepare_inputs
-    errors, defaults = prepare_inputs(workflow_ir, params)
-    if errors:
-        # Show user-friendly errors
-        for msg, path, suggestion in errors:
-            click.echo(f"❌ {msg}", err=True)
-            if path and path != "root":
-                click.echo(f"   At: {path}", err=True)
-            if suggestion:
-                click.echo(f"   👉 {suggestion}", err=True)
-        ctx.exit(1)
+        # Validate with prepare_inputs
+        errors, defaults = prepare_inputs(workflow_ir, params)
+        if errors:
+            # Show user-friendly errors
+            for msg, path, suggestion in errors:
+                click.echo(f"❌ {msg}", err=True)
+                if path and path != "root":
+                    click.echo(f"   At: {path}", err=True)
+                if suggestion:
+                    click.echo(f"   👉 {suggestion}", err=True)
+            ctx.exit(1)
 
-    # Apply defaults
-    if defaults:
-        params.update(defaults)
+        # Apply defaults
+        if defaults:
+            params.update(defaults)
 
     return params
 
@@ -2790,6 +3298,7 @@ def _validate_and_prepare_natural_language_input(workflow: tuple[str, ...]) -> s
 @click.option(
     "--no-update", is_flag=True, help="Save repairs to separate .repaired.json file instead of updating original"
 )
+@click.option("--validate-only", is_flag=True, help="Validate workflow without executing")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def workflow_command(
     ctx: click.Context,
@@ -2805,6 +3314,7 @@ def workflow_command(
     cache_planner: bool,
     no_repair: bool,
     no_update: bool,
+    validate_only: bool,
     workflow: tuple[str, ...],
 ) -> None:
     """pflow - Plan Once, Run Forever
@@ -2875,6 +3385,7 @@ def workflow_command(
         cache_planner,
         no_repair,
         no_update,
+        validate_only,
     )
 
     # Install Anthropic model wrapper for planning models

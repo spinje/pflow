@@ -2591,12 +2591,18 @@ class MetadataGenerationNode(Node):
         # Make LLM call - conditionally pass cache blocks based on flag
         logger.info("MetadataGenerationNode: Making LLM call")
         try:
-            response = model.prompt(
-                formatted_prompt,
-                schema=WorkflowMetadata,
-                temperature=prep_res["temperature"],
-                cache_blocks=cache_blocks if cache_planner else None,
-            )
+            # Build kwargs dict conditionally (cache_blocks=None is rejected by Pydantic)
+            llm_kwargs: dict[str, Any] = {
+                "schema": WorkflowMetadata,
+                "temperature": prep_res["temperature"],
+            }
+
+            # Only add cache_blocks if caching is enabled
+            if cache_planner and cache_blocks:
+                llm_kwargs["cache_blocks"] = cache_blocks
+
+            # Make LLM call
+            response = model.prompt(formatted_prompt, **llm_kwargs)
             logger.debug("MetadataGenerationNode: LLM call successful")
         except Exception as e:
             logger.exception(

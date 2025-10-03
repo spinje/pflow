@@ -1,7 +1,9 @@
 """Workflow management commands for pflow CLI."""
 
 import json
+import re
 import sys
+from pathlib import Path
 from typing import Any
 
 import click
@@ -125,3 +127,363 @@ def describe_workflow(name: str) -> None:
     _display_inputs(ir)
     _display_outputs(ir)
     _display_example_usage(name, ir)
+
+
+def _handle_discovery_error(exception: Exception) -> None:
+    """Handle errors during workflow discovery with user-friendly messages.
+
+    Args:
+        exception: The exception that occurred during discovery
+    """
+    from pflow.core.exceptions import CriticalPlanningError
+
+    if isinstance(exception, CriticalPlanningError):
+        # Check if this is an authentication/API key error
+        reason_lower = exception.reason.lower()
+        if "authentication" in reason_lower or "api key" in reason_lower:
+            click.echo("Error: LLM-powered workflow discovery requires API configuration\n", err=True)
+            click.echo("Configure Anthropic API key:", err=True)
+            click.echo("  export ANTHROPIC_API_KEY=your-key-here", err=True)
+            click.echo("  # Get key from: https://console.anthropic.com/\n", err=True)
+            click.echo("Alternative discovery methods:", err=True)
+            click.echo("  pflow workflow list              # Show all saved workflows", err=True)
+            click.echo("  pflow workflow describe <name>   # Get workflow details", err=True)
+        else:
+            # Other CriticalPlanningError - use existing reason
+            click.echo(f"Error: {exception.reason}", err=True)
+    else:
+        # Fallback for unexpected errors
+        click.echo(f"Error during discovery: {str(exception).splitlines()[0]}", err=True)
+
+
+def _display_workflow_metadata(workflow: dict) -> None:
+    """Display workflow metadata section.
+
+    Args:
+        workflow: Workflow dict with metadata
+    """
+    if "metadata" in workflow:
+        meta = workflow["metadata"]
+        if isinstance(meta, dict):
+            click.echo(f"**Description**: {meta.get('description', 'No description')}")
+            click.echo(f"**Version**: {meta.get('version', '1.0.0')}")
+
+
+def _display_workflow_flow(ir: dict) -> None:
+    """Display workflow node flow.
+
+    Args:
+        ir: Workflow IR with flow field
+    """
+    if "flow" in ir:
+        flow = ir.get("flow", [])
+        if flow:
+            flow_str = " >> ".join([edge["from"] for edge in flow[:3]])
+            if len(flow) > 3:
+                flow_str += " >> ..."
+            click.echo(f"**Node Flow**: {flow_str}")
+
+
+def _display_workflow_inputs_outputs(ir: dict) -> None:
+    """Display workflow inputs and outputs.
+
+    Args:
+        ir: Workflow IR with inputs and outputs
+    """
+    if inputs := ir.get("inputs"):
+        click.echo("**Inputs**:")
+        for key, spec in inputs.items():
+            req = "(required)" if spec.get("required") else "(optional)"
+            input_type = spec.get("type", "any")
+            desc = spec.get("description", "")
+            click.echo(f"  - {key}: {input_type} {req} - {desc}")
+
+    if outputs := ir.get("outputs"):
+        click.echo("**Outputs**:")
+        for key, spec in outputs.items():
+            output_type = spec.get("type", "any")
+            desc = spec.get("description", "")
+            click.echo(f"  - {key}: {output_type} - {desc}")
+
+
+def _format_discovery_result(result: dict, workflow: dict) -> None:
+    """Format and display workflow discovery results.
+
+    Args:
+        result: Discovery result with workflow_name, confidence, reasoning
+        workflow: Workflow IR with metadata, flow, inputs, outputs
+    """
+    workflow_name = result.get("workflow_name", "Unknown")
+    click.echo(f"\n## {workflow_name}")
+
+    _display_workflow_metadata(workflow)
+
+    ir = workflow.get("ir", workflow)
+    _display_workflow_flow(ir)
+    _display_workflow_inputs_outputs(ir)
+
+    # Show confidence
+    confidence = result.get("confidence", 0)
+    click.echo(f"**Confidence**: {confidence:.0%}")
+
+    # Show reasoning
+    if reasoning := result.get("reasoning"):
+        click.echo(f"\n*Match reasoning*: {reasoning}")
+
+
+@workflow.command(name="discover")
+@click.argument("query")
+def discover_workflows(query: str) -> None:
+    """Discover workflows that match your task description.
+
+    Uses LLM to intelligently find relevant existing workflows
+    based on a natural language description of what you want to do.
+
+    Example:
+        pflow workflow discover "I need to analyze pull requests"
+    """
+    import os
+
+    from pflow.planning.nodes import WorkflowDiscoveryNode
+
+    # Install Anthropic monkey patch for LLM calls (required for planning nodes)
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+
+        install_anthropic_model()
+
+    # Create and run discovery node
+    node = WorkflowDiscoveryNode()
+    shared = {
+        "user_input": query,
+        "workflow_manager": WorkflowManager(),
+    }
+
+    try:
+        action = node.run(shared)
+    except Exception as e:
+        _handle_discovery_error(e)
+        sys.exit(1)
+
+    # Display results
+    if action == "found_existing":
+        result = shared.get("discovery_result")
+        workflow = shared.get("found_workflow")
+
+        if workflow and result and isinstance(result, dict) and isinstance(workflow, dict):
+            _format_discovery_result(result, workflow)
+    else:
+        click.echo("No matching workflows found.")
+        click.echo("\nTip: Try a more specific query or use 'pflow workflow list' to see all workflows.")
+
+
+def _validate_workflow_name(name: str) -> None:
+    """Validate workflow name format.
+
+    Enforces CLI rules: lowercase letters, numbers, hyphens only, max 30 chars.
+
+    Args:
+        name: The workflow name to validate
+
+    Raises:
+        SystemExit: If name is invalid
+    """
+    if not re.match(r"^[a-z0-9-]+$", name):
+        click.echo("Error: Name must be lowercase letters, numbers, and hyphens only", err=True)
+        click.echo(f"  Got: '{name}'", err=True)
+        click.echo("  Example: 'my-workflow' or 'pr-analyzer-v2'", err=True)
+        sys.exit(1)
+
+    if len(name) > 30:
+        click.echo(f"Error: Name must be 30 characters or less (got {len(name)})", err=True)
+        sys.exit(1)
+
+
+def _load_and_normalize_workflow(file_path: str) -> dict[str, Any]:
+    """Load workflow from file and normalize IR structure.
+
+    Args:
+        file_path: Path to workflow JSON file
+
+    Returns:
+        Validated and normalized workflow IR
+
+    Raises:
+        SystemExit: If file can't be loaded or validation fails
+    """
+    from pflow.core import normalize_ir, validate_ir
+
+    # Load workflow
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            data: dict[str, Any] = json.load(f)
+    except json.JSONDecodeError as e:
+        click.echo(f"Error: Invalid JSON in {file_path}: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error reading file: {e}", err=True)
+        sys.exit(1)
+
+    # Extract IR if wrapped
+    workflow_ir: dict[str, Any] = data.get("ir", data)
+
+    # Auto-normalize workflow (same as --validate-only)
+    # Add boilerplate fields if missing to reduce friction for agents
+    normalize_ir(workflow_ir)
+
+    # Validate IR structure
+    try:
+        validate_ir(workflow_ir)  # Returns None, raises on error
+        return workflow_ir
+    except Exception as e:
+        click.echo(f"Error: Invalid workflow: {e}", err=True)
+        sys.exit(1)
+
+
+def _generate_metadata_if_requested(validated_ir: dict[str, Any], generate_metadata: bool) -> dict[str, Any] | None:
+    """Generate rich metadata for workflow if requested.
+
+    Args:
+        validated_ir: Validated workflow IR
+        generate_metadata: Whether to generate metadata
+
+    Returns:
+        Generated metadata dict or None
+    """
+    if not generate_metadata:
+        return None
+
+    import os
+
+    from pflow.planning.nodes import MetadataGenerationNode
+
+    # Install Anthropic monkey patch for LLM calls (required for Anthropic-specific features)
+    # Note: Other models (Gemini, OpenAI) work through standard LLM library
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+
+        install_anthropic_model()
+
+    click.echo("Generating rich metadata...")
+    try:
+        node = MetadataGenerationNode()
+        shared: dict[str, Any] = {
+            "generated_workflow": validated_ir,
+            "user_input": "",
+            "cache_planner": False,
+        }
+        node.run(shared)
+        metadata = shared.get("workflow_metadata", {})
+        if metadata and isinstance(metadata, dict):
+            click.echo(f"  Generated {len(metadata.get('keywords', []))} keywords")
+            click.echo(f"  Generated {len(metadata.get('capabilities', []))} capabilities")
+            return metadata  # type: ignore[no-any-return]
+        return None
+    except Exception as e:
+        click.echo(f"Warning: Could not generate metadata: {e}", err=True)
+        return None
+
+
+def _save_with_overwrite_check(
+    wm: WorkflowManager, name: str, validated_ir: dict, description: str, metadata: dict | None, force: bool
+) -> str:
+    """Save workflow to library with overwrite handling.
+
+    Args:
+        wm: WorkflowManager instance
+        name: Workflow name
+        validated_ir: Validated workflow IR
+        description: Workflow description
+        metadata: Optional metadata
+        force: Whether to overwrite existing workflow
+
+    Returns:
+        Path to saved workflow file
+
+    Raises:
+        SystemExit: If workflow exists and force=False, or save fails
+    """
+    if wm.exists(name):
+        if not force:
+            click.echo(f"Error: Workflow '{name}' already exists.", err=True)
+            click.echo("  Use --force to overwrite.", err=True)
+            sys.exit(1)
+        else:
+            # Delete existing workflow before saving new one
+            try:
+                wm.delete(name)
+                click.echo(f"✓ Deleted existing workflow '{name}'")
+            except Exception as e:
+                click.echo(f"Error deleting existing workflow: {e}", err=True)
+                sys.exit(1)
+
+    try:
+        return wm.save(name, validated_ir, description, metadata)
+    except Exception as e:
+        click.echo(f"Error saving workflow: {e}", err=True)
+        sys.exit(1)
+
+
+def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
+    """Delete draft file if requested and safe to do so.
+
+    Only deletes files in .pflow/workflows/ directory for safety.
+
+    Args:
+        file_path: Path to draft file
+        delete_draft: Whether to delete the draft
+    """
+    if not delete_draft:
+        return
+
+    file_path_obj = Path(file_path).resolve()
+    if ".pflow" in file_path_obj.parts and "workflows" in file_path_obj.parts:
+        try:
+            file_path_obj.unlink()
+            click.echo(f"✓ Deleted draft: {file_path}")
+        except Exception as e:
+            click.echo(f"Warning: Could not delete draft: {e}", err=True)
+    else:
+        click.echo(
+            f"Warning: Not deleting {file_path} - only files in .pflow/workflows/ can be auto-deleted",
+            err=True,
+        )
+
+
+@workflow.command(name="save")
+@click.argument("file_path", type=click.Path(exists=True, readable=True))
+@click.argument("name")
+@click.argument("description")
+@click.option("--delete-draft", is_flag=True, help="Delete source file after save")
+@click.option("--force", is_flag=True, help="Overwrite existing workflow")
+@click.option("--generate-metadata", is_flag=True, help="Generate rich discovery metadata")
+def save_workflow(
+    file_path: str, name: str, description: str, delete_draft: bool, force: bool, generate_metadata: bool
+) -> None:
+    """Save a workflow file to the global library.
+
+    Takes a workflow JSON file (typically a draft from .pflow/workflows/)
+    and saves it to the global library at ~/.pflow/workflows/ for reuse
+    across all projects.
+
+    Example:
+        pflow workflow save .pflow/workflows/draft.json my-analyzer "Analyzes PRs"
+    """
+    _validate_workflow_name(name)
+    validated_ir = _load_and_normalize_workflow(file_path)
+    metadata = _generate_metadata_if_requested(validated_ir, generate_metadata)
+
+    wm = WorkflowManager()
+    saved_path = _save_with_overwrite_check(wm, name, validated_ir, description, metadata, force)
+
+    _delete_draft_if_requested(file_path, delete_draft)
+
+    # Success output
+    click.echo(f"✓ Saved workflow '{name}' to library")
+    click.echo(f"  Location: {saved_path}")
+    click.echo(f"  Execute with: pflow {name}")
+
+    if metadata:
+        keywords = metadata.get("keywords", [])
+        if keywords:
+            click.echo(f"  Discoverable by: {', '.join(keywords[:3])}...")

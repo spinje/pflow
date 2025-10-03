@@ -237,16 +237,45 @@ class WorkflowExecutorService:
         # Determine error category
         category = self._determine_error_category(error_info["message"] or "")
 
-        return [
-            {
-                "source": "runtime",
-                "category": category,
-                "message": error_info["message"],
-                "action": action_result,
-                "node_id": error_info["failed_node"],
-                "fixable": True,  # Assume fixable for repair
-            }
-        ]
+        # Build base error dict
+        error = {
+            "source": "runtime",
+            "category": category,
+            "message": error_info["message"],
+            "action": action_result,
+            "node_id": error_info["failed_node"],
+            "fixable": True,  # Assume fixable for repair
+        }
+
+        # Extract rich error data from namespaced node output
+        failed_node = error_info.get("failed_node")
+        if failed_node:
+            node_output = shared_store.get(failed_node, {})
+            if isinstance(node_output, dict):
+                # HTTP node data (from src/pflow/nodes/http/http.py)
+                if "status_code" in node_output:
+                    error["status_code"] = node_output["status_code"]
+                    error["raw_response"] = node_output.get("response")
+                    error["response_headers"] = node_output.get("response_headers")
+                    error["response_time"] = node_output.get("response_time")
+
+                # MCP node data (from src/pflow/nodes/mcp/node.py)
+                if "error_details" in node_output:
+                    error["mcp_error_details"] = node_output["error_details"]
+
+                # MCP result data
+                if (
+                    "result" in node_output
+                    and isinstance(node_output["result"], dict)
+                    and "error" in node_output["result"]
+                ):
+                    error["mcp_error"] = node_output["result"]["error"]
+
+                # For template errors, capture available fields
+                if category == "template_error":
+                    error["available_fields"] = list(node_output.keys())[:100]  # type: ignore[assignment]
+
+        return [error]
 
     def _extract_error_info(
         self, action_result: Optional[str], shared_store: dict[str, Any]

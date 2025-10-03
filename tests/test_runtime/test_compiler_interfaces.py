@@ -133,7 +133,8 @@ class TestCompilerInterfaces:
         assert "file_path" in error.message
         assert "Path to the input file" in error.message
         assert error.path == "inputs.file_path"
-        assert "initial_params" in error.suggestion
+        # Suggestions removed for agent-friendly errors (Task 71)
+        # Agent knows how to pass parameters, no need for suggestion
 
     def test_optional_input_with_default_value(self, registry_with_nodes, mock_node_import, caplog):
         """Test that optional inputs with default values are applied."""
@@ -279,6 +280,10 @@ class TestCompilerInterfaces:
             "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "test.txt"}}],
             "edges": [],
         }
+
+        # Ensure caplog captures WARNING level logs from the compiler module
+        # This is necessary because earlier tests may have modified logger configuration
+        caplog.set_level("WARNING", logger="pflow.runtime.compiler")
 
         # Should compile successfully but log warning
         flow = compile_ir_to_flow(ir, registry_with_nodes)
@@ -544,4 +549,7 @@ class TestCompilerInterfaces:
             compile_ir_to_flow(ir, registry_with_nodes, {})
 
         error = exc_info.value
-        assert "Provide this parameter in initial_params" in error.suggestion
+        # Suggestions removed for agent-friendly errors (Task 71)
+        # Error message is clear enough: "Workflow requires input 'config_path': Path to configuration file"
+        assert "config_path" in error.message
+        assert "Path to configuration file" in error.message

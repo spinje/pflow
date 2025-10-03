@@ -538,6 +538,10 @@ class InstrumentedNodeWrapper:
             if "node_hashes" not in shared["__execution__"]:
                 shared["__execution__"]["node_hashes"] = {}
 
+        # Initialize cache hits tracking for JSON output
+        if "__cache_hits__" not in shared:
+            shared["__cache_hits__"] = []
+
     def _check_cache_validity(self, shared: dict[str, Any]) -> tuple[bool, Optional[Any]]:
         """Check if node is cached and if cache is valid.
 
@@ -591,6 +595,11 @@ class InstrumentedNodeWrapper:
         Returns:
             The cached action result
         """
+        # Record cache hit for JSON output
+        if "__cache_hits__" not in shared:
+            shared["__cache_hits__"] = []
+        shared["__cache_hits__"].append(self.node_id)
+
         # Call progress callback for cached node (same format as normal execution)
         callback = shared.get("__progress_callback__")
         if callable(callback):

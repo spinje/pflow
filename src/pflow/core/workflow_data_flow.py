@@ -59,6 +59,52 @@ def build_execution_order(workflow_ir: dict[str, Any]) -> list[str]:
     return order
 
 
+def _is_bash_syntax(ref: str) -> bool:
+    """Check if a template reference is bash-specific syntax, not a pflow template.
+
+    Bash-specific patterns include:
+    - Array operations: ${#array[@]}, ${array[@]}, ${array[*]}, ${array[$i]}
+    - String manipulation: ${var%%pattern}, ${var##pattern}, ${var/pattern/replacement}
+    - Default values: ${var:-default}, ${var:=default}, ${var:?error}, ${var:+value}
+    - Substring: ${var:offset:length}
+    - Length: ${#var}
+    - Case modification: ${var^^}, ${var,,}, ${var^}, ${var,}
+
+    Args:
+        ref: The content inside ${...} (e.g., "#array[@]" from "${#array[@]}")
+
+    Returns:
+        True if this is bash-specific syntax, False if it could be a pflow template
+    """
+    # Bash array syntax with brackets
+    if "[" in ref or "]" in ref:
+        return True
+
+    # Bash string operations (contains special operators)
+    bash_operators = ["%%", "##", ":-", ":=", ":?", ":+", "/", "^^", ",,"]
+    if any(op in ref for op in bash_operators):
+        return True
+
+    # Bash length operator at start
+    if ref.startswith("#"):
+        return True
+
+    # Bash substring syntax (contains colon but not at start, which would be special operators)
+    if ":" in ref and not ref.startswith(":"):
+        # Check if it's a substring operation like ${var:2:5}
+        # But not parameter expansion like ${var:-default} (already caught above)
+        parts = ref.split(":")
+        if len(parts) >= 2:
+            # If the part after : looks like a number/offset, it's bash substring
+            try:
+                int(parts[1].strip())
+                return True
+            except ValueError:
+                pass
+
+    return False
+
+
 def _validate_template_reference(
     ref: str,
     node_id: str,
@@ -82,6 +128,10 @@ def _validate_template_reference(
     Returns:
         Error message if invalid, None if valid
     """
+    # Skip validation for bash-specific syntax (but still validate pflow templates)
+    if _is_bash_syntax(ref):
+        return None
+
     if "." in ref:  # Node output reference like ${node1.output}
         parts = ref.split(".", 1)
         ref_node_id = parts[0]

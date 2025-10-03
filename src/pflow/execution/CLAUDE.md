@@ -120,16 +120,29 @@ class ExecutionResult:
     repaired_workflow_ir: Optional[dict]  # Repaired workflow if applicable
 ```
 
-**Error Structure for Repair**:
+**Error Structure for Repair** (Enhanced in Task 71):
 ```python
 {
     "source": "runtime",              # Where error originated
     "category": "api_validation",     # Error type for repair strategy
     "message": "Field 'title' required",  # Human-readable description
     "node_id": "create-issue",        # Which node failed
-    "fixable": True                   # Whether repair should attempt
+    "fixable": True,                  # Whether repair should attempt
+
+    # Rich error data (extracted from shared store - Task 71)
+    "status_code": 400,               # HTTP node: status code
+    "raw_response": {...},            # HTTP node: full response body
+    "response_headers": {...},        # HTTP node: response headers
+    "response_time": 1.234,           # HTTP node: request duration
+    "mcp_error_details": {...},       # MCP node: error details
+    "mcp_error": {...},               # MCP node: result.error object
+    "available_fields": [...]         # Template errors: available keys (max 20)
 }
 ```
+
+**Two-Layer Error Enhancement** (Task 71):
+- **Data Layer** (executor_service.py lines 240-277): Extracts rich context from `shared_store[node_id]`
+- **Display Layer** (cli/main.py): Formats errors for text/JSON output with context
 
 ### 4. Unified Execution Function (`workflow_execution.py`)
 
@@ -171,6 +184,9 @@ shared["__execution__"] = {
     },
     "failed_node": "send"                     # Where failure occurred
 }
+
+# Cache hit tracking (Task 71 - added in instrumented_wrapper.py lines 598-601)
+shared["__cache_hits__"] = ["fetch", "analyze"]  # Nodes that used cache
 ```
 
 ### 5. Repair Service (`repair_service.py`)
@@ -313,6 +329,9 @@ RepairService uses as cache_blocks for LLM
     },
     "failed_node": "node3"                     # Node that caused failure
 }
+
+# Cache tracking (Task 71)
+shared["__cache_hits__"] = ["node1"]           # Nodes that hit cache
 ```
 
 ### Repair Control Flags
@@ -323,7 +342,7 @@ shared["__warnings__"] = {"node": "msg"}      # API warning messages
 shared["__modified_nodes__"] = ["node1"]      # Nodes modified by repair
 ```
 
-### Error Structure for Repair
+### Error Structure for Repair (Enhanced in Task 71)
 
 ```python
 {
@@ -333,7 +352,13 @@ shared["__modified_nodes__"] = ["node1"]      # Nodes modified by repair
     "node_id": "process",                      # Failed node
     "fixable": True,                           # Repair eligibility
     "repair_attempted": True,                  # Repair was tried
-    "repair_reason": "Could not fix"           # Why repair failed
+    "repair_reason": "Could not fix",          # Why repair failed
+
+    # Rich context (Task 71 - extracted from shared store)
+    "status_code": 400,                        # HTTP errors
+    "raw_response": {...},                     # Full response body
+    "mcp_error_details": {...},                # MCP error context
+    "available_fields": ["result", "status"]   # Template error hints
 }
 ```
 
@@ -505,3 +530,65 @@ This architecture enables:
 - **Metrics**: Via metrics_collector parameter
 
 This module is the heart of pflow's self-healing workflow system, transforming workflows from brittle scripts into resilient, self-correcting automation.
+
+---
+
+## Task 71 Enhancements (Agent Enablement)
+
+### Rich Error Context Extraction
+
+**Location**: `executor_service.py` lines 240-277
+
+**Purpose**: Extract detailed error context from shared store for better repair and debugging.
+
+**Data Extracted**:
+- **HTTP nodes**: `status_code`, `raw_response`, `response_headers`, `response_time`
+- **MCP nodes**: `mcp_error_details`, `mcp_error` (from result.error)
+- **Template errors**: `available_fields` (first 20 keys from failed node output)
+
+**Integration**: Extracted once in `_format_errors_for_result()`, available in:
+- CLI error display (text mode)
+- JSON output (structured errors)
+- Repair service (better context for LLM)
+- Trace files (complete debugging info)
+
+### Cache Hit Tracking
+
+**Location**: `instrumented_wrapper.py` lines 542-601
+
+**Purpose**: Track which nodes used cached results for execution visibility.
+
+**Implementation**:
+```python
+# Initialize in _initialize_execution_tracking
+shared["__cache_hits__"] = []
+
+# Record in _use_cached_result
+shared["__cache_hits__"].append(self.node_id)
+```
+
+**Usage**:
+- JSON output: `execution.steps[].cached` field
+- CLI display: ↻ indicator for cached nodes
+- Metrics: Cache performance tracking
+- Debugging: Identify cache behavior
+
+### Impact on Agent Workflows
+
+**Before Task 71**:
+- Generic error messages: "Node failed"
+- No visibility into execution state
+- No cache information
+- Limited repair context
+
+**After Task 71**:
+- Rich error context: HTTP codes, response bodies, available fields
+- Complete execution state: which nodes ran, which cached, which failed
+- Repair-friendly errors: LLM gets full context for fixing issues
+- JSON output: Agents can programmatically inspect execution
+
+**AI Agent Benefits**:
+1. **Intelligent Repair**: Access to full error context enables better repair decisions
+2. **Execution Visibility**: Can see exactly what happened (completed/cached/failed)
+3. **Performance Understanding**: Cache metrics show workflow efficiency
+4. **Debugging Support**: Complete state for troubleshooting failed workflows

@@ -2,6 +2,11 @@
 
 These tests focus on behavior validation and use real filesystem operations
 where possible to ensure robust testing of workflow loading capabilities.
+
+IMPORTANT: Tests that check log output using caplog MUST explicitly set the log level
+for the pflow.planning.context_builder logger. This is required because earlier tests
+in the full test suite may modify logger configuration, preventing caplog from capturing
+logs by default. Use: caplog.set_level("WARNING", logger="pflow.planning.context_builder")
 """
 
 import json
@@ -177,6 +182,10 @@ class TestWorkflowLoading:
         valid_file = workflow_dir / "valid.json"
         valid_file.write_text(json.dumps(valid_workflow))
 
+        # Ensure caplog captures WARNING level logs from the context_builder module
+        # This is necessary because earlier tests may have modified logger configuration
+        caplog.set_level("WARNING", logger="pflow.planning.context_builder")
+
         # Load workflows
         workflows = _load_saved_workflows()
 
@@ -208,6 +217,9 @@ class TestWorkflowLoading:
         # Create valid workflow
         valid = {"name": "valid", "description": "Valid", "ir": {}}
         (workflow_dir / "valid.json").write_text(json.dumps(valid))
+
+        # Ensure caplog captures WARNING level logs from the context_builder module
+        caplog.set_level("WARNING", logger="pflow.planning.context_builder")
 
         # Load workflows
         workflows = _load_saved_workflows()
@@ -248,6 +260,9 @@ class TestWorkflowLoading:
         }
         (workflow_dir / "wrong-ir.json").write_text(json.dumps(wrong_ir))
 
+        # Ensure caplog captures WARNING level logs from the context_builder module
+        caplog.set_level("WARNING", logger="pflow.planning.context_builder")
+
         # Load workflows
         workflows = _load_saved_workflows()
 
@@ -276,6 +291,9 @@ class TestWorkflowLoading:
         # Create whitespace-only file
         whitespace_file = workflow_dir / "whitespace.json"
         whitespace_file.write_text("   \n\t  \n")
+
+        # Ensure caplog captures WARNING level logs from the context_builder module
+        caplog.set_level("WARNING", logger="pflow.planning.context_builder")
 
         # Load workflows
         workflows = _load_saved_workflows()
@@ -327,6 +345,9 @@ class TestWorkflowLoading:
         protected_file = workflow_dir / "protected.json"
         protected_file.write_text('{"name": "test"}')
 
+        # Ensure caplog captures WARNING level logs from the context_builder module
+        caplog.set_level("WARNING", logger="pflow.planning.context_builder")
+
         try:
             # Make file unreadable - handle platform differences
             if os.name != "nt":  # Unix-like systems
@@ -364,6 +385,9 @@ class TestWorkflowLoading:
         # Setup temporary home
         fake_home = tmp_path / "fake_home"
         monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        # Ensure caplog captures WARNING level logs from the context_builder module
+        caplog.set_level("WARNING", logger="pflow.planning.context_builder")
 
         # Simulate directory creation failure using mocking
         # This is appropriate here because we're testing error handling, not filesystem behavior
@@ -479,6 +503,9 @@ class TestWorkflowLoadingIntegration:
 
         # Create non-JSON file
         (workflow_dir / "readme.txt").write_text("This is not a workflow")
+
+        # Ensure caplog captures WARNING level logs from the context_builder module
+        caplog.set_level("WARNING", logger="pflow.planning.context_builder")
 
         # Load workflows
         workflows = _load_saved_workflows()

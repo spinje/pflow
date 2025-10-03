@@ -100,6 +100,7 @@ class CompilationError(Exception):
 - **LLM Usage Capture** (lines 100-191): Token tracking and cost attribution
 - **Progress Callbacks** (lines 271-321): Real-time execution feedback
 - **Trace Recording** (lines 373-409): Detailed debugging information
+- **Cache Hit Tracking** (Task 71 - lines 542-601): Records which nodes used cache
 
 **Checkpoint Structure**:
 ```python
@@ -109,6 +110,9 @@ shared["__execution__"] = {
     "node_hashes": {},       # MD5 config hashes
     "failed_node": None      # Where failure occurred
 }
+
+# Cache tracking (Task 71)
+shared["__cache_hits__"] = []  # Nodes that hit cache (for JSON output)
 ```
 
 #### 2.2 NamespacedNodeWrapper (`namespaced_wrapper.py`)
@@ -147,15 +151,40 @@ shared["__execution__"] = {
 2. Shared store (runtime data)
 3. Workflow inputs
 
-#### 3.2 TemplateValidator (`template_validator.py`)
+#### 3.2 TemplateValidator (`template_validator.py`) (Enhanced in Task 71)
 
-**Purpose**: Pre-execution validation of template variables.
+**Purpose**: Pre-execution validation of template variables with rich error suggestions.
 
 **Key Features**:
 - Validates all templates have sources
 - Uses registry metadata for node outputs
 - Detects unused declared inputs
-- Provides helpful error messages
+- **Enhanced error messages** (Task 71 - lines 162-413):
+  - `_flatten_output_structure()`: Recursively flattens nested outputs showing array access patterns
+  - `_find_similar_paths()`: Substring matching for typo suggestions
+  - `_format_enhanced_node_error()`: Multi-section errors with complete structure
+  - Shows all available paths (limit 20) with types
+  - "Did you mean X?" suggestions for typos
+  - Actionable "Common fix: Change X to Y" guidance
+
+**Error Format Example** (Task 71):
+```
+Node 'fetch-messages' (mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY)
+does not have output 'msg'
+
+Available outputs from this node:
+  - result: dict
+  - result.messages: array
+  - result.messages[0]: dict
+  - result.messages[0].text: string
+  - result.messages[0].user: string
+  ...
+
+Did you mean one of these?
+  - result.messages (array) - Contains message data
+
+Common fix: Change ${fetch-messages.msg} to ${fetch-messages.result.messages}
+```
 
 ### 4. WorkflowExecutor (`workflow_executor.py`)
 
@@ -292,7 +321,7 @@ InstrumentedNodeWrapper.set_params()
 
 ## Key Data Structures (VERIFIED)
 
-### Special Reserved Keys
+### Special Reserved Keys (Updated in Task 71)
 
 ```python
 # Execution tracking
@@ -309,6 +338,7 @@ shared["__progress_callback__"] = func    # Progress updates
 shared["__non_repairable_error__"] = bool # Skip repair flag
 shared["__warnings__"] = {}               # Node warnings
 shared["__modified_nodes__"] = []         # Repair tracking
+shared["__cache_hits__"] = []             # Cache hit tracking (Task 71)
 ```
 
 ### Compilation Context

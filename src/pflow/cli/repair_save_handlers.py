@@ -78,7 +78,10 @@ def _save_repaired_saved_workflow(ctx: click.Context, repaired_workflow_ir: dict
         else:
             # Default: Overwrite original using new API method
             workflow_manager.update_ir(workflow_name, repaired_workflow_ir)
-            click.echo(click.style(f"\n✅ Updated saved workflow '{workflow_name}'", fg="green"))
+            # Only show message in text mode (not JSON mode)
+            output_format = ctx.obj.get("output_format", "text")
+            if output_format != "json":
+                click.echo(click.style(f"\n✅ Updated saved workflow '{workflow_name}'", fg="green"))
 
     except Exception as e:
         # Show error to user (visible, not just logged)
@@ -125,7 +128,10 @@ def _save_repaired_file_workflow(ctx: click.Context, repaired_workflow_ir: dict[
             with open(source_file_path, "w") as f:
                 json.dump(repaired_workflow_ir, f, indent=2)
 
-            click.echo(click.style(f"\n✅ Updated {source_file_path}", fg="green"))
+            # Only show message in text mode (not JSON mode)
+            output_format = ctx.obj.get("output_format", "text")
+            if output_format != "json":
+                click.echo(click.style(f"\n✅ Updated {source_file_path}", fg="green"))
 
     except Exception as e:
         # Non-fatal - just warn
