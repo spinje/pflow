@@ -135,25 +135,16 @@ def _handle_discovery_error(exception: Exception) -> None:
     Args:
         exception: The exception that occurred during discovery
     """
-    from pflow.core.exceptions import CriticalPlanningError
+    from pflow.cli.discovery_errors import handle_discovery_error
 
-    if isinstance(exception, CriticalPlanningError):
-        # Check if this is an authentication/API key error
-        reason_lower = exception.reason.lower()
-        if "authentication" in reason_lower or "api key" in reason_lower:
-            click.echo("Error: LLM-powered workflow discovery requires API configuration\n", err=True)
-            click.echo("Configure Anthropic API key:", err=True)
-            click.echo("  export ANTHROPIC_API_KEY=your-key-here", err=True)
-            click.echo("  # Get key from: https://console.anthropic.com/\n", err=True)
-            click.echo("Alternative discovery methods:", err=True)
-            click.echo("  pflow workflow list              # Show all saved workflows", err=True)
-            click.echo("  pflow workflow describe <name>   # Get workflow details", err=True)
-        else:
-            # Other CriticalPlanningError - use existing reason
-            click.echo(f"Error: {exception.reason}", err=True)
-    else:
-        # Fallback for unexpected errors
-        click.echo(f"Error during discovery: {str(exception).splitlines()[0]}", err=True)
+    handle_discovery_error(
+        exception,
+        discovery_type="workflow",
+        alternative_commands=[
+            ("pflow workflow list", "Show all saved workflows"),
+            ("pflow workflow describe <name>", "Get workflow details"),
+        ],
+    )
 
 
 def _display_workflow_metadata(workflow: dict) -> None:
@@ -281,6 +272,7 @@ def _validate_workflow_name(name: str) -> None:
     """Validate workflow name format.
 
     Enforces CLI rules: lowercase letters, numbers, hyphens only, max 30 chars.
+    Must start/end with alphanumeric. No consecutive hyphens. No reserved names.
 
     Args:
         name: The workflow name to validate
@@ -288,9 +280,21 @@ def _validate_workflow_name(name: str) -> None:
     Raises:
         SystemExit: If name is invalid
     """
-    if not re.match(r"^[a-z0-9-]+$", name):
-        click.echo("Error: Name must be lowercase letters, numbers, and hyphens only", err=True)
+    # Reserved names that could conflict with system functionality
+    RESERVED_NAMES = {"null", "undefined", "none", "test", "settings", "registry", "workflow", "mcp"}
+
+    # Check reserved names
+    if name.lower() in RESERVED_NAMES:
+        click.echo(f"Error: '{name}' is a reserved workflow name", err=True)
+        click.echo("  Reserved names: null, undefined, none, test, settings, registry, workflow, mcp", err=True)
+        sys.exit(1)
+
+    # Stronger regex: must start/end with alphanumeric, single hyphens only
+    if not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", name):
+        click.echo("Error: Name must be lowercase letters, numbers, and single hyphens only", err=True)
         click.echo(f"  Got: '{name}'", err=True)
+        click.echo("  Must start and end with alphanumeric (no leading/trailing hyphens)", err=True)
+        click.echo("  No consecutive hyphens (use 'my-workflow' not 'my--workflow')", err=True)
         click.echo("  Example: 'my-workflow' or 'pr-analyzer-v2'", err=True)
         sys.exit(1)
 
@@ -428,6 +432,7 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
     """Delete draft file if requested and safe to do so.
 
     Only deletes files in .pflow/workflows/ directory for safety.
+    Uses is_relative_to() to prevent path traversal attacks.
 
     Args:
         file_path: Path to draft file
@@ -437,7 +442,20 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
         return
 
     file_path_obj = Path(file_path).resolve()
-    if ".pflow" in file_path_obj.parts and "workflows" in file_path_obj.parts:
+
+    # Define safe base directories for auto-deletion
+    home_pflow = Path.home() / ".pflow" / "workflows"
+    cwd_pflow = Path.cwd() / ".pflow" / "workflows"
+
+    # Check if file is within safe directories using is_relative_to()
+    # This prevents path traversal attacks (e.g., ../../etc/passwd)
+    try:
+        is_safe = file_path_obj.is_relative_to(home_pflow) or file_path_obj.is_relative_to(cwd_pflow)
+    except (ValueError, TypeError):
+        # is_relative_to() may raise on invalid paths
+        is_safe = False
+
+    if is_safe:
         try:
             file_path_obj.unlink()
             click.echo(f"✓ Deleted draft: {file_path}")

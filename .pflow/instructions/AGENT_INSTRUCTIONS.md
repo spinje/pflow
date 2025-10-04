@@ -1503,12 +1503,52 @@ ${fetch.result.messages[0].text}
 ### Execution Flags
 
 ```bash
---trace                 # Save execution trace to ~/.pflow/debug/
+--trace                 # Save execution trace to ~/.pflow/debug/ (RECOMMENDED for debugging)
 --no-repair            # Disable auto-repair on errors
 --output-format json   # JSON output
 ```
 
-> Note ALWAYS use ALL these three flags when building workflows for better error handling and debugging.
+> **Critical**: ALWAYS use `--trace` flag when building workflows. It saves complete execution data including ALL available fields from nodes, essential for debugging template errors.
+
+### Understanding Template Errors
+
+When you get a template error like `${fetch.messages}` not found:
+
+**1. Check the error output**:
+```
+Available fields in node (showing 5 of 147):
+  - result
+  - status
+  - metadata
+  - timestamp
+  - request_id
+  ... and 15 more (in error details)
+
+📁 Complete field list available in trace file
+   Run with --trace flag to save to ~/.pflow/debug/
+```
+
+**2. Use the trace file for complete field list**:
+```bash
+# Find the latest trace
+ls -lt ~/.pflow/debug/workflow-trace-*.json | head -1
+
+# View all available fields from the failed node
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.events[] | select(.node_id == "fetch") | .shared_after.fetch | keys'
+```
+
+**3. Update your template** with the correct field path:
+```json
+{
+  "params": {
+    "text": "${fetch.result.messages}"  // Correct path from trace
+  }
+}
+```
+
+> **Why this matters**: Error messages show only the first 20 fields to avoid overwhelming output. The trace file contains ALL fields (no limit), which is critical when nodes return 100+ fields.
+
+> Note: ALWAYS use ALL these three flags when building workflows for better error handling and debugging.
 
 ---
 

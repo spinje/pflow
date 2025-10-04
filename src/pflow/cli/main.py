@@ -1373,11 +1373,17 @@ def _display_single_error(
 
     # Show available fields for template errors
     if category == "template_error" and (available := error.get("available_fields")):
-        click.echo("\n  Available fields in node:", err=True)
+        total = error.get("available_fields_total", len(available))
+        click.echo(f"\n  Available fields in node (showing {min(len(available), 5)} of {total}):", err=True)
         for field in available[:5]:
             click.echo(f"    - {field}", err=True)
         if len(available) > 5:
-            click.echo(f"    ... and {len(available) - 5} more", err=True)
+            click.echo(f"    ... and {len(available) - 5} more (in error details)", err=True)
+
+        # Show trace file hint if fields were truncated
+        if error.get("available_fields_truncated"):
+            click.echo("\n  📁 Complete field list available in trace file", err=True)
+            click.echo("     Run with --trace flag to save to ~/.pflow/debug/", err=True)
 
     # Fixable hint
     if error.get("fixable") and no_repair:

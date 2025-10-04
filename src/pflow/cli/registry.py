@@ -682,25 +682,16 @@ def discover_nodes(query: str) -> None:
         node.run(shared)
     except Exception as e:
         # Show agent-friendly error without internal details
-        from pflow.core.exceptions import CriticalPlanningError
+        from pflow.cli.discovery_errors import handle_discovery_error
 
-        if isinstance(e, CriticalPlanningError):
-            # Check if this is an authentication/API key error
-            reason_lower = e.reason.lower()
-            if "authentication" in reason_lower or "api key" in reason_lower:
-                click.echo("Error: LLM-powered node discovery requires API configuration\n", err=True)
-                click.echo("Configure Anthropic API key:", err=True)
-                click.echo("  export ANTHROPIC_API_KEY=your-key-here", err=True)
-                click.echo("  # Get key from: https://console.anthropic.com/\n", err=True)
-                click.echo("Alternative discovery methods:", err=True)
-                click.echo("  pflow registry list              # Browse all nodes", err=True)
-                click.echo("  pflow registry describe <node>   # Get node specifications", err=True)
-            else:
-                # Other CriticalPlanningError - use existing reason
-                click.echo(f"Error: {e.reason}", err=True)
-        else:
-            # Fallback for unexpected errors
-            click.echo(f"Error during discovery: {str(e).splitlines()[0]}", err=True)
+        handle_discovery_error(
+            e,
+            discovery_type="node",
+            alternative_commands=[
+                ("pflow registry list", "Browse all nodes"),
+                ("pflow registry describe <node>", "Get node specifications"),
+            ],
+        )
         sys.exit(1)
 
     # Display planning context
