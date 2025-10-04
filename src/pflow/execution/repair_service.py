@@ -149,9 +149,24 @@ def _invoke_llm_for_repair(
     else:
         # Non-Anthropic (Gemini, OpenAI): Use text mode, no structured output
         # These providers have limited/unreliable structured output support
+
+        # Adjust parameters for model compatibility
+        # gpt-5 models only support temperature=1.0 and may have streaming restrictions
+        temperature = 0.0
+        stream = None  # Default: let the model decide
+        # Try to get model name from various attributes
+        model_name = getattr(model, "model_name", "") or getattr(model, "model_id", "") or str(model)
+        if "gpt-5" in model_name.lower():
+            logger.debug(f"Adjusting temperature to 1.0 and disabling streaming for {model_name}")
+            temperature = 1.0
+            stream = False  # Disable streaming for gpt-5 models to avoid organization verification issues
+
         llm_kwargs = {
-            "temperature": 0.0,
+            "temperature": temperature,
         }
+        if stream is not None:
+            llm_kwargs["stream"] = stream
+
         # Generate repair in text mode
         response = model.prompt(prompt, **llm_kwargs)
 
