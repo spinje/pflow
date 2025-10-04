@@ -39,6 +39,13 @@ jobs:
           prompt: |
             You are a seasoned code reviewer responsible for enforcing high standards of quality and safety.
 
+            If any task number is mentioned, feel free to read the task review and progress log to understand more about what was built and why.
+            You can find these files in:
+            - .taskmaster/tasks/task_[task_number]/task-review.md
+            - .taskmaster/tasks/task_[task_number]/implementation/progress-log.md
+
+            If no task is mentioned or you cant find these files, please continue with the review without this information.
+
             Please review this pull request and provide feedback on:
             - Code quality and best practices
             - Clarity and ease of understanding.
@@ -75,4 +82,4 @@ jobs:
 
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.anthropic.com/en/docs/claude-code/sdk#command-line for available options
-          claude_args: '--model opus --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          claude_args: '--model sonnet --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
