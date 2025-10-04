@@ -271,9 +271,20 @@ class WorkflowExecutorService:
                 ):
                     error["mcp_error"] = node_output["result"]["error"]
 
-                # For template errors, capture available fields
+                # For template errors, capture available fields (limit to 20 for readability)
                 if category == "template_error":
-                    error["available_fields"] = list(node_output.keys())[:100]  # type: ignore[assignment]
+                    all_fields = list(node_output.keys())
+                    error["available_fields"] = all_fields[:20]  # type: ignore[assignment]
+
+                    # Add metadata about total fields and trace file location
+                    total_fields = len(all_fields)
+                    if total_fields > 20:
+                        error["available_fields_total"] = total_fields
+                        error["available_fields_truncated"] = True
+                        error["trace_file_hint"] = (
+                            f"Showing 20 of {total_fields} fields. "
+                            "Use --trace flag to save complete field list to ~/.pflow/debug/workflow-trace-*.json"
+                        )
 
         return [error]
 

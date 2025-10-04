@@ -55,7 +55,8 @@ def _has_llm_key(provider: str) -> bool:
     """
     # Security: Validate provider name to prevent command injection
     if provider not in ALLOWED_PROVIDERS:
-        logger.debug(f"Unknown provider: {provider}")
+        # Don't log untrusted provider name - could contain control characters
+        logger.debug("Provider validation failed")
         return False
 
     llm_path = _get_validated_llm_path()
@@ -72,7 +73,7 @@ def _has_llm_key(provider: str) -> bool:
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,  # Explicitly close stdin to prevent hang
-            timeout=2,
+            timeout=1,  # Reduced from 2s for security
             check=False,
         )
         # Key exists if command succeeds and returns non-empty output

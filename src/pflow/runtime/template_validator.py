@@ -159,6 +159,31 @@ class TemplateValidator:
         return errors
 
     @staticmethod
+    def _sanitize_for_display(value: str, max_length: int = 100) -> str:
+        """Sanitize string for safe display in error messages.
+
+        Removes control characters and limits length to prevent:
+        - Terminal escape sequences
+        - Log injection
+        - Information disclosure
+
+        Args:
+            value: String to sanitize (node_id, template variable, etc.)
+            max_length: Maximum length before truncation
+
+        Returns:
+            Sanitized string safe for error messages
+        """
+        # Remove non-printable characters except spaces/newlines
+        sanitized = "".join(c for c in value if c.isprintable() or c.isspace())
+
+        # Truncate if too long
+        if len(sanitized) > max_length:
+            sanitized = sanitized[:max_length] + "..."
+
+        return sanitized
+
+    @staticmethod
     def _flatten_output_structure(  # noqa: C901
         base_key: str,
         base_type: str,
@@ -169,6 +194,15 @@ class TemplateValidator:
         _max_depth: int = 5,
     ) -> list[tuple[str, str]]:
         """Recursively flatten output structure to list of (path, type) tuples.
+
+        Note: This function has inherent complexity (noqa: C901) due to recursive
+        tree traversal of arbitrary nested structures. Refactoring would require
+        breaking the recursion pattern, which could reduce readability without
+        meaningful benefit. The complexity is managed through:
+        - Clear function boundaries (prep/traverse/handle)
+        - Depth limiting to prevent infinite recursion
+        - Comprehensive docstrings
+        - Type hints for all parameters
 
         Args:
             base_key: The base output key (e.g., "result")
@@ -304,19 +338,29 @@ class TemplateValidator:
         Returns:
             Multi-line error message with sections for problem, available outputs, and suggestions
         """
+        # Sanitize all user-controlled values to prevent template injection
+        safe_node_id = TemplateValidator._sanitize_for_display(node_id)
+        safe_node_type = TemplateValidator._sanitize_for_display(node_type)
+        safe_attempted_key = TemplateValidator._sanitize_for_display(attempted_key)
+        safe_base_var = TemplateValidator._sanitize_for_display(base_var)
+
         # Section 1: Problem statement
-        lines = [f"Node '{node_id}' (type: {node_type}) does not output '{attempted_key}'"]
+        lines = [f"Node '{safe_node_id}' (type: {safe_node_type}) does not output '{safe_attempted_key}'"]
 
         # Section 2: Available outputs (limit to 20 to avoid overwhelming)
         if available_paths:
             lines.append("")
-            lines.append(f"Available outputs from '{node_id}':")
+            lines.append(f"Available outputs from '{safe_node_id}':")
 
             display_paths = available_paths[:20]  # Limit display
             for path, type_str in display_paths:
+                # Sanitize path components for safety
+                safe_path = TemplateValidator._sanitize_for_display(path)
+                safe_type = TemplateValidator._sanitize_for_display(type_str)
+
                 # Format with checkmark and type
-                full_path = f"{base_var}.{path}" if base_var not in path else path
-                lines.append(f"  ✓ ${{{full_path}}} ({type_str})")
+                full_path = f"{safe_base_var}.{safe_path}" if safe_base_var not in safe_path else safe_path
+                lines.append(f"  ✓ ${{{full_path}}} ({safe_type})")
 
             # Show truncation message if needed
             if len(available_paths) > 20:
@@ -329,12 +373,18 @@ class TemplateValidator:
             lines.append("")
             if len(suggestions) == 1:
                 sugg_path, _ = suggestions[0]
-                full_sugg = f"{base_var}.{sugg_path}" if base_var not in sugg_path else sugg_path
+                safe_sugg_path = TemplateValidator._sanitize_for_display(sugg_path)
+                full_sugg = (
+                    f"{safe_base_var}.{safe_sugg_path}" if safe_base_var not in safe_sugg_path else safe_sugg_path
+                )
                 lines.append(f"Did you mean: ${{{full_sugg}}}?")
             else:
                 lines.append("Did you mean one of these?")
                 for sugg_path, _ in suggestions:
-                    full_sugg = f"{base_var}.{sugg_path}" if base_var not in sugg_path else sugg_path
+                    safe_sugg_path = TemplateValidator._sanitize_for_display(sugg_path)
+                    full_sugg = (
+                        f"{safe_base_var}.{safe_sugg_path}" if safe_base_var not in safe_sugg_path else safe_sugg_path
+                    )
                     lines.append(f"  - ${{{full_sugg}}}")
 
         # Section 4: Common fix (use first suggestion if available, otherwise first available path)
