@@ -79,6 +79,20 @@ def stdin_has_data() -> bool:
     if sys.stdin.isatty():
         return False
 
+    # Check if stdin is closed or /dev/null (common when subprocess.DEVNULL is used)
+    # This prevents hanging on Linux when stdin is redirected to /dev/null
+    try:
+        if sys.stdin.closed:
+            return False
+
+        # Additional check: if stdin is /dev/null, it won't have real data
+        # This is a common pattern when subprocess.DEVNULL is used
+        if hasattr(sys.stdin, "name") and sys.stdin.name == os.devnull:
+            return False
+    except (AttributeError, OSError):
+        # stdin might not have these attributes in some environments
+        pass
+
     # Use select with 0 timeout to check if stdin is ready without blocking
     # This avoids the hang when stdin is non-TTY but has no data
     try:
