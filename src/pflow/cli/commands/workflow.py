@@ -578,7 +578,7 @@ def save_workflow(
 
     # Enhanced execution hint with parameter information
     execution_hint = _format_execution_hint(name, validated_ir)
-    click.echo(f"  Execute with: {execution_hint}")
+    click.echo(f"  ✨ Execute with: {execution_hint}")
 
     # Add note about optional parameters if there are any
     inputs = validated_ir.get("inputs", {})

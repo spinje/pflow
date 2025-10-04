@@ -1855,10 +1855,10 @@ pflow workflow save .pflow/workflows/draft.json slack-qa-bot "Answers Slack ques
 ```
 
 > **Important**: The save command shows parameter placeholders, but YOU should tell the user how to run with their ACTUAL values:
-> Example: If user provided "channel C09C16NAU5B", show: `pflow workflow-name channel-id=C09C16NAU5B limit=10`
+> Example: If user provided "channel C09C16NAU5B", show: `✨ pflow workflow-name channel-id=C09C16NAU5B limit=10` (without line breaks)
 > This lets them immediately test the workflow with their specific configuration.
 >
-> Note: Always write commands on a SINGLE line (no line breaks or wrapping) to ensure easy copy-paste. Even with long parameter lists, keep the entire command on one line.
+> **CRITICAL**: Always write commands on a SINGLE line (no line breaks or wrapping) to ensure easy copy-paste. Even with very long parameter lists, keep the ENTIRE command on ONE line. Users need to copy-paste commands directly without editing.
 
 ### Library Locations
 
