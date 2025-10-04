@@ -18,9 +18,6 @@ jobs:
     #   github.event.pull_request.user.login == 'new-developer' ||
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
-    # Skip review if commit message contains [skip review]
-    if: "!contains(github.event.head_commit.message, '[skip review]')"
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -34,7 +31,22 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Check if should skip
+        id: check_skip
+        run: |
+          # Get the latest commit message
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "Commit message: $COMMIT_MSG"
+
+          if [[ "$COMMIT_MSG" == *"[skip review]"* ]]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Skipping review due to [skip review] in commit message"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Run Claude Code Review
+        if: steps.check_skip.outputs.skip != 'true'
         id: claude-review
         uses: anthropics/claude-code-action@v1
         with:
