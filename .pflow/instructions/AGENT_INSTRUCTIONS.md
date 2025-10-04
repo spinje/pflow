@@ -1,8 +1,21 @@
 # pflow Agent Instructions
 
-**The complete guide for AI agents building workflows autonomously**
+## ⚡ Quick Start Decision Tree
 
-This guide teaches you how to think about workflows, discover pflow capabilities, build workflows iteratively, and create production-ready automations. You'll learn not just the commands, but the mental models that make you an effective workflow builder.
+```
+User provides a value?
+├── It's specific (ID, path, number)? → Make it an INPUT
+├── User says "always/only/hardcode"? → Hardcode it
+├── It's a format/pattern? → Hardcode it
+└── When unsure? → Make it an INPUT (safer)
+```
+
+## 🎯 Your Mission
+
+**Build reusable tools, not one-time scripts.**
+
+Every workflow should work tomorrow, for someone else, with different data.
+The user shows you ONE example. You build the GENERAL solution.
 
 ---
 
@@ -30,9 +43,33 @@ This guide teaches you how to think about workflows, discover pflow capabilities
 
 ---
 
+## Workflow Philosophy
+
+Three principles guide every decision:
+
+1. **Maximize Reusability**: Every hardcoded value limits who can use this workflow
+2. **Explicit Over Implicit**: Clear inputs/outputs beat hidden assumptions
+3. **Intent Over Literal**: Users say "do X with Y" but mean "build a tool that does X-like things"
+
+**The Reusability Test**: Before building, ask "Could someone else use this tomorrow for a similar task?"
+
+---
+
+## Working with Constraints
+
+**pflow has limitations. Be creative:**
+
+- **No loops** → Use LLM to batch-process (e.g., transform all Q&A pairs into rows at once)
+- **No branching** → Use LLM to handle all cases in one output
+- **Linear only** → Later nodes can reference any earlier outputs
+
+**Your job**: Find creative ways to deliver what the user wants. If truly impossible, explain why and suggest alternatives.
+
+---
+
 ## How to Think About Workflows
 
-A workflow is a **data transformation pipeline**. Before writing any JSON, understand your task as a series of transformations.
+A workflow is a **reusable data transformation tool**. Users show you one example, but you build for all cases.
 
 ### The Mental Model
 
@@ -47,25 +84,25 @@ Every workflow answers three questions:
 
 ### Breaking Down a Task
 
-**Example**: "Analyze Slack messages, answer questions, log to Sheets"
+**Your Thinking Process** (applies to ANY request):
 
-**Step 1 - Identify inputs and outputs**:
-- Input: Slack channel ID
-- Output: Answered questions in Slack + logged in Sheets
+User says: "Do X with specific-value-Y and send to specific-value-Z"
 
-**Step 2 - Map the transformations**:
-1. Fetch messages from Slack → Messages data
-2. Analyze with AI → Q&A pairs
-3. Send answers to Slack → Confirmation
-4. Log to Sheets → Sheet rows
+**Step 1 - Extract the pattern**:
+- What's the general action? (fetch, analyze, send)
+- What are the variable parts? (sources, destinations, parameters)
 
-**Step 3 - Identify node categories**:
-- Data retrieval: Slack fetch (MCP)
-- Transformation: LLM for analysis
-- Data storage: Slack send (MCP) + Sheets update (MCP)
-- Utilities: Shell for timestamps
+**Step 2 - Identify what becomes inputs**:
+- specific-value-Y → `source` input (they'll want different sources)
+- specific-value-Z → `destination` input (they'll want different destinations)
+- Any counts/limits → inputs with defaults
 
-**Now you're ready to discover specific nodes!**
+**Step 3 - Map transformations**:
+1. Get data from [SOURCE] → Data
+2. Transform/analyze → Processed data
+3. Send to [DESTINATION] → Confirmation
+
+This pattern works whether it's Slack→Sheets, GitHub→Email, or Files→Database.
 
 ### Choosing Node Categories
 
@@ -99,16 +136,16 @@ Parse the user's request into structured requirements.
 - [ ] What external services are involved?
 - [ ] Does this match a common pattern? (see [Common Patterns](#common-workflow-patterns))
 
-**Example**:
+**Example Thinking**:
 ```
-User: "Get Slack messages, answer questions with AI, send back, log to Sheets"
+User: "Get messages from source X, process with AI, send to destination Y"
 
-Requirements:
-- Input: Slack channel ID
-- Transformations: fetch → analyze → respond → log
-- External services: Slack (read+write), Sheets (write)
-- Pattern: Multi-service coordination
-- Additional: Need timestamps (shell commands)
+Your Analysis:
+- User inputs needed: source_id, destination_id
+- Core transformations: fetch → process → send
+- Services involved: [Identify from user's request]
+- Pattern: Multi-service pipeline
+- Additional: Consider if timestamps, limits, formats should be configurable
 ```
 
 **Output**: Clear mental model of what needs to happen
@@ -178,9 +215,32 @@ Templates needed:
 
 Create the workflow JSON **step-by-step**.
 
+#### 🔴 The Input Decision Framework
+
+**Core Rule: If the user specified it, it should be an input.**
+
+The user is demonstrating ONE example. Build the GENERAL tool.
+
+**Decision Process:**
+```
+Is it a specific value (ID, path, number, name)?
+  → YES: Make it an INPUT
+
+Did user say "always", "only", or "hardcode"?
+  → YES: Safe to hardcode
+
+Is it a system constraint (date format, encoding)?
+  → YES: Hardcode it
+
+Everything else?
+  → Make it an INPUT (safer for reusability)
+```
+
+**Why**: Someone else will want to use this workflow with different values tomorrow.
+
 #### Step 4.1: Declare Workflow Inputs (2 min)
 
-**Only for user-provided values.**
+**For all user-provided values (following the rule above).**
 
 ```json
 {
@@ -377,6 +437,15 @@ See [Saving Workflows](#saving-workflows) section below for complete details.
 
 **Output**: Reusable workflow available globally as `pflow workflow-name`
 
+**Always tell the user how to run their saved workflow**:
+```bash
+# If no inputs (all hardcoded):
+pflow workflow-name
+
+# If has inputs (show with user's values):
+pflow workflow-name channel=C123 sheet_id=abc123
+```
+
 ---
 
 ## Time Estimates
@@ -532,6 +601,52 @@ Learn to recognize these patterns in user requests:
 ```
 
 **Use when**: Need to gather context before processing
+
+---
+
+## Pattern Library
+
+Quick examples showing the input extraction principle across different domains:
+
+### File Operations
+```
+User: "Convert data.csv to JSON"
+Your inputs: {
+  "input_file": {"type": "string", "required": true, "description": "Source file path"},
+  "output_format": {"type": "string", "required": false, "default": "json", "description": "Output format"}
+}
+Why: Tomorrow they'll convert "other.csv" or want XML output
+```
+
+### API Integrations
+```
+User: "Get issues from repo owner/name"
+Your inputs: {
+  "repo": {"type": "string", "required": true, "description": "Repository in owner/name format"}
+}
+Why: Reusable for any repository
+```
+
+### Threshold Monitoring
+```
+User: "Alert when value exceeds 100"
+Your inputs: {
+  "threshold": {"type": "number", "required": false, "default": 100, "description": "Alert threshold"}
+}
+Why: Different scenarios need different thresholds
+```
+
+### Data Processing
+```
+User: "Process last 30 items with batch size 5"
+Your inputs: {
+  "item_count": {"type": "number", "required": false, "default": 30},
+  "batch_size": {"type": "number", "required": false, "default": 5}
+}
+Why: Optimal values vary by use case
+```
+
+**Key Pattern**: Every specific value becomes a configurable input unless explicitly told otherwise.
 
 ---
 
@@ -1295,6 +1410,20 @@ Before declaring an input, verify:
 
 **That's it. Only `source` and `description`. No other fields allowed.**
 
+#### ⚠️ Critical: Nodes with `Any` Outputs
+
+**Nodes returning `result: Any` (MCP, HTTP) contain massive nested objects.**
+
+```
+Is this an automation (send/update/post)?
+  → Skip outputs entirely - success is implied
+
+Need the processed data?
+  → Output specific field: ${analyze.response}
+
+Never output ${node.result} directly - too verbose
+```
+
 #### Validation Checklist
 
 Before declaring an output, verify:
@@ -1310,10 +1439,9 @@ Before declaring an output, verify:
 
 | Workflow Type | Output Strategy | Example |
 |---------------|-----------------|---------|
-| **File Creation** | Confirmation paths | `${write.file_path}` |
-| **Analysis** | Full result | `${llm.response}` |
-| **API Calls** | Status/confirmations | `${http.status_code}` |
-| **Multi-step** | Final result only | Last node's meaningful output |
+| **Automation** | No outputs | Send/update/post - success is implied |
+| **Analysis** | Processed data only | `${llm.response}` not `${fetch.result}` |
+| **File Creation** | Path only | `${write.file_path}` |
 
 **General Rules:**
 1. **First output is most important** - users see this first
@@ -1579,12 +1707,17 @@ pflow workflow save .pflow/workflows/draft.json slack-qa-bot "Answers Slack ques
 - `--force` - Overwrite if exists
 - `--generate-metadata` - AI-generate rich metadata (requires LLM)
 
-**Success**:
+**Success** (now shows required parameters):
 ```
-✓ Saved workflow 'slack-qa-bot' to library
-  Location: ~/.pflow/workflows/slack-qa-bot.json
-  Execute with: pflow slack-qa-bot
+✓ Saved workflow 'workflow-name' to library
+  Location: ~/.pflow/workflows/workflow-name.json
+  Execute with: pflow workflow-name param1=<value> param2=<value>
+  Optional params: param2
 ```
+
+> **Important**: The save command shows parameter placeholders, but YOU should tell the user how to run with their ACTUAL values:
+> Example: If user provided "channel C09C16NAU5B", show: `pflow workflow-name channel-id=C09C16NAU5B limit=10`
+> This lets them immediately test the workflow with their specific configuration.
 
 ### Library Locations
 
@@ -1755,6 +1888,27 @@ Before building a workflow:
 
 ---
 
+## Workflow Smells
+
+**🚩 Red flags that indicate poor workflow design:**
+
+1. **No inputs section** → Not reusable
+2. **Hardcoded IDs/paths** → Will break for other users
+3. **Repeated literal values** → Should reference one input
+4. **Over-specific input names** → `slack_channel_C123` instead of `channel`
+5. **Missing defaults for optional params** → Poor user experience
+6. **Too many required inputs** → Consider smart defaults
+7. **Coupling service to workflow** → Input named `github_repo` instead of generic `repo`
+8. **Exposing .result outputs** → `${mcp-node.result}` is too verbose
+
+**Quick Fix Guide:**
+- See hardcoded value? → Make it an input
+- See repeated value? → Reference single input
+- See specific name? → Generalize it
+- See many required fields? → Add defaults where sensible
+
+---
+
 ## Common Mistakes
 
 Learn from others' experiences!
@@ -1868,19 +2022,30 @@ Learn from others' experiences!
 
 ---
 
-## Complete Example: Building a Complex Workflow
+## Complete Example: Building Any Multi-Service Workflow
 
-Let's build the Slack QA + Sheets logging workflow from scratch.
+Let's demonstrate the thinking process that applies to ANY workflow.
 
 ### Step 1: UNDERSTAND
 
-**User request**: "Get last 10 Slack messages, answer questions with AI, send back, log to Sheets with timestamps"
+**User request**: "Get last 10 messages from [SOURCE], process them, send results to [DESTINATION]"
 
-**Analysis**:
-- Input: Slack channel ID, Sheets ID
-- Transformations: fetch → analyze → respond → log
-- Services: Slack (read+write), Sheets (write), Shell (date/time)
-- Pattern: Multi-service coordination
+**Your Thinking Process**:
+```
+What are the specific values they provided?
+- "10" → message_limit input (they might want 20 tomorrow)
+- [SOURCE ID] → source_id input (different sources later)
+- [DESTINATION ID] → destination_id input (different destinations)
+
+What stays constant?
+- The pattern: fetch → process → send
+- The transformation logic
+
+What might they configure later?
+- Processing parameters
+- Output format
+- Filtering criteria
+```
 
 ### Step 2: DISCOVER
 
@@ -1893,87 +2058,68 @@ pflow registry discover "fetch Slack messages, analyze with AI, send Slack messa
 ### Step 3: DESIGN
 
 ```
-get-date (shell) → stdout
-     ↓
-get-time (shell) → stdout
-     ↓
-fetch-messages (mcp-slack-FETCH) → result
-     ↓
-analyze (llm) → response (Q&A pairs as JSON)
-     ↓
-format-for-sheets (llm) → response (2D array: [[date, time, q, a], ...])
-     ↓
-send-response (mcp-slack-SEND) → result
-     ↓
-log (mcp-sheets-UPDATE) → result (inserts multiple rows)
+fetch-data → process-data → format-output → send-result → log-confirmation
+
+Key decisions:
+- Each specific value becomes an input
+- Each transformation is a separate node
+- Data flows through template variables
 ```
 
-**Key pattern**: Since pflow doesn't support loops, we use LLM to transform Q&A pairs into a 2D array where each Q&A becomes a row. Google Sheets BATCH_UPDATE can insert multiple rows in one call. Try to use clever workaround like this to solve the users problem. Always strive to do exactly what the user asks for and if its not possible, say so!
+**Design Principle**: Build the pipeline that could work with ANY similar source/destination pair.
 
 ### Step 4: BUILD
 
 ```json
 {
+  "inputs": {
+    "source_id": {
+      "type": "string",
+      "required": true,
+      "description": "Source identifier"
+    },
+    "destination_id": {
+      "type": "string",
+      "required": true,
+      "description": "Destination identifier"
+    },
+    "limit": {
+      "type": "number",
+      "required": false,
+      "default": 10,
+      "description": "Number of items to process"
+    }
+  },
   "nodes": [
     {
-      "id": "get-date",
-      "type": "shell",
-      "params": {"command": "date +%Y-%m-%d"}
-    },
-    {
-      "id": "get-time",
-      "type": "shell",
-      "params": {"command": "date +%H:%M:%S"}
-    },
-    {
-      "id": "fetch-messages",
-      "type": "mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY",
+      "id": "fetch-data",
+      "type": "service-fetch-node",
       "params": {
-        "channel": "C09C16NAU5B",
-        "limit": 10
+        "source": "${source_id}",
+        "limit": "${limit}"
       }
     },
     {
-      "id": "analyze",
+      "id": "process",
       "type": "llm",
       "params": {
-        "prompt": "Analyze these Slack messages and identify questions. Answer each question.\n\nMessages: ${fetch-messages.result}\n\nReturn JSON: {\"qa_pairs\": [{\"question\": \"...\", \"answer\": \"...\"}]}"
+        "prompt": "Process this data: ${fetch-data.result}"
       }
     },
     {
-      "id": "format-for-sheets",
-      "type": "llm",
+      "id": "send-result",
+      "type": "service-send-node",
       "params": {
-        "prompt": "Convert this Q&A data into a 2D array for Google Sheets. Each Q&A pair should be a separate row with: [date, time, question, answer].\n\nDate: ${get-date.stdout}\nTime: ${get-time.stdout}\nQ&A pairs: ${analyze.response}\n\nReturn ONLY a JSON array like: [[\"2025-01-01\", \"12:00:00\", \"question 1\", \"answer 1\"], [\"2025-01-01\", \"12:00:00\", \"question 2\", \"answer 2\"]]"
-      }
-    },
-    {
-      "id": "send-response",
-      "type": "mcp-slack-composio-SLACK_SEND_MESSAGE",
-      "params": {
-        "channel": "C09C16NAU5B",
-        "markdown_text": "**Q&A Summary**\\n\\n${analyze.response}"
-      }
-    },
-    {
-      "id": "log",
-      "type": "mcp-googlesheets-composio-GOOGLESHEETS_BATCH_UPDATE",
-      "params": {
-        "spreadsheet_id": "1rWrTSw0XT1D-e5XsrerWgupqEs-1Mtj-fT6e_kKYjek",
-        "sheet_name": "Sheet1",
-        "valueInputOption": "USER_ENTERED",
-        "values": "${format-for-sheets.response}"
+        "destination": "${destination_id}",
+        "content": "${process.response}"
       }
     }
   ],
   "edges": [
-    {"from": "get-date", "to": "get-time"},
-    {"from": "get-time", "to": "fetch-messages"},
-    {"from": "fetch-messages", "to": "analyze"},
-    {"from": "analyze", "to": "format-for-sheets"},
-    {"from": "format-for-sheets", "to": "send-response"},
-    {"from": "send-response", "to": "log"}
+    {"from": "fetch-data", "to": "process"},
+    {"from": "process", "to": "send-result"}
   ]
+  // No outputs - this is an automation workflow
 }
 ```
 
@@ -2008,10 +2154,14 @@ Result: ✓ Saved to global library!
 ### Step 8: REUSE
 
 ```bash
-pflow slack-qa-bot param-1=value param-2=value
+# Show users exactly how to run with their original values:
+pflow workflow-name source_id=ORIGINAL_VALUE destination_id=ORIGINAL_VALUE limit=10
+
+# They can now easily change any parameter:
+pflow workflow-name source_id=DIFFERENT_SOURCE destination_id=NEW_DEST limit=20
 ```
 
-Done! Workflow runs anytime.
+**Key**: Always show the command with the user's original values so they can test immediately.
 
 > Make sure the users new request matches the workflow description and parameters.
 > - If it doesn't, ask the user if they want to update the workflow or create a new one.
@@ -2021,6 +2171,21 @@ Done! Workflow runs anytime.
 ---
 
 ## Quick Reference
+
+### Decision Table: What Becomes an Input?
+
+| User Says | You Create | Why |
+|-----------|------------|-----|
+| "file.txt" | `input: file_path` | They'll use different files |
+| "channel ABC123" | `input: channel` | Different channels later |
+| "last 10 items" | `input: limit` (default: 10) | Might want 20 tomorrow |
+| "repo owner/name" | `input: repo` | Other repos later |
+| "threshold 100" | `input: threshold` (default: 100) | Different thresholds |
+| "always use prod" | Hardcode: "prod" | Explicitly said "always" |
+| Date format | Hardcode format string | System constraint |
+| API endpoint | `input: endpoint` | Different endpoints |
+
+**Rule**: When in doubt → make it an input.
 
 ### Command Cheat Sheet
 
@@ -2099,8 +2264,19 @@ pflow --output-format json workflow-name               # JSON output
 
 ---
 
-**You're now ready to build workflows autonomously with pflow!**
+## The Golden Rule
 
-Start with Level 1, work through the patterns, and soon you'll be building complex multi-service workflows with confidence. Remember: understand → discover → design → build → validate → test → refine → save.
+**Users show you ONE example. You build the GENERAL tool.**
 
-Happy workflow building! 🚀
+Every specific value they provide is demonstrating what COULD be configured, not what MUST be hardcoded. Build workflows that work tomorrow, for someone else, with different data.
+
+**When reviewing your workflow, ask:**
+- Could someone reuse this with different values?
+- Did I hardcode anything that might change?
+- Would I be frustrated trying to adapt this?
+
+If any answer is "no" or "yes" → add more inputs.
+
+---
+
+**You're now ready to build reusable workflows with pflow!** 🚀

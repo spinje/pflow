@@ -196,6 +196,71 @@ def _display_workflow_inputs_outputs(ir: dict) -> None:
             click.echo(f"  - {key}: {output_type} - {desc}")
 
 
+def _format_execution_hint(name: str, workflow_ir: dict) -> str:
+    """Format execution hint with parameter examples.
+
+    Args:
+        name: Workflow name
+        workflow_ir: Workflow IR with inputs declaration
+
+    Returns:
+        Formatted execution command with parameter hints
+
+    Examples:
+        >>> _format_execution_hint("my-workflow", {"inputs": {}})
+        'pflow my-workflow'
+
+        >>> _format_execution_hint("my-workflow", {
+        ...     "inputs": {
+        ...         "topic": {"required": True, "type": "string"},
+        ...         "style": {"required": False, "type": "string"}
+        ...     }
+        ... })
+        'pflow my-workflow topic=<value> [style=<value>]'
+    """
+    base_command = f"pflow {name}"
+
+    # Get inputs from IR
+    inputs = workflow_ir.get("inputs", {})
+    if not inputs:
+        return base_command
+
+    # Separate required and optional parameters
+    required_params = []
+    optional_params = []
+
+    for param_name, param_spec in inputs.items():
+        is_required = param_spec.get("required", True)
+        param_type = param_spec.get("type", "string")
+
+        # Create hint based on type - use consistent <type> format
+        if param_type == "boolean":
+            type_hint = "<true/false>"
+        elif param_type == "number":
+            type_hint = "<number>"
+        elif param_type == "array":
+            type_hint = "<array>"
+        elif param_type == "object":
+            type_hint = "<object>"
+        else:
+            type_hint = "<value>"
+
+        hint = f"{param_name}={type_hint}"
+
+        if is_required:
+            required_params.append(hint)
+        else:
+            # Add (optional) suffix instead of brackets
+            optional_params.append(f"{hint}")
+
+    # Construct full command
+    all_params = required_params + optional_params
+    if all_params:
+        return f"{base_command} {' '.join(all_params)}"
+    else:
+        return base_command
+
+
 def _format_discovery_result(result: dict, workflow: dict) -> None:
     """Format and display workflow discovery results.
 
@@ -510,7 +575,16 @@ def save_workflow(
     # Success output
     click.echo(f"✓ Saved workflow '{name}' to library")
     click.echo(f"  Location: {saved_path}")
-    click.echo(f"  Execute with: pflow {name}")
+
+    # Enhanced execution hint with parameter information
+    execution_hint = _format_execution_hint(name, validated_ir)
+    click.echo(f"  Execute with: {execution_hint}")
+
+    # Add note about optional parameters if there are any
+    inputs = validated_ir.get("inputs", {})
+    optional_params = [name for name, spec in inputs.items() if not spec.get("required", True)]
+    if optional_params:
+        click.echo(f"  Optional params: {', '.join(optional_params)}")
 
     if metadata:
         keywords = metadata.get("keywords", [])
