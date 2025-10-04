@@ -35,6 +35,121 @@ from pocketflow import Node
 logger = logging.getLogger(__name__)
 
 
+def _is_anthropic_model(model_name: str) -> bool:
+    """Check if model is Anthropic (accepts cache_blocks=None)."""
+    return model_name.startswith("anthropic/") or model_name.startswith("claude-") or "claude" in model_name.lower()
+
+
+def _adjust_temperature_for_model(model_name: str, temperature: float) -> float:
+    """Adjust temperature for models with specific requirements.
+
+    Some models (like gpt-5 family) only support temperature=1.0 (default).
+
+    Args:
+        model_name: Model identifier
+        temperature: Requested temperature
+
+    Returns:
+        Adjusted temperature value compatible with the model
+    """
+    # gpt-5 models only support temperature=1.0
+    if "gpt-5" in model_name.lower():
+        if temperature != 1.0:
+            logger.debug(f"Adjusting temperature from {temperature} to 1.0 for {model_name}")
+        return 1.0
+
+    return temperature
+
+
+def _strip_cache_control(cache_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove cache_control markers from cache blocks.
+
+    Used when caching is disabled but we still need the context.
+
+    Args:
+        cache_blocks: List of cache blocks with cache_control markers
+
+    Returns:
+        List of blocks with cache_control markers removed
+    """
+    if not cache_blocks:
+        return cache_blocks
+
+    return [{"text": block["text"]} for block in cache_blocks if "text" in block]
+
+
+def _flatten_cache_blocks(cache_blocks: list[dict[str, Any]], prompt: str) -> str:
+    """Flatten cache blocks into a single prompt for non-Anthropic models.
+
+    Args:
+        cache_blocks: List of cache blocks with 'text' fields
+        prompt: The main prompt/instructions
+
+    Returns:
+        Combined prompt with all cache block content + instructions
+    """
+    if not cache_blocks:
+        return prompt
+
+    # Extract text from each cache block
+    block_texts = [block.get("text", "") for block in cache_blocks if "text" in block]
+
+    # Combine: cache blocks first (context), then instructions
+    combined = "\n\n".join(block_texts)
+    if prompt:
+        combined = combined + "\n\n" + prompt
+
+    return combined
+
+
+def _build_llm_kwargs(
+    model_name: str,
+    cache_planner: bool,
+    cache_blocks: Optional[list[dict[str, Any]]],
+    prompt: str,
+    **kwargs: Any,
+) -> tuple[str, dict[str, Any]]:
+    """Build kwargs and prompt for model.prompt() with proper cache_blocks handling.
+
+    Anthropic models accept cache_blocks=None (handled by our monkey-patch),
+    but OpenAI/Gemini reject it (Pydantic extra='forbid'). For non-Anthropic models,
+    we flatten cache_blocks into the prompt itself.
+
+    Args:
+        model_name: Model identifier (to detect Anthropic vs others)
+        cache_planner: Whether caching is enabled
+        cache_blocks: Cache blocks to use
+        prompt: The main prompt/instructions
+        **kwargs: Other parameters (schema, temperature, etc.)
+
+    Returns:
+        Tuple of (modified_prompt, kwargs_dict)
+    """
+    llm_kwargs = dict(kwargs)
+    final_prompt = prompt
+
+    # Adjust temperature for model compatibility
+    if "temperature" in llm_kwargs:
+        llm_kwargs["temperature"] = _adjust_temperature_for_model(model_name, llm_kwargs["temperature"])
+
+    if _is_anthropic_model(model_name):
+        # Anthropic: always pass cache_blocks (contains the context!)
+        # Strip cache_control markers if caching is disabled
+        if cache_planner:
+            llm_kwargs["cache_blocks"] = cache_blocks
+        else:
+            llm_kwargs["cache_blocks"] = _strip_cache_control(cache_blocks) if cache_blocks else None
+    else:
+        # Non-Anthropic models (OpenAI, Gemini, etc.)
+        # Flatten cache_blocks into the prompt since they don't support multi-block caching
+        if cache_blocks:
+            final_prompt = _flatten_cache_blocks(cache_blocks, prompt)
+        # Disable streaming for non-Anthropic to avoid response parsing issues
+        llm_kwargs["stream"] = False
+
+    return final_prompt, llm_kwargs
+
+
 # Pydantic models for structured LLM output
 class WorkflowDecision(BaseModel):
     """Decision structure for workflow discovery."""
@@ -236,13 +351,17 @@ class WorkflowDiscoveryNode(Node):
             prep_res["discovery_context"], prep_res["user_input"], cache_planner
         )
 
-        # Make LLM call - conditionally pass cache blocks based on flag
-        response = model.prompt(
+        # Build kwargs with proper cache_blocks handling for different model types
+        final_prompt, kwargs = _build_llm_kwargs(
+            prep_res["model_name"],
+            cache_planner,
+            cache_blocks,
             formatted_prompt,
             schema=WorkflowDecision,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None,
         )
+
+        response = model.prompt(final_prompt, **kwargs)
 
         result = parse_structured_response(response, WorkflowDecision)
 
@@ -532,13 +651,17 @@ class ComponentBrowsingNode(Node):
             cache_planner,
         )
 
-        # Make LLM call - conditionally pass cache blocks based on flag
-        response = model.prompt(
+        # Build kwargs with proper cache_blocks handling for different model types
+        final_prompt, kwargs = _build_llm_kwargs(
+            prep_res["model_name"],
+            cache_planner,
+            cache_blocks,
             formatted_prompt,
             schema=ComponentSelection,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None,
         )
+
+        response = model.prompt(final_prompt, **kwargs)
 
         result = parse_structured_response(response, ComponentSelection)
 
@@ -776,13 +899,17 @@ class ParameterDiscoveryNode(Node):
             enable_caching=cache_planner,
         )
 
-        # Make LLM call - conditionally pass cache blocks based on flag
-        response = model.prompt(
+        # Build kwargs with proper cache_blocks handling for different model types
+        final_prompt, kwargs = _build_llm_kwargs(
+            prep_res["model_name"],
+            cache_planner,
+            cache_blocks,
             formatted_prompt,
             schema=ParameterDiscovery,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None,
         )
+
+        response = model.prompt(final_prompt, **kwargs)
 
         result = parse_structured_response(response, ParameterDiscovery)
 
@@ -976,14 +1103,17 @@ class RequirementsAnalysisNode(Node):
             enable_caching=cache_planner,
         )
 
-        # Make LLM call - conditionally pass cache blocks based on flag
-        # When cache_planner is False, passing None means no caching happens
-        response = model.prompt(
+        # Build kwargs with proper cache_blocks handling for different model types
+        final_prompt, kwargs = _build_llm_kwargs(
+            prep_res["model_name"],
+            cache_planner,
+            cache_blocks,
             formatted_prompt,
             schema=RequirementsSchema,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None,
         )
+
+        response = model.prompt(final_prompt, **kwargs)
         result = parse_structured_response(response, RequirementsSchema)
 
         logger.info(
@@ -1292,6 +1422,9 @@ class PlanningNode(Node):
         # When thinking is enabled, temperature MUST be 1.0 (Anthropic API requirement)
         temperature = 1.0 if thinking_budget > 0 else base_temperature
 
+        # Get cache_planner flag from shared store
+        cache_planner = shared.get("cache_planner", False)
+
         return {
             "requirements_result": requirements_result,
             "browsed_components": browsed_components,
@@ -1301,6 +1434,7 @@ class PlanningNode(Node):
             "model_name": model_name,
             "temperature": temperature,
             "thinking_budget": thinking_budget,
+            "cache_planner": cache_planner,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -1341,6 +1475,7 @@ class PlanningNode(Node):
 
         # CRITICAL: Use exact same thinking budget as WorkflowGeneratorNode for cache sharing
         thinking_budget = prep_res.get("thinking_budget", 0)
+        cache_planner = prep_res.get("cache_planner", False)
 
         # Log thinking usage if enabled
         if thinking_budget > 0:
@@ -1349,12 +1484,25 @@ class PlanningNode(Node):
                 extra={"phase": "exec", "thinking_budget": thinking_budget},
             )
 
-        response = model.prompt(
-            planning_instructions,  # Instructions only in user message
-            cache_blocks=base_blocks,  # Cache blocks in system parameter
-            temperature=prep_res["temperature"],
-            thinking_budget=thinking_budget,  # Same budget as WorkflowGeneratorNode
-        )
+        # Build prompt and kwargs for different model types
+        temperature = _adjust_temperature_for_model(prep_res["model_name"], prep_res["temperature"])
+
+        kwargs: dict[str, Any]
+        if _is_anthropic_model(prep_res["model_name"]):
+            # Anthropic models - use cache_blocks directly
+            # Always pass blocks (even when caching disabled) - they contain the context!
+            # Strip cache_control markers if caching is disabled
+            final_prompt = planning_instructions
+            blocks_to_use = base_blocks if cache_planner else _strip_cache_control(base_blocks)
+            kwargs = {"temperature": temperature, "cache_blocks": blocks_to_use}
+            if thinking_budget > 0:
+                kwargs["thinking_budget"] = thinking_budget
+        else:
+            # Non-Anthropic models - flatten cache_blocks into prompt
+            final_prompt = _flatten_cache_blocks(base_blocks, planning_instructions)
+            kwargs = {"temperature": temperature, "stream": False}
+
+        response = model.prompt(final_prompt, **kwargs)
 
         # Extract text from response
         plan_markdown = response.text() if hasattr(response, "text") else str(response)
@@ -1678,13 +1826,17 @@ class ParameterMappingNode(Node):
             enable_caching=cache_planner,
         )
 
-        # Make LLM call - conditionally pass cache blocks based on flag
-        response = model.prompt(
+        # Build kwargs with proper cache_blocks handling for different model types
+        final_prompt, kwargs = _build_llm_kwargs(
+            prep_res["model_name"],
+            cache_planner,
+            cache_blocks,
             formatted_prompt,
             schema=ParameterExtraction,
             temperature=prep_res["temperature"],
-            cache_blocks=cache_blocks if cache_planner else None,
         )
+
+        response = model.prompt(final_prompt, **kwargs)
 
         return parse_structured_response(response, ParameterExtraction)
 
@@ -1975,6 +2127,9 @@ class WorkflowGeneratorNode(Node):
         base_temperature = self.params.get("temperature", 0.0)
         temperature = 1.0 if thinking_budget > 0 else base_temperature
 
+        # Get cache_planner flag from shared store
+        cache_planner = shared.get("cache_planner", False)
+
         return {
             "model_name": self.params.get("model", "anthropic/claude-sonnet-4-0"),
             "temperature": temperature,
@@ -1992,6 +2147,7 @@ class WorkflowGeneratorNode(Node):
             "planner_extended_blocks": shared.get("planner_extended_blocks"),  # Cache blocks from PlanningNode
             "planner_accumulated_blocks": shared.get("planner_accumulated_blocks"),  # Cache blocks for retries
             "thinking_budget": thinking_budget,  # MUST be same as PlanningNode for cache sharing
+            "cache_planner": cache_planner,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
@@ -2081,6 +2237,7 @@ class WorkflowGeneratorNode(Node):
 
         # CRITICAL: Use exact same thinking budget as PlanningNode for cache sharing
         thinking_budget = prep_res.get("thinking_budget", 0)
+        cache_planner = prep_res.get("cache_planner", False)
 
         # Log thinking usage if enabled
         if thinking_budget > 0:
@@ -2089,22 +2246,29 @@ class WorkflowGeneratorNode(Node):
                 extra={"phase": "exec", "thinking_budget": thinking_budget},
             )
 
-        response = model.prompt(
-            generation_instructions,  # Instructions only in user message
-            schema=FlowIR,
-            cache_blocks=blocks,  # Cache blocks in system parameter
-            temperature=prep_res["temperature"],
-            thinking_budget=thinking_budget,  # Same budget as PlanningNode for cache sharing
-        )
+        # Build prompt and kwargs for different model types
+        temperature = _adjust_temperature_for_model(prep_res["model_name"], prep_res["temperature"])
+
+        kwargs: dict[str, Any]
+        if _is_anthropic_model(prep_res["model_name"]):
+            # Anthropic models - use cache_blocks directly
+            # Always pass blocks (even when caching disabled) - they contain the context!
+            # Strip cache_control markers if caching is disabled
+            final_prompt = generation_instructions
+            blocks_to_use = blocks if cache_planner else _strip_cache_control(blocks)
+            kwargs = {"schema": FlowIR, "temperature": temperature, "cache_blocks": blocks_to_use}
+            if thinking_budget > 0:
+                kwargs["thinking_budget"] = thinking_budget
+        else:
+            # Non-Anthropic models - flatten cache_blocks into prompt
+            final_prompt = _flatten_cache_blocks(blocks, generation_instructions)
+            kwargs = {"schema": FlowIR, "temperature": temperature, "stream": False}
+
+        response = model.prompt(final_prompt, **kwargs)
 
         # Parse nested Anthropic response
-        result = parse_structured_response(response, FlowIR)
-
-        # Convert to dict if it's a Pydantic model
-        if hasattr(result, "model_dump"):
-            workflow = result.model_dump(by_alias=True, exclude_none=True)
-        else:
-            workflow = dict(result)
+        # parse_structured_response handles validation and alias conversion
+        workflow = parse_structured_response(response, FlowIR)
 
         # Post-process to add system fields that don't need LLM generation
         workflow = self._post_process_workflow(workflow)
@@ -2209,7 +2373,8 @@ class WorkflowGeneratorNode(Node):
             self._find_templates_in_value(params, template_pattern, used_vars)
 
         # Check workflow outputs too
-        for _output_name, output_spec in workflow.get("outputs", {}).items():
+        outputs = workflow.get("outputs") or {}
+        for _output_name, output_spec in outputs.items():
             if isinstance(output_spec, dict):
                 # Could have templates in the spec
                 self._find_templates_in_value(output_spec, template_pattern, used_vars)
@@ -2491,16 +2656,10 @@ class MetadataGenerationNode(Node):
         Returns:
             Dict with rich metadata fields for discovery
         """
-        import json
-
-        from pflow.planning.ir_models import WorkflowMetadata
-        from pflow.planning.utils.llm_helpers import parse_structured_response
-        from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
-
         workflow = prep_res.get("workflow", {})
         extracted_params = prep_res.get("extracted_params", {})
 
-        # DEBUG: Log entry and workflow details
+        # Log entry and workflow details
         logger.info(
             "MetadataGenerationNode: Starting exec with workflow containing %d nodes",
             len(workflow.get("nodes", [])),
@@ -2513,151 +2672,20 @@ class MetadataGenerationNode(Node):
             },
         )
 
-        # Check if caching is enabled
-        cache_planner = prep_res.get("cache_planner", False)
+        # 1. Get LLM model
+        model = self._get_llm_model(prep_res["model_name"])
 
-        # Get LLM to analyze and generate metadata
-        try:
-            model = llm.get_model(prep_res["model_name"])
-            logger.debug("MetadataGenerationNode: Successfully retrieved model %s", prep_res["model_name"])
-        except Exception as e:
-            logger.exception(
-                "MetadataGenerationNode: Failed to get model %s",
-                prep_res["model_name"],
-                extra={"phase": "model_init", "error": str(e)},
-            )
-            raise
+        # 2. Build workflow description
+        node_flow, workflow_stages = self._build_workflow_description(workflow)
 
-        # Build all variables for the prompt template
-        try:
-            node_flow = _build_node_flow(workflow)
-            if not node_flow:
-                node_flow = "empty workflow"
-            logger.debug("MetadataGenerationNode: Built node flow: %s", node_flow[:100])
-        except Exception as e:
-            logger.exception(
-                "MetadataGenerationNode: Failed to build node flow",
-                extra={"phase": "node_flow", "error": str(e)},
-            )
-            node_flow = "empty workflow"
+        # 3. Prepare prompt variables and build cache blocks
+        cache_blocks, formatted_prompt = self._prepare_prompt_variables(prep_res, workflow, node_flow, workflow_stages)
 
-        try:
-            workflow_stages = self._build_workflow_stages(workflow)
-            if not workflow_stages:
-                workflow_stages = "No stages defined"
-            logger.debug("MetadataGenerationNode: Built workflow stages")
-        except Exception as e:
-            logger.exception(
-                "MetadataGenerationNode: Failed to build workflow stages",
-                extra={"phase": "workflow_stages", "error": str(e)},
-            )
-            workflow_stages = "No stages defined"
+        # 4. Call LLM for metadata
+        response = self._call_llm_for_metadata(model, formatted_prompt, cache_blocks, prep_res)
 
-        # Format workflow inputs
-        workflow_inputs = json.dumps(workflow.get("inputs", {}), indent=2)
-
-        # Use templatized input if available
-        user_input = prep_res.get("templatized_input", prep_res.get("user_input", ""))
-
-        # Prepare all variables for the prompt template
-        all_vars = {
-            "user_input": user_input,
-            "node_flow": node_flow,
-            "workflow_stages": workflow_stages,
-            "workflow_inputs": workflow_inputs,
-            "parameter_bindings": json.dumps(extracted_params or {}, indent=2),
-        }
-
-        # Build cache blocks based on cache_planner flag
-        try:
-            cache_blocks, formatted_prompt = build_cached_prompt(
-                "metadata_generation",
-                all_variables=all_vars,
-                cacheable_variables=None,  # No cacheable context for this node
-                enable_caching=cache_planner,
-            )
-            logger.debug(
-                "MetadataGenerationNode: Built prompt structure, %d blocks, prompt length %d",
-                len(cache_blocks) if cache_blocks else 0,
-                len(formatted_prompt),
-            )
-        except Exception as e:
-            logger.exception(
-                "MetadataGenerationNode: Failed to build prompt",
-                extra={"phase": "build_prompt", "error": str(e)},
-            )
-            raise
-
-        # Make LLM call - conditionally pass cache blocks based on flag
-        logger.info("MetadataGenerationNode: Making LLM call")
-        try:
-            # Build kwargs dict conditionally (cache_blocks=None is rejected by Pydantic)
-            llm_kwargs: dict[str, Any] = {
-                "schema": WorkflowMetadata,
-                "temperature": prep_res["temperature"],
-            }
-
-            # Only add cache_blocks if caching is enabled
-            if cache_planner and cache_blocks:
-                llm_kwargs["cache_blocks"] = cache_blocks
-
-            # Make LLM call
-            response = model.prompt(formatted_prompt, **llm_kwargs)
-            logger.debug("MetadataGenerationNode: LLM call successful")
-        except Exception as e:
-            logger.exception(
-                "MetadataGenerationNode: LLM call failed",
-                extra={"phase": "llm_call", "error": str(e), "error_type": type(e).__name__},
-            )
-            raise
-
-        # Parse the structured response
-        try:
-            metadata = parse_structured_response(response, WorkflowMetadata)
-            logger.debug("MetadataGenerationNode: Successfully parsed structured response")
-        except Exception as e:
-            logger.exception(
-                "MetadataGenerationNode: Failed to parse structured response",
-                extra={"phase": "parse_response", "error": str(e)},
-            )
-            raise
-
-        # Convert to plain dict for uniform downstream handling
-        metadata_dict = metadata.model_dump() if hasattr(metadata, "model_dump") else dict(metadata)
-
-        logger.debug(
-            "Generated rich metadata: name=%s, keywords=%s",
-            metadata_dict.get("suggested_name"),
-            len(metadata_dict.get("search_keywords", [])),
-        )
-
-        # Return comprehensive metadata (keep keys as produced by schema/tests)
-        result = {
-            "suggested_name": metadata_dict.get("suggested_name"),
-            "description": metadata_dict.get("description"),
-            "search_keywords": metadata_dict.get("search_keywords", []),
-            "capabilities": metadata_dict.get("capabilities", []),
-            "typical_use_cases": metadata_dict.get("typical_use_cases", []),
-            "declared_inputs": list(workflow.get("inputs", {}).keys()),
-            "declared_outputs": self._extract_outputs(workflow),
-        }
-
-        # Log successful completion
-        logger.info(
-            "MetadataGenerationNode: Successfully generated metadata - name='%s', keywords=%d, capabilities=%d",
-            result.get("suggested_name"),
-            len(result.get("search_keywords", [])),
-            len(result.get("capabilities", [])),
-            extra={
-                "phase": "exec_complete",
-                "success": True,
-                "metadata_name": result.get("suggested_name"),
-                "keyword_count": len(result.get("search_keywords", [])),
-                "capability_count": len(result.get("capabilities", [])),
-            },
-        )
-
-        return result
+        # 5. Parse response and prepare result
+        return self._prepare_metadata_result(response, workflow)
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store metadata and continue flow.
@@ -2722,6 +2750,249 @@ class MetadataGenerationNode(Node):
         # The error is embedded in the response for later processing.
 
         return safe_response
+
+    def _get_llm_model(self, model_name: str) -> Any:
+        """Retrieve the LLM model instance.
+
+        Args:
+            model_name: Name of the model to retrieve
+
+        Returns:
+            LLM model instance
+
+        Raises:
+            Exception: If model retrieval fails
+        """
+        try:
+            model = llm.get_model(model_name)
+            logger.debug("MetadataGenerationNode: Successfully retrieved model %s", model_name)
+            return model
+        except Exception as e:
+            logger.exception(
+                "MetadataGenerationNode: Failed to get model %s",
+                model_name,
+                extra={"phase": "model_init", "error": str(e)},
+            )
+            raise
+
+    def _build_workflow_description(self, workflow: dict[str, Any]) -> tuple[str, str]:
+        """Build node flow and workflow stages descriptions.
+
+        Args:
+            workflow: Workflow dictionary
+
+        Returns:
+            Tuple of (node_flow, workflow_stages)
+        """
+        # Build node flow
+        try:
+            node_flow = _build_node_flow(workflow)
+            if not node_flow:
+                node_flow = "empty workflow"
+            logger.debug("MetadataGenerationNode: Built node flow: %s", node_flow[:100])
+        except Exception as e:
+            logger.exception(
+                "MetadataGenerationNode: Failed to build node flow",
+                extra={"phase": "node_flow", "error": str(e)},
+            )
+            node_flow = "empty workflow"
+
+        # Build workflow stages
+        try:
+            workflow_stages = self._build_workflow_stages(workflow)
+            if not workflow_stages:
+                workflow_stages = "No stages defined"
+            logger.debug("MetadataGenerationNode: Built workflow stages")
+        except Exception as e:
+            logger.exception(
+                "MetadataGenerationNode: Failed to build workflow stages",
+                extra={"phase": "workflow_stages", "error": str(e)},
+            )
+            workflow_stages = "No stages defined"
+
+        return node_flow, workflow_stages
+
+    def _prepare_prompt_variables(
+        self, prep_res: dict[str, Any], workflow: dict[str, Any], node_flow: str, workflow_stages: str
+    ) -> tuple[list[dict] | None, str]:
+        """Prepare variables for the prompt template and build cache blocks.
+
+        Args:
+            prep_res: Prepared data from prep()
+            workflow: Workflow dictionary
+            node_flow: Node flow description
+            workflow_stages: Workflow stages description
+
+        Returns:
+            Tuple of (cache_blocks, formatted_prompt)
+
+        Raises:
+            Exception: If prompt building fails
+        """
+        import json
+
+        from pflow.planning.utils.prompt_cache_helper import build_cached_prompt
+
+        # Format workflow inputs
+        workflow_inputs = json.dumps(workflow.get("inputs", {}), indent=2)
+
+        # Use templatized input if available
+        user_input = prep_res.get("templatized_input", prep_res.get("user_input", ""))
+
+        # Prepare all variables for the prompt template
+        all_vars = {
+            "user_input": user_input,
+            "node_flow": node_flow,
+            "workflow_stages": workflow_stages,
+            "workflow_inputs": workflow_inputs,
+            "parameter_bindings": json.dumps(prep_res.get("extracted_params", {}) or {}, indent=2),
+        }
+
+        # Build cache blocks based on cache_planner flag
+        try:
+            cache_blocks, formatted_prompt = build_cached_prompt(
+                "metadata_generation",
+                all_variables=all_vars,
+                cacheable_variables=None,  # No cacheable context for this node
+                enable_caching=prep_res.get("cache_planner", False),
+            )
+            logger.debug(
+                "MetadataGenerationNode: Built prompt structure, %d blocks, prompt length %d",
+                len(cache_blocks) if cache_blocks else 0,
+                len(formatted_prompt),
+            )
+            return cache_blocks, formatted_prompt
+        except Exception as e:
+            logger.exception(
+                "MetadataGenerationNode: Failed to build prompt",
+                extra={"phase": "build_prompt", "error": str(e)},
+            )
+            raise
+
+    def _call_llm_for_metadata(
+        self,
+        model: Any,
+        formatted_prompt: str,
+        cache_blocks: list[dict] | None,
+        prep_res: dict[str, Any],
+    ) -> Any:
+        """Call LLM with model-specific configuration.
+
+        Args:
+            model: LLM model instance
+            formatted_prompt: Formatted prompt string
+            cache_blocks: Optional cache blocks for Anthropic models
+            prep_res: Prepared data with model config
+
+        Returns:
+            LLM response
+
+        Raises:
+            Exception: If LLM call fails
+        """
+        from pflow.planning.ir_models import WorkflowMetadata
+
+        logger.info("MetadataGenerationNode: Making LLM call")
+        try:
+            # Adjust temperature for model compatibility
+            temperature = _adjust_temperature_for_model(prep_res["model_name"], prep_res["temperature"])
+
+            # Build kwargs and prompt for different model types
+            if _is_anthropic_model(prep_res["model_name"]):
+                # Anthropic models
+                final_prompt = formatted_prompt
+                llm_kwargs: dict[str, Any] = {
+                    "schema": WorkflowMetadata,
+                    "temperature": temperature,
+                }
+                # Only add cache_blocks if caching is enabled
+                if prep_res.get("cache_planner", False) and cache_blocks:
+                    llm_kwargs["cache_blocks"] = cache_blocks
+            else:
+                # Non-Anthropic models - flatten cache_blocks into prompt
+                final_prompt = (
+                    _flatten_cache_blocks(cache_blocks, formatted_prompt) if cache_blocks else formatted_prompt
+                )
+                llm_kwargs = {
+                    "schema": WorkflowMetadata,
+                    "temperature": temperature,
+                    "stream": False,
+                }
+
+            # Make LLM call
+            response = model.prompt(final_prompt, **llm_kwargs)
+            logger.debug("MetadataGenerationNode: LLM call successful")
+            return response
+        except Exception as e:
+            logger.exception(
+                "MetadataGenerationNode: LLM call failed",
+                extra={"phase": "llm_call", "error": str(e), "error_type": type(e).__name__},
+            )
+            raise
+
+    def _prepare_metadata_result(self, response: Any, workflow: dict[str, Any]) -> dict[str, Any]:
+        """Parse LLM response and prepare final metadata result.
+
+        Args:
+            response: LLM response
+            workflow: Workflow dictionary
+
+        Returns:
+            Dictionary with metadata fields
+
+        Raises:
+            Exception: If parsing fails
+        """
+        from pflow.planning.ir_models import WorkflowMetadata
+        from pflow.planning.utils.llm_helpers import parse_structured_response
+
+        # Parse the structured response
+        try:
+            metadata = parse_structured_response(response, WorkflowMetadata)
+            logger.debug("MetadataGenerationNode: Successfully parsed structured response")
+        except Exception as e:
+            logger.exception(
+                "MetadataGenerationNode: Failed to parse structured response",
+                extra={"phase": "parse_response", "error": str(e)},
+            )
+            raise
+
+        # Convert to plain dict for uniform downstream handling
+        metadata_dict = metadata.model_dump() if hasattr(metadata, "model_dump") else dict(metadata)
+
+        logger.debug(
+            "Generated rich metadata: name=%s, keywords=%s",
+            metadata_dict.get("suggested_name"),
+            len(metadata_dict.get("search_keywords", [])),
+        )
+
+        # Return comprehensive metadata (keep keys as produced by schema/tests)
+        result = {
+            "suggested_name": metadata_dict.get("suggested_name"),
+            "description": metadata_dict.get("description"),
+            "search_keywords": metadata_dict.get("search_keywords", []),
+            "capabilities": metadata_dict.get("capabilities", []),
+            "typical_use_cases": metadata_dict.get("typical_use_cases", []),
+            "declared_inputs": list(workflow.get("inputs", {}).keys()),
+            "declared_outputs": self._extract_outputs(workflow),
+        }
+
+        # Log successful completion
+        logger.info(
+            "MetadataGenerationNode: Successfully generated metadata - name='%s', keywords=%d, capabilities=%d",
+            result.get("suggested_name"),
+            len(result.get("search_keywords", [])),
+            len(result.get("capabilities", [])),
+            extra={
+                "phase": "exec_complete",
+                "success": True,
+                "metadata_name": result.get("suggested_name"),
+                "keyword_count": len(result.get("search_keywords", [])),
+                "capability_count": len(result.get("capabilities", [])),
+            },
+        )
+
+        return result
 
     def _summarize_nodes(self, nodes: list) -> str:
         """Summarize the types of nodes used in the workflow.

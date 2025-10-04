@@ -45,39 +45,32 @@ def mock_registry():
 
 @pytest.fixture
 def mock_llm_response_nested():
-    """Mock LLM response with CRITICAL nested structure for Anthropic."""
+    """Mock LLM response for WorkflowDiscoveryNode and ComponentBrowsingNode."""
 
     def create_response(found=False, workflow_name=None, confidence=0.8, node_ids=None, workflow_names=None):
-        """Create mock response with correct nested structure."""
+        """Create mock response with valid JSON string."""
+        import json
+
         response = Mock()
 
         if node_ids is not None or workflow_names is not None:
             # ComponentSelection response
-            response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "node_ids": node_ids or [],
-                            "workflow_names": workflow_names or [],
-                            "reasoning": "Test reasoning for component selection",
-                        }
-                    }
-                ]
+            response_data = {
+                "node_ids": node_ids or [],
+                "workflow_names": workflow_names or [],
+                "reasoning": "Test reasoning for component selection",
             }
         else:
             # WorkflowDecision response
-            response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": found,
-                            "workflow_name": workflow_name,
-                            "confidence": confidence,
-                            "reasoning": "Test reasoning for decision",
-                        }
-                    }
-                ]
+            response_data = {
+                "found": found,
+                "workflow_name": workflow_name,
+                "confidence": confidence,
+                "reasoning": "Test reasoning for decision",
             }
+
+        # CRITICAL: text() must return JSON string, not Mock object
+        response.text.return_value = json.dumps(response_data)
         return response
 
     return create_response
@@ -167,7 +160,8 @@ class TestSharedStoreContracts:
             result = node.exec(prep_res)
 
             assert result["found"] is False
-            assert result["workflow_name"] is None
+            # workflow_name is None, so it's excluded by Pydantic's exclude_none=True
+            assert result.get("workflow_name") is None
             assert result["confidence"] == 0.2
 
     def test_exec_sends_correct_prompt_to_llm(self, mock_llm_response_nested):

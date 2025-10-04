@@ -117,12 +117,14 @@ def mock_registry():
 
 @pytest.fixture
 def mock_llm_response():
-    """Factory for creating mock LLM responses with proper nested structure."""
+    """Factory for creating mock LLM responses with proper text() method."""
+    import json
 
     def create_response(**kwargs):
-        """Create mock response with Anthropic's nested structure."""
+        """Create mock response with text() returning JSON string."""
         response = Mock()
-        response.json.return_value = {"content": [{"input": kwargs}]}
+        # response.text() should return a JSON string matching the schema
+        response.text.return_value = json.dumps(kwargs)
         return response
 
     return create_response
@@ -316,18 +318,15 @@ class TestPathADiscoveryToParameter:
 
             # Configure mock to return incomplete parameters - use 'extracted' not 'parameters'
             model = Mock()
-            model.prompt.return_value.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {},
-                            "missing": ["input_file"],
-                            "confidence": 0.0,
-                            "reasoning": "Could not extract file path from user input",
-                        }
-                    }
-                ]
+            import json
+
+            response_data = {
+                "extracted": {},
+                "missing": ["input_file"],
+                "confidence": 0.0,
+                "reasoning": "Could not extract file path from user input",
             }
+            model.prompt.return_value.text.return_value = json.dumps(response_data)
             mock_get_model.return_value = model
 
             shared = {"user_input": "Convert to JSON", "found_workflow": mock_workflow_manager.load("csv-to-json")}
@@ -464,13 +463,16 @@ class TestPathBDiscoveryToParameter:
 
             # Step 5: ParameterMappingNode extracts final parameters
             # Create a proper mock for parameter mapping
+            import json
+
             mapping_model = Mock()
-            mapping_model.prompt.return_value = mock_llm_response(
-                extracted={"input_file": "data.txt", "output_file": "result.json"},
-                missing=[],
-                confidence=0.95,
-                reasoning="All parameters extracted successfully",
-            )
+            mapping_response_data = {
+                "extracted": {"input_file": "data.txt", "output_file": "result.json"},
+                "missing": [],
+                "confidence": 0.95,
+                "reasoning": "All parameters extracted successfully",
+            }
+            mapping_model.prompt.return_value.text.return_value = json.dumps(mapping_response_data)
 
             with patch("pflow.planning.nodes.llm.get_model", return_value=mapping_model):
                 mapping_node = ParameterMappingNode(wait=0)
@@ -613,6 +615,7 @@ class TestConvergencePoint:
 
     def test_both_paths_converge_at_parameter_mapping(self, mock_workflow_manager, mock_llm_response):
         """Test that both Path A and Path B converge at the same parameter mapping logic."""
+
         with (
             patch("pflow.planning.nodes.WorkflowManager") as mock_wm_class,
             patch("pflow.planning.nodes.llm.get_model") as mock_get_model,

@@ -84,20 +84,8 @@ class TestCachingIntegration:
                     mock_model = Mock()
                     mock_response = Mock()
 
-                    # Mock the nested response structure (Anthropic format)
-                    mock_response.json.return_value = {
-                        "content": [
-                            {
-                                "input": {
-                                    "found": False,
-                                    "workflow_name": None,
-                                    "confidence": 0.0,
-                                    "reasoning": "No matching workflow found",
-                                }
-                            }
-                        ]
-                    }
-                    mock_response.text.return_value = "PATH_A"
+                    # Mock the response to return JSON string matching WorkflowDecision schema
+                    mock_response.text.return_value = '{"found": false, "workflow_name": null, "confidence": 0.0, "reasoning": "No matching workflow found"}'
 
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
@@ -193,20 +181,8 @@ class TestCachingIntegration:
                 with patch("llm.get_model") as mock_get_model:
                     mock_model = Mock()
                     mock_response = Mock()
-                    # Mock the response structure properly for discovery node
-                    mock_response.json.return_value = {
-                        "content": [
-                            {
-                                "input": {
-                                    "found": False,
-                                    "workflow_name": None,
-                                    "confidence": 0.0,
-                                    "reasoning": "No matching workflow found",
-                                }
-                            }
-                        ]
-                    }
-                    mock_response.text.return_value = "PATH_A"
+                    # Mock the response to return JSON string matching WorkflowDecision schema
+                    mock_response.text.return_value = '{"found": false, "workflow_name": null, "confidence": 0.0, "reasoning": "No matching workflow found"}'
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
 
@@ -241,21 +217,8 @@ class TestCachingIntegration:
         # Set up LLM mock
         mock_model = Mock()
         mock_response = Mock()
-        # Mock proper RequirementsSchema response
-        mock_response.json.return_value = {
-            "content": [
-                {
-                    "input": {
-                        "is_clear": True,
-                        "clarification_needed": None,
-                        "steps": ["req1", "req2"],
-                        "estimated_nodes": 3,
-                        "required_capabilities": ["file_ops"],
-                        "complexity_indicators": {"complexity": "medium"},
-                    }
-                }
-            ]
-        }
+        # Mock the response to return JSON string matching RequirementsSchema
+        mock_response.text.return_value = '{"is_clear": true, "clarification_needed": null, "steps": ["req1", "req2"], "estimated_nodes": 3, "required_capabilities": ["file_ops"], "complexity_indicators": {"complexity": "medium"}}'
         mock_model.prompt.return_value = mock_response
         mock_get_model.return_value = mock_model
 
@@ -313,18 +276,8 @@ This section will be dynamically built."""
                         with patch("llm.get_model") as mock_get_model:
                             mock_model = Mock()
                             mock_response = Mock()
-                            # Mock proper ComponentSelection response structure
-                            mock_response.json.return_value = {
-                                "content": [
-                                    {
-                                        "input": {
-                                            "node_ids": ["read-file"],
-                                            "workflow_names": [],
-                                            "reasoning": "Selected read-file node for file operations",
-                                        }
-                                    }
-                                ]
-                            }
+                            # Mock the response to return JSON string matching ComponentSelection schema
+                            mock_response.text.return_value = '{"node_ids": ["read-file"], "workflow_names": [], "reasoning": "Selected read-file node for file operations"}'
                             mock_model.prompt.return_value = mock_response
                             mock_get_model.return_value = mock_model
 

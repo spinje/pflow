@@ -7,10 +7,12 @@ particularly for parsing structured output from Anthropic's API.
 import logging
 from typing import Any
 
+from pydantic import BaseModel
+
 logger = logging.getLogger(__name__)
 
 
-def parse_structured_response(response: Any, expected_type: type) -> dict[str, Any]:
+def parse_structured_response(response: Any, expected_type: type[BaseModel]) -> dict[str, Any]:
     """Parse structured LLM response from any model (Anthropic, OpenAI, Gemini, etc).
 
     Uses the normalized text() method which works consistently across all LLM providers.
@@ -47,12 +49,27 @@ def parse_structured_response(response: Any, expected_type: type) -> dict[str, A
         except json.JSONDecodeError as e:
             raise ValueError(f"Response text is not valid JSON: {text_output[:200]}") from e
 
-        # Convert Pydantic model to dict if needed
-        if hasattr(result, "model_dump"):
-            model_dict: dict[str, Any] = result.model_dump(by_alias=True, exclude_none=True)
-            return model_dict
-
-        return dict(result) if isinstance(result, dict) else result
+        # CRITICAL: Validate through Pydantic model and dump with aliases
+        # This ensures "from_node"/"to_node" get converted to "from"/"to"
+        if isinstance(result, dict) and expected_type:
+            # Validate through the expected Pydantic model
+            try:
+                model = expected_type.model_validate(result)
+                # Dump with aliases to get correct format
+                validated_result: dict[str, Any] = model.model_dump(by_alias=True, exclude_none=True)
+                return validated_result
+            except Exception as e:
+                # If validation fails, log and return raw result
+                logger.warning(f"Failed to validate result through {expected_type.__name__}: {e}")
+                return result
+        elif hasattr(result, "model_dump"):
+            # Already a Pydantic model (shouldn't happen but handle it)
+            pydantic_result: dict[str, Any] = result.model_dump(by_alias=True, exclude_none=True)
+            return pydantic_result
+        else:
+            # Fallback: return as-is
+            fallback_result: dict[str, Any] = result
+            return fallback_result
 
     except Exception as e:
         # Log at debug level to avoid showing stack traces in normal operation

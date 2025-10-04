@@ -4,6 +4,7 @@ These tests demonstrate the correct mock setup that makes the flow work.
 Based on the debug script that proved the flow executes correctly.
 """
 
+import json
 from datetime import datetime
 from unittest.mock import Mock, patch
 
@@ -94,39 +95,31 @@ class TestPlannerWorking:
 
             # 1. WorkflowDiscoveryNode will call LLM
             discovery_response = Mock()
-            discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": True,
-                            "workflow_name": "generate-changelog",
-                            "confidence": 0.95,
-                            "reasoning": "User wants to create a changelog, exact match found",
-                        }
-                    }
-                ]
+            discovery_data = {
+                "found": True,
+                "workflow_name": "generate-changelog",
+                "confidence": 0.95,
+                "reasoning": "User wants to create a changelog, exact match found",
             }
+            discovery_response.text.return_value = json.dumps(discovery_data)
+            discovery_response.json.return_value = discovery_data
             responses.append(discovery_response)
 
             # 2. ParameterMappingNode will call LLM to extract parameters
             param_response = Mock()
-            param_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {  # Changed from "parameters" to "extracted"
-                                "repo": "anthropics/pflow",  # Direct values, not nested dicts
-                                "since_date": "2024-01-01",
-                                "limit": "50",
-                                "output_path": "CHANGELOG.md",
-                            },
-                            "missing": [],
-                            "confidence": 0.95,
-                            "reasoning": "All required parameters extracted from user input",
-                        }
-                    }
-                ]
+            param_data = {
+                "extracted": {  # Changed from "parameters" to "extracted"
+                    "repo": "anthropics/pflow",  # Direct values, not nested dicts
+                    "since_date": "2024-01-01",
+                    "limit": "50",
+                    "output_path": "CHANGELOG.md",
+                },
+                "missing": [],
+                "confidence": 0.95,
+                "reasoning": "All required parameters extracted from user input",
             }
+            param_response.text.return_value = json.dumps(param_data)
+            param_response.json.return_value = param_data
             responses.append(param_response)
 
             # Set up the mock to return responses in sequence
@@ -191,37 +184,29 @@ class TestPlannerWorking:
 
             # 1. WorkflowDiscoveryNode
             discovery_response = Mock()
-            discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": True,
-                            "workflow_name": "generate-changelog",
-                            "confidence": 0.85,
-                            "reasoning": "User wants a changelog",
-                        }
-                    }
-                ]
+            discovery_data = {
+                "found": True,
+                "workflow_name": "generate-changelog",
+                "confidence": 0.85,
+                "reasoning": "User wants a changelog",
             }
+            discovery_response.text.return_value = json.dumps(discovery_data)
+            discovery_response.json.return_value = discovery_data
             responses.append(discovery_response)
 
             # 2. ParameterMappingNode - can't extract required params
             param_response = Mock()
-            param_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {
-                                "since_date": "last month"
-                                # Missing: repo, output_path (required params)
-                            },
-                            "missing": ["repo", "output_path"],
-                            "confidence": 0.0,
-                            "reasoning": "Missing required parameters: repo and output_path",
-                        }
-                    }
-                ]
+            param_data = {
+                "extracted": {
+                    "since_date": "last month"
+                    # Missing: repo, output_path (required params)
+                },
+                "missing": ["repo", "output_path"],
+                "confidence": 0.0,
+                "reasoning": "Missing required parameters: repo and output_path",
             }
+            param_response.text.return_value = json.dumps(param_data)
+            param_response.json.return_value = param_data
             responses.append(param_response)
 
             mock_model.prompt.side_effect = responses

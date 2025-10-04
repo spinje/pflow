@@ -17,6 +17,7 @@ def repair_workflow(
     shared_store: Optional[dict[str, Any]] = None,
     planner_cache_chunks: Optional[list[dict[str, Any]]] = None,
     trace_collector: Optional[Any] = None,
+    repair_model: Optional[str] = None,
 ) -> tuple[bool, Optional[dict]]:
     """
     Attempt to repair a broken workflow using LLM.
@@ -28,6 +29,7 @@ def repair_workflow(
         shared_store: Execution state for additional context
         planner_cache_chunks: Cache chunks from planner for context
         trace_collector: Optional trace collector for debugging
+        repair_model: LLM model to use for repairs (default: auto-detect)
 
     Returns:
         (success, repaired_workflow_ir or None)
@@ -43,59 +45,191 @@ def repair_workflow(
         # Build repair prompt (no cache chunks in prompt text!)
         prompt = _build_repair_prompt(workflow_ir, errors, repair_context, original_request)
 
-        # Set up LLM interception for trace if available
-        if trace_collector and hasattr(trace_collector, "setup_llm_interception"):
-            trace_collector.setup_llm_interception("repair_workflow")
+        # Set up LLM and get model
+        model, is_anthropic = _setup_llm_model(repair_model, planner_cache_chunks, trace_collector)
 
-        # Test Sonnet using the exact same pattern as planner
-        model = llm.get_model("anthropic/claude-sonnet-4-0")
-
-        # Use FlowIR schema like WorkflowGeneratorNode does
-        from pflow.planning.ir_models import FlowIR
-
-        # CRITICAL: Pass cache chunks as cache_blocks parameter, not in prompt text
-        cache_blocks = planner_cache_chunks if planner_cache_chunks else None
-
-        # Generate repair with planner-compatible interface (mimicking WorkflowGeneratorNode)
-        response = model.prompt(
-            prompt,
-            schema=FlowIR,  # Same schema as WorkflowGeneratorNode
-            cache_blocks=cache_blocks,  # Pass cache chunks here for caching!
-            temperature=0.0,
-            thinking_budget=0,
-        )
-
-        # Parse structured response like WorkflowGeneratorNode does
-        from pflow.planning.utils.llm_helpers import parse_structured_response
-
-        result = parse_structured_response(response, FlowIR)
-
-        # Convert to dict if it's a Pydantic model
-        repaired_ir = result.model_dump() if hasattr(result, "model_dump") else result
-
-        # Record repair LLM call in trace if available
-        if trace_collector and hasattr(trace_collector, "record_repair_llm_call"):
-            # Convert to JSON string for proper formatting in traces
-            response_json = json.dumps(repaired_ir, indent=2) if repaired_ir else None
-            trace_collector.record_repair_llm_call(prompt=prompt, response=response_json, success=bool(result))
-
-        logger.debug(f"Structured repair result: {str(repaired_ir)[:500]}...")
-
-        if not repaired_ir:
-            logger.warning("Failed to extract valid workflow from LLM response")
+        # Invoke LLM to generate repair
+        result = _invoke_llm_for_repair(model, prompt, is_anthropic, planner_cache_chunks)
+        if not result:
             return False, None
 
-        # Basic validation
-        if not _validate_repaired_workflow(repaired_ir):
-            logger.warning("Repaired workflow failed validation")
-            return False, None
+        # Convert LLM response to workflow IR
+        repaired_ir = _convert_llm_response(result, is_anthropic)
 
-        logger.info("Successfully generated workflow repair")
-        return True, repaired_ir
+        # Finalize and validate repair result
+        return _finalize_repair_result(repaired_ir, prompt, trace_collector)
 
     except Exception:
         logger.exception("Repair generation failed")
         return False, None
+
+
+def _setup_llm_model(
+    repair_model: Optional[str],
+    planner_cache_chunks: Optional[list[dict[str, Any]]],
+    trace_collector: Optional[Any],
+) -> tuple[Any, bool]:
+    """
+    Set up LLM model for repair generation.
+
+    Args:
+        repair_model: LLM model name or None for auto-detect
+        planner_cache_chunks: Cache chunks for context
+        trace_collector: Optional trace collector
+
+    Returns:
+        Tuple of (model, is_anthropic)
+    """
+    # Set up LLM interception for trace if available
+    if trace_collector and hasattr(trace_collector, "setup_llm_interception"):
+        trace_collector.setup_llm_interception("repair_workflow")
+
+    # Use same model as planner (or auto-detect if not specified)
+    if repair_model is None:
+        from pflow.core.llm_config import get_default_llm_model
+
+        repair_model = get_default_llm_model() or "anthropic/claude-sonnet-4-5"
+
+    # Get the LLM model
+    model = llm.get_model(repair_model)
+
+    # Check if this is an Anthropic model (monkey-patched models need cache_blocks)
+    is_anthropic = bool(
+        repair_model
+        and (
+            repair_model.startswith("anthropic/")
+            or repair_model.startswith("claude-")
+            or "claude" in repair_model.lower()
+        )
+    )
+
+    return model, is_anthropic
+
+
+def _invoke_llm_for_repair(
+    model: Any,
+    prompt: str,
+    is_anthropic: bool,
+    planner_cache_chunks: Optional[list[dict[str, Any]]],
+) -> Optional[Any]:
+    """
+    Invoke LLM to generate workflow repair.
+
+    Args:
+        model: LLM model instance
+        prompt: Repair prompt
+        is_anthropic: Whether model is Anthropic
+        planner_cache_chunks: Cache chunks for context
+
+    Returns:
+        Parsed repair result or None on failure
+    """
+    from pflow.planning.ir_models import FlowIR
+
+    # CRITICAL: Pass cache chunks as cache_blocks parameter, not in prompt text
+    cache_blocks = planner_cache_chunks if planner_cache_chunks else None
+
+    result: Any
+    # Build kwargs based on model type
+    if is_anthropic:
+        # Anthropic: Use full FlowIR with nested models (supports $defs/$ref and structured output)
+        llm_kwargs = {
+            "schema": FlowIR,
+            "temperature": 0.0,
+            "thinking_budget": 0,
+            "cache_blocks": cache_blocks,
+        }
+        # Generate repair with structured output
+        response = model.prompt(prompt, **llm_kwargs)
+
+        # Parse structured response
+        from pflow.planning.utils.llm_helpers import parse_structured_response
+
+        result = parse_structured_response(response, FlowIR)
+    else:
+        # Non-Anthropic (Gemini, OpenAI): Use text mode, no structured output
+        # These providers have limited/unreliable structured output support
+        llm_kwargs = {
+            "temperature": 0.0,
+        }
+        # Generate repair in text mode
+        response = model.prompt(prompt, **llm_kwargs)
+
+        # Extract JSON from text response
+        response_text = response.text() if callable(response.text) else response.text
+        result = _extract_workflow_from_response(response_text)
+        if not result:
+            logger.error(f"Failed to extract JSON from LLM response: {response_text[:200]}")
+            return None
+
+    return result
+
+
+def _convert_llm_response(result: Any, is_anthropic: bool) -> dict[str, Any]:
+    """
+    Convert LLM response to workflow IR format.
+
+    Args:
+        result: LLM response (structured or dict)
+        is_anthropic: Whether model is Anthropic
+
+    Returns:
+        Workflow IR dict
+    """
+    from pflow.planning.ir_models import FlowIR
+
+    # Convert result to dict format
+    if is_anthropic:
+        # Anthropic: FlowIR result needs validation and alias conversion
+        if isinstance(result, dict):
+            # Validate through Pydantic model
+            flow_model = FlowIR.model_validate(result)
+            # Dump with aliases to get correct edge format
+            repaired_ir: dict[str, Any] = flow_model.model_dump(by_alias=True)
+        elif hasattr(result, "model_dump"):
+            # Already a Pydantic model
+            repaired_ir = result.model_dump(by_alias=True)
+        else:
+            # Fallback: use as-is
+            repaired_ir = result
+    else:
+        # Non-Anthropic: result is already a dict from JSON extraction
+        repaired_ir = result
+
+    return repaired_ir
+
+
+def _finalize_repair_result(
+    repaired_ir: dict[str, Any],
+    prompt: str,
+    trace_collector: Optional[Any],
+) -> tuple[bool, Optional[dict]]:
+    """
+    Finalize repair result with validation and trace recording.
+
+    Args:
+        repaired_ir: Repaired workflow IR
+        prompt: Repair prompt used
+        trace_collector: Optional trace collector
+
+    Returns:
+        Tuple of (success, repaired_workflow_ir or None)
+    """
+    # Record repair LLM call in trace if available
+    if trace_collector and hasattr(trace_collector, "record_repair_llm_call"):
+        # Convert to JSON string for proper formatting in traces
+        response_json = json.dumps(repaired_ir, indent=2)
+        trace_collector.record_repair_llm_call(prompt=prompt, response=response_json, success=True)
+
+    logger.debug(f"Structured repair result: {str(repaired_ir)[:500]}...")
+
+    # Basic validation
+    if not _validate_repaired_workflow(repaired_ir):
+        logger.warning("Repaired workflow failed validation")
+        return False, None
+
+    logger.info("Successfully generated workflow repair")
+    return True, repaired_ir
 
 
 def repair_workflow_with_validation(
@@ -106,6 +240,7 @@ def repair_workflow_with_validation(
     execution_params: Optional[dict[str, Any]] = None,
     max_attempts: int = 3,
     trace_collector: Optional[Any] = None,
+    repair_model: Optional[str] = None,
 ) -> tuple[bool, Optional[dict], Optional[list[dict[str, Any]]]]:
     """
     Repair workflow with static validation loop.
@@ -123,6 +258,8 @@ def repair_workflow_with_validation(
         shared_store: Execution state for additional context
         execution_params: Parameters for template validation
         max_attempts: Maximum repair generation attempts (default: 3)
+        trace_collector: Optional trace collector for debugging
+        repair_model: LLM model to use for repairs (default: auto-detect)
 
     Returns:
         Tuple of:
@@ -148,6 +285,7 @@ def repair_workflow_with_validation(
             shared_store=shared_store,
             planner_cache_chunks=planner_cache_chunks,
             trace_collector=trace_collector,
+            repair_model=repair_model,
         )
 
         if not success or not repaired_ir:
@@ -481,7 +619,7 @@ def _build_repair_prompt(
     category_guidance = _get_category_guidance(errors)
 
     # Single unified repair prompt that works for all error types
-    prompt = f"""Fix this workflow that has errors.
+    prompt = f"""Fix this workflow that has errors. [v2]
 
 ## Core Repair Principle
 The error occurred at one node, but the fix might be in a different node. Consider the data flow:
@@ -612,7 +750,7 @@ def _validate_repaired_workflow(workflow_ir: Optional[dict]) -> bool:
     if "edges" in workflow_ir:
         for edge in workflow_ir["edges"]:
             if "from" not in edge or "to" not in edge:
-                logger.warning("Edge missing from or to")
+                logger.warning(f"Edge missing from or to: {edge}")
                 return False
 
     return True

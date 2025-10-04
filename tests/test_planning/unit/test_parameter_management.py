@@ -34,22 +34,20 @@ from pflow.planning.nodes import (
 
 @pytest.fixture
 def mock_llm_param_discovery():
-    """Mock LLM response for ParameterDiscoveryNode with Anthropic's nested structure."""
+    """Mock LLM response for ParameterDiscoveryNode."""
 
     def create_response(parameters=None, stdin_type=None):
-        """Create mock response with correct nested structure for ParameterDiscovery."""
+        """Create mock response with valid JSON string for ParameterDiscovery."""
+        import json
+
         response = Mock()
-        response.json.return_value = {
-            "content": [
-                {
-                    "input": {
-                        "parameters": parameters or {},
-                        "stdin_type": stdin_type,
-                        "reasoning": "Test parameter discovery reasoning",
-                    }
-                }
-            ]
+        # CRITICAL: text() must return JSON string, not Mock object
+        response_data = {
+            "parameters": parameters or {},
+            "stdin_type": stdin_type,
+            "reasoning": "Test parameter discovery reasoning",
         }
+        response.text.return_value = json.dumps(response_data)
         return response
 
     return create_response
@@ -57,23 +55,21 @@ def mock_llm_param_discovery():
 
 @pytest.fixture
 def mock_llm_param_extraction():
-    """Mock LLM response for ParameterMappingNode with Anthropic's nested structure."""
+    """Mock LLM response for ParameterMappingNode."""
 
     def create_response(extracted=None, missing=None, confidence=0.9):
-        """Create mock response with correct nested structure for ParameterExtraction."""
+        """Create mock response with valid JSON string for ParameterExtraction."""
+        import json
+
         response = Mock()
-        response.json.return_value = {
-            "content": [
-                {
-                    "input": {
-                        "extracted": extracted or {},
-                        "missing": missing or [],
-                        "confidence": confidence,
-                        "reasoning": "Test parameter extraction reasoning",
-                    }
-                }
-            ]
+        # CRITICAL: text() must return JSON string, not Mock object
+        response_data = {
+            "extracted": extracted or {},
+            "missing": missing or [],
+            "confidence": confidence,
+            "reasoning": "Test parameter extraction reasoning",
         }
+        response.text.return_value = json.dumps(response_data)
         return response
 
     return create_response
@@ -151,7 +147,8 @@ class TestParameterDiscoveryNode:
 
         # Verify parameters were extracted
         assert exec_res["parameters"] == {"filename": "report.csv", "limit": "20", "format": "json"}
-        assert exec_res["stdin_type"] is None
+        # stdin_type is None, so it's excluded by Pydantic's exclude_none=True
+        assert exec_res.get("stdin_type") is None
         assert "reasoning" in exec_res
 
         # Verify stored in shared store for Path B

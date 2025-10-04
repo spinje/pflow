@@ -18,15 +18,15 @@ classifiers = [
 ]
 
 dependencies = [
-    "click",          # CLI framework (more flexible than Typer)
-    "jsonschema>=4.20.0",  # JSON Schema validation for workflow IR
-    "llm>=0.27.1",    # Simon Willison's LLM library for text processing
-    "llm-anthropic>=0.17",  # Anthropic Claude models for planner
-    "anthropic>=0.40.0",  # Anthropic SDK for direct API access (thinking/caching)
-    "pydantic",       # IR/metadata validation (used in planning/ir_models.py)
-    "mcp[cli]>=1.13.1",  # Model Context Protocol for MCP server support
-    "requests>=2.32.5",  # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
-    "claude-code-sdk>=0.0.21",  # Claude Code SDK for agentic development node
+    "click", # CLI framework (more flexible than Typer)
+    "jsonschema>=4.20.0", # JSON Schema validation for workflow IR
+    "llm>=0.27.1", # Simon Willison's LLM library for text processing
+    "llm-anthropic==0.19", # Anthropic Claude models for planner
+    "anthropic>=0.40.0", # Anthropic SDK for direct API access (thinking/caching)
+    "pydantic", # IR/metadata validation (used in planning/ir_models.py)
+    "mcp[cli]>=1.13.1", # Model Context Protocol for MCP server support
+    "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
+    "claude-code-sdk>=0.0.21", # Claude Code SDK for agentic development node
 ]
 
 # Optional dependencies can be added here for future LLM providers
@@ -144,6 +144,8 @@ ignore = [
 "tests/test_integration/test_git_*.py" = ["S603", "S607"]  # Allow subprocess calls for git integration tests
 "tests/test_core/test_stdin_no_hang.py" = ["S603", "S607", "UP022"]  # Allow subprocess calls for testing stdin hang issue
 "src/pflow/nodes/shell/shell.py" = ["S602"]  # shell=True is intentional for shell node
+# S603: Safe subprocess use - validated with shutil.which(), allowlisted providers, no shell expansion
+"src/pflow/core/llm_config.py" = ["S603"]
 
 [tool.ruff.format]
 preview = true

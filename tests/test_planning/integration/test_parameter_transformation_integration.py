@@ -11,6 +11,7 @@ class TestParameterTransformationIntegration:
     @patch("llm.get_model")
     def test_metadata_generation_uses_templatized_input(self, mock_get_model):
         """Test that MetadataGenerationNode uses templatized input from shared store."""
+        import json
 
         # Mock LLM responses
         mock_model = Mock()
@@ -51,13 +52,9 @@ class TestParameterTransformationIntegration:
             typical_use_cases=["release notes generation", "changelog creation for new versions"],
         )
 
-        # Mock response needs the structure expected by parse_structured_response
+        # Mock response needs text() to return JSON string
         mock_response = Mock()
-        mock_response.json = Mock(
-            return_value={
-                "content": [{"input": mock_metadata.model_dump()}]  # Claude format
-            }
-        )
+        mock_response.text = Mock(return_value=json.dumps(mock_metadata.model_dump()))
 
         # We need to check what prompt is sent to the LLM
         captured_prompt = None
@@ -105,6 +102,7 @@ class TestParameterTransformationIntegration:
     @patch("llm.get_model")
     def test_parameter_discovery_creates_templatized_input(self, mock_get_model):
         """Test that ParameterDiscoveryNode creates templatized input."""
+        import json
 
         # Mock LLM response for parameter discovery
         mock_model = Mock()
@@ -119,11 +117,7 @@ class TestParameterTransformationIntegration:
         )
 
         mock_response = Mock()
-        mock_response.json = Mock(
-            return_value={
-                "content": [{"input": mock_params.model_dump()}]  # Claude format
-            }
-        )
+        mock_response.text = Mock(return_value=json.dumps(mock_params.model_dump()))
         mock_model.prompt = Mock(return_value=mock_response)
 
         # Setup shared store
@@ -153,6 +147,7 @@ class TestParameterTransformationIntegration:
     @patch("llm.get_model")
     def test_full_flow_with_parameter_transformation(self, mock_get_model):
         """Test parameter transformation through the full flow."""
+        import json
 
         # Mock LLM
         mock_model = Mock()
@@ -170,7 +165,7 @@ class TestParameterTransformationIntegration:
         )
 
         param_response = Mock()
-        param_response.json = Mock(return_value={"content": [{"input": param_discovery.model_dump()}]})
+        param_response.text = Mock(return_value=json.dumps(param_discovery.model_dump()))
 
         # 2. Metadata Generation response
         metadata = WorkflowMetadata(
@@ -182,7 +177,7 @@ class TestParameterTransformationIntegration:
         )
 
         metadata_response = Mock()
-        metadata_response.json = Mock(return_value={"content": [{"input": metadata.model_dump()}]})
+        metadata_response.text = Mock(return_value=json.dumps(metadata.model_dump()))
 
         # Track which prompt is being used
         prompt_counter = 0

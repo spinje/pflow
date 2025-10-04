@@ -24,6 +24,20 @@ from pflow.planning.nodes import WorkflowDiscoveryNode
 logger = logging.getLogger(__name__)
 
 
+def create_mock_response(data: dict) -> Mock:
+    """Helper to create mock LLM response with correct text() format.
+
+    Args:
+        data: Dictionary to be JSON-encoded and returned by text()
+
+    Returns:
+        Mock response object with text() method returning JSON string
+    """
+    mock_response = Mock()
+    mock_response.text = Mock(return_value=json.dumps(data))
+    return mock_response
+
+
 class TestNorthStarWorkflowDiscovery:
     """Test discovery with realistic, valuable workflows developers actually need.
 
@@ -298,19 +312,12 @@ class TestNorthStarWorkflowDiscovery:
 
                 # Mock LLM to recognize the changelog workflow
                 with patch("llm.get_model") as mock_get_model:
-                    mock_response = Mock()
-                    mock_response.json.return_value = {
-                        "content": [
-                            {
-                                "input": {
-                                    "found": True,
-                                    "workflow_name": "generate-changelog",
-                                    "confidence": 0.95,
-                                    "reasoning": f"The request '{query}' matches the 'generate-changelog' workflow perfectly.",
-                                }
-                            }
-                        ]
-                    }
+                    mock_response = create_mock_response({
+                        "found": True,
+                        "workflow_name": "generate-changelog",
+                        "confidence": 0.95,
+                        "reasoning": f"The request '{query}' matches the 'generate-changelog' workflow perfectly.",
+                    })
                     mock_model = Mock()
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
@@ -341,19 +348,12 @@ class TestNorthStarWorkflowDiscovery:
             prep_res = node.prep(shared)
 
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": True,
-                                "workflow_name": "issue-triage-report",
-                                "confidence": 0.92,
-                                "reasoning": "Exact match for creating triage report from open issues",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": True,
+                    "workflow_name": "issue-triage-report",
+                    "confidence": 0.92,
+                    "reasoning": "Exact match for creating triage report from open issues",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -385,19 +385,12 @@ class TestNorthStarWorkflowDiscovery:
             prep_res = node.prep(shared)
 
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": False,
-                                "workflow_name": None,
-                                "confidence": 0.3,
-                                "reasoning": "Request too vague to match any specific workflow",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": False,
+                    "workflow_name": None,
+                    "confidence": 0.3,
+                    "reasoning": "Request too vague to match any specific workflow",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -442,19 +435,12 @@ class TestNorthStarWorkflowDiscovery:
 
                 # Mock LLM to recognize changelog workflow
                 with patch("llm.get_model") as mock_get_model:
-                    mock_response = Mock()
-                    mock_response.json.return_value = {
-                        "content": [
-                            {
-                                "input": {
-                                    "found": True,
-                                    "workflow_name": "generate-changelog",
-                                    "confidence": 0.9,
-                                    "reasoning": "User wants to generate/update a changelog",
-                                }
-                            }
-                        ]
-                    }
+                    mock_response = create_mock_response({
+                        "found": True,
+                        "workflow_name": "generate-changelog",
+                        "confidence": 0.9,
+                        "reasoning": "User wants to generate/update a changelog",
+                    })
                     mock_model = Mock()
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
@@ -485,19 +471,12 @@ class TestNorthStarWorkflowDiscovery:
             prep_res = node.prep(shared_release)
 
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": True,
-                                "workflow_name": "create-release-notes",
-                                "confidence": 0.92,
-                                "reasoning": "User specifically wants release notes, not changelog",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": True,
+                    "workflow_name": "create-release-notes",
+                    "confidence": 0.92,
+                    "reasoning": "User specifically wants release notes, not changelog",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -529,19 +508,12 @@ class TestNorthStarWorkflowDiscovery:
 
             # Low confidence should trigger Path B
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": False,  # Low confidence = not found
-                                "workflow_name": None,
-                                "confidence": 0.4,
-                                "reasoning": "Too vague to match any specific workflow",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": False,  # Low confidence = not found
+                    "workflow_name": None,
+                    "confidence": 0.4,
+                    "reasoning": "Too vague to match any specific workflow",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -572,19 +544,12 @@ class TestNorthStarWorkflowDiscovery:
             prep_res = node.prep(shared)
 
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": True,
-                                "workflow_name": "generate-changelog",
-                                "confidence": 0.95,
-                                "reasoning": "User wants changelog with different limit parameter",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": True,
+                    "workflow_name": "generate-changelog",
+                    "confidence": 0.95,
+                    "reasoning": "User wants changelog with different limit parameter",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -625,19 +590,12 @@ class TestNorthStarWorkflowDiscovery:
                 prep_res = node.prep(shared)
 
                 with patch("llm.get_model") as mock_get_model:
-                    mock_response = Mock()
-                    mock_response.json.return_value = {
-                        "content": [
-                            {
-                                "input": {
-                                    "found": True,
-                                    "workflow_name": expected_workflow,
-                                    "confidence": 0.9,
-                                    "reasoning": f"Matched to {expected_workflow}",
-                                }
-                            }
-                        ]
-                    }
+                    mock_response = create_mock_response({
+                        "found": True,
+                        "workflow_name": expected_workflow,
+                        "confidence": 0.9,
+                        "reasoning": f"Matched to {expected_workflow}",
+                    })
                     mock_model = Mock()
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
@@ -710,19 +668,12 @@ class TestNorthStarWorkflowDiscovery:
 
             # Mock LLM to NOT find existing workflow (Path B)
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": False,
-                                "workflow_name": None,
-                                "confidence": 0.3,
-                                "reasoning": "Too specific with version 1.3 and exact paths, needs new workflow",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": False,
+                    "workflow_name": None,
+                    "confidence": 0.3,
+                    "reasoning": "Too specific with version 1.3 and exact paths, needs new workflow",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -757,19 +708,12 @@ class TestNorthStarWorkflowDiscovery:
 
             # Mock LLM to NOT find existing workflow (Path B)
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": False,
-                                "workflow_name": None,
-                                "confidence": 0.25,
-                                "reasoning": "Very specific with dates and paths, requires new workflow generation",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": False,
+                    "workflow_name": None,
+                    "confidence": 0.25,
+                    "reasoning": "Very specific with dates and paths, requires new workflow generation",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -900,19 +844,12 @@ class TestWorkflowDiscoveryHappyPath:
 
             # Mock the LLM to return a positive match
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": True,
-                                "workflow_name": "read-and-analyze-file",
-                                "confidence": 0.95,
-                                "reasoning": "The workflow 'read-and-analyze-file' exactly matches the user's request to read a file and analyze its contents.",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": True,
+                    "workflow_name": "read-and-analyze-file",
+                    "confidence": 0.95,
+                    "reasoning": "The workflow 'read-and-analyze-file' exactly matches the user's request to read a file and analyze its contents.",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -960,19 +897,12 @@ class TestWorkflowDiscoveryHappyPath:
 
             # Mock LLM to recognize the CSV workflow
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": True,
-                                "workflow_name": "process-csv-data",
-                                "confidence": 0.92,
-                                "reasoning": "The 'process-csv-data' workflow matches - it reads CSV files, processes them, and generates reports.",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": True,
+                    "workflow_name": "process-csv-data",
+                    "confidence": 0.92,
+                    "reasoning": "The 'process-csv-data' workflow matches - it reads CSV files, processes them, and generates reports.",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -1010,19 +940,12 @@ class TestWorkflowDiscoveryHappyPath:
 
             # Mock for Path A (found)
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": True,
-                                "workflow_name": "read-and-analyze-file",
-                                "confidence": 0.95,
-                                "reasoning": "Exact match found",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": True,
+                    "workflow_name": "read-and-analyze-file",
+                    "confidence": 0.95,
+                    "reasoning": "Exact match found",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
@@ -1083,19 +1006,12 @@ class TestWorkflowDiscoveryHappyPath:
 
             # Mock LLM for perfect match
             with patch("llm.get_model") as mock_get_model:
-                mock_response = Mock()
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": True,
-                                "workflow_name": "github-issue-tracker",
-                                "confidence": 0.98,
-                                "reasoning": "Exact match for GitHub issue tracking",
-                            }
-                        }
-                    ]
-                }
+                mock_response = create_mock_response({
+                    "found": True,
+                    "workflow_name": "github-issue-tracker",
+                    "confidence": 0.98,
+                    "reasoning": "Exact match for GitHub issue tracking",
+                })
                 mock_model = Mock()
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model

@@ -115,9 +115,15 @@ class TestUnknownModelUserExperience:
         # 2. Update MODEL_PRICING if it's a new model
         # 3. File an issue if it's a legitimate new model
 
-    @patch("logging.Logger.warning")
-    def test_warning_logged_for_unknown_model(self, mock_warning):
-        """Test that warnings are logged for unknown models."""
+    @patch("logging.Logger.debug")
+    def test_debug_logged_for_unknown_model(self, mock_debug):
+        """Test that debug info is logged for unknown models.
+
+        NOTE: Changed from warning to debug level in commit 76e0bc2.
+        Unknown models are expected behavior (custom models, new models),
+        and the information is already surfaced to users via unavailable_models.
+        Debug logging is more appropriate for diagnostics.
+        """
         collector = MetricsCollector()
 
         llm_calls = [
@@ -130,8 +136,8 @@ class TestUnknownModelUserExperience:
 
         collector.calculate_costs(llm_calls)
 
-        # Verify warning was logged with helpful message
-        mock_warning.assert_called()
-        warning_message = mock_warning.call_args[0][0]
-        assert "unknown-model" in warning_message
-        assert "Pricing not available" in warning_message
+        # Verify debug message was logged with helpful diagnostic info
+        mock_debug.assert_called()
+        debug_message = mock_debug.call_args[0][0]
+        assert "unknown-model" in debug_message
+        assert "Pricing not available" in debug_message

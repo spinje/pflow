@@ -38,35 +38,25 @@ def mock_llm_response_nested():
 
     def create_response(found=False, workflow_name=None, confidence=0.8, node_ids=None, workflow_names=None):
         """Create mock response with correct nested structure."""
+        import json
+
         response = Mock()
 
         if node_ids is not None or workflow_names is not None:
-            # ComponentSelection response
-            response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "node_ids": node_ids or [],
-                            "workflow_names": workflow_names or [],
-                            "reasoning": "Test reasoning for component selection",
-                        }
-                    }
-                ]
-            }
+            # ComponentSelection response - return JSON string
+            response.text.return_value = json.dumps({
+                "node_ids": node_ids or [],
+                "workflow_names": workflow_names or [],
+                "reasoning": "Test reasoning for component selection",
+            })
         else:
-            # WorkflowDecision response
-            response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": found,
-                            "workflow_name": workflow_name,
-                            "confidence": confidence,
-                            "reasoning": "Test reasoning for decision",
-                        }
-                    }
-                ]
-            }
+            # WorkflowDecision response - return JSON string
+            response.text.return_value = json.dumps({
+                "found": found,
+                "workflow_name": workflow_name,
+                "confidence": confidence,
+                "reasoning": "Test reasoning for decision",
+            })
         return response
 
     return create_response

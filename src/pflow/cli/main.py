@@ -1912,6 +1912,11 @@ def execute_json_workflow(
         warnings.filterwarnings("ignore", message="Flow ends:*", module="pocketflow")
 
     try:
+        # Get planner model from context for repair service (with smart default)
+        from pflow.core.llm_config import get_default_llm_model
+
+        planner_model = ctx.obj.get("planner_model") or get_default_llm_model()
+
         # Execute workflow with unified function (includes repair capability)
         result = execute_workflow(
             workflow_ir=ir_data,
@@ -1926,6 +1931,7 @@ def execute_json_workflow(
             output_key=output_key,
             metrics_collector=metrics_collector,
             trace_collector=workflow_trace,
+            repair_model=planner_model,  # Use same model as planner
         )
 
         # Save repaired workflow if applicable
@@ -2315,8 +2321,20 @@ def _execute_planner_and_workflow(
         ctx, raw_input, stdin_data, verbose, cache_planner
     )
 
-    # Create planner flow with debugging context
-    planner_flow = create_planner_flow(debug_context=debug_context)
+    # Resolve planner model with smart detection and error handling
+    planner_model = ctx.obj.get("planner_model")
+    if planner_model is None:
+        from pflow.core.llm_config import get_default_llm_model, get_llm_setup_help
+
+        planner_model = get_default_llm_model()
+        if planner_model is None:
+            # No LLM keys configured - error at decision point
+            click.echo("Error: Cannot plan workflow without LLM configuration\n", err=True)
+            click.echo(get_llm_setup_help(), err=True)
+            sys.exit(1)
+
+    # Create planner flow with detected/specified model
+    planner_flow = create_planner_flow(debug_context=debug_context, model=planner_model)
 
     # Run planner with timeout handling
     _run_planner_with_timeout(ctx, planner_flow, shared, trace_collector, planner_timeout, verbose)
@@ -2763,6 +2781,7 @@ def _initialize_context(
     planner_timeout: int,
     save: bool,
     cache_planner: bool,
+    planner_model: str,
     no_repair: bool,
     no_update: bool,
     validate_only: bool,
@@ -2780,6 +2799,7 @@ def _initialize_context(
         planner_timeout: Planner timeout in seconds
         save: Save workflow flag
         cache_planner: Enable cross-session caching for planner
+        planner_model: LLM model for planning nodes
         no_repair: Disable automatic workflow repair on failure
         no_update: Save repairs to separate file instead of updating original
         validate_only: Validate workflow without executing
@@ -2796,6 +2816,8 @@ def _initialize_context(
     ctx.obj["planner_timeout"] = planner_timeout
     ctx.obj["save"] = save
     ctx.obj["cache_planner"] = cache_planner
+    # Use smart default if no model specified (will be resolved when needed)
+    ctx.obj["planner_model"] = planner_model  # None triggers auto-detection later
     ctx.obj["no_repair"] = no_repair
     ctx.obj["no_update"] = no_update
     ctx.obj["validate_only"] = validate_only
@@ -3294,6 +3316,11 @@ def _validate_and_prepare_natural_language_input(workflow: tuple[str, ...]) -> s
     is_flag=True,
     help="Enable cross-session caching for planner LLM calls (reduces cost for repeated runs)",
 )
+@click.option(
+    "--planner-model",
+    default=None,  # Will auto-detect based on available API keys
+    help="LLM model for planning (default: auto-detect). Supports Anthropic, OpenAI, Gemini, etc.",
+)
 @click.option("--no-repair", is_flag=True, help="Disable automatic workflow repair on failure")
 @click.option(
     "--no-update", is_flag=True, help="Save repairs to separate .repaired.json file instead of updating original"
@@ -3312,6 +3339,7 @@ def workflow_command(
     planner_timeout: int,
     save: bool,
     cache_planner: bool,
+    planner_model: str,
     no_repair: bool,
     no_update: bool,
     validate_only: bool,
@@ -3383,6 +3411,7 @@ def workflow_command(
         planner_timeout,
         save,
         cache_planner,
+        planner_model,
         no_repair,
         no_update,
         validate_only,

@@ -18,22 +18,20 @@ from pflow.planning.nodes import (
 
 @pytest.fixture
 def mock_llm_param_discovery():
-    """Mock LLM response for ParameterDiscoveryNode with Anthropic's nested structure."""
+    """Mock LLM response for ParameterDiscoveryNode with correct text() format."""
 
     def create_response(parameters=None, stdin_type=None):
-        """Create mock response with correct nested structure for ParameterDiscovery."""
+        """Create mock response with JSON string format for ParameterDiscovery."""
+        import json
+
         response = Mock()
-        response.json.return_value = {
-            "content": [
-                {
-                    "input": {
-                        "parameters": parameters or {},
-                        "stdin_type": stdin_type,
-                        "reasoning": "Test parameter discovery reasoning",
-                    }
-                }
-            ]
-        }
+        response.text = Mock(
+            return_value=json.dumps({
+                "parameters": parameters or {},
+                "stdin_type": stdin_type,
+                "reasoning": "Test parameter discovery reasoning",
+            })
+        )
         return response
 
     return create_response
@@ -41,23 +39,21 @@ def mock_llm_param_discovery():
 
 @pytest.fixture
 def mock_llm_param_extraction():
-    """Mock LLM response for ParameterMappingNode with Anthropic's nested structure."""
+    """Mock LLM response for ParameterMappingNode with correct text() format."""
 
     def create_response(extracted=None, missing=None, confidence=0.9):
-        """Create mock response with correct nested structure for ParameterExtraction."""
+        """Create mock response with JSON string format for ParameterExtraction."""
+        import json
+
         response = Mock()
-        response.json.return_value = {
-            "content": [
-                {
-                    "input": {
-                        "extracted": extracted or {},
-                        "missing": missing or [],
-                        "confidence": confidence,
-                        "reasoning": "Test parameter extraction reasoning",
-                    }
-                }
-            ]
-        }
+        response.text = Mock(
+            return_value=json.dumps({
+                "extracted": extracted or {},
+                "missing": missing or [],
+                "confidence": confidence,
+                "reasoning": "Test parameter extraction reasoning",
+            })
+        )
         return response
 
     return create_response

@@ -33,7 +33,49 @@ from pocketflow import Flow, Node
 logger = logging.getLogger(__name__)
 
 
-def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: int = 1) -> "Flow":
+def _create_llm_node(
+    node_class: type[Node],
+    model: str,
+    wait: int = 1,
+    **extra_params: str | int | float | bool,
+) -> Node:
+    """Create LLM-powered planning node with consistent configuration.
+
+    This factory function ensures all LLM nodes in the planner have consistent
+    model configuration while following PocketFlow's principle of using params
+    for node configuration (not shared store).
+
+    Args:
+        node_class: The node class to instantiate (e.g., WorkflowDiscoveryNode)
+        model: LLM model name (e.g., "anthropic/claude-sonnet-4-5")
+        wait: Retry wait time in seconds (default: 1)
+        **extra_params: Additional node params like temperature, max_tokens, etc.
+
+    Returns:
+        Configured node instance with model and params set
+
+    Example:
+        >>> node = _create_llm_node(WorkflowDiscoveryNode, "gemini-2.0-flash-lite", wait=1)
+        >>> node.params["model"]
+        'gemini-2.0-flash-lite'
+    """
+    # Nodes that don't accept wait parameter in __init__
+    no_wait_nodes = {ValidatorNode, ParameterPreparationNode, ResultPreparationNode}
+
+    # Create node with or without wait parameter
+    node = node_class() if node_class in no_wait_nodes else node_class(wait=wait)
+
+    # Set model and any extra params (like temperature, max_tokens)
+    node.params = {"model": model, **extra_params}
+
+    return node
+
+
+def create_planner_flow(
+    debug_context: Optional["DebugContext"] = None,
+    wait: int = 1,
+    model: Optional[str] = None,
+) -> "Flow":
     """Create the complete planner meta-workflow.
 
     This flow implements the sophisticated two-path architecture:
@@ -49,24 +91,67 @@ def create_planner_flow(debug_context: Optional["DebugContext"] = None, wait: in
     Args:
         debug_context: Optional DebugContext for debugging capabilities
         wait: Wait time between retries in seconds (default 1, use 0 for tests)
+        model: LLM model for all planning nodes. If None, auto-detects based on
+               available API keys (Anthropic > Gemini > OpenAI), with fallback
+               to claude-sonnet-4-5 for library usage. Supports any model from
+               llm library: Anthropic, OpenAI, Gemini, etc.
 
     Returns:
         The complete planner flow ready for execution
-    """
-    logger.debug("Creating planner flow with 11 nodes")
 
-    # Create all nodes with configurable wait time (critical for test performance)
-    discovery_node: Node = WorkflowDiscoveryNode(wait=wait)
-    component_browsing: Node = ComponentBrowsingNode(wait=wait)
-    parameter_discovery: Node = ParameterDiscoveryNode(wait=wait)
-    requirements_analysis: Node = RequirementsAnalysisNode(wait=wait)
-    planning: Node = PlanningNode(wait=wait)
-    parameter_mapping: Node = ParameterMappingNode(wait=wait)
-    parameter_preparation: Node = ParameterPreparationNode()  # Doesn't take wait param
-    workflow_generator: Node = WorkflowGeneratorNode(wait=wait)
-    validator: Node = ValidatorNode()  # Doesn't take wait param
-    metadata_generation: Node = MetadataGenerationNode(wait=wait)
-    result_preparation: Node = ResultPreparationNode()  # Doesn't take wait param
+    Note:
+        CLI should detect model and error before calling this function.
+        The fallback ensures library usage works without CLI.
+    """
+    from pflow.core.llm_config import get_default_llm_model
+
+    # Auto-detect model if not provided, with fallback for library usage
+    if model is None:
+        model = get_default_llm_model() or "anthropic/claude-sonnet-4-5"
+
+    # TEMPORARY: Only Anthropic models supported due to llm-gemini library limitations
+    # The llm-gemini plugin uses the old response_schema API which doesn't support
+    # complex schemas with $ref/$defs that Pydantic generates for nested models.
+    #
+    # Gemini 2.5 itself DOES support these via the newer responseJsonSchema API,
+    # but llm-gemini hasn't been updated to use it yet.
+    #
+    # TODO: When llm-gemini is updated to use responseJsonSchema:
+    #   1. Remove this check
+    #   2. Test all planner nodes with Gemini
+    #   3. Verify nested Pydantic models work correctly
+    #   4. Update documentation to list Gemini as supported
+    #
+    # Related: https://github.com/simonw/llm-gemini (check for responseJsonSchema support)
+    # Block Gemini models - they have issues with Pydantic schemas
+    if "gemini" in model.lower():
+        raise ValueError(
+            f"The planner currently doesn't support Gemini models due to llm-gemini library limitations.\n"
+            f"You specified: {model}\n\n"
+            f"Supported models:\n"
+            f"  - Anthropic: anthropic/claude-sonnet-4-0, claude-opus-4-0, etc.\n"
+            f"  - OpenAI: gpt-4o, gpt-4o-mini, etc.\n\n"
+            f"Technical details: The llm-gemini plugin uses the old response_schema API\n"
+            f"which doesn't support complex schemas. Gemini 2.5 itself supports these via\n"
+            f"responseJsonSchema, but the plugin hasn't been updated yet."
+        )
+
+    logger.debug(f"Creating planner flow with 11 nodes (model: {model})")
+
+    # Create LLM-powered nodes with factory (ensures consistent model configuration)
+    discovery_node: Node = _create_llm_node(WorkflowDiscoveryNode, model, wait)
+    component_browsing: Node = _create_llm_node(ComponentBrowsingNode, model, wait)
+    parameter_discovery: Node = _create_llm_node(ParameterDiscoveryNode, model, wait)
+    requirements_analysis: Node = _create_llm_node(RequirementsAnalysisNode, model, wait)
+    planning: Node = _create_llm_node(PlanningNode, model, wait)
+    parameter_mapping: Node = _create_llm_node(ParameterMappingNode, model, wait)
+    workflow_generator: Node = _create_llm_node(WorkflowGeneratorNode, model, wait)
+    metadata_generation: Node = _create_llm_node(MetadataGenerationNode, model, wait)
+
+    # Create non-LLM nodes (no model parameter needed)
+    parameter_preparation: Node = ParameterPreparationNode()
+    validator: Node = ValidatorNode()
+    result_preparation: Node = ResultPreparationNode()
 
     # If debugging context provided, wrap all nodes
     if debug_context:

@@ -4,6 +4,7 @@ The validation flow has been redesigned to extract parameters BEFORE validation,
 allowing workflows with required inputs to pass validation correctly.
 """
 
+import json
 from unittest.mock import Mock, patch
 
 from pflow.core.workflow_manager import WorkflowManager
@@ -43,33 +44,25 @@ class TestPlannerSimpleIntegration:
 
             # Discovery finds the workflow
             discovery_response = Mock()
-            discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": True,
-                            "workflow_name": "read-file-workflow",
-                            "confidence": 0.95,
-                            "reasoning": "Exact match for file reading",
-                        }
-                    }
-                ]
+            discovery_data = {
+                "found": True,
+                "workflow_name": "read-file-workflow",
+                "confidence": 0.95,
+                "reasoning": "Exact match for file reading",
             }
+            discovery_response.json.return_value = discovery_data
+            discovery_response.text.return_value = json.dumps(discovery_data)
 
             # Parameter extraction
             param_response = Mock()
-            param_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {"input_file": "test.txt"},
-                            "missing": [],
-                            "confidence": 0.9,
-                            "reasoning": "Extracted filename from user input",
-                        }
-                    }
-                ]
+            param_data = {
+                "extracted": {"input_file": "test.txt"},
+                "missing": [],
+                "confidence": 0.9,
+                "reasoning": "Extracted filename from user input",
             }
+            param_response.json.return_value = param_data
+            param_response.text.return_value = json.dumps(param_data)
 
             # Set up responses in order
             mock_model.prompt.side_effect = [
@@ -135,33 +128,25 @@ class TestPlannerSimpleIntegration:
 
             # Discovery finds the workflow
             discovery_response = Mock()
-            discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": True,
-                            "workflow_name": "process-workflow",
-                            "confidence": 0.85,
-                            "reasoning": "Found data processing workflow",
-                        }
-                    }
-                ]
+            discovery_data = {
+                "found": True,
+                "workflow_name": "process-workflow",
+                "confidence": 0.85,
+                "reasoning": "Found data processing workflow",
             }
+            discovery_response.json.return_value = discovery_data
+            discovery_response.text.return_value = json.dumps(discovery_data)
 
             # Parameter extraction fails to find all params
             param_response = Mock()
-            param_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {},  # No parameters extracted
-                            "missing": ["data_file", "output_file"],
-                            "confidence": 0.2,
-                            "reasoning": "No file names specified in user input",
-                        }
-                    }
-                ]
+            param_data = {
+                "extracted": {},  # No parameters extracted
+                "missing": ["data_file", "output_file"],
+                "confidence": 0.2,
+                "reasoning": "No file names specified in user input",
             }
+            param_response.json.return_value = param_data
+            param_response.text.return_value = json.dumps(param_data)
 
             mock_model.prompt.side_effect = [
                 discovery_response,
@@ -221,141 +206,103 @@ class TestPlannerSimpleIntegration:
                 mock_model = Mock()
 
                 # Response sequence for Path B with new flow order
+                # Create mock helper function
+                def create_mock_response(data):
+                    """Create mock with both text() method and json() for compatibility."""
+                    mock = Mock()
+                    if isinstance(data, str):
+                        mock.text.return_value = data
+                    else:
+                        json_str = json.dumps(data)
+                        mock.text.return_value = json_str
+                        mock.json.return_value = data
+                    return mock
+
                 responses = [
                     # 1. Discovery - no workflow found
-                    Mock(
-                        json=lambda: {
-                            "content": [
-                                {
-                                    "input": {
-                                        "found": False,
-                                        "workflow_name": None,
-                                        "confidence": 0.1,
-                                        "reasoning": "No existing CSV analysis workflow",
-                                    }
-                                }
-                            ]
-                        }
-                    ),
+                    create_mock_response({
+                        "found": False,
+                        "workflow_name": None,
+                        "confidence": 0.1,
+                        "reasoning": "No existing CSV analysis workflow",
+                    }),
                     # 2. Parameter discovery (MOVED earlier in Task 52)
-                    Mock(
-                        json=lambda: {
-                            "content": [
-                                {
-                                    "input": {
-                                        "parameters": {"format": "CSV"},
-                                        "stdin_type": None,
-                                        "reasoning": "Found CSV format mentioned",
-                                    }
-                                }
-                            ]
-                        }
-                    ),
+                    create_mock_response({
+                        "parameters": {"format": "CSV"},
+                        "stdin_type": None,
+                        "reasoning": "Found CSV format mentioned",
+                    }),
                     # 3. Requirements analysis (NEW in Task 52)
-                    Mock(
-                        json=lambda: {
-                            "content": [
-                                {
-                                    "input": {
-                                        "is_clear": True,
-                                        "clarification_needed": None,
-                                        "steps": ["Read CSV file", "Analyze data", "Generate report"],
-                                        "estimated_nodes": 3,
-                                        "required_capabilities": ["file", "llm"],
-                                        "complexity_indicators": {"has_conditional": False},
-                                    }
-                                }
-                            ]
-                        }
-                    ),
+                    create_mock_response({
+                        "is_clear": True,
+                        "clarification_needed": None,
+                        "steps": ["Read CSV file", "Analyze data", "Generate report"],
+                        "estimated_nodes": 3,
+                        "required_capabilities": ["file", "llm"],
+                        "complexity_indicators": {"has_conditional": False},
+                    }),
                     # 4. Component browsing
-                    Mock(
-                        json=lambda: {
-                            "content": [
-                                {
-                                    "input": {
-                                        "node_ids": ["read-file", "llm", "write-file"],
-                                        "workflow_names": [],
-                                        "reasoning": "Selected file and LLM nodes",
-                                    }
-                                }
-                            ]
-                        }
-                    ),
+                    create_mock_response({
+                        "node_ids": ["read-file", "llm", "write-file"],
+                        "workflow_names": [],
+                        "reasoning": "Selected file and LLM nodes",
+                    }),
                     # 5. Planning (NEW in Task 52)
-                    Mock(
-                        text=lambda: """## Execution Plan
+                    create_mock_response("""## Execution Plan
 
 Creating workflow to analyze CSV data.
 
 **Status**: FEASIBLE
-**Node Chain**: read-file >> llm >> write-file"""
-                    ),
+**Node Chain**: read-file >> llm >> write-file"""),
                     # 6. Workflow generation
-                    Mock(
-                        json=lambda: {
-                            "content": [
-                                {
-                                    "input": {
-                                        "ir_version": "0.1.0",
-                                        "nodes": [
-                                            {
-                                                "id": "read",
-                                                "type": "read-file",
-                                                "params": {"file_path": "${input_file}"},
-                                            },
-                                            {
-                                                "id": "analyze",
-                                                "type": "llm",
-                                                "params": {"prompt": "Analyze CSV data from ${input_file}"},
-                                            },
-                                            {
-                                                "id": "write",
-                                                "type": "write-file",
-                                                "params": {
-                                                    "file_path": "${output_file}",
-                                                    "content": "Analysis complete",
-                                                },
-                                            },
-                                        ],
-                                        "edges": [
-                                            {"from": "read", "to": "analyze"},
-                                            {"from": "analyze", "to": "write"},
-                                        ],
-                                        "start_node": "read",
-                                        "inputs": {
-                                            "input_file": {
-                                                "description": "CSV file to analyze",
-                                                "type": "string",
-                                                "required": True,
-                                            },
-                                            "output_file": {
-                                                "description": "Output report file",
-                                                "type": "string",
-                                                "required": True,
-                                            },
-                                        },
-                                        "outputs": {},
-                                    }
-                                }
-                            ]
-                        }
-                    ),
+                    create_mock_response({
+                        "ir_version": "0.1.0",
+                        "nodes": [
+                            {
+                                "id": "read",
+                                "type": "read-file",
+                                "params": {"file_path": "${input_file}"},
+                            },
+                            {
+                                "id": "analyze",
+                                "type": "llm",
+                                "params": {"prompt": "Analyze CSV data from ${input_file}"},
+                            },
+                            {
+                                "id": "write",
+                                "type": "write-file",
+                                "params": {
+                                    "file_path": "${output_file}",
+                                    "content": "Analysis complete",
+                                },
+                            },
+                        ],
+                        "edges": [
+                            {"from": "read", "to": "analyze"},
+                            {"from": "analyze", "to": "write"},
+                        ],
+                        "start_node": "read",
+                        "inputs": {
+                            "input_file": {
+                                "description": "CSV file to analyze",
+                                "type": "string",
+                                "required": True,
+                            },
+                            "output_file": {
+                                "description": "Output report file",
+                                "type": "string",
+                                "required": True,
+                            },
+                        },
+                        "outputs": {},
+                    }),
                     # 7. Parameter mapping (BEFORE validation now)
-                    Mock(
-                        json=lambda: {
-                            "content": [
-                                {
-                                    "input": {
-                                        "extracted": {},
-                                        "missing": ["input_file", "output_file"],
-                                        "confidence": 0.0,
-                                        "reasoning": "No specific files mentioned",
-                                    }
-                                }
-                            ]
-                        }
-                    ),
+                    create_mock_response({
+                        "extracted": {},
+                        "missing": ["input_file", "output_file"],
+                        "confidence": 0.0,
+                        "reasoning": "No specific files mentioned",
+                    }),
                     # Validation would happen here but param mapping detected missing params
                     # so flow goes to ResultPreparation with error
                 ]

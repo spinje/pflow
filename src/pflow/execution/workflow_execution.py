@@ -86,6 +86,7 @@ def _handle_validation_phase(
     display: DisplayManager,
     resume_state: Optional[dict],
     trace_collector: Optional[Any] = None,
+    repair_model: str = "anthropic/claude-sonnet-4-5",
 ) -> tuple[bool, dict, Optional[dict]]:
     """Handle the validation phase with repair if needed.
 
@@ -96,6 +97,8 @@ def _handle_validation_phase(
         output: Output interface
         display: Display manager for UI
         resume_state: Resume state for shared store updates
+        trace_collector: Optional trace collector
+        repair_model: LLM model to use for repairs
 
     Returns:
         Tuple of (was_repaired, workflow_ir, original_workflow_ir)
@@ -123,6 +126,7 @@ def _handle_validation_phase(
         execution_params=execution_params,
         max_attempts=3,
         trace_collector=trace_collector,
+        repair_model=repair_model,
     )
 
     if not success or not repaired_ir:
@@ -272,6 +276,7 @@ def _attempt_repair(
     display: DisplayManager,
     runtime_attempt: int,
     trace_collector: Optional[Any] = None,
+    repair_model: str = "anthropic/claude-sonnet-4-5",
 ) -> tuple[bool, Optional[dict]]:
     """Attempt to repair a failed workflow execution.
 
@@ -283,6 +288,8 @@ def _attempt_repair(
         output: Output interface
         display: Display manager
         runtime_attempt: Current attempt number
+        trace_collector: Optional trace collector
+        repair_model: LLM model to use for repairs
 
     Returns:
         Tuple of (success, repaired_ir)
@@ -309,6 +316,7 @@ def _attempt_repair(
         execution_params=execution_params,
         max_attempts=3,
         trace_collector=trace_collector,
+        repair_model=repair_model,
     )
 
     if not success or not repaired_ir:
@@ -352,6 +360,7 @@ def _execute_with_repair_loop(
     metrics_collector: Optional[Any],
     trace_collector: Optional[Any],
     workflow_was_repaired: bool,
+    repair_model: str = "anthropic/claude-sonnet-4-5",
 ) -> tuple[ExecutionResult, dict, bool]:
     """Execute workflow with runtime repair loop.
 
@@ -369,6 +378,7 @@ def _execute_with_repair_loop(
         metrics_collector: Metrics collector
         trace_collector: Trace collector
         workflow_was_repaired: Whether workflow was already repaired
+        repair_model: LLM model to use for repairs
 
     Returns:
         Tuple of (result, final_workflow_ir, was_repaired)
@@ -430,6 +440,7 @@ def _execute_with_repair_loop(
             display=display,
             runtime_attempt=runtime_attempt,
             trace_collector=trace_collector,
+            repair_model=repair_model,
         )
 
         if not success:
@@ -469,6 +480,7 @@ def execute_workflow(
     output_key: Optional[str] = None,
     metrics_collector: Optional[Any] = None,
     trace_collector: Optional[Any] = None,
+    repair_model: Optional[str] = None,
 ) -> ExecutionResult:
     """
     Unified workflow execution function with automatic repair capability.
@@ -496,6 +508,7 @@ def execute_workflow(
         output_key: Key to extract from shared store
         metrics_collector: For metrics tracking
         trace_collector: For execution tracing
+        repair_model: LLM model to use for repairs (default: auto-detect)
 
     Returns:
         ExecutionResult with success status and execution details
@@ -503,6 +516,10 @@ def execute_workflow(
     # Default output if not provided
     if output is None:
         output = NullOutput()
+
+    # Default repair model if not provided
+    if repair_model is None:
+        repair_model = "anthropic/claude-sonnet-4-5"
 
     # Create display manager for UI messages
     display = DisplayManager(output=output)
@@ -524,6 +541,7 @@ def execute_workflow(
             display=display,
             resume_state=resume_state,
             trace_collector=trace_collector,
+            repair_model=repair_model,
         )
 
         # Check if validation failed completely
@@ -571,6 +589,7 @@ def execute_workflow(
             metrics_collector=metrics_collector,
             trace_collector=trace_collector,
             workflow_was_repaired=was_repaired,
+            repair_model=repair_model,
         )
 
         # Add repaired workflow to result if repair occurred

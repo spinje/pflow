@@ -7,6 +7,7 @@ The validation flow has been redesigned to extract parameters BEFORE validation,
 allowing workflows with required inputs to pass validation correctly.
 """
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -40,18 +41,12 @@ class TestPlannerSmoke:
 
         def mock_response(*args, **kwargs):
             response = Mock()
-            response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": True,
-                            "workflow_name": "test-workflow",
-                            "confidence": 0.95,
-                            "reasoning": "Exact match found",
-                        }
-                    }
-                ]
-            }
+            response.text.return_value = json.dumps({
+                "found": True,
+                "workflow_name": "test-workflow",
+                "confidence": 0.95,
+                "reasoning": "Exact match found",
+            })
             return response
 
         return mock_response
@@ -62,18 +57,12 @@ class TestPlannerSmoke:
 
         def mock_response(*args, **kwargs):
             response = Mock()
-            response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": False,
-                            "workflow_name": None,
-                            "confidence": 0.0,
-                            "reasoning": "No matching workflow",
-                        }
-                    }
-                ]
-            }
+            response.text.return_value = json.dumps({
+                "found": False,
+                "workflow_name": None,
+                "confidence": 0.0,
+                "reasoning": "No matching workflow",
+            })
             return response
 
         return mock_response
@@ -84,20 +73,14 @@ class TestPlannerSmoke:
 
         def mock_response(*args, **kwargs):
             response = Mock()
-            response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {  # Correct field per ParameterExtraction model
-                                "input": "test_value"  # Direct value, not nested object
-                            },
-                            "missing": [],  # No missing parameters
-                            "confidence": 0.9,
-                            "reasoning": "Extracted all parameters",
-                        }
-                    }
-                ]
-            }
+            response.text.return_value = json.dumps({
+                "extracted": {  # Correct field per ParameterExtraction model
+                    "input": "test_value"  # Direct value, not nested object
+                },
+                "missing": [],  # No missing parameters
+                "confidence": 0.9,
+                "reasoning": "Extracted all parameters",
+            })
             return response
 
         return mock_response
@@ -148,18 +131,12 @@ class TestPlannerSmoke:
             mock_model.prompt.side_effect = [
                 mock_llm_discovery_found(),  # Discovery finds workflow
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "extracted": {},
-                                    "missing": ["input"],
-                                    "confidence": 0.3,
-                                    "reasoning": "Missing required input parameter",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "extracted": {},
+                        "missing": ["input"],
+                        "confidence": 0.3,
+                        "reasoning": "Missing required input parameter",
+                    })
                 ),  # Missing required param
             ]
             mock_get_model.return_value = mock_model

@@ -537,7 +537,7 @@ class TraceCollector:
                     )
                 except ValueError as e:
                     # Don't crash trace collection for unknown models
-                    logger.warning(f"Pricing not available for model '{model_name}': {e}")
+                    logger.debug(f"Pricing not available for model '{model_name}': {e}")
                     cost_breakdown = {
                         "total_cost_usd": None,
                         "pricing_model": "unavailable",

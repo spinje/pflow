@@ -55,6 +55,8 @@ def mock_llm_generator():
 
     def create_response(workflow=None):
         """Create mock response with correct nested structure for workflow generation."""
+        import json
+
         if workflow is None:
             # Default valid workflow with template variables
             workflow = {
@@ -82,7 +84,8 @@ def mock_llm_generator():
             }
 
         response = Mock()
-        response.json.return_value = {"content": [{"input": workflow}]}
+        # Mock text() to return JSON string (root cause fix)
+        response.text.return_value = json.dumps(workflow)
         return response
 
     return create_response
@@ -287,7 +290,7 @@ class TestLLMResponseParsing:
         """Test LLM returns None raises ValueError."""
         mock_model = Mock()
         mock_response = Mock()
-        mock_response.json.return_value = None
+        mock_response.text.return_value = ""  # Empty string triggers "LLM returned empty response"
         mock_model.prompt.return_value = mock_response
         mock_get_model.return_value = mock_model
 
@@ -306,7 +309,7 @@ class TestLLMResponseParsing:
         with pytest.raises(ValueError) as exc_info:
             node.exec(prep_res)
 
-        assert "LLM returned None response" in str(exc_info.value)
+        assert "LLM returned empty response" in str(exc_info.value)
 
     @patch("llm.get_model")
     def test_response_parsed_from_nested_structure(self, mock_get_model, mock_llm_generator):
@@ -334,11 +337,15 @@ class TestLLMResponseParsing:
         assert len(result["workflow"]["nodes"]) == 1
 
     @patch("llm.get_model")
-    def test_llm_response_missing_content_raises_valueerror(self, mock_get_model):
-        """Test LLM response missing content raises ValueError."""
+    def test_llm_response_missing_content_logs_warning(self, mock_get_model, caplog):
+        """Test LLM response missing content logs warning but returns raw result."""
+        import json
+        import logging
+
         mock_model = Mock()
         mock_response = Mock()
-        mock_response.json.return_value = {"no_content": "here"}
+        # Return valid JSON but missing required workflow fields
+        mock_response.text.return_value = json.dumps({"no_content": "here"})
         mock_model.prompt.return_value = mock_response
         mock_get_model.return_value = mock_model
 
@@ -354,10 +361,17 @@ class TestLLMResponseParsing:
             "temperature": 0.0,
         }
 
-        with pytest.raises(ValueError) as exc_info:
-            node.exec(prep_res)
+        # Should NOT raise, but logs warning and returns raw result
+        with caplog.at_level(logging.WARNING):
+            result = node.exec(prep_res)
 
-        assert "Response parsing failed" in str(exc_info.value)
+        # Verify warning was logged about validation failure
+        assert "Failed to validate result through FlowIR" in caplog.text
+
+        # Result contains the raw (invalid) data with default ir_version added
+        assert "workflow" in result
+        assert result["workflow"]["no_content"] == "here"
+        assert result["workflow"]["ir_version"] == "1.0.0"  # Default added by node
 
 
 class TestWorkflowGeneration:
@@ -366,6 +380,8 @@ class TestWorkflowGeneration:
     @patch("llm.get_model")
     def test_generated_workflow_has_linear_edges_only(self, mock_get_model):
         """Test generated workflow has linear edges only (no action field in edges)."""
+        import json
+
         mock_model = Mock()
 
         # Create workflow with only linear edges (no action field)
@@ -377,7 +393,7 @@ class TestWorkflowGeneration:
         }
 
         response = Mock()
-        response.json.return_value = {"content": [{"input": workflow}]}
+        response.text.return_value = json.dumps(workflow)
         mock_model.prompt.return_value = response
         mock_get_model.return_value = mock_model
 
@@ -408,6 +424,8 @@ class TestTemplateVariables:
     @patch("llm.get_model")
     def test_template_variables_use_dollar_prefix(self, mock_get_model):
         """Test template variables use $ prefix (all params with variables start with $)."""
+        import json
+
         mock_model = Mock()
 
         workflow = {
@@ -425,7 +443,7 @@ class TestTemplateVariables:
         }
 
         response = Mock()
-        response.json.return_value = {"content": [{"input": workflow}]}
+        response.text.return_value = json.dumps(workflow)
         mock_model.prompt.return_value = response
         mock_get_model.return_value = mock_model
 
@@ -452,6 +470,8 @@ class TestTemplateVariables:
     @patch("llm.get_model")
     def test_template_paths_supported(self, mock_get_model):
         """Test template paths supported (${var.field.subfield} in params)."""
+        import json
+
         mock_model = Mock()
 
         workflow = {
@@ -469,7 +489,7 @@ class TestTemplateVariables:
         }
 
         response = Mock()
-        response.json.return_value = {"content": [{"input": workflow}]}
+        response.text.return_value = json.dumps(workflow)
         mock_model.prompt.return_value = response
         mock_get_model.return_value = mock_model
 
@@ -495,6 +515,8 @@ class TestTemplateVariables:
     @patch("llm.get_model")
     def test_template_variables_match_inputs_keys(self, mock_get_model):
         """Test template variables match inputs keys (each ${var} has corresponding inputs key)."""
+        import json
+
         mock_model = Mock()
 
         workflow = {
@@ -522,7 +544,7 @@ class TestTemplateVariables:
         }
 
         response = Mock()
-        response.json.return_value = {"content": [{"input": workflow}]}
+        response.text.return_value = json.dumps(workflow)
         mock_model.prompt.return_value = response
         mock_get_model.return_value = mock_model
 
@@ -667,6 +689,8 @@ class TestNorthStarExamples:
     @patch("llm.get_model")
     def test_generate_changelog_workflow(self, mock_get_model):
         """Test generation of generate-changelog workflow with repo and since_date parameters."""
+        import json
+
         mock_model = Mock()
 
         changelog_workflow = {
@@ -698,7 +722,7 @@ class TestNorthStarExamples:
         }
 
         response = Mock()
-        response.json.return_value = {"content": [{"input": changelog_workflow}]}
+        response.text.return_value = json.dumps(changelog_workflow)
         mock_model.prompt.return_value = response
         mock_get_model.return_value = mock_model
 
@@ -726,6 +750,8 @@ class TestNorthStarExamples:
     @patch("llm.get_model")
     def test_issue_triage_report_workflow(self, mock_get_model):
         """Test generation of issue-triage-report workflow with repo, labels, state, limit parameters."""
+        import json
+
         mock_model = Mock()
 
         triage_workflow = {
@@ -769,7 +795,7 @@ class TestNorthStarExamples:
         }
 
         response = Mock()
-        response.json.return_value = {"content": [{"input": triage_workflow}]}
+        response.text.return_value = json.dumps(triage_workflow)
         mock_model.prompt.return_value = response
         mock_get_model.return_value = mock_model
 
