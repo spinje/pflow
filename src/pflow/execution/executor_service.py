@@ -238,7 +238,7 @@ class WorkflowExecutorService:
         category = self._determine_error_category(error_info["message"] or "")
 
         # Build base error dict
-        error = {
+        error: dict[str, Any] = {
             "source": "runtime",
             "category": category,
             "message": error_info["message"],
@@ -274,7 +274,7 @@ class WorkflowExecutorService:
                 # For template errors, capture available fields (limit to 20 for readability)
                 if category == "template_error":
                     all_fields = list(node_output.keys())
-                    error["available_fields"] = all_fields[:20]  # type: ignore[assignment]
+                    error["available_fields"] = all_fields[:20]
 
                     # Add metadata about total fields and trace file location
                     total_fields = len(all_fields)
