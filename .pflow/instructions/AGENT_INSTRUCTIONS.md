@@ -35,20 +35,19 @@ The user shows you ONE example. You build the GENERAL solution using dynamic inp
 3. [Common Workflow Patterns](#common-workflow-patterns)
 4. [Progressive Learning Path](#progressive-learning-path)
 5. [Pre-Build Checklist](#pre-build-checklist)
-6. [Discovery Commands](#discovery-commands)
-7. [Building Workflows](#building-workflows)
+6. [Building Workflows](#building-workflows)
    - [Critical Constraints](#-critical-constraints-read-first)
    - [Node Parameter Philosophy](#node-parameter-philosophy)
    - [Template Variable Syntax](#template-variable-syntax)
    - [Workflow Inputs](#workflow-inputs)
    - [Workflow Outputs](#workflow-outputs)
-8. [Validation](#validation)
-9. [Testing & Debugging](#testing--debugging)
-10. [Saving Workflows](#saving-workflows)
-11. [Executing Workflows](#executing-workflows)
-12. [Context Efficiency](#context-efficiency)
-13. [Common Mistakes](#common-mistakes)
-14. [Quick Reference](#quick-reference)
+7. [Validation](#validation)
+8. [Testing & Debugging](#testing--debugging)
+9. [Saving Workflows](#saving-workflows)
+10. [Executing Workflows](#executing-workflows)
+11. [Context Efficiency](#context-efficiency)
+12. [Common Mistakes](#common-mistakes)
+13. [Quick Reference](#quick-reference)
 
 ---
 
@@ -199,27 +198,108 @@ NOT action requests (needs help/guidance):
 
 **Output**: Clear mental model + user intent + confidence level + action vs exploration
 
-### 2. DISCOVER (5 minutes)
+### 2. DISCOVER WORKFLOWS (5 minutes)
 
-Find the right nodes using intelligent discovery.
+**Check for existing workflows before building new ones.**
 
-**Primary method** (use this first):
+This is MANDATORY - never skip this step. Users often don't know what workflows already exist.
+
+```bash
+pflow workflow discover "user's request in natural language"
+```
+
+**What you get**: Matching workflows with names, descriptions, inputs/outputs, confidence scores, and reasoning.
+
+#### Processing Discovery Results
+
+Always surface relevant workflows (70%+ confidence) regardless of user intent - they might not know what exists.
+
+**Based on user intent and match scores:**
+
+**User said "run/execute [workflow]"** (believes it exists):
+- **90-100% match + all params provided** → Execute immediately
+- **90-100% match + missing params** → Ask for missing params, then execute
+- **70-89% matches** → "No exact match. Found similar: [list]. Run one of these?"
+- **<70%** → "No workflow found matching that name. Want me to build it?"
+
+**User said "create/build [workflow]"** (wants something new):
+- **90-100% match** → "Found existing `workflow-name` that does this. Use it, modify it, or build new?"
+- **70-89% matches** → "Found similar workflows: [list]. Want to see/modify these first?"
+- **<70%** → Proceed to build new workflow (continue to Step 3)
+
+**User made an action request** (wants something done):
+Examples: "analyze customer data", "send report", "process invoices"
+- **80-100% match + all required params satisfied** → Execute immediately
+- **80-100% match + missing params** → "I need [specific param] to run this"
+- **<80% match** → "I don't have a workflow for that yet. Should I create one?"
+
+**User described problem/need** (wants help/exploration):
+Examples: "I need to track metrics better", "how can we monitor API usage?"
+
+→ **Low confidence/exploring users**:
+  1. "Let me help clarify what you need. Based on your request, you might want to:"
+     - Option A: [One interpretation of their request]
+     - Option B: [Another valid interpretation]
+     - Option C: Something else?
+  2. Based on their answer, show relevant workflows or suggest approach
+  3. Guide to decision: use existing, modify, or build custom
+
+→ **High confidence/clear requirements**:
+  - **90-100% match** → "Found `workflow-name` that does exactly this. Want to use it?"
+  - **70-89% matches** → Show differences clearly, ask preference
+  - **<70%** → "I'll build a new workflow for your requirements"
+
+#### Comparing Similar Workflows
+
+When presenting workflows with 70%+ match, explain differences clearly:
+
+```
+Found `workflow-name` (85% match):
+✅ Matches your requirements:
+  - [Features that align with request]
+❌ Differences:
+  - [What's different and why it matters]
+➕ Additional features:
+  - [Extra capabilities they didn't request]
+
+Impact: [How these differences affect their use case]
+```
+
+**Example comparison**:
+```
+Found `slack-to-sheets` (85% match):
+✅ Matches:
+  - Fetches from Slack
+  - Processes with AI
+  - Logs to Google Sheets
+❌ Differences:
+  - Analyzes sentiment (you want Q&A)
+  - Different sheet format
+➕ Additional:
+  - Sends summary email
+  - Archives messages
+
+Impact: Core flow matches, but needs prompt adjustment for Q&A instead of sentiment.
+```
+
+**Decision point**:
+- **Execute existing workflow** → Skip to execution
+- **Modify existing workflow** → Load it, proceed to Step 4 (design modifications)
+- **Build new workflow** → Continue to Step 3 (discover nodes)
+
+**Output**: Clear decision on whether to execute existing, modify existing, or build new
+
+### 3. DISCOVER NODES (3 minutes)
+
+**Find the building blocks for your workflow (only if building new).**
+
+If Step 2 determined you need to build a new workflow, discover the relevant nodes:
+
 ```bash
 pflow registry discover "I need to fetch Slack messages, analyze with AI, send responses, and log to Google Sheets"
 ```
 
 This uses pflow's internal LLM to intelligently select relevant nodes with complete specs in one shot.
-
-**Fallback methods** (only if LLM discovery fails):
-```bash
-pflow registry list                          # Browse all available nodes
-pflow registry describe node1 node2 node3    # Get specific node specs
-```
-
-**Why fallback might be needed**:
-- No LLM API key configured
-- LLM discovery service unavailable
-- You already know exact node names
 
 **What you get**:
 - Complete interface specifications
@@ -227,9 +307,13 @@ pflow registry describe node1 node2 node3    # Get specific node specs
 - Output structure
 - Usage requirements
 
-**Output**: List of nodes with interfaces understood
+**Only use manual commands if AI discovery is unavailable**:
+- `pflow registry describe node1 node2` - Get specific node specs when you know exact names
+- Avoid `pflow registry list` - pollutes context with hundreds of unnecessary nodes
 
-### 3. DESIGN (5 minutes)
+**Output**: List of nodes with interfaces understood, ready for design phase
+
+### 4. DESIGN (5 minutes)
 
 Sketch the data flow before writing JSON.
 
@@ -260,7 +344,7 @@ Templates needed:
 
 **Output**: Clear node graph design
 
-### 4. PLAN & CONFIRM (2 minutes)
+### 5. PLAN & CONFIRM (2 minutes)
 
 **Show your understanding before building JSON.**
 
@@ -302,7 +386,7 @@ Quick confirm - this matches what you need?"
 
 **Output**: User-confirmed plan that matches their intent
 
-### 5. BUILD (10 minutes)
+### 6. BUILD (10 minutes)
 
 **After plan is confirmed**, create the workflow JSON step-by-step.
 
@@ -329,7 +413,7 @@ Everything else?
 
 **Why**: Someone else will want to use this workflow with different values tomorrow.
 
-#### Step 4.1: Declare Workflow Inputs (2 min)
+#### Step 6.1: Declare Workflow Inputs (2 min)
 
 **For all user-provided values (following the rule above).**
 
@@ -351,7 +435,7 @@ Everything else?
 - [ ] If `required: false`, has sensible `default` value
 - [ ] No extra fields (no `example`, `format`, etc.)
 
-#### Step 4.2: Create Nodes Array (5 min)
+#### Step 6.2: Create Nodes Array (5 min)
 
 **One node at a time, in execution order.**
 
@@ -379,7 +463,7 @@ Everything else?
 - [ ] Every `${variable}` is either a workflow input OR previous node output
 - [ ] Used `params` not `inputs` for node configuration
 
-#### Step 4.3: Create Edges Array (1 min)
+#### Step 6.3: Create Edges Array (1 min)
 
 **Connect nodes in execution order.**
 
@@ -398,7 +482,7 @@ Everything else?
 - [ ] Each node has exactly ONE outgoing edge (except last)
 - [ ] No cycles (node1 → node2 → node1)
 
-#### Step 4.4: Declare Workflow Outputs (2 min)
+#### Step 6.4: Declare Workflow Outputs (2 min)
 
 **Expose specific results to users.**
 
@@ -435,7 +519,7 @@ Before moving to VALIDATE:
 
 **Don't worry about**: `ir_version` or empty `edges` - these are auto-added!
 
-### 6. VALIDATE (2 minutes per iteration)
+### 7. VALIDATE (2 minutes per iteration)
 
 Catch structural errors before execution.
 
@@ -458,7 +542,7 @@ pflow --validate-only workflow.json
 
 **Output**: Structurally valid workflow
 
-### 7. TEST (Variable - only when needed)
+### 8. TEST (Variable - only when needed)
 
 Execute the workflow to verify it works.
 
@@ -491,7 +575,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[0].outputs'
 
 **Output**: Working workflow that executes successfully
 
-### 8. REFINE (Variable)
+### 9. REFINE (Variable)
 
 Improve the workflow for production use.
 
@@ -510,7 +594,7 @@ Improve the workflow for production use.
 
 **Output**: Production-ready workflow
 
-### 9. SAVE (1 minute)
+### 10. SAVE (1 minute)
 
 **When to do this**: After your workflow is tested and working correctly.
 
@@ -930,18 +1014,14 @@ See [Complete Example](#complete-example-building-a-complex-workflow) for a full
 - [ ] I know what data exits the workflow (outputs)
 - [ ] I can draw the data flow on paper
 
-### ✅ Workflow Discovery Complete
-- [ ] I've determined user intent (run/create/task)
-- [ ] I've used `pflow workflow discover` to find existing workflows
-- [ ] I've surfaced all 70%+ matches to the user (regardless of intent)
-- [ ] For "run" requests: I've identified which workflow to execute or confirmed none exists
-- [ ] For "create" requests: I've shown existing options and confirmed they want new
-- [ ] User has confirmed my plan before I start building JSON
+### ✅ Workflow Discovery Complete (Step 2 - MANDATORY)
+- [ ] I've run `pflow workflow discover "user's request"`
+- [ ] If 70%+ match found: I've shown it to user and confirmed their decision
+- [ ] Decision made: execute existing, modify existing, or build new
 
-### ✅ Node Discovery Complete
-- [ ] I've used `pflow registry discover` with specific task description
-- [ ] I've reviewed each node's parameters with `pflow registry describe`
-- [ ] I know the exact output structure I'll reference (checked documentation)
+### ✅ Node Discovery Complete (Step 3 - if building new)
+- [ ] I've run `pflow registry discover "specific task description"`
+- [ ] I have node specs (from discovery output or `pflow registry describe`)
 - [ ] I understand which outputs are `Any` type and if I need to investigate them
 
 ### ✅ Design Validated
@@ -958,110 +1038,7 @@ See [Complete Example](#complete-example-building-a-complex-workflow) for a full
 
 **Time investment**: 5-10 minutes on this checklist saves 30+ minutes of debugging.
 
-**If you can't check all boxes**: Go back to DISCOVER or DESIGN phase. If anything is unclear or if the task is impossible to build, ask the user for clarification by informing them of the current situation.
-
----
-
-## Discovery Commands
-
-### Two Types of Discovery
-
-pflow has TWO intelligent discovery commands - use them based on your needs:
-
-#### 1. Discover Existing Workflows
-
-```bash
-pflow workflow discover "I need to analyze GitHub pull requests"
-```
-
-**Use when**: You want to find if someone already built a workflow for your task.
-
-**Returns**: Matching saved workflows with name, description, inputs/outputs, confidence score, and reasoning.
-
-**What to do with discovery results**:
-
-Always surface relevant workflows (70%+ confidence) regardless of user intent - they might not know what exists.
-
-**User said "run/execute [workflow]"** (believes it exists):
-- 90-100% match + all params provided → Execute immediately
-- 90-100% match + missing params → Ask for missing params, then execute
-- 70-89% matches → "No exact match. Found similar: [list]. Run one of these?"
-- <70% → "No workflow found matching that name. Want me to build it?"
-
-**User said "create/build [workflow]"** (wants something new):
-- 90-100% match → "Found existing `workflow-name` that does this. Use it, modify it, or build new?"
-- 70-89% matches → "Found similar workflows: [list]. Want to see/modify these first?"
-- <70% → Proceed to build new workflow
-
-**User made an action request** (wants something done):
-- 80-100% match + all required params satisfied → Execute immediately
-- 80-100% match + missing params → "I need [specific param] to run this"
-- <80% match → "I don't have a workflow for that yet. Should I create one?"
-
-**User described problem/need** (wants help):
-
-→ **Low confidence/exploring**:
-  1. "Let me help clarify what you need. Based on your request, you might want to:"
-     - Option A: [One interpretation of their request]
-     - Option B: [Another valid interpretation]
-     - Option C: Something else?
-
-  2. Based on their answer, show relevant workflows or suggest approach
-
-  3. Guide to decision: use existing, modify, or build custom
-
-→ **High confidence/clear requirements**:
-  - 90-100% match → "Found `workflow-name` that does exactly this. Want to use it?"
-  - 70-89% matches → Show differences clearly, ask preference
-  - <70% → "I'll build a new workflow for your requirements"
-
-#### How to Compare Workflows
-
-When presenting similar workflows (70%+ match), explain differences clearly:
-
-**Structure your comparison**:
-```
-Found `workflow-name` (X% match):
-✅ Matches your requirements:
-  - [Features that align with request]
-❌ Differences:
-  - [What's different and why it matters]
-➕ Additional features:
-  - [Extra capabilities they didn't request]
-
-Impact: [How these differences affect their use case]
-```
-
-**Example - data processing workflow**:
-```
-Found `api-to-database` (85% match):
-✅ Matches:
-  - Fetches from REST API
-  - Transforms JSON data
-  - Stores in database
-❌ Differences:
-  - Uses PostgreSQL (you didn't specify database)
-  - Batch processing (you might want real-time)
-➕ Additional:
-  - Sends completion notifications
-  - Saves to a file as well as outputs the data
-
-Impact: Database type is easy to change, but batch vs real-time needs structural changes.
-```
-
-Always explain differences in terms of impact, not just features.
-
-#### 2. Discover Nodes for Building
-
-```bash
-pflow registry discover "I need to fetch Slack messages and analyze with AI"
-```
-
-**Use when**: You're building a NEW workflow and need to find the right nodes.
-
-**Returns**: Curated list of relevant nodes with complete specifications.
-
-**Fallback if discovery fails**: Use `pflow registry list` and `pflow registry describe [nodes]`
+**If you can't check all boxes**: Go back to Step 2 (workflows), Step 3 (nodes), or Step 4 (design) as needed. If anything is unclear or if the task is impossible to build, ask the user for clarification by informing them of the current situation.
 
 ---
 
@@ -1727,7 +1704,7 @@ Don't try to fix all errors at once - tackle them sequentially!
 ### Common Validation Errors
 
 **"Unknown node type 'X'"**
-→ Run `pflow registry list | grep -i X` to find correct name (might be MCP format)
+→ Run `pflow registry discover "task that needs X"` OR check exact name with `pflow registry describe` if you know it
 
 **"Template variable '${X}' not found"**
 → Either add `X` to `inputs` section OR verify previous node outputs it with `pflow registry describe`
@@ -1844,7 +1821,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.events[] | select(.node_id == "f
 
 ## Saving Workflows
 
-**When to save**: After completing Step 9 in the development loop - your workflow is tested and working correctly.
+**When to save**: After completing Step 10 in the development loop - your workflow is tested and working correctly.
 
 Saving moves your workflow from local drafts (`.pflow/workflows/`) to the global library (`~/.pflow/workflows/`) for reuse across all projects.
 
@@ -1999,67 +1976,73 @@ Before building a workflow:
 
 Learn from others' experiences!
 
-### ❌ Mistake 1: Starting with JSON Before Understanding
+### ❌ Mistake 1: Skipping Workflow Discovery
+
+**What happens**: You build from scratch when a workflow already exists.
+
+**Fix**: ALWAYS run `pflow workflow discover` first (Step 2) - 70% of requests have existing solutions!
+
+### ❌ Mistake 2: Starting with JSON Before Understanding
 
 **What happens**: You write nodes but don't know what data flows where.
 
 **Fix**: Spend 5 minutes in UNDERSTAND phase - map the task first!
 
-### ❌ Mistake 2: Not Using `pflow registry discover`
+### ❌ Mistake 3: Not Using `pflow registry discover`
 
 **What happens**: You manually search through hundreds of nodes.
 
 **Fix**: Use `pflow registry discover "what you need"` - let LLM find nodes for you!
 
-### ❌ Mistake 3: Not Checking Node Output Structure
+### ❌ Mistake 4: Not Checking Node Output Structure
 
 **What happens**: Templates like `${fetch.data.items}` fail because output is `${fetch.result.items}`.
 
 **Fix**: Run `pflow registry describe node-type` BEFORE writing templates.
 
-### ❌ Mistake 4: Building Everything at Once
+### ❌ Mistake 5: Building Everything at Once
 
 **What happens**: 10 nodes, 50 errors, impossible to debug.
 
 **Fix**: Build 2 nodes → validate → add 1 more → validate → repeat.
 
-### ❌ Mistake 5: Ignoring Validation Errors
+### ❌ Mistake 6: Ignoring Validation Errors
 
 **What happens**: You execute anyway, get cryptic runtime errors.
 
 **Fix**: Trust validation - it catches 90% of issues before execution!
 
-### ❌ Mistake 6: Using Generic Node IDs
+### ❌ Mistake 7: Using Generic Node IDs
 
 **What happens**: Templates like `${node2.output}` are unreadable.
 
 **Fix**: Use descriptive IDs like `${fetch-messages.result}` for clarity.
 
-### ❌ Mistake 7: Forgetting MCP Format
+### ❌ Mistake 8: Forgetting MCP Format
 
 **What happens**: `pflow registry describe SLACK_SEND_MESSAGE` → "Unknown node"
 
 **Fix**: Use full format: `mcp-slack-composio-SLACK_SEND_MESSAGE`
 
-### ❌ Mistake 8: Using `inputs` Instead of `params`
+### ❌ Mistake 9: Using `inputs` Instead of `params`
 
 **What happens**: Validation fails with schema error.
 
 **Fix**: Node configuration uses `params`, not `inputs`!
 
-### ❌ Mistake 9: Investigating Every `result: Any`
+### ❌ Mistake 10: Investigating Every `result: Any`
 
 **What happens**: Waste time discovering structures you don't need.
 
 **Fix**: Only investigate when templates need nested paths!
 
-### ❌ Mistake 10: Trying to Add Error Handling in IR
+### ❌ Mistake 11: Trying to Add Error Handling in IR
 
 **What happens**: Frustration - branching not supported.
 
 **Fix**: Let pflow's external repair system handle errors. Focus on happy path!
 
-### ❌ Mistake 11: Using Too Many Nodes
+### ❌ Mistake 12: Using Too Many Nodes
 
 **What happens**: Workflow becomes verbose, consumes excessive context, harder to debug.
 
@@ -2083,7 +2066,7 @@ Learn from others' experiences!
 
 **When to consolidate**: If operations are naturally chained and intermediate outputs aren't needed elsewhere.
 
-### ❌ Mistake 12: Over-Specifying Node Parameters
+### ❌ Mistake 13: Over-Specifying Node Parameters
 
 **What happens**: Workflows use outdated values, waste tokens, override good defaults.
 
@@ -2112,7 +2095,7 @@ Learn from others' experiences!
 
 Let's demonstrate the thinking process that applies to ANY workflow.
 
-### Step 1: UNDERSTAND
+### Example Step 1: UNDERSTAND
 
 **User request**: "Get last 10 messages from [SOURCE], process them, send results to [DESTINATION]"
 
@@ -2133,7 +2116,15 @@ What might they configure later?
 - Filtering criteria
 ```
 
-### Step 2: DISCOVER
+### Example Step 2: DISCOVER WORKFLOWS
+
+```bash
+pflow workflow discover "fetch messages, analyze, send to destination, log to sheets"
+```
+
+**Results**: No 70%+ matches found, proceeding to build new.
+
+### Example Step 3: DISCOVER NODES
 
 ```bash
 pflow registry discover "fetch Slack messages, analyze with AI, send Slack messages, update Google Sheets, get date and time from shell"
@@ -2141,7 +2132,7 @@ pflow registry discover "fetch Slack messages, analyze with AI, send Slack messa
 
 **Results**: Found all needed nodes with specs.
 
-### Step 3: DESIGN
+### Example Step 4: DESIGN
 
 ```
 fetch-data → process-data → format-output → send-result → log-confirmation
@@ -2154,7 +2145,7 @@ Key decisions:
 
 **Design Principle**: Build the pipeline that could work with ANY similar source/destination pair.
 
-### Step 4: BUILD
+### Example Step 6: BUILD
 
 ```json
 {
@@ -2209,7 +2200,7 @@ Key decisions:
 }
 ```
 
-### Step 5: VALIDATE
+### Example Step 7: VALIDATE
 
 ```bash
 pflow --validate-only slack-qa.json
@@ -2217,7 +2208,7 @@ pflow --validate-only slack-qa.json
 
 Result: ✓ All validations passed!
 
-### Step 6: TEST
+### Example Step 8: TEST
 
 ```bash
 pflow --output-format json --no-repair --trace slack-qa.json
@@ -2225,7 +2216,7 @@ pflow --output-format json --no-repair --trace slack-qa.json
 
 Result: ✓ Workflow executed successfully!
 
-### Step 7: SAVE
+### Example Step 10: SAVE
 
 Ask the user to verify the results and if they are happy, save the workflow to the global library.
 
@@ -2237,7 +2228,7 @@ Result: ✓ Saved to global library!
 
 > Note: Always ask the user before saving the workflow to the global library/registry.
 
-### Step 9: REUSE
+### Example: REUSE
 
 ```bash
 # Show users exactly how to run with their original values:
@@ -2276,28 +2267,26 @@ pflow workflow-name source_id=DIFFERENT_SOURCE destination_id=NEW_DEST limit=20
 ### Command Cheat Sheet
 
 ```bash
-# Discovery
-pflow registry discover "natural language description"  # Primary method
-pflow registry list                                     # Browse all nodes (**AVOID**: use registry discover to avoid context pollution)
-pflow registry describe node1 node2                     # Get node specs
+# Discovery - ALWAYS use AI-powered discovery first
+pflow workflow discover "user's request"                # Find existing workflows (Step 2 - MANDATORY)
+pflow registry discover "what you need to build"        # Find nodes for building (Step 3)
+
+# Only use these if AI discovery is unavailable
+pflow registry describe node1 node2                     # Get specific node specs
+pflow workflow describe name                            # Show specific workflow
 
 # Development
 pflow --validate-only workflow.json                     # Validate structure
 
-# Library
-pflow workflow discover "what you want to build"        # Discover workflows to reuse
-pflow workflow list                                     # List saved workflows (**AVOID**: use workflow discover to avoid context pollution)
-pflow workflow save file name "desc"                    # Save workflow
-pflow workflow describe name                            # Show workflow details
+# Saving
+pflow workflow save file name "desc"                    # Save workflow to library
 
 # Execution
 pflow workflow.json param=value                         # Run from file
 pflow saved-workflow param=value                        # Run from library
 
-## Required Execution Flags
-pflow --trace workflow-name                             # Run with trace
-pflow --no-repair workflow-name                         # Disable auto-repair
-pflow --output-format json workflow-name               # JSON output
+# Required Execution Flags (use together when testing)
+pflow --trace --no-repair --output-format json workflow-name
 ```
 
 ### Common Node Types
@@ -2339,7 +2328,7 @@ pflow --output-format json workflow-name               # JSON output
 14. **Action requests need action** - Don't compare workflows when user wants execution
 
 ### Workflow Building Order
-**Always follow**: UNDERSTAND → DISCOVER → DESIGN → BUILD → VALIDATE → TEST → REFINE → SAVE
+**Always follow**: UNDERSTAND → DISCOVER WORKFLOWS → DISCOVER NODES → DESIGN → PLAN → BUILD → VALIDATE → TEST → REFINE → SAVE
 
 ---
 
