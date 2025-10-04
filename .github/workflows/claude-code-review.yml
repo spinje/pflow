@@ -34,8 +34,9 @@ jobs:
       - name: Check if should skip
         id: check_skip
         run: |
-          # Get the latest commit message
-          COMMIT_MSG=$(git log -1 --pretty=%B)
+          # Get the actual PR head commit message (not the merge commit)
+          # GitHub creates a merge commit, so we need to get the actual pushed commit
+          COMMIT_MSG=$(git log -1 --pretty=%B ${{ github.event.pull_request.head.sha }})
           echo "Commit message: $COMMIT_MSG"
 
           if [[ "$COMMIT_MSG" == *"[skip review]"* ]]; then
