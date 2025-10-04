@@ -18,9 +18,14 @@ check: ## Run code quality tools.
 	@uv run mkdocs build -s --clean
 
 .PHONY: test
-test: ## Test the code with pytest (excludes LLM tests that require API keys)
-	@echo "🚀 Testing code: Running pytest (excluding LLM tests)"
-	@uv run python -m pytest --doctest-modules --ignore=tests/test_planning/llm --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+test: ## Test the code with pytest in parallel (excludes LLM tests that require API keys)
+	@echo "🚀 Testing code: Running pytest in parallel with 4 workers (excluding LLM tests)"
+	@uv run python -m pytest -n 4 --doctest-modules --ignore=tests/test_planning/llm --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+
+.PHONY: test-debug
+test-debug: ## Test the code with pytest sequentially for debugging
+	@echo "🚀 Testing code: Running pytest sequentially (for debugging)"
+	@uv run python -m pytest -n 0 -vv --tb=short --doctest-modules --ignore=tests/test_planning/llm --ignore=tests/test_nodes/test_llm/test_llm_integration.py
 
 .PHONY: test-llm
 test-llm: ## Run LLM integration tests with real API calls (requires API keys)
@@ -29,9 +34,9 @@ test-llm: ## Run LLM integration tests with real API calls (requires API keys)
 	@RUN_LLM_TESTS=1 uv run python -m pytest tests/test_nodes/test_llm/test_llm_integration.py tests/test_planning/llm -v
 
 .PHONY: test-all
-test-all: ## Run all tests including LLM integration tests
-	@echo "🚀 Testing code: Running all tests including LLM integration"
-	@RUN_LLM_TESTS=1 uv run python -m pytest --doctest-modules
+test-all: ## Run all tests including LLM integration tests in parallel
+	@echo "🚀 Testing code: Running all tests including LLM integration (4 workers)"
+	@RUN_LLM_TESTS=1 uv run python -m pytest -n 4 --doctest-modules
 
 .PHONY: test-with-skipped
 test-with-skipped: ## Run tests showing all skipped tests (useful for debugging)

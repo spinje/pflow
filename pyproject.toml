@@ -85,6 +85,12 @@ ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "pocketflow/tests"]
+markers = [
+    "serial: marks tests that must run sequentially (deselect with '-m \"not serial\"')",
+    "integration: marks integration tests that spawn subprocesses",
+]
+# Note: We don't set addopts with -n here to allow flexibility
+# Use 'make test' for parallel or 'make test-debug' for sequential
 
 [tool.ruff]
 target-version = "py39"

@@ -114,6 +114,8 @@ def test_stdin_has_data_fallback_on_select_error(monkeypatch):
 
 
 # Integration test - only ONE subprocess test to verify the actual fix
+@pytest.mark.integration
+@pytest.mark.serial
 def test_stdin_no_hang_integration(tmp_path):
     """Integration test: verify pflow doesn't hang when piped through grep.
 
