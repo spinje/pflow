@@ -1718,6 +1718,8 @@ pflow workflow save .pflow/workflows/draft.json slack-qa-bot "Answers Slack ques
 > **Important**: The save command shows parameter placeholders, but YOU should tell the user how to run with their ACTUAL values:
 > Example: If user provided "channel C09C16NAU5B", show: `pflow workflow-name channel-id=C09C16NAU5B limit=10`
 > This lets them immediately test the workflow with their specific configuration.
+>
+> Note: Always write commands on a SINGLE line (no line breaks or wrapping) to ensure easy copy-paste. Even with long parameter lists, keep the entire command on one line.
 
 ### Library Locations
 
@@ -1765,58 +1767,7 @@ As an AI agent, you work differently than traditional programs:
 
 ### Efficient Strategies
 
-#### 1. Use Specific Queries Over Broad Searches
-
-**❌ Inefficient workflow (fetch everything, then filter):**
-```json
-{
-  "nodes": [
-    {
-      "id": "fetch-all",
-      "type": "github-list-issues",
-      "params": {
-        "limit": 100  // Fetches 100 issues = ~10,000 tokens
-      }
-    },
-    {
-      "id": "filter",
-      "type": "llm",
-      "params": {
-        "prompt": "Filter to only critical bugs from last week: ${fetch-all.issues}"
-      }
-    }
-  ]
-}
-```
-**Result**: LLM processes 10,000 tokens to find 3 relevant issues.
-
-**✅ Efficient workflow (filter at source):**
-```json
-{
-  "nodes": [
-    {
-      "id": "fetch-specific",
-      "type": "github-search-issues",
-      "params": {
-        "query": "label:bug label:critical created:>2024-01-01",  // Filter at API level
-        "limit": 10  // Only fetches 10 issues = ~300 tokens
-      }
-    },
-    {
-      "id": "analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "Analyze these bugs: ${fetch-specific.issues}"
-      }
-    }
-  ]
-}
-```
-**Result**: LLM processes 300 tokens. Same result, 97% less context used.
-
-**Pattern**: Use search/filter parameters at the source node, not LLM filtering after fetching.
-
-#### 2. Only Investigate MCP Outputs When Needed
+#### 1. Only Investigate MCP Outputs When Needed
 
 **Many MCP tools return `result: Any` (unstructured data).**
 
@@ -1832,34 +1783,7 @@ As an AI agent, you work differently than traditional programs:
 
 **Why**: LLMs naturally handle unstructured data. Use that strength!
 
-#### 3. Chain Operations When Intermediate Outputs Aren't Needed
-
-**❌ Inefficient:**
-```json
-{
-  "nodes": [
-    {"id": "fetch1", "type": "http", "params": {"url": "api/users"}},
-    {"id": "fetch2", "type": "http", "params": {"url": "api/posts"}},
-    {"id": "fetch3", "type": "http", "params": {"url": "api/comments"}},
-    {"id": "combine", "type": "llm", "params": {"prompt": "Merge all data..."}}
-  ]
-}
-```
-
-**✅ Efficient:**
-```json
-{
-  "nodes": [
-    {"id": "analyze", "type": "llm", "params": {
-      "prompt": "Fetch and analyze user activity from our API..."
-    }}
-  ]
-}
-```
-
-**When LLMs can handle the entire operation, let them.**
-
-#### 4. Request Only Needed Fields
+#### 2. Request Only Needed Fields
 
 **Some nodes support filtering/pagination. Use them:**
 
@@ -1878,7 +1802,7 @@ As an AI agent, you work differently than traditional programs:
 ### Token Efficiency Checklist
 
 Before building a workflow:
-- [ ] Am I fetching only what I need? (use filters, limits)
+- [ ] Am I fetching only what I need? (use filters, limits if possible)
 - [ ] Can I combine steps instead of chaining many small nodes?
 - [ ] Am I investigating MCP outputs unnecessarily?
 - [ ] Are my queries specific enough to avoid broad searches?
