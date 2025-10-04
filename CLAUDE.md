@@ -401,6 +401,7 @@ Next version (post-MVP/post-Launch):
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
+- ⏳ Task 78: Save User Request History in Workflow Metadata
 - ⏳ Task 74: Create knowledge base system
 - ⏳ Task 44: Build caching system
 - ⏳ Task 45: Evaluate if wrapping or integratingn8n is worth the effort
