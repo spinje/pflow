@@ -431,6 +431,7 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
 
     Only deletes files in .pflow/workflows/ directory for safety.
     Uses is_relative_to() to prevent path traversal attacks.
+    Resolves symlinks and refuses to delete symlinked files.
 
     Args:
         file_path: Path to draft file
@@ -439,16 +440,22 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
     if not delete_draft:
         return
 
-    file_path_obj = Path(file_path).resolve()
+    file_path_obj = Path(file_path).resolve()  # Resolves symlinks
 
-    # Define safe base directories for auto-deletion
-    home_pflow = Path.home() / ".pflow" / "workflows"
-    cwd_pflow = Path.cwd() / ".pflow" / "workflows"
+    # Define safe base directories for auto-deletion (also resolve them)
+    home_pflow = (Path.home() / ".pflow" / "workflows").resolve()
+    cwd_pflow = (Path.cwd() / ".pflow" / "workflows").resolve()
 
     # Check if file is within safe directories using is_relative_to()
     # This prevents path traversal attacks (e.g., ../../etc/passwd)
     try:
         is_safe = file_path_obj.is_relative_to(home_pflow) or file_path_obj.is_relative_to(cwd_pflow)
+
+        # Additional security: refuse to delete symlinks (defense in depth)
+        if is_safe and Path(file_path).is_symlink():
+            click.echo(f"Warning: Refusing to delete symlink: {file_path}", err=True)
+            is_safe = False
+
     except (ValueError, TypeError):
         # is_relative_to() may raise on invalid paths
         is_safe = False

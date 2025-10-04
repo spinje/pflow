@@ -215,7 +215,7 @@ class WorkflowExecutorService:
             return self._extract_default_output(shared_store, workflow_ir)
         return None
 
-    def _build_error_list(  # noqa: C901
+    def _build_error_list(
         self, success: bool, action_result: Optional[str], shared_store: dict[str, Any]
     ) -> list[dict[str, Any]]:
         """Build error list if execution failed.
@@ -275,14 +275,11 @@ class WorkflowExecutorService:
                 if category == "template_error":
                     from pflow.runtime.template_validator import MAX_DISPLAYED_FIELDS
 
-                    all_fields = list(node_output.keys())
-                    error["available_fields"] = all_fields[:MAX_DISPLAYED_FIELDS]
-
-                    # Runtime validation to ensure type safety
-                    if not isinstance(error["available_fields"], list):
-                        raise TypeError("available_fields must be a list")
-                    if not all(isinstance(f, str) for f in error["available_fields"]):
-                        raise TypeError("all fields must be strings")
+                    # Defensive: ensure node_output is dict-like and convert keys to strings
+                    # This handles edge cases where node_output might not be a dict or keys aren't strings
+                    all_fields = list(node_output.keys()) if isinstance(node_output, dict) else []
+                    # Ensure all fields are strings and limit to MAX_DISPLAYED_FIELDS
+                    error["available_fields"] = [str(f) for f in all_fields[:MAX_DISPLAYED_FIELDS]]
 
                     # Add metadata about total fields and trace file location
                     total_fields = len(all_fields)
