@@ -44,7 +44,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run python -m pytest --doctest-modules --ignore=tests/test_planning/llm --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+        # Use -n 2 for CI (conservative for 2-core GitHub runners)
+        run: uv run python -m pytest -n 2 --doctest-modules --ignore=tests/test_planning/llm --ignore=tests/test_nodes/test_llm/test_llm_integration.py
 
       - name: Check typing
         run: uv run mypy

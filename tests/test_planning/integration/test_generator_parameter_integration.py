@@ -47,12 +47,16 @@ def create_minimal_context_blocks(user_input="test request", browsed_components=
 
 @pytest.fixture
 def mock_llm_response():
-    """Factory for creating mock LLM responses with Anthropic's nested structure."""
+    """Factory for creating mock LLM responses in direct schema format."""
 
     def create_response(**kwargs):
-        """Create mock response with correct nested structure."""
+        """Create mock response with direct schema format (no wrapper)."""
+        import json
+
         response = Mock()
-        response.json.return_value = {"content": [{"input": kwargs}]}
+        # parse_structured_response() expects direct schema format
+        response.text = Mock(return_value=json.dumps(kwargs))
+        response.json = Mock(return_value=kwargs)  # Keep for compatibility
         return response
 
     return create_response

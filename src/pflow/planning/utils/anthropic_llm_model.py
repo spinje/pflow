@@ -281,16 +281,18 @@ def install_anthropic_model() -> None:
     original_get_model = llm.get_model
 
     def get_model_with_anthropic(name: Optional[str] = None, _skip_async: bool = False) -> Any:
-        """Replacement for llm.get_model that uses Anthropic SDK for planning models."""
-        # Always use Anthropic SDK for planning models (better caching, thinking)
-        # Planning nodes use "anthropic/claude-sonnet-4-0" by default
-        is_planning_model = name and ("claude-sonnet-4" in name or name == "anthropic/claude-sonnet-4-0")
+        """Replacement for llm.get_model that uses Anthropic SDK for all Anthropic models."""
+        # Check if this is an Anthropic model (any Claude variant)
+        is_anthropic_model = name and (
+            name.startswith("anthropic/") or name.startswith("claude-") or "claude" in name.lower()
+        )
 
-        if is_planning_model and name is not None:
-            # Use our Anthropic SDK wrapper for planning models
+        if is_anthropic_model and name is not None:
+            # Use our Anthropic SDK wrapper for all Anthropic models
+            # Provides: prompt caching, thinking tokens, structured output
             return AnthropicLLMModel(name)
         else:
-            # Use original llm library for everything else
+            # Use original llm library for non-Anthropic models (OpenAI, Gemini, etc.)
             return original_get_model(name, _skip_async)
 
     # Replace llm.get_model

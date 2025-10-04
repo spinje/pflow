@@ -271,3 +271,61 @@ class TestValidateDataFlow:
         }
         errors = validate_data_flow(workflow)
         assert errors == []
+
+    def test_shell_command_with_mixed_syntax(self):
+        """Test shell commands with both pflow templates and bash-specific syntax.
+
+        Critical test: Ensures pflow templates are validated even in shell commands
+        that also contain bash-specific patterns. This prevents false positives where
+        valid pflow templates would be incorrectly skipped.
+        """
+        workflow = {
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "shell",
+                    "params": {
+                        # Mix of pflow templates and bash syntax:
+                        # - ${api_url}, ${limit}: pflow templates (MUST validate)
+                        # - ${array[@]}: bash syntax (skip validation)
+                        # - ${#count}: bash length operator (skip validation)
+                        "command": "curl ${api_url} | head -n ${limit}; echo ${array[@]} ${#count}"
+                    },
+                },
+            ],
+            "edges": [],
+            "inputs": {
+                "api_url": {"type": "string"},
+                "limit": {"type": "number"},
+            },
+        }
+        errors = validate_data_flow(workflow)
+        # Should pass: pflow templates are valid, bash syntax is ignored
+        assert errors == []
+
+    def test_shell_command_with_invalid_pflow_template(self):
+        """Test that invalid pflow templates in shell commands are still caught.
+
+        Ensures the bash syntax detection doesn't create a loophole where
+        invalid pflow templates could slip through validation.
+        """
+        workflow = {
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "shell",
+                    "params": {
+                        # ${undefined_input}: Invalid pflow template (should error)
+                        # ${array[@]}: Valid bash syntax (should be ignored)
+                        "command": "curl ${undefined_input} && echo ${array[@]}"
+                    },
+                },
+            ],
+            "edges": [],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        # Should fail: undefined_input is not declared
+        assert len(errors) == 1
+        assert "undefined_input" in errors[0]
+        assert "fetch" in errors[0]

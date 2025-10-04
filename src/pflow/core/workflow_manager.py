@@ -35,7 +35,10 @@ class WorkflowManager:
         logger.debug(f"WorkflowManager initialized with directory: {self.workflows_dir}")
 
     def _validate_workflow_name(self, name: str) -> None:
-        """Validate workflow name.
+        """Validate workflow name format.
+
+        Enforces: lowercase letters, numbers, hyphens only, max 50 chars.
+        Must start/end with alphanumeric. No consecutive hyphens. No reserved names.
 
         Args:
             name: Workflow name to validate
@@ -43,19 +46,28 @@ class WorkflowManager:
         Raises:
             WorkflowValidationError: If name is invalid
         """
-        if not name:
-            raise WorkflowValidationError("Workflow name cannot be empty")
-        if len(name) > 50:
-            raise WorkflowValidationError("Workflow name cannot exceed 50 characters")
-        if "/" in name or "\\" in name:
-            raise WorkflowValidationError("Workflow name cannot contain path separators")
-
-        # Check for invalid characters (allow alphanumeric, hyphens, underscores, dots)
         import re
 
-        if not re.match(r"^[a-zA-Z0-9._-]+$", name):
+        # Reserved names that could conflict with system functionality
+        RESERVED_NAMES = {"null", "undefined", "none", "test", "settings", "registry", "workflow", "mcp"}
+
+        if not name:
+            raise WorkflowValidationError("Workflow name cannot be empty")
+
+        if name.lower() in RESERVED_NAMES:
+            reserved_list = ", ".join(sorted(RESERVED_NAMES))
+            raise WorkflowValidationError(f"'{name}' is a reserved workflow name. Reserved names: {reserved_list}")
+
+        if len(name) > 50:
+            raise WorkflowValidationError("Workflow name cannot exceed 50 characters")
+
+        # Stronger regex: must start/end with alphanumeric, single hyphens only
+        if not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", name):
             raise WorkflowValidationError(
-                "Workflow name can only contain letters, numbers, dots, hyphens, and underscores"
+                f"Invalid workflow name '{name}'. "
+                "Must be lowercase letters, numbers, and single hyphens only. "
+                "Must start and end with alphanumeric (no leading/trailing hyphens). "
+                "No consecutive hyphens. Example: 'my-workflow' or 'pr-analyzer-v2'"
             )
 
     def _create_metadata_wrapper(

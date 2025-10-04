@@ -19,12 +19,14 @@ MODEL_PRICING = {
     "anthropic/claude-3-5-sonnet-20240620": {"input": 3.00, "output": 15.00},
     "anthropic/claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
     "anthropic/claude-sonnet-4-0": {"input": 3.00, "output": 15.00},
+    "anthropic/claude-sonnet-4-5": {"input": 3.00, "output": 15.00},  # Same pricing as 4.0
     "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
     # OpenAI models
     "gpt-4": {"input": 30.0, "output": 60.0},
     "gpt-4-turbo": {"input": 10.0, "output": 30.0},
     "gpt-4o": {"input": 5.0, "output": 15.0},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "gpt-5-mini": {"input": 0.25, "output": 2.00},
     "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
     # Google models (support both short and full format)
     "gemini-1.5-pro": {"input": 1.25, "output": 5.00},

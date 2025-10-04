@@ -31,27 +31,24 @@ class TestRequirementsAnalysisNode:
         This is THE most critical test - it prevents the entire pipeline
         from failing mysteriously when users provide unclear requests.
         """
+        import json
+
         node = RequirementsAnalysisNode()
 
         # Mock LLM to return "not clear"
         with patch("llm.get_model") as mock_llm:
             mock_model = Mock()
-            mock_model.prompt.return_value = Mock(
-                json=lambda: {
-                    "content": [
-                        {
-                            "input": {
-                                "is_clear": False,
-                                "clarification_needed": "Please specify what to process and how",
-                                "steps": [],
-                                "estimated_nodes": 0,
-                                "required_capabilities": [],
-                                "complexity_indicators": {},
-                            }
-                        }
-                    ]
-                }
-            )
+            # Create the response data structure
+            response_data = {
+                "is_clear": False,
+                "clarification_needed": "Please specify what to process and how",
+                "steps": [],
+                "estimated_nodes": 0,
+                "required_capabilities": [],
+                "complexity_indicators": {},
+            }
+            # Mock text() to return JSON string
+            mock_model.prompt.return_value = Mock(text=lambda: json.dumps(response_data))
             mock_llm.return_value = mock_model
 
             shared = {"templatized_input": "process the data"}
@@ -76,27 +73,24 @@ class TestRequirementsAnalysisNode:
 
         This ensures we don't accidentally block valid requests.
         """
+        import json
+
         node = RequirementsAnalysisNode()
 
         # Mock LLM to return clear requirements
         with patch("llm.get_model") as mock_llm:
             mock_model = Mock()
-            mock_model.prompt.return_value = Mock(
-                json=lambda: {
-                    "content": [
-                        {
-                            "input": {
-                                "is_clear": True,
-                                "clarification_needed": None,
-                                "steps": ["Fetch issues from GitHub", "Generate changelog", "Write to file"],
-                                "estimated_nodes": 3,
-                                "required_capabilities": ["github_api", "text_generation", "file_io"],
-                                "complexity_indicators": {"has_external_services": True},
-                            }
-                        }
-                    ]
-                }
-            )
+            # Create the response data structure
+            response_data = {
+                "is_clear": True,
+                "clarification_needed": None,
+                "steps": ["Fetch issues from GitHub", "Generate changelog", "Write to file"],
+                "estimated_nodes": 3,
+                "required_capabilities": ["github_api", "text_generation", "file_io"],
+                "complexity_indicators": {"has_external_services": True},
+            }
+            # Mock text() to return JSON string
+            mock_model.prompt.return_value = Mock(text=lambda: json.dumps(response_data))
             mock_llm.return_value = mock_model
 
             shared = {"templatized_input": "fetch ${issue_count} issues and create changelog"}
@@ -154,26 +148,23 @@ class TestRequirementsAnalysisNode:
 
         This ensures users see helpful messages instead of generic failures.
         """
+        import json
+
         node = RequirementsAnalysisNode()
 
         with patch("llm.get_model") as mock_llm:
             mock_model = Mock()
-            mock_model.prompt.return_value = Mock(
-                json=lambda: {
-                    "content": [
-                        {
-                            "input": {
-                                "is_clear": False,
-                                "clarification_needed": "Please provide more details about what data to process",
-                                "steps": [],
-                                "estimated_nodes": 0,
-                                "required_capabilities": [],
-                                "complexity_indicators": {},
-                            }
-                        }
-                    ]
-                }
-            )
+            # Create the response data structure
+            response_data = {
+                "is_clear": False,
+                "clarification_needed": "Please provide more details about what data to process",
+                "steps": [],
+                "estimated_nodes": 0,
+                "required_capabilities": [],
+                "complexity_indicators": {},
+            }
+            # Mock text() to return JSON string
+            mock_model.prompt.return_value = Mock(text=lambda: json.dumps(response_data))
             mock_llm.return_value = mock_model
 
             shared = {"templatized_input": "do the thing"}
@@ -253,39 +244,35 @@ class TestRequirementsAnalysisNode:
 
         This is a key Task 52 requirement - "20 GitHub issues" -> "GitHub issues"
         """
+        import json
+
         node = RequirementsAnalysisNode()
 
         with patch("llm.get_model") as mock_llm:
             mock_model = Mock()
-            # Simulate LLM correctly abstracting
-            mock_model.prompt.return_value = Mock(
-                json=lambda: {
-                    "content": [
-                        {
-                            "input": {
-                                "is_clear": True,
-                                "clarification_needed": None,
-                                "steps": [
-                                    "Fetch filtered issues from GitHub repository",  # Service explicit, value abstracted
-                                    "Analyze issue labels and priorities",
-                                    "Generate formatted changelog",
-                                    "Write changelog to file",
-                                ],
-                                "estimated_nodes": 4,
-                                "required_capabilities": [
-                                    "github_api",
-                                    "text_processing",
-                                    "file_io",
-                                ],  # Services explicit
-                                "complexity_indicators": {
-                                    "has_external_services": True,
-                                    "external_services": ["github"],
-                                },
-                            }
-                        }
-                    ]
-                }
-            )
+            # Create the response data structure
+            response_data = {
+                "is_clear": True,
+                "clarification_needed": None,
+                "steps": [
+                    "Fetch filtered issues from GitHub repository",  # Service explicit, value abstracted
+                    "Analyze issue labels and priorities",
+                    "Generate formatted changelog",
+                    "Write changelog to file",
+                ],
+                "estimated_nodes": 4,
+                "required_capabilities": [
+                    "github_api",
+                    "text_processing",
+                    "file_io",
+                ],  # Services explicit
+                "complexity_indicators": {
+                    "has_external_services": True,
+                    "external_services": ["github"],
+                },
+            }
+            # Mock text() to return JSON string
+            mock_model.prompt.return_value = Mock(text=lambda: json.dumps(response_data))
             mock_llm.return_value = mock_model
 
             # Input has templatized values

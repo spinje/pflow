@@ -40,16 +40,19 @@ class MockLLMModel:
         # Create mock response object
         response = Mock()
 
-        # Handle Anthropic's nested response format
+        # CRITICAL: text() must return JSON string for ALL responses
+        # Our refactored parse_structured_response() uses text(), not json()
+        response_text = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
+        response.text = Mock(return_value=response_text)
+
+        # Also provide json() for backward compatibility (some tests may still use it)
         if schema:
-            # Structured response with nested format
+            # Structured response with nested format (old format, kept for compatibility)
             nested_response = {"content": [{"input": response_data}]}
             response.json.return_value = nested_response
         else:
-            # Text response - text() is a method that returns the text (llm library behavior)
-            response_text = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
-            # Make text a callable that returns the text
-            response.text = Mock(return_value=response_text)
+            # Text response
+            response.json.return_value = response_data
 
         # Add usage tracking as a method (matching llm library)
         usage_data = Mock()

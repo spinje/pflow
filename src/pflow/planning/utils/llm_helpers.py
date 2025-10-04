@@ -7,18 +7,19 @@ particularly for parsing structured output from Anthropic's API.
 import logging
 from typing import Any
 
+from pydantic import BaseModel
+
 logger = logging.getLogger(__name__)
 
 
-def parse_structured_response(response: Any, expected_type: type) -> dict[str, Any]:  # noqa: C901
-    """Parse structured LLM response from both Claude and GPT models.
+def parse_structured_response(response: Any, expected_type: type[BaseModel]) -> dict[str, Any]:
+    """Parse structured LLM response from any model (Anthropic, OpenAI, Gemini, etc).
 
-    Handles two response formats:
-    - Claude/Anthropic: Nested in response['content'][0]['input']
-    - GPT/OpenAI: Direct JSON string in response['content']
+    Uses the normalized text() method which works consistently across all LLM providers.
+    For structured output (schema-based), the text() contains the JSON matching the schema.
 
     Args:
-        response: LLM response object with json() method
+        response: LLM response object with text() method
         expected_type: Expected Pydantic model type for logging
 
     Returns:
@@ -27,60 +28,51 @@ def parse_structured_response(response: Any, expected_type: type) -> dict[str, A
     Raises:
         ValueError: If response parsing fails or structure is invalid
     """
+    import json
+
     try:
-        response_data = response.json() if hasattr(response, "json") else response
+        # The LLM library normalizes all responses to have a text() method
+        # For structured output, this contains the JSON matching the schema
+        if not hasattr(response, "text"):
+            raise ValueError("Response object has no text() method")
 
-        if response_data is None:
-            raise ValueError("LLM returned None response")
+        # Get the text (which is JSON for structured responses)
+        text_output = response.text() if callable(response.text) else response.text
 
-        # Get content field
-        content = response_data.get("content")
-        if content is None:
-            raise ValueError(f"No 'content' field in LLM response: {response_data}")
+        if not text_output:
+            raise ValueError("LLM returned empty response")
 
-        result = None
+        # Parse the JSON
+        try:
+            result = json.loads(text_output)
+            logger.debug(f"Parsed structured response for {expected_type.__name__}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Response text is not valid JSON: {text_output[:200]}") from e
 
-        # Try Claude/Anthropic format first (nested structure)
-        if isinstance(content, list) and len(content) > 0:
-            # Claude format: content[0]['input']
-            first_item = content[0]
-            if isinstance(first_item, dict) and "input" in first_item:
-                result = first_item["input"]
-                logger.debug(f"Parsed Claude format response for {expected_type.__name__}")
-
-        # Try GPT/OpenAI format (direct JSON string or dict)
-        if result is None:
-            if isinstance(content, str):
-                # GPT often returns JSON as a string that needs parsing
-                try:
-                    import json
-
-                    result = json.loads(content)
-                    logger.debug(f"Parsed GPT string format response for {expected_type.__name__}")
-                except json.JSONDecodeError as e:
-                    # Not JSON, might be plain text response
-                    raise ValueError(f"Content is not valid JSON: {content[:200]}") from e
-            elif isinstance(content, dict):
-                # Sometimes it's already a dict
-                result = content
-                logger.debug(f"Parsed GPT dict format response for {expected_type.__name__}")
-            else:
-                raise ValueError(f"Unexpected content type: {type(content)}")
-
-        if result is None:
-            raise ValueError(f"Could not parse response in either Claude or GPT format: {response_data}")
-
-        logger.debug(f"Successfully parsed {expected_type.__name__} from LLM response")
-
-        # Convert Pydantic model to dict if needed
-        if hasattr(result, "model_dump"):
-            model_dict: dict[str, Any] = result.model_dump(by_alias=True, exclude_none=True)
-            return model_dict
-        return dict(result)
+        # CRITICAL: Validate through Pydantic model and dump with aliases
+        # This ensures "from_node"/"to_node" get converted to "from"/"to"
+        if isinstance(result, dict) and expected_type:
+            # Validate through the expected Pydantic model
+            try:
+                model = expected_type.model_validate(result)
+                # Dump with aliases to get correct format
+                validated_result: dict[str, Any] = model.model_dump(by_alias=True, exclude_none=True)
+                return validated_result
+            except Exception as e:
+                # If validation fails, log and return raw result
+                logger.warning(f"Failed to validate result through {expected_type.__name__}: {e}")
+                return result
+        elif hasattr(result, "model_dump"):
+            # Already a Pydantic model (shouldn't happen but handle it)
+            pydantic_result: dict[str, Any] = result.model_dump(by_alias=True, exclude_none=True)
+            return pydantic_result
+        else:
+            # Fallback: return as-is
+            fallback_result: dict[str, Any] = result
+            return fallback_result
 
     except Exception as e:
         # Log at debug level to avoid showing stack traces in normal operation
-        # Stack traces are only useful for debugging, not for handled errors
         logger.debug(f"Failed to parse LLM response: {type(e).__name__}: {e}")
 
         # Preserve API errors for intelligent downstream handling

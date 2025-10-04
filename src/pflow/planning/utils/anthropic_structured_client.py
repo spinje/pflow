@@ -76,7 +76,10 @@ class AnthropicStructuredClient:
             Tuple of (tool_name, tool_definition)
         """
         tool_name = response_model.__name__.lower()
-        tool_schema = response_model.model_json_schema()
+        # Use by_alias=True to ensure aliases (like "from"/"to") are used in schema, not field names
+        tool_schema = response_model.model_json_schema(by_alias=True)
+
+        # Debug: Log full tool schema
         tool = {"name": tool_name, "description": f"Generate {response_model.__name__}", "input_schema": tool_schema}
         return tool_name, tool
 

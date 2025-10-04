@@ -214,7 +214,7 @@ class TestFlowIR:
         assert flow.outputs == outputs
 
     def test_to_dict_method(self):
-        """Test to_dict conversion for validation."""
+        """Test model_dump conversion for validation."""
         nodes = [
             NodeIR(
                 id="read", type="read-file", purpose="Read file from templated input path", params={"path": "${input}"}
@@ -231,7 +231,7 @@ class TestFlowIR:
             inputs={"input": {"type": "str"}},
         )
 
-        result = flow.to_dict()
+        result = flow.model_dump(by_alias=True, exclude_none=True)
 
         # Check structure
         assert result["ir_version"] == "1.0.0"
@@ -250,9 +250,9 @@ class TestFlowIR:
         assert "outputs" not in result
 
     def test_to_dict_excludes_none_values(self):
-        """Test that to_dict excludes None values."""
+        """Test that model_dump excludes None values."""
         flow = FlowIR(nodes=[NodeIR(id="n", type="t", purpose="Test None value exclusion in serialization")])
-        result = flow.to_dict()
+        result = flow.model_dump(by_alias=True, exclude_none=True)
 
         # Optional None fields should not be in output
         assert "start_node" not in result
@@ -288,7 +288,7 @@ class TestFlowIR:
         )
 
         # Verify structure is preserved
-        result = flow.to_dict()
+        result = flow.model_dump(by_alias=True, exclude_none=True)
         assert result["nodes"][0]["params"]["config"]["mode"] == "fast"
         assert result["inputs"]["data"]["schema"] == {"type": "object"}
 
@@ -317,7 +317,7 @@ class TestModelInteraction:
         assert flow.edges[1].to_node == "n3"
 
     def test_flow_to_dict_preserves_node_params(self):
-        """Test that node params are preserved through to_dict."""
+        """Test that node params are preserved through model_dump."""
         flow = FlowIR(
             nodes=[
                 NodeIR(
@@ -336,7 +336,7 @@ class TestModelInteraction:
             ]
         )
 
-        result = flow.to_dict()
+        result = flow.model_dump(by_alias=True, exclude_none=True)
         params = result["nodes"][0]["params"]
 
         # All values should be preserved, including falsy ones

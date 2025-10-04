@@ -414,6 +414,7 @@ class TestCollectorIntegration:
             "input": "data",
             "test_output": "executed",
             "__llm_calls__": [],
+            "__cache_hits__": [],
             "__execution__": {
                 "completed_nodes": ["test_node"],
                 "node_actions": {"test_node": "test_result"},

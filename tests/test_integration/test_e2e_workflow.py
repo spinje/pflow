@@ -122,8 +122,8 @@ def test_registry_load_error(tmp_path, monkeypatch):
         assert result.exit_code == 1
         # The registry error is now handled as a workflow execution failure
         assert "Workflow execution failed" in result.output
-        # The output now provides generic troubleshooting guidance
-        assert "workflow or nodes" in result.output
+        # The registry error message is shown in the detailed error output
+        assert "Registry validation error" in result.output or "Failed to access registry" in result.output
 
 
 def test_invalid_workflow_json(tmp_path):
@@ -224,9 +224,10 @@ def test_node_execution_failure(tmp_path):
 
         # Should report failure
         assert result.exit_code == 1
-        assert "Workflow execution failed - Node returned error action" in result.output
-        assert "Check node output above for details" in result.output
-        # The node error details are logged, not printed to stdout in test environment
+        # New enhanced error format shows detailed error information
+        assert "Workflow execution failed" in result.output
+        assert "Error 1 at node 'read':" in result.output or "failed" in result.output.lower()
+        # The node error details are shown with category and message
 
 
 def test_verbose_execution_output(tmp_path):

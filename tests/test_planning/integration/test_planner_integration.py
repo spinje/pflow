@@ -16,6 +16,7 @@ This ensures template validation happens with actual parameter values, allowing
 workflows with required inputs to pass validation correctly.
 """
 
+import json
 import logging
 import tempfile
 from datetime import datetime
@@ -33,20 +34,14 @@ logger = logging.getLogger(__name__)
 def create_requirements_mock(is_clear=True, steps=None, capabilities=None):
     """Helper to create RequirementsAnalysisNode mock response."""
     return Mock(
-        json=lambda: {
-            "content": [
-                {
-                    "input": {
-                        "is_clear": is_clear,
-                        "clarification_needed": None if is_clear else "Please specify what needs to be done",
-                        "steps": steps or ["Process input", "Generate output"],
-                        "estimated_nodes": len(steps) if steps else 2,
-                        "required_capabilities": capabilities or ["llm"],
-                        "complexity_indicators": {"has_conditional": False},
-                    }
-                }
-            ]
-        }
+        text=lambda: json.dumps({
+            "is_clear": is_clear,
+            "clarification_needed": None if is_clear else "Please specify what needs to be done",
+            "steps": steps or ["Process input", "Generate output"],
+            "estimated_nodes": len(steps) if steps else 2,
+            "required_capabilities": capabilities or ["llm"],
+            "complexity_indicators": {"has_conditional": False},
+        })
     )
 
 
@@ -196,49 +191,29 @@ class TestPlannerFlowIntegration:
 
             # Discovery response - finds existing workflow
             discovery_response = Mock()
-            discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": True,
-                            "workflow_name": "read-analyze-file",
-                            "confidence": 0.95,
-                            "reasoning": "Exact match for reading and analyzing files",
-                        }
-                    }
-                ]
-            }
+            discovery_response.text.return_value = json.dumps({
+                "found": True,
+                "workflow_name": "read-analyze-file",
+                "confidence": 0.95,
+                "reasoning": "Exact match for reading and analyzing files",
+            })
 
             # Parameter discovery response (NEW - Task 52, moved to position 2)
             param_discovery_response = Mock()
-            param_discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "parameters": {
-                                "input_file": {"value": "test.txt", "confidence": 0.9, "source": "explicit"}
-                            },
-                            "stdin_type": None,
-                            "reasoning": "Found parameter in user input",
-                        }
-                    }
-                ]
-            }
+            param_discovery_response.text.return_value = json.dumps({
+                "parameters": {"input_file": {"value": "test.txt", "confidence": 0.9, "source": "explicit"}},
+                "stdin_type": None,
+                "reasoning": "Found parameter in user input",
+            })
 
             # Parameter mapping response - all params available
             param_response = Mock()
-            param_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {"input_file": "test.txt"},
-                            "missing": [],
-                            "confidence": 0.9,
-                            "reasoning": "All parameters can be mapped",
-                        }
-                    }
-                ]
-            }
+            param_response.text.return_value = json.dumps({
+                "extracted": {"input_file": "test.txt"},
+                "missing": [],
+                "confidence": 0.9,
+                "reasoning": "All parameters can be mapped",
+            })
 
             # Setup mock to return different responses
             # Path A flow: Discovery → ParameterDiscovery → ParameterMapping
@@ -296,63 +271,39 @@ class TestPlannerFlowIntegration:
 
             # Discovery - no workflow found
             discovery_response = Mock()
-            discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": False,
-                            "workflow_name": None,
-                            "confidence": 0.2,
-                            "reasoning": "No existing workflow matches",
-                        }
-                    }
-                ]
-            }
+            discovery_response.text.return_value = json.dumps({
+                "found": False,
+                "workflow_name": None,
+                "confidence": 0.2,
+                "reasoning": "No existing workflow matches",
+            })
 
             # Parameter discovery (comes BEFORE requirements in new flow)
             param_discovery_response = Mock()
-            param_discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "parameters": {"input_file": "data.txt", "output_file": "result.txt"},
-                            "stdin_type": None,
-                            "reasoning": "Extracted parameters from user input",
-                        }
-                    }
-                ]
-            }
+            param_discovery_response.text.return_value = json.dumps({
+                "parameters": {"input_file": "data.txt", "output_file": "result.txt"},
+                "stdin_type": None,
+                "reasoning": "Extracted parameters from user input",
+            })
 
             # RequirementsAnalysisNode - NEW
             requirements_response = Mock()
-            requirements_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "is_clear": True,
-                            "clarification_needed": None,
-                            "steps": ["Read file", "Process content", "Write output"],
-                            "estimated_nodes": 3,
-                            "required_capabilities": ["file", "llm"],
-                            "complexity_indicators": {"has_conditional": False},
-                        }
-                    }
-                ]
-            }
+            requirements_response.text.return_value = json.dumps({
+                "is_clear": True,
+                "clarification_needed": None,
+                "steps": ["Read file", "Process content", "Write output"],
+                "estimated_nodes": 3,
+                "required_capabilities": ["file", "llm"],
+                "complexity_indicators": {"has_conditional": False},
+            })
 
             # Component browsing - selects components
             browsing_response = Mock()
-            browsing_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "node_ids": ["read-file", "llm", "write-file"],
-                            "workflow_names": [],
-                            "reasoning": "Components needed for the workflow",
-                        }
-                    }
-                ]
-            }
+            browsing_response.text.return_value = json.dumps({
+                "node_ids": ["read-file", "llm", "write-file"],
+                "workflow_names": [],
+                "reasoning": "Components needed for the workflow",
+            })
 
             # PlanningNode - NEW
             planning_response = Mock()
@@ -365,69 +316,51 @@ Based on the requirements, I'll create a workflow that reads a file, processes i
 
             # Workflow generation - realistic workflow with valid data flow
             generation_response = Mock()
-            generation_response.json.return_value = {
-                "content": [
+            generation_response.text.return_value = json.dumps({
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {"id": "read", "type": "read-file", "params": {"file_path": "${input_file}"}},
+                    {"id": "process", "type": "llm", "params": {"prompt": "Analyze: ${read.content}"}},
                     {
-                        "input": {
-                            "ir_version": "0.1.0",
-                            "nodes": [
-                                {"id": "read", "type": "read-file", "params": {"file_path": "${input_file}"}},
-                                {"id": "process", "type": "llm", "params": {"prompt": "Analyze: ${read.content}"}},
-                                {
-                                    "id": "write",
-                                    "type": "write-file",
-                                    "params": {"file_path": "${output_file}", "content": "${process.response}"},
-                                },
-                            ],
-                            "edges": [
-                                {"from": "read", "to": "process"},
-                                {"from": "process", "to": "write"},
-                            ],
-                            "start_node": "read",
-                            "inputs": {
-                                "input_file": {"description": "File to read", "type": "string"},
-                                "output_file": {"description": "Output file", "type": "string"},
-                            },
-                            "outputs": {"result": {"description": "Processing result", "source": "${write.success}"}},
-                        }
-                    }
-                ]
-            }
+                        "id": "write",
+                        "type": "write-file",
+                        "params": {"file_path": "${output_file}", "content": "${process.response}"},
+                    },
+                ],
+                "edges": [
+                    {"from": "read", "to": "process"},
+                    {"from": "process", "to": "write"},
+                ],
+                "start_node": "read",
+                "inputs": {
+                    "input_file": {"description": "File to read", "type": "string"},
+                    "output_file": {"description": "Output file", "type": "string"},
+                },
+                "outputs": {"result": {"description": "Processing result", "source": "${write.success}"}},
+            })
 
             # Parameter mapping - extracts parameters BEFORE validation
             param_mapping_response = Mock()
-            param_mapping_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {"input_file": "data.txt", "output_file": "result.txt"},
-                            "missing": [],
-                            "confidence": 0.9,
-                            "reasoning": "Extracted parameters from discovered params",
-                        }
-                    }
-                ]
-            }
+            param_mapping_response.text.return_value = json.dumps({
+                "extracted": {"input_file": "data.txt", "output_file": "result.txt"},
+                "missing": [],
+                "confidence": 0.9,
+                "reasoning": "Extracted parameters from discovered params",
+            })
 
             # Note: ValidatorNode doesn't use LLM - it validates internally using extracted_params
 
             # Metadata generation
             metadata_response = Mock()
-            metadata_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "suggested_name": "new-workflow",
-                            "description": "A new generated workflow",
-                            "search_keywords": ["workflow", "process"],
-                            "capabilities": ["Read files", "Process with LLM", "Write output"],
-                            "typical_use_cases": ["Text processing"],
-                            "declared_inputs": ["input_file", "output_file"],
-                            "declared_outputs": ["result"],
-                        }
-                    }
-                ]
-            }
+            metadata_response.text.return_value = json.dumps({
+                "suggested_name": "new-workflow",
+                "description": "A new generated workflow",
+                "search_keywords": ["workflow", "process"],
+                "capabilities": ["Read files", "Process with LLM", "Write output"],
+                "typical_use_cases": ["Text processing"],
+                "declared_inputs": ["input_file", "output_file"],
+                "declared_outputs": ["result"],
+            })
 
             # Setup responses in correct order for Task 52 flow
             # Flow: Discovery → ParamDiscovery → Requirements → ComponentBrowsing → Planning → Generation → ParamMapping
@@ -548,40 +481,39 @@ Based on the requirements, I'll create a workflow that reads a file, processes i
 
             # Discovery - no match
             discovery_response = Mock()
-            discovery_response.json.return_value = {
-                "content": [
-                    {"input": {"found": False, "workflow_name": None, "confidence": 0.1, "reasoning": "No match found"}}
-                ]
-            }
+            discovery_response.text.return_value = json.dumps({
+                "found": False,
+                "workflow_name": None,
+                "confidence": 0.1,
+                "reasoning": "No match found",
+            })
 
             # Component browsing
             browsing_response = Mock()
-            browsing_response.json.return_value = {
-                "content": [{"input": {"node_ids": ["llm"], "workflow_names": [], "reasoning": "Simple LLM workflow"}}]
-            }
+            browsing_response.text.return_value = json.dumps({
+                "node_ids": ["llm"],
+                "workflow_names": [],
+                "reasoning": "Simple LLM workflow",
+            })
 
             # Parameter discovery (moved earlier in new flow)
             param_discovery = Mock()
-            param_discovery.json.return_value = {
-                "content": [{"input": {"parameters": {}, "stdin_type": None, "reasoning": "No parameters discovered"}}]
-            }
+            param_discovery.text.return_value = json.dumps({
+                "parameters": {},
+                "stdin_type": None,
+                "reasoning": "No parameters discovered",
+            })
 
             # RequirementsAnalysisNode - NEW
             requirements_response = Mock()
-            requirements_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "is_clear": True,  # Must be True to continue
-                            "clarification_needed": None,
-                            "steps": ["Generate workflow", "Validate output"],
-                            "estimated_nodes": 1,
-                            "required_capabilities": ["llm"],
-                            "complexity_indicators": {"has_conditional": False},
-                        }
-                    }
-                ]
-            }
+            requirements_response.text.return_value = json.dumps({
+                "is_clear": True,  # Must be True to continue
+                "clarification_needed": None,
+                "steps": ["Generate workflow", "Validate output"],
+                "estimated_nodes": 1,
+                "required_capabilities": ["llm"],
+                "complexity_indicators": {"has_conditional": False},
+            })
 
             # PlanningNode - NEW
             planning_response = Mock()
@@ -595,67 +527,50 @@ Creating a simple workflow that will be validated with retries.
             # Generation attempts - first 2 invalid, 3rd valid
             # Attempt 1: Invalid node type (will fail validation)
             gen_fail1 = Mock()
-            gen_fail1.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            # Invalid node type - will fail validation
-                            "nodes": [{"id": "n1", "type": "invalid-node-type", "params": {"prompt": "test"}}],
-                            "edges": [],
-                            "start_node": "n1",
-                            "inputs": {},
-                            "outputs": {},
-                        }
-                    }
-                ]
-            }
+            gen_fail1.text.return_value = json.dumps({
+                # Invalid node type - will fail validation
+                "nodes": [{"id": "n1", "type": "invalid-node-type", "params": {"prompt": "test"}}],
+                "edges": [],
+                "start_node": "n1",
+                "inputs": {},
+                "outputs": {},
+            })
 
             # Attempt 2: Missing start_node (will fail structural validation)
             gen_fail2 = Mock()
-            gen_fail2.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "ir_version": "0.1.0",
-                            "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "test"}}],
-                            "edges": [],
-                            # Missing start_node - will fail validation
-                            "inputs": {},
-                            "outputs": {},
-                        }
-                    }
-                ]
-            }
+            gen_fail2.text.return_value = json.dumps({
+                "ir_version": "0.1.0",
+                "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "test"}}],
+                "edges": [],
+                # Missing start_node - will fail validation
+                "inputs": {},
+                "outputs": {},
+            })
 
             # Attempt 3: Valid workflow
             gen_success = Mock()
-            gen_success.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "ir_version": "0.1.0",
-                            "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "test"}}],
-                            "edges": [],
-                            "start_node": "n1",
-                            "inputs": {},
-                            "outputs": {},
-                        }
-                    }
-                ]
-            }
+            gen_success.text.return_value = json.dumps({
+                "ir_version": "0.1.0",
+                "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "test"}}],
+                "edges": [],
+                "start_node": "n1",
+                "inputs": {},
+                "outputs": {},
+            })
 
             # Parameter mapping (empty params)
             param_mapping = Mock()
-            param_mapping.json.return_value = {
-                "content": [
-                    {"input": {"extracted": {}, "missing": [], "confidence": 0.9, "reasoning": "No parameters needed"}}
-                ]
-            }
+            param_mapping.text.return_value = json.dumps({
+                "extracted": {},
+                "missing": [],
+                "confidence": 0.9,
+                "reasoning": "No parameters needed",
+            })
 
             # Metadata generation - mock AFTER successful validation
             # This mock needs to handle the WorkflowMetadata schema properly
             metadata_response = Mock()
-            metadata_response.json.return_value = {
+            metadata_response.text.return_value = json.dumps({
                 "content": [
                     {
                         "input": {
@@ -669,7 +584,7 @@ Creating a simple workflow that will be validated with retries.
                         }
                     }
                 ]
-            }
+            })
 
             # Setup the sequence with Task 52 flow order
             # Flow: Discovery → ParamDiscovery → Requirements → Browse → Planning → Generate → ParamMapping → Validate
@@ -772,48 +687,30 @@ Creating a simple workflow that will be validated with retries.
 
             # Discovery - finds workflow
             discovery_response = Mock()
-            discovery_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": True,
-                            "workflow_name": "generate-changelog",
-                            "confidence": 0.9,
-                            "reasoning": "Changelog generation workflow found",
-                        }
-                    }
-                ]
-            }
+            discovery_response.text.return_value = json.dumps({
+                "found": True,
+                "workflow_name": "generate-changelog",
+                "confidence": 0.9,
+                "reasoning": "Changelog generation workflow found",
+            })
 
             # Parameter discovery (NEW - Task 52, position 2)
             param_discovery = Mock()
-            param_discovery.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "parameters": {},  # No parameters found
-                            "stdin_type": None,
-                            "reasoning": "No specific parameters found in user input",
-                        }
-                    }
-                ]
-            }
+            param_discovery.text.return_value = json.dumps({
+                "parameters": {},  # No parameters found
+                "stdin_type": None,
+                "reasoning": "No specific parameters found in user input",
+            })
 
             # Parameter mapping - missing optional param (limit has default=20)
             # Since limit is optional with default, it shouldn't be in missing list
             param_response = Mock()
-            param_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {},
-                            "missing": [],  # limit is optional with default value
-                            "confidence": 0.9,
-                            "reasoning": "Optional parameter will use default value",
-                        }
-                    }
-                ]
-            }
+            param_response.text.return_value = json.dumps({
+                "extracted": {},
+                "missing": [],  # limit is optional with default value
+                "confidence": 0.9,
+                "reasoning": "Optional parameter will use default value",
+            })
 
             # Path A: Discovery → ParameterDiscovery → ParameterMapping
             mock_model.prompt.side_effect = [discovery_response, param_discovery, param_response]
@@ -878,63 +775,39 @@ Creating a simple workflow that will be validated with retries.
             responses = [
                 # 1. Discovery - no match
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "found": False,
-                                    "workflow_name": None,
-                                    "confidence": 0.1,
-                                    "reasoning": "No match",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "found": False,
+                        "workflow_name": None,
+                        "confidence": 0.1,
+                        "reasoning": "No match",
+                    })
                 ),
                 # 2. Parameter discovery (MOVED earlier)
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "parameters": {},  # ParameterDiscoveryNode uses "parameters" field
-                                    "stdin_type": None,
-                                    "reasoning": "No parameters found",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "parameters": {},  # ParameterDiscoveryNode uses "parameters" field
+                        "stdin_type": None,
+                        "reasoning": "No parameters found",
+                    })
                 ),
                 # 3. Requirements analysis (NEW)
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "is_clear": True,
-                                    "clarification_needed": None,
-                                    "steps": ["Create workflow", "Read file"],
-                                    "estimated_nodes": 1,
-                                    "required_capabilities": ["file"],
-                                    "complexity_indicators": {},
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "is_clear": True,
+                        "clarification_needed": None,
+                        "steps": ["Create workflow", "Read file"],
+                        "estimated_nodes": 1,
+                        "required_capabilities": ["file"],
+                        "complexity_indicators": {},
+                    })
                 ),
                 # 4. Component browsing
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "node_ids": ["read-file", "llm"],
-                                    "workflow_names": [],
-                                    "reasoning": "File and LLM nodes",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "node_ids": ["read-file", "llm"],
+                        "workflow_names": [],
+                        "reasoning": "File and LLM nodes",
+                    })
                 ),
                 # 5. Planning (NEW)
                 Mock(
@@ -947,28 +820,16 @@ Creating workflow to read file.
                 ),
                 # 6. Generation - only 1 needed now!
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": workflow_with_inputs  # Workflow with required inputs
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps(workflow_with_inputs)  # Workflow with required inputs
                 ),
                 # 7. Parameter mapping - missing required param
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "extracted": {},
-                                    "missing": ["input_file"],
-                                    "confidence": 0.3,
-                                    "reasoning": "Cannot determine input file",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "extracted": {},
+                        "missing": ["input_file"],
+                        "confidence": 0.3,
+                        "reasoning": "Cannot determine input file",
+                    })
                 ),
                 # ParameterMapping detects missing params and routes to ResultPreparation
                 # No metadata generation occurs when params are missing
@@ -1026,42 +887,41 @@ Creating workflow to read file.
 
             # Setup standard Path B responses
             discovery_response = Mock()
-            discovery_response.json.return_value = {
-                "content": [
-                    {"input": {"found": False, "workflow_name": None, "confidence": 0.1, "reasoning": "No match"}}
-                ]
-            }
+            discovery_response.text.return_value = json.dumps({
+                "found": False,
+                "workflow_name": None,
+                "confidence": 0.1,
+                "reasoning": "No match",
+            })
 
             browsing_response = Mock()
-            browsing_response.json.return_value = {
-                "content": [{"input": {"node_ids": ["llm"], "workflow_names": [], "reasoning": "LLM workflow"}}]
-            }
+            browsing_response.text.return_value = json.dumps({
+                "node_ids": ["llm"],
+                "workflow_names": [],
+                "reasoning": "LLM workflow",
+            })
 
             param_discovery = Mock()
-            param_discovery.json.return_value = {
-                "content": [{"input": {"parameters": {}, "stdin_type": None, "reasoning": "No parameters discovered"}}]
-            }
+            param_discovery.text.return_value = json.dumps({
+                "parameters": {},
+                "stdin_type": None,
+                "reasoning": "No parameters discovered",
+            })
 
             # Generation always returns same IR wrapped in Anthropic structure
             gen_response = Mock()
-            gen_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "ir_version": "0.1.0",
-                            "nodes": [{"id": "n1", "type": "invalid-node", "params": {}}],
-                            "edges": [],
-                            "start_node": "n1",
-                            "inputs": {},
-                            "outputs": {},
-                        }
-                    }
-                ]
-            }
+            gen_response.text.return_value = json.dumps({
+                "ir_version": "0.1.0",
+                "nodes": [{"id": "n1", "type": "invalid-node", "params": {}}],
+                "edges": [],
+                "start_node": "n1",
+                "inputs": {},
+                "outputs": {},
+            })
 
             # Validation always fails
             validation_fail = Mock()
-            validation_fail.json.return_value = {
+            validation_fail.text.return_value = json.dumps({
                 "content": [
                     {
                         "input": {
@@ -1072,13 +932,16 @@ Creating workflow to read file.
                         }
                     }
                 ]
-            }
+            })
 
             # Parameter mapping response - needed after each generation
             param_mapping = Mock()
-            param_mapping.json.return_value = {
-                "content": [{"input": {"extracted": {}, "missing": [], "confidence": 0.9, "reasoning": "No params"}}]
-            }
+            param_mapping.text.return_value = json.dumps({
+                "extracted": {},
+                "missing": [],
+                "confidence": 0.9,
+                "reasoning": "No params",
+            })
 
             # Create helper mocks for new nodes
             requirements_response = create_requirements_mock(
@@ -1154,46 +1017,28 @@ Creating workflow to read file.
 
             # Path A responses
             discovery_found = Mock()
-            discovery_found.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "found": True,
-                            "workflow_name": "generate-changelog",  # Use existing test workflow
-                            "confidence": 0.95,
-                            "reasoning": "Found matching workflow",
-                        }
-                    }
-                ]
-            }
+            discovery_found.text.return_value = json.dumps({
+                "found": True,
+                "workflow_name": "generate-changelog",  # Use existing test workflow
+                "confidence": 0.95,
+                "reasoning": "Found matching workflow",
+            })
 
             # Parameter discovery (NEW - Task 52, position 2)
             param_discovery = Mock()
-            param_discovery.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "parameters": {"limit": {"value": "30", "confidence": 0.9, "source": "explicit"}},
-                            "stdin_type": None,
-                            "reasoning": "Found limit parameter",
-                        }
-                    }
-                ]
-            }
+            param_discovery.text.return_value = json.dumps({
+                "parameters": {"limit": {"value": "30", "confidence": 0.9, "source": "explicit"}},
+                "stdin_type": None,
+                "reasoning": "Found limit parameter",
+            })
 
             param_mapping = Mock()
-            param_mapping.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "extracted": {"limit": "30"},  # Extract params that match test workflow
-                            "missing": [],
-                            "confidence": 0.9,
-                            "reasoning": "All params mapped",
-                        }
-                    }
-                ]
-            }
+            param_mapping.text.return_value = json.dumps({
+                "extracted": {"limit": "30"},  # Extract params that match test workflow
+                "missing": [],
+                "confidence": 0.9,
+                "reasoning": "All params mapped",
+            })
 
             # Path A: Discovery → ParameterDiscovery → ParameterMapping
             mock_model.prompt.side_effect = [discovery_found, param_discovery, param_mapping]
@@ -1241,95 +1086,61 @@ Creating workflow to read file.
             responses = [
                 # 1. Discovery not found
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "found": False,
-                                    "workflow_name": None,
-                                    "confidence": 0.1,
-                                    "reasoning": "No match",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "found": False,
+                        "workflow_name": None,
+                        "confidence": 0.1,
+                        "reasoning": "No match",
+                    })
                 ),
                 # 2. Param discovery (MOVED earlier in Task 52)
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "parameters": {"prompt": "test"},
-                                    "stdin_type": None,
-                                    "reasoning": "Found prompt parameter",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "parameters": {"prompt": "test"},
+                        "stdin_type": None,
+                        "reasoning": "Found prompt parameter",
+                    })
                 ),
                 # 3. Requirements analysis (NEW in Task 52)
                 create_requirements_mock(is_clear=True, steps=["Generate text with LLM"], capabilities=["llm"]),
                 # 4. Component browsing
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {"input": {"node_ids": ["llm"], "workflow_names": [], "reasoning": "LLM components"}}
-                        ]
-                    }
+                    text=lambda: json.dumps({"node_ids": ["llm"], "workflow_names": [], "reasoning": "LLM components"})
                 ),
                 # 5. Planning (NEW in Task 52)
                 create_planning_mock(status="FEASIBLE", node_chain="llm"),
                 # 6. Generation attempt
-                Mock(json=lambda: {"content": [{"input": simple_workflow}]}),
+                Mock(text=lambda: json.dumps(simple_workflow)),
                 # 7. Parameter mapping (before validation)
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "extracted": {},  # No params to extract for simple workflow
-                                    "missing": [],
-                                    "confidence": 0.9,
-                                    "reasoning": "No parameters needed",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "extracted": {},  # No params to extract for simple workflow
+                        "missing": [],
+                        "confidence": 0.9,
+                        "reasoning": "No parameters needed",
+                    })
                 ),
                 # ValidatorNode validates internally (no LLM call)
                 # 8. Metadata generation (after successful validation)
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "suggested_name": "new-workflow",
-                                    "description": "Generated workflow",
-                                    "search_keywords": ["llm", "prompt"],
-                                    "capabilities": ["LLM text generation"],
-                                    "typical_use_cases": ["Generate text with LLM"],
-                                    "declared_inputs": [],  # No inputs declared
-                                    "declared_outputs": [],
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "suggested_name": "new-workflow",
+                        "description": "Generated workflow",
+                        "search_keywords": ["llm", "prompt"],
+                        "capabilities": ["LLM text generation"],
+                        "typical_use_cases": ["Generate text with LLM"],
+                        "declared_inputs": [],  # No inputs declared
+                        "declared_outputs": [],
+                    })
                 ),
                 # 9. Final parameter mapping (convergence point!)
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "extracted": {},
-                                    "missing": [],
-                                    "confidence": 0.9,
-                                    "reasoning": "No parameters needed",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "extracted": {},
+                        "missing": [],
+                        "confidence": 0.9,
+                        "reasoning": "No parameters needed",
+                    })
                 ),
             ]
 
@@ -1408,37 +1219,25 @@ Creating workflow to read file.
             responses = [
                 # 1. Discovery
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "found": False,
-                                        "workflow_name": None,
-                                        "confidence": 0.2,
-                                        "reasoning": "No existing workflow",
-                                    }
-                                }
-                            ]
-                        }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "found": False,
+                            "workflow_name": None,
+                            "confidence": 0.2,
+                            "reasoning": "No existing workflow",
+                        })
                     )
                 ),
                 # 2. Param discovery (MOVED earlier - should detect stdin)
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "parameters": {
-                                            "input_data": "<stdin>"  # Special marker for stdin
-                                        },
-                                        "stdin_type": "text",
-                                        "reasoning": "Using stdin data",
-                                    }
-                                }
-                            ]
-                        }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "parameters": {
+                                "input_data": "<stdin>"  # Special marker for stdin
+                            },
+                            "stdin_type": "text",
+                            "reasoning": "Using stdin data",
+                        })
                     )
                 ),
                 # 3. Requirements analysis (NEW in Task 52)
@@ -1447,102 +1246,70 @@ Creating workflow to read file.
                 ),
                 # 4. Component browsing
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "node_ids": ["llm"],
-                                        "workflow_names": [],
-                                        "reasoning": "Process stdin data",
-                                    }
-                                }
-                            ]
-                        }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "node_ids": ["llm"],
+                            "workflow_names": [],
+                            "reasoning": "Process stdin data",
+                        })
                     )
                 ),
                 # 5. Planning (NEW in Task 52)
                 create_planning_mock(status="FEASIBLE", node_chain="llm"),
                 # 6. Generation - realistic workflow with stdin input
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "ir_version": "0.1.0",
-                                        "nodes": [
-                                            {"id": "n1", "type": "llm", "params": {"prompt": "Process: ${input_data}"}}
-                                        ],
-                                        "edges": [],
-                                        "start_node": "n1",
-                                        "inputs": {
-                                            "input_data": {
-                                                "description": "Data to process",
-                                                "type": "string",
-                                                "required": True,
-                                            }
-                                        },
-                                        "outputs": {},
-                                    }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "ir_version": "0.1.0",
+                            "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "Process: ${input_data}"}}],
+                            "edges": [],
+                            "start_node": "n1",
+                            "inputs": {
+                                "input_data": {
+                                    "description": "Data to process",
+                                    "type": "string",
+                                    "required": True,
                                 }
-                            ]
-                        }
+                            },
+                            "outputs": {},
+                        })
                     )
                 ),
                 # 7. Parameter mapping - maps stdin to input_data (before validation)
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "extracted": {"input_data": "<stdin>"},  # Maps stdin
-                                        "missing": [],
-                                        "confidence": 1.0,
-                                        "reasoning": "Using stdin data for input_data",
-                                    }
-                                }
-                            ]
-                        }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "extracted": {"input_data": "<stdin>"},  # Maps stdin
+                            "missing": [],
+                            "confidence": 1.0,
+                            "reasoning": "Using stdin data for input_data",
+                        })
                     )
                 ),
                 # ValidatorNode validates internally with extracted params (including stdin)
                 # 8. Metadata generation (after successful validation)
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "suggested_name": "stdin-processor",
-                                        "description": "Process stdin input",
-                                        "search_keywords": ["stdin", "process"],
-                                        "capabilities": ["Process stdin data with LLM"],
-                                        "typical_use_cases": ["Processing piped input"],
-                                        "declared_inputs": ["input_data"],
-                                        "declared_outputs": [],
-                                    }
-                                }
-                            ]
-                        }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "suggested_name": "stdin-processor",
+                            "description": "Process stdin input",
+                            "search_keywords": ["stdin", "process"],
+                            "capabilities": ["Process stdin data with LLM"],
+                            "typical_use_cases": ["Processing piped input"],
+                            "declared_inputs": ["input_data"],
+                            "declared_outputs": [],
+                        })
                     )
                 ),
                 # 9. Final parameter mapping (after metadata)
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "extracted": {"input_data": "<stdin>"},  # Maps stdin again
-                                        "missing": [],
-                                        "confidence": 1.0,
-                                        "reasoning": "Using stdin data for input_data",
-                                    }
-                                }
-                            ]
-                        }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "extracted": {"input_data": "<stdin>"},  # Maps stdin again
+                            "missing": [],
+                            "confidence": 1.0,
+                            "reasoning": "Using stdin data for input_data",
+                        })
                     )
                 ),
             ]
@@ -1620,103 +1387,67 @@ Creating workflow to read file.
             responses = [
                 # Discovery - not found
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "found": False,
-                                    "workflow_name": None,
-                                    "confidence": 0.1,
-                                    "reasoning": "No match",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "found": False,
+                        "workflow_name": None,
+                        "confidence": 0.1,
+                        "reasoning": "No match",
+                    })
                 ),
                 # Parameter discovery
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "parameters": {"input_file": "test.txt"},
-                                    "stdin_type": None,
-                                    "reasoning": "Found input file",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "parameters": {"input_file": "test.txt"},
+                        "stdin_type": None,
+                        "reasoning": "Found input file",
+                    })
                 ),
                 # Requirements
                 create_requirements_mock(is_clear=True, steps=["Fetch from API", "Process data"]),
                 # Component browsing
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "node_ids": ["read-file", "llm"],
-                                    "workflow_names": [],
-                                    "reasoning": "File and LLM nodes needed",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "node_ids": ["read-file", "llm"],
+                        "workflow_names": [],
+                        "reasoning": "File and LLM nodes needed",
+                    })
                 ),
                 # Planning
                 create_planning_mock(status="FEASIBLE", node_chain="read-file >> llm"),
                 # Generation - workflow with template paths
-                Mock(json=lambda: {"content": [{"input": workflow_with_params}]}),
+                Mock(text=lambda: json.dumps(workflow_with_params)),
                 # Parameter mapping - provides input_file
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "extracted": {"input_file": "test.txt"},
-                                    "missing": [],
-                                    "confidence": 0.9,
-                                    "reasoning": "Extracted input file",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "extracted": {"input_file": "test.txt"},
+                        "missing": [],
+                        "confidence": 0.9,
+                        "reasoning": "Extracted input file",
+                    })
                 ),
                 # Metadata generation
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "suggested_name": "api-processor",
-                                    "description": "Fetch and process API data",
-                                    "search_keywords": ["api", "http", "process"],
-                                    "capabilities": ["API fetching", "Data processing"],
-                                    "typical_use_cases": ["API data processing"],
-                                    "declared_inputs": ["api_url"],
-                                    "declared_outputs": [],
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "suggested_name": "api-processor",
+                        "description": "Fetch and process API data",
+                        "search_keywords": ["api", "http", "process"],
+                        "capabilities": ["API fetching", "Data processing"],
+                        "typical_use_cases": ["API data processing"],
+                        "declared_inputs": ["api_url"],
+                        "declared_outputs": [],
+                    })
                 ),
                 # RuntimeValidation could potentially retry if issues are found
                 # Provide extra responses just in case
-                Mock(json=lambda: {"content": [{"input": workflow_with_params}]}),
+                Mock(text=lambda: json.dumps(workflow_with_params)),
                 # Parameter mapping retry
                 Mock(
-                    json=lambda: {
-                        "content": [
-                            {
-                                "input": {
-                                    "extracted": {"input_file": "test.txt"},
-                                    "missing": [],
-                                    "confidence": 0.9,
-                                    "reasoning": "Extracted input file",
-                                }
-                            }
-                        ]
-                    }
+                    text=lambda: json.dumps({
+                        "extracted": {"input_file": "test.txt"},
+                        "missing": [],
+                        "confidence": 0.9,
+                        "reasoning": "Extracted input file",
+                    })
                 ),
             ]
 
@@ -1790,53 +1521,35 @@ Creating workflow to read file.
             # Simple Path A responses
             mock_model.prompt.side_effect = [
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "found": True,
-                                        "workflow_name": "read-analyze-file",
-                                        "confidence": 0.9,
-                                        "reasoning": "Found workflow",
-                                    }
-                                }
-                            ]
-                        }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "found": True,
+                            "workflow_name": "read-analyze-file",
+                            "confidence": 0.9,
+                            "reasoning": "Found workflow",
+                        })
                     )
                 ),
                 # Parameter discovery (NEW - Task 52, position 2)
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "parameters": {
-                                            "input_file": {"value": "test.txt", "confidence": 0.9, "source": "explicit"}
-                                        },
-                                        "stdin_type": None,
-                                        "reasoning": "Found parameter",
-                                    }
-                                }
-                            ]
-                        }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "parameters": {
+                                "input_file": {"value": "test.txt", "confidence": 0.9, "source": "explicit"}
+                            },
+                            "stdin_type": None,
+                            "reasoning": "Found parameter",
+                        })
                     )
                 ),
                 Mock(
-                    json=Mock(
-                        return_value={
-                            "content": [
-                                {
-                                    "input": {
-                                        "extracted": {"input_file": "test.txt"},
-                                        "missing": [],
-                                        "confidence": 0.9,
-                                        "reasoning": "Mapped",
-                                    }
-                                }
-                            ]
-                        }
+                    text=Mock(
+                        return_value=json.dumps({
+                            "extracted": {"input_file": "test.txt"},
+                            "missing": [],
+                            "confidence": 0.9,
+                            "reasoning": "Mapped",
+                        })
                     )
                 ),
             ]

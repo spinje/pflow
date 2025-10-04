@@ -13,6 +13,11 @@ from pflow.registry import Registry
 
 logger = logging.getLogger(__name__)
 
+# Display limits for error messages - balances information vs overwhelming output
+MAX_DISPLAYED_FIELDS = 20  # Fits in ~25 terminal lines with formatting
+MAX_DISPLAYED_SUGGESTIONS = 3  # Cognitive limit for processing alternatives
+MAX_FLATTEN_DEPTH = 5  # Prevent infinite recursion on circular refs
+
 
 class TemplateValidator:
     """Validates template variables before workflow execution."""
@@ -159,8 +164,253 @@ class TemplateValidator:
         return errors
 
     @staticmethod
+    def _sanitize_for_display(value: str, max_length: int = 100) -> str:
+        """Sanitize string for safe display in error messages.
+
+        Removes control characters and limits length to prevent:
+        - Terminal escape sequences
+        - Log injection (newlines, carriage returns)
+        - Information disclosure
+
+        Args:
+            value: String to sanitize (node_id, template variable, etc.)
+            max_length: Maximum length before truncation
+
+        Returns:
+            Sanitized string safe for error messages
+        """
+        # Remove non-printable characters AND newlines/carriage returns
+        # Allow only printable characters, excluding control chars that enable log injection
+        sanitized = "".join(c for c in value if c.isprintable() and c not in ("\n", "\r", "\t", "\x0b", "\x0c"))
+
+        # Truncate if too long
+        if len(sanitized) > max_length:
+            sanitized = sanitized[:max_length] + "..."
+
+        return sanitized
+
+    @staticmethod
+    def _flatten_output_structure(  # noqa: C901
+        base_key: str,
+        base_type: str,
+        structure: dict[str, Any],
+        _current_path: str = "",
+        _paths: list[tuple[str, str]] | None = None,
+        _depth: int = 0,
+        _max_depth: int = MAX_FLATTEN_DEPTH,
+    ) -> list[tuple[str, str]]:
+        """Recursively flatten output structure to list of (path, type) tuples.
+
+        Note: This function has inherent complexity (noqa: C901) due to recursive
+        tree traversal of arbitrary nested structures. Refactoring would require
+        breaking the recursion pattern, which could reduce readability without
+        meaningful benefit. The complexity is managed through:
+        - Clear function boundaries (prep/traverse/handle)
+        - Depth limiting to prevent infinite recursion
+        - Comprehensive docstrings
+        - Type hints for all parameters
+
+        Args:
+            base_key: The base output key (e.g., "result")
+            base_type: Type of the base key (e.g., "dict")
+            structure: Nested structure dictionary
+            _current_path: Current path during recursion (internal)
+            _paths: Accumulated paths (internal)
+            _depth: Current recursion depth (internal)
+            _max_depth: Maximum recursion depth to prevent infinite loops
+
+        Returns:
+            List of (path, type) tuples representing all accessible paths
+
+        Example:
+            Input: base_key="result", base_type="dict", structure={
+                "messages": {"type": "array", "items": {"type": "dict", "structure": {...}}}
+            }
+            Output: [
+                ("result", "dict"),
+                ("result.messages", "array"),
+                ("result.messages[0].text", "string"),
+                ...
+            ]
+        """
+        if _paths is None:
+            _paths = []
+
+        # Prevent infinite recursion on malformed structures
+        if _depth > _max_depth:
+            return _paths
+
+        # Add the base path first
+        if _current_path == "":
+            _paths.append((base_key, base_type))
+            _current_path = base_key
+
+        # Recursively traverse structure
+        if structure and isinstance(structure, dict):
+            for field_name, field_info in structure.items():
+                field_path = f"{_current_path}.{field_name}"
+
+                if isinstance(field_info, dict):
+                    field_type = field_info.get("type", "any")
+                    _paths.append((field_path, field_type))
+
+                    # Handle arrays with example index
+                    if field_type == "array" and "items" in field_info:
+                        items = field_info["items"]
+                        if isinstance(items, dict):
+                            item_type = items.get("type", "any")
+                            item_path = f"{field_path}[0]"
+                            _paths.append((item_path, item_type))
+
+                            # Recurse into array item structure
+                            if "structure" in items and isinstance(items["structure"], dict):
+                                TemplateValidator._flatten_output_structure(
+                                    base_key="",  # Not used in recursion
+                                    base_type="",
+                                    structure=items["structure"],
+                                    _current_path=item_path,
+                                    _paths=_paths,
+                                    _depth=_depth + 1,
+                                    _max_depth=_max_depth,
+                                )
+
+                    # Recurse into nested dict structure
+                    elif "structure" in field_info and isinstance(field_info["structure"], dict):
+                        TemplateValidator._flatten_output_structure(
+                            base_key="",
+                            base_type="",
+                            structure=field_info["structure"],
+                            _current_path=field_path,
+                            _paths=_paths,
+                            _depth=_depth + 1,
+                            _max_depth=_max_depth,
+                        )
+                elif isinstance(field_info, str):
+                    # Direct type string (legacy format)
+                    _paths.append((field_path, field_info))
+
+        return _paths
+
+    @staticmethod
+    def _find_similar_paths(attempted_key: str, available_paths: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        """Find paths similar to the attempted key.
+
+        Uses simple substring matching for MVP.
+
+        Args:
+            attempted_key: The key user tried to access (e.g., "msg")
+            available_paths: List of (path, type) tuples
+
+        Returns:
+            List of (path, type) tuples that match, sorted by relevance
+
+        Example:
+            attempted_key="msg"
+            available_paths=[("result", "dict"), ("result.messages", "array")]
+            returns=[("result.messages", "array")]
+        """
+        attempted_lower = attempted_key.lower()
+        matches = []
+
+        for path, path_type in available_paths:
+            # Extract just the last component of the path for matching
+            last_component = path.split(".")[-1].split("[")[0]  # Handle array notation
+
+            # Substring match (case-insensitive)
+            if attempted_lower in last_component.lower():
+                # Calculate match quality (longer substring match = better)
+                match_quality = len(attempted_lower) / len(last_component) if last_component else 0
+                matches.append((path, path_type, match_quality))
+
+        # Sort by match quality (best matches first), then alphabetically
+        matches.sort(key=lambda x: (-x[2], x[0]))
+
+        # Return just the (path, type) tuples, top 3 matches
+        return [(path, path_type) for path, path_type, _ in matches[:MAX_DISPLAYED_SUGGESTIONS]]
+
+    @staticmethod
+    def _format_enhanced_node_error(
+        node_id: str, node_type: str, attempted_key: str, available_paths: list[tuple[str, str]], base_var: str
+    ) -> str:
+        """Create multi-section error with available outputs and suggestions.
+
+        Args:
+            node_id: Node ID where error occurred
+            node_type: Type of the node
+            attempted_key: The output key that was attempted
+            available_paths: List of (path, type) tuples
+            base_var: Base variable (node ID) for template construction
+
+        Returns:
+            Multi-line error message with sections for problem, available outputs, and suggestions
+        """
+        # Sanitize all user-controlled values to prevent template injection
+        safe_node_id = TemplateValidator._sanitize_for_display(node_id)
+        safe_node_type = TemplateValidator._sanitize_for_display(node_type)
+        safe_attempted_key = TemplateValidator._sanitize_for_display(attempted_key)
+        safe_base_var = TemplateValidator._sanitize_for_display(base_var)
+
+        # Section 1: Problem statement
+        lines = [f"Node '{safe_node_id}' (type: {safe_node_type}) does not output '{safe_attempted_key}'"]
+
+        # Section 2: Available outputs (limit to 20 to avoid overwhelming)
+        if available_paths:
+            lines.append("")
+            lines.append(f"Available outputs from '{safe_node_id}':")
+
+            display_paths = available_paths[:MAX_DISPLAYED_FIELDS]  # Limit display
+            for path, type_str in display_paths:
+                # Sanitize path components for safety
+                safe_path = TemplateValidator._sanitize_for_display(path)
+                safe_type = TemplateValidator._sanitize_for_display(type_str)
+
+                # Format with checkmark and type
+                full_path = f"{safe_base_var}.{safe_path}" if safe_base_var not in safe_path else safe_path
+                lines.append(f"  ✓ ${{{full_path}}} ({safe_type})")
+
+            # Show truncation message if needed
+            if len(available_paths) > 20:
+                remaining = len(available_paths) - 20
+                lines.append(f"  ... and {remaining} more outputs")
+
+        # Section 3: Suggestions (find similar paths)
+        suggestions = TemplateValidator._find_similar_paths(attempted_key, available_paths)
+        if suggestions:
+            lines.append("")
+            if len(suggestions) == 1:
+                sugg_path, _ = suggestions[0]
+                safe_sugg_path = TemplateValidator._sanitize_for_display(sugg_path)
+                full_sugg = (
+                    f"{safe_base_var}.{safe_sugg_path}" if safe_base_var not in safe_sugg_path else safe_sugg_path
+                )
+                lines.append(f"Did you mean: ${{{full_sugg}}}?")
+            else:
+                lines.append("Did you mean one of these?")
+                for sugg_path, _ in suggestions:
+                    safe_sugg_path = TemplateValidator._sanitize_for_display(sugg_path)
+                    full_sugg = (
+                        f"{safe_base_var}.{safe_sugg_path}" if safe_base_var not in safe_sugg_path else safe_sugg_path
+                    )
+                    lines.append(f"  - ${{{full_sugg}}}")
+
+        # Section 4: Common fix (use first suggestion if available, otherwise first available path)
+        if suggestions:
+            fix_path, _ = suggestions[0]
+            full_fix = f"{base_var}.{fix_path}" if base_var not in fix_path else fix_path
+            lines.append("")
+            lines.append(f"Common fix: Change ${{{base_var}.{attempted_key}}} to ${{{full_fix}}}")
+        elif available_paths:
+            # No suggestions, but we have paths - suggest the first one as generic fix
+            first_path, _ = available_paths[0]
+            full_first = f"{base_var}.{first_path}" if base_var not in first_path else first_path
+            lines.append("")
+            lines.append(f"Tip: Try using ${{{full_first}}} instead")
+
+        return "\n".join(lines)
+
+    @staticmethod
     def _get_node_outputs_description(node: dict[str, Any], output_key: str, registry: Registry) -> str:
-        """Get error message for missing node output.
+        """Get error message for missing node output with enhanced suggestions.
 
         Args:
             node: Node dictionary from workflow IR
@@ -168,7 +418,7 @@ class TemplateValidator:
             registry: Registry instance for metadata lookup
 
         Returns:
-            Error message describing what outputs are available
+            Error message describing what outputs are available with suggestions
         """
         node_type = node.get("type", "unknown")
         base_var = node.get("id")
@@ -177,24 +427,47 @@ class TemplateValidator:
             nodes_metadata = registry.get_nodes_metadata([node_type])
             if node_type in nodes_metadata:
                 interface = nodes_metadata[node_type]["interface"]
-                available_outputs = []
+
+                # Extract all outputs with nested paths
+                all_paths = []
                 for output in interface["outputs"]:
                     if isinstance(output, str):
-                        available_outputs.append(output)
+                        # Simple output without structure
+                        all_paths.append((output, "any"))
                     else:
-                        available_outputs.append(output["key"])
+                        # Rich output with potential structure
+                        key = output["key"]
+                        output_type = output.get("type", "any")
+                        structure = output.get("structure", {})
 
-                if available_outputs:
-                    return (
-                        f"Node '{base_var}' (type: {node_type}) does not output '{output_key}'. "
-                        f"Available outputs: {', '.join(available_outputs)}"
+                        # Add the base output key
+                        all_paths.append((key, output_type))
+
+                        # Flatten nested structure if it exists
+                        if structure and isinstance(structure, dict):
+                            nested_paths = TemplateValidator._flatten_output_structure(
+                                base_key=key, base_type=output_type, structure=structure
+                            )
+                            # Skip the first entry (base key already added)
+                            all_paths.extend(nested_paths[1:])
+
+                if all_paths:
+                    # Type-safe: base_var comes from node.get("id") which may be None
+                    node_id_str = str(base_var) if base_var else "unknown"
+                    return TemplateValidator._format_enhanced_node_error(
+                        node_id=node_id_str,
+                        node_type=node_type,
+                        attempted_key=output_key,
+                        available_paths=all_paths,
+                        base_var=node_id_str,
                     )
                 else:
                     return f"Node '{base_var}' (type: {node_type}) does not produce any outputs"
         except Exception as e:
             # Registry lookup failed, skip detailed error message
-            logger.debug(f"Failed to get node metadata for validation: {e}")
+            logger.debug(f"Failed to get enhanced node metadata for validation: {e}")
 
+        # Fallback if registry lookup failed
         return f"Node '{base_var}' does not output '{output_key}'"
 
     @staticmethod

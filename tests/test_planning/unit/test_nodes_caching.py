@@ -7,6 +7,7 @@ This test suite validates:
 4. Correct parameters are passed to LLM
 """
 
+import json
 from unittest.mock import Mock, patch
 
 from pflow.planning.nodes import (
@@ -45,18 +46,13 @@ class TestWorkflowDiscoveryNodeCaching:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure for parse_structured_response
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": False,
-                                "workflow_name": None,
-                                "confidence": 0.0,
-                                "reasoning": "No matching workflow found",
-                            }
-                        }
-                    ]
-                }
+
+                mock_response.text.return_value = json.dumps({
+                    "found": False,
+                    "workflow_name": None,
+                    "confidence": 0.0,
+                    "reasoning": "No matching workflow found",
+                })
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -89,18 +85,13 @@ class TestWorkflowDiscoveryNodeCaching:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": False,
-                                "workflow_name": None,
-                                "confidence": 0.0,
-                                "reasoning": "No matching workflow found",
-                            }
-                        }
-                    ]
-                }
+
+                mock_response.text.return_value = json.dumps({
+                    "found": False,
+                    "workflow_name": None,
+                    "confidence": 0.0,
+                    "reasoning": "No matching workflow found",
+                })
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -141,18 +132,13 @@ class TestWorkflowDiscoveryNodeCaching:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "found": False,
-                                "workflow_name": None,
-                                "confidence": 0.0,
-                                "reasoning": "No matching workflow found",
-                            }
-                        }
-                    ]
-                }
+
+                mock_response.text.return_value = json.dumps({
+                    "found": False,
+                    "workflow_name": None,
+                    "confidence": 0.0,
+                    "reasoning": "No matching workflow found",
+                })
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -187,9 +173,11 @@ class TestComponentBrowsingNodeCaching:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure for parse_structured_response
-                mock_response.json.return_value = {
-                    "content": [{"input": {"node_ids": ["read-file"], "workflow_names": [], "reasoning": "test"}}]
-                }
+                mock_response.text.return_value = json.dumps({
+                    "node_ids": ["read-file"],
+                    "workflow_names": [],
+                    "reasoning": "test",
+                })
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -227,9 +215,11 @@ class TestComponentBrowsingNodeCaching:
                     mock_model = Mock()
                     mock_response = Mock()
                     # Mock proper response structure
-                    mock_response.json.return_value = {
-                        "content": [{"input": {"node_ids": ["read-file"], "workflow_names": [], "reasoning": "test"}}]
-                    }
+                    mock_response.text.return_value = json.dumps({
+                        "node_ids": ["read-file"],
+                        "workflow_names": [],
+                        "reasoning": "test",
+                    })
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
 
@@ -267,17 +257,11 @@ class TestRequirementsAnalysisNodeCaching:
         with patch("llm.get_model") as mock_get_model:
             mock_model = Mock()
             mock_response = Mock()
-            mock_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "is_clear": True,
-                            "steps": ["req1", "req2"],
-                            "required_capabilities": ["test"],
-                        }
-                    }
-                ]
-            }
+            mock_response.text.return_value = json.dumps({
+                "is_clear": True,
+                "steps": ["req1", "req2"],
+                "required_capabilities": ["test"],
+            })
             mock_model.prompt.return_value = mock_response
             mock_get_model.return_value = mock_model
 
@@ -304,19 +288,13 @@ class TestRequirementsAnalysisNodeCaching:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure for parse_structured_response
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "is_clear": True,
-                                "steps": ["req1"],
-                                "estimated_nodes": 1,
-                                "required_capabilities": ["test"],
-                                "complexity_indicators": {},
-                            }
-                        }
-                    ]
-                }
+                mock_response.text.return_value = json.dumps({
+                    "is_clear": True,
+                    "steps": ["req1"],
+                    "estimated_nodes": 1,
+                    "required_capabilities": ["test"],
+                    "complexity_indicators": {},
+                })
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -354,9 +332,11 @@ class TestParameterDiscoveryNodeCaching:
             mock_model = Mock()
             mock_response = Mock()
             # Mock proper response structure for parse_structured_response
-            mock_response.json.return_value = {
-                "content": [{"input": {"parameters": {"param1": "value1"}, "stdin_type": None, "reasoning": "test"}}]
-            }
+            mock_response.text.return_value = json.dumps({
+                "parameters": {"param1": "value1"},
+                "stdin_type": None,
+                "reasoning": "test",
+            })
             mock_model.prompt.return_value = mock_response
             mock_get_model.return_value = mock_model
 
@@ -384,11 +364,11 @@ class TestParameterDiscoveryNodeCaching:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure for parse_structured_response
-                mock_response.json.return_value = {
-                    "content": [
-                        {"input": {"parameters": {"param1": "value1"}, "stdin_type": None, "reasoning": "test"}}
-                    ]
-                }
+                mock_response.text.return_value = json.dumps({
+                    "parameters": {"param1": "value1"},
+                    "stdin_type": None,
+                    "reasoning": "test",
+                })
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -423,9 +403,11 @@ class TestParameterMappingNodeCaching:
             mock_model = Mock()
             mock_response = Mock()
             # Mock proper response structure for parse_structured_response
-            mock_response.json.return_value = {
-                "content": [{"input": {"extracted": {"param1": "value1"}, "missing": [], "confidence": 1.0}}]
-            }
+            mock_response.text.return_value = json.dumps({
+                "extracted": {"param1": "value1"},
+                "missing": [],
+                "confidence": 1.0,
+            })
             mock_model.prompt.return_value = mock_response
             mock_get_model.return_value = mock_model
 
@@ -460,9 +442,11 @@ class TestParameterMappingNodeCaching:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure for parse_structured_response
-                mock_response.json.return_value = {
-                    "content": [{"input": {"extracted": {"param1": "value1"}, "missing": [], "confidence": 1.0}}]
-                }
+                mock_response.text.return_value = json.dumps({
+                    "extracted": {"param1": "value1"},
+                    "missing": [],
+                    "confidence": 1.0,
+                })
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -490,19 +474,13 @@ class TestMetadataGenerationNodeCaching:
             mock_model = Mock()
             mock_response = Mock()
             # Mock proper response structure for parse_structured_response
-            mock_response.json.return_value = {
-                "content": [
-                    {
-                        "input": {
-                            "suggested_name": "test-workflow",
-                            "description": "Test description for workflow that performs various testing operations and validates results against expected behavior patterns in automated testing scenarios",
-                            "search_keywords": ["test", "workflow"],
-                            "capabilities": ["test capability"],
-                            "typical_use_cases": ["test use case"],
-                        }
-                    }
-                ]
-            }
+            mock_response.text.return_value = json.dumps({
+                "suggested_name": "test-workflow",
+                "description": "Test description for workflow that performs various testing operations and validates results against expected behavior patterns in automated testing scenarios",
+                "search_keywords": ["test", "workflow"],
+                "capabilities": ["test capability"],
+                "typical_use_cases": ["test use case"],
+            })
             mock_model.prompt.return_value = mock_response
             mock_get_model.return_value = mock_model
 
@@ -533,19 +511,13 @@ class TestMetadataGenerationNodeCaching:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure for parse_structured_response
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "suggested_name": "test-workflow",
-                                "description": "Test description for workflow that performs various testing operations and validates results against expected behavior patterns in automated testing scenarios",
-                                "search_keywords": ["test", "workflow"],
-                                "capabilities": ["test capability"],
-                                "typical_use_cases": ["test use case"],
-                            }
-                        }
-                    ]
-                }
+                mock_response.text.return_value = json.dumps({
+                    "suggested_name": "test-workflow",
+                    "description": "Test description for workflow that performs various testing operations and validates results against expected behavior patterns in automated testing scenarios",
+                    "search_keywords": ["test", "workflow"],
+                    "capabilities": ["test capability"],
+                    "typical_use_cases": ["test use case"],
+                })
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -577,7 +549,7 @@ class TestPlanningNodeCaching:
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
-                mock_response.text = lambda: "**Status**: FEASIBLE\n**Node Chain**: test"
+                mock_response.text.return_value = "**Status**: FEASIBLE\n**Node Chain**: test"
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -601,7 +573,7 @@ class TestPlanningNodeCaching:
             with patch("llm.get_model") as mock_get_model:
                 mock_model = Mock()
                 mock_response = Mock()
-                mock_response.text = lambda: "**Status**: FEASIBLE\n**Node Chain**: test"
+                mock_response.text.return_value = "**Status**: FEASIBLE\n**Node Chain**: test"
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -638,17 +610,11 @@ class TestWorkflowGeneratorNodeCaching:
                 mock_model = Mock()
                 mock_response = Mock()
                 # Mock proper response structure for parse_structured_response
-                mock_response.json.return_value = {
-                    "content": [
-                        {
-                            "input": {
-                                "ir_version": "0.1.0",
-                                "nodes": [],
-                                "edges": [],
-                            }
-                        }
-                    ]
-                }
+                mock_response.text.return_value = json.dumps({
+                    "ir_version": "0.1.0",
+                    "nodes": [],
+                    "edges": [],
+                })
                 mock_model.prompt.return_value = mock_response
                 mock_get_model.return_value = mock_model
 
@@ -687,18 +653,12 @@ class TestCacheBlockContent:
                     mock_model = Mock()
                     mock_response = Mock()
                     # Mock proper response structure for parse_structured_response
-                    mock_response.json.return_value = {
-                        "content": [
-                            {
-                                "input": {
-                                    "found": False,
-                                    "workflow_name": None,
-                                    "confidence": 0.0,
-                                    "reasoning": "No matching workflow found",
-                                }
-                            }
-                        ]
-                    }
+                    mock_response.text.return_value = json.dumps({
+                        "found": False,
+                        "workflow_name": None,
+                        "confidence": 0.0,
+                        "reasoning": "No matching workflow found",
+                    })
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
 
@@ -745,9 +705,11 @@ class TestCacheBlockContent:
                     mock_model = Mock()
                     mock_response = Mock()
                     # Mock proper response structure for parse_structured_response
-                    mock_response.json.return_value = {
-                        "content": [{"input": {"node_ids": ["test"], "workflow_names": [], "reasoning": "test"}}]
-                    }
+                    mock_response.text.return_value = json.dumps({
+                        "node_ids": ["test"],
+                        "workflow_names": [],
+                        "reasoning": "test",
+                    })
                     mock_model.prompt.return_value = mock_response
                     mock_get_model.return_value = mock_model
 

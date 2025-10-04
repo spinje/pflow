@@ -117,7 +117,12 @@ class TestRepairService:
         assert workflow["nodes"][1]["params"]["prompt"] == "User: ${fetch.login}"
 
     def test_repair_workflow_success(self):
-        """Test successful workflow repair with mocked LLM."""
+        """Test successful workflow repair with mocked LLM.
+
+        FIX HISTORY:
+        - 2025-01-XX: Added missing 'purpose' field to nodes to match FlowIR schema requirements.
+          The FlowIR model requires purpose (min 10 chars) for all nodes, but test was missing it.
+        """
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "process", "type": "llm", "params": {"prompt": "${data.username}"}}],
@@ -126,9 +131,17 @@ class TestRepairService:
         errors = [{"message": "Template ${data.username} not found. Available: login"}]
 
         # Fixed workflow that LLM would return (as FlowIR model)
+        # NOTE: Must include 'purpose' field to match FlowIR schema (required, min 10 chars)
         fixed_workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "process", "type": "llm", "params": {"prompt": "${data.login}"}}],
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "purpose": "Process user data with LLM",
+                    "params": {"prompt": "${data.login}"},
+                }
+            ],
         }
 
         # Mock the parse_structured_response helper at its actual import location
@@ -152,8 +165,8 @@ class TestRepairService:
             assert repaired_ir is not None
             assert repaired_ir["nodes"][0]["params"]["prompt"] == "${data.login}"
 
-            # Verify correct model was used (changed to claude-sonnet-4-0 in current implementation)
-            mock_get_model.assert_called_with("anthropic/claude-sonnet-4-0")
+            # Verify correct model was used (default is claude-sonnet-4-5)
+            mock_get_model.assert_called_with("anthropic/claude-sonnet-4-5")
             # Verify deterministic temperature
             mock_model.prompt.assert_called_once()
             args, kwargs = mock_model.prompt.call_args

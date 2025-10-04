@@ -23,14 +23,14 @@ high
 
 ### The Paradigm Shift
 
-After extensive analysis, we discovered that pflow already has ~24 CLI commands with 95% of the logic needed. Instead of building complex MCP infrastructure, we're taking the radically simpler approach:
+After extensive analysis, we discovered that pflow already has the infrastructure needed. We're exposing the planner's internal capabilities as CLI commands:
 
-1. Add 2 new discovery commands that use LLM for intelligent selection
-2. Add 1 new save command for workflow library management
-3. Enhance 1 existing command with JSON output
-4. Create clear agent instructions
-5. Test with agents using just CLI
-6. Only build MCP (Task 72) if CLI proves insufficient
+1. Add 2 discovery commands that use LLM for intelligent selection
+2. Add 1 validation flag for pre-flight checks (critical!)
+3. Add 1 save command for workflow library management
+4. Add 1 describe command for detailed node information
+5. Enhance error output to show rich context
+6. Create clear agent instructions (AGENT_INSTRUCTIONS.md)
 
 ### Key Insight: Discovery Like the Planner
 
@@ -38,116 +38,188 @@ The breakthrough is that agents need the same discovery approach as the planner:
 - **Rich queries**: "I need to analyze GitHub PRs and create reports"
 - **Intelligent selection**: LLM understands intent and selects relevant components
 - **Complete information**: Full interface details, not just names
+- **Pre-flight validation**: Check workflows before execution
 - **Single-shot discovery**: Everything needed in one command
 
-### Key Discoveries
+### Key Discoveries from Research
 
-1. **Execute Already Supports File Paths**:
-   - `.pflow/workflows/draft.json` - relative paths ✅
-   - `~/.pflow/workflows/saved.json` - home expansion ✅
-   - `draft.json` - current directory ✅
-   - `my-workflow` - saved workflow names ✅
+1. **Direct Node Reuse is Feasible**:
+   - Planner nodes can run standalone with `node.run(shared)`
+   - No Flow needed, just a shared dict
+   - Test suite proves this with 350+ examples
 
-2. **Workflow Describe Already Exists**:
-   - `pflow workflow describe <name>` shows inputs/outputs ✅
-   - Needs `--json` option for agents
+2. **Validation is Critical**:
+   - Agents have no way to validate before execution
+   - Runtime failures are bad UX for iterative development
+   - ValidatorNode provides 4-layer validation
 
-3. **MCP Discovery Already Works**:
-   - `pflow mcp list` - lists servers ✅
-   - `pflow mcp tools` - lists tools ✅
-   - `pflow mcp info <tool>` - tool details ✅
+3. **Context Builders are Ready**:
+   - `build_nodes_context()` - lightweight browsing
+   - `build_planning_context()` - full interface details
+   - `build_workflows_context()` - rich workflow metadata
 
-### CLI Commands to Add/Enhance
+4. **Rich Error Data Exists but Hidden**:
+   - Nodes capture full API responses in shared store
+   - ExecutionResult.errors contains detailed error information
+   - CLI currently shows generic "execution failed" message
+   - Simple fix: pass and display ExecutionResult.errors
 
-#### 1. `pflow discover-nodes` Command (NEW)
+### CLI Commands to Add
 
-**Purpose**: Discover all nodes needed for a specific task
-
-**How it works**:
-- Takes rich natural language query
-- Uses LLM to select relevant nodes (like ComponentBrowsingNode)
-- Returns FULL interface details for each node
-- Groups by category for readability
-
-**Example**:
-```bash
-$ pflow discover-nodes "I need to fetch GitHub issues, analyze them with AI, and save reports"
-
-## GitHub Operations
-
-### github-get-issue
-**Description**: Fetch a specific GitHub issue with details
-**Inputs**:
-  - repo: str (required) - Repository in owner/repo format
-  - issue_number: int (required) - Issue number to fetch
-**Outputs**:
-  - issue_title: str - Title of the issue
-  - issue_body: str - Full issue description
-  - issue_state: str - Current state (open/closed)
-
-## AI/LLM Operations
-
-### llm
-**Description**: Process text using a language model
-**Inputs**:
-  - prompt: str (required) - The prompt to send
-  - model: str (optional, default: "gpt-4") - Model to use
-[... complete details for all relevant nodes ...]
-```
-
-#### 2. `pflow discover-workflows` Command (NEW)
+#### 1. `pflow workflow discover` Command (NEW)
 
 **Purpose**: Discover existing workflows that match a task description
 
 **How it works**:
 - Takes rich natural language query
-- Uses LLM to find relevant workflows (like WorkflowDiscoveryNode)
-- Returns COMPLETE workflow metadata
-- Includes flow, capabilities, usage examples
+- Uses WorkflowDiscoveryNode directly
+- Returns matching workflows with metadata
 
 **Example**:
 ```bash
-$ pflow discover-workflows "I need to analyze pull requests"
+$ pflow workflow discover "I need to analyze pull requests"
 
 ## pr-analyzer
 **Description**: Comprehensive PR analysis workflow
-**Version**: 1.2.0
-**Node Flow**: github-get-pr >> extract-diff >> llm >> format-report >> write-file
+**Node Flow**: github-get-pr >> llm >> write-file
 **Inputs**:
   - repo: str (required) - GitHub repository
   - pr_number: int (required) - Pull request number
 **Outputs**:
   - report_path: str - Path to generated report
-  - summary: str - Brief summary of analysis
 **Capabilities**:
   - Analyzes code changes
   - Identifies potential issues
-  - Suggests improvements
-**Example Usage**:
-  pflow execute pr-analyzer --param repo="owner/repo" --param pr_number=123
-**Execution Stats**:
-  - Used 47 times
-  - Average duration: 3.2s
 ```
 
-#### 3. `pflow workflow save` Command (NEW)
+#### 2. `pflow registry discover` Command (NEW)
 
-**Purpose**: Save a draft workflow file to the global library
+**Purpose**: Discover nodes needed for a specific task
+
+**How it works**:
+- Takes rich natural language query
+- Uses ComponentBrowsingNode directly
+- Returns relevant nodes with full interfaces
+
+**Example**:
+```bash
+$ pflow registry discover "I need to fetch GitHub issues and analyze them"
+
+## GitHub Operations
+
+### github-get-issue
+**Description**: Fetch a specific GitHub issue
+**Inputs**:
+  - repo: str (required) - Repository in owner/repo format
+  - issue_number: int (required) - Issue number
+**Outputs**:
+  - issue_title: str - Title of the issue
+  - issue_body: str - Full issue description
+[... other relevant nodes ...]
+```
+
+#### 3. `--validate-only` Flag (NEW - CRITICAL)
+
+**Purpose**: Validate a workflow before execution
+
+**How it works**:
+- Added to main pflow CLI as a flag
+- Uses ValidatorNode's 4-layer validation
+- Checks: schema, templates, compilation, runtime readiness
+- No side effects, pure validation
+
+**Example**:
+```bash
+$ pflow --validate-only .pflow/workflows/draft.json repo=owner/repo pr_number=123
+
+✓ Schema validation passed
+✓ Template resolution passed
+✓ Compilation check passed
+✓ Runtime validation passed
+
+Workflow is ready for execution!
+```
+
+#### 4. `pflow workflow save` Command (NEW)
+
+**Purpose**: Save a draft workflow to the global library
 
 **Usage**:
 ```bash
-pflow workflow save .pflow/workflows/draft.json my-workflow "Description"
+pflow workflow save .pflow/workflows/draft.json my-workflow "Description" [--generate-metadata]
 ```
 
-**Implementation**:
-- Location: `src/pflow/cli/commands/workflow.py`
-- Use `WorkflowManager.save()` (already has validation)
-- Add `--delete-draft` option
+**Features**:
+- Uses WorkflowManager.save()
+- Optional --generate-metadata for rich discovery ✅ **Verified: Can be in MVP**
+- --delete-draft option
 
-#### 4. `pflow workflow describe` Enhancement
+**Note on --generate-metadata**: ✅ Research confirmed MetadataGenerationNode only needs raw workflow IR, NOT ValidatorNode-specific output. Simple to implement - just pass workflow IR via shared store. See VERIFIED_RESEARCH_FINDINGS.md section 4 for details.
 
-**Current**: Shows inputs/outputs in text format
-**Enhancement**: Add `--json` option for agent consumption
+#### 5. `pflow registry describe` Command (NEW)
+
+**Purpose**: Get detailed information about specific nodes
+
+**How it works**:
+- Takes one or more node IDs
+- Uses build_planning_context() directly
+- Returns full interface specifications
+
+**Example**:
+```bash
+$ pflow registry describe github-get-pr llm
+
+### github-get-pr
+**Description**: Fetch pull request details from GitHub
+**Inputs**:
+  - repo: str (required) - Repository in owner/repo format
+  - pr_number: int (required) - Pull request number
+**Outputs**:
+  - pr_title: str - Title of the pull request
+  - pr_body: str - Description of the PR
+[... complete details ...]
+```
+
+#### 6. Enhanced Error Output (CRITICAL)
+
+**Purpose**: Show rich error context when execution fails
+
+**How it works**:
+- Enhances CLI to display ExecutionResult.errors details
+- Especially important with --no-repair flag
+- Shows raw API responses, not just generic messages
+- Displays field-level validation errors
+- Shows available fields for template errors
+- Helps agents understand and fix errors
+
+**Example for API error**:
+```bash
+$ pflow --no-repair draft.json repo=owner/repo
+
+❌ Workflow execution failed at node: 'create-issue'
+   Category: api_validation
+   Message: HTTP 422 - Validation Failed
+
+   API Response:
+   - Field 'assignees': should be a list (got: string "alice")
+   - Field 'body': too short (minimum: 30 chars)
+
+   Documentation: https://docs.github.com/rest/issues
+```
+
+**Example for template error**:
+```bash
+❌ Workflow execution failed at node: 'process'
+   Category: template_error
+   Message: Template ${fetch.result.title} failed to resolve
+
+   Available fields in 'fetch':
+   - issues
+   - total_count
+   - incomplete_results
+
+   💡 Tip: Use ${fetch.issues[0].title} instead
+```
 
 ### File Organization for Agents
 
@@ -170,82 +242,76 @@ Agents need to understand WHERE to create files:
 
 ### Agent Instructions Document
 
-Create comprehensive `AGENT_INSTRUCTIONS.md` that shows:
+Create comprehensive `AGENT_INSTRUCTIONS.md` showing the complete workflow:
 
-#### 1. Discovery-First Workflow
+#### Complete Agent Workflow
 ```bash
-# Discover everything needed for your task
-pflow discover-nodes "analyze GitHub PRs and create reports"
-pflow discover-workflows "PR analysis"
+# 1. Discover what exists
+pflow workflow discover "analyze GitHub PRs"
+pflow registry discover "fetch GitHub data and analyze"
 
-# You now have:
-# - All relevant node interfaces with full details
-# - Any existing workflows you can reuse or learn from
-```
+# 2. Get specific node details if needed
+pflow registry describe github-get-pr llm write-file
 
-#### 2. Workflow Creation Process
-```bash
-# Create local draft
+# 3. Create workflow JSON based on discoveries
 mkdir -p .pflow/workflows
-# Agent creates: .pflow/workflows/draft.json using discovered information
+# Agent creates: .pflow/workflows/draft.json
 
-# Test with explicit file path
-pflow execute .pflow/workflows/draft.json --param key=value
+# 4. VALIDATE before execution (critical!)
+pflow --validate-only .pflow/workflows/draft.json repo=owner/repo pr_number=123
+# Fix any validation errors...
 
-# Fix errors by editing JSON
-# Re-execute (checkpoint resumes from failure)
+# 5. Test execution
+pflow --no-repair .pflow/workflows/draft.json repo=owner/repo pr_number=123
+# Enhanced error output helps debug issues
 
-# Save to library when working
-pflow workflow save .pflow/workflows/draft.json my-workflow "Description"
-
-# Now usable from anywhere
-pflow execute my-workflow --param key=value
+# 6. Save with metadata when working
+pflow workflow save .pflow/workflows/draft.json my-analyzer "PR analyzer" --generate-metadata
 ```
-
-#### 3. File Path Resolution
-
-**Critical for agents to understand**:
-- Contains `/` or ends with `.json` → File path
-- Otherwise → Saved workflow name
-
-Examples:
-- `pflow execute draft.json` → Loads from current directory
-- `pflow execute .pflow/workflows/draft.json` → Loads from path
-- `pflow execute my-workflow` → Loads from `~/.pflow/workflows/`
 
 ## Implementation Plan
 
-### Phase 1: Add `discover-nodes` Command (1.5 hours)
-
-- Location: `src/pflow/cli/commands/discover.py` (new file)
-- Reuse ComponentBrowsingNode logic for LLM selection
-- Reuse `build_nodes_context()` for full details formatting
-- Handle LLM failures gracefully
-
-### Phase 2: Add `discover-workflows` Command (1.5 hours)
-
-- Location: `src/pflow/cli/commands/discover.py`
-- Reuse WorkflowDiscoveryNode logic for LLM selection
-- Reuse `build_workflows_context()` for rich metadata
-- Include capabilities and execution stats
-
-### Phase 3: Add `workflow save` Command (30 min)
-
+### Phase 1: Add `workflow discover` Command (30 min)
 - Location: `src/pflow/cli/commands/workflow.py`
-- Thin wrapper around `WorkflowManager.save()`
-- Add validation and `--delete-draft` option
+- Create WorkflowDiscoveryNode instance
+- Run with user query in shared dict
+- Format and display results
 
-### Phase 4: Enhance `workflow describe` (15 min)
+### Phase 2: Add `registry discover` Command (30 min)
+- Location: `src/pflow/cli/commands/registry.py`
+- Create ComponentBrowsingNode instance
+- Run with user query in shared dict
+- Display planning context output
 
-Add `--json` option to existing command for structured output.
+### Phase 3: Add `--validate-only` Flag (45 min)
+- Location: `src/pflow/cli/main.py`
+- Add flag to main CLI command
+- Use ValidatorNode logic for validation
+- Run 4-layer validation
+- Return structured errors without execution
 
-### Phase 5: Create Agent Instructions (1 hour)
+### Phase 4: Add `workflow save` Command (30 min)
+- Location: `src/pflow/cli/commands/workflow.py`
+- Thin wrapper around WorkflowManager.save()
+- Add --generate-metadata and --delete-draft options
 
-Comprehensive guide emphasizing:
-- Discovery-first approach (rich queries)
-- Complete information in single commands
-- File organization (local vs global)
-- Error handling with checkpoints
+### Phase 5: Add `registry describe` Command (30 min)
+- Location: `src/pflow/cli/commands/registry.py`
+- Use build_planning_context() directly
+- Accept multiple node IDs
+- Display full specifications
+
+### Phase 6: Enhance Error Output (30 min)
+- Location: `src/pflow/cli/main.py`
+- Display rich ExecutionResult.errors details
+- Show node_id, category, available fields
+- Especially important for --no-repair mode
+
+### Phase 7: Create Agent Instructions (45 min)
+- Comprehensive guide with complete workflow
+- Emphasize discovery-first approach
+- Include validation step
+- Show error handling patterns
 
 ## Test Strategy
 
@@ -253,43 +319,65 @@ Comprehensive guide emphasizing:
 - Rich queries return relevant components only
 - Full interface details included
 - LLM failures handled gracefully
-- Performance within 2 seconds
+- Direct node execution works
+
+### Validation Command Tests
+- All 4 validation layers work
+- Returns specific actionable errors
+- No side effects occur
+- Works with partial parameters
 
 ### Save Command Tests
 - Validates and saves correctly
-- `--delete-draft` removes source
+- --generate-metadata creates rich metadata
+- --delete-draft removes source
 - Name validation works
 
 ### Integration Tests
-- Full cycle: discover → create → execute → save
+- Full cycle: discover → create → validate → execute → save
 - Agent can build complete workflow
-- Checkpoint resumption works
+- Validation catches errors before execution
 
 ## Why This Approach is Superior
 
-1. **Matches Planner Pattern**: Proven discovery approach
-2. **Single-Shot Discovery**: Everything in one command
-3. **Complete Information**: No follow-up queries needed
-4. **Intelligent Selection**: LLM understands intent
-5. **Immediate Value**: 4-5 hours implementation vs 20 for MCP
+1. **Direct Node Reuse**: No extraction needed, nodes work standalone
+2. **Pre-flight Validation**: Catch errors before execution
+3. **Rich Error Context**: Agents see exactly what went wrong
+4. **Matches Planner Pattern**: Proven discovery approach
+5. **Complete Information**: No follow-up queries needed
+6. **Immediate Value**: ~4 hours implementation
 
 ## Success Criteria
 
-✅ `pflow discover-nodes` returns full interface details for relevant nodes
-✅ `pflow discover-workflows` returns complete workflow metadata
-✅ Both discovery commands use LLM for intelligent selection
-✅ `pflow workflow save` promotes drafts to library
-✅ `pflow workflow describe --json` provides structured data
-✅ AGENT_INSTRUCTIONS.md explains discovery-first approach
-✅ Agents can build complete workflows with single discovery commands
-✅ Total implementation under 5 hours
+✅ `pflow workflow discover` returns matching workflows with metadata
+✅ `pflow registry discover` returns relevant nodes with full interfaces
+✅ `pflow --validate-only` performs 4-layer validation without execution
+✅ `pflow workflow save` promotes drafts to library with optional metadata
+✅ `pflow registry describe` provides complete node specifications
+✅ Enhanced error output shows rich context on failures
+✅ AGENT_INSTRUCTIONS.md explains complete discovery → validation → execution flow
+✅ Agents can build validated workflows with intelligent discovery
+✅ Total implementation under 4 hours
 
 ## Notes
 
-The key insight: Agents need the same rich, intelligent discovery that the planner uses internally. By exposing the planner's discovery nodes as CLI commands, agents get:
+The key insight: Agents need pre-flight validation! The planner's nodes can be reused directly without extraction. By exposing these capabilities as CLI commands, agents get:
 1. **Rich Queries** - Natural language descriptions of intent
 2. **Intelligent Selection** - LLM picks exactly what's needed
-3. **Complete Information** - Full details, no follow-ups
-4. **Proven Pattern** - Reuses planner's successful approach
+3. **Pre-flight Validation** - Catch errors before execution
+4. **Complete Information** - Full details, no follow-ups
+5. **Proven Pattern** - Reuses planner's successful approach
 
-This transforms the agent experience from browsing catalogs to describing intent and receiving curated, complete information.
+## Implementation Notes
+
+### LLM Model Configuration
+✅ **Verified**: Discovery commands (workflow discover, registry discover) use planner nodes that have built-in defaults.
+
+**Research findings** (see VERIFIED_RESEARCH_FINDINGS.md section 5):
+1. ✅ WorkflowDiscoveryNode and ComponentBrowsingNode HAVE default model configs
+2. ✅ CAN run without explicit `node.set_params()` calls
+3. ✅ Default to: `anthropic/claude-sonnet-4-0` @ temperature `0.0`
+
+**Implementation approach**: Proceed without explicit config - defaults are production-ready. Tests confirm this pattern works correctly.
+
+**Optional enhancement**: Can add `--model` flag later if users need to override defaults.

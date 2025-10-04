@@ -641,3 +641,234 @@ def _get_node_type(name: str, metadata: dict) -> str:
 
     # Default to user
     return "user"
+
+
+@registry.command(name="discover")
+@click.argument("query")
+def discover_nodes(query: str) -> None:
+    """Discover nodes needed for a specific task.
+
+    Uses LLM to intelligently select relevant nodes based on
+    a natural language description of what you want to build.
+
+    Example:
+        pflow registry discover "I need to fetch GitHub data and analyze it"
+    """
+    import os
+    from datetime import datetime
+
+    from pflow.core.workflow_manager import WorkflowManager
+    from pflow.planning.nodes import ComponentBrowsingNode
+
+    # Validate query before processing
+    query = query.strip()
+    if not query:
+        click.echo("Error: registry discover query cannot be empty", err=True)
+        sys.exit(1)
+    if len(query) > 500:
+        click.echo(f"Error: Query too long (max 500 characters, got {len(query)})", err=True)
+        click.echo("  Please use a more concise description", err=True)
+        sys.exit(1)
+
+    # Install Anthropic monkey patch for LLM calls (required for planning nodes)
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+
+        install_anthropic_model()
+
+    # Create complete shared store context (required by ComponentBrowsingNode)
+    workflow_manager = WorkflowManager()
+    shared = {
+        "user_input": query,
+        "workflow_manager": workflow_manager,  # Required for workflow context
+        "current_date": datetime.now().strftime("%Y-%m-%d"),  # Standard context
+        "cache_planner": False,  # Disable cache for CLI (no planner context)
+    }
+
+    # Create and run browsing node
+    node = ComponentBrowsingNode()
+
+    try:
+        node.run(shared)
+    except Exception as e:
+        # Show agent-friendly error without internal details
+        from pflow.cli.discovery_errors import handle_discovery_error
+
+        handle_discovery_error(
+            e,
+            discovery_type="node",
+            alternative_commands=[
+                ("pflow registry list", "Browse all nodes"),
+                ("pflow registry describe <node>", "Get node specifications"),
+            ],
+        )
+        sys.exit(1)
+
+    # Display planning context
+    if "planning_context" in shared:
+        click.echo(shared["planning_context"])
+    elif "browsed_components" in shared:
+        # Fallback if planning context not built
+        components = shared["browsed_components"]
+        if isinstance(components, dict) and (node_ids := components.get("node_ids", [])):
+            click.echo(f"Found {len(node_ids)} relevant nodes:")
+            for nid in node_ids:
+                click.echo(f"  - {nid}")
+        else:
+            click.echo("No relevant nodes found.")
+    else:
+        click.echo("No relevant nodes found.")
+        click.echo("\nTip: Try a more specific query or use 'pflow registry list' to see all nodes.")
+
+
+def _normalize_node_id(user_input: str, available_nodes: set[str]) -> str | None:
+    """Normalize node ID to match registry format.
+
+    Handles multiple input formats:
+    - Full format: mcp-server-TOOL_NAME
+    - Hyphen variant: mcp-server-TOOL-NAME (converts to underscore)
+    - Short form: TOOL_NAME or TOOL-NAME (tries to match unique tool)
+
+    Args:
+        user_input: User-provided node ID
+        available_nodes: Set of registered node IDs
+
+    Returns:
+        Normalized node ID if found, None otherwise
+    """
+    # Try exact match first
+    if user_input in available_nodes:
+        return user_input
+
+    # Strategy 1: Try converting ALL hyphens to underscores (for simple short forms)
+    normalized_all = user_input.replace("-", "_")
+    if normalized_all in available_nodes:
+        return normalized_all
+
+    # Strategy 2: For MCP format, try smart conversion
+    # Pattern: mcp-{server}-{TOOL-NAME} or {server}-{TOOL-NAME}
+    # We want: mcp-{server}-{TOOL_NAME} (hyphens in prefix, underscores in tool)
+    if "mcp-" in user_input or user_input.count("-") >= 2:
+        # Try to find matching node by comparing with hyphens converted to underscores in tool name only
+        for node_id in available_nodes:
+            # Create a version of node_id with underscores replaced by hyphens for comparison
+            node_with_hyphens = node_id.replace("_", "-")
+            if user_input == node_with_hyphens:
+                return node_id
+
+    # Strategy 3: Try matching as short form (just tool name without prefix)
+    # For MCP tools: TOOL_NAME → mcp-server-TOOL_NAME
+    # For MCP tools with hyphens: TOOL-NAME → mcp-server-TOOL_NAME
+    matches = []
+    for node_id in available_nodes:
+        # Check if node ends with the user input (exact or normalized)
+        if node_id.endswith(user_input) or node_id.endswith(normalized_all):
+            matches.append(node_id)
+
+    if len(matches) == 1:
+        return matches[0]
+    elif len(matches) > 1:
+        # Ambiguous - return None and let caller handle error
+        return None
+
+    return None
+
+
+def _validate_and_normalize_node_ids(
+    node_ids: tuple[str, ...], available_nodes: set[str]
+) -> tuple[list[str], dict[str, list[str]], list[str]]:
+    """Validate and normalize node IDs.
+
+    Args:
+        node_ids: User-provided node IDs to validate
+        available_nodes: Set of available node IDs from registry
+
+    Returns:
+        Tuple of (normalized_ids, ambiguous_nodes, invalid_nodes)
+    """
+    normalized_ids = []
+    invalid_nodes = []
+    ambiguous_nodes = {}
+
+    for user_id in node_ids:
+        normalized = _normalize_node_id(user_id, available_nodes)
+        if normalized:
+            normalized_ids.append(normalized)
+        else:
+            # Check if it was ambiguous
+            normalized_check = user_id.replace("-", "_")
+            matches = [n for n in available_nodes if n.endswith(user_id) or n.endswith(normalized_check)]
+            if len(matches) > 1:
+                ambiguous_nodes[user_id] = matches
+            else:
+                invalid_nodes.append(user_id)
+
+    return normalized_ids, ambiguous_nodes, invalid_nodes
+
+
+def _handle_node_validation_errors(
+    ambiguous_nodes: dict[str, list[str]], invalid_nodes: list[str], available_nodes: set[str]
+) -> None:
+    """Display errors for ambiguous or invalid nodes and exit.
+
+    Args:
+        ambiguous_nodes: Mapping of ambiguous user IDs to matching node IDs
+        invalid_nodes: List of invalid user IDs
+        available_nodes: Set of available node IDs for error messages
+    """
+    if ambiguous_nodes:
+        for user_id, matches in ambiguous_nodes.items():
+            click.echo(f"Error: Ambiguous node name '{user_id}'. Found in multiple servers:", err=True)
+            for match in sorted(matches):
+                click.echo(f"  - {match}", err=True)
+            click.echo("\nPlease specify the full node ID or use format: {server}-{tool}", err=True)
+        sys.exit(1)
+
+    if invalid_nodes:
+        click.echo(f"Error: Unknown nodes: {', '.join(invalid_nodes)}", err=True)
+        click.echo("\nAvailable nodes:", err=True)
+        for node in sorted(available_nodes)[:20]:  # Show first 20
+            click.echo(f"  - {node}", err=True)
+        if len(available_nodes) > 20:
+            click.echo(f"  ... and {len(available_nodes) - 20} more", err=True)
+        click.echo("\nUse 'pflow registry list' to see all nodes.", err=True)
+        sys.exit(1)
+
+
+@registry.command(name="describe")
+@click.argument("node_ids", nargs=-1, required=True)
+def describe_nodes(node_ids: tuple[str, ...]) -> None:
+    """Get detailed information about specific nodes.
+
+    Shows complete interface specifications including inputs,
+    outputs, parameters, and examples.
+
+    Example:
+        pflow registry describe github-get-pr llm write-file
+    """
+    from pflow.planning.context_builder import build_planning_context
+
+    # Load registry
+    reg = Registry()
+    registry_metadata = reg.load()
+
+    # Validate node IDs exist with normalization
+    # registry_metadata is dict[str, dict] where keys are node IDs
+    available_nodes = set(registry_metadata.keys())
+
+    # Validate and normalize all node IDs
+    normalized_ids, ambiguous_nodes, invalid_nodes = _validate_and_normalize_node_ids(node_ids, available_nodes)
+
+    # Handle any validation errors
+    if ambiguous_nodes or invalid_nodes:
+        _handle_node_validation_errors(ambiguous_nodes, invalid_nodes, available_nodes)
+
+    # Build detailed context using normalized IDs
+    try:
+        context = build_planning_context(
+            selected_node_ids=normalized_ids, selected_workflow_names=[], registry_metadata=registry_metadata
+        )
+        click.echo(context)
+    except Exception as e:
+        click.echo(f"Error building node details: {e}", err=True)
+        sys.exit(1)

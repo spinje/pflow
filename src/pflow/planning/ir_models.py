@@ -49,6 +49,31 @@ class FlowIR(BaseModel):
         populate_by_name=True,
     )
 
+
+class FlatFlowIR(BaseModel):
+    """Flattened Flow IR without $defs - compatible with Gemini/OpenAI.
+
+    This version uses list[Any] to avoid additionalProperties which Gemini rejects.
+
+    Drawback: Minimal validation on nested structures, but can be validated after
+    parsing by converting to FlowIR.
+    """
+
+    ir_version: str = Field(default="0.1.0", pattern=r"^\d+\.\d+\.\d+$")
+    nodes: list[Any] = Field(
+        ..., min_length=1, description="List of node objects with id, type, purpose, and params fields"
+    )
+    edges: list[Any] = Field(
+        default_factory=list, description="List of edge objects with 'from' and 'to' fields (and optional action)"
+    )
+    start_node: Optional[str] = None
+    inputs: Optional[Any] = None
+    outputs: Optional[Any] = None
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
     def to_dict(self) -> dict:
         """Convert to dict for validation with existing schema."""
         return self.model_dump(by_alias=True, exclude_none=True)

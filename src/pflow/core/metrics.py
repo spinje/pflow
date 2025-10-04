@@ -97,7 +97,7 @@ class MetricsCollector:
             except ValueError as e:
                 # Track unknown models but don't crash
                 unavailable_models.add(model)
-                logger.warning(f"Pricing not available for model '{model}': {e}")
+                logger.debug(f"Pricing not available for model '{model}': {e}")
 
         # Return structured result
         if unavailable_models:
