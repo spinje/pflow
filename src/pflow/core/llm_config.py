@@ -71,6 +71,7 @@ def _has_llm_key(provider: str) -> bool:
             command,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,  # Explicitly close stdin to prevent hang
             timeout=2,
             check=False,
         )
