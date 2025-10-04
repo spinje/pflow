@@ -117,7 +117,7 @@ class TestWorkflowManager:
             workflow_manager.save(name, sample_ir)
 
     def test_save_workflow_invalid_name(self, workflow_manager, sample_ir):
-        """Test validation of workflow names."""
+        """Test validation of workflow names with new strict rules."""
         # Empty name
         with pytest.raises(WorkflowValidationError, match="Workflow name cannot be empty"):
             workflow_manager.save("", sample_ir)
@@ -126,29 +126,43 @@ class TestWorkflowManager:
         with pytest.raises(WorkflowValidationError, match="cannot exceed 50 characters"):
             workflow_manager.save("a" * 51, sample_ir)
 
-        # Name with path separator
-        with pytest.raises(WorkflowValidationError, match="cannot contain path separators"):
-            workflow_manager.save("my/workflow", sample_ir)
+        # Reserved names
+        with pytest.raises(WorkflowValidationError, match="reserved workflow name"):
+            workflow_manager.save("test", sample_ir)
 
-        # Name with invalid characters
-        with pytest.raises(WorkflowValidationError, match="can only contain"):
-            workflow_manager.save("my workflow!", sample_ir)
+        # Invalid format - uppercase
+        with pytest.raises(WorkflowValidationError, match="Invalid workflow name"):
+            workflow_manager.save("MyWorkflow", sample_ir)
+
+        # Invalid format - underscores
+        with pytest.raises(WorkflowValidationError, match="Invalid workflow name"):
+            workflow_manager.save("my_workflow", sample_ir)
+
+        # Invalid format - dots
+        with pytest.raises(WorkflowValidationError, match="Invalid workflow name"):
+            workflow_manager.save("my.workflow", sample_ir)
+
+        # Invalid format - leading hyphen
+        with pytest.raises(WorkflowValidationError, match="Invalid workflow name"):
+            workflow_manager.save("-myworkflow", sample_ir)
+
+        # Invalid format - consecutive hyphens
+        with pytest.raises(WorkflowValidationError, match="Invalid workflow name"):
+            workflow_manager.save("my--workflow", sample_ir)
 
     @pytest.mark.parametrize(
         "name",
         [
             "simple",
             "kebab-case-name",
-            "snake_case_name",
-            "with.dots",
-            "MixedCase",
             "name123",
             "123name",
-            "a-b_c.d",
+            "workflow-v2",
+            "my-analyzer",
         ],
     )
     def test_save_workflow_valid_name(self, workflow_manager, sample_ir, name):
-        """Test that a valid workflow name is accepted."""
+        """Test that valid workflow names are accepted (lowercase, hyphens only)."""
         path = workflow_manager.save(name, sample_ir)
         assert Path(path).exists()
         assert workflow_manager.exists(name)
@@ -364,7 +378,7 @@ class TestWorkflowManager:
 
         # Should handle permission error gracefully
         with pytest.raises(PermissionError):
-            workflow_manager.save("test", {"ir_version": "0.1.0", "nodes": []})
+            workflow_manager.save("my-workflow", {"ir_version": "0.1.0", "nodes": []})
 
         # Restore permissions for cleanup
         readonly_dir.chmod(stat.S_IRWXU)

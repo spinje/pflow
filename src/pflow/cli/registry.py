@@ -660,6 +660,16 @@ def discover_nodes(query: str) -> None:
     from pflow.core.workflow_manager import WorkflowManager
     from pflow.planning.nodes import ComponentBrowsingNode
 
+    # Validate query before processing
+    query = query.strip()
+    if not query:
+        click.echo("Error: registry discover query cannot be empty", err=True)
+        sys.exit(1)
+    if len(query) > 500:
+        click.echo(f"Error: Query too long (max 500 characters, got {len(query)})", err=True)
+        click.echo("  Please use a more concise description", err=True)
+        sys.exit(1)
+
     # Install Anthropic monkey patch for LLM calls (required for planning nodes)
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         from pflow.planning.utils.anthropic_llm_model import install_anthropic_model

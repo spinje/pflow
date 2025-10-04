@@ -304,20 +304,20 @@ class TestWorkflowSaveCLI:
     def test_workflow_save_enforces_max_name_length(
         self, runner: click.testing.CliRunner, tmp_path: Any, sample_workflow_ir: dict[str, Any]
     ) -> None:
-        """Workflow names must be 30 characters or less."""
+        """Workflow names must be 50 characters or less."""
         home_pflow = tmp_path / ".pflow" / "workflows"
         home_pflow.mkdir(parents=True)
 
         draft = tmp_path / "test.json"
         draft.write_text(json.dumps(sample_workflow_ir))
 
-        # Name with 31 characters
-        long_name = "a" * 31
+        # Name with 51 characters
+        long_name = "a" * 51
 
         result = runner.invoke(workflow_cmd, ["save", str(draft), long_name, "Test"], env={"HOME": str(tmp_path)})
 
-        assert result.exit_code != 0, "Should reject names longer than 30 characters"
-        assert "30 characters" in result.output.lower()
+        assert result.exit_code != 0, "Should reject names longer than 50 characters"
+        assert "50 characters" in result.output.lower()
 
     def test_workflow_save_success_output_format(
         self, runner: click.testing.CliRunner, tmp_path: Any, sample_workflow_ir: dict[str, Any]

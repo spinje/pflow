@@ -1,7 +1,6 @@
 """Workflow management commands for pflow CLI."""
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -237,6 +236,9 @@ def discover_workflows(query: str) -> None:
 
     from pflow.planning.nodes import WorkflowDiscoveryNode
 
+    # Validate query before processing
+    query = _validate_discovery_query(query, "workflow discover")
+
     # Install Anthropic monkey patch for LLM calls (required for planning nodes)
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
@@ -268,39 +270,35 @@ def discover_workflows(query: str) -> None:
         click.echo("\nTip: Try a more specific query or use 'pflow workflow list' to see all workflows.")
 
 
-def _validate_workflow_name(name: str) -> None:
-    """Validate workflow name format.
+# Workflow name validation is now handled by WorkflowManager._validate_workflow_name()
+# This provides defense in depth - validation happens at the data layer, not just CLI
 
-    Enforces CLI rules: lowercase letters, numbers, hyphens only, max 30 chars.
-    Must start/end with alphanumeric. No consecutive hyphens. No reserved names.
+
+def _validate_discovery_query(query: str, command_name: str) -> str:
+    """Validate and sanitize discovery query.
 
     Args:
-        name: The workflow name to validate
+        query: User's natural language query
+        command_name: Name of the discovery command (for error messages)
+
+    Returns:
+        Sanitized query string
 
     Raises:
-        SystemExit: If name is invalid
+        SystemExit: If query is invalid
     """
-    # Reserved names that could conflict with system functionality
-    RESERVED_NAMES = {"null", "undefined", "none", "test", "settings", "registry", "workflow", "mcp"}
+    query = query.strip()
 
-    # Check reserved names
-    if name.lower() in RESERVED_NAMES:
-        click.echo(f"Error: '{name}' is a reserved workflow name", err=True)
-        click.echo("  Reserved names: null, undefined, none, test, settings, registry, workflow, mcp", err=True)
+    if not query:
+        click.echo(f"Error: {command_name} query cannot be empty", err=True)
         sys.exit(1)
 
-    # Stronger regex: must start/end with alphanumeric, single hyphens only
-    if not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", name):
-        click.echo("Error: Name must be lowercase letters, numbers, and single hyphens only", err=True)
-        click.echo(f"  Got: '{name}'", err=True)
-        click.echo("  Must start and end with alphanumeric (no leading/trailing hyphens)", err=True)
-        click.echo("  No consecutive hyphens (use 'my-workflow' not 'my--workflow')", err=True)
-        click.echo("  Example: 'my-workflow' or 'pr-analyzer-v2'", err=True)
+    if len(query) > 500:
+        click.echo(f"Error: Query too long (max 500 characters, got {len(query)})", err=True)
+        click.echo("  Please use a more concise description", err=True)
         sys.exit(1)
 
-    if len(name) > 30:
-        click.echo(f"Error: Name must be 30 characters or less (got {len(name)})", err=True)
-        sys.exit(1)
+    return query
 
 
 def _load_and_normalize_workflow(file_path: str) -> dict[str, Any]:
@@ -487,12 +485,18 @@ def save_workflow(
     Example:
         pflow workflow save .pflow/workflows/draft.json my-analyzer "Analyzes PRs"
     """
-    _validate_workflow_name(name)
+    from pflow.core.exceptions import WorkflowValidationError
+
     validated_ir = _load_and_normalize_workflow(file_path)
     metadata = _generate_metadata_if_requested(validated_ir, generate_metadata)
 
     wm = WorkflowManager()
-    saved_path = _save_with_overwrite_check(wm, name, validated_ir, description, metadata, force)
+
+    try:
+        saved_path = _save_with_overwrite_check(wm, name, validated_ir, description, metadata, force)
+    except WorkflowValidationError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
     _delete_draft_if_requested(file_path, delete_draft)
 

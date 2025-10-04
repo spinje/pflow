@@ -215,7 +215,7 @@ class WorkflowExecutorService:
             return self._extract_default_output(shared_store, workflow_ir)
         return None
 
-    def _build_error_list(
+    def _build_error_list(  # noqa: C901
         self, success: bool, action_result: Optional[str], shared_store: dict[str, Any]
     ) -> list[dict[str, Any]]:
         """Build error list if execution failed.
@@ -271,18 +271,26 @@ class WorkflowExecutorService:
                 ):
                     error["mcp_error"] = node_output["result"]["error"]
 
-                # For template errors, capture available fields (limit to 20 for readability)
+                # For template errors, capture available fields (use same limit as template validator)
                 if category == "template_error":
+                    from pflow.runtime.template_validator import MAX_DISPLAYED_FIELDS
+
                     all_fields = list(node_output.keys())
-                    error["available_fields"] = all_fields[:20]
+                    error["available_fields"] = all_fields[:MAX_DISPLAYED_FIELDS]
+
+                    # Runtime validation to ensure type safety
+                    if not isinstance(error["available_fields"], list):
+                        raise TypeError("available_fields must be a list")
+                    if not all(isinstance(f, str) for f in error["available_fields"]):
+                        raise TypeError("all fields must be strings")
 
                     # Add metadata about total fields and trace file location
                     total_fields = len(all_fields)
-                    if total_fields > 20:
+                    if total_fields > MAX_DISPLAYED_FIELDS:
                         error["available_fields_total"] = total_fields
                         error["available_fields_truncated"] = True
                         error["trace_file_hint"] = (
-                            f"Showing 20 of {total_fields} fields. "
+                            f"Showing {MAX_DISPLAYED_FIELDS} of {total_fields} fields. "
                             "Use --trace flag to save complete field list to ~/.pflow/debug/workflow-trace-*.json"
                         )
 

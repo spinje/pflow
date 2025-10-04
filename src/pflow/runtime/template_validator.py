@@ -13,6 +13,11 @@ from pflow.registry import Registry
 
 logger = logging.getLogger(__name__)
 
+# Display limits for error messages - balances information vs overwhelming output
+MAX_DISPLAYED_FIELDS = 20  # Fits in ~25 terminal lines with formatting
+MAX_DISPLAYED_SUGGESTIONS = 3  # Cognitive limit for processing alternatives
+MAX_FLATTEN_DEPTH = 5  # Prevent infinite recursion on circular refs
+
 
 class TemplateValidator:
     """Validates template variables before workflow execution."""
@@ -164,7 +169,7 @@ class TemplateValidator:
 
         Removes control characters and limits length to prevent:
         - Terminal escape sequences
-        - Log injection
+        - Log injection (newlines, carriage returns)
         - Information disclosure
 
         Args:
@@ -174,8 +179,9 @@ class TemplateValidator:
         Returns:
             Sanitized string safe for error messages
         """
-        # Remove non-printable characters except spaces/newlines
-        sanitized = "".join(c for c in value if c.isprintable() or c.isspace())
+        # Remove non-printable characters AND newlines/carriage returns
+        # Allow only printable characters, excluding control chars that enable log injection
+        sanitized = "".join(c for c in value if c.isprintable() and c not in ("\n", "\r", "\t", "\x0b", "\x0c"))
 
         # Truncate if too long
         if len(sanitized) > max_length:
@@ -191,7 +197,7 @@ class TemplateValidator:
         _current_path: str = "",
         _paths: list[tuple[str, str]] | None = None,
         _depth: int = 0,
-        _max_depth: int = 5,
+        _max_depth: int = MAX_FLATTEN_DEPTH,
     ) -> list[tuple[str, str]]:
         """Recursively flatten output structure to list of (path, type) tuples.
 
@@ -320,7 +326,7 @@ class TemplateValidator:
         matches.sort(key=lambda x: (-x[2], x[0]))
 
         # Return just the (path, type) tuples, top 3 matches
-        return [(path, path_type) for path, path_type, _ in matches[:3]]
+        return [(path, path_type) for path, path_type, _ in matches[:MAX_DISPLAYED_SUGGESTIONS]]
 
     @staticmethod
     def _format_enhanced_node_error(
@@ -352,7 +358,7 @@ class TemplateValidator:
             lines.append("")
             lines.append(f"Available outputs from '{safe_node_id}':")
 
-            display_paths = available_paths[:20]  # Limit display
+            display_paths = available_paths[:MAX_DISPLAYED_FIELDS]  # Limit display
             for path, type_str in display_paths:
                 # Sanitize path components for safety
                 safe_path = TemplateValidator._sanitize_for_display(path)
