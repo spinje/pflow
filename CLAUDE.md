@@ -390,9 +390,10 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 67: Use MCP Standard Format
 - ✅ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
 - ✅ Task 68: Separate RuntimeValidation from planner and refactor Workflow Execution
+- ✅ Task 70: Design and Validate MCP-Based Agent Infrastructure Architecture
+- ✅ Task 71: Extend CLI Commands with tools for agentic workflow building
 
 Next up:
-- ⏳ Task 71: Extend CLI Commands with tools for agentic workflow building
 - ⏳ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
 
 Next version (post-MVP/post-Launch):
@@ -402,15 +403,25 @@ Next version (post-MVP/post-Launch):
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
 - ⏳ Task 78: Save User Request History in Workflow Metadata
+- ⏳ Task 75: Execution Preview in Validation
 - ⏳ Task 74: Create knowledge base system
+- ⏳ Task 76: Implement Registry Execute Command for Independent Node Testing by agents
+- ⏳ Task 77: Improve Agent Instructions
+- ⏳ Task 73: Implement Checkpoint Persistence for External Agent Repair
+- ⏳ Task 65: MCP Gateway Integration Support
+
+Later:
+- ⏳ Task 51: Refactor CLI main.py
 - ⏳ Task 44: Build caching system
-- ⏳ Task 45: Evaluate if wrapping or integratingn8n is worth the effort
+- ⏳ Task 45: Evaluate if wrapping or integrating n8n is worth the effort
 - ⏳ Task 61: Implement Fast Mode for Planner
 - ⏳ Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
 - ⏳ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
 - ⏳ Task 64: MCP Orchestration with long running servers
+- ⏳ Task 79: Show tool definitions as structured JSON
 - ⏳ Task 60: Support Gemini models for planner
 - ⏳ Task 66: Support structured output for LLM node
+- ⏳ Task 69: Refactor Internal Repair system to use Pocketflow
 
 *Update this list as you complete tasks.*
 

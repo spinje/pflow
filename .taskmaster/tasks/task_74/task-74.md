@@ -19,4 +19,6 @@ And the related workflow name will be automatically included when the agent is u
 
 In the future these knowledge base files will be shared across a users team or organization when connected to pflow cloud.
 
+Read: https://www.anthropic.com/news/context-management for more information on how to manage context efficiently.
+
 
