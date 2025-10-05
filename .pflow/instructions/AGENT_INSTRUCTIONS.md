@@ -205,7 +205,7 @@ NOT action requests (needs help/guidance):
 This is MANDATORY - never skip this step. Users often don't know what workflows already exist.
 
 ```bash
-pflow workflow discover "user's request in natural language"
+uv run pflow workflow discover "user's request in natural language"
 ```
 
 **What you get**: Matching workflows with names, descriptions, inputs/outputs, confidence scores, and reasoning.
@@ -296,7 +296,7 @@ Impact: Core flow matches, but needs prompt adjustment for Q&A instead of sentim
 If Step 2 determined you need to build a new workflow, discover the relevant nodes:
 
 ```bash
-pflow registry discover "I need to fetch Slack messages, analyze with AI, send responses, and log to Google Sheets"
+uv run pflow registry discover "I need to fetch Slack messages, analyze with AI, send responses, and log to Google Sheets"
 ```
 
 This uses pflow's internal LLM to intelligently select relevant nodes with complete specs in one shot.
@@ -524,7 +524,7 @@ Before moving to VALIDATE:
 Catch structural errors before execution.
 
 ```bash
-pflow --validate-only workflow.json
+uv run pflow --validate-only workflow.json
 ```
 
 **What gets validated**:
@@ -547,7 +547,7 @@ pflow --validate-only workflow.json
 Execute the workflow to verify it works.
 
 ```bash
-pflow workflow.json param1=value param2=value
+uv run pflow workflow.json param1=value param2=value
 ```
 
 **When to discover `result: Any` output structures**:
@@ -565,7 +565,7 @@ Skip output discovery when:
 **How to discover output structure** (if needed):
 ```bash
 # 1. Create minimal test workflow
-pflow --trace test-workflow.json
+uv run pflow --trace test-workflow.json
 
 # 2. Examine trace
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[0].outputs'
@@ -601,10 +601,10 @@ Improve the workflow for production use.
 Save to global library for reuse across all projects:
 
 ```bash
-pflow workflow save .pflow/workflows/your-draft.json workflow-name "Clear description"
+uv run pflow workflow save .pflow/workflows/your-draft.json workflow-name "Clear description"
 
 # With optional enhancements
-pflow workflow save .pflow/workflows/your-draft.json workflow-name "Description" --generate-metadata --delete-draft
+uv run pflow workflow save .pflow/workflows/your-draft.json workflow-name "Description" --generate-metadata --delete-draft
 ```
 
 See [Saving Workflows](#saving-workflows) section below for complete details.
@@ -614,10 +614,10 @@ See [Saving Workflows](#saving-workflows) section below for complete details.
 **Always tell the user how to run their saved workflow**:
 ```bash
 # If no inputs (all hardcoded):
-pflow workflow-name
+uv run pflow workflow-name
 
 # If has inputs (show with user's values):
-pflow workflow-name channel=C123 sheet_id=abc123
+uv run pflow workflow-name channel=C123 sheet_id=abc123
 ```
 
 ---
@@ -887,8 +887,8 @@ Start simple, build complexity gradually.
 
 **Try it**:
 ```bash
-pflow --validate-only level1.json
-pflow level1.json input="What is 2+2?"
+uv run pflow --validate-only level1.json
+uv run pflow level1.json input="What is 2+2?"
 ```
 
 **What you learn**:
@@ -933,7 +933,7 @@ pflow level1.json input="What is 2+2?"
 
 **Try it**:
 ```bash
-pflow level2.json file="README.md"
+uv run pflow level2.json file="README.md"
 ```
 
 **What you learn**:
@@ -1402,7 +1402,7 @@ Example json:
 
 Get full specs with:
 ```bash
-pflow registry describe mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY
+uv run pflow registry describe mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY
 ```
 
 ### Workflow Inputs
@@ -1659,7 +1659,7 @@ Before declaring an output, verify:
 ### Static Validation Command
 
 ```bash
-pflow --validate-only workflow.json
+uv run pflow --validate-only workflow.json
 ```
 
 **No runtime parameters needed!** Pflow auto-generates dummy values for inputs but provide them if you want.
@@ -1727,7 +1727,7 @@ Don't try to fix all errors at once - tackle them sequentially!
 ### Execute Workflow
 
 ```bash
-pflow --output-format json --no-repair --trace workflow.json param1=value param2=value
+uv run pflow --output-format json --no-repair --trace workflow.json param1=value param2=value
 ```
 
 > Using --output-format json --no-repair --trace flags is mandatory when building workflows for AI agents.
@@ -1828,12 +1828,12 @@ Saving moves your workflow from local drafts (`.pflow/workflows/`) to the global
 ### Save to Global Library
 
 ```bash
-pflow workflow save FILE_PATH NAME "Description"
+uv run pflow workflow save FILE_PATH NAME "Description"
 ```
 
 **Example**:
 ```bash
-pflow workflow save .pflow/workflows/draft.json slack-qa-bot "Answers Slack questions and logs to Sheets"
+uv run pflow workflow save .pflow/workflows/draft.json slack-qa-bot "Answers Slack questions and logs to Sheets"
 ```
 
 **Name requirements** (auto-validated):
@@ -1874,20 +1874,20 @@ pflow workflow save .pflow/workflows/draft.json slack-qa-bot "Answers Slack ques
 ### From File
 
 ```bash
-pflow workflow.json param1=value param2=value
+uv run pflow workflow.json param1=value param2=value
 ```
 
 ### From Library
 
 ```bash
-pflow my-saved-workflow param1=value param2=value
+uv run pflow my-saved-workflow param1=value param2=value
 ```
 
 ### Check What's Available
 
 ```bash
-pflow workflow list                 # List saved workflows
-pflow workflow describe my-workflow # Show workflow details
+uv run pflow workflow list                 # List saved workflows
+uv run pflow workflow describe my-workflow # Show workflow details
 ```
 
 ---
@@ -2119,7 +2119,7 @@ What might they configure later?
 ### Example Step 2: DISCOVER WORKFLOWS
 
 ```bash
-pflow workflow discover "fetch messages, analyze, send to destination, log to sheets"
+uv run pflow workflow discover "fetch messages, analyze, send to destination, log to sheets"
 ```
 
 **Results**: No 70%+ matches found, proceeding to build new.
@@ -2127,7 +2127,7 @@ pflow workflow discover "fetch messages, analyze, send to destination, log to sh
 ### Example Step 3: DISCOVER NODES
 
 ```bash
-pflow registry discover "fetch Slack messages, analyze with AI, send Slack messages, update Google Sheets, get date and time from shell"
+uv run pflow registry discover "fetch Slack messages, analyze with AI, send Slack messages, update Google Sheets, get date and time from shell"
 ```
 
 **Results**: Found all needed nodes with specs.
@@ -2203,7 +2203,7 @@ Key decisions:
 ### Example Step 7: VALIDATE
 
 ```bash
-pflow --validate-only slack-qa.json
+uv run pflow --validate-only slack-qa.json
 ```
 
 Result: ✓ All validations passed!
@@ -2211,7 +2211,7 @@ Result: ✓ All validations passed!
 ### Example Step 8: TEST
 
 ```bash
-pflow --output-format json --no-repair --trace slack-qa.json
+uv run pflow --output-format json --no-repair --trace slack-qa.json
 ```
 
 Result: ✓ Workflow executed successfully!
@@ -2221,7 +2221,7 @@ Result: ✓ Workflow executed successfully!
 Ask the user to verify the results and if they are happy, save the workflow to the global library.
 
 ```bash
-pflow workflow save slack-qa.json slack-qa-bot "Answers Slack questions and logs Q&A pairs to Google Sheets with timestamps"
+uv run pflow workflow save slack-qa.json slack-qa-bot "Answers Slack questions and logs Q&A pairs to Google Sheets with timestamps"
 ```
 
 Result: ✓ Saved to global library!
@@ -2232,10 +2232,10 @@ Result: ✓ Saved to global library!
 
 ```bash
 # Show users exactly how to run with their original values:
-pflow workflow-name source_id=ORIGINAL_VALUE destination_id=ORIGINAL_VALUE limit=10
+uv run pflow workflow-name source_id=ORIGINAL_VALUE destination_id=ORIGINAL_VALUE limit=10
 
 # They can now easily change any parameter:
-pflow workflow-name source_id=DIFFERENT_SOURCE destination_id=NEW_DEST limit=20
+uv run pflow workflow-name source_id=DIFFERENT_SOURCE destination_id=NEW_DEST limit=20
 ```
 
 **Key**: Always show the command with the user's original values so they can test immediately.
@@ -2268,25 +2268,25 @@ pflow workflow-name source_id=DIFFERENT_SOURCE destination_id=NEW_DEST limit=20
 
 ```bash
 # Discovery - ALWAYS use AI-powered discovery first
-pflow workflow discover "user's request"                # Find existing workflows (Step 2 - MANDATORY)
-pflow registry discover "what you need to build"        # Find nodes for building (Step 3)
+uv run pflow workflow discover "user's request"                # Find existing workflows (Step 2 - MANDATORY)
+uv run pflow registry discover "what you need to build"        # Find nodes for building (Step 3)
 
 # Only use these if AI discovery is unavailable
-pflow registry describe node1 node2                     # Get specific node specs
-pflow workflow describe name                            # Show specific workflow
+uv run pflow registry describe node1 node2                     # Get specific node specs
+uv run pflow workflow describe name                            # Show specific workflow
 
 # Development
-pflow --validate-only workflow.json                     # Validate structure
+uv run pflow --validate-only workflow.json                     # Validate structure
 
 # Saving
-pflow workflow save file name "desc"                    # Save workflow to library
+uv run pflow workflow save file name "desc"                    # Save workflow to library
 
 # Execution
-pflow workflow.json param=value                         # Run from file
-pflow saved-workflow param=value                        # Run from library
+uv run pflow workflow.json param=value                         # Run from file
+uv run pflow saved-workflow param=value                        # Run from library
 
 # Required Execution Flags (use together when testing)
-pflow --trace --no-repair --output-format json workflow-name
+uv run pflow --trace --no-repair --output-format json workflow-name
 ```
 
 ### Common Node Types
@@ -2329,6 +2329,14 @@ pflow --trace --no-repair --output-format json workflow-name
 
 ### Workflow Building Order
 **Always follow**: UNDERSTAND → DISCOVER WORKFLOWS → DISCOVER NODES → DESIGN → PLAN → BUILD → VALIDATE → TEST → REFINE → SAVE
+
+## Running pflow
+
+Always run pflow using uv or it will not work in the current environment:
+
+```bash
+uv run pflow ...
+```
 
 ---
 
