@@ -17,3 +17,20 @@ We are currently saving this into rich metadata:
       "sheet_name": "Sheet1",
       "__verbose__": false
     }
+
+
+---
+
+Additional insights:
+
+1.
+
+this will allow users to say things like:
+
+do the slack workflow with my usual params
+
+this is possible because we will save the params used in the workflow json file in combination with the user request.
+
+2.
+
+This will also help the workflow discovery (discovery node) be able to make better decisions.
