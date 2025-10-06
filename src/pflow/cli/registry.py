@@ -721,6 +721,66 @@ def discover_nodes(query: str) -> None:
         click.echo("\nTip: Try a more specific query or use 'pflow registry list' to see all nodes.")
 
 
+@registry.command(name="run")
+@click.argument("node_type")
+@click.argument("params", nargs=-1)
+@click.option(
+    "--output-format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format (text or json)",
+)
+@click.option("--show-structure", is_flag=True, help="Show flattened output structure for template usage")
+@click.option("--timeout", type=int, default=60, help="Execution timeout in seconds")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed execution information")
+def run_node(
+    node_type: str,
+    params: tuple[str, ...],
+    output_format: str,
+    show_structure: bool,
+    timeout: int,
+    verbose: bool,
+) -> None:
+    """Run a single node with provided parameters for testing.
+
+    Examples:
+
+        pflow registry run read-file file_path=/tmp/test.txt
+
+        pflow registry run llm prompt="Hello world" --output-format json
+
+        pflow registry run mcp-slack-fetch channel=C123 --show-structure
+
+    This command is useful for:
+
+    - Testing node parameters before building workflows
+
+    - Discovering output structure for nodes with 'Any' types
+
+    - Verifying credentials and authentication
+
+    - Quick iteration during workflow development
+
+    Node name variations (MCP nodes):
+
+    - Full: mcp-slack-composio-SLACK_SEND_MESSAGE
+
+    - Server-qualified: slack-composio-SLACK_SEND_MESSAGE
+
+    - Tool name only: SLACK_SEND_MESSAGE (if unique)
+    """
+    from pflow.cli.registry_run import execute_single_node
+
+    execute_single_node(
+        node_type=node_type,
+        params=params,
+        output_format=output_format,
+        show_structure=show_structure,
+        timeout=timeout,
+        verbose=verbose,
+    )
+
+
 def _normalize_node_id(user_input: str, available_nodes: set[str]) -> str | None:
     """Normalize node ID to match registry format.
 
