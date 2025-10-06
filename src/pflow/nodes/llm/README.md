@@ -66,7 +66,7 @@ pflow llm \
 ### In a workflow:
 ```bash
 # Read file and summarize
-pflow read-file --path=document.txt >> llm --prompt="Summarize: $content"
+pflow read-file --path=document.txt >> llm --prompt="Summarize: ${content}"
 ```
 
 ## Image Support

@@ -243,6 +243,31 @@ def test_shared_takes_precedence_over_params(temp_image, mock_llm_response):
         assert call_kwargs["attachments"][0].path == temp_image
 
 
+def test_shared_empty_list_takes_precedence_over_params(mock_llm_response):
+    """Test that shared["images"] = [] takes precedence over params (not fallback).
+
+    This is a critical test for the parameter fallback logic.
+    Empty list is a valid value meaning "no images", and should NOT
+    fall back to params when explicitly set in shared store.
+    """
+    node = LLMNode()
+    node.params = {"prompt": "Test", "images": ["https://example.com/param.jpg"]}
+    shared = {"prompt": "Test", "images": []}  # Explicitly empty
+
+    with patch("pflow.nodes.llm.llm.llm") as mock_llm:
+        mock_model = Mock()
+        mock_model.prompt.return_value = mock_llm_response
+        mock_llm.get_model.return_value = mock_model
+
+        action = node.run(shared)
+
+        assert action == "default"
+
+        # CRITICAL: Should NOT use params images, should respect shared empty list
+        call_kwargs = mock_model.prompt.call_args[1]
+        assert "attachments" not in call_kwargs  # Empty list = no attachments
+
+
 def test_images_with_system_and_max_tokens(temp_image, mock_llm_response):
     """Test images work correctly with other optional parameters."""
     node = LLMNode()

@@ -110,7 +110,8 @@ class LLMNode(Node):
         temperature = max(0.0, min(2.0, temperature))
 
         # Process images with parameter fallback
-        images = shared.get("images") or self.params.get("images") or []
+        # Use explicit key check to handle empty list correctly
+        images = shared.get("images") if "images" in shared else self.params.get("images", [])
 
         # Ensure images is a list
         if not isinstance(images, list):
