@@ -1024,6 +1024,20 @@ See [Complete Example](#complete-example-building-a-complex-workflow) for a full
 - [ ] I have node specs (from discovery output or `pflow registry describe`)
 - [ ] I understand which outputs are `Any` type and if I need to investigate them
 
+### ✅ Critical Nodes Tested (Recommended - Step 3.5)
+- [ ] I've tested MCP nodes with `pflow registry run` to verify parameters
+- [ ] I've confirmed auth/credentials work for external services
+- [ ] I've seen exact output structure for `Any` type nodes using `--show-structure`
+- [ ] I'm confident about parameter formats (especially arrays/objects)
+
+**Why test first?** Catch parameter errors before building workflows. See actual output structures, not guessing. Verify credentials work independently. Build workflows with confidence (fewer iterations).
+
+**When to test:**
+- ✅ MCP nodes (especially with `Any` outputs)
+- ✅ Nodes requiring authentication
+- ✅ Complex parameter formats (arrays, objects)
+- ❌ Simple nodes with known schemas (optional)
+
 ### ✅ Design Validated
 - [ ] My workflow is a LINEAR chain (no parallel branches)
 - [ ] Each node has exactly ONE successor
@@ -1723,6 +1737,37 @@ Don't try to fix all errors at once - tackle them sequentially!
 ---
 
 ## Testing & Debugging
+
+### Test Individual Nodes (Before Building Workflows)
+
+Test nodes in isolation to verify parameters, discover output structure, and confirm authentication:
+
+```bash
+pflow registry run <node-type> param1=value1 param2=value2
+```
+
+**Output Modes:**
+- `--output-format json` - For programmatic parsing
+- `--show-structure` - Discover template paths for `Any` types (critical for MCP)
+- `--verbose` - Show parameters and execution details
+
+**Examples:**
+
+```bash
+# Test MCP node and see output structure
+pflow registry run SLACK_SEND_MESSAGE channel=C123 text="test" --show-structure
+
+# Verify GitHub credentials
+pflow registry run github-list-issues repo=owner/repo state=open
+
+# Test complex parameters
+pflow registry run http url="https://api.example.com" body='{"key":"value"}' --output-format json
+```
+
+**Node name shortcuts (MCP):**
+- Full: `mcp-slack-composio-SLACK_SEND_MESSAGE`
+- Server-qualified: `slack-composio-SLACK_SEND_MESSAGE`
+- Tool only: `SLACK_SEND_MESSAGE` (if unique)
 
 ### Execute Workflow
 
