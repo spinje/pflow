@@ -331,7 +331,7 @@ class PlannerContextBuilder:
 
         sections.extend([
             "",
-            "Note: These should NEVER be hardcoded in the workflow and should only be considered as POTENTIAL defaults in the inputs section",
+            "> Note: These should NEVER be hardcoded in the workflow and should only be considered as POTENTIAL defaults in the inputs section. If you decide to create any additional inputs, DO NOT make them required: true, instead create a sensible default value for the input.",
         ])
 
         return sections
