@@ -33,6 +33,41 @@ class ShellNode(Node):
     These are treated as empty results, not errors. Use ignore_errors=true
     for other cases where you want to continue despite failures.
 
+    Template Variables and Data Handling:
+
+    The shell node supports template variables in both command and stdin parameters,
+    but they serve different purposes:
+
+    ✅ CORRECT - Use stdin for data (JSON, large text, complex strings):
+      {
+        "stdin": "${upstream.result}",           # Data with quotes, special chars, etc.
+        "command": "jq -r '.data.field'"         # Processing logic
+      }
+
+      Why stdin?
+      - No shell escaping issues (data is piped, not interpreted)
+      - Handles any data: JSON, binary, special characters, newlines
+      - Follows Unix philosophy: data via stdin, logic in command
+      - More reliable and maintainable
+
+    ✅ OK - Simple values in commands (paths, names, IDs):
+      {
+        "command": "ls ${directory}",            # Simple string, no special chars
+        "command": "echo ${user_id}"             # Numeric or simple text
+      }
+
+    ❌ WRONG - Complex data in command strings:
+      {
+        "command": "echo '${json_data}' | jq"    # Shell escaping issues!
+      }
+
+      This fails when json_data contains quotes, special characters, or is very large.
+      The shell cannot safely parse complex data embedded in command strings.
+
+    Pattern Detection:
+    The shell node will detect when you try to use structured data (dict/list) in
+    command templates and error with a helpful message guiding you to use stdin instead.
+
     Interface:
     - Reads: shared["stdin"]: str  # Optional input data for the command
     - Writes: shared["stdout"]: str  # Command standard output
@@ -169,6 +204,131 @@ class ShellNode(Node):
             return 1
         return exit_code
 
+    def _check_command_template_safety(self, command: str) -> None:
+        """Check if command templates contain problematic data patterns.
+
+        Detects when users try to embed structured data (JSON) in command strings,
+        which causes shell escaping issues. Provides clear guidance to use stdin instead.
+
+        Args:
+            command: The shell command to validate
+
+        Raises:
+            ValueError: If command contains templates with structured data
+        """
+        from ...runtime.template_resolver import TemplateResolver
+
+        # Extract template variables from command
+        template_vars = TemplateResolver.extract_variables(command)
+
+        for var_name in template_vars:
+            # Check if this template variable has been resolved in params
+            # (Wrapper resolves templates and puts them in params before we see them)
+            if var_name in self.params:
+                resolved_value = self.params[var_name]
+
+                # Block structured data in commands (dict/list)
+                if isinstance(resolved_value, (dict, list)):
+                    type_name = type(resolved_value).__name__
+                    raise ValueError(
+                        f"Template variable '${{{var_name}}}' in command contains "
+                        f"structured data ({type_name}).\n\n"
+                        f"Shell commands cannot safely handle JSON objects/arrays in template substitution "
+                        f"due to shell escaping issues.\n\n"
+                        f"✅ Solution: Use the 'stdin' parameter instead:\n\n"
+                        f"  {{\n"
+                        f'    "stdin": "${{{var_name}}}",\n'
+                        f'    "command": "jq -r \'.field\'"\n'
+                        f"  }}\n\n"
+                        f"This passes the data via stdin (no shell escaping needed) "
+                        f"and keeps the command clean."
+                    )
+
+                # Warn about very large strings (likely JSON/data files)
+                if isinstance(resolved_value, str) and len(resolved_value) > 500:
+                    logger.warning(
+                        f"Template variable '${{{var_name}}}' contains large string "
+                        f"({len(resolved_value)} chars). "
+                        f"For reliability with complex data, consider using stdin parameter instead.",
+                        extra={"phase": "prep", "var_name": var_name, "size": len(resolved_value)},
+                    )
+
+    def _adapt_stdin_to_string(self, stdin: Any) -> str | None:
+        """Adapt any type to string suitable for subprocess stdin.
+
+        The shell node accepts template variables of any type but subprocess
+        requires string or None for stdin. This method intelligently converts
+        types to strings suitable for shell processing.
+
+        Conversion rules:
+        - str: Use as-is (already correct)
+        - None: Keep as None (means "no input")
+        - dict/list: Serialize to JSON (common case: piping to jq, python, etc.)
+        - int/float/bool: Convert to string representation
+        - bytes: Decode to UTF-8 (with latin-1 fallback)
+        - Other: Fallback to str() for custom objects
+
+        Args:
+            stdin: Value from template resolution (can be any Python type)
+
+        Returns:
+            String suitable for subprocess stdin, or None for no input
+        """
+        import json
+
+        if stdin is None:
+            return None
+
+        if isinstance(stdin, str):
+            return stdin
+
+        if isinstance(stdin, (dict, list)):
+            # Common case: JSON data for pipes (jq, python -m json.tool, etc.)
+            try:
+                result = json.dumps(stdin, ensure_ascii=False)
+                logger.info(
+                    f"Serialized {type(stdin).__name__} to JSON for stdin",
+                    extra={"phase": "prep", "type": type(stdin).__name__, "size": len(stdin)},
+                )
+                return result
+            except (TypeError, ValueError) as e:
+                # Fallback if JSON serialization fails (e.g., unserializable objects)
+                logger.warning(
+                    f"Failed to serialize {type(stdin).__name__} to JSON, using str() fallback",
+                    extra={"phase": "prep", "error": str(e)},
+                )
+                return str(stdin)
+
+        if isinstance(stdin, bytes):
+            # Decode bytes to string
+            try:
+                result = stdin.decode("utf-8")
+                logger.debug("Decoded bytes to UTF-8 for stdin", extra={"phase": "prep"})
+                return result
+            except UnicodeDecodeError:
+                # Try latin-1 as fallback (accepts all byte values)
+                result = stdin.decode("latin-1")
+                logger.debug("Decoded bytes to latin-1 for stdin", extra={"phase": "prep"})
+                return result
+
+        if isinstance(stdin, bool):
+            # Use lowercase for CLI/JSON compatibility
+            # Many tools (jq, JSON parsers, CLI flags) expect lowercase "true"/"false"
+            result = "true" if stdin else "false"
+            logger.debug(
+                f"Converted bool to lowercase string for stdin: {result}",
+                extra={"phase": "prep", "value": result},
+            )
+            return result
+
+        # int, float, or custom objects
+        result = str(stdin)
+        logger.debug(
+            f"Converted {type(stdin).__name__} to string for stdin",
+            extra={"phase": "prep", "type": type(stdin).__name__, "value": str(result)[:100]},
+        )
+        return result
+
     def __init__(self) -> None:
         """Initialize the shell node with retry support."""
         # Shell commands can be flaky, so allow retries
@@ -191,6 +351,9 @@ class ShellNode(Node):
         if not command:
             raise ValueError("Missing required 'command' parameter")
 
+        # Validate command templates for safety (detect JSON/structured data in commands)
+        self._check_command_template_safety(command)
+
         # Check for obviously dangerous patterns
         command_lower = command.lower()
         for pattern in self.DANGEROUS_PATTERNS:
@@ -210,8 +373,11 @@ class ShellNode(Node):
                     )
                 break  # Only log once per command
 
-        # Get optional stdin from shared store
-        stdin = shared.get("stdin")
+        # Get optional stdin from shared store or params (template fallback)
+        stdin = shared.get("stdin") or self.params.get("stdin")
+
+        # Adapt stdin to string (handle any type from templates)
+        stdin = self._adapt_stdin_to_string(stdin)
 
         # Get optional configuration from params
         cwd = self.params.get("cwd")
