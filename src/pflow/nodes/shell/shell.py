@@ -311,7 +311,17 @@ class ShellNode(Node):
                 logger.debug("Decoded bytes to latin-1 for stdin", extra={"phase": "prep"})
                 return result
 
-        # int, float, bool, or custom objects
+        if isinstance(stdin, bool):
+            # Use lowercase for CLI/JSON compatibility
+            # Many tools (jq, JSON parsers, CLI flags) expect lowercase "true"/"false"
+            result = "true" if stdin else "false"
+            logger.debug(
+                f"Converted bool to lowercase string for stdin: {result}",
+                extra={"phase": "prep", "value": result},
+            )
+            return result
+
+        # int, float, or custom objects
         result = str(stdin)
         logger.debug(
             f"Converted {type(stdin).__name__} to string for stdin",

@@ -91,24 +91,24 @@ class TestPrimitiveTypes:
         assert shared["stdout"] == "42"
 
     def test_bool_true_stdin_converted_to_string(self):
-        """Boolean True should be converted to 'True'."""
+        """Boolean True should be converted to lowercase 'true' for CLI compatibility."""
         node = ShellNode()
         node.set_params({"command": "cat", "stdin": True})
         shared = {}
 
         action = node.run(shared)
         assert action == "default"
-        assert shared["stdout"] == "True"
+        assert shared["stdout"] == "true"
 
     def test_bool_false_stdin_converted_to_string(self):
-        """Boolean False should be converted to 'False'."""
+        """Boolean False should be converted to lowercase 'false' for CLI compatibility."""
         node = ShellNode()
         node.set_params({"command": "cat", "stdin": False})
         shared = {}
 
         action = node.run(shared)
         assert action == "default"
-        assert shared["stdout"] == "False"
+        assert shared["stdout"] == "false"
 
     def test_float_stdin_converted_to_string(self):
         """Float should be converted to string."""
