@@ -3,6 +3,7 @@
 Interface:
 - Reads: shared["prompt"]: str  # Text prompt to send to model
 - Reads: shared["system"]: str  # System prompt (optional)
+- Reads: shared["images"]: list[str]  # Image URLs or file paths (optional)
 - Writes: shared["response"]: Any  # Model's response (auto-parsed JSON or string)
 - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
 - Params: model: str  # Model to use (default: gemini-2.5-flash)
@@ -34,6 +35,7 @@ class LLMNode(Node):
     Interface:
     - Reads: shared["prompt"]: str  # Text prompt to send to model
     - Reads: shared["system"]: str  # System prompt (optional)
+    - Reads: shared["images"]: list[str]  # Image URLs or file paths (optional)
     - Writes: shared["response"]: any  # Model's response (auto-parsed JSON or string)
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
@@ -107,12 +109,39 @@ class LLMNode(Node):
         temperature = self.params.get("temperature", 1.0)
         temperature = max(0.0, min(2.0, temperature))
 
+        # Process images with parameter fallback
+        images = shared.get("images") or self.params.get("images") or []
+
+        # Ensure images is a list
+        if not isinstance(images, list):
+            images = [images]  # Wrap single value in list
+
+        # Build attachments list
+        attachments = []
+        for img in images:
+            if not isinstance(img, str):
+                raise TypeError(f"Image must be a string (URL or path), got: {type(img).__name__}")
+
+            # Detect URL vs file path
+            if img.startswith(("http://", "https://")):
+                # URL - let llm library handle validation/fetching
+                attachments.append(llm.Attachment(url=img))
+            else:
+                # File path - validate existence now
+                path = Path(img)
+                if not path.exists():
+                    raise ValueError(
+                        f"Image file not found: {img}\nPlease ensure the file exists at the specified path."
+                    )
+                attachments.append(llm.Attachment(path=str(path)))
+
         return {
             "prompt": prompt,
             "model": self.params.get("model", "gemini-2.5-flash"),  # Default to reliable JSON-capable model
             "temperature": temperature,
             "system": system,
             "max_tokens": self.params.get("max_tokens"),
+            "attachments": attachments,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -127,6 +156,10 @@ class LLMNode(Node):
             kwargs["system"] = prep_res["system"]
         if prep_res["max_tokens"] is not None:
             kwargs["max_tokens"] = prep_res["max_tokens"]
+
+        # Add attachments if present
+        if prep_res["attachments"]:
+            kwargs["attachments"] = prep_res["attachments"]
 
         # Let exceptions bubble up for retry mechanism
         response = model.prompt(prep_res["prompt"], **kwargs)

@@ -69,6 +69,52 @@ pflow llm \
 pflow read-file --path=document.txt >> llm --prompt="Summarize: $content"
 ```
 
+## Image Support
+
+The LLM node supports multimodal models by accepting images via URLs or file paths. Images are passed to models that support vision capabilities (like GPT-4o, Claude 3.5 Sonnet, Gemini Flash).
+
+### Basic usage with a single image:
+```bash
+# From URL
+pflow llm --prompt="Describe this image" \
+  --images="https://example.com/cat.jpg"
+
+# From local file
+pflow llm --prompt="What's in this image?" \
+  --images="photo.jpg"
+```
+
+### Multiple images:
+```bash
+pflow llm \
+  --prompt="Compare these two images" \
+  --images="image1.jpg" \
+  --images="https://example.com/image2.png"
+```
+
+### In workflows:
+```bash
+# Simple workflow with image
+pflow read-file --path=data.json >> llm \
+  --prompt="Analyze this data and this chart: ${content}" \
+  --images="chart.png"
+```
+
+### Supported formats:
+The llm library supports these image formats (model support may vary):
+- **JPEG/JPG** (image/jpeg)
+- **PNG** (image/png)
+- **GIF** (image/gif)
+- **WebP** (image/webp)
+- **PDF** (application/pdf)
+
+### Notes:
+- Images are optional - the node works with text-only prompts
+- You can mix URLs and file paths in the same call
+- URL images are fetched at runtime (network errors will trigger retries)
+- Local file paths are validated before execution (missing files fail immediately)
+- Not all models support images - check model capabilities with `llm models`
+
 ## Available Models
 
 To see all available models (based on installed plugins):
@@ -88,6 +134,7 @@ Common models:
 - `temperature`: Sampling temperature 0.0-2.0 (default: 0.7)
 - `system`: System prompt for behavior guidance (optional)
 - `max_tokens`: Maximum response tokens (optional)
+- `images`: Image URLs or file paths (optional, can be repeated for multiple images)
 
 ## Token Usage Tracking
 
