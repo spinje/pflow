@@ -392,12 +392,12 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 68: Separate RuntimeValidation from planner and refactor Workflow Execution
 - ✅ Task 70: Design and Validate MCP-Based Agent Infrastructure Architecture
 - ✅ Task 71: Extend CLI Commands with tools for agentic workflow building
+- ✅ Task 76: Implement Registry Execute Command for Independent Node Testing by agents
 
 Next up:
-- ⏳ Task 76: Implement Registry Execute Command for Independent Node Testing by agents
+- ⏳ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
 
 Next version (post-MVP/post-Launch):
-- ⏳ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 59: Add support for nested workflows

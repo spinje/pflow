@@ -4,6 +4,12 @@ This test suite validates the end-to-end caching behavior:
 1. Cache flag propagation through the system
 2. Cache blocks are built when flag is enabled
 3. LLM is called with appropriate cache parameters
+
+IMPORTANT: This test mocks load_prompt with valid templates for ALL prompts.
+When running in parallel (pytest-xdist), tests from OTHER files may execute
+while these mocks are active. The mock MUST return valid templates with correct
+{{variables}} for ANY prompt that might be loaded, otherwise format_prompt()
+validation will fail.
 """
 
 from unittest.mock import Mock, patch
@@ -13,6 +19,184 @@ from pflow.planning.nodes import (
     RequirementsAnalysisNode,
     WorkflowDiscoveryNode,
 )
+
+
+def _create_valid_prompt_template(prompt_name: str) -> str:
+    """Create valid prompt templates with correct variables for each prompt type.
+
+    This function is critical for pytest-xdist compatibility. When tests run in
+    parallel, multiple test files may execute in the same worker process. If another
+    test tries to load a prompt while our mock is active, it must receive a valid
+    template with the correct {{variables}}, not a generic string.
+
+    Args:
+        prompt_name: The name of the prompt file (without .md extension)
+
+    Returns:
+        A valid template string with:
+        - Instructions section (>1000 chars for caching tests)
+        - ## Context marker (required for caching logic)
+        - Correct {{variable}} placeholders for format_prompt() validation
+
+    Raises:
+        ValueError: If an unknown prompt is requested (indicates test needs updating)
+    """
+    # Map of prompt names to their required variables
+    # Based on actual prompt files in src/pflow/planning/prompts/
+    prompt_templates = {
+        "discovery": {
+            "variables": ["discovery_context", "user_input"],
+            "template": """Instructions for discovery prompt. """ * 50
+            + """
+
+## Context
+
+<existing_workflows>
+{{discovery_context}}
+</existing_workflows>
+
+<user_request>
+{{user_input}}
+</user_request>""",
+        },
+        "parameter_mapping": {
+            "variables": ["inputs_description", "user_input", "stdin_data"],
+            "template": """Instructions for parameter mapping. """ * 50
+            + """
+
+## Context
+
+<workflow_parameters>
+{{inputs_description}}
+</workflow_parameters>
+
+<user_input>
+{{user_input}}
+</user_input>
+
+<stdin_data>
+{{stdin_data}}
+</stdin_data>""",
+        },
+        "parameter_discovery": {
+            "variables": ["user_input", "stdin_info"],
+            "template": """Instructions for parameter discovery. """ * 50
+            + """
+
+## Context
+
+<user_input>
+{{user_input}}
+</user_input>
+
+<stdin_info>
+{{stdin_info}}
+</stdin_info>""",
+        },
+        "requirements_analysis": {
+            "variables": ["input_text"],
+            "template": """Instructions for requirements analysis. """ * 50
+            + """
+
+## Context
+
+{{input_text}}""",
+        },
+        "metadata_generation": {
+            "variables": ["user_input", "workflow_stages", "node_flow", "parameter_bindings", "workflow_inputs"],
+            "template": """Instructions for metadata generation. """ * 50
+            + """
+
+## Context
+
+<user_input>
+{{user_input}}
+</user_input>
+
+<workflow_stages>
+{{workflow_stages}}
+</workflow_stages>
+
+<node_flow>
+{{node_flow}}
+</node_flow>
+
+<parameter_bindings>
+{{parameter_bindings}}
+</parameter_bindings>
+
+<workflow_inputs>
+{{workflow_inputs}}
+</workflow_inputs>""",
+        },
+        "component_browsing": {
+            "variables": ["user_input", "requirements", "nodes_context", "workflows_context"],
+            "template": """Instructions for component browsing. """ * 50
+            + """
+
+## Context
+
+<user_input>
+{{user_input}}
+</user_input>
+
+<requirements>
+{{requirements}}
+</requirements>
+
+<nodes_context>
+{{nodes_context}}
+</nodes_context>
+
+<workflows_context>
+{{workflows_context}}
+</workflows_context>""",
+        },
+        "planning_instructions": {
+            "variables": ["user_input"],  # Simplified for testing
+            "template": """Instructions for planning. """ * 50
+            + """
+
+## Context
+
+<user_input>
+{{user_input}}
+</user_input>""",
+        },
+        "workflow_generator_instructions": {
+            "variables": ["user_input"],  # Simplified for testing
+            "template": """Instructions for workflow generation. """ * 50
+            + """
+
+## Context
+
+<user_input>
+{{user_input}}
+</user_input>""",
+        },
+        "workflow_generator_retry": {
+            "variables": ["user_input"],  # Simplified for testing
+            "template": """Instructions for workflow generation retry. """ * 50
+            + """
+
+## Context
+
+<user_input>
+{{user_input}}
+</user_input>""",
+        },
+    }
+
+    if prompt_name not in prompt_templates:
+        raise ValueError(
+            f"Unknown prompt '{prompt_name}' in test mock. This likely means:\n"
+            f"1. A new prompt was added to the planner\n"
+            f"2. This test file needs to be updated with the new prompt's variables\n"
+            f"3. Check src/pflow/planning/prompts/{prompt_name}.md for required variables\n"
+            f"\nKnown prompts: {sorted(prompt_templates.keys())}"
+        )
+
+    return prompt_templates[prompt_name]["template"]
 
 
 class TestCachingIntegration:
@@ -54,31 +238,9 @@ class TestCachingIntegration:
                 patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt,
                 patch("pflow.planning.utils.prompt_cache_helper.load_prompt", mock_load_prompt),
             ):
-                # Use side_effect to return different templates based on prompt_name
-                def load_prompt_side_effect(prompt_name):
-                    if prompt_name == "discovery":
-                        # Return a template that matches the real discovery prompt structure
-                        # Must have "## Context" for caching logic to work
-                        # Create actual content > 1000 chars (not just visual line breaks)
-                        instructions_content = "Instructions for discovery. " * 50  # ~1400 chars
-                        return f"""{instructions_content}
-
-## Context
-
-<existing_workflows>
-{{{{discovery_context}}}}
-</existing_workflows>
-
-## Inputs
-
-<user_request>
-{{{{user_input}}}}
-</user_request>"""
-                    else:
-                        # Return a generic template for other prompts
-                        return f"Generic template for {prompt_name}"
-
-                mock_load_prompt.side_effect = load_prompt_side_effect
+                # CRITICAL: Must return valid templates for ALL prompts that might be loaded
+                # during parallel test execution. Uses _create_valid_prompt_template() helper.
+                mock_load_prompt.side_effect = _create_valid_prompt_template
 
                 with patch("llm.get_model") as mock_get_model:
                     mock_model = Mock()
@@ -153,30 +315,9 @@ class TestCachingIntegration:
                 patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt,
                 patch("pflow.planning.utils.prompt_cache_helper.load_prompt", mock_load_prompt),
             ):
-                # Use side_effect to return different templates based on prompt_name
-                def load_prompt_side_effect(prompt_name):
-                    if prompt_name == "discovery":
-                        # Same structure as above but caching should be disabled
-                        # Create actual content > 1000 chars (not just visual line breaks)
-                        instructions_content = "Instructions for discovery. " * 50  # ~1400 chars
-                        return f"""{instructions_content}
-
-## Context
-
-<existing_workflows>
-{{{{discovery_context}}}}
-</existing_workflows>
-
-## Inputs
-
-<user_request>
-{{{{user_input}}}}
-</user_request>"""
-                    else:
-                        # Return a generic template for other prompts
-                        return f"Generic template for {prompt_name}"
-
-                mock_load_prompt.side_effect = load_prompt_side_effect
+                # CRITICAL: Must return valid templates for ALL prompts that might be loaded
+                # during parallel test execution. Uses _create_valid_prompt_template() helper.
+                mock_load_prompt.side_effect = _create_valid_prompt_template
 
                 with patch("llm.get_model") as mock_get_model:
                     mock_model = Mock()
@@ -253,22 +394,9 @@ class TestCachingIntegration:
                     patch("pflow.planning.prompts.loader.load_prompt") as mock_load_prompt,
                     patch("pflow.planning.utils.prompt_cache_helper.load_prompt", mock_load_prompt),
                 ):
-                    # Use side_effect to return different templates based on prompt_name
-                    def load_prompt_side_effect(prompt_name):
-                        if prompt_name == "component_browsing":
-                            # Must have "## Context" marker for special caching logic
-                            # Create actual content > 1000 chars (not just visual line breaks)
-                            instructions_content = "Component browsing instructions. " * 40  # ~1360 chars
-                            return f"""{instructions_content}
-
-## Context
-
-This section will be dynamically built."""
-                        else:
-                            # Return a generic template for other prompts
-                            return f"Generic template for {prompt_name}"
-
-                    mock_load_prompt.side_effect = load_prompt_side_effect
+                    # CRITICAL: Must return valid templates for ALL prompts that might be loaded
+                    # during parallel test execution. Uses _create_valid_prompt_template() helper.
+                    mock_load_prompt.side_effect = _create_valid_prompt_template
 
                     with patch("pflow.registry.registry.Registry.load") as mock_registry:
                         mock_registry.return_value = {}
