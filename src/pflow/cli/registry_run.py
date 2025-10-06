@@ -33,27 +33,76 @@ def execute_single_node(
         timeout: Execution timeout in seconds (currently unused)
         verbose: Whether to show detailed execution information
     """
-    # Step 1: Parse parameters from key=value format
+    # Step 1: Parse and validate parameters
+    execution_params = _validate_parameters(params)
+
+    # Step 2: Resolve node type to actual node ID
+    registry = Registry()
+    resolved_node = _resolve_node_type(node_type, registry, verbose)
+
+    # Step 3: Prepare node for execution
+    node, enhanced_params = _prepare_node_execution(resolved_node, execution_params, registry)
+
+    # Step 4: Execute node and display results
+    _execute_and_display_results(
+        node=node,
+        resolved_node=resolved_node,
+        execution_params=execution_params,
+        enhanced_params=enhanced_params,
+        output_format=output_format,
+        show_structure=show_structure,
+        registry=registry,
+        verbose=verbose,
+    )
+
+
+def _validate_parameters(params: tuple[str, ...]) -> dict[str, Any]:
+    """Parse and validate parameters from key=value format.
+
+    Args:
+        params: Tuple of parameter strings in key=value format
+
+    Returns:
+        Dictionary of parsed parameters
+
+    Exits:
+        With code 1 if parameter validation fails
+    """
     execution_params = parse_workflow_params(params)
 
-    # Step 2: Validate parameter names (security check)
+    # Validate parameter names (security check)
     invalid_keys = [k for k in execution_params if not is_valid_parameter_name(k)]
     if invalid_keys:
         click.echo(f"❌ Invalid parameter name(s): {', '.join(invalid_keys)}", err=True)
         click.echo("   Parameter names cannot contain shell special characters ($, |, >, <, &, ;, etc.)", err=True)
         sys.exit(1)
 
-    # Step 3: Load registry and get available nodes
-    registry = Registry()
+    return execution_params
+
+
+def _resolve_node_type(node_type: str, registry: Registry, verbose: bool) -> str:
+    """Resolve node type to actual node ID, handling MCP variations.
+
+    Args:
+        node_type: Node type from user input
+        registry: Registry instance
+        verbose: Whether to show resolution feedback
+
+    Returns:
+        Resolved node ID
+
+    Exits:
+        With code 1 if node cannot be resolved
+    """
     nodes = registry.load()
     available_nodes = set(nodes.keys())
 
-    # Step 4: Normalize node ID using existing logic (handles MCP variations)
+    # Normalize node ID using existing logic (handles MCP variations)
     from pflow.cli.registry import _normalize_node_id
 
     resolved_node = _normalize_node_id(node_type, available_nodes)
 
-    # Step 5: Handle normalization results
+    # Handle normalization results
     if not resolved_node:
         # Check if it was ambiguous (multiple matches)
         normalized_check = node_type.replace("-", "_")
@@ -72,17 +121,36 @@ def execute_single_node(
     if verbose and resolved_node != node_type:
         click.echo(f"📝 Resolved '{node_type}' to '{resolved_node}'")
 
-    # Step 6: Import node class
+    return resolved_node
+
+
+def _prepare_node_execution(
+    resolved_node: str, execution_params: dict[str, Any], registry: Registry
+) -> tuple[Any, dict[str, Any]]:
+    """Prepare node instance for execution.
+
+    Args:
+        resolved_node: Resolved node ID
+        execution_params: User-provided parameters
+        registry: Registry instance
+
+    Returns:
+        Tuple of (node instance, enhanced parameters)
+
+    Exits:
+        With code 1 if node loading fails
+    """
+    # Import node class
     try:
         node_class = import_node_class(resolved_node, registry)
     except Exception as e:
         click.echo(f"❌ Failed to load node '{resolved_node}': {e}", err=True)
         sys.exit(1)
 
-    # Step 7: Create node instance
+    # Create node instance
     node = node_class()
 
-    # Step 8: Inject special parameters (for MCP and workflow nodes)
+    # Inject special parameters (for MCP and workflow nodes)
     enhanced_params = _inject_special_parameters(
         resolved_node,
         resolved_node,
@@ -90,16 +158,44 @@ def execute_single_node(
         registry,  # node_id same as node_type
     )
 
-    # Step 9: Set parameters on node
+    # Set parameters on node
     if enhanced_params:
         node.set_params(enhanced_params)
 
-    # Step 10: Create minimal shared store
+    return node, enhanced_params
+
+
+def _execute_and_display_results(
+    node: Any,
+    resolved_node: str,
+    execution_params: dict[str, Any],
+    enhanced_params: dict[str, Any],
+    output_format: str,
+    show_structure: bool,
+    registry: Registry,
+    verbose: bool,
+) -> None:
+    """Execute node and display results based on output mode.
+
+    Args:
+        node: Node instance to execute
+        resolved_node: Resolved node ID
+        execution_params: User-provided parameters
+        enhanced_params: Enhanced parameters with special injections
+        output_format: Output format - "text" or "json"
+        show_structure: Whether to show flattened structure
+        registry: Registry instance
+        verbose: Whether to show detailed execution information
+
+    Exits:
+        With code 1 if execution fails
+    """
+    # Create minimal shared store
     shared_store = {}
     # Add execution params to shared (nodes can read from either params or shared)
     shared_store.update(execution_params)
 
-    # Step 11: Execute node with timing
+    # Execute node with timing
     start_time = time.perf_counter()
 
     if verbose:
@@ -265,37 +361,76 @@ def _display_structure_output(
     click.echo("✓ Node executed successfully\n")
 
     # Show full output values (same as text mode)
-    if outputs:
-        click.echo("Outputs:")
-        for key, value in outputs.items():
-            # Show full output (pretty-print JSON if it's a dict/list)
-            if isinstance(value, (dict, list)):
-                value_str = json.dumps(value, indent=2, ensure_ascii=False)
-                # Indent each line for better formatting
-                indented = "\n  ".join(value_str.split("\n"))
-                click.echo(f"  {key}:")
-                click.echo(f"  {indented}")
-            elif isinstance(value, str) and value.strip().startswith(("{", "[")):
-                # Try to parse and pretty-print JSON strings
-                try:
-                    parsed = json.loads(value)
-                    value_str = json.dumps(parsed, indent=2, ensure_ascii=False)
-                    indented = "\n  ".join(value_str.split("\n"))
-                    click.echo(f"  {key}:")
-                    click.echo(f"  {indented}")
-                except (json.JSONDecodeError, ValueError):
-                    # Not valid JSON, show as-is
-                    click.echo(f"  {key}: {value}")
-            else:
-                click.echo(f"  {key}: {value}")
-        click.echo()
+    _display_output_values(outputs)
 
-    # Get node metadata for interface structure
-    nodes_metadata = registry.get_nodes_metadata([node_type])
-    if node_type not in nodes_metadata:
+    # Get metadata and extract template paths
+    metadata_paths, has_any_type = _extract_metadata_paths(node_type, registry)
+    if metadata_paths is None:
+        # No metadata available
         click.echo("Note: Output structure information not available for this node")
         click.echo(f"\nExecution time: {execution_time_ms}ms")
         return
+
+    # Display paths based on whether we have runtime data or use metadata
+    if has_any_type and outputs:
+        runtime_paths = _extract_runtime_paths(outputs)
+        _display_template_paths(runtime_paths, "from actual output")
+    elif metadata_paths:
+        _display_template_paths(metadata_paths, None)
+    else:
+        click.echo("No structured outputs defined for this node")
+
+    click.echo(f"\nExecution time: {execution_time_ms}ms")
+
+
+def _display_output_values(outputs: dict[str, Any]) -> None:
+    """Display full output values in human-readable format.
+
+    Args:
+        outputs: Dictionary of output values to display
+    """
+    if not outputs:
+        return
+
+    click.echo("Outputs:")
+    for key, value in outputs.items():
+        # Show full output (pretty-print JSON if it's a dict/list)
+        if isinstance(value, (dict, list)):
+            value_str = json.dumps(value, indent=2, ensure_ascii=False)
+            # Indent each line for better formatting
+            indented = "\n  ".join(value_str.split("\n"))
+            click.echo(f"  {key}:")
+            click.echo(f"  {indented}")
+        elif isinstance(value, str) and value.strip().startswith(("{", "[")):
+            # Try to parse and pretty-print JSON strings
+            try:
+                parsed = json.loads(value)
+                value_str = json.dumps(parsed, indent=2, ensure_ascii=False)
+                indented = "\n  ".join(value_str.split("\n"))
+                click.echo(f"  {key}:")
+                click.echo(f"  {indented}")
+            except (json.JSONDecodeError, ValueError):
+                # Not valid JSON, show as-is
+                click.echo(f"  {key}: {value}")
+        else:
+            click.echo(f"  {key}: {value}")
+    click.echo()
+
+
+def _extract_metadata_paths(node_type: str, registry: Registry) -> tuple[list[tuple[str, str]] | None, bool]:
+    """Extract template paths from node metadata.
+
+    Args:
+        node_type: Node type to get metadata for
+        registry: Registry instance
+
+    Returns:
+        Tuple of (paths list or None if no metadata, has_any_type flag)
+    """
+    # Get node metadata for interface structure
+    nodes_metadata = registry.get_nodes_metadata([node_type])
+    if node_type not in nodes_metadata:
+        return None, False
 
     interface = nodes_metadata[node_type].get("interface", {})
     outputs_spec = interface.get("outputs", [])
@@ -306,8 +441,8 @@ def _display_structure_output(
 
     for output in outputs_spec:
         if isinstance(output, dict):
-            key = output.get("key", output.get("name", "unknown"))
-            output_type = output.get("type", "any")
+            key = str(output.get("key") or output.get("name") or "unknown")
+            output_type = str(output.get("type", "any"))
             structure = output.get("structure", {})
 
             # Add base path
@@ -325,59 +460,66 @@ def _display_structure_output(
                 # Skip first as it's the base key we already added
                 all_paths.extend(nested_paths[1:])
 
-    # If we have Any types and actual data, flatten the real runtime structure
-    if has_any_type and outputs:
-        click.echo("Available template paths (from actual output):")
-        MAX_DISPLAYED_FIELDS = 500  # Allow up to 500 lines for full structure discovery
-        runtime_paths = []
-        seen_structures = {}  # Track structures we've already shown
+    return all_paths, has_any_type
 
-        for key, value in outputs.items():
-            # Check if this value is identical to one we've already processed
-            # (MCP nodes often return both 'result' and 'server_TOOL_result' with same data)
-            value_hash = _get_value_hash(value)
 
-            if value_hash in seen_structures:
-                # Skip duplicate structure, but note it exists
-                original_key = seen_structures[value_hash]
-                click.echo(
-                    f"\nNote: '{key}' contains the same data as '{original_key}' (showing paths for '{original_key}' only)\n"
-                )
-                continue
+def _extract_runtime_paths(outputs: dict[str, Any]) -> list[tuple[str, str]]:
+    """Extract template paths from actual runtime output values.
 
-            seen_structures[value_hash] = key
+    Args:
+        outputs: Dictionary of output values
 
-            # Recursively flatten the actual runtime value (handles JSON strings too)
-            # Use just the key as prefix (not full node_type) for shorter paths
-            flattened = _flatten_runtime_value(key, value)
-            runtime_paths.extend(flattened)
+    Returns:
+        List of (path, type) tuples
+    """
+    runtime_paths: list[tuple[str, str]] = []
+    seen_structures: dict[str, str] = {}  # Track structures we've already shown
 
-        for path, type_str in runtime_paths[:MAX_DISPLAYED_FIELDS]:
-            click.echo(f"  ✓ ${{{path}}} ({type_str})")
+    for key, value in outputs.items():
+        # Check if this value is identical to one we've already processed
+        # (MCP nodes often return both 'result' and 'server_TOOL_result' with same data)
+        value_hash = _get_value_hash(value)
 
-        if len(runtime_paths) > MAX_DISPLAYED_FIELDS:
-            remaining = len(runtime_paths) - MAX_DISPLAYED_FIELDS
-            click.echo(f"  ... and {remaining} more paths")
+        if value_hash in seen_structures:
+            # Skip duplicate structure, but note it exists
+            original_key = seen_structures[value_hash]
+            click.echo(
+                f"\nNote: '{key}' contains the same data as '{original_key}' (showing paths for '{original_key}' only)\n"
+            )
+            continue
 
-        click.echo("\nUse these paths in workflow templates.")
+        seen_structures[value_hash] = key
 
-    # Otherwise use metadata-defined structure
-    elif all_paths:
-        click.echo("Available template paths:")
-        MAX_DISPLAYED_FIELDS = 500  # Allow up to 500 lines for full structure discovery
+        # Recursively flatten the actual runtime value (handles JSON strings too)
+        # Use just the key as prefix (not full node_type) for shorter paths
+        flattened = _flatten_runtime_value(key, value)
+        runtime_paths.extend(flattened)
 
-        for path, type_str in all_paths[:MAX_DISPLAYED_FIELDS]:
-            click.echo(f"  ✓ ${{{path}}} ({type_str})")
+    return runtime_paths
 
-        if len(all_paths) > MAX_DISPLAYED_FIELDS:
-            remaining = len(all_paths) - MAX_DISPLAYED_FIELDS
-            click.echo(f"  ... and {remaining} more paths")
 
-        click.echo("\nUse these paths in workflow templates.")
+def _display_template_paths(paths: list[tuple[str, str]], source_description: str | None) -> None:
+    """Display template paths in a formatted list.
+
+    Args:
+        paths: List of (path, type) tuples
+        source_description: Optional description of the source (e.g., "from actual output")
+    """
+    MAX_DISPLAYED_FIELDS = 500  # Allow up to 500 lines for full structure discovery
+
+    if source_description:
+        click.echo(f"Available template paths ({source_description}):")
     else:
-        click.echo("No structured outputs defined for this node")
+        click.echo("Available template paths:")
 
-    click.echo(f"\nExecution time: {execution_time_ms}ms")
+    for path, type_str in paths[:MAX_DISPLAYED_FIELDS]:
+        click.echo(f"  ✓ ${{{path}}} ({type_str})")
+
+    if len(paths) > MAX_DISPLAYED_FIELDS:
+        remaining = len(paths) - MAX_DISPLAYED_FIELDS
+        click.echo(f"  ... and {remaining} more paths")
+
+    click.echo("\nUse these paths in workflow templates.")
 
 
 def _get_value_hash(value: Any) -> str:

@@ -126,21 +126,23 @@ def test_basic_node_execution_with_temp_file(runner, tmp_path):
     # Import the actual ReadFileNode for this test
     from pflow.nodes.file.read_file import ReadFileNode
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run.Registry") as MockRegistry:
-            # Setup registry mock
-            instance = MagicMock()
-            instance.load.return_value = {"read-file": {}}
-            MockRegistry.return_value = instance
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        # Setup registry mock
+        instance = MagicMock()
+        instance.load.return_value = {"read-file": {}}
+        MockRegistry.return_value = instance
 
-            # Return actual node class
-            mock_import.return_value = ReadFileNode
+        # Return actual node class
+        mock_import.return_value = ReadFileNode
 
-            result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}"])
+        result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}"])
 
-            assert result.exit_code == 0
-            assert "Node executed successfully" in result.output
-            assert "Hello, world!" in result.output
+        assert result.exit_code == 0
+        assert "Node executed successfully" in result.output
+        assert "Hello, world!" in result.output
 
 
 def test_node_execution_returns_exit_code_zero_on_success(runner, tmp_path):
@@ -150,34 +152,38 @@ def test_node_execution_returns_exit_code_zero_on_success(runner, tmp_path):
 
     from pflow.nodes.file.read_file import ReadFileNode
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run.Registry") as MockRegistry:
-            instance = MagicMock()
-            instance.load.return_value = {"read-file": {}}
-            MockRegistry.return_value = instance
-            mock_import.return_value = ReadFileNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        instance = MagicMock()
+        instance.load.return_value = {"read-file": {}}
+        MockRegistry.return_value = instance
+        mock_import.return_value = ReadFileNode
 
-            result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}"])
+        result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}"])
 
-            assert result.exit_code == 0
+        assert result.exit_code == 0
 
 
 def test_node_execution_returns_exit_code_one_on_failure(runner):
     """Test that failed execution returns exit code 1."""
     from pflow.nodes.file.read_file import ReadFileNode
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run.Registry") as MockRegistry:
-            instance = MagicMock()
-            instance.load.return_value = {"read-file": {}}
-            MockRegistry.return_value = instance
-            mock_import.return_value = ReadFileNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        instance = MagicMock()
+        instance.load.return_value = {"read-file": {}}
+        MockRegistry.return_value = instance
+        mock_import.return_value = ReadFileNode
 
-            # Try to read non-existent file
-            result = runner.invoke(registry, ["run", "read-file", "file_path=/nonexistent/file.txt"])
+        # Try to read non-existent file
+        result = runner.invoke(registry, ["run", "read-file", "file_path=/nonexistent/file.txt"])
 
-            assert result.exit_code == 1
-            assert "execution failed" in result.output.lower() or "error" in result.output.lower()
+        assert result.exit_code == 1
+        assert "execution failed" in result.output.lower() or "error" in result.output.lower()
 
 
 # ==============================================================================
@@ -192,25 +198,27 @@ def test_json_output_format_is_valid(runner, tmp_path):
 
     from pflow.nodes.file.read_file import ReadFileNode
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run.Registry") as MockRegistry:
-            instance = MagicMock()
-            instance.load.return_value = {"read-file": {}}
-            MockRegistry.return_value = instance
-            mock_import.return_value = ReadFileNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        instance = MagicMock()
+        instance.load.return_value = {"read-file": {}}
+        MockRegistry.return_value = instance
+        mock_import.return_value = ReadFileNode
 
-            result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}", "--output-format", "json"])
+        result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}", "--output-format", "json"])
 
-            assert result.exit_code == 0
+        assert result.exit_code == 0
 
-            # Parse and validate JSON
-            output = json.loads(result.output)
-            assert "success" in output
-            assert output["success"] is True
-            assert "node_type" in output
-            assert "outputs" in output
-            assert "execution_time_ms" in output
-            assert isinstance(output["execution_time_ms"], int)
+        # Parse and validate JSON
+        output = json.loads(result.output)
+        assert "success" in output
+        assert output["success"] is True
+        assert "node_type" in output
+        assert "outputs" in output
+        assert "execution_time_ms" in output
+        assert isinstance(output["execution_time_ms"], int)
 
 
 def test_structure_mode_shows_flattened_paths(runner, mock_registry):
@@ -249,19 +257,21 @@ def test_text_mode_displays_human_readable_output(runner, tmp_path):
 
     from pflow.nodes.file.read_file import ReadFileNode
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run.Registry") as MockRegistry:
-            instance = MagicMock()
-            instance.load.return_value = {"read-file": {}}
-            MockRegistry.return_value = instance
-            mock_import.return_value = ReadFileNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        instance = MagicMock()
+        instance.load.return_value = {"read-file": {}}
+        MockRegistry.return_value = instance
+        mock_import.return_value = ReadFileNode
 
-            result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}"])
+        result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}"])
 
-            assert result.exit_code == 0
-            assert "Node executed successfully" in result.output
-            assert "Outputs:" in result.output
-            assert "Execution time:" in result.output
+        assert result.exit_code == 0
+        assert "Node executed successfully" in result.output
+        assert "Outputs:" in result.output
+        assert "Execution time:" in result.output
 
 
 # ==============================================================================
@@ -297,17 +307,19 @@ def test_parameter_type_inference_boolean(runner, mock_registry):
         "interface": {"params": [{"key": "flag", "type": "bool"}]},
     }
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run._inject_special_parameters", return_value={"flag": True}):
-            mock_import.return_value = BoolTestNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run._inject_special_parameters", return_value={"flag": True}),
+    ):
+        mock_import.return_value = BoolTestNode
 
-            # Test true
-            result = runner.invoke(registry, ["run", "test-node", "flag=true"])
-            assert result.exit_code == 0
+        # Test true
+        result = runner.invoke(registry, ["run", "test-node", "flag=true"])
+        assert result.exit_code == 0
 
-            # Test false
-            result = runner.invoke(registry, ["run", "test-node", "flag=false"])
-            assert result.exit_code == 0
+        # Test false
+        result = runner.invoke(registry, ["run", "test-node", "flag=false"])
+        assert result.exit_code == 0
 
 
 def test_parameter_type_inference_integers(runner, mock_registry):
@@ -336,12 +348,14 @@ def test_parameter_type_inference_integers(runner, mock_registry):
         "interface": {"params": [{"key": "count", "type": "int"}]},
     }
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run._inject_special_parameters", return_value={"count": 42}):
-            mock_import.return_value = IntTestNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run._inject_special_parameters", return_value={"count": 42}),
+    ):
+        mock_import.return_value = IntTestNode
 
-            result = runner.invoke(registry, ["run", "test-node", "count=42"])
-            assert result.exit_code == 0
+        result = runner.invoke(registry, ["run", "test-node", "count=42"])
+        assert result.exit_code == 0
 
 
 def test_parameter_type_inference_json(runner, mock_registry):
@@ -370,12 +384,14 @@ def test_parameter_type_inference_json(runner, mock_registry):
         "interface": {"params": [{"key": "data", "type": "dict"}]},
     }
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run._inject_special_parameters", return_value={"data": {"key": "value"}}):
-            mock_import.return_value = JsonTestNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run._inject_special_parameters", return_value={"data": {"key": "value"}}),
+    ):
+        mock_import.return_value = JsonTestNode
 
-            result = runner.invoke(registry, ["run", "test-node", 'data={"key":"value"}'])
-            assert result.exit_code == 0
+        result = runner.invoke(registry, ["run", "test-node", 'data={"key":"value"}'])
+        assert result.exit_code == 0
 
 
 def test_invalid_parameter_names_are_rejected(runner, mock_registry):
@@ -420,16 +436,18 @@ def test_mcp_node_short_form_resolution(runner, mock_registry):
             shared["result"] = exec_res
             return "default"
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run._inject_special_parameters") as mock_inject:
-            mock_import.return_value = MockMCPNode
-            mock_inject.return_value = {"channel": "test", "text": "hello"}
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run._inject_special_parameters") as mock_inject,
+    ):
+        mock_import.return_value = MockMCPNode
+        mock_inject.return_value = {"channel": "test", "text": "hello"}
 
-            # Test short form (tool name only)
-            result = runner.invoke(registry, ["run", "SLACK_SEND_MESSAGE", "channel=test", "text=hello"])
+        # Test short form (tool name only)
+        result = runner.invoke(registry, ["run", "SLACK_SEND_MESSAGE", "channel=test", "text=hello"])
 
-            # Should resolve to mcp-slack-composio-SLACK_SEND_MESSAGE
-            assert result.exit_code == 0
+        # Should resolve to mcp-slack-composio-SLACK_SEND_MESSAGE
+        assert result.exit_code == 0
 
 
 def test_mcp_node_resolution_feedback_in_verbose_mode(runner, mock_registry):
@@ -524,14 +542,16 @@ def test_missing_required_parameter_shows_error(runner, mock_registry):
         "interface": {"params": [{"key": "required_param", "type": "str", "required": True}]},
     }
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run._inject_special_parameters", return_value={}):
-            mock_import.return_value = StrictNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run._inject_special_parameters", return_value={}),
+    ):
+        mock_import.return_value = StrictNode
 
-            result = runner.invoke(registry, ["run", "strict-node"])
+        result = runner.invoke(registry, ["run", "strict-node"])
 
-            assert result.exit_code == 1
-            assert "missing" in result.output.lower() or "required" in result.output.lower()
+        assert result.exit_code == 1
+        assert "missing" in result.output.lower() or "required" in result.output.lower()
 
 
 def test_unknown_node_suggests_similar_names(runner, mock_registry):
@@ -570,16 +590,18 @@ def test_structure_mode_parses_json_strings(runner, mock_registry):
             shared["result"] = exec_res["result"]
             return "default"
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run._inject_special_parameters", return_value={}):
-            mock_import.return_value = JsonStringNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run._inject_special_parameters", return_value={}),
+    ):
+        mock_import.return_value = JsonStringNode
 
-            result = runner.invoke(registry, ["run", "mcp-github-list-repos", "--show-structure"])
+        result = runner.invoke(registry, ["run", "mcp-github-list-repos", "--show-structure"])
 
-            assert result.exit_code == 0
-            assert "Available template paths" in result.output or "structure" in result.output.lower()
-            # Should show flattened paths from parsed JSON
-            # The exact paths depend on implementation, but should include array notation
+        assert result.exit_code == 0
+        assert "Available template paths" in result.output or "structure" in result.output.lower()
+        # Should show flattened paths from parsed JSON
+        # The exact paths depend on implementation, but should include array notation
 
 
 def test_structure_mode_shows_nested_array_notation(runner, mock_registry):
@@ -605,15 +627,17 @@ def test_structure_mode_shows_nested_array_notation(runner, mock_registry):
         "interface": {"outputs": [{"key": "result", "type": "any"}]},
     }
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run._inject_special_parameters", return_value={}):
-            mock_import.return_value = NestedArrayNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run._inject_special_parameters", return_value={}),
+    ):
+        mock_import.return_value = NestedArrayNode
 
-            result = runner.invoke(registry, ["run", "test-node", "--show-structure"])
+        result = runner.invoke(registry, ["run", "test-node", "--show-structure"])
 
-            assert result.exit_code == 0
-            # Should show paths with array notation [0]
-            # Exact format depends on implementation
+        assert result.exit_code == 0
+        # Should show paths with array notation [0]
+        # Exact format depends on implementation
 
 
 def test_structure_mode_deduplicates_identical_outputs(runner, mock_registry):
@@ -643,19 +667,21 @@ def test_structure_mode_deduplicates_identical_outputs(runner, mock_registry):
         "interface": {"outputs": [{"key": "result", "type": "any"}]},
     }
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run._inject_special_parameters", return_value={}):
-            mock_import.return_value = DuplicateOutputNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run._inject_special_parameters", return_value={}),
+    ):
+        mock_import.return_value = DuplicateOutputNode
 
-            result = runner.invoke(registry, ["run", "mcp-node", "--show-structure"])
+        result = runner.invoke(registry, ["run", "mcp-node", "--show-structure"])
 
-            assert result.exit_code == 0
-            # Should note the duplication
-            if "contains the same data" in result.output or "showing paths" in result.output:
-                pass  # Deduplication detected
-            else:
-                # At minimum, should not crash and should show structure
-                assert "Available template paths" in result.output or "structure" in result.output.lower()
+        assert result.exit_code == 0
+        # Should note the duplication
+        if "contains the same data" in result.output or "showing paths" in result.output:
+            pass  # Deduplication detected
+        else:
+            # At minimum, should not crash and should show structure
+            assert "Available template paths" in result.output or "structure" in result.output.lower()
 
 
 # ==============================================================================
@@ -670,18 +696,20 @@ def test_node_execution_timing_is_displayed(runner, tmp_path):
 
     from pflow.nodes.file.read_file import ReadFileNode
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run.Registry") as MockRegistry:
-            instance = MagicMock()
-            instance.load.return_value = {"read-file": {}}
-            MockRegistry.return_value = instance
-            mock_import.return_value = ReadFileNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        instance = MagicMock()
+        instance.load.return_value = {"read-file": {}}
+        MockRegistry.return_value = instance
+        mock_import.return_value = ReadFileNode
 
-            result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}"])
+        result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}"])
 
-            assert result.exit_code == 0
-            assert "Execution time:" in result.output
-            assert "ms" in result.output
+        assert result.exit_code == 0
+        assert "Execution time:" in result.output
+        assert "ms" in result.output
 
 
 def test_verbose_mode_shows_parameters(runner, tmp_path):
@@ -691,17 +719,19 @@ def test_verbose_mode_shows_parameters(runner, tmp_path):
 
     from pflow.nodes.file.read_file import ReadFileNode
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run.Registry") as MockRegistry:
-            instance = MagicMock()
-            instance.load.return_value = {"read-file": {}}
-            MockRegistry.return_value = instance
-            mock_import.return_value = ReadFileNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        instance = MagicMock()
+        instance.load.return_value = {"read-file": {}}
+        MockRegistry.return_value = instance
+        mock_import.return_value = ReadFileNode
 
-            result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}", "--verbose"])
+        result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}", "--verbose"])
 
-            assert result.exit_code == 0
-            assert "Running node" in result.output or "Parameters:" in result.output
+        assert result.exit_code == 0
+        assert "Running node" in result.output or "Parameters:" in result.output
 
 
 def test_json_mode_error_response_is_valid(runner, mock_registry):
@@ -727,19 +757,21 @@ def test_multiple_parameters_are_parsed_correctly(runner, tmp_path):
 
     from pflow.nodes.file.write_file import WriteFileNode
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
-        with patch("pflow.cli.registry_run.Registry") as MockRegistry:
-            instance = MagicMock()
-            instance.load.return_value = {"write-file": {}}
-            MockRegistry.return_value = instance
-            mock_import.return_value = WriteFileNode
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        instance = MagicMock()
+        instance.load.return_value = {"write-file": {}}
+        MockRegistry.return_value = instance
+        mock_import.return_value = WriteFileNode
 
-            result = runner.invoke(
-                registry,
-                ["run", "write-file", f"file_path={test_file}", "content=Hello", "overwrite=true"],
-            )
+        result = runner.invoke(
+            registry,
+            ["run", "write-file", f"file_path={test_file}", "content=Hello", "overwrite=true"],
+        )
 
-            assert result.exit_code == 0
-            # File should be created
-            assert test_file.exists()
-            assert test_file.read_text() == "Hello"
+        assert result.exit_code == 0
+        # File should be created
+        assert test_file.exists()
+        assert test_file.read_text() == "Hello"
