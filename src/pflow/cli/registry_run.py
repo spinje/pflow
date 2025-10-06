@@ -216,8 +216,8 @@ def _execute_and_display_results(
         # Try node type key first, then check for common output keys
         outputs = shared_store.get(resolved_node, {})
         if not outputs:
-            # Fallback: collect any non-input keys as outputs
-            outputs = {k: v for k, v in shared_store.items() if k not in execution_params}
+            # Fallback: collect any non-input keys as outputs (excluding internal keys)
+            outputs = {k: v for k, v in shared_store.items() if k not in execution_params and not k.startswith("__")}
 
         # Display results based on mode
         _display_results(
