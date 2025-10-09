@@ -1758,7 +1758,7 @@ def _setup_execution_context(
 def _perform_validation(
     ir_data: dict[str, Any],
     output_format: str,
-) -> list[str]:
+) -> tuple[list[str], list[Any]]:
     """Perform static workflow validation.
 
     Args:
@@ -1766,7 +1766,9 @@ def _perform_validation(
         output_format: Output format for error display
 
     Returns:
-        List of validation errors (empty if valid)
+        Tuple of (errors, warnings):
+        - errors: List of validation errors (empty if valid)
+        - warnings: List of ValidationWarning objects
 
     Raises:
         SystemExit: If validation raises an exception
@@ -1783,7 +1785,7 @@ def _perform_validation(
         dummy_params[input_name] = "__validation_placeholder__"
 
     try:
-        errors = WorkflowValidator.validate(
+        errors, warnings = WorkflowValidator.validate(
             workflow_ir=ir_data,
             extracted_params=dummy_params,  # Dummy values enable structural validation
             registry=registry,  # Pass Registry object, not metadata dict
@@ -1798,17 +1800,19 @@ def _perform_validation(
 
         sys.exit(1)
 
-    return errors
+    return (errors, warnings)
 
 
 def _display_validation_results(
     errors: list[str],
+    warnings: list[Any],
     output_format: str,
 ) -> None:
     """Display validation results and exit.
 
     Args:
         errors: List of validation errors (empty if valid)
+        warnings: List of ValidationWarning objects
         output_format: Output format (text or json)
 
     Note:
@@ -1824,6 +1828,13 @@ def _display_validation_results(
             click.echo("✓ Data flow validation passed")
             click.echo("✓ Template structure validation passed")
             click.echo("✓ Node types validation passed")
+
+            # Display warnings if present
+            if warnings:
+                from pflow.runtime.compiler import _display_validation_warnings
+
+                _display_validation_warnings(warnings)
+
             click.echo("\nWorkflow is valid and ready to execute!")
         sys.exit(0)
     else:
@@ -1861,10 +1872,10 @@ def _handle_validate_only_mode(
     # No need to normalize again here
 
     # Perform static validation
-    errors = _perform_validation(ir_data, output_format)
+    errors, warnings = _perform_validation(ir_data, output_format)
 
     # Display results and exit
-    _display_validation_results(errors, output_format)
+    _display_validation_results(errors, warnings, output_format)
 
 
 def execute_json_workflow(

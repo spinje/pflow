@@ -158,7 +158,7 @@ class TestTemplateArrayNotation:
             mock_metadata.side_effect = get_metadata
 
             # Should validate - array notation is in templates
-            errors = TemplateValidator.validate_workflow_templates(
+            errors, warnings = TemplateValidator.validate_workflow_templates(
                 workflow_ir,
                 {},  # No external params needed
                 registry,

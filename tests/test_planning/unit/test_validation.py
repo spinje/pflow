@@ -86,7 +86,7 @@ class TestValidatorNode:
             patch("pflow.core.ir_schema.validate_ir"),
             patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = []
+            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -105,7 +105,7 @@ class TestValidatorNode:
         with patch("pflow.core.ir_schema.validate_ir") as mock_validate:
             mock_validate.side_effect = Exception("Missing required field: ir_version")
             with patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator:
-                MockTemplateValidator.validate_workflow_templates.return_value = []
+                MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
 
                 prep_res = validator_node.prep(shared)
                 exec_res = validator_node.exec(prep_res)
@@ -124,7 +124,7 @@ class TestValidatorNode:
         with patch("pflow.core.ir_schema.validate_ir") as mock_validate:
             mock_validate.side_effect = Exception("Missing required field: ir_version")
             with patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator:
-                MockTemplateValidator.validate_workflow_templates.return_value = []
+                MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
 
                 prep_res = validator_node.prep(shared)
                 exec_res = validator_node.exec(prep_res)
@@ -150,7 +150,7 @@ class TestValidatorNode:
             mock_validate.side_effect = ValidationError()
 
             with patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator:
-                MockTemplateValidator.validate_workflow_templates.return_value = []
+                MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
 
                 prep_res = validator_node.prep(shared)
                 exec_res = validator_node.exec(prep_res)
@@ -167,10 +167,13 @@ class TestValidatorNode:
             patch("pflow.core.ir_schema.validate_ir"),
             patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = [
-                "Template error: Unknown variable {{unknown_var}}",
-                "Unused input: input_file",
-            ]
+            MockTemplateValidator.validate_workflow_templates.return_value = (
+                [
+                    "Template error: Unknown variable {{unknown_var}}",
+                    "Unused input: input_file",
+                ],
+                [],
+            )
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -187,7 +190,7 @@ class TestValidatorNode:
             patch("pflow.core.ir_schema.validate_ir"),
             patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = []
+            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -214,7 +217,7 @@ class TestValidatorNode:
             patch("pflow.core.ir_schema.validate_ir"),
             patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = []
+            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -255,7 +258,7 @@ class TestValidatorNode:
             patch("pflow.core.ir_schema.validate_ir"),
             patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = []
+            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -296,7 +299,7 @@ class TestValidatorNode:
             patch("pflow.core.ir_schema.validate_ir"),  # Mock passes
             patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = []  # No errors
+            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])  # No errors
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)

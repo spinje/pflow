@@ -249,6 +249,7 @@ class TemplateResolver:
         - False -> "False"
         - [] -> "[]"
         - {} -> "{}"
+        - dict/list -> JSON serialized (for valid JSON in templates)
         - Everything else -> str(value)
 
         Args:
@@ -257,6 +258,8 @@ class TemplateResolver:
         Returns:
             String representation of the value
         """
+        import json
+
         if value is None or value == "":
             return ""
         # Check for boolean BEFORE checking for 0 (since False == 0 in Python)
@@ -270,6 +273,14 @@ class TemplateResolver:
             return "[]"
         elif value == {}:
             return "{}"
+        elif isinstance(value, (dict, list)):
+            # Use JSON serialization for dicts/lists to produce valid JSON
+            # (not Python repr with single quotes)
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except (TypeError, ValueError):
+                # Fallback for non-serializable objects
+                return str(value)
         else:
             return str(value)
 

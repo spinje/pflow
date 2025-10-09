@@ -596,9 +596,62 @@ class MCPNode(Node):
         # Type cast: we know the result is a dict since we pass in a dict
         return cast(dict, result)
 
-    def _extract_text_content(self, content: Any) -> str:
-        """Extract text from text content block."""
-        return str(content.text)
+    def _safe_parse_json(self, text: str) -> Any:
+        """Attempt to parse JSON, return original string on failure.
+
+        This allows MCP text content blocks containing JSON to be
+        automatically parsed into Python objects, enabling nested
+        template access like ${node.result.data.channels[0]}.
+
+        For non-JSON text (plain strings, logs, etc.), returns the
+        original string unchanged.
+
+        Args:
+            text: Text content that may or may not be JSON
+
+        Returns:
+            Parsed JSON object (dict/list/primitive) or original string
+        """
+        import json
+
+        text_stripped = text.strip()
+
+        # Quick rejection: empty or doesn't start with JSON indicators
+        if not text_stripped:
+            return text
+
+        first_char = text_stripped[0]
+        # JSON can start with: { [ " t(rue) f(alse) n(ull) - or digit
+        if first_char not in ("{", "[", '"', "t", "f", "n", "-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"):
+            # Doesn't look like JSON - save CPU cycles
+            return text
+
+        # Attempt to parse
+        try:
+            parsed = json.loads(text_stripped)
+            logger.debug(
+                "Successfully parsed JSON from text content block",
+                extra={"type": type(parsed).__name__, "text_preview": text_stripped[:100]},
+            )
+            return parsed
+        except (json.JSONDecodeError, ValueError) as e:
+            # Not valid JSON - return as plain text
+            logger.debug(f"Text content is not valid JSON, returning as string: {e}")
+            return text
+
+    def _extract_text_content(self, content: Any) -> Any:
+        """Extract text from text content block, parsing JSON if present.
+
+        For backwards compatibility with MCP servers that return JSON as text
+        (e.g., Composio), this method attempts to parse the text as JSON.
+        If parsing succeeds, returns the parsed object. If parsing fails,
+        returns the original text string.
+
+        This enables nested template access like ${node.result.data.field}
+        without requiring jq workarounds.
+        """
+        text = str(content.text)
+        return self._safe_parse_json(text)
 
     def _extract_image_content(self, content: Any) -> dict[str, Any]:
         """Extract image data from image content block."""

@@ -110,7 +110,7 @@ def test_unused_input_single_unused(mock_registry, tmp_path):
 
     initial_params = {"input_path": input_path}  # unused_param not provided
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have exactly one error about unused input
     assert len(errors) == 1
@@ -142,7 +142,7 @@ def test_all_inputs_used(mock_registry, tmp_path):
 
     initial_params = {"input_path": input_path, "output_path": output_path}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors
     assert len(errors) == 0
@@ -163,7 +163,7 @@ def test_empty_inputs_field(mock_registry, tmp_path):
         ],
     }
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, mock_registry)
     assert len(errors) == 0
 
     # Test with missing inputs field
@@ -177,7 +177,7 @@ def test_empty_inputs_field(mock_registry, tmp_path):
         ]
     }
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir_no_inputs, {}, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir_no_inputs, {}, mock_registry)
     assert len(errors) == 0
 
 
@@ -209,7 +209,7 @@ def test_input_used_in_nested_path(mock_registry, tmp_path):
         "api_settings": {"endpoint": {"url": output_path}},
     }
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - both inputs are used even though with nested paths
     assert len(errors) == 0
@@ -235,7 +235,7 @@ def test_multiple_unused_inputs(mock_registry, tmp_path):
 
     initial_params = {"used_param": str(tmp_path / "file.txt")}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have exactly one error listing all unused inputs
     assert len(errors) == 1
@@ -276,7 +276,7 @@ def test_node_output_not_flagged_as_unused_input(mock_registry, tmp_path):
 
     initial_params = {"input_file": input_path}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - outputs aren't inputs
     assert len(errors) == 0
@@ -309,7 +309,7 @@ def test_input_used_multiple_times(mock_registry, tmp_path):
 
     initial_params = {"base_path": str(tmp_path)}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - input is used
     assert len(errors) == 0
@@ -340,7 +340,7 @@ def test_mixed_used_and_unused_inputs(mock_registry, tmp_path):
 
     initial_params = {"used1": str(tmp_path / "input.txt"), "used2": str(tmp_path / "output.txt")}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have one error about unused inputs
     assert len(errors) == 1
@@ -368,7 +368,7 @@ def test_input_only_used_in_concatenation(mock_registry, tmp_path):
 
     initial_params = {"prefix": "test", "suffix": "data"}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - both inputs are used
     assert len(errors) == 0
@@ -393,7 +393,7 @@ def test_unused_input_with_missing_required_input(mock_registry):
     # Don't provide the required input
     initial_params = {}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have two errors: one for missing required, one for unused
     assert len(errors) == 2
@@ -421,7 +421,7 @@ def test_case_sensitivity_in_unused_detection(mock_registry, tmp_path):
 
     initial_params = {"MyInput": str(tmp_path / "file.txt")}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have one error about unused 'myinput' (lowercase)
     assert len(errors) == 1
@@ -461,7 +461,7 @@ def test_nested_headers_with_templates(mock_registry):
 
     initial_params = {"api_token": "token123", "channel_id": "C123", "api_key": "key456"}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - all inputs are used in nested headers
     assert len(errors) == 0
@@ -494,7 +494,7 @@ def test_nested_body_with_templates(mock_registry):
 
     initial_params = {"message": "Hello", "user_id": "user123", "timestamp": "2024-01-01T00:00:00Z"}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - all inputs are used in nested body
     assert len(errors) == 0
@@ -527,7 +527,7 @@ def test_nested_params_with_templates(mock_registry):
 
     initial_params = {"search_query": "test", "page_size": "10", "sort_order": "desc"}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - all inputs are used in nested params
     assert len(errors) == 0
@@ -573,7 +573,7 @@ def test_deeply_nested_templates(mock_registry):
 
     initial_params = {"api_key": "key", "user_name": "Bob", "project_id": "P1", "task_id": "T1"}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - all inputs are used even in deeply nested structures
     assert len(errors) == 0
@@ -608,7 +608,7 @@ def test_templates_in_lists(mock_registry):
 
     initial_params = {"item1": "a", "item2": "b", "item3": "c"}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - all inputs are used in lists
     assert len(errors) == 0
@@ -642,7 +642,7 @@ def test_mixed_nested_and_toplevel_templates(mock_registry):
 
     initial_params = {"direct_url": "https://api.com", "header_token": "token", "body_message": "hello"}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have one error - unused_param is not used
     assert len(errors) == 1
@@ -690,7 +690,7 @@ def test_nested_templates_with_multiple_nodes(mock_registry):
 
     initial_params = {"auth_token": "token123", "api_key": "key456", "channel": "C789"}
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - all inputs are used across different nodes
     assert len(errors) == 0
@@ -787,7 +787,7 @@ def test_slack_google_sheets_real_scenario(mock_registry):
         "sheet_name": "Sheet1",
     }
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have no errors - all inputs are properly used in various nested structures
     assert len(errors) == 0
@@ -831,7 +831,7 @@ def test_partially_used_nested_inputs(mock_registry):
         "also_never_used": "a",
     }
 
-    errors = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
+    errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, mock_registry)
 
     # Should have one error listing both unused inputs
     assert len(errors) == 1

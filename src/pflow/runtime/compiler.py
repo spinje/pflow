@@ -20,7 +20,7 @@ from pocketflow import BaseNode, Flow
 from .namespaced_wrapper import NamespacedNodeWrapper
 from .node_wrapper import TemplateAwareNodeWrapper
 from .template_resolver import TemplateResolver
-from .template_validator import TemplateValidator
+from .template_validator import TemplateValidator, ValidationWarning
 from .workflow_validator import prepare_inputs, validate_ir_structure
 
 # Set up module logger
@@ -78,6 +78,62 @@ class CompilationError(Exception):
             parts.append(f"Suggestion: {suggestion}")
 
         super().__init__("\n".join(parts))
+
+
+def _display_validation_warnings(warnings: list[ValidationWarning]) -> None:
+    """Display validation warnings in a user-friendly format.
+
+    Warnings are grouped by node for cleaner output and displayed to stderr
+    so they don't interfere with JSON output mode.
+
+    Args:
+        warnings: List of validation warnings to display
+    """
+    import sys
+
+    # Group warnings by node for cleaner output
+    by_node: dict[str, list[ValidationWarning]] = {}
+    for w in warnings:
+        if w.node_id not in by_node:
+            by_node[w.node_id] = []
+        by_node[w.node_id].append(w)
+
+    # Display grouped warnings
+    print(file=sys.stderr)  # Blank line for separation
+    print(f"Note: {len(warnings)} template(s) use runtime validation:", file=sys.stderr)
+    print(file=sys.stderr)
+
+    for node_id, node_warnings in by_node.items():
+        # Show node context once
+        first = node_warnings[0]
+
+        # Format node type (shorten MCP types)
+        node_type_display = first.node_type
+        if node_type_display.startswith("mcp-"):
+            # Remove 'mcp-' prefix and replace first '-composio-' with '/'
+            node_type_display = node_type_display[4:]  # Remove 'mcp-'
+            if "-composio-" in node_type_display:
+                node_type_display = node_type_display.replace("-composio-", "/", 1)
+
+        print(f"  Node '{node_id}' ({node_type_display}):", file=sys.stderr)
+        print(f"    Output type: {first.output_type} (structure unknown at validation time)", file=sys.stderr)
+        print(file=sys.stderr)
+
+        # Show each template (limit to 10 per node to avoid overwhelming)
+        display_count = min(len(node_warnings), 10)
+        for w in node_warnings[:display_count]:
+            print(f"    • {w.template}", file=sys.stderr)
+            print(f"      Accessing: {w.output_key}.{w.nested_path}", file=sys.stderr)
+            print(file=sys.stderr)
+
+        if len(node_warnings) > 10:
+            remaining = len(node_warnings) - 10
+            print(f"    ... and {remaining} more template(s)", file=sys.stderr)
+            print(file=sys.stderr)
+
+    print("  These templates will be validated during workflow execution.", file=sys.stderr)
+    print("  If the nested paths don't exist, the workflow will fail at runtime.", file=sys.stderr)
+    print(file=sys.stderr)
 
 
 def _parse_ir_input(ir_json: Union[str, dict[str, Any]]) -> dict[str, Any]:
@@ -831,7 +887,15 @@ def _validate_workflow(
     # Step 5: Validate templates if requested
     if validate_templates:
         logger.debug("Validating template variables", extra={"phase": "template_validation"})
-        template_errors = TemplateValidator.validate_workflow_templates(ir_dict, initial_params, registry)
+        template_errors, template_warnings = TemplateValidator.validate_workflow_templates(
+            ir_dict, initial_params, registry
+        )
+
+        # Display warnings if present (non-blocking)
+        if template_warnings:
+            _display_validation_warnings(template_warnings)
+
+        # Fail only on errors
         if template_errors:
             error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in template_errors)
             logger.error(

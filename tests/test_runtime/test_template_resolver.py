@@ -129,11 +129,12 @@ class TestTypeConversion:
         assert TemplateResolver._convert_to_string({}) == "{}"
 
     def test_regular_value_conversion(self):
-        """Test regular values use str()."""
+        """Test regular values use str() or JSON serialization."""
         assert TemplateResolver._convert_to_string("hello") == "hello"
         assert TemplateResolver._convert_to_string(42) == "42"
+        # Lists and dicts should serialize as valid JSON (double quotes, not Python repr)
         assert TemplateResolver._convert_to_string([1, 2, 3]) == "[1, 2, 3]"
-        assert TemplateResolver._convert_to_string({"a": 1}) == "{'a': 1}"
+        assert TemplateResolver._convert_to_string({"a": 1}) == '{"a": 1}'
 
 
 class TestStringResolution:
