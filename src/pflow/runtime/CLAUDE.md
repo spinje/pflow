@@ -417,7 +417,7 @@ shared["__cache_hits__"] = []             # Cache hit tracking (Task 71)
 - **Array Support**: `${items[0].name}`, `${data[5].users[2]}`
 - **Simple templates** (`${var}`): Preserve original type (int, bool, None, dict, list)
 - **Complex templates** (`"Hello ${name}"`): Always return strings
-- **Type Conversion**: None→"", False→"False", True→"True", 0→"0", []→"[]", {}→"{}"
+- **Type Conversion**: None→"", False→"False", True→"True", 0→"0", []→"[]", {}→"{}", dicts/lists→JSON serialized (double quotes, valid JSON)
 - **Unresolved templates**: Remain for debugging visibility
 - **Template errors**: Fatal ValueError triggers repair
 

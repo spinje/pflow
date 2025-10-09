@@ -26,7 +26,7 @@ class WorkflowValidator:
         extracted_params: Optional[dict[str, Any]] = None,
         registry: Optional[Registry] = None,
         skip_node_types: bool = False,
-    ) -> list[str]:
+    ) -> tuple[list[str], list[Any]]:
         """Run complete workflow validation.
 
         Performs multiple validation checks:
@@ -42,9 +42,12 @@ class WorkflowValidator:
             skip_node_types: Skip node type validation (for mock nodes in tests)
 
         Returns:
-            List of all validation errors (empty if valid)
+            Tuple of (errors, warnings):
+            - errors: List of validation errors that prevent execution
+            - warnings: List of ValidationWarning objects for runtime-validated templates
         """
         errors = []
+        warnings = []
 
         # 1. Structural validation (ALWAYS run)
         struct_errors = WorkflowValidator._validate_structure(workflow_ir)
@@ -58,8 +61,11 @@ class WorkflowValidator:
         if extracted_params is not None:
             if registry is None:
                 registry = Registry()
-            template_errors = WorkflowValidator._validate_templates(workflow_ir, extracted_params, registry)
+            template_errors, template_warnings = WorkflowValidator._validate_templates(
+                workflow_ir, extracted_params, registry
+            )
             errors.extend(template_errors)
+            warnings.extend(template_warnings)
 
         # 4. Node type validation (if not skipped)
         if not skip_node_types:
@@ -70,10 +76,12 @@ class WorkflowValidator:
 
         if errors:
             logger.debug(f"Validation found {len(errors)} errors")
+        elif warnings:
+            logger.debug(f"Validation passed with {len(warnings)} runtime-validated template(s)")
         else:
             logger.debug("Validation passed")
 
-        return errors
+        return (errors, warnings)
 
     @staticmethod
     def _validate_structure(workflow_ir: dict[str, Any]) -> list[str]:
@@ -120,7 +128,7 @@ class WorkflowValidator:
     @staticmethod
     def _validate_templates(
         workflow_ir: dict[str, Any], extracted_params: dict[str, Any], registry: Registry
-    ) -> list[str]:
+    ) -> tuple[list[str], list[Any]]:
         """Validate template variables and parameters.
 
         Args:
@@ -129,14 +137,17 @@ class WorkflowValidator:
             registry: Node registry
 
         Returns:
-            List of template validation errors
+            Tuple of (errors, warnings):
+            - errors: List of template validation errors
+            - warnings: List of ValidationWarning objects
         """
         from pflow.runtime.template_validator import TemplateValidator
 
         try:
-            return TemplateValidator.validate_workflow_templates(workflow_ir, extracted_params, registry)
+            errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, extracted_params, registry)
+            return (errors, warnings)
         except Exception as e:
-            return [f"Template validation error: {e!s}"]
+            return ([f"Template validation error: {e!s}"], [])
 
     @staticmethod
     def _validate_node_types(workflow_ir: dict[str, Any], registry: Registry) -> list[str]:

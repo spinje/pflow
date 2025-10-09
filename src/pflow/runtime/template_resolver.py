@@ -5,6 +5,7 @@ template variables in node parameters. Template variables use the format
 ${identifier} with optional path traversal (${data.field.subfield}).
 """
 
+import json
 import logging
 import re
 from typing import Any, Optional
@@ -249,6 +250,7 @@ class TemplateResolver:
         - False -> "False"
         - [] -> "[]"
         - {} -> "{}"
+        - dict/list -> JSON serialized (for valid JSON in templates)
         - Everything else -> str(value)
 
         Args:
@@ -270,6 +272,14 @@ class TemplateResolver:
             return "[]"
         elif value == {}:
             return "{}"
+        elif isinstance(value, (dict, list)):
+            # Use JSON serialization for dicts/lists to produce valid JSON
+            # (not Python repr with single quotes)
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except (TypeError, ValueError):
+                # Fallback for non-serializable objects
+                return str(value)
         else:
             return str(value)
 

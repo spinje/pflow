@@ -606,7 +606,7 @@ def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool
     registry = create_test_registry() if uses_mcp_nodes else Registry()
 
     # Run full production validation
-    validation_errors = WorkflowValidator.validate(
+    validation_errors, _ = WorkflowValidator.validate(
         workflow,
         extracted_params=test_case.discovered_params,
         registry=registry,

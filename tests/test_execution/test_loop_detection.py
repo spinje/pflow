@@ -117,7 +117,7 @@ class TestLoopDetectionIntegration:
         workflow = {"ir_version": "1.0", "nodes": [{"id": "node1", "type": "shell", "params": {"command": "exit 1"}}]}
 
         with patch("pflow.core.workflow_validator.WorkflowValidator") as mock_validator:
-            mock_validator.validate.return_value = []  # No validation errors
+            mock_validator.validate.return_value = ([], [])  # No validation errors, no warnings
 
             with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as mock_executor:
                 # Same error each time
@@ -147,7 +147,7 @@ class TestLoopDetectionIntegration:
         workflow = {"ir_version": "1.0", "nodes": [{"id": "node1", "type": "shell", "params": {}}]}
 
         with patch("pflow.core.workflow_validator.WorkflowValidator") as mock_validator:
-            mock_validator.validate.return_value = []
+            mock_validator.validate.return_value = ([], [])
 
             with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as mock_executor:
                 # Different errors each time
@@ -185,7 +185,7 @@ class TestLoopDetectionIntegration:
         workflow = {"ir_version": "1.0", "nodes": []}
 
         with patch("pflow.core.workflow_validator.WorkflowValidator") as mock_validator:
-            mock_validator.validate.return_value = []
+            mock_validator.validate.return_value = ([], [])
 
             with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as mock_executor:
                 # Result with no errors
@@ -211,7 +211,7 @@ class TestLoopDetectionIntegration:
         workflow = {"ir_version": "1.0", "nodes": []}
 
         with patch("pflow.core.workflow_validator.WorkflowValidator") as mock_validator:
-            mock_validator.validate.return_value = []
+            mock_validator.validate.return_value = ([], [])
 
             with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as mock_executor:
                 # First attempt fails, second succeeds

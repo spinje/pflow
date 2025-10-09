@@ -2549,12 +2549,13 @@ class ValidatorNode(Node):
             return {"errors": ["No workflow provided for validation"]}
 
         # Use unified WorkflowValidator for all validation
-        errors = WorkflowValidator.validate(
+        errors, warnings = WorkflowValidator.validate(
             workflow,
             extracted_params=prep_res.get("extracted_params", {}),
             registry=self.registry,
             skip_node_types=False,  # Always validate node types in production
         )
+        # Currently ignoring warnings - could be enhanced to include in error messages
 
         # Return top 3 most actionable errors
         if errors:

@@ -1108,7 +1108,7 @@ def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool
 
     # Use production WorkflowValidator with same validation as real planner
     # (except runtime template resolution which requires extracted_params)
-    validation_errors = WorkflowValidator.validate(
+    validation_errors, _ = WorkflowValidator.validate(
         workflow_ir=workflow_copy,
         extracted_params=runtime_params,  # None - validates structure, not runtime execution
         registry=registry,

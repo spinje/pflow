@@ -30,7 +30,7 @@ class TestWorkflowExecution:
 
             # Mock validator to return no errors (workflow is valid)
             with patch("pflow.core.workflow_validator.WorkflowValidator") as MockValidator:
-                MockValidator.validate.return_value = []  # No validation errors
+                MockValidator.validate.return_value = ([], [])  # No validation errors, no warnings
 
                 with patch("pflow.execution.workflow_execution.repair_workflow_with_validation") as mock_repair:
                     result = execute_workflow(
@@ -75,7 +75,7 @@ class TestWorkflowExecution:
 
                 # Mock validator to return no errors (workflow is valid)
                 with patch("pflow.core.workflow_validator.WorkflowValidator") as MockValidator:
-                    MockValidator.validate.return_value = []  # No validation errors
+                    MockValidator.validate.return_value = ([], [])  # No validation errors, no warnings
 
                     result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=True)
 
@@ -136,7 +136,7 @@ class TestWorkflowExecution:
 
                 # Mock validator to return no errors (workflow is valid)
                 with patch("pflow.core.workflow_validator.WorkflowValidator") as MockValidator:
-                    MockValidator.validate.return_value = []  # No validation errors
+                    MockValidator.validate.return_value = ([], [])  # No validation errors, no warnings
 
                     result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=True)
 
@@ -167,7 +167,7 @@ class TestWorkflowExecution:
 
             # Mock validator to return no errors (workflow is valid)
             with patch("pflow.core.workflow_validator.WorkflowValidator") as MockValidator:
-                MockValidator.validate.return_value = []  # No validation errors
+                MockValidator.validate.return_value = ([], [])  # No validation errors, no warnings
 
                 result = execute_workflow(
                     workflow_ir=workflow_ir,
@@ -208,7 +208,7 @@ class TestWorkflowExecution:
 
                 # Mock validator to return no errors (workflow is valid)
                 with patch("pflow.core.workflow_validator.WorkflowValidator") as MockValidator:
-                    MockValidator.validate.return_value = []  # No validation errors
+                    MockValidator.validate.return_value = ([], [])  # No validation errors, no warnings
 
                     # Execute workflow with repair enabled
                     result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=True)
@@ -251,7 +251,7 @@ class TestWorkflowExecution:
 
                     # Mock validator to return no errors (workflow is valid)
                     with patch("pflow.core.workflow_validator.WorkflowValidator") as MockValidator:
-                        MockValidator.validate.return_value = []  # No validation errors
+                        MockValidator.validate.return_value = ([], [])  # No validation errors, no warnings
 
                         result = execute_workflow(
                             workflow_ir=workflow_ir, execution_params={}, enable_repair=True, output=mock_output

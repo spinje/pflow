@@ -38,7 +38,7 @@ class TestWorkflowValidator:
             "inputs": {"input_file": {"type": "string", "required": True}},
         }
 
-        errors = WorkflowValidator.validate(
+        errors, warnings = WorkflowValidator.validate(
             workflow, extracted_params={"input_file": "test.txt"}, registry=registry_with_nodes, skip_node_types=True
         )
 
@@ -53,7 +53,7 @@ class TestWorkflowValidator:
             "edges": [],
         }
 
-        errors = WorkflowValidator.validate(workflow)
+        errors, warnings = WorkflowValidator.validate(workflow)
 
         assert len(errors) > 0
         assert any("Structure:" in e for e in errors)
@@ -73,7 +73,7 @@ class TestWorkflowValidator:
             "inputs": {},
         }
 
-        errors = WorkflowValidator.validate(workflow, skip_node_types=True)
+        errors, warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
 
         assert len(errors) > 0
         assert any("after" in e for e in errors)
@@ -88,7 +88,7 @@ class TestWorkflowValidator:
         }
 
         # With extracted_params but missing the required param
-        errors = WorkflowValidator.validate(
+        errors, warnings = WorkflowValidator.validate(
             workflow,
             extracted_params={},  # Empty params
             registry=registry_with_nodes,
@@ -107,7 +107,7 @@ class TestWorkflowValidator:
         }
 
         # Without extracted_params - should skip template validation
-        errors = WorkflowValidator.validate(workflow, skip_node_types=True)
+        errors, warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
 
         # Should not have template errors
         assert not any("missing_param" in e for e in errors)
@@ -122,7 +122,7 @@ class TestWorkflowValidator:
         }
 
         # With node type validation enabled
-        errors = WorkflowValidator.validate(workflow, registry=registry_with_nodes, skip_node_types=False)
+        errors, warnings = WorkflowValidator.validate(workflow, registry=registry_with_nodes, skip_node_types=False)
 
         assert len(errors) > 0
         assert any("Unknown node type" in e for e in errors)
@@ -138,13 +138,13 @@ class TestWorkflowValidator:
         }
 
         # With node type validation - should fail
-        errors_with_validation = WorkflowValidator.validate(
+        errors_with_validation, _ = WorkflowValidator.validate(
             workflow, registry=registry_with_nodes, skip_node_types=False
         )
         assert any("Unknown node type" in e for e in errors_with_validation)
 
         # Without node type validation - should pass
-        errors_without_validation = WorkflowValidator.validate(
+        errors_without_validation, _ = WorkflowValidator.validate(
             workflow, registry=registry_with_nodes, skip_node_types=True
         )
         assert not any("Unknown node type" in e for e in errors_without_validation)
@@ -161,7 +161,7 @@ class TestWorkflowValidator:
             "inputs": {},
         }
 
-        errors = WorkflowValidator.validate(workflow, extracted_params={}, registry=registry_with_nodes)
+        errors, warnings = WorkflowValidator.validate(workflow, extracted_params={}, registry=registry_with_nodes)
 
         # Should have multiple error types
         assert len(errors) >= 3
@@ -188,7 +188,7 @@ class TestWorkflowValidator:
             "inputs": {},
         }
 
-        errors = WorkflowValidator.validate(workflow, skip_node_types=True)
+        errors, warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
 
         assert len(errors) > 0
         assert any("Circular dependency" in e for e in errors)
@@ -235,7 +235,7 @@ class TestWorkflowValidator:
             },
         }
 
-        errors = WorkflowValidator.validate(
+        errors, warnings = WorkflowValidator.validate(
             workflow,
             extracted_params={
                 "repo_owner": "anthropic",

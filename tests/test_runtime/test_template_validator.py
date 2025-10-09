@@ -235,7 +235,7 @@ class TestWorkflowValidation:
         params = {"url": "https://youtube.com/watch?v=xyz"}
         registry = create_mock_registry()
 
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0
 
     def test_missing_cli_parameter(self):
@@ -252,7 +252,7 @@ class TestWorkflowValidation:
         params = {}
 
         registry = create_mock_registry()
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 1
         assert "Template variable ${url} has no valid source" in errors[0]
 
@@ -270,7 +270,7 @@ class TestWorkflowValidation:
         params = {}
 
         registry = create_mock_registry()
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 3
         assert any("${param1}" in e for e in errors)
         assert any("${param2}" in e for e in errors)
@@ -296,7 +296,7 @@ class TestWorkflowValidation:
         params = {"url": "https://youtube.com/watch?v=xyz"}
 
         registry = create_mock_registry()
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0  # No errors - transcript_data is from shared store
 
     def test_invalid_syntax_in_shared_vars(self):
@@ -310,7 +310,7 @@ class TestWorkflowValidation:
 
         params = {}
         registry = create_mock_registry()
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 1
         assert "Template variable ${data..field} has no valid source" in errors[0]
 
@@ -334,7 +334,7 @@ class TestWorkflowValidation:
         params = {"config": {"setting": "value1", "other": "value2"}}
 
         registry = create_mock_registry()
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0  # config is provided
 
     def test_no_templates_in_workflow(self):
@@ -349,7 +349,7 @@ class TestWorkflowValidation:
 
         params = {}
         registry = create_mock_registry()
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0  # No templates, no errors
 
 
@@ -377,12 +377,14 @@ class TestRealWorldScenarios:
 
         # Test with missing URL
         registry = create_mock_registry()
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
         assert len(errors) == 1
         assert "Template variable ${url} has no valid source" in errors[0]
 
         # Test with URL provided
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {"url": "https://youtube.com"}, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(
+            workflow_ir, {"url": "https://youtube.com"}, registry
+        )
         assert len(errors) == 0  # transcript_data and summary are from shared store
 
     def test_github_issue_workflow(self):
@@ -405,17 +407,17 @@ class TestRealWorldScenarios:
 
         # Test with no params
         registry = create_mock_registry()
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
         assert len(errors) == 2
         assert any("${repo}" in e for e in errors)
         assert any("${issue_number}" in e for e in errors)
 
         # Test with partial params
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, {"repo": "pflow"}, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"repo": "pflow"}, registry)
         assert len(errors) == 1
         assert "${issue_number}" in errors[0]
 
         # Test with all params
         params = {"repo": "pflow", "issue_number": "123"}
-        errors = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0

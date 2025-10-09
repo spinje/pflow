@@ -7,9 +7,29 @@ workflow execution begins.
 
 import logging
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Optional
 
 from pflow.registry import Registry
+
+
+@dataclass
+class ValidationWarning:
+    """Warning about runtime-validated template access.
+
+    Emitted when static validation cannot verify a template path
+    (e.g., accessing nested fields on outputs with type 'Any').
+    These templates will be validated at runtime during execution.
+    """
+
+    template: str  # Full template with ${}
+    node_id: str  # Node producing the output
+    node_type: str  # Node type (often MCP)
+    output_key: str  # Output key being accessed
+    output_type: str  # Type causing runtime validation
+    reason: str  # Human-readable explanation
+    nested_path: str  # Nested portion: "data.field[0]"
+
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +86,7 @@ class TemplateValidator:
     @staticmethod
     def validate_workflow_templates(
         workflow_ir: dict[str, Any], available_params: dict[str, Any], registry: Registry
-    ) -> list[str]:
+    ) -> tuple[list[str], list[ValidationWarning]]:
         """
         Validates all template variables in a workflow.
 
@@ -80,9 +100,12 @@ class TemplateValidator:
             registry: Registry instance with parsed node metadata
 
         Returns:
-            List of error messages (empty if valid)
+            Tuple of (errors, warnings):
+            - errors: List of validation errors that prevent execution
+            - warnings: List of ValidationWarning objects for runtime-validated templates
         """
         errors: list[str] = []
+        warnings: list[ValidationWarning] = []
 
         # Extract all templates from workflow
         all_templates = TemplateValidator._extract_all_templates(workflow_ir)
@@ -100,7 +123,7 @@ class TemplateValidator:
 
         # If no templates, we can return early (after checking for unused inputs)
         if not all_templates:
-            return errors
+            return (errors, warnings)
 
         # Get full output structure from nodes
         node_outputs = TemplateValidator._extract_node_outputs(workflow_ir, registry)
@@ -111,9 +134,16 @@ class TemplateValidator:
 
         # Validate each template path
         for template in sorted(all_templates):
-            if not TemplateValidator._validate_template_path(
+            is_valid, warning = TemplateValidator._validate_template_path(
                 template, available_params, node_outputs, workflow_ir, registry
-            ):
+            )
+
+            # Collect warning if present
+            if warning:
+                warnings.append(warning)
+
+            # Collect error if invalid
+            if not is_valid:
                 error = TemplateValidator._create_template_error(
                     template, available_params, workflow_ir, node_outputs, registry
                 )
@@ -123,10 +153,15 @@ class TemplateValidator:
             logger.warning(
                 f"Template validation found {len(errors)} errors", extra={"error_count": len(errors), "errors": errors}
             )
+        elif warnings:
+            logger.info(
+                f"Template validation passed with {len(warnings)} runtime-validated template(s)",
+                extra={"warning_count": len(warnings)},
+            )
         else:
             logger.info("Template validation passed")
 
-        return errors
+        return (errors, warnings)
 
     @staticmethod
     def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]) -> list[str]:
@@ -676,7 +711,7 @@ class TemplateValidator:
         node_outputs: dict[str, Any],
         workflow_ir: dict[str, Any],
         registry: Registry,
-    ) -> bool:
+    ) -> tuple[bool, Optional[ValidationWarning]]:
         """Validate a template path exists in available sources.
 
         With namespacing enabled, we need to distinguish between:
@@ -691,7 +726,7 @@ class TemplateValidator:
             registry: Registry instance (passed through for consistency)
 
         Returns:
-            True if the path is valid, False otherwise
+            Tuple of (is_valid, optional_warning)
         """
         parts = template.split(".")
         base_var = parts[0]
@@ -706,17 +741,21 @@ class TemplateValidator:
                 # The full path should be in node_outputs as "node_id.output_key"
                 if len(parts) == 1:
                     # Just the node ID without output key - invalid
-                    return False
+                    return (False, None)
 
                 # Check if the namespaced path exists in node_outputs
                 node_output_key = f"{base_var}.{parts[1]}"
                 if node_output_key in node_outputs:
                     if len(parts) == 2:
-                        # Just node_id.output_key - valid
-                        return True
+                        # Just node_id.output_key - valid, no nesting
+                        return (True, None)
+
                     # Validate deeper nested path
-                    return TemplateValidator._validate_nested_path(parts[2:], node_outputs[node_output_key])
-                return False
+                    output_key = parts[1]  # Extract output key
+                    return TemplateValidator._validate_nested_path(
+                        parts[2:], node_outputs[node_output_key], full_template=template, output_key=output_key
+                    )
+                return (False, None)
 
         # Not a node ID reference (or namespacing disabled), check as root-level reference
 
@@ -724,40 +763,68 @@ class TemplateValidator:
         if base_var in initial_params:
             # For nested paths in initial_params, we can't validate at compile time
             # since values are runtime-dependent. This is a limitation.
-            return True
+            return (True, None)
 
         # Check node outputs (for backward compatibility when namespacing is disabled)
         if base_var in node_outputs:
             if len(parts) == 1:
-                return True
+                return (True, None)
 
             # Validate nested path in structure
-            return TemplateValidator._validate_nested_path(parts[1:], node_outputs[base_var])
+            output_key = base_var  # For non-namespaced, base_var is the output key
+            return TemplateValidator._validate_nested_path(
+                parts[1:], node_outputs[base_var], full_template=template, output_key=output_key
+            )
 
-        return False
+        return (False, None)
 
     @staticmethod
-    def _validate_nested_path(path_parts: list[str], output_info: dict[str, Any]) -> bool:
+    def _validate_nested_path(
+        path_parts: list[str], output_info: dict[str, Any], full_template: str = "", output_key: str = ""
+    ) -> tuple[bool, Optional[ValidationWarning]]:
         """Validate a nested path exists in the output structure.
 
         Args:
             path_parts: List of path components after the base variable
             output_info: Output info dict with type and structure
+            full_template: Full template string for warning context
+            output_key: The output key being accessed (for warning)
 
         Returns:
-            True if the path is valid, False otherwise
+            Tuple of (is_valid, optional_warning)
         """
         current_structure = output_info.get("structure", {})
 
         # If no structure info, check if type allows traversal
         if not current_structure:
             output_type = output_info.get("type", "any")
-            return output_type in ["dict", "object", "any"]
+
+            # Case-insensitive check for type
+            type_allows_traversal = output_type.lower() in ["dict", "object", "any"]
+
+            if not type_allows_traversal:
+                return (False, None)
+
+            # Type allows traversal - check if we should warn
+            warning = None
+            if output_type.lower() == "any" and len(path_parts) > 0:
+                # Generate warning for runtime validation
+                warning = ValidationWarning(
+                    template=full_template if full_template.startswith("${") else f"${{{full_template}}}",
+                    node_id=output_info.get("node_id", "unknown"),
+                    node_type=output_info.get("node_type", "unknown"),
+                    output_key=output_key,
+                    output_type=output_type,
+                    reason=f"Output type '{output_type}' - structure cannot be verified statically",
+                    nested_path=".".join(path_parts),
+                )
+
+            return (True, warning)
 
         # Traverse the structure
         for i, part in enumerate(path_parts):
             if part not in current_structure:
-                return False
+                return (False, None)
 
             next_item = current_structure[part]
             if isinstance(next_item, dict):
@@ -769,18 +836,18 @@ class TemplateValidator:
                         current_structure = next_item.get("structure", {})
                         if not current_structure:
                             # Can't traverse further into a non-dict type
-                            return next_item.get("type", "any") in ["dict", "object", "any"]
+                            return (next_item.get("type", "any") in ["dict", "object", "any"], None)
                     else:
                         # This is the final part - valid
-                        return True
+                        return (True, None)
                 else:
                     # Direct nested structure
                     current_structure = next_item
             else:
                 # Reached a leaf type string, no more traversal possible
-                return i == len(path_parts) - 1
+                return (i == len(path_parts) - 1, None)
 
-        return True
+        return (True, None)
 
     @staticmethod
     def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:

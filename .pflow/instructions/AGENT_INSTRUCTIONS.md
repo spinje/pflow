@@ -1025,18 +1025,79 @@ See [Complete Example](#complete-example-building-a-complex-workflow) for a full
 - [ ] I understand which outputs are `Any` type and if I need to investigate them
 
 ### ✅ Critical Nodes Tested (Recommended - Step 3.5)
-- [ ] I've tested MCP nodes with `pflow registry run` to verify parameters
-- [ ] I've confirmed auth/credentials work for external services
-- [ ] I've seen exact output structure for `Any` type nodes using `--show-structure`
-- [ ] I'm confident about parameter formats (especially arrays/objects)
 
-**Why test first?** Catch parameter errors before building workflows. See actual output structures, not guessing. Verify credentials work independently. Build workflows with confidence (fewer iterations).
+**When to test nodes individually:**
 
-**When to test:**
-- ✅ MCP nodes (especially with `Any` outputs)
-- ✅ Nodes requiring authentication
-- ✅ Complex parameter formats (arrays, objects)
-- ❌ Simple nodes with known schemas (optional)
+**✅ Test when:**
+- Tool purpose is unclear from name/description alone
+- Node outputs `Any` type and you need nested fields
+- Authentication required (verify credentials work)
+- Parameter format is ambiguous (arrays vs objects, nested structures)
+- Tool has constraints not visible in specs
+
+**❌ Skip testing when:**
+- Tool purpose is immediately clear (e.g., "sends email to address")
+- Simple, well-documented parameters
+- You won't use nested output fields
+
+**MCP Meta-Discovery (Do This First)**:
+
+Before testing individual MCP tools, check if the server has helper tools:
+
+```bash
+# Search or discover
+pflow registry search "servername" / "toolname" / "keyword" # Prefer this over list
+pflow registry list | grep mcp-servername
+
+# Look for meta-tools that help you understand capabilities:
+# - Tools ending in: LIST, GET_SCHEMA, GET_DOCS, GET_EXAMPLES
+# - Tools for exploration: SEARCH, QUERY, BROWSE, DESCRIBE
+```
+
+**Common helper tool patterns:**
+- `LIST_SCHEMAS` - Shows available data structures
+- `GET_DOCUMENTATION` - Returns detailed tool docs
+- `LIST_EXAMPLES` - Provides usage examples
+- `DESCRIBE_*` - Explains specific resources
+- `GET_METADATA` - Returns server capabilities
+
+**Example exploration flow:**
+
+```bash
+# 1. Find potential helper tools
+pflow registry search "datastore"
+
+# Found: GET_SCHEMA, LIST_TABLES, CREATE_RECORD, QUERY_RECORDS
+
+# 2. Read more about the tool
+pflow registry describe mcp-datastore-LIST_TABLES
+
+# Understand the tool params (database_name) and expected outputs (array of table names)
+
+# 3. Use helper tools to understand before building
+pflow registry run mcp-datastore-LIST_TABLES database_name="my_database" --show-structure
+# → Now I understand what tables exist and their structure
+
+# 4. Read more about the tool
+pflow registry describe mcp-datastore-CREATE_RECORD
+
+# Understand the tool params (table, data) and expected outputs (record ID)
+
+# 3. Test unclear tools with realistic data
+pflow registry run mcp-datastore-CREATE_RECORD table="users" data='{"name":"test"}' --show-structure
+# → Reveals actual output structure and constraints
+```
+
+**Testing Checklist** (only for nodes you decided to test):
+- [ ] Discovered and used MCP helper tools (if available)
+- [ ] Tested with realistic parameters
+- [ ] Seen actual output structure with `--show-structure`
+- [ ] Identified any undocumented constraints or limitations
+- [ ] Confirmed auth/credentials work (if required)
+
+**Why this matters:** MCP tool descriptions are often incomplete. Documentation may not reflect actual behavior. Testing with real data reveals constraints invisible in specs. Helper tools within the server provide the fastest path to understanding.
+
+**Time investment:** 2-5 minutes of targeted testing saves 20+ minutes of debugging.
 
 ### ✅ Design Validated
 - [ ] My workflow is a LINEAR chain (no parallel branches)
