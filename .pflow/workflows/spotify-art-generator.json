@@ -1,0 +1,288 @@
+{
+  "inputs": {
+    "sheet_id": {
+      "type": "string",
+      "required": true,
+      "description": "Google Sheets ID (found in the spreadsheet URL after /d/)"
+    },
+    "replicate_api_token": {
+      "type": "string",
+      "required": true,
+      "description": "Replicate API token for authentication (from replicate.com/account)"
+    }
+  },
+  "nodes": [
+    {
+      "id": "get-sheet-data",
+      "type": "mcp-googlesheets-composio-GOOGLESHEETS_BATCH_GET",
+      "params": {
+        "spreadsheet_id": "${sheet_id}",
+        "ranges": [
+          "A:H"
+        ]
+      }
+    },
+    {
+      "id": "extract-filename",
+      "type": "shell",
+      "params": {
+        "stdin": "${get-sheet-data.result}",
+        "command": "jq -r '.data.valueRanges[0].values | map(select(.[6] != null and .[6] != \"\" and (.[6] | test(\"https://open\\\\.spotify\\\\.com\")))) | last | .[0] // \"untitled\"' | tr -d '\\n'"
+      }
+    },
+    {
+      "id": "extract-spotify-url",
+      "type": "shell",
+      "params": {
+        "stdin": "${get-sheet-data.result}",
+        "command": "jq -r '.data.valueRanges[0].values | map(select(.[6] != null and .[6] != \"\" and (.[6] | test(\"https://open\\\\.spotify\\\\.com\")))) | last | .[6] | match(\"https://open\\\\.spotify\\\\.com/[^\\\\s]+\") | .string'"
+      }
+    },
+    {
+      "id": "extract-prompt",
+      "type": "shell",
+      "params": {
+        "stdin": "${get-sheet-data.result}",
+        "command": "jq -r '.data.valueRanges[0].values | map(select(.[6] != null and .[6] != \"\" and (.[6] | test(\"https://open\\\\.spotify\\\\.com\")))) | last | .[7] // \"\"'"
+      }
+    },
+    {
+      "id": "call-oembed",
+      "type": "http",
+      "params": {
+        "url": "https://open.spotify.com/oembed",
+        "method": "GET",
+        "params": {
+          "url": "${extract-spotify-url.stdout}"
+        }
+      }
+    },
+    {
+      "id": "generate-image-seedream-original",
+      "type": "http",
+      "params": {
+        "url": "https://api.replicate.com/v1/predictions",
+        "method": "POST",
+        "auth_token": "${replicate_api_token}",
+        "headers": {
+          "Prefer": "wait=60"
+        },
+        "body": {
+          "version": "054cd8c667f535616fd66710ce20c8949bf64ac3d9a3459e338f026424be8bec",
+          "input": {
+            "prompt": "${extract-prompt.stdout} Remove all text, logos, and typography from the image.",
+            "image_input": [
+              "${call-oembed.response.thumbnail_url}"
+            ],
+            "size": "2K"
+          }
+        }
+      }
+    },
+    {
+      "id": "download-image-1",
+      "type": "shell",
+      "params": {
+        "command": "filename=$(echo '${extract-filename.stdout}' | tr -s ' ' '-' | tr -cd '[:alnum:]-_.'); mkdir -p generated-images && curl -s -L -o \"generated-images/$filename-seedream-original.jpg\" '${generate-image-seedream-original.response.output[0]}' && echo \"generated-images/$filename-seedream-original.jpg\""
+      }
+    },
+    {
+      "id": "generate-image-nano-original",
+      "type": "http",
+      "params": {
+        "url": "https://api.replicate.com/v1/models/google/nano-banana/predictions",
+        "method": "POST",
+        "auth_token": "${replicate_api_token}",
+        "headers": {
+          "Prefer": "wait"
+        },
+        "body": {
+          "input": {
+            "prompt": "${extract-prompt.stdout} Remove all text, logos, and typography from the image.",
+            "image_input": [
+              "${call-oembed.response.thumbnail_url}"
+            ],
+            "aspect_ratio": "match_input_image",
+            "output_format": "jpg"
+          }
+        }
+      }
+    },
+    {
+      "id": "download-image-2",
+      "type": "shell",
+      "params": {
+        "command": "filename=$(echo '${extract-filename.stdout}' | tr -s ' ' '-' | tr -cd '[:alnum:]-_.'); curl -s -L -o \"generated-images/$filename-nano-original.jpg\" '${generate-image-nano-original.response.output}' && echo \"generated-images/$filename-nano-original.jpg\""
+      }
+    },
+    {
+      "id": "enhance-prompt",
+      "type": "llm",
+      "params": {
+        "prompt": "You are an expert AI image generation prompt engineer. Analyze the provided image and user's editing request, then create an enhanced, detailed prompt.\n\nUser's original request: ${extract-prompt.stdout}\n\nCreate an improved prompt that:\n1. Focuses on the EDITING TASK (what needs to change or be added)\n2. Adds artistic and technical details (lighting setup, composition rules, color theory, art style/medium)\n3. Describes visual elements using neutral, technical, professional terminology\n4. Maintains the user's core creative intent\n5. Uses language appropriate for commercial album artwork and professional photography\n6. REMOVES ALL TEXT AND TYPOGRAPHY from the image (if any text is present, it should be completely removed)\n\nIMPORTANT GUIDELINES:\n- Avoid any language that could be interpreted as sexual, provocative, romantic, or suggestive\n- Use technical/artistic terms only (e.g., \"high-contrast lighting\" not \"seductive glow\")\n- Focus on what changes, not elaborate descriptions of existing elements\n- Frame descriptions in professional/commercial art context\n- Explicitly instruct to remove any visible text, logos, or typography\n\nOutput ONLY the enhanced prompt, nothing else.",
+        "images": [
+          "${call-oembed.response.thumbnail_url}"
+        ],
+        "model": "gemini-2.5-pro"
+      }
+    },
+    {
+      "id": "save-enhanced-prompt",
+      "type": "write-file",
+      "params": {
+        "file_path": "generated-images/${extract-filename.stdout}-enhanced-prompt.md",
+        "content": "# Enhanced Prompt for ${extract-filename.stdout}\n\n## Original User Request\n${extract-prompt.stdout}\n\n## AI-Enhanced Prompt\n${enhance-prompt.response}\n"
+      }
+    },
+    {
+      "id": "generate-image-seedream-enhanced",
+      "type": "http",
+      "params": {
+        "url": "https://api.replicate.com/v1/predictions",
+        "method": "POST",
+        "auth_token": "${replicate_api_token}",
+        "headers": {
+          "Prefer": "wait=60"
+        },
+        "body": {
+          "version": "054cd8c667f535616fd66710ce20c8949bf64ac3d9a3459e338f026424be8bec",
+          "input": {
+            "prompt": "${enhance-prompt.response}",
+            "image_input": [
+              "${call-oembed.response.thumbnail_url}"
+            ],
+            "size": "2K"
+          }
+        }
+      }
+    },
+    {
+      "id": "download-image-3",
+      "type": "shell",
+      "params": {
+        "command": "filename=$(echo '${extract-filename.stdout}' | tr -s ' ' '-' | tr -cd '[:alnum:]-_.'); curl -s -L -o \"generated-images/$filename-seedream-enhanced.jpg\" '${generate-image-seedream-enhanced.response.output[0]}' && echo \"generated-images/$filename-seedream-enhanced.jpg\""
+      }
+    },
+    {
+      "id": "generate-image-nano-enhanced",
+      "type": "http",
+      "params": {
+        "url": "https://api.replicate.com/v1/models/google/nano-banana/predictions",
+        "method": "POST",
+        "auth_token": "${replicate_api_token}",
+        "headers": {
+          "Prefer": "wait"
+        },
+        "body": {
+          "input": {
+            "prompt": "${enhance-prompt.response}",
+            "image_input": [
+              "${call-oembed.response.thumbnail_url}"
+            ],
+            "aspect_ratio": "match_input_image",
+            "output_format": "jpg"
+          }
+        }
+      }
+    },
+    {
+      "id": "download-image-4",
+      "type": "shell",
+      "params": {
+        "command": "filename=$(echo '${extract-filename.stdout}' | tr -s ' ' '-' | tr -cd '[:alnum:]-_.'); curl -s -L -o \"generated-images/$filename-nano-enhanced.jpg\" '${generate-image-nano-enhanced.response.output}' && echo \"generated-images/$filename-nano-enhanced.jpg\""
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "get-sheet-data",
+      "to": "extract-filename"
+    },
+    {
+      "from": "extract-filename",
+      "to": "extract-spotify-url"
+    },
+    {
+      "from": "extract-spotify-url",
+      "to": "extract-prompt"
+    },
+    {
+      "from": "extract-prompt",
+      "to": "call-oembed"
+    },
+    {
+      "from": "call-oembed",
+      "to": "generate-image-seedream-original"
+    },
+    {
+      "from": "generate-image-seedream-original",
+      "to": "download-image-1"
+    },
+    {
+      "from": "download-image-1",
+      "to": "generate-image-nano-original"
+    },
+    {
+      "from": "generate-image-nano-original",
+      "to": "download-image-2"
+    },
+    {
+      "from": "download-image-2",
+      "to": "enhance-prompt"
+    },
+    {
+      "from": "enhance-prompt",
+      "to": "save-enhanced-prompt"
+    },
+    {
+      "from": "save-enhanced-prompt",
+      "to": "generate-image-seedream-enhanced"
+    },
+    {
+      "from": "generate-image-seedream-enhanced",
+      "to": "download-image-3"
+    },
+    {
+      "from": "download-image-3",
+      "to": "generate-image-nano-enhanced"
+    },
+    {
+      "from": "generate-image-nano-enhanced",
+      "to": "download-image-4"
+    }
+  ],
+  "outputs": {
+    "seedream_original_file": {
+      "source": "${download-image-1.stdout}",
+      "description": "Seedream-4 with original prompt (filename-seedream-original.jpg)"
+    },
+    "nano_original_file": {
+      "source": "${download-image-2.stdout}",
+      "description": "Nano-Banana with original prompt (filename-nano-original.jpg)"
+    },
+    "seedream_enhanced_file": {
+      "source": "${download-image-3.stdout}",
+      "description": "Seedream-4 with enhanced prompt (filename-seedream-enhanced.jpg)"
+    },
+    "nano_enhanced_file": {
+      "source": "${download-image-4.stdout}",
+      "description": "Nano-Banana with enhanced prompt (filename-nano-enhanced.jpg)"
+    },
+    "filename_from_sheet": {
+      "source": "${extract-filename.stdout}",
+      "description": "Original filename from column A of the sheet"
+    },
+    "original_prompt": {
+      "source": "${extract-prompt.stdout}",
+      "description": "Original prompt from column H"
+    },
+    "enhanced_prompt": {
+      "source": "${enhance-prompt.response}",
+      "description": "Gemini-enhanced prompt with text removal and additional details"
+    },
+    "enhanced_prompt_file": {
+      "source": "${save-enhanced-prompt.file_path}",
+      "description": "Path to markdown file containing enhanced prompt (filename-enhanced-prompt.md)"
+    }
+  }
+}
