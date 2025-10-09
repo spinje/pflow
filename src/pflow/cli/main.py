@@ -27,6 +27,7 @@ from pflow.core.shell_integration import (
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.execution import DisplayManager, ExecutionResult
+from pflow.runtime.compiler import _display_validation_warnings
 
 # Import MCP CLI commands
 
@@ -1831,8 +1832,6 @@ def _display_validation_results(
 
             # Display warnings if present
             if warnings:
-                from pflow.runtime.compiler import _display_validation_warnings
-
                 _display_validation_warnings(warnings)
 
             click.echo("\nWorkflow is valid and ready to execute!")

@@ -5,6 +5,7 @@ template variables in node parameters. Template variables use the format
 ${identifier} with optional path traversal (${data.field.subfield}).
 """
 
+import json
 import logging
 import re
 from typing import Any, Optional
@@ -258,8 +259,6 @@ class TemplateResolver:
         Returns:
             String representation of the value
         """
-        import json
-
         if value is None or value == "":
             return ""
         # Check for boolean BEFORE checking for 0 (since False == 0 in Python)

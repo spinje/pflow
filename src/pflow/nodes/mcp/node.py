@@ -612,8 +612,6 @@ class MCPNode(Node):
         Returns:
             Parsed JSON object (dict/list/primitive) or original string
         """
-        import json
-
         text_stripped = text.strip()
 
         # Quick rejection: empty or doesn't start with JSON indicators
@@ -644,11 +642,29 @@ class MCPNode(Node):
 
         For backwards compatibility with MCP servers that return JSON as text
         (e.g., Composio), this method attempts to parse the text as JSON.
-        If parsing succeeds, returns the parsed object. If parsing fails,
-        returns the original text string.
 
-        This enables nested template access like ${node.result.data.field}
-        without requiring jq workarounds.
+        Args:
+            content: Content block with text attribute
+
+        Returns:
+            Parsed JSON object (dict/list/primitive) if text is valid JSON,
+            otherwise returns the original text string unchanged.
+
+        Examples:
+            >>> # JSON text gets parsed into Python objects
+            >>> content.text = '{"key": "value"}'
+            >>> result = self._extract_text_content(content)
+            >>> assert isinstance(result, dict)  # Parsed as dict
+
+            >>> # Plain text remains as string
+            >>> content.text = 'plain text message'
+            >>> result = self._extract_text_content(content)
+            >>> assert isinstance(result, str)  # Unchanged string
+
+        Note:
+            This enables nested template access like ${node.result.data.field}
+            without requiring jq workarounds for MCP servers that return JSON
+            as text content.
         """
         text = str(content.text)
         return self._safe_parse_json(text)

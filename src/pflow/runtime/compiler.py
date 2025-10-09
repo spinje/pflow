@@ -10,6 +10,7 @@ import importlib
 import importlib.util
 import json
 import logging
+import sys
 from typing import Any, Optional, Union, cast
 
 from pflow.core.ir_schema import ValidationError
@@ -25,6 +26,9 @@ from .workflow_validator import prepare_inputs, validate_ir_structure
 
 # Set up module logger
 logger = logging.getLogger(__name__)
+
+# Display limits for warning output
+MAX_DISPLAYED_WARNINGS_PER_NODE = 10  # Limit to avoid overwhelming terminal output
 
 
 class CompilationError(Exception):
@@ -89,8 +93,6 @@ def _display_validation_warnings(warnings: list[ValidationWarning]) -> None:
     Args:
         warnings: List of validation warnings to display
     """
-    import sys
-
     # Group warnings by node for cleaner output
     by_node: dict[str, list[ValidationWarning]] = {}
     for w in warnings:
@@ -119,15 +121,15 @@ def _display_validation_warnings(warnings: list[ValidationWarning]) -> None:
         print(f"    Output type: {first.output_type} (structure unknown at validation time)", file=sys.stderr)
         print(file=sys.stderr)
 
-        # Show each template (limit to 10 per node to avoid overwhelming)
-        display_count = min(len(node_warnings), 10)
+        # Show each template (limit to avoid overwhelming)
+        display_count = min(len(node_warnings), MAX_DISPLAYED_WARNINGS_PER_NODE)
         for w in node_warnings[:display_count]:
             print(f"    • {w.template}", file=sys.stderr)
             print(f"      Accessing: {w.output_key}.{w.nested_path}", file=sys.stderr)
             print(file=sys.stderr)
 
-        if len(node_warnings) > 10:
-            remaining = len(node_warnings) - 10
+        if len(node_warnings) > MAX_DISPLAYED_WARNINGS_PER_NODE:
+            remaining = len(node_warnings) - MAX_DISPLAYED_WARNINGS_PER_NODE
             print(f"    ... and {remaining} more template(s)", file=sys.stderr)
             print(file=sys.stderr)
 
