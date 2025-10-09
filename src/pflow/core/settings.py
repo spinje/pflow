@@ -54,6 +54,8 @@ class SettingsManager:
         """Load settings with environment variable overrides."""
         if self._settings is None:
             self._settings = self._load_from_file()
+            # Validate permissions after loading (defense-in-depth)
+            self._validate_permissions(self._settings)
         # Always (re)apply env overrides to handle toggling without restart
         self._apply_env_overrides(self._settings)
         return self._settings
@@ -338,12 +340,15 @@ class SettingsManager:
             return "***"
         return value[:3] + "***"
 
-    def _validate_permissions(self) -> None:
+    def _validate_permissions(self, settings: Optional[PflowSettings] = None) -> None:
         """Validate file permissions and warn if insecure (defense-in-depth).
 
         Checks if settings file has world/group-readable permissions when it
         contains secrets. This is a safety check in case chmod fails or user
         manually changes permissions.
+
+        Args:
+            settings: Optional pre-loaded settings to avoid recursion during load()
         """
         if not self.settings_path.exists():
             return
@@ -357,16 +362,18 @@ class SettingsManager:
             if mode & (stat.S_IROTH | stat.S_IRGRP):
                 # Only warn if file contains secrets
                 try:
-                    settings = self.load()
+                    # Use provided settings or load (avoid recursion)
+                    if settings is None:
+                        settings = self.load()
                     if settings.env:
                         logger.warning(
                             f"Settings file {self.settings_path} contains secrets "
                             f"but has insecure permissions {oct(mode)}. "
                             f"Run: chmod 600 {self.settings_path}"
                         )
-                except Exception:  # noqa: S110
+                except Exception as e:
                     # If we can't check, don't warn (defense-in-depth: validation failure is non-critical)
-                    pass
-        except Exception:  # noqa: S110
+                    logger.debug(f"Permission validation failed during env check: {e}")
+        except Exception as e:
             # Don't let validation errors break functionality (defense-in-depth: never breaks operations)
-            pass
+            logger.debug(f"Permission validation failed: {e}")
