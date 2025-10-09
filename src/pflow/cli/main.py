@@ -2917,8 +2917,20 @@ def _validate_and_prepare_workflow_params(
         # Import prepare_inputs from the right module
         from pflow.runtime.workflow_validator import prepare_inputs
 
-        # Validate with prepare_inputs
-        errors, defaults = prepare_inputs(workflow_ir, params)
+        # Load settings.env to populate workflow inputs
+        settings_env: dict[str, str] = {}
+        try:
+            from pflow.core.settings import SettingsManager
+
+            manager = SettingsManager()
+            settings = manager.load()
+            settings_env = settings.env
+        except Exception as e:
+            # Non-fatal - continue with empty settings
+            logger.warning(f"Failed to load settings.env: {e}")
+
+        # Validate with prepare_inputs (including settings.env)
+        errors, defaults = prepare_inputs(workflow_ir, params, settings_env=settings_env)
         if errors:
             # Show user-friendly errors
             for msg, path, suggestion in errors:

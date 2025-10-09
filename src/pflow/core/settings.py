@@ -3,6 +3,9 @@
 import json
 import logging
 import os
+import stat
+import tempfile
+import threading
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import ClassVar, Optional
@@ -44,6 +47,8 @@ class SettingsManager:
         self._settings: Optional[PflowSettings] = None
         # Track base include_test_nodes from file to correctly handle env toggling
         self._base_include_test_nodes: Optional[bool] = None
+        # Lock for thread-safe load-modify-save operations
+        self._lock = threading.Lock()
 
     def load(self) -> PflowSettings:
         """Load settings with environment variable overrides."""
@@ -192,20 +197,36 @@ class SettingsManager:
         return False
 
     def save(self, settings: Optional[PflowSettings] = None) -> None:
-        """Save settings to file."""
+        """Save settings to file with atomic operations and secure permissions."""
         if settings is None:
             settings = self.load()
 
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.settings_path, "w") as f:
-            data = settings.model_dump()
-            # Never persist env-derived test override; keep override ephemeral
-            if isinstance(data.get("registry"), dict):
-                data["registry"].pop("include_test_nodes", None)
-            json.dump(data, f, indent=2)
 
-        # Clear cache to force reload on next access
-        self._settings = None
+        # Atomic write pattern: write to temp file, then replace
+        temp_fd, temp_path = tempfile.mkstemp(dir=self.settings_path.parent, prefix=".settings.", suffix=".tmp")
+
+        try:
+            with open(temp_fd, "w", encoding="utf-8") as f:
+                data = settings.model_dump()
+                # Never persist env-derived test override; keep override ephemeral
+                if isinstance(data.get("registry"), dict):
+                    data["registry"].pop("include_test_nodes", None)
+                json.dump(data, f, indent=2)
+
+            # Atomic replace (works on all platforms)
+            os.replace(temp_path, self.settings_path)
+
+            # Set restrictive permissions (owner read/write only)
+            os.chmod(self.settings_path, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+
+            # Clear cache to force reload on next access
+            self._settings = None
+
+        except Exception:
+            # Clean up temp file on failure
+            Path(temp_path).unlink(missing_ok=True)
+            raise
 
     def update_allow_list(self, patterns: list[str]) -> None:
         """Update the allow list with new patterns."""
@@ -246,3 +267,106 @@ class SettingsManager:
         if pattern in settings.registry.nodes.deny:
             settings.registry.nodes.deny.remove(pattern)
             self.save(settings)
+
+    def set_env(self, key: str, value: str) -> None:
+        """Set an environment variable in settings.
+
+        Args:
+            key: Environment variable name
+            value: Environment variable value
+        """
+        with self._lock:
+            settings = self.load()
+            settings.env[key] = value
+            self.save(settings)
+
+    def unset_env(self, key: str) -> bool:
+        """Remove an environment variable from settings.
+
+        Args:
+            key: Environment variable name
+
+        Returns:
+            True if the key was removed, False if it didn't exist
+        """
+        with self._lock:
+            settings = self.load()
+            if key in settings.env:
+                del settings.env[key]
+                self.save(settings)
+                return True
+            return False
+
+    def get_env(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Get an environment variable value.
+
+        Args:
+            key: Environment variable name
+            default: Default value if key doesn't exist
+
+        Returns:
+            The value of the environment variable or the default
+        """
+        settings = self.load()
+        return settings.env.get(key, default)
+
+    def list_env(self, mask_values: bool = True) -> dict[str, str]:
+        """List all environment variables, optionally masking values.
+
+        Args:
+            mask_values: If True, mask values showing only first 3 chars
+
+        Returns:
+            Dictionary of environment variables (possibly masked)
+        """
+        settings = self.load()
+        if not mask_values:
+            return settings.env.copy()
+        return {k: self._mask_value(v) for k, v in settings.env.items()}
+
+    @staticmethod
+    def _mask_value(value: str) -> str:
+        """Mask a value for display (show first 3 chars + ***).
+
+        Args:
+            value: Value to mask
+
+        Returns:
+            Masked value
+        """
+        if len(value) <= 3:
+            return "***"
+        return value[:3] + "***"
+
+    def _validate_permissions(self) -> None:
+        """Validate file permissions and warn if insecure (defense-in-depth).
+
+        Checks if settings file has world/group-readable permissions when it
+        contains secrets. This is a safety check in case chmod fails or user
+        manually changes permissions.
+        """
+        if not self.settings_path.exists():
+            return
+
+        try:
+            # Check current permissions
+            file_stat = os.stat(self.settings_path)
+            mode = stat.S_IMODE(file_stat.st_mode)
+
+            # Check if world or group readable
+            if mode & (stat.S_IROTH | stat.S_IRGRP):
+                # Only warn if file contains secrets
+                try:
+                    settings = self.load()
+                    if settings.env:
+                        logger.warning(
+                            f"Settings file {self.settings_path} contains secrets "
+                            f"but has insecure permissions {oct(mode)}. "
+                            f"Run: chmod 600 {self.settings_path}"
+                        )
+                except Exception:  # noqa: S110
+                    # If we can't check, don't warn (defense-in-depth: validation failure is non-critical)
+                    pass
+        except Exception:  # noqa: S110
+            # Don't let validation errors break functionality (defense-in-depth: never breaks operations)
+            pass

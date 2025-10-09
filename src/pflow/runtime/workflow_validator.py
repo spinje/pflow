@@ -69,7 +69,7 @@ def validate_ir_structure(ir_dict: dict[str, Any]) -> None:
 
 
 def prepare_inputs(
-    workflow_ir: dict[str, Any], provided_params: dict[str, Any]
+    workflow_ir: dict[str, Any], provided_params: dict[str, Any], settings_env: dict[str, str] | None = None
 ) -> tuple[list[tuple[str, str, str]], dict[str, Any]]:
     """Validate workflow inputs and return defaults to apply.
 
@@ -81,11 +81,18 @@ def prepare_inputs(
     Args:
         workflow_ir: The workflow IR dictionary containing input declarations
         provided_params: Parameters provided for workflow execution (NOT modified)
+        settings_env: Environment variables from settings.env (optional)
 
     Returns:
         tuple: (errors, defaults_to_apply) where:
             - errors: List of (message, path, suggestion) tuples for ValidationError
             - defaults_to_apply: Dict of default values to apply for missing optional inputs
+
+    Precedence order:
+        1. provided_params (CLI arguments) - highest priority
+        2. settings_env (from settings.json)
+        3. workflow input defaults (from IR)
+        4. Error if required and not provided
 
     Note:
         This function was renamed from _validate_inputs to prepare_inputs to better
@@ -93,6 +100,7 @@ def prepare_inputs(
     """
     errors: list[tuple[str, str, str]] = []
     defaults: dict[str, Any] = {}
+    settings_env = settings_env or {}
 
     # Extract input declarations (backward compatible with workflows without inputs)
     inputs = workflow_ir.get("inputs", {})
@@ -123,6 +131,15 @@ def prepare_inputs(
 
         # Check if input is provided
         if input_name not in provided_params:
+            # Check settings.env before applying workflow defaults or erroring
+            if input_name in settings_env:
+                defaults[input_name] = settings_env[input_name]
+                logger.debug(
+                    f"Using value from settings.env for input '{input_name}'",
+                    extra={"phase": "input_validation", "input": input_name},
+                )
+                continue  # Skip workflow default and error handling
+
             if is_required:
                 # Required input is missing
                 description = input_spec.get("description", "No description provided")

@@ -250,3 +250,64 @@ def _print_matching_patterns(settings: PflowSettings, candidates: list[str], nod
         env_value = os.getenv("PFLOW_INCLUDE_TEST_NODES", "").lower()
         if env_value in ("true", "1", "yes"):
             click.echo("\n  ⚠️  Test node included due to PFLOW_INCLUDE_TEST_NODES=true")
+
+
+@settings.command(name="set-env")
+@click.argument("key")
+@click.argument("value")
+def set_env(key: str, value: str) -> None:
+    """Set an environment variable in settings.
+
+    Example:
+        pflow settings set-env replicate_api_token r8_xxx
+        pflow settings set-env OPENAI_API_KEY sk-...
+    """
+    manager = SettingsManager()
+    manager.set_env(key, value)
+
+    click.echo(f"✓ Set environment variable: {key}")
+    click.echo(f"   Value: {manager._mask_value(value)}")
+
+
+@settings.command(name="unset-env")
+@click.argument("key")
+def unset_env(key: str) -> None:
+    """Remove an environment variable from settings.
+
+    Example:
+        pflow settings unset-env replicate_api_token
+    """
+    manager = SettingsManager()
+    removed = manager.unset_env(key)
+
+    if removed:
+        click.echo(f"✓ Removed environment variable: {key}")
+    else:
+        click.echo(f"✗ Environment variable not found: {key}")
+
+
+@settings.command(name="list-env")
+@click.option("--show-values", is_flag=True, help="Show full values (unmasked)")
+def list_env(show_values: bool) -> None:
+    """List all environment variables.
+
+    By default, values are masked showing only the first 3 characters.
+    Use --show-values to display full values (use with caution).
+
+    Example:
+        pflow settings list-env              # Masked
+        pflow settings list-env --show-values  # Unmasked
+    """
+    manager = SettingsManager()
+    env_vars = manager.list_env(mask_values=not show_values)
+
+    if show_values:
+        click.echo("⚠️  Displaying unmasked values")
+
+    if not env_vars:
+        click.echo("No environment variables configured")
+        return
+
+    click.echo("Environment variables:")
+    for key, value in sorted(env_vars.items()):
+        click.echo(f"  {key}: {value}")
