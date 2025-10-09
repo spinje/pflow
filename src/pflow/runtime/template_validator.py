@@ -107,6 +107,15 @@ class TemplateValidator:
         errors: list[str] = []
         warnings: list[ValidationWarning] = []
 
+        # Check for malformed template syntax FIRST
+        malformed_errors = TemplateValidator._validate_malformed_templates(workflow_ir)
+        errors.extend(malformed_errors)
+
+        # If malformed syntax found, return early with those errors
+        if malformed_errors:
+            logger.error(f"Found {len(malformed_errors)} malformed template(s)", extra={"errors": malformed_errors})
+            return (errors, warnings)
+
         # Extract all templates from workflow
         all_templates = TemplateValidator._extract_all_templates(workflow_ir)
 
@@ -799,15 +808,21 @@ class TemplateValidator:
         if not current_structure:
             output_type = output_info.get("type", "any")
 
-            # Case-insensitive check for type
-            type_allows_traversal = output_type.lower() in ["dict", "object", "any"]
+            # Parse union types (e.g., "dict|str" → ["dict", "str"])
+            # Strip whitespace and convert to lowercase for comparison
+            types_in_union = [t.strip().lower() for t in output_type.split("|")]
 
-            if not type_allows_traversal:
+            # Check if ANY type in the union allows traversal
+            traversable_types = [t for t in types_in_union if t in ["dict", "object", "any"]]
+
+            if not traversable_types:
+                # None of the types allow nested access
                 return (False, None)
 
-            # Type allows traversal - check if we should warn
+            # At least one type allows traversal - check if we should warn
+            # Only warn for pure "any" or if "any" is in a union
             warning = None
-            if output_type.lower() == "any" and len(path_parts) > 0:
+            if "any" in traversable_types and len(path_parts) > 0:
                 # Generate warning for runtime validation
                 warning = ValidationWarning(
                     template=full_template if full_template.startswith("${") else f"${{{full_template}}}",
@@ -848,6 +863,54 @@ class TemplateValidator:
                 return (i == len(path_parts) - 1, None)
 
         return (True, None)
+
+    @staticmethod
+    def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[str]:
+        """Detect malformed template syntax by counting ${ vs valid template matches.
+
+        A malformed template is one where we find ${ but it doesn't form a valid template.
+        Examples: ${unclosed, ${}, ${ }
+
+        Args:
+            workflow_ir: The workflow IR
+
+        Returns:
+            List of error messages for malformed templates
+        """
+        errors: list[str] = []
+
+        for node in workflow_ir.get("nodes", []):
+            node_id = node.get("id", "unknown")
+            params = node.get("params", {})
+
+            def check_value(value: Any, node_id: str, param_path: str = "") -> None:
+                """Recursively check for malformed templates in any value type."""
+                if isinstance(value, str) and "${" in value:
+                    # Count how many ${ we have
+                    dollar_brace_count = value.count("${")
+
+                    # Count how many valid templates we matched
+                    valid_matches = TemplateValidator._PERMISSIVE_PATTERN.findall(value)
+
+                    # If mismatch, we have malformed syntax
+                    if len(valid_matches) < dollar_brace_count:
+                        location = f"node '{node_id}' parameter '{param_path}'" if param_path else f"node '{node_id}'"
+                        errors.append(
+                            f"Malformed template syntax in {location}: "
+                            f"Found {dollar_brace_count} '${{' but only {len(valid_matches)} valid template(s). "
+                            f"Check for missing '}}' or empty templates like '${{}}'"
+                        )
+                elif isinstance(value, dict):
+                    for key, val in value.items():
+                        check_value(val, node_id, f"{param_path}.{key}" if param_path else key)
+                elif isinstance(value, list):
+                    for idx, item in enumerate(value):
+                        check_value(item, node_id, f"{param_path}[{idx}]")
+
+            for param_key, param_value in params.items():
+                check_value(param_value, node_id, param_key)
+
+        return errors
 
     @staticmethod
     def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:

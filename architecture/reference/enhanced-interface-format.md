@@ -39,6 +39,37 @@ All components support type annotations using Python's built-in types:
 - `list` - List/array structures
 - `any` - Any type (default when not specified)
 
+#### Union Types
+
+Union types allow you to specify that a value can be one of multiple types using the pipe (`|`) operator:
+
+```python
+# Basic union type
+- Writes: shared["response"]: dict|str  # Response data (parsed JSON or raw text)
+
+# Three-way union
+- Writes: shared["result"]: dict|str|int  # Result value (varies by mode)
+
+# Union with any
+- Writes: shared["data"]: any|str  # Data of unknown structure or string
+```
+
+**Validation Behavior:**
+- If ANY type in the union supports nested access (`dict`, `object`, `any`), nested template access is allowed
+- Example: `dict|str` allows `${node.response.field}` because dict supports it
+- Example: `str|int` rejects `${node.value.field}` because neither type supports nested access
+- Unions containing `any` generate validation warnings for nested access
+
+**Common Patterns:**
+- `dict|str` - API responses (parsed JSON or raw text)
+- `dict|list` - Flexible data structures
+- `str|int` - Values that can be text or numeric
+- `any|str` - Unknown structure with string fallback
+
+**Naming Convention:**
+- Use lowercase type names: `dict|str` ✅ not `Dict|Str` ❌
+- No spaces around pipe: `dict|str` ✅ not `dict | str` ❌ (though both work)
+
 #### Type Syntax
 ```python
 # Input with type

@@ -50,19 +50,46 @@ class ShellNode(Node):
       - Follows Unix philosophy: data via stdin, logic in command
       - More reliable and maintainable
 
-    ✅ OK - Simple values in commands (paths, names, IDs):
-      {
-        "command": "ls ${directory}",            # Simple string, no special chars
-        "command": "echo ${user_id}"             # Numeric or simple text
-      }
+    💡 Nested Template Access (MCP JSON Parsing Feature):
+      MCP and HTTP nodes return parsed JSON. You can access nested properties
+      in template variables: ${node.result.data.field}
 
-    ❌ WRONG - Complex data in command strings:
-      {
-        "command": "echo '${json_data}' | jq"    # Shell escaping issues!
-      }
+      ⚠️ CRITICAL: Where you use nested access matters!
 
-      This fails when json_data contains quotes, special characters, or is very large.
-      The shell cannot safely parse complex data embedded in command strings.
+      ✅ In stdin - Always safe (any data type):
+        {
+          "stdin": "${api.response.items}",        # Array/object - safe in stdin
+          "command": "jq -c 'map(.name)'"
+        }
+        {
+          "stdin": "${api.response.data.values}",  # Complex nested - safe
+          "command": "jq 'length'"
+        }
+        # Works because stdin bypasses shell parsing - data is piped directly
+
+      ✅ In commands - Safe for simple scalars only:
+        {
+          "command": "echo User ID: ${user.profile.id}"        # Number - safe
+        }
+        {
+          "command": "curl ${api.response.next_url}"           # URL string - safe
+        }
+        {
+          "command": "ls ${config.settings.directory}"         # Path string - safe
+        }
+        # Safe because simple values don't contain shell special characters
+
+      ❌ In commands - Never use complex data:
+        {
+          "command": "echo '${api.response.items}' | jq"       # Array - BREAKS!
+        }
+        {
+          "command": "cat <<< '${mcp.result.data}' | jq"       # Object - BREAKS!
+        }
+        # Fails with shell escaping if data contains ( ) ' " [ ] etc.
+
+      🎯 Rule: stdin = data (any type), command = logic (scalars only)
+         Nested access works everywhere, but complex data needs stdin.
 
     Pattern Detection:
     The shell node will detect when you try to use structured data (dict/list) in
