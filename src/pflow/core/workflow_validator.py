@@ -11,12 +11,6 @@ from pflow.registry import Registry
 
 logger = logging.getLogger(__name__)
 
-# Import ValidationWarning for type hints
-try:
-    from pflow.runtime.template_validator import ValidationWarning
-except ImportError:
-    ValidationWarning = Any  # Fallback for circular import issues
-
 
 class WorkflowValidator:
     """Orchestrates all workflow validation checks.
