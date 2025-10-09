@@ -823,6 +823,25 @@ def _get_start_node(nodes: dict[str, Any], ir_dict: dict[str, Any]) -> Any:
     return nodes[start_node_id]
 
 
+def _load_settings_env() -> dict[str, str]:
+    """Load settings.env for workflow input population.
+
+    Returns empty dict on any error (non-fatal).
+
+    Returns:
+        Dictionary of environment variables from settings.env
+    """
+    try:
+        from pflow.core.settings import SettingsManager
+
+        manager = SettingsManager()
+        settings = manager.load()
+        return settings.env
+    except Exception as e:
+        logger.warning(f"Failed to load settings.env: {e}")
+        return {}
+
+
 def _validate_workflow(
     ir_dict: dict[str, Any], registry: Registry, initial_params: dict[str, Any], validate_templates: bool
 ) -> dict[str, Any]:
@@ -854,7 +873,11 @@ def _validate_workflow(
 
     # Step 3: Validate inputs and apply defaults
     try:
-        errors, defaults = prepare_inputs(ir_dict, initial_params)
+        # Load settings.env once per compilation
+        settings_env = _load_settings_env()
+
+        # Pass settings_env to prepare_inputs
+        errors, defaults = prepare_inputs(ir_dict, initial_params, settings_env=settings_env)
         if errors:
             if len(errors) == 1:
                 # Single error - keep current behavior for backward compatibility

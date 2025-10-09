@@ -396,6 +396,7 @@ The codebase is in early development with these tasks completed:
 
 Next up:
 - ⏳ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
+- ⏳ Task 80: Implement API Key Management via Settings
 
 Next version (post-MVP/post-Launch):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI

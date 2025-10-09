@@ -291,31 +291,94 @@ Controls output behavior based on execution context:
 - ✓ Success (green), ❌ Error (red), ⚠️ Warning (yellow)
 - ↻ Cached (blue, dimmed), [repaired] Modified (cyan)
 
-### 10. settings.py - Node Filtering Configuration
+### 10. settings.py - Settings Management & API Key Storage
 
-Manages settings with environment variable override support:
+Manages settings with environment variable override support and secure API key storage:
 
 **Key Classes**:
 - **`SettingsManager`**: Manages `~/.pflow/settings.json`
-- **`PflowSettings`**: Settings data model
+- **`PflowSettings`**: Settings data model with registry and env fields
 
 **Features**:
-- Node allow/deny patterns with fnmatch support
-- Test node filtering (`PFLOW_INCLUDE_TEST_NODES` env var)
-- MCP node pattern matching with aliases
-- Atomic save operations
+- **Node Filtering**: Allow/deny patterns with fnmatch support
+- **Test Node Filtering**: `PFLOW_INCLUDE_TEST_NODES` env var override
+- **MCP Pattern Matching**: Aliases for MCP node filtering
+- **API Key Management**: Secure storage of API keys and secrets (Task 80)
+- **Atomic Operations**: Temp file + os.replace() pattern for crash safety
+- **Secure Permissions**: Automatic chmod 600 on save (owner read/write only)
+- **Permission Validation**: Warns if file has insecure permissions with secrets
 
 **Settings Structure**:
 ```json
 {
+  "version": "1.0.0",
   "registry": {
     "nodes": {
       "allow": ["*"],
       "deny": ["test*", "debug*"]
     }
+  },
+  "env": {
+    "OPENAI_API_KEY": "sk-proj-...",
+    "ANTHROPIC_API_KEY": "sk-ant-...",
+    "replicate_api_token": "r8_..."
   }
 }
 ```
+
+**Environment Variable Management** (Added in Task 80):
+- `set_env(key, value)` - Store API keys and secrets
+- `unset_env(key) → bool` - Remove keys (idempotent)
+- `get_env(key, default) → Optional[str]` - Retrieve stored values
+- `list_env(mask_values=True) → dict` - List keys (masked by default for security)
+- `_mask_value(value) → str` [static] - Value masking (first 3 chars + ***)
+
+**Security Implementation**:
+```python
+# Atomic save with secure permissions
+temp_fd, temp_path = tempfile.mkstemp(
+    dir=self.settings_path.parent,
+    prefix=".settings.",
+    suffix=".tmp"
+)
+try:
+    with open(temp_fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(temp_path, self.settings_path)  # Atomic
+    os.chmod(self.settings_path, 0o600)         # Secure permissions
+except Exception:
+    Path(temp_path).unlink(missing_ok=True)     # Cleanup
+    raise
+```
+
+**Workflow Integration**: Settings.env values automatically populate workflow inputs via:
+1. Compiler loads settings.env (`compiler.py:_validate_workflow()`)
+2. Validator uses env values (`workflow_validator.py:prepare_inputs()`)
+3. Precedence: CLI params → settings.env → workflow defaults → error
+
+**Usage Pattern**:
+```python
+# Set API keys (automatically secure with 600 permissions)
+manager = SettingsManager()
+manager.set_env("OPENAI_API_KEY", "sk-...")
+manager.set_env("replicate_api_token", "r8_...")
+
+# Values automatically populate workflow inputs
+# No need to pass via --param every time!
+
+# List keys (masked for security)
+env_vars = manager.list_env()  # {"OPENAI_API_KEY": "sk-***", ...}
+
+# Show full values (debugging only)
+env_vars = manager.list_env(mask_values=False)
+```
+
+**Security Properties**:
+- File permissions always 600 (owner-only access)
+- Atomic operations prevent corruption during crashes
+- Value masking reduces accidental exposure
+- Permission validation warns on insecure files
+- Plain text storage (industry standard for CLI tools)
 
 ### 11. user_errors.py - User-Friendly Error Formatting
 
