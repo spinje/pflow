@@ -10,6 +10,7 @@ Key functions:
 """
 
 import logging
+import os
 from typing import Any
 
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
@@ -90,9 +91,10 @@ def prepare_inputs(
 
     Precedence order:
         1. provided_params (CLI arguments) - highest priority
-        2. settings_env (from settings.json)
-        3. workflow input defaults (from IR)
-        4. Error if required and not provided
+        2. Shell environment variables (os.environ)
+        3. settings_env (from settings.json)
+        4. workflow input defaults (from IR)
+        5. Error if required and not provided
 
     Note:
         This function was renamed from _validate_inputs to prepare_inputs to better
@@ -131,7 +133,16 @@ def prepare_inputs(
 
         # Check if input is provided
         if input_name not in provided_params:
-            # Check settings.env before applying workflow defaults or erroring
+            # Check shell environment variables first (transient session values)
+            if input_name in os.environ:
+                defaults[input_name] = os.environ[input_name]
+                logger.debug(
+                    f"Using shell environment variable for input '{input_name}'",
+                    extra={"phase": "input_validation", "input": input_name},
+                )
+                continue  # Skip settings.env, workflow default, and error handling
+
+            # Check settings.env (persistent configuration)
             if input_name in settings_env:
                 defaults[input_name] = settings_env[input_name]
                 logger.debug(

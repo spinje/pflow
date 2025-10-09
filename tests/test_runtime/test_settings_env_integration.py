@@ -435,3 +435,202 @@ class TestEndToEndIntegration:
 
         assert errors == []
         # Works fine without settings file
+
+
+class TestShellEnvironmentVariables:
+    """Test shell environment variable support for workflow inputs."""
+
+    def test_shell_env_var_populates_required_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that shell env var satisfies required input."""
+        # Set shell environment variable
+        monkeypatch.setenv("api_key", "shell_value_123")
+
+        workflow_ir = {"inputs": {"api_key": {"required": True, "description": "API key"}}}
+
+        provided_params = {}  # No CLI params
+        settings_env = {}  # No settings.env
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert defaults["api_key"] == "shell_value_123"
+
+    def test_shell_env_var_populates_optional_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that shell env var populates optional input."""
+        monkeypatch.setenv("timeout", "30")
+
+        workflow_ir = {"inputs": {"timeout": {"required": False, "default": 10}}}
+
+        provided_params = {}
+        settings_env = {}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert defaults["timeout"] == "30"
+
+    def test_cli_param_overrides_shell_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that CLI parameter takes precedence over shell env var."""
+        monkeypatch.setenv("api_key", "shell_value")
+
+        workflow_ir = {"inputs": {"api_key": {"required": True}}}
+        provided_params = {"api_key": "cli_value"}  # CLI wins
+        settings_env = {}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert "api_key" not in defaults  # Already in provided_params
+        # Verify CLI value is preserved (not overwritten)
+        assert provided_params["api_key"] == "cli_value"
+
+    def test_shell_env_var_overrides_settings_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that shell env var takes precedence over settings.env."""
+        monkeypatch.setenv("api_key", "shell_value")
+
+        workflow_ir = {"inputs": {"api_key": {"required": True}}}
+        provided_params = {}
+        settings_env = {"api_key": "settings_value"}  # Shell env wins
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert defaults["api_key"] == "shell_value"
+
+    def test_shell_env_var_overrides_workflow_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that shell env var overrides workflow default value."""
+        monkeypatch.setenv("timeout", "60")
+
+        workflow_ir = {"inputs": {"timeout": {"required": False, "default": 30}}}
+
+        provided_params = {}
+        settings_env = {}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert defaults["timeout"] == "60"  # Not 30
+
+    def test_settings_env_used_when_no_shell_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test fallback to settings.env when shell env var not set."""
+        # Ensure shell env var is NOT set
+        monkeypatch.delenv("api_key", raising=False)
+
+        workflow_ir = {"inputs": {"api_key": {"required": True}}}
+        provided_params = {}
+        settings_env = {"api_key": "settings_value"}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert defaults["api_key"] == "settings_value"
+
+    def test_full_precedence_chain(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test complete precedence: CLI > shell env > settings.env > workflow default."""
+        monkeypatch.setenv("key1", "shell_1")
+        monkeypatch.setenv("key2", "shell_2")
+        monkeypatch.setenv("key3", "shell_3")
+
+        workflow_ir = {
+            "inputs": {
+                "key1": {"required": True},  # From CLI
+                "key2": {"required": True},  # From shell env
+                "key3": {"required": True},  # From settings.env (no shell)
+                "key4": {"required": False, "default": "default_4"},  # From workflow default
+            }
+        }
+
+        # Remove key3 from shell env to test fallback
+        monkeypatch.delenv("key3", raising=False)
+
+        provided_params = {"key1": "cli_1"}
+        settings_env = {"key2": "settings_2", "key3": "settings_3", "key4": "settings_4"}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        # key1 already in provided_params (CLI)
+        assert defaults["key2"] == "shell_2"  # Shell env beats settings
+        assert defaults["key3"] == "settings_3"  # Settings used (no shell env)
+        assert defaults["key4"] == "settings_4"  # Settings beats workflow default
+
+    def test_multiple_inputs_mixed_sources(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test workflow with inputs from different sources simultaneously."""
+        monkeypatch.setenv("github_token", "ghp_from_shell")
+        monkeypatch.setenv("api_key", "shell_api_key")
+
+        workflow_ir = {
+            "inputs": {
+                "repo": {"required": True},  # From CLI
+                "github_token": {"required": True},  # From shell env
+                "api_key": {"required": True},  # From settings.env (overridden by shell)
+                "branch": {"required": False, "default": "main"},  # From workflow default
+            }
+        }
+
+        provided_params = {"repo": "user/repo"}
+        settings_env = {"api_key": "settings_api_key", "github_token": "ghp_from_settings"}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert defaults["github_token"] == "ghp_from_shell"  # noqa: S105 - Test data comparison
+        assert defaults["api_key"] == "shell_api_key"  # Shell beats settings
+        assert defaults["branch"] == "main"
+
+    def test_shell_env_var_empty_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that empty string in shell env var is preserved."""
+        monkeypatch.setenv("api_key", "")
+
+        workflow_ir = {"inputs": {"api_key": {"required": True}}}
+        provided_params = {}
+        settings_env = {"api_key": "non_empty_value"}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert defaults["api_key"] == ""  # Empty string is valid
+
+    def test_shell_env_var_with_special_characters(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that special characters in shell env vars are preserved."""
+        special_value = "abc!@#$%^&*()_+-={}[]|:;<>,.?/"
+        monkeypatch.setenv("api_key", special_value)
+
+        workflow_ir = {"inputs": {"api_key": {"required": True}}}
+        provided_params = {}
+        settings_env = {}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert defaults["api_key"] == special_value
+
+    def test_shell_env_var_case_sensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that shell env var names are case-sensitive."""
+        monkeypatch.setenv("api_key", "lowercase")
+        monkeypatch.setenv("API_KEY", "uppercase")
+
+        workflow_ir = {"inputs": {"api_key": {"required": True}, "API_KEY": {"required": True}}}
+
+        provided_params = {}
+        settings_env = {}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert errors == []
+        assert defaults["api_key"] == "lowercase"
+        assert defaults["API_KEY"] == "uppercase"
+
+    def test_shell_env_var_not_set_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test error when shell env var not set and no other sources available."""
+        monkeypatch.delenv("api_key", raising=False)
+
+        workflow_ir = {"inputs": {"api_key": {"required": True, "description": "API key"}}}
+        provided_params = {}
+        settings_env = {}
+
+        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+
+        assert len(errors) == 1
+        assert "api_key" in errors[0][0]
+        assert "required" in errors[0][0].lower() or "requires" in errors[0][0].lower()

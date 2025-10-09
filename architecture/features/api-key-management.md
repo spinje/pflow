@@ -153,8 +153,8 @@ pflow settings list-env --show-values
 
 **3. Workflow Integration** (`src/pflow/runtime/`):
 - `compiler.py:_validate_workflow()` - Loads settings.env once
-- `workflow_validator.py:prepare_inputs()` - Populates workflow inputs
-- Precedence: CLI params → settings.env → workflow defaults
+- `workflow_validator.py:prepare_inputs()` - Populates workflow inputs from multiple sources
+- Precedence: CLI params → shell env vars → settings.env → workflow defaults
 
 ### Data Flow
 
@@ -175,16 +175,17 @@ pflow my-workflow --param user_input=value
 ┌─────────────────────────────────────────┐
 │ Validator: Prepare inputs               │
 │ For each workflow input:               │
-│   1. Check CLI params    → use it      │
-│   2. Check settings.env  → use it      │
-│   3. Check workflow default → use it   │
-│   4. Error if missing                  │
+│   1. Check CLI params      → use it    │
+│   2. Check shell env vars  → use it    │
+│   3. Check settings.env    → use it    │
+│   4. Check workflow default → use it   │
+│   5. Error if missing                  │
 └─────────────────────────────────────────┘
             ↓
 ┌─────────────────────────────────────────┐
 │ Execution: All inputs populated         │
 │ - user_input: "value" (from CLI)       │
-│ - api_key: "sk-xxx" (from settings)    │
+│ - api_key: "sk-xxx" (from shell env)   │
 │ - model: "gpt-4" (from defaults)       │
 └─────────────────────────────────────────┘
 ```
@@ -197,20 +198,25 @@ pflow my-workflow --param user_input=value
 
 1. **CLI Parameters**: `--param key=value`
    - Always wins
-   - Enables CI/CD overrides
-   - Explicit user intent
+   - Enables explicit overrides
+   - Takes precedence over all other sources
 
-2. **Settings.env**: `~/.pflow/settings.json`
-   - Convenient defaults for local dev
-   - Persistent across sessions
-   - Secure storage
+2. **Shell Environment Variables**: `export VAR=value`
+   - Transient session values
+   - CI/CD-friendly (GitHub Actions, etc.)
+   - Standard Unix pattern
 
-3. **Workflow Defaults**: `inputs.key.default` in IR
+3. **Settings.env**: `~/.pflow/settings.json`
+   - Persistent local configuration
+   - Secure storage (600 permissions)
+   - Convenient for repeated use
+
+4. **Workflow Defaults**: `inputs.key.default` in IR
    - Workflow-specific fallbacks
    - Optional parameters only
    - Documented in workflow
 
-4. **Error**: If required and none above
+5. **Error**: If required and none above
    - Clear error message
    - Tells user what's missing
    - No mention of settings (keeps it simple)
@@ -225,7 +231,17 @@ pflow workflow --param api_key=sk-prod
 # Result: Uses sk-prod (CLI wins)
 ```
 
-**Example 2: Settings Provides Key**
+**Example 2: Shell Environment Variables (CI/CD)**
+```bash
+# GitHub Actions or local shell
+export OPENAI_API_KEY="sk-xxx"
+pflow workflow
+
+# Result: Uses sk-xxx (from shell env)
+# Perfect for CI/CD - no need to setup settings.json!
+```
+
+**Example 3: Settings Provides Key**
 ```bash
 # settings.env has: {"api_key": "sk-xxx"}
 pflow workflow
@@ -233,7 +249,7 @@ pflow workflow
 # Result: Uses sk-xxx (from settings)
 ```
 
-**Example 3: Mixed Sources**
+**Example 4: Mixed Sources**
 ```bash
 # settings.env: {"api_key": "sk-xxx", "temp": "0.9"}
 # workflow defaults: {"model": "gpt-4", "temp": "0.7"}
