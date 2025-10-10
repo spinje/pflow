@@ -34,3 +34,7 @@ this is possible because we will save the params used in the workflow json file 
 2.
 
 This will also help the workflow discovery (discovery node) be able to make better decisions.
+
+3.
+
+Secutiry concerns: user inputs that is api keys and such should NEVER be saved in the workflow json file. We might need a way to mark these inputs as sensitive by adding a new field to the input object?
