@@ -393,10 +393,10 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 70: Design and Validate MCP-Based Agent Infrastructure Architecture
 - ✅ Task 71: Extend CLI Commands with tools for agentic workflow building
 - ✅ Task 76: Implement Registry Execute Command for Independent Node Testing by agents
+- ✅ Task 80: Implement API Key Management via Settings
 
 Next up:
 - ⏳ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
-- ⏳ Task 80: Implement API Key Management via Settings
 
 Next version (post-MVP/post-Launch):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI

@@ -413,7 +413,25 @@ Everything else?
 
 **Why**: Someone else will want to use this workflow with different values tomorrow.
 
-#### Step 6.1: Declare Workflow Inputs (2 min)
+#### 🔴 Settings Auto-Population
+
+**Settings (`~/.pflow/settings.json`) auto-populate workflow inputs. Use ONLY for authentication secrets.**
+
+**The Rule**: Add to settings only if used for **authentication across ALL workflows**.
+
+**✅ Settings belong:**
+- API tokens: `replicate_api_token`, `github_token`, `openai_api_key`
+- Service credentials used universally
+- Note: LLM API keys can also be stored using the LLM library for usage in LLM nodes
+
+**❌ Settings don't belong:**
+- Resource IDs: `sheet_id`, `channel`, `repo` (workflow-specific)
+- Data parameters: `limit`, `input_file`, `threshold` (varies by use case)
+
+**Why**: Settings are global. Adding `input_name="123"` means every workflow uses that if input name matches.
+
+**Manage**: `pflow settings set-env KEY value` | **Precedence**: CLI > ENV >settings > defaults
+
 
 **For all user-provided values (following the rule above).**
 
