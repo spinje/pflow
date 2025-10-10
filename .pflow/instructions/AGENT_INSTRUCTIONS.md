@@ -1,5 +1,17 @@
 # pflow Agent Instructions
 
+## 🎯 Core Philosophy
+
+**You are building TOOLS, not scripts.**
+
+When a user says "analyze file.txt", they're showing you ONE example.
+You build a tool that can analyze ANY file.
+
+**Three Rules**:
+1. **Every specific value → Input** (unless user says "always")
+2. **Every workflow → Reusable** (works tomorrow with different data)
+3. **Every decision → Algorithmic** (no guessing, follow the rules)
+
 ## ⚡ Quick Start Decision Tree
 
 ### First: What does user want?
@@ -24,108 +36,18 @@ User provides a value?
 **Build reusable tools, not one-time scripts.**
 
 Every workflow should work tomorrow, for someone else, with different data.
-The user shows you ONE example. You build the GENERAL solution using dynamic inputs based on the users example.
+The user shows you ONE example. You build the GENERAL solution using dynamic inputs.
 
 ---
 
-## Table of Contents
+## 📚 Quick Task Index
 
-1. [How to Think About Workflows](#how-to-think-about-workflows)
-2. [The Agent Development Loop](#the-agent-development-loop)
-3. [Common Workflow Patterns](#common-workflow-patterns)
-4. [Progressive Learning Path](#progressive-learning-path)
-5. [Pre-Build Checklist](#pre-build-checklist)
-6. [Building Workflows](#building-workflows)
-   - [Critical Constraints](#-critical-constraints-read-first)
-   - [Node Parameter Philosophy](#node-parameter-philosophy)
-   - [Template Variable Syntax](#template-variable-syntax)
-   - [Workflow Inputs](#workflow-inputs)
-   - [Workflow Outputs](#workflow-outputs)
-7. [Validation](#validation)
-8. [Testing & Debugging](#testing--debugging)
-9. [Saving Workflows](#saving-workflows)
-10. [Executing Workflows](#executing-workflows)
-11. [Context Efficiency](#context-efficiency)
-12. [Common Mistakes](#common-mistakes)
-13. [Quick Reference](#quick-reference)
-
----
-
-## Workflow Philosophy
-
-Three principles guide every decision:
-
-1. **Maximize Reusability**: Every hardcoded value limits who can use this workflow
-2. **Explicit Over Implicit**: Clear inputs/outputs beat hidden assumptions
-3. **Intent Over Literal**: Users say "do X with Y" but mean "build a tool that does X-like things"
-
-**The Reusability Test**: Before building, ask "Could someone else use this tomorrow for a similar task?"
-
----
-
-## Working with Constraints
-
-**pflow has limitations. Be creative:**
-
-- **No loops** → Use LLM to batch-process (e.g., transform all Q&A pairs into rows at once)
-- **No branching** → Use LLM to handle all cases in one output
-- **Linear only** → Later nodes can reference any earlier outputs
-
-**Your job**: Find creative ways to deliver what the user wants. If truly impossible, explain why and suggest alternatives.
-
----
-
-## How to Think About Workflows
-
-A workflow is a **reusable data transformation tool**. Users show you one example, but you build for all cases.
-
-### The Mental Model
-
-```
-[Input Data] → [Transform 1] → [Transform 2] → [Output Data]
-```
-
-Every workflow answers three questions:
-1. **What data do I start with?** (inputs, files, APIs)
-2. **What transformations happen?** (fetch, analyze, format, send)
-3. **What data do I produce?** (files, messages, API calls)
-
-### Breaking Down a Task
-
-**Your Thinking Process** (applies to ANY request):
-
-User says: "Do X with specific-value-Y and send to specific-value-Z"
-
-**Step 1 - Extract the pattern**:
-- What's the general action? (fetch, analyze, send)
-- What are the variable parts? (sources, destinations, parameters)
-
-**Step 2 - Identify what becomes inputs**:
-- specific-value-Y → `source` input (they'll want different sources)
-- specific-value-Z → `destination` input (they'll want different destinations)
-- Any counts/limits → inputs with defaults
-
-**Step 3 - Map transformations**:
-1. Get data from [SOURCE] → Data
-2. Transform/analyze → Processed data
-3. Send to [DESTINATION] → Confirmation
-
-This pattern works whether it's Slack→Sheets, GitHub→Email, or Files→Database.
-
-### Choosing Node Categories
-
-Before discovering specific nodes, know which category you need:
-
-| Need | Category | Examples |
-|------|----------|----------|
-| **Get data** | Data retrieval | `read-file`, `http`, `mcp-slack-fetch`, `mcp-github-get` |
-| **Transform text** | AI/LLM processing | `llm` |
-| **Transform data** | Data processing | `llm` (with structured prompts), `shell` (jq, awk) |
-| **Store data** | Data storage | `write-file`, `mcp-slack-send`, `mcp-sheets-update` |
-| **Run commands** | System operations | `shell` |
-| **Make decisions** | Control flow | `llm` (outputs structured choices) |
-
-**Pro tip**: When in doubt, `llm` can handle most text-based transformations!
+- **Building from natural language** → Start at [The Agent Development Loop](#the-agent-development-loop)
+- **Have existing workflow to modify** → Load it, then go to [Step 4: DESIGN](#4-design-5-minutes)
+- **Testing MCP tools** → See [MCP Meta-Discovery](#mcp-meta-discovery-do-this-first)
+- **Debugging template errors** → See [Understanding Template Errors](#understanding-template-errors)
+- **Authentication issues** → See [Authentication & Credentials](#authentication--credentials)
+- **Workflow naming** → See [Workflow Naming Conventions](#workflow-naming-conventions)
 
 ---
 
@@ -142,7 +64,7 @@ Parse the user's request into structured requirements.
 - [ ] What are the outputs? (files, messages, database updates)
 - [ ] What transformations happen between input and output?
 - [ ] What external services are involved?
-- [ ] Does this match a common pattern? (see [Common Patterns](#common-workflow-patterns))
+- [ ] Does this match a common pattern? (see [Common Workflow Patterns](#common-workflow-patterns))
 
 **Example Thinking**:
 ```
@@ -156,45 +78,14 @@ Your Analysis:
 - Additional: Consider if timestamps, limits, formats should be configurable
 ```
 
-**Determine user intent**:
-- **"Run/execute [workflow]"** → Named execution (user knows workflow name)
-- **"Create/build [workflow]"** → Explicit building request
-- **Action request** → "Analyze X", "Send Y", "Generate Z" → Domain task execution
-- **"I need to [problem]"** → Exploration, needs guidance
+**Determine user intent using concrete signals**:
 
-**Assess user confidence**:
-
-High confidence signals (user knows what they want):
-- Lists specific steps or data flow
-- Names exact tools/services/APIs
-- Provides concrete input/output examples
-- Uses definitive language ("fetch X, transform Y, send to Z")
-
-Low confidence signals (user exploring):
-- Describes desired outcome without method ("track things better")
-- Uses uncertain language ("maybe", "somehow", "something like")
-- Asks questions in request ("is it possible to...", "how can I...")
-- Mentions problems without solutions
-
-→ High confidence: Proceed directly to discover/build
-→ Low confidence: Explore requirements first
-
-**Recognize action requests vs exploration**:
-
-Action request signals (wants immediate execution):
-- Action verbs: analyze, generate, send, update, process, calculate, export
-- Domain-specific terms: "customer churn", "revenue report", "team standup", "metrics"
-- Time-bound references: "this week", "today", "for October", "Q4 data"
-- Delegation tone: speaks as if asking a colleague who knows the job
-
-NOT action requests (needs help/guidance):
-- Problem descriptions: "I need to track X better"
-- Questions: "How can I...", "Is it possible to..."
-- Uncertainty: "something to help with...", "maybe we could..."
-- Feature requests: "It should also do X"
-
-→ Action request + workflow exists → Execute immediately (if params satisfied)
-→ Problem/exploration → Guide through discovery
+✅ **Concrete Intent Signals**:
+- User provides specific tool names → Execute workflow
+- User lists exact steps → High confidence, build directly
+- User uses action verbs + specific targets → Action request
+- User asks "how" or "is it possible" → Low confidence, explore
+- User describes problems without solutions → Needs guidance
 
 **Output**: Clear mental model + user intent + confidence level + action vs exploration
 
@@ -210,77 +101,25 @@ uv run pflow workflow discover "user's request in natural language"
 
 **What you get**: Matching workflows with names, descriptions, inputs/outputs, confidence scores, and reasoning.
 
-#### Processing Discovery Results
+#### Processing Discovery Results - Exact Decision Tree
 
-Always surface relevant workflows (70%+ confidence) regardless of user intent - they might not know what exists.
+**Based on match score and user intent:**
 
-**Based on user intent and match scores:**
-
-**User said "run/execute [workflow]"** (believes it exists):
-- **90-100% match + all params provided** → Execute immediately
-- **90-100% match + missing params** → Ask for missing params, then execute
-- **70-89% matches** → "No exact match. Found similar: [list]. Run one of these?"
-- **<70%** → "No workflow found matching that name. Want me to build it?"
-
-**User said "create/build [workflow]"** (wants something new):
-- **90-100% match** → "Found existing `workflow-name` that does this. Use it, modify it, or build new?"
-- **70-89% matches** → "Found similar workflows: [list]. Want to see/modify these first?"
-- **<70%** → Proceed to build new workflow (continue to Step 3)
-
-**User made an action request** (wants something done):
-Examples: "analyze customer data", "send report", "process invoices"
-- **80-100% match + all required params satisfied** → Execute immediately
-- **80-100% match + missing params** → "I need [specific param] to run this"
-- **<80% match** → "I don't have a workflow for that yet. Should I create one?"
-
-**User described problem/need** (wants help/exploration):
-Examples: "I need to track metrics better", "how can we monitor API usage?"
-
-→ **Low confidence/exploring users**:
-  1. "Let me help clarify what you need. Based on your request, you might want to:"
-     - Option A: [One interpretation of their request]
-     - Option B: [Another valid interpretation]
-     - Option C: Something else?
-  2. Based on their answer, show relevant workflows or suggest approach
-  3. Guide to decision: use existing, modify, or build custom
-
-→ **High confidence/clear requirements**:
-  - **90-100% match** → "Found `workflow-name` that does exactly this. Want to use it?"
-  - **70-89% matches** → Show differences clearly, ask preference
-  - **<70%** → "I'll build a new workflow for your requirements"
-
-#### Comparing Similar Workflows
-
-When presenting workflows with 70%+ match, explain differences clearly:
-
-```
-Found `workflow-name` (85% match):
-✅ Matches your requirements:
-  - [Features that align with request]
-❌ Differences:
-  - [What's different and why it matters]
-➕ Additional features:
-  - [Extra capabilities they didn't request]
-
-Impact: [How these differences affect their use case]
-```
-
-**Example comparison**:
-```
-Found `slack-to-sheets` (85% match):
-✅ Matches:
-  - Fetches from Slack
-  - Processes with AI
-  - Logs to Google Sheets
-❌ Differences:
-  - Analyzes sentiment (you want Q&A)
-  - Different sheet format
-➕ Additional:
-  - Sends summary email
-  - Archives messages
-
-Impact: Core flow matches, but needs prompt adjustment for Q&A instead of sentiment.
-```
+| User Intent | Match Score | Required Params | Action |
+|------------|-------------|-----------------|---------|
+| "run/execute [workflow]" | ≥90% | All present | Execute immediately |
+| "run/execute [workflow]" | ≥90% | Missing | Ask for params, then execute |
+| "run/execute [workflow]" | 70-89% | Any | "No exact match. Found similar: [list]. Run one?" |
+| "run/execute [workflow]" | <70% | Any | "No workflow found. Want me to build it?" |
+| "create/build [workflow]" | ≥90% | Any | "Found existing. Use it, modify, or build new?" |
+| "create/build [workflow]" | 70-89% | Any | "Found similar: [list]. See/modify these first?" |
+| "create/build [workflow]" | <70% | Any | Proceed to build new |
+| Action request | ≥80% | All present | Execute immediately |
+| Action request | ≥80% | Missing | "I need [params] to run this" |
+| Action request | <80% | Any | "Should I create a workflow for that?" |
+| Problem/exploration | ≥90% | Any | "Found [name] that does this. Want to use it?" |
+| Problem/exploration | 70-89% | Any | Show differences, ask preference |
+| Problem/exploration | <70% | Any | Guide through options |
 
 **Decision point**:
 - **Execute existing workflow** → Skip to execution
@@ -308,8 +147,8 @@ This uses pflow's internal LLM to intelligently select relevant nodes with compl
 - Usage requirements
 
 **Only use manual commands if AI discovery is unavailable**:
-- `pflow registry describe node1 node2` - Get specific node specs when you know exact names
-- Avoid `pflow registry list` - pollutes context with hundreds of unnecessary nodes
+- `uv run pflow registry describe node1 node2` - Get specific node specs when you know exact names
+- Avoid `uv run pflow registry list` - pollutes context with hundreds of unnecessary nodes
 
 **Output**: List of nodes with interfaces understood, ready for design phase
 
@@ -376,166 +215,116 @@ Pattern: [which pattern]
 Quick confirm - this matches what you need?"
 ```
 
-**For unclear requests** (any confidence):
-```
-"I need clarification on a few points:
-- When you say X, do you mean [option A] or [option B]?
-- Should the output be [format 1] or [format 2]?
-- What should happen if [edge case]?"
-```
-
 **Output**: User-confirmed plan that matches their intent
 
 ### 6. BUILD (10 minutes)
 
 **After plan is confirmed**, create the workflow JSON step-by-step.
 
-#### 🔴 The Input Decision Framework
+#### Step 6.1: Declare Workflow Inputs
 
-**Core Rule: If the user specified it, it should be an input.**
-
-The user is demonstrating ONE example. Build the GENERAL tool.
-
-**Decision Process:**
-```
-Is it a specific value (ID, path, number, name)?
-  → YES: Make it an INPUT
-
-Did user say "always", "only", or "hardcode"?
-  → YES: Safe to hardcode
-
-Is it a system constraint (date format, encoding)?
-  → YES: Hardcode it
-
-Everything else?
-  → Make it an INPUT (safer for reusability)
-```
-
-**Why**: Someone else will want to use this workflow with different values tomorrow.
-
-#### 🔴 Settings Auto-Population
-
-**Settings (`~/.pflow/settings.json`) auto-populate workflow inputs. Use ONLY for authentication secrets.**
-
-**The Rule**: Add to settings only if used for **authentication across ALL workflows**.
-
-**✅ Settings belong:**
-- API tokens: `replicate_api_token`, `github_token`, `openai_api_key`
-- Service credentials used universally
-- Note: LLM API keys can also be stored using the LLM library for usage in LLM nodes
-
-**❌ Settings don't belong:**
-- Resource IDs: `sheet_id`, `channel`, `repo` (workflow-specific)
-- Data parameters: `limit`, `input_file`, `threshold` (varies by use case)
-
-**Why**: Settings are global. Adding `input_name="123"` means every workflow uses that if input name matches.
-
-**Manage**: `pflow settings set-env KEY value` | **Precedence**: CLI > ENV >settings > defaults
-
-
-**For all user-provided values (following the rule above).**
+**For every user-specified value, create an input.**
 
 ```json
 {
   "inputs": {
-    "user_value": {
-      "type": "string",              // REQUIRED: string, number, boolean, array, object
-      "description": "What this is",  // REQUIRED: Clear explanation
-      "required": true                // REQUIRED: true or false
+    "channel": {
+      "type": "string",
+      "description": "Slack channel ID",
+      "required": true
+    },
+    "limit": {
+      "type": "number",
+      "description": "Number of messages to fetch",
+      "required": false,
+      "default": 10
     }
   }
 }
 ```
 
-**Validation**:
-- [ ] Each input is a value the USER provides (not generated by nodes)
+**Validation checklist**:
 - [ ] Each input has `type`, `description`, `required` fields
-- [ ] If `required: false`, has sensible `default` value
+- [ ] If `required: false`, has `default` value
 - [ ] No extra fields (no `example`, `format`, etc.)
+- [ ] Every user-provided value is an input
 
-#### Step 6.2: Create Nodes Array (5 min)
+#### Step 6.2: Create Nodes Array
 
-**One node at a time, in execution order.**
+**Build nodes in execution order:**
 
 ```json
 {
   "nodes": [
     {
-      "id": "descriptive-id",       // Unique, use hyphens
-      "type": "node-type",           // From registry
+      "id": "fetch-messages",
+      "type": "mcp-slack-fetch",
       "params": {
-        "required_param": "value",          // Required params
-        "input_ref": "${workflow_input}",   // Reference workflow input
-        "node_ref": "${previous.output}"    // Reference previous node
+        "channel": "${channel}",
+        "limit": "${limit}"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "params": {
+        "prompt": "Extract Q&A pairs from: ${fetch-messages.result}"
       }
     }
   ]
 }
 ```
 
-**Validation (per node)**:
-- [ ] ID is descriptive (not `node1`, `node2`)
-- [ ] Type exists in registry (checked with `pflow registry describe`)
-- [ ] All required params are set
-- [ ] Optional params only set if user requested or logic requires
-- [ ] Every `${variable}` is either a workflow input OR previous node output
-- [ ] Used `params` not `inputs` for node configuration
+**Per-node validation**:
+- [ ] ID is descriptive (not `node1`)
+- [ ] Type exists (verified with `pflow registry describe`)
+- [ ] Required params are set
+- [ ] Every `${variable}` is either input or previous node output
 
-#### Step 6.3: Create Edges Array (1 min)
+#### Step 6.3: Create Edges Array
 
-**Connect nodes in execution order.**
+**Connect nodes linearly:**
 
 ```json
 {
   "edges": [
-    {"from": "node1", "to": "node2"},
-    {"from": "node2", "to": "node3"}
+    {"from": "fetch-messages", "to": "analyze"},
+    {"from": "analyze", "to": "save-results"}
   ]
 }
 ```
 
-**Validation**:
-- [ ] Forms a LINEAR chain (no branches)
-- [ ] Each node appears in order
-- [ ] Each node has exactly ONE outgoing edge (except last)
-- [ ] No cycles (node1 → node2 → node1)
+**Edge validation**:
+- [ ] Forms LINEAR chain (no branches)
+- [ ] Each node has ONE outgoing edge (except last)
+- [ ] No cycles
 
-#### Step 6.4: Declare Workflow Outputs (2 min)
+#### Step 6.4: Declare Workflow Outputs
 
-**Expose specific results to users.**
+**Expose final results:**
 
 ```json
 {
   "outputs": {
-    "result_name": {
-      "source": "${node_id.output_key}",  // REQUIRED: Template expression
-      "description": "What this contains"  // REQUIRED: Clear explanation
+    "qa_pairs": {
+      "source": "${analyze.response}",
+      "description": "Extracted Q&A pairs"
     }
   }
 }
 ```
 
-**Validation**:
-- [ ] Each output has ONLY `source` and `description` fields
-- [ ] `source` uses `${}` template syntax
-- [ ] Referenced node outputs exist (checked with `pflow registry describe`)
-- [ ] Most important output is FIRST
-- [ ] Follows output strategy (file workflows: confirmations, analysis: full results)
+**Output validation**:
+- [ ] Only `source` and `description` fields
+- [ ] Most important output first
+- [ ] Skip outputs for automation workflows
 
-#### Build Checklist Summary
-
-Before moving to VALIDATE:
-- [ ] Workflow inputs declared for all user-provided values
-- [ ] Nodes use descriptive IDs
-- [ ] Node params use defaults (only override when necessary)
-- [ ] All templates (`${...}`) are either inputs or node outputs
-- [ ] Edges form a linear chain
-- [ ] Workflow outputs expose useful data
-- [ ] Used `params` not `inputs` for nodes
-
-**Output**: Complete workflow.json file
-
-**Don't worry about**: `ir_version` or empty `edges` - these are auto-added!
+#### Complete BUILD Checklist
+- [ ] All user values → inputs
+- [ ] Nodes in execution order
+- [ ] All templates resolve
+- [ ] Edges form linear chain
+- [ ] Outputs expose useful data
 
 ### 7. VALIDATE (2 minutes per iteration)
 
@@ -544,12 +333,6 @@ Catch structural errors before execution.
 ```bash
 uv run pflow --validate-only workflow.json
 ```
-
-**What gets validated**:
-- ✅ Schema compliance (JSON structure)
-- ✅ Data flow correctness (execution order, no cycles)
-- ✅ Template structure (syntax, node references, output paths)
-- ✅ Node types exist
 
 **Process**:
 1. Run validation
@@ -568,27 +351,40 @@ Execute the workflow to verify it works.
 uv run pflow workflow.json param1=value param2=value
 ```
 
-**When to discover `result: Any` output structures**:
+#### When to Investigate Output Structures
 
-Only investigate MCP tool outputs when:
-- ✅ You need nested data in templates: `${fetch.result.messages[0].text}`
-- ✅ You need to expose nested fields in workflow outputs (Avoid in outputs unless necessary or explicitly asked for by the user)
-- ✅ Your templates reference specific structure
+**Many nodes return `result: Any` - investigate ONLY when needed:**
 
-Skip output discovery when:
-- ❌ Just passing data through: `${fetch.result}` works fine
-- ❌ Sending to LLM: `prompt: "Analyze: ${data.result}"` - LLM handles any structure
-- ❌ Output is the final result: workflow ends there
+✅ **Investigate when:**
+- Templates need nested data: `${fetch.result.messages[0].text}`
+- Workflow outputs expose nested fields
+- User wants to optimize data flow
 
-**How to discover output structure** (if needed):
+❌ **Skip investigation when:**
+- Just passing data through: `${fetch.result}` works fine
+- Sending to LLM: LLM handles any structure
+- Output is the final result
+
+#### How to Discover Output Structure
+
 ```bash
-# 1. Create minimal test workflow
+# 1. Run with trace flag
 uv run pflow --trace test-workflow.json
 
-# 2. Examine trace
+# 2. Examine the trace file
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[0].outputs'
 
-# 3. Use discovered structure in templates
+# 3. See actual structure like:
+{
+  "result": {
+    "messages": [
+      {"text": "Hello", "user": "U123", "ts": "1234567890"}
+    ],
+    "has_more": false
+  }
+}
+
+# 4. Now you can use: ${fetch.result.messages[0].text}
 ```
 
 **Output**: Working workflow that executes successfully
@@ -605,10 +401,8 @@ Improve the workflow for production use.
 
 **What you CANNOT currently do**:
 - ❌ Add error handling (no branching in IR)
-- ❌ Add try-catch patterns
 - ❌ Add conditional flows (if-then-else)
-- ❌ Add retry logic (handled by `--no-repair` externally)
-
+- ❌ Add retry logic
 
 **Output**: Production-ready workflow
 
@@ -625,400 +419,13 @@ uv run pflow workflow save .pflow/workflows/your-draft.json workflow-name "Clear
 uv run pflow workflow save .pflow/workflows/your-draft.json workflow-name "Description" --generate-metadata --delete-draft
 ```
 
-See [Saving Workflows](#saving-workflows) section below for complete details.
-
-**Output**: Reusable workflow available globally as `pflow workflow-name`
-
 **Always tell the user how to run their saved workflow**:
 ```bash
-# If no inputs (all hardcoded):
-uv run pflow workflow-name
-
-# If has inputs (show with user's values):
+# Show with user's actual values:
 uv run pflow workflow-name channel=C123 sheet_id=abc123
 ```
 
----
-
-## Common Workflow Patterns
-
-Learn to recognize these patterns in user requests:
-
-### Pattern 1: Fetch → Transform → Store
-
-```
-[Data Source] → [LLM/Processing] → [Data Sink]
-```
-
-**Example**: Read file → Analyze → Write summary
-
-**Nodes**:
-```json
-{
-  "nodes": [
-    {"id": "read", "type": "read-file", "params": {"file_path": "${input_file}"}},
-    {"id": "analyze", "type": "llm", "params": {"prompt": "Summarize: ${read.content}"}},
-    {"id": "write", "type": "write-file", "params": {"content": "${analyze.response}", "file_path": "summary.md"}}
-  ],
-  "edges": [
-    {"from": "read", "to": "analyze"},
-    {"from": "analyze", "to": "write"}
-  ]
-}
-```
-
-**Use when**: Simple ETL (Extract, Transform, Load) tasks
-
-### Pattern 2: Multi-Source → Combine → Process
-
-```
-[Source A] ──┐
-             ├─→ [LLM Combines] → [Process]
-[Source B] ──┘
-```
-
-**Example**: Fetch GitHub PR + issues → Analyze together → Generate report
-
-**Nodes**:
-```json
-{
-  "nodes": [
-    {"id": "get-pr", "type": "mcp-github-get-pr", "params": {"number": "${pr_number}"}},
-    {"id": "get-issues", "type": "mcp-github-list-issues", "params": {"state": "open"}},
-    {"id": "analyze", "type": "llm", "params": {
-      "prompt": "PR: ${get-pr.result}\n\nIssues: ${get-issues.result}\n\nGenerate report"
-    }}
-  ],
-  "edges": [
-    {"from": "get-pr", "to": "analyze"},
-    {"from": "get-issues", "to": "analyze"}
-  ]
-}
-```
-
-**Use when**: Combining data from multiple sources
-
-### Pattern 3: Fetch → Decide → Act
-
-```
-[Data Source] → [LLM Decision] → [Conditional Action]
-```
-
-**Example**: Get PR → Check if approved → Take action
-
-**Current limitation**: No native branching. Workaround: LLM outputs action command as text.
-
-**Nodes**:
-```json
-{
-  "nodes": [
-    {"id": "get-pr", "type": "mcp-github-get-pr", "params": {"number": "${pr}"}},
-    {"id": "decide", "type": "llm", "params": {
-      "prompt": "Is this PR approved? ${get-pr.result}\nRespond ONLY with: MERGE or COMMENT"
-    }},
-    {"id": "comment", "type": "mcp-github-comment", "params": {
-      "body": "Decision: ${decide.response}"
-    }}
-  ]
-}
-```
-
-**Note**: True branching not yet supported. This pattern works for simple cases where you can describe both paths in one action.
-
-**Use when**: Need to make decisions based on data content
-
-### Pattern 4: Multi-Service Coordination
-
-```
-[Service A] → [Transform] → [Service B] → [Service C]
-```
-
-**Example**: Slack → AI analysis → Slack response → Sheets logging
-
-**Nodes**:
-```json
-{
-  "nodes": [
-    {"id": "fetch", "type": "mcp-slack-fetch", "params": {"channel": "C123"}},
-    {"id": "analyze", "type": "llm", "params": {"prompt": "Answer questions: ${fetch.result}"}},
-    {"id": "respond", "type": "mcp-slack-send", "params": {"channel": "C123", "text": "${analyze.response}"}},
-    {"id": "log", "type": "mcp-sheets-update", "params": {"values": [["${analyze.response}"]]}}
-  ],
-  "edges": [
-    {"from": "fetch", "to": "analyze"},
-    {"from": "analyze", "to": "respond"},
-    {"from": "respond", "to": "log"}
-  ]
-}
-```
-
-**Use when**: Orchestrating multiple external services
-
-### Pattern 5: Enrich → Process → Store
-
-```
-[Base Data] → [Enrich with Context] → [Process] → [Store]
-```
-
-**Example**: Get issue → Fetch related PRs → Analyze → Update issue
-
-**Nodes**:
-```json
-{
-  "nodes": [
-    {"id": "get-issue", "type": "mcp-github-get-issue", "params": {"number": "${issue}"}},
-    {"id": "get-prs", "type": "mcp-github-list-prs", "params": {"state": "open"}},
-    {"id": "analyze", "type": "llm", "params": {
-      "prompt": "Issue: ${get-issue.result}\nRelated PRs: ${get-prs.result}\nGenerate analysis"
-    }},
-    {"id": "update", "type": "mcp-github-update-issue", "params": {
-      "number": "${issue}",
-      "body": "${analyze.response}"
-    }}
-  ]
-}
-```
-
-**Use when**: Need to gather context before processing
-
----
-
-## Pattern Library
-
-Quick examples showing the input extraction principle across different domains:
-
-### File Operations
-```
-User: "Convert data.csv to JSON"
-Your inputs: {
-  "input_file": {"type": "string", "required": true, "description": "Source file path"},
-  "output_format": {"type": "string", "required": false, "default": "json", "description": "Output format"}
-}
-Why: Tomorrow they'll convert "other.csv" or want XML output
-```
-
-### API Integrations
-```
-User: "Get issues from repo owner/name"
-Your inputs: {
-  "repo": {"type": "string", "required": true, "description": "Repository in owner/name format"}
-}
-Why: Reusable for any repository
-```
-
-### Threshold Monitoring
-```
-User: "Alert when value exceeds 100"
-Your inputs: {
-  "threshold": {"type": "number", "required": false, "default": 100, "description": "Alert threshold"}
-}
-Why: Different scenarios need different thresholds
-```
-
-### Data Processing
-```
-User: "Process last 30 items with batch size 5"
-Your inputs: {
-  "item_count": {"type": "number", "required": false, "default": 30},
-  "batch_size": {"type": "number", "required": false, "default": 5}
-}
-Why: Optimal values vary by use case
-```
-
-**Key Pattern**: Every specific value becomes a configurable input unless explicitly told otherwise.
-
----
-
-## Recognizing Action Requests vs Exploration
-
-Understanding the difference between users wanting **immediate action** vs **needing help**.
-
-### Action Requests (Execute immediately if possible)
-
-**Examples**:
-```
-"Generate the weekly sales report" or "I need sales report now for this week"
-"Send standup summary to team" or "Run the standup flow""
-"Process today's transactions" or "Can we process today's transactions?"
-```
-
-**Pattern**: [Action/need/question] + [business object/workflow] + [urgency/specifics]
-- Use your best judgement to determine if the user is asking for an action.
-- If it seems like you should know what to do, thats a clear signal that the user is asking for execution.
-
-**Response**: Find matching workflow and execute if possible. Don't compare alternatives.
-
-### Exploration Requests (Need guidance)
-
-**Examples**:
-```
-"I need something to track customer engagement"
-"How can we monitor our API usage?"
-"We should analyze our support tickets somehow"
-"I want to automate our reporting"
-"Is it possible to connect Stripe to Sheets?"
-"Maybe we could track deployments better"
-```
-
-**Pattern**: [Problem/need] + [uncertainty] + [no specific action]
-
-**Response**: Explore options, guide to solution, show comparisons.
-
-### Key Principle: Missing HOW ≠ Confusion
-
-When users say "analyze customer churn" without mentioning implementation:
-- They're not confused about what they want
-- They're delegating the HOW to you
-- They expect you to handle the details
-- Execute if you can, ask only for missing required params
-
----
-
-## Progressive Learning Path
-
-Start simple, build complexity gradually.
-
-### Level 1: Single Transform (5 minutes)
-
-**Goal**: Understand basic structure
-
-```json
-{
-  "nodes": [
-    {
-      "id": "process",
-      "type": "llm",
-      "params": {
-        "prompt": "${input}"
-      }
-    }
-  ],
-  "inputs": {
-    "input": {
-      "type": "string",
-      "required": true,
-      "description": "Text to process"
-    }
-  }
-}
-```
-
-**Try it**:
-```bash
-uv run pflow --validate-only level1.json
-uv run pflow level1.json input="What is 2+2?"
-```
-
-**What you learn**:
-- Basic JSON structure
-- Input declarations
-- Validation workflow
-
-### Level 2: Chain Two Nodes (10 minutes)
-
-**Goal**: Understand data flow with templates
-
-```json
-{
-  "nodes": [
-    {
-      "id": "read",
-      "type": "read-file",
-      "params": {
-        "file_path": "${file}"
-      }
-    },
-    {
-      "id": "analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "Summarize this file:\n\n${read.content}"
-      }
-    }
-  ],
-  "edges": [
-    {"from": "read", "to": "analyze"}
-  ],
-  "inputs": {
-    "file": {
-      "type": "string",
-      "required": true,
-      "description": "File path to analyze"
-    }
-  }
-}
-```
-
-**Try it**:
-```bash
-uv run pflow level2.json file="README.md"
-```
-
-**What you learn**:
-- Template variables `${node.output}`
-- Edge connections
-- Data flow between nodes
-
-### Level 3: Multi-Step Pipeline (20 minutes)
-
-**Goal**: Coordinate multiple operations
-
-```json
-{
-  "nodes": [
-    {
-      "id": "fetch",
-      "type": "http",
-      "params": {
-        "url": "${api_url}",
-        "method": "GET"
-      }
-    },
-    {
-      "id": "analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "Extract key insights from this API response:\n\n${fetch.response}"
-      }
-    },
-    {
-      "id": "save",
-      "type": "write-file",
-      "params": {
-        "file_path": "analysis.md",
-        "content": "# Analysis\n\n${analyze.response}"
-      }
-    }
-  ],
-  "edges": [
-    {"from": "fetch", "to": "analyze"},
-    {"from": "analyze", "to": "save"}
-  ],
-  "inputs": {
-    "api_url": {
-      "type": "string",
-      "required": true,
-      "description": "API endpoint to fetch data from"
-    }
-  }
-}
-```
-
-**What you learn**:
-- Multi-step pipelines
-- HTTP operations
-- File operations
-
-### Level 4: Real-World Integration (30+ minutes)
-
-**Goal**: Use MCP tools, handle complex data
-
-See [Complete Example](#complete-example-building-a-complex-workflow) for a full Slack + Sheets workflow.
-
-**What you learn**:
-- MCP tool usage
-- Multi-service coordination
-- Production patterns
+**Output**: Reusable workflow available globally
 
 ---
 
@@ -1033,89 +440,14 @@ See [Complete Example](#complete-example-building-a-complex-workflow) for a full
 - [ ] I can draw the data flow on paper
 
 ### ✅ Workflow Discovery Complete (Step 2 - MANDATORY)
-- [ ] I've run `pflow workflow discover "user's request"`
+- [ ] I've run `uv run pflow workflow discover "user's request"`
 - [ ] If 70%+ match found: I've shown it to user and confirmed their decision
 - [ ] Decision made: execute existing, modify existing, or build new
 
 ### ✅ Node Discovery Complete (Step 3 - if building new)
-- [ ] I've run `pflow registry discover "specific task description"`
-- [ ] I have node specs (from discovery output or `pflow registry describe`)
+- [ ] I've run `uv run pflow registry discover "specific task description"`
+- [ ] I have node specs (from discovery output or `uv run pflow registry describe`)
 - [ ] I understand which outputs are `Any` type and if I need to investigate them
-
-### ✅ Critical Nodes Tested (Recommended - Step 3.5)
-
-**When to test nodes individually:**
-
-**✅ Test when:**
-- Tool purpose is unclear from name/description alone
-- Node outputs `Any` type and you need nested fields
-- Authentication required (verify credentials work)
-- Parameter format is ambiguous (arrays vs objects, nested structures)
-- Tool has constraints not visible in specs
-
-**❌ Skip testing when:**
-- Tool purpose is immediately clear (e.g., "sends email to address")
-- Simple, well-documented parameters
-- You won't use nested output fields
-
-**MCP Meta-Discovery (Do This First)**:
-
-Before testing individual MCP tools, check if the server has helper tools:
-
-```bash
-# Search or discover
-pflow registry search "servername" / "toolname" / "keyword" # Prefer this over list
-pflow registry list | grep mcp-servername
-
-# Look for meta-tools that help you understand capabilities:
-# - Tools ending in: LIST, GET_SCHEMA, GET_DOCS, GET_EXAMPLES
-# - Tools for exploration: SEARCH, QUERY, BROWSE, DESCRIBE
-```
-
-**Common helper tool patterns:**
-- `LIST_SCHEMAS` - Shows available data structures
-- `GET_DOCUMENTATION` - Returns detailed tool docs
-- `LIST_EXAMPLES` - Provides usage examples
-- `DESCRIBE_*` - Explains specific resources
-- `GET_METADATA` - Returns server capabilities
-
-**Example exploration flow:**
-
-```bash
-# 1. Find potential helper tools
-pflow registry search "datastore"
-
-# Found: GET_SCHEMA, LIST_TABLES, CREATE_RECORD, QUERY_RECORDS
-
-# 2. Read more about the tool
-pflow registry describe mcp-datastore-LIST_TABLES
-
-# Understand the tool params (database_name) and expected outputs (array of table names)
-
-# 3. Use helper tools to understand before building
-pflow registry run mcp-datastore-LIST_TABLES database_name="my_database" --show-structure
-# → Now I understand what tables exist and their structure
-
-# 4. Read more about the tool
-pflow registry describe mcp-datastore-CREATE_RECORD
-
-# Understand the tool params (table, data) and expected outputs (record ID)
-
-# 3. Test unclear tools with realistic data
-pflow registry run mcp-datastore-CREATE_RECORD table="users" data='{"name":"test"}' --show-structure
-# → Reveals actual output structure and constraints
-```
-
-**Testing Checklist** (only for nodes you decided to test):
-- [ ] Discovered and used MCP helper tools (if available)
-- [ ] Tested with realistic parameters
-- [ ] Seen actual output structure with `--show-structure`
-- [ ] Identified any undocumented constraints or limitations
-- [ ] Confirmed auth/credentials work (if required)
-
-**Why this matters:** MCP tool descriptions are often incomplete. Documentation may not reflect actual behavior. Testing with real data reveals constraints invisible in specs. Helper tools within the server provide the fastest path to understanding.
-
-**Time investment:** 2-5 minutes of targeted testing saves 20+ minutes of debugging.
 
 ### ✅ Design Validated
 - [ ] My workflow is a LINEAR chain (no parallel branches)
@@ -1129,9 +461,77 @@ pflow registry run mcp-datastore-CREATE_RECORD table="users" data='{"name":"test
 - [ ] I know which workflow inputs to declare
 - [ ] I know which workflow outputs to expose
 
-**Time investment**: 5-10 minutes on this checklist saves 30+ minutes of debugging.
+**If you can't check all boxes**: Go back to Step 2 (workflows), Step 3 (nodes), or Step 4 (design) as needed.
 
-**If you can't check all boxes**: Go back to Step 2 (workflows), Step 3 (nodes), or Step 4 (design) as needed. If anything is unclear or if the task is impossible to build, ask the user for clarification by informing them of the current situation.
+---
+
+## How to Think About Workflows
+
+A workflow is a **reusable data transformation tool**. Users show you one example, but you build for all cases.
+
+### One Workflow or Multiple?
+
+**Critical decision: Should this be one workflow or several?**
+
+#### Build ONE Workflow When:
+- Steps are always done together
+- Data flows between all steps
+- User wants single command to run
+
+**Example**: "Fetch Slack messages, extract Q&A, log to sheets"
+→ ONE workflow (always done as a sequence)
+
+#### Build MULTIPLE Workflows When:
+- Steps are independent
+- User might want to run separately
+- Different schedules/triggers
+
+**Example**: "Monitor GitHub PRs, issues, and commits"
+→ THREE workflows (each monitoring task is independent)
+
+#### The Litmus Test:
+Ask: "Would a user ever want to do just step X without Y?"
+- If YES → Separate workflows
+- If NO → Combined workflow
+
+**When unsure, ask**:
+"Should this be one workflow that does everything, or separate workflows you can run independently?"
+
+### The Mental Model
+
+```
+[Input Data] → [Transform 1] → [Transform 2] → [Output Data]
+```
+
+Every workflow answers three questions:
+1. **What data do I start with?** (inputs, files, APIs)
+2. **What transformations happen?** (fetch, analyze, format, send)
+3. **What data do I produce?** (files, messages, API calls)
+
+### 🔴 The Golden Rule
+
+**Users show you ONE example. You build the GENERAL tool.**
+
+Every specific value they provide is demonstrating what COULD be configured, not what MUST be hardcoded.
+
+### Choosing Node Categories
+
+**Critical: Choose the right tool for each job**
+
+| Need | Best Choice | Why | Avoid |
+|------|------------|-----|-------|
+| **Parse JSON/CSV** | `shell` with jq/awk | Fast, deterministic | LLM (overkill) |
+| **Extract meaning** | `llm` | Understands context | Shell (can't understand) |
+| **Fetch from API** | `http` or MCP tool | Direct access | LLM (can't fetch) |
+| **Transform text** | `llm` | Flexible | Shell (limited) |
+| **Count/filter** | `shell` | Efficient | LLM (wasteful) |
+| **Make decisions** | `llm` | Can reason | Shell (no logic) |
+
+**The Right Tool Rule**:
+- **Structured data** → Shell/direct tools
+- **Unstructured text** → LLM
+- **External services** → MCP tools
+- **File operations** → File nodes (not shell)
 
 ---
 
@@ -1139,7 +539,7 @@ pflow registry run mcp-datastore-CREATE_RECORD table="users" data='{"name":"test
 
 ### 🚨 Critical Constraints (READ FIRST)
 
-**These are HARD LIMITATIONS of the workflow system. Violating them will cause execution failures.**
+**These are HARD LIMITATIONS of the workflow system.**
 
 #### 1. Sequential Execution Only
 
@@ -1156,72 +556,56 @@ fetch-data → analyze
 fetch-data → analyze → visualize
 ```
 
-**Why**: Each node can have ONLY ONE outgoing edge in the `edges` array.
-
-**Workaround**: Later nodes can reference MULTIPLE earlier outputs:
-```json
-{
-  "id": "visualize",
-  "params": {
-    "data": "${fetch-data.content}",      // Reference original data
-    "insights": "${analyze.response}"      // Reference analysis result
-  }
-}
-```
-
 #### 2. Template Variables Must Resolve
 
 **Every `${variable}` MUST be either:**
 - A declared workflow input: `"inputs": {"variable": {...}}`
 - A node output: `${node_id.output_key}`
 
-**❌ WRONG - Undefined variable:**
-```json
-{"file_path": "${output_file}"}  // Not declared anywhere
-```
-
-**✅ CORRECT - Declared in inputs:**
-```json
-{
-  "inputs": {
-    "output_file": {
-      "type": "string",
-      "required": true,
-      "description": "Where to save results"
-    }
-  },
-  "nodes": [{
-    "params": {"file_path": "${output_file}"}
-  }]
-}
-```
-
 #### 3. Node Output References Must Exist
 
 **You can only reference outputs that nodes actually produce.**
 
-**❌ WRONG - Node doesn't output this:**
-```json
-{"content": "${read.text}"}  // read-file outputs 'content', not 'text'
+**Rule**: ALWAYS run `uv run pflow registry describe node-type` before writing templates.
+
+### The Input Decision Framework
+
+**Core Rule: If the user specified it, it should be an input.**
+
+**Decision Process:**
+```
+Is it a specific value (ID, path, number, name)?
+  → YES: Make it an INPUT
+
+Did user say "always", "only", or "hardcode"?
+  → YES: Safe to hardcode
+
+Is it a system constraint (date format, encoding)?
+  → YES: Hardcode it
+
+Everything else?
+  → Make it an INPUT (safer for reusability)
 ```
 
-> Carefully read the node documentation to understand the exact output structure.
+### Authentication & Credentials
 
-**✅ CORRECT - Check node docs first:**
-```bash
-pflow registry describe read-file  # Shows it outputs 'content'
-```
-```json
-{"content": "${read.content}"}  // Correct output name
-```
+**Settings (`~/.pflow/settings.json`) are ONLY for authentication secrets.**
 
-**Rule**: ALWAYS run `pflow registry describe node-type` before writing templates.
+**✅ Settings belong:**
+- API tokens: `replicate_api_token`, `github_token`, `openai_api_key`
+- Service credentials used universally
+- LLM API keys (can also use LLM library)
 
----
+**❌ Settings don't belong:**
+- Resource IDs: `sheet_id`, `channel`, `repo` (workflow-specific)
+- Data parameters: `limit`, `input_file`, `threshold` (varies by use case)
 
-### Minimal Workflow Structure
+**Manage**: `uv run pflow settings set-env KEY value`
+**Precedence**: CLI > ENV > settings > defaults
 
-You only need essentials:
+### Workflow Structure Essentials
+
+#### Minimal Workflow Structure
 
 ```json
 {
@@ -1247,22 +631,9 @@ You only need essentials:
   },
   "outputs": {
     "output_name": {
-      "source": "node_id.output_key",
+      "source": "${node_id.output_key}",
       "description": "What this output contains"
     }
-  }
-}
-```
-
-### Node Structure
-
-```json
-{
-  "id": "descriptive-id",      // Unique within workflow (use hyphens)
-  "type": "node-type",          // From registry (e.g., "llm", "read-file")
-  "params": {                   // Use "params" NOT "inputs"!
-    "param1": "value",
-    "param2": "${template}"
   }
 }
 ```
@@ -1272,237 +643,93 @@ You only need essentials:
 - ID must be unique within workflow
 - Type must exist in registry
 
----
-
-### Node Parameter Philosophy
+#### Node Parameter Philosophy
 
 **Default Rule: Use node defaults whenever possible. Only set parameters the user explicitly requests.**
 
-#### Why This Matters
+**When to Set Parameters:**
+- ✅ User explicitly requests specific values
+- ✅ Required parameter (no default exists)
+- ✅ Workflow logic requires non-default behavior
 
-Nodes have **sensible defaults** built-in. Overriding them:
-- ❌ Wastes tokens (more characters in JSON)
-- ❌ May use outdated values from your training data
-- ❌ Overrides improvements in node defaults
-- ❌ Makes workflows less maintainable
+**When NOT to Set:**
+- ❌ Parameter has a good default
+- ❌ User didn't mention it
+- ❌ You're guessing what might be better
 
-#### When to Set Parameters
-
-**✅ SET when:**
-- User explicitly requests specific values
-- Required parameter (no default exists)
-- Workflow logic requires non-default behavior
-
-**❌ DON'T SET when:**
-- Parameter has a good default
-- User didn't mention it
-- You're guessing what might be better
-
-#### Examples
-
-**❌ WRONG - Over-specification:**
-```json
-{
-  "id": "analyze",
-  "type": "llm",
-  "params": {
-    "prompt": "Analyze this data: ${read.content}",
-    "model": "gpt-4",              // ❌ User didn't request specific model
-    "temperature": 0.7,            // ❌ User didn't request specific temperature
-    "max_tokens": 1000,            // ❌ User didn't request token limit
-    "system": "You are a helpful assistant"  // ❌ Generic, not needed
-  }
-}
-```
-
-**✅ CORRECT - Minimal specification:**
-```json
-{
-  "id": "analyze",
-  "type": "llm",
-  "params": {
-    "prompt": "Analyze this data: ${read.content}"
-    // ✅ That's it! Node uses sensible defaults for model, temperature, etc.
-  }
-}
-```
-
-**✅ CORRECT - User-requested overrides:**
-```json
-// User said: "Use GPT-4 with low temperature for consistency"
-{
-  "id": "analyze",
-  "type": "llm",
-  "params": {
-    "prompt": "Analyze this data: ${read.content}",
-    "model": "gpt-4",              // ✅ User explicitly requested
-    "temperature": 0.2             // ✅ User wants consistency
-  }
-}
-```
-
-#### Common Defaulted Parameters
-
-These typically have good defaults (don't set unless requested):
-
-| Node Type | Defaulted Params | When to Override |
-|-----------|------------------|------------------|
-| `llm` | model, temperature, max_tokens | User requests specific model/behavior |
-| `read-file` | encoding | Non-UTF-8 file |
-| `write-file` | encoding, mode | Specific encoding or append mode |
-| `http` | method, headers | POST requests or auth needed |
-| `shell` | shell, timeout | Specific shell or long-running command |
-
-**Check what's required:**
-```bash
-pflow registry describe node-type  # Shows required vs optional params
-```
-
-#### The Decision Process
-
-```
-Need to add a parameter?
-│
-├─ Is it REQUIRED by the node? → YES → Add it
-│
-├─ Did user EXPLICITLY request it? → YES → Add it
-│
-└─ Does workflow LOGIC require it? → YES → Add it
-   │
-   └─ Otherwise → SKIP IT (use default)
-```
-
-### Template Variable Syntax
+#### Template Variable Syntax
 
 **Templates (`${...}`) are how data flows through your workflow.**
 
-#### Decision Tree: What Goes Where?
-
-**When you need to reference a value in node params, ask:**
+##### Decision Tree: What Goes Where?
 
 ```
-┌─ Is this value PROVIDED BY USER when running workflow?
-│
+Is this value PROVIDED BY USER when running workflow?
 ├─ YES → Declare in "inputs" section
-│         THEN reference as: ${input_name}
+│        THEN reference as: ${input_name}
 │
-│         Example:
-│         "inputs": {"repo": {type, description, required}}
-│         "params": {"repository": "${repo}"}
+│        Example:
+│        "inputs": {"repo": {...}}
+│        "params": {"repository": "${repo}"}
 │
 └─ NO → Is this value GENERATED BY A NODE?
-   │
-   ├─ YES → Reference as: ${node_id.output_key}
-   │         CHECK node output first: pflow registry describe node-type
-   │
-   │         Example:
-   │         "params": {"content": "${read.content}"}
-   │
-   └─ NO → It's a STATIC VALUE
-             Use literal value (no template)
+    ├─ YES → Reference as: ${node_id.output_key}
+    │        CHECK first: pflow registry describe node-type
+    │
+    │        Example:
+    │        "params": {"content": "${read.content}"}
+    │
+    └─ NO → It's a STATIC VALUE
+            Use literal value (no template)
 
-             Example:
-             "params": {"encoding": "utf-8"}
+            Example:
+            "params": {"encoding": "utf-8"}
 ```
 
-#### The Golden Rule
-
-**🔴 Every `${variable}` must be EITHER:**
-1. **A workflow input**: Declared in `"inputs": {"variable": {...}}`
-2. **A node output**: From an earlier node `${node_id.output_key}`
-
-**If it's neither, validation will fail.**
-
-#### Template Syntax Patterns
-
-Once you know the source, use the right syntax:
+##### Common Template Patterns
 
 ```json
 {
   "params": {
-    "file_path": "${input_file}",           // ✅ Workflow input
-    "content": "${read.content}",           // ✅ Node output (simple)
-    "text": "${analyze.response}",          // ✅ Chained node data
-    "nested": "${fetch.result.data}",       // ✅ Nested object access
-    "array": "${items.result[0].name}",     // ✅ Array indexing
-    "hardcoded": "utf-8"                    // ✅ Static value (no template)
+    "file_path": "${input_file}",           // Workflow input
+    "content": "${read.content}",           // Node output (simple)
+    "nested": "${fetch.result.data}",       // Nested object access
+    "array": "${items.result[0].name}",     // Array indexing
+    "hardcoded": "utf-8"                    // Static value (no template)
   }
 }
 ```
 
-#### Common Mistakes
+##### Common Mistakes & Fixes
 
-**❌ WRONG - Using ${} for node output that should be an input:**
+❌ **WRONG - Template for hardcoded value:**
 ```json
-// User provides repo when running workflow
-"params": {"repo": "${github.repo}"}  // ❌ No github node exists
+"params": {"format": "${json}"}  // No 'json' input exists
 ```
-
-**✅ CORRECT - Declare as input:**
+✅ **CORRECT:**
 ```json
-"inputs": {
-  "repo": {"type": "string", "required": true, "description": "GitHub repo"}
-},
-"params": {"repo": "${repo}"}  // ✅ References workflow input
+"params": {"format": "json"}  // Static value
 ```
 
-**❌ WRONG - Declaring input for node output:**
+❌ **WRONG - Missing template syntax:**
 ```json
-"inputs": {
-  "analysis": {  // ❌ Generated by llm node, not user
-    "type": "string",
-    "required": true,
-    "description": "Analysis result"
-  }
-}
+"params": {"data": "analyze.response"}  // Missing ${}
 ```
-
-**✅ CORRECT - Reference node output:**
+✅ **CORRECT:**
 ```json
-// No input declaration needed
-"params": {"analysis": "${llm.response}"}  // ✅ References node output
+"params": {"data": "${analyze.response}"}
 ```
 
-**❌ WRONG - Template without declaration:**
+❌ **WRONG - User value not declared as input:**
 ```json
-"params": {"file": "${output_path}"}  // ❌ output_path not declared anywhere
+"params": {"limit": "${10}"}  // '10' is not an input
 ```
-
-**✅ CORRECT - Declare then reference:**
+✅ **CORRECT:**
 ```json
-"inputs": {
-  "output_path": {"type": "string", "required": true, "description": "Output file"}
-},
-"params": {"file": "${output_path}"}  // ✅ Declared in inputs
-```
+"inputs": {"limit": {"type": "number", "default": 10, ...}},
+"params": {"limit": "${limit}"}
 
-### MCP Tool Nodes
-
-MCP tools use the format: `mcp-{server}-{tool}`
-
-Example json:
-
-```json
-{
-  "id": "fetch-slack",
-  "type": "mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY",
-  "params": {
-    "channel": "C09C16NAU5B",
-    "limit": 10
-  }
-}
-```
-
-Get full specs with:
-```bash
-uv run pflow registry describe mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY
-```
-
-### Workflow Inputs
-
-**Inputs define the API contract for your workflow - what users provide when running it.**
-
-#### Input Object Structure Rules
+#### Workflow Inputs
 
 **Each input MUST be an object with these REQUIRED fields:**
 
@@ -1519,99 +746,7 @@ uv run pflow registry describe mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTO
 "default": "value"  // OPTIONAL: Only when required is false
 ```
 
-#### Validation Checklist
-
-Before declaring an input, verify:
-
-- [ ] Is this value provided by the USER (not generated by a node)?
-- [ ] Does the input object have `type`, `description`, and `required` fields?
-- [ ] Is `type` one of: string, number, boolean, array, object?
-- [ ] If `required: false`, does it have a sensible `default` value?
-- [ ] Is `description` clear enough for someone who doesn't know the workflow?
-
-#### Common Mistakes
-
-**❌ WRONG - Simple string:**
-```json
-"input_file": "Path to the file"  // Missing type, required fields
-```
-
-**❌ WRONG - Extra fields:**
-```json
-"repo": {
-  "type": "string",
-  "description": "GitHub repo",
-  "required": true,
-  "default": "owner/repo",     // ❌ Can't have default when required=true
-  "example": "foo/bar"          // ❌ Extra field not in schema
-}
-```
-
-**❌ WRONG - Node output as input:**
-```json
-"inputs": {
-  "analysis": {  // ❌ Generated by llm node, not user input
-    "type": "string",
-    "required": true,
-    "description": "Analysis result"
-  }
-}
-```
-
-**✅ CORRECT:**
-```json
-{
-  "inputs": {
-    "input_file": {
-      "type": "string",
-      "required": true,
-      "description": "Path to the file to analyze"
-    },
-    "max_items": {
-      "type": "number",
-      "required": false,
-      "default": 10,
-      "description": "Maximum items to process"
-    }
-  }
-}
-```
-
-#### When to Set `required: false`
-
-**Use `required: false` when:**
-- Parameter has a sensible default value
-- Node parameter is optional (check with `pflow registry describe`)
-- User can reasonably skip this parameter
-
-**Example - GitHub repo (often optional):**
-```json
-"repo": {
-  "type": "string",
-  "required": false,  // ✅ Many GitHub nodes default to current repo
-  "description": "GitHub repository in owner/repo format"
-}
-```
-
-**Rule**: Minimize required inputs. Make optional anything that has smart defaults.
-
----
-
-### Workflow Outputs
-
-**Outputs expose specific data from your workflow - what users receive when it completes.**
-
-#### When To Skip Outputs Entirely
-
-**Omit the entire `outputs` section when the workflow performs actions (not analysis)**:
-- Workflow sends messages, updates databases, creates files
-- Success is visible through side effects (message appears, file exists, database updated)
-- User doesn't need confirmation data returned
-
-**Examples**: Slack bot, database sync, file automation, API updates
-
-
-#### Output Object Structure Rules
+#### Workflow Outputs
 
 **Each output MUST be an object with these REQUIRED fields:**
 
@@ -1624,229 +759,64 @@ Before declaring an input, verify:
 
 **That's it. Only `source` and `description`. No other fields allowed.**
 
-#### ⚠️ Critical: Nodes with `Any` Outputs
-
-**Nodes returning `result: Any` (MCP, HTTP) contain massive nested objects.**
-
-```
-Is this an automation (send/update/post)?
-  → Skip outputs entirely - success is implied
-
-Need the processed data?
-  → Output specific field: ${analyze.response}
-
-Never output ${node.result} directly - too verbose
-```
-
-#### Validation Checklist
-
-Before declaring an output, verify:
-
-- [ ] Does output object have ONLY `source` and `description` fields?
-- [ ] Is `source` a valid template expression (`${node.output}`)?
-- [ ] Does the referenced node output actually exist? (check with `pflow registry describe`)
-- [ ] Is this output actually useful to the user?
-
-#### Output Selection Strategy
-
-**Choose outputs based on workflow purpose:**
-
-| Workflow Type | Output Strategy | Example |
-|---------------|-----------------|---------|
-| **Analysis** | Processed data only | `${llm.response}` not `${fetch.result}` |
-| **File Creation** | Path only | `${write.file_path}` |
-
-**General Rules:**
-1. **First output is most important** - users see this first
-2. **Prefer specific over verbose** - `${http.status_code}` not `${http.response}`
-3. **Avoid intermediate outputs** - only output from final nodes
-4. **Skip metadata** - no `llm_usage`, `response_headers` unless specifically needed
-
-#### Common Mistakes
-
-**❌ WRONG - Extra fields:**
-```json
-"analysis": {
-  "source": "${analyze.response}",
-  "description": "Analysis result",
-  "type": "string",        // ❌ Not allowed
-  "format": "markdown"     // ❌ Not allowed
-}
-```
-
-**❌ WRONG - Missing template syntax:**
-```json
-"file_path": {
-  "source": "write.file_path",  // ❌ Missing ${}
-  "description": "Saved file path"
-}
-```
-
-**❌ WRONG - File workflow returning full content:**
-```json
-{
-  "outputs": {
-    "report": {
-      "source": "${format.response}",  // ❌ Full report (already saved to file)
-      "description": "Report content"
-    }
-  }
-}
-```
-
-**✅ CORRECT - File workflow returns confirmation:**
-```json
-{
-  "outputs": {
-    "confirmation": {
-      "source": "${write.file_path}",  // ✅ Just the path (content is in file)
-      "description": "Path where report was saved"
-    },
-    "summary": {
-      "source": "${analyze.key_findings}",  // ✅ Summary is useful
-      "description": "Key findings from analysis"
-    }
-  }
-}
-```
-
-**✅ CORRECT - Analysis workflow returns full result:**
-```json
-{
-  "outputs": {
-    "analysis": {
-      "source": "${llm.response}",  // ✅ Full analysis (this IS the result)
-      "description": "Complete analysis report"
-    },
-    "issues_count": {
-      "source": "${fetch.total_count}",  // ✅ Useful metadata
-      "description": "Number of issues analyzed"
-    }
-  }
-}
-```
-
-#### Output Ordering
-
-**Put most important output FIRST:**
-
-```json
-{
-  "outputs": {
-    "primary_result": {  // ✅ First - what user cares about most
-      "source": "${final.result}",
-      "description": "The main workflow result"
-    },
-    "metadata": {  // ✅ Second - supporting information
-      "source": "${final.count}",
-      "description": "Number of items processed"
-    }
-  }
-}
-```
+**When to skip outputs entirely**: Automation workflows (send/update/post) where success is visible through side effects.
 
 ---
 
-## Validation
+## MCP Meta-Discovery (Do This First)
 
-### Static Validation Command
+**Critical for understanding MCP tool capabilities.**
+
+Before testing individual MCP tools, check if the server has helper tools:
 
 ```bash
-uv run pflow --validate-only workflow.json
+# Search for meta-tools
+uv run pflow registry search "servername"
+
+# Look for meta-tools that help you understand capabilities:
+# - Tools ending in: LIST, GET_SCHEMA, GET_DOCS, GET_EXAMPLES
+# - Tools for exploration: SEARCH, QUERY, BROWSE, DESCRIBE
 ```
 
-**No runtime parameters needed!** Pflow auto-generates dummy values for inputs but provide them if you want.
+**Common helper tool patterns:**
+- `LIST_SCHEMAS` - Shows available data structures
+- `GET_DOCUMENTATION` - Returns detailed tool docs
+- `LIST_EXAMPLES` - Provides usage examples
+- `DESCRIBE_*` - Explains specific resources
+- `GET_METADATA` - Returns server capabilities
 
-**What gets validated**:
-- ✅ Schema compliance (JSON structure, required fields)
-- ✅ Data flow correctness (execution order, no circular dependencies)
-- ✅ Template structure (syntax, node references, output paths)
-- ✅ Node types exist in registry
+**Example exploration flow:**
+```bash
+# 1. Find potential helper tools
+uv run pflow registry search "datastore"
 
-**What does NOT get validated**:
-- ❌ Runtime values (that's execution-time)
-- ❌ API credentials
-- ❌ File existence
+# Found: GET_SCHEMA, LIST_TABLES, CREATE_RECORD, QUERY_RECORDS
 
-**Success output**:
+# 2. Use helper tools to understand before building
+uv run pflow registry run mcp-datastore-LIST_TABLES database_name="my_database" --show-structure
+# → Now I understand what tables exist and their structure
+
+# 3. Test unclear tools with realistic data
+uv run pflow registry run mcp-datastore-CREATE_RECORD table="users" data='{"name":"test"}' --show-structure
+# → Reveals actual output structure and constraints
 ```
-✓ Schema validation passed
-✓ Data flow validation passed
-✓ Template structure validation passed
-✓ Node types validation passed
-
-Workflow is valid and ready to execute!
-```
-
-**Error output** (actionable):
-```
-✗ Static validation failed:
-  - Unknown node type: 'nonexistent-node'
-  - Node 'analyze' references 'read.missing_output'
-```
-
-### Iterative Validation
-
-1. Run validation
-2. Fix ONE error at a time
-3. Re-validate
-4. Repeat until ✓
-
-Don't try to fix all errors at once - tackle them sequentially!
-
-### Common Validation Errors
-
-**"Unknown node type 'X'"**
-→ Run `pflow registry discover "task that needs X"` OR check exact name with `pflow registry describe` if you know it
-
-**"Template variable '${X}' not found"**
-→ Either add `X` to `inputs` section OR verify previous node outputs it with `pflow registry describe`
-
-**"Node 'A' references 'B.output' but B hasn't executed yet"**
-→ Reorder edges: B must execute before A in the chain
-
-**"Circular dependency detected"**
-→ Check edges array for loops (A→B→A pattern)
-
-**"Missing required parameter 'Y' in node 'Z'"**
-→ Check node interface with `pflow registry describe Z` and add required param
-
-**Still stuck?** Run with `--trace` flag and examine error in full execution context.
 
 ---
 
 ## Testing & Debugging
 
-### Test Individual Nodes (Before Building Workflows)
+### Test Individual Nodes
 
-Test nodes in isolation to verify parameters, discover output structure, and confirm authentication:
+Test nodes in isolation before building workflows:
 
 ```bash
-pflow registry run <node-type> param1=value1 param2=value2
+uv run pflow registry run <node-type> param1=value1 param2=value2
 ```
 
 **Output Modes:**
 - `--output-format json` - For programmatic parsing
-- `--show-structure` - Discover template paths for `Any` types (critical for MCP)
+- `--show-structure` - Discover template paths for `Any` types
 - `--verbose` - Show parameters and execution details
-
-**Examples:**
-
-```bash
-# Test MCP node and see output structure
-pflow registry run SLACK_SEND_MESSAGE channel=C123 text="test" --show-structure
-
-# Verify GitHub credentials
-pflow registry run github-list-issues repo=owner/repo state=open
-
-# Test complex parameters
-pflow registry run http url="https://api.example.com" body='{"key":"value"}' --output-format json
-```
-
-**Node name shortcuts (MCP):**
-- Full: `mcp-slack-composio-SLACK_SEND_MESSAGE`
-- Server-qualified: `slack-composio-SLACK_SEND_MESSAGE`
-- Tool only: `SLACK_SEND_MESSAGE` (if unique)
 
 ### Execute Workflow
 
@@ -1855,51 +825,6 @@ uv run pflow --output-format json --no-repair --trace workflow.json param1=value
 ```
 
 > Using --output-format json --no-repair --trace flags is mandatory when building workflows for AI agents.
-
-### When Output Structure is Unknown
-
-Many MCP tools return `result: Any` because the upstream server doesn't provide output schemas.
-
-**Only investigate when you need to**:
-- ✅ Templates reference nested data: `${fetch.result.messages[0].text}`
-- ✅ Workflow outputs expose nested fields
-- ✅ User wants to optimize the workflow for performance only passing the most important data to LLM nodes
-- ❌ Just passing data through: `${fetch.result}` is fine
-- ❌ Sending to LLM: It handles any structure
-
-**How to discover output structure**:
-
-```bash
-# 1. Run with trace
-pflow --trace workflow.json
-
-# 2. Examine output
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[0].outputs'
-
-# 3. Use discovered structure
-# Example output:
-{
-  "result": {
-    "messages": [
-      {"text": "Hello", "user": "U123", "ts": "1234567890.123"}
-    ],
-    "has_more": false
-  }
-}
-
-# 4. Update templates
-${fetch.result.messages[0].text}
-```
-
-### Execution Flags
-
-```bash
---trace                 # Save execution trace to ~/.pflow/debug/ (RECOMMENDED for debugging)
---no-repair            # Disable auto-repair on errors
---output-format json   # JSON output
-```
-
-> **Critical**: ALWAYS use `--trace` flag when building workflows. It saves complete execution data including ALL available fields from nodes, essential for debugging template errors.
 
 ### Understanding Template Errors
 
@@ -1928,446 +853,603 @@ ls -lt ~/.pflow/debug/workflow-trace-*.json | head -1
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.events[] | select(.node_id == "fetch") | .shared_after.fetch | keys'
 ```
 
-**3. Update your template** with the correct field path:
+### Common Validation Errors
+
+| Error | Solution |
+|-------|----------|
+| "Unknown node type 'X'" | Run `uv run pflow registry discover "task that needs X"` |
+| "Template variable '${X}' not found" | Add `X` to inputs OR verify node output |
+| "Node 'A' references 'B.output' but B hasn't executed yet" | Reorder edges |
+| "Circular dependency detected" | Check edges for loops |
+| "Missing required parameter 'Y' in node 'Z'" | Check node interface with `uv run pflow registry describe Z` |
+
+---
+
+## Progressive Learning Path
+
+Start simple, build complexity gradually.
+
+### Level 1: Single Node (5 minutes)
+
+**Goal**: Understand basic workflow structure
+
 ```json
 {
-  "params": {
-    "text": "${fetch.result.messages}"  // Correct path from trace
+  "inputs": {
+    "question": {
+      "type": "string",
+      "required": true,
+      "description": "Question to answer"
+    }
+  },
+  "nodes": [
+    {
+      "id": "answer",
+      "type": "llm",
+      "params": {
+        "prompt": "Answer concisely: ${question}"
+      }
+    }
+  ],
+  "outputs": {
+    "response": {
+      "source": "${answer.response}",
+      "description": "AI response"
+    }
   }
 }
 ```
 
-> **Why this matters**: Error messages show only the first 20 fields to avoid overwhelming output. The trace file contains ALL fields (no limit), which is critical when nodes return 100+ fields.
+**Try it**: `uv run pflow level1.json question="What is 2+2?"`
 
-> Note: ALWAYS use ALL these three flags when building workflows for better error handling and debugging.
+### Level 2: Chain Two Nodes (10 minutes)
 
----
-
-## Saving Workflows
-
-**When to save**: After completing Step 10 in the development loop - your workflow is tested and working correctly.
-
-Saving moves your workflow from local drafts (`.pflow/workflows/`) to the global library (`~/.pflow/workflows/`) for reuse across all projects.
-
-### Save to Global Library
-
-```bash
-uv run pflow workflow save FILE_PATH NAME "Description"
-```
-
-**Example**:
-```bash
-uv run pflow workflow save .pflow/workflows/draft.json slack-qa-bot "Answers Slack questions and logs to Sheets"
-```
-
-**Name requirements** (auto-validated):
-- Lowercase letters, numbers, hyphens only
-- Max 30 characters
-- Examples: `file-analyzer`, `pr-reviewer`, `slack-bot`
-
-**Optional flags**:
-- `--delete-draft` - Remove source file after save
-- `--force` - Overwrite if exists
-- `--generate-metadata` - AI-generate rich metadata (requires LLM)
-
-**Success** (now shows required parameters):
-```
-✓ Saved workflow 'workflow-name' to library
-  Location: ~/.pflow/workflows/workflow-name.json
-  Execute with: pflow workflow-name param1=<value> param2=<value>
-  Optional params: param2
-```
-
-> **Important**: The save command shows parameter placeholders, but YOU should tell the user how to run with their ACTUAL values:
-> Example: If user provided "channel C09C16NAU5B", show: `✨ pflow workflow-name channel-id=C09C16NAU5B limit=10` (without line breaks)
-> This lets them immediately test the workflow with their specific configuration.
->
-> **CRITICAL**: Always write commands on a SINGLE line (no line breaks or wrapping) to ensure easy copy-paste. Even with very long parameter lists, keep the ENTIRE command on ONE line. Users need to copy-paste commands directly without editing.
-
-### Library Locations
-
-- **Local drafts**: `.pflow/workflows/` (project-specific)
-- **Global library**: `~/.pflow/workflows/` (reusable everywhere)
-
-> Always use the local drafts directory when creating new workflows for iteration and testing before saving to the global library.
-
----
-
-## Executing Workflows
-
-### From File
-
-```bash
-uv run pflow workflow.json param1=value param2=value
-```
-
-### From Library
-
-```bash
-uv run pflow my-saved-workflow param1=value param2=value
-```
-
-### Check What's Available
-
-```bash
-uv run pflow workflow list                 # List saved workflows
-uv run pflow workflow describe my-workflow # Show workflow details
-```
-
----
-
-## Context Efficiency
-
-**You have limited context space. Every token matters.**
-
-### Understanding Your Constraints
-
-As an AI agent, you work differently than traditional programs:
-- ❌ **Limited context**: You can't hold unlimited data in memory
-- ✅ **Natural language strength**: You excel at processing unstructured data
-- ❌ **Token cost**: Every character you read and write has a cost
-- ✅ **Smart filtering**: You can understand relevance better than exact matching
-
-### Efficient Strategies
-
-#### 1. Only Investigate MCP Outputs When Needed
-
-**Many MCP tools return `result: Any` (unstructured data).**
-
-**✅ ONLY investigate when:**
-- Templates need nested data: `${fetch.result.messages[0].text}`
-- Workflow outputs expose nested fields
-- User explicitly asks to optimize data flow
-
-**❌ SKIP investigation when:**
-- Just passing data through: `${fetch.result}` → works fine
-- Sending to LLM: `prompt: "Analyze ${data.result}"` → LLM handles any structure
-- Output is final: Workflow ends there
-
-**Why**: LLMs naturally handle unstructured data. Use that strength!
-
-#### 2. Request Only Needed Fields
-
-**Some nodes support filtering/pagination. Use them:**
+**Goal**: Understand data flow between nodes
 
 ```json
-// ❌ Inefficient
-{"id": "fetch", "type": "github-list-issues", "params": {"limit": 100}}
-
-// ✅ Efficient
-{"id": "fetch", "type": "github-list-issues", "params": {
-  "limit": 10,              // Only get what you need
-  "state": "open",          // Filter at source
-  "labels": "bug,critical"  // Be specific
-}}
+{
+  "inputs": {
+    "file_path": {
+      "type": "string",
+      "required": true,
+      "description": "File to summarize"
+    }
+  },
+  "nodes": [
+    {
+      "id": "read",
+      "type": "read-file",
+      "params": {
+        "file_path": "${file_path}"
+      }
+    },
+    {
+      "id": "summarize",
+      "type": "llm",
+      "params": {
+        "prompt": "Summarize in 3 points:\n\n${read.content}"
+      }
+    }
+  ],
+  "edges": [
+    {"from": "read", "to": "summarize"}
+  ],
+  "outputs": {
+    "summary": {
+      "source": "${summarize.response}",
+      "description": "File summary"
+    }
+  }
+}
 ```
 
-### Token Efficiency Checklist
+**Try it**: `uv run pflow level2.json file_path="README.md"`
 
-Before building a workflow:
-- [ ] Am I fetching only what I need? (use filters, limits if possible)
-- [ ] Can I combine steps instead of chaining many small nodes?
-- [ ] Am I investigating MCP outputs unnecessarily?
-- [ ] Are my queries specific enough to avoid broad searches?
-- [ ] Can an LLM handle this naturally without pre-processing?
+### Level 3: Multi-Step Pipeline (20 minutes)
 
-**Remember**: Efficient != minimal nodes. Efficient = minimal unnecessary context.
+**Goal**: Coordinate multiple operations
+
+```json
+{
+  "inputs": {
+    "api_url": {
+      "type": "string",
+      "required": true,
+      "description": "API endpoint"
+    },
+    "output_file": {
+      "type": "string",
+      "required": false,
+      "default": "analysis.md",
+      "description": "Output file path"
+    }
+  },
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "params": {
+        "url": "${api_url}",
+        "method": "GET"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "params": {
+        "prompt": "Extract key insights from:\n\n${fetch.response}"
+      }
+    },
+    {
+      "id": "save",
+      "type": "write-file",
+      "params": {
+        "file_path": "${output_file}",
+        "content": "# API Analysis\n\n${analyze.response}\n\nSource: ${api_url}"
+      }
+    }
+  ],
+  "edges": [
+    {"from": "fetch", "to": "analyze"},
+    {"from": "analyze", "to": "save"}
+  ],
+  "outputs": {
+    "file": {
+      "source": "${save.file_path}",
+      "description": "Analysis file location"
+    }
+  }
+}
+```
+
+**What you learn**: Templates, optional inputs, multi-step flows
+
+### Level 4: Production Workflow (30 minutes)
+
+See [Complete Example](#complete-example-slack-qa-bot) for a full production workflow.
 
 ---
 
-## Workflow Smells
+## Common Workflow Patterns
 
-**🚩 Red flags that indicate poor workflow design:**
+### Pattern 1: Fetch → Transform → Store
 
-1. **No inputs section** → Not reusable
-2. **Hardcoded IDs/paths** → Will break for other users
-3. **Repeated literal values** → Should reference one input
-4. **Over-specific input names** → `slack_channel_C123` instead of `channel`
-5. **Missing defaults for optional params** → Poor user experience
-6. **Too many required inputs** → Consider smart defaults
-7. **Coupling service to workflow** → Input named `github_repo` instead of generic `repo`
-8. **Exposing .result outputs** → `${mcp-node.result}` is too verbose
+```
+[Data Source] → [LLM/Processing] → [Data Sink]
+```
 
-**Quick Fix Guide:**
-- See hardcoded value? → Make it an input
-- See repeated value? → Reference single input
-- See specific name? → Generalize it
-- See many required fields? → Add defaults where sensible
+**Example**: Read file → Analyze → Write summary
+
+```json
+{
+  "inputs": {
+    "input_file": {
+      "type": "string",
+      "required": true,
+      "description": "File to analyze"
+    }
+  },
+  "nodes": [
+    {
+      "id": "read",
+      "type": "read-file",
+      "params": {
+        "file_path": "${input_file}"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "params": {
+        "prompt": "Summarize this content in 3 bullet points:\n\n${read.content}"
+      }
+    },
+    {
+      "id": "save",
+      "type": "write-file",
+      "params": {
+        "file_path": "summary.md",
+        "content": "# Summary\n\n${analyze.response}"
+      }
+    }
+  ],
+  "edges": [
+    {"from": "read", "to": "analyze"},
+    {"from": "analyze", "to": "save"}
+  ],
+  "outputs": {
+    "summary_path": {
+      "source": "${save.file_path}",
+      "description": "Path to saved summary"
+    }
+  }
+}
+
+### Pattern 2: Multi-Source → Combine → Process
+
+```
+[Source A] ──┐
+             ├─→ [LLM Combines] → [Process]
+[Source B] ──┘
+```
+
+**Example**: Fetch GitHub PR + issues → Analyze together → Generate report
+
+```json
+{
+  "inputs": {
+    "repo": {
+      "type": "string",
+      "required": true,
+      "description": "Repository (owner/name)"
+    },
+    "pr_number": {
+      "type": "number",
+      "required": true,
+      "description": "PR number to analyze"
+    }
+  },
+  "nodes": [
+    {
+      "id": "get-pr",
+      "type": "mcp-github-get-pr",
+      "params": {
+        "repo": "${repo}",
+        "number": "${pr_number}"
+      }
+    },
+    {
+      "id": "get-issues",
+      "type": "mcp-github-list-issues",
+      "params": {
+        "repo": "${repo}",
+        "state": "open"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "params": {
+        "prompt": "PR:\n${get-pr.result}\n\nOpen Issues:\n${get-issues.result}\n\nIdentify which issues this PR might resolve."
+      }
+    }
+  ],
+  "edges": [
+    {"from": "get-pr", "to": "get-issues"},
+    {"from": "get-issues", "to": "analyze"}
+  ],
+  "outputs": {
+    "analysis": {
+      "source": "${analyze.response}",
+      "description": "PR impact analysis"
+    }
+  }
+}
+
+### Pattern 3: Multi-Service Coordination
+
+```
+[Service A] → [Transform] → [Service B] → [Service C]
+```
+
+**Example**: Slack → AI analysis → Slack response → Sheets logging
+
+```json
+{
+  "inputs": {
+    "channel": {
+      "type": "string",
+      "required": true,
+      "description": "Slack channel ID"
+    },
+    "sheet_id": {
+      "type": "string",
+      "required": true,
+      "description": "Google Sheets ID"
+    }
+  },
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "mcp-slack-fetch",
+      "params": {
+        "channel": "${channel}",
+        "limit": 10
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "params": {
+        "prompt": "Extract Q&A pairs from these messages:\n\n${fetch.result}"
+      }
+    },
+    {
+      "id": "respond",
+      "type": "mcp-slack-send",
+      "params": {
+        "channel": "${channel}",
+        "text": "Found Q&A pairs:\n${analyze.response}"
+      }
+    },
+    {
+      "id": "log",
+      "type": "mcp-sheets-append",
+      "params": {
+        "sheet_id": "${sheet_id}",
+        "values": [["${analyze.response}"]]
+      }
+    }
+  ],
+  "edges": [
+    {"from": "fetch", "to": "analyze"},
+    {"from": "analyze", "to": "respond"},
+    {"from": "respond", "to": "log"}
+  ]
+}
+
+### Pattern 4: Enrich → Process → Store
+
+```
+[Base Data] → [Enrich with Context] → [Process] → [Store]
+```
+
+**Example**: Get issue → Fetch related PRs → Analyze → Update issue
+
+```json
+{
+  "inputs": {
+    "repo": {
+      "type": "string",
+      "required": true,
+      "description": "Repository (owner/name)"
+    },
+    "issue_number": {
+      "type": "number",
+      "required": true,
+      "description": "Issue to analyze"
+    }
+  },
+  "nodes": [
+    {
+      "id": "get-issue",
+      "type": "mcp-github-get-issue",
+      "params": {
+        "repo": "${repo}",
+        "number": "${issue_number}"
+      }
+    },
+    {
+      "id": "get-prs",
+      "type": "mcp-github-list-prs",
+      "params": {
+        "repo": "${repo}",
+        "state": "open"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "params": {
+        "prompt": "Issue:\n${get-issue.result}\n\nOpen PRs:\n${get-prs.result}\n\nWhich PRs might fix this issue?"
+      }
+    },
+    {
+      "id": "update",
+      "type": "mcp-github-comment-issue",
+      "params": {
+        "repo": "${repo}",
+        "number": "${issue_number}",
+        "body": "Analysis:\n${analyze.response}"
+      }
+    }
+  ],
+  "edges": [
+    {"from": "get-issue", "to": "get-prs"},
+    {"from": "get-prs", "to": "analyze"},
+    {"from": "analyze", "to": "update"}
+  ]
+}
+
+---
+
+## Workflow Naming Conventions
+
+**Format**: verb-noun-target
+- Examples: `analyze-github-prs`, `slack-qa-bot`, `process-invoices`
+- Max 30 characters, lowercase, hyphens only
+- Be specific: `slack-qa-bot` > `message-processor`
 
 ---
 
 ## Common Mistakes
 
-Learn from others' experiences!
-
 ### ❌ Mistake 1: Skipping Workflow Discovery
+**Fix**: ALWAYS run `uv run pflow workflow discover` first (Step 2)
 
-**What happens**: You build from scratch when a workflow already exists.
+### ❌ Mistake 2: Not Checking Node Output Structure
+**Fix**: Run `uv run pflow registry describe node-type` BEFORE writing templates
 
-**Fix**: ALWAYS run `pflow workflow discover` first (Step 2) - 70% of requests have existing solutions!
+### ❌ Mistake 3: Building Everything at Once
+**Fix**: Build 2 nodes → validate → add 1 more → validate → repeat
 
-### ❌ Mistake 2: Starting with JSON Before Understanding
-
-**What happens**: You write nodes but don't know what data flows where.
-
-**Fix**: Spend 5 minutes in UNDERSTAND phase - map the task first!
-
-### ❌ Mistake 3: Not Using `pflow registry discover`
-
-**What happens**: You manually search through hundreds of nodes.
-
-**Fix**: Use `pflow registry discover "what you need"` - let LLM find nodes for you!
-
-### ❌ Mistake 4: Not Checking Node Output Structure
-
-**What happens**: Templates like `${fetch.data.items}` fail because output is `${fetch.result.items}`.
-
-**Fix**: Run `pflow registry describe node-type` BEFORE writing templates.
-
-### ❌ Mistake 5: Building Everything at Once
-
-**What happens**: 10 nodes, 50 errors, impossible to debug.
-
-**Fix**: Build 2 nodes → validate → add 1 more → validate → repeat.
-
-### ❌ Mistake 6: Ignoring Validation Errors
-
-**What happens**: You execute anyway, get cryptic runtime errors.
-
-**Fix**: Trust validation - it catches 90% of issues before execution!
-
-### ❌ Mistake 7: Using Generic Node IDs
-
-**What happens**: Templates like `${node2.output}` are unreadable.
-
-**Fix**: Use descriptive IDs like `${fetch-messages.result}` for clarity.
-
-### ❌ Mistake 8: Forgetting MCP Format
-
-**What happens**: `pflow registry describe SLACK_SEND_MESSAGE` → "Unknown node"
-
-**Fix**: Use full format: `mcp-slack-composio-SLACK_SEND_MESSAGE`
-
-### ❌ Mistake 9: Using `inputs` Instead of `params`
-
-**What happens**: Validation fails with schema error.
-
+### ❌ Mistake 4: Using `inputs` Instead of `params`
 **Fix**: Node configuration uses `params`, not `inputs`!
 
-### ❌ Mistake 10: Investigating Every `result: Any`
+### ❌ Mistake 5: Over-Specifying Node Parameters
+**Fix**: Only set parameters user explicitly requests or workflow logic requires
 
-**What happens**: Waste time discovering structures you don't need.
+### ❌ Mistake 6: Too Many Nodes
+**Fix**: LLM nodes can consolidate multiple operations. Each node adds overhead.
 
+### ❌ Mistake 7: Investigating Every `result: Any`
 **Fix**: Only investigate when templates need nested paths!
-
-### ❌ Mistake 11: Trying to Add Error Handling in IR
-
-**What happens**: Frustration - branching not supported.
-
-**Fix**: Let pflow's external repair system handle errors. Focus on happy path!
-
-### ❌ Mistake 12: Using Too Many Nodes
-
-**What happens**: Workflow becomes verbose, consumes excessive context, harder to debug.
-
-**Bad example**:
-```json
-{"id": "get-user", "type": "github-get-user", ...}
-{"id": "get-repos", "type": "github-list-repos", ...}
-{"id": "get-issues", "type": "github-list-issues", ...}
-{"id": "filter", "type": "llm", "params": {"prompt": "Filter relevant repos..."}}
-{"id": "analyze", "type": "llm", "params": {"prompt": "Analyze filtered data..."}}
-```
-
-**Good example**:
-```json
-{"id": "analyze", "type": "llm", "params": {
-  "prompt": "Analyze GitHub user ${username}'s activity focusing on their top repositories and recent issues..."
-}}
-```
-
-**Why**: LLM nodes can consolidate multiple operations. Each node call adds overhead.
-
-**When to consolidate**: If operations are naturally chained and intermediate outputs aren't needed elsewhere.
-
-### ❌ Mistake 13: Over-Specifying Node Parameters
-
-**What happens**: Workflows use outdated values, waste tokens, override good defaults.
-
-**Bad example**:
-```json
-{"id": "analyze", "type": "llm", "params": {
-  "prompt": "...",
-  "model": "gpt-4",         // ❌ Not requested by user
-  "temperature": 0.7,       // ❌ Not requested by user
-  "max_tokens": 1000        // ❌ Not requested by user
-}}
-```
-
-**Good example**:
-```json
-{"id": "analyze", "type": "llm", "params": {
-  "prompt": "..."  // ✅ Only required param, rest use defaults
-}}
-```
-
-**Fix**: Only set parameters user explicitly requests or workflow logic requires.
 
 ---
 
-## Complete Example: Building Any Multi-Service Workflow
+## When NOT to Build a Workflow
 
-Let's demonstrate the thinking process that applies to ANY workflow.
+**🛑 Recognize when pflow is the wrong tool:**
 
-### Example Step 1: UNDERSTAND
+### Requires Conditional Logic
+**User wants**: "If PR is approved, merge it, otherwise request review"
+**Problem**: No branching in pflow
+**Alternative**: Build two workflows or use external automation
 
-**User request**: "Get last 10 messages from [SOURCE], process them, send results to [DESTINATION]"
+### Needs Loops or Iteration
+**User wants**: "Process each file in directory differently"
+**Problem**: No loops in pflow
+**Alternative**: Use shell script or batch processing
 
-**Your Thinking Process**:
-```
-What are the specific values they provided?
-- "10" → message_limit input (they might want 20 tomorrow)
-- [SOURCE ID] → source_id input (different sources later)
-- [DESTINATION ID] → destination_id input (different destinations)
+### Requires State Persistence
+**User wants**: "Track progress and resume if interrupted"
+**Problem**: Workflows are stateless
+**Alternative**: Use database or file-based state tracking
 
-What stays constant?
-- The pattern: fetch → process → send
-- The transformation logic
+### Needs User Interaction
+**User wants**: "Ask user for confirmation before proceeding"
+**Problem**: No interactive prompts
+**Alternative**: Split into multiple workflows
 
-What might they configure later?
-- Processing parameters
-- Output format
-- Filtering criteria
-```
+### Real-Time Requirements
+**User wants**: "Respond within 100ms"
+**Problem**: LLM nodes add latency
+**Alternative**: Use direct API calls without LLM
 
-### Example Step 2: DISCOVER WORKFLOWS
+**Response Template**:
+"This requires [feature] which pflow doesn't support. I can either:
+1. Build a simplified version that [workaround]
+2. Suggest an alternative approach using [tool]
+Which would you prefer?"
 
-```bash
-uv run pflow workflow discover "fetch messages, analyze, send to destination, log to sheets"
-```
+---
 
-**Results**: No 70%+ matches found, proceeding to build new.
+## Debugging Playbook
 
-### Example Step 3: DISCOVER NODES
+**When validation passes but execution fails:**
 
-```bash
-uv run pflow registry discover "fetch Slack messages, analyze with AI, send Slack messages, update Google Sheets, get date and time from shell"
-```
-
-**Results**: Found all needed nodes with specs.
-
-### Example Step 4: DESIGN
-
-```
-fetch-data → process-data → format-output → send-result → log-confirmation
-
-Key decisions:
-- Each specific value becomes an input
-- Each transformation is a separate node
-- Data flows through template variables
-```
-
-**Design Principle**: Build the pipeline that could work with ANY similar source/destination pair.
-
-### Example Step 6: BUILD
-
-```json
-{
-  "inputs": {
-    "source_id": {
-      "type": "string",
-      "required": true,
-      "description": "Source identifier"
-    },
-    "destination_id": {
-      "type": "string",
-      "required": true,
-      "description": "Destination identifier"
-    },
-    "limit": {
-      "type": "number",
-      "required": false,
-      "default": 10,
-      "description": "Number of items to process"
-    }
-  },
-  "nodes": [
-    {
-      "id": "fetch-data",
-      "type": "service-fetch-node",
-      "params": {
-        "source": "${source_id}",
-        "limit": "${limit}"
-      }
-    },
-    {
-      "id": "process",
-      "type": "llm",
-      "params": {
-        "prompt": "Process this data: ${fetch-data.result}"
-      }
-    },
-    {
-      "id": "send-result",
-      "type": "service-send-node",
-      "params": {
-        "destination": "${destination_id}",
-        "content": "${process.response}"
-      }
-    }
-  ],
-  "edges": [
-    {"from": "fetch-data", "to": "process"},
-    {"from": "process", "to": "send-result"}
-  ]
-  // No outputs - this is an automation workflow
-}
-```
-
-### Example Step 7: VALIDATE
+### Step 1: Check the Error Type
 
 ```bash
-uv run pflow --validate-only slack-qa.json
+# Run with trace to capture full error context
+uv run pflow --trace --no-repair workflow.json
 ```
 
-Result: ✓ All validations passed!
+| Error Pattern | Likely Cause | Fix |
+|--------------|-------------|-----|
+| `KeyError: 'result'` | Node output structure different than expected | Use --trace to discover actual structure |
+| `401 Unauthorized` | Missing/invalid credentials | Check settings.json or environment variables |
+| `TypeError: expected string` | Wrong data type in template | Verify node output types with registry describe |
+| `Connection refused` | Service not running | Start required MCP servers |
+| `Rate limit exceeded` | Too many API calls | Add delays or reduce batch size |
 
-### Example Step 8: TEST
+### Step 2: Isolate the Failing Node
 
 ```bash
-uv run pflow --output-format json --no-repair --trace slack-qa.json
+# Test just the failing node
+uv run pflow registry run <node-type> param1=value --show-structure
+
+# If it works alone, check data flow
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id=="failing-node")'
 ```
 
-Result: ✓ Workflow executed successfully!
+---
 
-### Example Step 10: SAVE
+## Real Request Parsing
 
-Ask the user to verify the results and if they are happy, save the workflow to the global library.
+**How to handle ambiguous user requests:**
 
+### Ambiguous Quantities
+**User says**: "Get recent messages from Slack"
+```
+❌ DON'T: Guess that "recent" means 10
+✅ DO: Make it an input with sensible default
+"limit": {"default": 10, "description": "Number of recent messages"}
+```
+
+### Unclear Targets
+**User says**: "Send the report"
+```
+❌ DON'T: Hardcode a destination
+✅ DO: Ask for clarification
+"Where should I send the report? (email, Slack, file, etc.)"
+```
+
+### Missing Context
+**User says**: "Analyze the data"
+```
+❌ DON'T: Assume what data
+✅ DO: Identify what's missing
+"What data should I analyze? Please specify the source."
+```
+
+### Conflicting Requirements
+**User says**: "Make it fast but check everything thoroughly"
+```
+✅ DO: Explain the tradeoff
+"I can optimize for speed OR thoroughness. Which is more important?"
+```
+
+### Implicit Expectations
+**User says**: "Process our customer data" (implies security)
+```
+✅ DO: Surface hidden requirements
+"This involves customer data. Should I include any special security measures?"
+```
+
+**The Clarification Template**:
+```
+I need to clarify a few things:
+1. When you say [ambiguous term], do you mean [option A] or [option B]?
+2. For [missing piece], what should I use?
+3. Should I [implicit requirement]?
+```
+
+---
+
+## MCP and HTTP Tool Reality Check
+
+**Tools often don't work as documented. Here's how to handle it:**
+
+### Before Building: Test Everything
 ```bash
-uv run pflow workflow save slack-qa.json slack-qa-bot "Answers Slack questions and logs Q&A pairs to Google Sheets with timestamps"
+# 1. Warn users before making tool calls that might be destructive or make dangerous side effects.
+# 2. Always test with actual data first if not a very simple tool.
+uv run pflow registry run mcp-tool param=value --show-structure
+
+# 3. Verify that the tool works with the current inputs
+# Debugging each tool call individually reduces complexity and the time to find the issue.
 ```
 
-Result: ✓ Saved to global library!
+### Common MCP Quirks & Workarounds
 
-> Note: Always ask the user before saving the workflow to the global library/registry.
+| Tool Says | Reality | Workaround |
+|-----------|---------|------------|
+| "Returns array" | Returns object with array inside | Use `${result.items}` not `${result}` |
+| "Optional parameter" | Actually required | Always provide it |
+| "Accepts string" | Needs specific format | Test formats, document what works |
+| "Any type" | Has hidden structure | Use --show-structure to discover |
+| "Returns result" | Returns nested response.data.result | Trace actual path |
 
-### Example: REUSE
+### When Documentation is Wrong
 
-```bash
-# Show users exactly how to run with their original values:
-uv run pflow workflow-name source_id=ORIGINAL_VALUE destination_id=ORIGINAL_VALUE limit=10
+Document what ACTUALLY works in `.pflow/workflows/docs/<workflow-name>.md`
 
-# They can now easily change any parameter:
-uv run pflow workflow-name source_id=DIFFERENT_SOURCE destination_id=NEW_DEST limit=20
+---
+
+## When Stuck (Decision Tree)
+
 ```
-
-**Key**: Always show the command with the user's original values so they can test immediately.
-
-> Make sure the users new request matches the workflow description and parameters.
-> - If it doesn't, ask the user if they want to update the workflow or create a new one.
-> - Right now pflow does not support nested workflows so if the user wants to create a similar workflow, you must create a new one from scratch (but you can always copy the existing workflow and modify it).
-> - If the user wants to update the workflow, you should still copy the existing workflow and work on it in the .pflow/workflows/ directory and when they user is satisfied, save the workflow to the global library using --force flag to overwrite the existing workflow. Ask the before overwriting!
+Template error?
+├─ Yes → Check trace file (Understanding Template Errors)
+└─ No → Validation error?
+    ├─ Yes → See Common Validation Errors
+    └─ No → Execution error?
+        ├─ Yes → Use Debugging Playbook
+        └─ No → Discovery failed?
+            ├─ Yes → Try manual discovery commands
+            └─ No → Ask user for clarification
+```
 
 ---
 
@@ -2380,30 +1462,20 @@ uv run pflow workflow-name source_id=DIFFERENT_SOURCE destination_id=NEW_DEST li
 | "file.txt" | `input: file_path` | They'll use different files |
 | "channel ABC123" | `input: channel` | Different channels later |
 | "last 10 items" | `input: limit` (default: 10) | Might want 20 tomorrow |
-| "repo owner/name" | `input: repo` | Other repos later |
-| "threshold 100" | `input: threshold` (default: 100) | Different thresholds |
 | "always use prod" | Hardcode: "prod" | Explicitly said "always" |
-| Date format | Hardcode format string | System constraint |
-| API endpoint | `input: endpoint` | Different endpoints |
-
-**Rule**: When in doubt → make it an input.
 
 ### Command Cheat Sheet
 
 ```bash
 # Discovery - ALWAYS use AI-powered discovery first
-uv run pflow workflow discover "user's request"                # Find existing workflows (Step 2 - MANDATORY)
-uv run pflow registry discover "what you need to build"        # Find nodes for building (Step 3)
-
-# Only use these if AI discovery is unavailable
-uv run pflow registry describe node1 node2                     # Get specific node specs
-uv run pflow workflow describe name                            # Show specific workflow
+uv run pflow workflow discover "user's request"                # Find existing workflows
+uv run pflow registry discover "what you need to build"        # Find nodes for building
 
 # Development
 uv run pflow --validate-only workflow.json                     # Validate structure
 
 # Saving
-uv run pflow workflow save file name "desc"                    # Save workflow to library
+uv run pflow workflow save file name "desc"                    # Save to library
 
 # Execution
 uv run pflow workflow.json param=value                         # Run from file
@@ -2412,15 +1484,6 @@ uv run pflow saved-workflow param=value                        # Run from librar
 # Required Execution Flags (use together when testing)
 uv run pflow --trace --no-repair --output-format json workflow-name
 ```
-
-### Common Node Types
-
-- `llm` - AI text processing
-- `read-file` - Read file contents
-- `write-file` - Write to file
-- `shell` - Execute commands
-- `http` - HTTP requests
-- `mcp-{server}-{tool}` - MCP integrations
 
 ### Template Syntax
 
@@ -2431,59 +1494,274 @@ uv run pflow --trace --no-repair --output-format json workflow-name
 
 ---
 
-## Key Takeaways
+## Complete Example: Slack Q&A Bot
 
-### Critical Rules (Never Violate)
-1. **🚨 Sequential execution ONLY** - No parallel branches, one edge per node
-2. **🚨 Every `${variable}` must be declared** - Either workflow input OR node output
-3. **🚨 Check node outputs FIRST** - `pflow registry describe` before writing templates
-4. **🚨 Input objects need 3 fields** - `type`, `description`, `required` (nothing else)
-5. **🚨 Output objects need 2 fields** - `source`, `description` (nothing else)
+Let's build a complete workflow from user request to saved, reusable tool.
 
-### Best Practices (Follow These)
-6. **Think before you code** - Pre-build checklist prevents 80% of errors
-7. **Use intelligent discovery** - `pflow registry discover` finds relevant nodes
-8. **Validate early and often** - Fix one error at a time, re-validate
-9. **Build incrementally** - Add 2 nodes, validate, repeat
-10. **Use node defaults** - Only override parameters when user explicitly requests
-11. **Be context-efficient** - Specific queries > broad searches, investigate `Any` only when needed
-12. **Focus on happy path** - Let pflow's repair system handle errors
-13. **First output is most important** - Users see this first, choose wisely
-14. **Action requests need action** - Don't compare workflows when user wants execution
+### User Request
+"I need to fetch the last 15 messages from Slack channel C09C16NAU5B, extract Q&A pairs, and log them to Google Sheets ID abc123xyz"
 
-### Workflow Building Order
-**Always follow**: UNDERSTAND → DISCOVER WORKFLOWS → DISCOVER NODES → DESIGN → PLAN → BUILD → VALIDATE → TEST → REFINE → SAVE
+### Step 1: UNDERSTAND
+```
+Inputs needed:
+- channel: C09C16NAU5B → Make it an input
+- limit: 15 → Make it an input with default
+- sheet_id: abc123xyz → Make it an input
 
-## Running pflow
+Pattern: Multi-Service Coordination
+```
 
-Always run pflow using uv or it will not work in the current environment:
-
+### Step 2: DISCOVER WORKFLOWS
 ```bash
-uv run pflow ...
+uv run pflow workflow discover "fetch slack messages extract Q&A log to sheets"
+# Result: No 80%+ matches, building new
+```
+
+### Step 3: DISCOVER NODES
+```bash
+uv run pflow registry discover "fetch Slack messages, extract Q&A with AI, append to Google Sheets"
+# Found: mcp-slack-fetch, llm, mcp-sheets-append
+```
+
+### Step 4: DESIGN
+```
+fetch-messages (mcp-slack-fetch) → channel, limit
+     ↓
+extract-qa (llm) → prompt with messages
+     ↓
+log-to-sheets (mcp-sheets-append) → sheet_id, values
+```
+
+### Step 5: PLAN & CONFIRM
+"I'll create a workflow that:
+1. Fetches messages from Slack channel
+2. Extracts Q&A pairs using AI
+3. Logs results to Google Sheets
+
+Inputs: channel, limit, sheet_id
+Pattern: Multi-Service Coordination
+
+Confirm?"
+
+### Step 6: BUILD
+
+```json
+{
+  "inputs": {
+    "channel": {
+      "type": "string",
+      "required": true,
+      "description": "Slack channel ID to fetch messages from"
+    },
+    "limit": {
+      "type": "number",
+      "required": false,
+      "default": 15,
+      "description": "Number of messages to fetch"
+    },
+    "sheet_id": {
+      "type": "string",
+      "required": true,
+      "description": "Google Sheets ID for logging"
+    }
+  },
+  "nodes": [
+    {
+      "id": "fetch-messages",
+      "type": "mcp-slack-fetch",
+      "params": {
+        "channel": "${channel}",
+        "limit": "${limit}"
+      }
+    },
+    {
+      "id": "extract-qa",
+      "type": "llm",
+      "params": {
+        "prompt": "Extract Q&A pairs from these Slack messages. Format as:\nQ: [question]\nA: [answer]\n\nMessages:\n${fetch-messages.result}"
+      }
+    },
+    {
+      "id": "log-to-sheets",
+      "type": "mcp-sheets-append",
+      "params": {
+        "sheet_id": "${sheet_id}",
+        "values": [
+          ["${extract-qa.response}"]
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {"from": "fetch-messages", "to": "extract-qa"},
+    {"from": "extract-qa", "to": "log-to-sheets"}
+  ],
+  "outputs": {
+    "qa_pairs": {
+      "source": "${extract-qa.response}",
+      "description": "Extracted Q&A pairs"
+    },
+    "sheet_update": {
+      "source": "${log-to-sheets.result}",
+      "description": "Sheets update confirmation"
+    }
+  }
+}
+```
+
+### Step 7: VALIDATE
+```bash
+uv run pflow --validate-only slack-qa.json
+# ✓ All validations passed!
+```
+
+### Step 8: TEST
+```bash
+uv run pflow --trace --no-repair --output-format json slack-qa.json channel=C09C16NAU5B limit=15 sheet_id=abc123xyz
+# ✓ Workflow executed successfully!
+```
+
+### Step 9: REFINE
+- Improved prompt for better Q&A extraction
+- Added timestamp to sheet logging
+- Enhanced descriptions
+
+### Step 10: SAVE
+```bash
+uv run pflow workflow save slack-qa.json slack-qa-bot "Extracts Q&A pairs from Slack and logs to Google Sheets"
+```
+
+### Final: User can now run
+```bash
+# With their original values:
+uv run pflow slack-qa-bot channel=C09C16NAU5B limit=15 sheet_id=abc123xyz
+
+# Or with different values:
+uv run pflow slack-qa-bot channel=D456DEF limit=50 sheet_id=xyz789
 ```
 
 ---
 
-## Getting Help
+## Workflow Smells
 
-- `pflow --help` - CLI help
-- `pflow registry --help` - Registry commands
-- `pflow workflow --help` - Workflow commands
+**🚩 Red flags that indicate poor workflow design:**
+
+### No Inputs Section
+```json
+// ❌ BAD - Not reusable
+{"nodes": [...], "edges": [...]}
+```
+**Fix**: Extract all user values as inputs
+
+### Hardcoded Values
+```json
+// ❌ BAD - Only works for one channel
+"params": {"channel": "C09C16NAU5B"}
+```
+**Fix**: Make it an input: `"channel": "${channel}"`
+
+### Over-Specific Input Names
+```json
+// ❌ BAD - Too specific
+"inputs": {"slack_channel_C123": {...}}
+```
+**Fix**: Generic name: `"channel": {...}`
+
+### Too Many Required Inputs
+```json
+// ❌ BAD - Everything required
+"required": true, "required": true, "required": true
+```
+**Fix**: Add sensible defaults where possible
+
+### Exposing Raw MCP Results
+```json
+// ❌ BAD - Too verbose
+"outputs": {"data": {"source": "${fetch.result}"}}
+```
+**Fix**: Extract specific fields users need
 
 ---
 
-## The Golden Rule
+## Input Extraction Examples
 
-**Users show you ONE example. You build the GENERAL tool.**
+**Learn to extract inputs from user requests:**
 
-Every specific value they provide is demonstrating what COULD be configured, not what MUST be hardcoded. Build workflows that work tomorrow, for someone else, with different data.
+### Example 1: File Operations
+**User says**: "Convert data.csv to JSON format"
+```json
+"inputs": {
+  "input_file": {
+    "type": "string",
+    "required": true,
+    "description": "CSV file to convert"
+  },
+  "output_format": {
+    "type": "string",
+    "required": false,
+    "default": "json",
+    "description": "Output format"
+  }
+}
+```
+**Why**: Tomorrow they'll convert "report.csv" or want XML
 
-**When reviewing your workflow, ask:**
-- Could someone reuse this with different values?
-- Did I hardcode anything that might change?
-- Would I be frustrated trying to adapt this?
+### Example 2: API Monitoring
+**User says**: "Alert when response time exceeds 500ms for api.example.com"
+```json
+"inputs": {
+  "api_url": {
+    "type": "string",
+    "required": true,
+    "description": "API endpoint to monitor"
+  },
+  "threshold_ms": {
+    "type": "number",
+    "required": false,
+    "default": 500,
+    "description": "Response time threshold in milliseconds"
+  }
+}
+```
+**Why**: Different APIs, different thresholds
 
-If any answer is "no" or "yes" → add more inputs.
+### Example 3: Data Processing
+**User says**: "Process last 30 GitHub issues with priority labels"
+```json
+"inputs": {
+  "repo": {
+    "type": "string",
+    "required": true,
+    "description": "Repository (owner/name format)"
+  },
+  "issue_count": {
+    "type": "number",
+    "required": false,
+    "default": 30,
+    "description": "Number of issues to process"
+  },
+  "labels": {
+    "type": "string",
+    "required": false,
+    "default": "priority",
+    "description": "Label filter"
+  }
+}
+```
+**Why**: Reusable for any repo, count, or label
+
+---
+
+## Key Takeaways
+
+1. **Sequential execution ONLY** - No parallel branches
+2. **Every `${variable}` must be declared** - Either workflow input OR node output
+3. **Check node outputs FIRST** - Before writing templates
+4. **Think before you code** - Pre-build checklist prevents 80% of errors
+5. **Use intelligent discovery** - Let AI find relevant nodes
+6. **Build incrementally** - Validate often
+7. **Focus on happy path** - Let pflow's repair system handle errors
+8. **Users show ONE example** - You build the GENERAL tool
 
 ---
 
