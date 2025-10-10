@@ -70,6 +70,30 @@ User specifies a value?
 Every workflow should work tomorrow, for someone else, with different data.
 The user shows you ONE example. You build the GENERAL solution using dynamic inputs.
 
+## 🛑 What Workflows CANNOT Do
+
+**Hard limits - these are not supported:**
+
+❌ **Monitoring or looping** - Workflows run once and exit
+   - Can't: "Monitor GitHub for new PRs"
+   - Can't: "Process each file in a directory differently"
+   - Can: "Fetch and process latest 10 PRs right now"
+
+❌ **Conditional logic** - Only linear chains, no if/then/else
+   - Can't: "If PR is approved then merge, else request review"
+   - Can: "Get PR status and generate recommendation"
+
+❌ **State or memory** - Each run is independent
+   - Can't: "Track changes since last run"
+   - Can't: "Resume if interrupted"
+   - Can: "Fetch current state and process it"
+
+❌ **User interaction during execution**
+   - Can't: "Ask user for confirmation before proceeding"
+   - Can: Build separate workflows for each path
+
+**If a user asks for these, explain the limitation and offer alternatives.**
+
 ## 💬 Communication Guidelines
 
 **Keep it simple and helpful:**
