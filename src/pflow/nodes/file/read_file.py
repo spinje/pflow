@@ -1,5 +1,6 @@
 """Read file node implementation."""
 
+import base64
 import logging
 import os
 import sys
@@ -24,7 +25,9 @@ class ReadFileNode(Node):
     Interface:
     - Reads: shared["file_path"]: str  # Path to the file to read
     - Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
-    - Writes: shared["content"]: str  # File contents with line numbers
+    - Writes: shared["content"]: str  # File contents (with line numbers for text, base64-encoded for binary)
+    - Writes: shared["content_is_binary"]: bool  # True if content is binary data
+    - Writes: shared["file_path"]: str  # Path that was read
     - Writes: shared["error"]: str  # Error message if operation failed
     - Actions: default (success), error (failure)
 
@@ -54,17 +57,16 @@ class ReadFileNode(Node):
         logger.debug("Preparing to read file", extra={"file_path": file_path, "encoding": encoding, "phase": "prep"})
         return (str(file_path), encoding)
 
-    def exec(self, prep_res: tuple[str, str]) -> str:
+    def exec(self, prep_res: tuple[str, str]) -> str | bytes:
         """
-        Read file content and add line numbers.
+        Read file content and add line numbers for text files, or read as binary.
 
         Returns:
-            File content with line numbers
+            File content with line numbers (text) or raw bytes (binary)
 
         Raises:
             FileNotFoundError: If file doesn't exist
             PermissionError: If file cannot be read due to permissions
-            UnicodeDecodeError: If file cannot be decoded with specified encoding
             OSError: For other file system errors
         """
         file_path, encoding = prep_res
@@ -73,6 +75,41 @@ class ReadFileNode(Node):
         if not os.path.exists(file_path):
             logger.error("File not found", extra={"file_path": file_path, "phase": "exec"})
             raise FileNotFoundError(f"File '{file_path}' does not exist")
+
+        # Binary extension detection
+        BINARY_EXTENSIONS = {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".ico",
+            ".webp",
+            ".pdf",
+            ".zip",
+            ".tar",
+            ".gz",
+            ".7z",
+            ".rar",
+            ".mp3",
+            ".mp4",
+            ".wav",
+            ".avi",
+            ".mov",
+            ".exe",
+            ".dll",
+            ".so",
+            ".dylib",
+            ".woff",
+            ".woff2",
+            ".ttf",
+            ".bin",
+            ".dat",
+        }
+
+        path = Path(file_path)
+        file_ext = path.suffix.lower()
+        is_binary_ext = file_ext in BINARY_EXTENSIONS
 
         # Log file size for large files
         try:
@@ -85,22 +122,56 @@ class ReadFileNode(Node):
         except OSError:
             pass  # Continue with read attempt
 
-        logger.info("Reading file", extra={"file_path": file_path, "encoding": encoding, "phase": "exec"})
+        # Read file based on detection
+        if is_binary_ext:
+            # Known binary extension - read as binary directly
+            logger.info("Reading binary file", extra={"file_path": file_path, "phase": "exec"})
+            binary_content = path.read_bytes()
+            self._is_binary = True
 
-        # Read file content - let any exceptions bubble up
-        with open(file_path, encoding=encoding) as f:
-            lines = f.readlines()
+            logger.info(
+                "Binary file read successfully",
+                extra={"file_path": file_path, "size_bytes": len(binary_content), "phase": "exec"},
+            )
+            return binary_content
+        else:
+            # Try text read first
+            try:
+                logger.info("Reading text file", extra={"file_path": file_path, "encoding": encoding, "phase": "exec"})
 
-        # Add 1-indexed line numbers
-        numbered_lines = [f"{i + 1}: {line}" for i, line in enumerate(lines)]
-        content = "".join(numbered_lines)
+                with open(file_path, encoding=encoding) as f:
+                    lines = f.readlines()
 
-        logger.info(
-            "File read successfully",
-            extra={"file_path": file_path, "size_bytes": len(content), "line_count": len(lines), "phase": "exec"},
-        )
+                # Add 1-indexed line numbers
+                numbered_lines = [f"{i + 1}: {line}" for i, line in enumerate(lines)]
+                text_content = "".join(numbered_lines)
+                self._is_binary = False
 
-        return content
+                logger.info(
+                    "Text file read successfully",
+                    extra={
+                        "file_path": file_path,
+                        "size_bytes": len(text_content),
+                        "line_count": len(lines),
+                        "phase": "exec",
+                    },
+                )
+                return text_content
+
+            except UnicodeDecodeError:
+                # Binary file with text extension - fallback to binary
+                logger.info(
+                    "Text decode failed, reading as binary",
+                    extra={"file_path": file_path, "encoding": encoding, "phase": "exec"},
+                )
+                binary_content = path.read_bytes()
+                self._is_binary = True
+
+                logger.info(
+                    "Binary file read successfully (after decode error)",
+                    extra={"file_path": file_path, "size_bytes": len(binary_content), "phase": "exec"},
+                )
+                return binary_content
 
     def exec_fallback(self, prep_res: tuple[str, str], exc: Exception) -> str:
         """Handle final failure after all retries with user-friendly messages."""
@@ -126,12 +197,27 @@ class ReadFileNode(Node):
         # Return error message that will be stored in shared["error"]
         return error_msg
 
-    def post(self, shared: dict, prep_res: tuple[str, str], exec_res: str) -> str:
+    def post(self, shared: dict, prep_res: tuple[str, str], exec_res: str | bytes) -> str:
         """Update shared store based on result and return action."""
         # Check if exec_res is an error message from exec_fallback
-        if exec_res.startswith("Error:"):
+        if isinstance(exec_res, str) and exec_res.startswith("Error:"):
             shared["error"] = exec_res
             return "error"
+
+        # Handle binary encoding
+        if hasattr(self, "_is_binary") and self._is_binary:
+            # Binary content - base64 encode
+            assert isinstance(exec_res, bytes), "Binary content must be bytes"  # Type narrowing for mypy  # noqa: S101
+            encoded = base64.b64encode(exec_res).decode("ascii")
+            shared["content"] = encoded
+            shared["content_is_binary"] = True
         else:
+            # Text content - store as-is
+            assert isinstance(exec_res, str), "Text content must be str"  # Type narrowing for mypy  # noqa: S101
             shared["content"] = exec_res
-            return "default"
+            shared["content_is_binary"] = False
+
+        # Store file path
+        shared["file_path"] = prep_res[0]
+
+        return "default"

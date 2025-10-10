@@ -1,5 +1,6 @@
 """Shell node implementation for executing system commands."""
 
+import base64
 import logging
 import os
 import subprocess
@@ -97,8 +98,10 @@ class ShellNode(Node):
 
     Interface:
     - Reads: shared["stdin"]: str  # Optional input data for the command
-    - Writes: shared["stdout"]: str  # Command standard output
-    - Writes: shared["stderr"]: str  # Command error output
+    - Writes: shared["stdout"]: str  # Command standard output (text or base64-encoded binary)
+    - Writes: shared["stdout_is_binary"]: bool  # True if stdout is binary data
+    - Writes: shared["stderr"]: str  # Command error output (text or base64-encoded binary)
+    - Writes: shared["stderr_is_binary"]: bool  # True if stderr is binary data
     - Writes: shared["exit_code"]: int  # Process exit code
     - Params: command: str  # Shell command to execute (required)
     - Params: cwd: str  # Working directory (optional, defaults to current)
@@ -161,9 +164,29 @@ class ShellNode(Node):
     def _is_safe_non_error(self, command: str, exit_code: int, stdout: str, stderr: str) -> tuple[bool, str]:
         """Check if a non-zero exit code is actually a safe "no results" case.
 
+        Determines if commands like grep, find, or diff returned non-zero because
+        they legitimately found no results, rather than due to an actual error.
+
+        IMPORTANT: Only call this for TEXT output. Binary output should skip this
+        check entirely since safe patterns ("No such file", "not found", "no matches")
+        don't apply to binary data. Calling this on binary output could cause:
+        1. False positives from random bytes matching patterns
+        2. UnicodeDecodeError if binary data interpreted as text
+        3. Incorrect auto-handling of legitimate binary command failures
+
+        Binary detection happens in exec() and is checked in post() before calling
+        this method (see lines 616-622).
+
+        Args:
+            command: The shell command that was executed
+            exit_code: The non-zero exit code returned
+            stdout: Command stdout (must be text, not base64 or binary)
+            stderr: Command stderr (must be text, not base64 or binary)
+
         Returns:
-            Tuple of (is_safe, reason) where is_safe indicates if this should be treated
-            as success, and reason explains why (for logging).
+            Tuple of (is_safe, reason) where:
+            - is_safe: True if this is a safe non-error (e.g., grep no match)
+            - reason: Human-readable explanation of why it's safe (for logging)
         """
         # ls with glob patterns that match no files
         if (
@@ -470,10 +493,20 @@ class ShellNode(Node):
         )
 
         try:
+            # Encode stdin to bytes for text=False mode
+            stdin_bytes = stdin.encode("utf-8") if stdin else None
+
             # Execute the command with shell=True for full shell power
             # Security: shell=True is intentional - this is a shell node that provides full shell access
             result = subprocess.run(
-                command, shell=True, capture_output=True, text=True, input=stdin, cwd=cwd, env=full_env, timeout=timeout
+                command,
+                shell=True,
+                capture_output=True,
+                text=False,
+                input=stdin_bytes,
+                cwd=cwd,
+                env=full_env,
+                timeout=timeout,
             )
 
             logger.info(
@@ -481,18 +514,45 @@ class ShellNode(Node):
                 extra={"phase": "exec", "exit_code": result.returncode, "command": command[:100], "audit": True},
             )
 
-            return {"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode, "timeout": False}
+            # Handle stdout - try decode, fallback to binary
+            try:
+                stdout = result.stdout.decode("utf-8")
+                stdout_is_binary = False
+            except UnicodeDecodeError:
+                # Binary output - keep as bytes for post() to encode
+                stdout = result.stdout
+                stdout_is_binary = True
+
+            # Handle stderr - try decode, fallback to binary
+            try:
+                stderr = result.stderr.decode("utf-8")
+                stderr_is_binary = False
+            except UnicodeDecodeError:
+                # Binary error output
+                stderr = result.stderr
+                stderr_is_binary = True
+
+            return {
+                "stdout": stdout,
+                "stdout_is_binary": stdout_is_binary,
+                "stderr": stderr,
+                "stderr_is_binary": stderr_is_binary,
+                "exit_code": result.returncode,
+                "timeout": False,
+            }
 
         except subprocess.TimeoutExpired as e:
             logger.exception(f"Command timed out after {timeout} seconds", extra={"phase": "exec", "timeout": timeout})
 
-            # Try to capture any partial output
+            # Try to capture any partial output (with lossy decode for readability)
             stdout = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
             stderr = e.stderr.decode("utf-8", errors="replace") if e.stderr else ""
 
             return {
                 "stdout": stdout,
+                "stdout_is_binary": False,  # Lossy decode means treat as text
                 "stderr": stderr,
+                "stderr_is_binary": False,
                 "exit_code": -1,  # Convention for timeout
                 "timeout": True,
                 "error": f"Command timed out after {timeout} seconds",
@@ -513,9 +573,27 @@ class ShellNode(Node):
         Returns:
             Action string for flow control
         """
-        # Store all outputs in shared store
-        shared["stdout"] = exec_res["stdout"]
-        shared["stderr"] = exec_res["stderr"]
+        # Handle stdout encoding
+        if exec_res.get("stdout_is_binary", False):
+            # Encode binary stdout as base64
+            encoded = base64.b64encode(exec_res["stdout"]).decode("ascii")
+            shared["stdout"] = encoded
+            shared["stdout_is_binary"] = True
+        else:
+            shared["stdout"] = exec_res["stdout"]
+            shared["stdout_is_binary"] = False
+
+        # Handle stderr encoding
+        if exec_res.get("stderr_is_binary", False):
+            # Encode binary stderr as base64
+            encoded = base64.b64encode(exec_res["stderr"]).decode("ascii")
+            shared["stderr"] = encoded
+            shared["stderr_is_binary"] = True
+        else:
+            shared["stderr"] = exec_res["stderr"]
+            shared["stderr_is_binary"] = False
+
+        # Store exit code
         shared["exit_code"] = exec_res["exit_code"]
 
         # Store error message if present
@@ -549,11 +627,19 @@ class ShellNode(Node):
             return "default"  # Continue on normal path
 
         # Check if this is a safe "no results" pattern that shouldn't be treated as an error
+        # Note: Only check safe patterns for text output (binary commands don't have these patterns)
         command = prep_res["command"]
         stdout = exec_res["stdout"]
         stderr = exec_res["stderr"]
 
-        is_safe, reason = self._is_safe_non_error(command, exit_code, stdout, stderr)
+        # Skip safe pattern check if output is binary
+        if exec_res.get("stdout_is_binary", False) or exec_res.get("stderr_is_binary", False):
+            # Binary output - safe pattern detection doesn't apply
+            is_safe = False
+            reason = ""
+        else:
+            # Text output - check safe patterns
+            is_safe, reason = self._is_safe_non_error(command, exit_code, stdout, stderr)
         if is_safe:
             # Normalize exit codes across platforms for predictable behavior
             normalized_exit = self._normalize_exit_code_for_safe_patterns(command, exit_code, stdout, stderr)

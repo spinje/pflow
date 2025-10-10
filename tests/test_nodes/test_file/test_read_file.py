@@ -79,6 +79,11 @@ class TestReadFileNode:
         FIX HISTORY:
         - Removed dual testing approach (exception testing + behavior testing)
         - Fixed string assertion fragility with more robust checking
+        - UPDATED for Task 82: Binary files now fallback instead of error
+
+        BEHAVIOR CHANGE (Task 82): Files that fail UTF-8 decoding now fallback
+        to binary mode instead of returning an error. This test now verifies
+        the fallback works correctly.
         """
         # Write binary data that's not valid UTF-8
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
@@ -89,14 +94,16 @@ class TestReadFileNode:
             node = ReadFileNode()
             shared = {"file_path": temp_path}
 
-            # BEHAVIOR: Should provide helpful error about encoding
+            # NEW BEHAVIOR: Should fallback to binary, not error
             action = node.run(shared)
 
-            assert action == "error"
-            error_msg = shared["error"]
-            # Check semantic meaning rather than exact strings
-            assert "encoding" in error_msg.lower() or "utf-8" in error_msg.lower() or "decode" in error_msg.lower()
-            assert temp_path in error_msg  # Shows which file had the problem
+            assert action == "default", "Should fallback to binary, not error"
+            assert "content" in shared
+            assert "error" not in shared, "Binary fallback should succeed"
+
+            # Should be base64 encoded binary
+            assert "content_is_binary" in shared
+            assert shared["content_is_binary"] is True
         finally:
             os.unlink(temp_path)
 

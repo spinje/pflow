@@ -1,5 +1,6 @@
 """Write file node implementation."""
 
+import base64
 import contextlib
 import logging
 import os
@@ -25,7 +26,8 @@ class WriteFileNode(Node):
     as needed. Supports both write and append modes.
 
     Interface:
-    - Reads: shared["content"]: str  # Content to write to the file
+    - Reads: shared["content"]: str  # Content to write to the file (text or base64-encoded binary)
+    - Reads: shared["content_is_binary"]: bool  # True if content is base64-encoded binary (optional, default: false)
     - Reads: shared["file_path"]: str  # Path to the file to write
     - Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
     - Writes: shared["written"]: bool  # True if write succeeded
@@ -44,7 +46,7 @@ class WriteFileNode(Node):
         """Initialize with retry support for transient file access issues."""
         super().__init__(max_retries=3, wait=0.1)
 
-    def prep(self, shared: dict) -> tuple[str, str, str, bool]:
+    def prep(self, shared: dict) -> tuple[str | bytes, str, str, bool, bool]:
         """Extract content, file path, encoding, and mode from shared store or params."""
         # Content is required - check shared first, then params
         if "content" in shared:
@@ -70,17 +72,28 @@ class WriteFileNode(Node):
         # Get append mode (default False)
         append = self.params.get("append", False)
 
+        # Check for binary flag (NEW)
+        is_binary = shared.get("content_is_binary") or self.params.get("content_is_binary", False)
+
+        if is_binary and isinstance(content, str):
+            # Decode base64 to bytes
+            try:
+                content = base64.b64decode(content)
+            except Exception as e:
+                raise ValueError(f"Invalid base64 content: {str(e)[:100]}") from e
+
         logger.debug(
             "Preparing to write file",
             extra={
                 "file_path": file_path,
                 "encoding": encoding,
                 "append": append,
-                "content_size": len(str(content)),
+                "is_binary": is_binary,
+                "content_size": len(content) if isinstance(content, bytes) else len(str(content)),
                 "phase": "prep",
             },
         )
-        return (str(content), str(file_path), encoding, append)
+        return (content if is_binary else str(content), str(file_path), encoding, append, is_binary)
 
     def _ensure_parent_directory(self, file_path: str) -> None:
         """Create parent directories if needed."""
@@ -115,7 +128,7 @@ class WriteFileNode(Node):
             # statvfs not available on Windows or other error - continue anyway
             pass
 
-    def exec(self, prep_res: tuple[str, str, str, bool]) -> str:
+    def exec(self, prep_res: tuple[str | bytes, str, str, bool, bool]) -> str:
         """
         Write content to file atomically.
 
@@ -126,27 +139,41 @@ class WriteFileNode(Node):
             PermissionError: If unable to write to file or create directories
             OSError: For disk space or other file system errors
         """
-        content, file_path, encoding, append = prep_res
+        content, file_path, encoding, append, is_binary = prep_res
 
         # Create parent directories if needed
         self._ensure_parent_directory(file_path)
 
-        # Check disk space
-        self._check_disk_space(content, encoding, file_path)
+        # Check disk space (skip for binary - requires different calculation)
+        if not is_binary:
+            assert isinstance(content, str), "Text content must be string"  # noqa: S101
+            self._check_disk_space(content, encoding, file_path)
 
         # Log operation start for large content
-        if len(content) > 1024 * 1024:  # 1MB
+        content_size = len(content) if isinstance(content, (str, bytes)) else len(str(content))
+        if content_size > 1024 * 1024:  # 1MB
             logger.info(
                 "Writing large file",
-                extra={"file_path": file_path, "size_mb": round(len(content) / (1024 * 1024), 2), "phase": "exec"},
+                extra={
+                    "file_path": file_path,
+                    "size_mb": round(content_size / (1024 * 1024), 2),
+                    "is_binary": is_binary,
+                    "phase": "exec",
+                },
             )
 
         if append:
             # For append mode, use direct write (atomic append is complex)
-            logger.info("Appending to file", extra={"file_path": file_path, "phase": "exec"})
+            logger.info("Appending to file", extra={"file_path": file_path, "is_binary": is_binary, "phase": "exec"})
             # Let exceptions bubble up for retry mechanism
-            with open(file_path, "a", encoding=encoding) as f:
-                f.write(content)
+            if is_binary:
+                assert isinstance(content, bytes), "Binary content must be bytes"  # noqa: S101
+                with open(file_path, "ab") as f:
+                    f.write(content)
+            else:
+                assert isinstance(content, str), "Text content must be string"  # noqa: S101
+                with open(file_path, "a", encoding=encoding) as f:
+                    f.write(content)
             logger.info(
                 "File append successful",
                 extra={"file_path": file_path, "bytes_written": len(content), "phase": "exec"},
@@ -154,7 +181,12 @@ class WriteFileNode(Node):
             return f"Successfully appended to '{file_path}'"
         else:
             # For write mode, use atomic write with temp file
-            return self._atomic_write(file_path, content, encoding)
+            if is_binary:
+                assert isinstance(content, bytes), "Binary content must be bytes"  # noqa: S101
+                return self._atomic_write_binary(file_path, content)
+            else:
+                assert isinstance(content, str), "Text content must be string"  # noqa: S101
+                return self._atomic_write(file_path, content, encoding)
 
     def _atomic_write(self, file_path: str, content: str, encoding: str) -> str:
         """Write file atomically using temp file + rename."""
@@ -196,9 +228,49 @@ class WriteFileNode(Node):
                     logger.debug("Cleaned up temp file after error", extra={"temp_path": temp_path, "phase": "exec"})
             raise  # Re-raise the exception for retry mechanism
 
-    def exec_fallback(self, prep_res: tuple[str, str, str, bool], exc: Exception) -> str:
+    def _atomic_write_binary(self, file_path: str, content: bytes) -> str:
+        """Write binary file atomically using temp file + rename."""
+        dir_path = os.path.dirname(file_path) or "."
+
+        # Create temp file in same directory for atomic rename
+        temp_fd = None
+        temp_path = None
+
+        try:
+            temp_fd, temp_path = tempfile.mkstemp(dir=dir_path, text=False)  # text=False for binary
+            logger.debug(
+                "Created temp file for atomic binary write",
+                extra={"file_path": file_path, "temp_path": temp_path, "phase": "exec"},
+            )
+
+            # Write to temp file
+            with os.fdopen(temp_fd, "wb") as f:
+                f.write(content)
+                temp_fd = None  # fdopen takes ownership
+
+            # Atomic rename (on same filesystem)
+            shutil.move(temp_path, file_path)
+            logger.info(
+                "Binary file written atomically",
+                extra={"file_path": file_path, "temp_path": temp_path, "bytes_written": len(content), "phase": "exec"},
+            )
+
+            return f"Successfully wrote binary file to '{file_path}'"
+
+        except Exception:
+            # Clean up temp file on error before re-raising
+            if temp_fd is not None:
+                with contextlib.suppress(Exception):
+                    os.close(temp_fd)
+            if temp_path and os.path.exists(temp_path):
+                with contextlib.suppress(Exception):
+                    os.unlink(temp_path)
+                    logger.debug("Cleaned up temp file after error", extra={"temp_path": temp_path, "phase": "exec"})
+            raise  # Re-raise the exception for retry mechanism
+
+    def exec_fallback(self, prep_res: tuple[str | bytes, str, str, bool, bool], exc: Exception) -> str:
         """Handle final failure after all retries with user-friendly messages."""
-        _, file_path, _, append = prep_res
+        _, file_path, _, append, _ = prep_res
 
         logger.error(
             f"Failed to write file after {self.max_retries} retries",
@@ -219,7 +291,7 @@ class WriteFileNode(Node):
 
         return error_msg
 
-    def post(self, shared: dict, prep_res: tuple[str, str, str, bool], exec_res: str) -> str:
+    def post(self, shared: dict, prep_res: tuple[str | bytes, str, str, bool, bool], exec_res: str) -> str:
         """Update shared store based on result and return action."""
         # Check if exec_res is an error message from exec_fallback
         if exec_res.startswith("Error:"):

@@ -96,6 +96,9 @@ class TestFileNodeRetryBehavior:
         """Test that different error conditions produce helpful messages.
 
         BEHAVIOR: Users should get actionable error messages, not technical details.
+
+        UPDATE (Task 82): Binary files now fallback instead of error, so removed
+        encoding error test case.
         """
         node = ReadFileNode()
         node.wait = 0  # Speed up tests by removing retry delays
@@ -108,22 +111,6 @@ class TestFileNodeRetryBehavior:
         error_msg = shared["error"]
         assert "does not exist" in error_msg.lower()
         assert "/nonexistent/path/file.txt" in error_msg  # Shows actual path
-
-        # Test with invalid encoding on real file
-        with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
-            f.write(b"\x80\x81\x82\x83")  # Invalid UTF-8
-            temp_path = f.name
-
-        try:
-            shared = {"file_path": temp_path, "encoding": "utf-8"}
-            action = node.run(shared)
-
-            assert action == "error"
-            error_msg = shared["error"]
-            assert "encoding" in error_msg.lower() or "utf-8" in error_msg.lower()
-
-        finally:
-            os.unlink(temp_path)
 
     def test_concurrent_file_access_eventually_succeeds(self):
         """Test that retry mechanism handles real concurrent access scenarios.
@@ -399,10 +386,11 @@ class TestFileNodeRetryBehavior:
             assert action == "default"
             assert "copied" in shared or "success" in shared.get("copied", "").lower()
 
-    def test_encoding_issues_provide_helpful_guidance(self):
-        """Test that encoding problems are handled with useful error messages.
+    def test_encoding_issues_fallback_to_binary(self):
+        """Test that encoding problems fallback to binary mode.
 
-        BEHAVIOR: Users should get actionable guidance for encoding issues.
+        BEHAVIOR CHANGE (Task 82): Files with invalid UTF-8 now fallback to binary
+        instead of returning an error. This enables binary file workflows.
         """
         # Create file with invalid UTF-8 bytes
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
@@ -416,14 +404,14 @@ class TestFileNodeRetryBehavior:
 
             action = node.run(shared)
 
-            # BEHAVIOR: Should provide helpful error message
-            assert action == "error"
-            error_msg = shared["error"]
-            assert "encoding" in error_msg.lower() or "utf-8" in error_msg.lower()
-            assert temp_path in error_msg  # Shows which file had the problem
+            # NEW BEHAVIOR: Should fallback to binary, not error
+            assert action == "default", "Should fallback to binary mode"
+            assert "content" in shared
+            assert "error" not in shared
 
-            # BEHAVIOR: Error message should suggest solutions
-            assert "encoding" in error_msg.lower() or "format" in error_msg.lower()
+            # Should be base64 encoded binary
+            assert "content_is_binary" in shared
+            assert shared["content_is_binary"] is True
 
         finally:
             os.unlink(temp_path)
