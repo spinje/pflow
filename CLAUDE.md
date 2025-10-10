@@ -397,6 +397,7 @@ The codebase is in early development with these tasks completed:
 
 Next up:
 - ⏳ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
+- ⏳ Task 82: Implement System-Wide Binary Data Support
 
 Next version (post-MVP/post-Launch):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
