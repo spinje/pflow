@@ -12,9 +12,37 @@ You build a tool that can analyze ANY file.
 2. **Every workflow → Reusable** (works tomorrow with different data)
 3. **Every decision → Algorithmic** (no guessing, follow the rules)
 
+## 🛑 STOP - Do This Before Anything Else
+
+**Run this command first. Always. No exceptions:**
+```bash
+uv run pflow workflow discover "user's exact request here"
+```
+- **≥95-100% match** → Skip to execution, you're done
+- **≥80-95% match** → Ask the user to confirm the workflow
+- **<80% match** → Continue reading to build
+
+This takes 5 seconds. Building unnecessarily takes hours.
+
+## 🎯 Choose the Simplest Tool First
+
+**Before using complex tools, check if simpler ones work:**
+
+| Task Type | ❌ Complex (Avoid) | ✅ Simple (Use First) | Why |
+|-----------|-------------------|---------------------|-----|
+| Extract from structured data | LLM node | `shell` + `jq` | Deterministic, fast, free |
+| Binary file operations | MCP nodes | `shell` + `curl` | Direct, reliable |
+| Async operations | Multiple polling nodes | HTTP with `Prefer: wait` | Single node instead of many |
+| Parse JSON/CSV/XML | LLM extraction | `jq`/`awk`/`xmllint` | Precise, no hallucination |
+| Text transformations | LLM | `shell` + `sed`/`tr` | Instant, predictable |
+| File access from cloud | Download then use | Direct URL when available | Eliminates intermediate steps |
+| Field validation | LLM reasoning | `jq` with conditionals | Deterministic logic |
+
+**The Simplicity Test**: Can a deterministic tool (shell/jq/curl) do this? If yes, use it.
+
 ## ⚡ Quick Start Decision Tree
 
-### First: What does user want?
+### First: What does user want? What did discovery find?
 ```
 User says "run X" → Find and execute workflow
 User says "create/build X" → Check existing, then build/modify
@@ -48,6 +76,18 @@ The user shows you ONE example. You build the GENERAL solution using dynamic inp
 - **Debugging template errors** → See [Understanding Template Errors](#understanding-template-errors)
 - **Authentication issues** → See [Authentication & Credentials](#authentication--credentials)
 - **Workflow naming** → See [Workflow Naming Conventions](#workflow-naming-conventions)
+
+## 🚨 When Stuck - Quick Fixes
+
+| Stuck On | Do This | Then Check |
+|----------|---------|------------|
+| `${var}` not found | `--trace` flag → check trace file | [Template Errors](#understanding-template-errors) |
+| 20+ nodes chaos | Delete all after node 5, test, add back slowly | [Build in Phases](#for-complex-workflows-15-nodes-build-in-phases) |
+| Output is `Any` | `registry run NODE --show-structure` | [Test Individual Nodes](#test-individual-nodes-when-needed) |
+| Unclear request | Ask: "You want to [specific action] with [specific result]?" | Stop guessing |
+| Nothing works | Test ONE node: `registry run NODE params` | [Testing & Debugging](#testing--debugging) |
+
+**Rule: When spiraling → Stop adding. Start subtracting. Test smallest piece.**
 
 ---
 
@@ -152,6 +192,79 @@ This uses pflow's internal LLM to intelligently select relevant nodes with compl
 
 **Output**: List of nodes with interfaces understood, ready for design phase
 
+### 3.5. EXTERNAL API INTEGRATION (When No Dedicated Node Exists)
+
+**Common scenario: The service you need has no MCP or dedicated node.**
+
+#### Quick Decision: HTTP vs Shell+curl
+
+| Use Case | Best Tool | Example |
+|----------|-----------|---------|
+| JSON APIs | HTTP node | REST endpoints, OAuth APIs |
+| Binary downloads | `shell` + `curl` | Images, PDFs, files |
+| File uploads | `shell` + `curl` | Cloud storage, S3, form uploads |
+| Complex auth | HTTP node | Multi-step OAuth flows |
+
+#### For REST APIs: Use HTTP Node
+
+1. **Research the API**
+```bash
+WebSearch: "ServiceName API documentation"
+WebFetch: [docs URL] to extract endpoint details
+```
+
+2. **CRITICAL: Try Prefer: wait First (Eliminates Polling!)**
+```json
+{
+  "type": "http",
+  "params": {
+    "url": "https://api.example.com/v1/resource",
+    "method": "POST",
+    "headers": {
+      "Prefer": "wait=60",  // ← Waits up to 60s for completion!
+      "Authorization": "Bearer ${api_token}"
+    },
+    "body": {"param1": "...", "param2": {...}}
+  }
+}
+```
+**This single header can eliminate 2-3 polling nodes!**
+
+3. **Only if Prefer: wait doesn't work, add polling nodes**
+
+#### For Binary Data: Use Shell+curl
+
+**Download pattern:**
+```json
+{
+  "type": "shell",
+  "params": {
+    "command": "curl -s -L -o 'output_file' '${url}' && echo 'output_file'"
+  }
+}
+```
+
+**Upload pattern:**
+```json
+{
+  "type": "shell",
+  "params": {
+    "command": "curl -X POST '[upload-endpoint]' --header 'Authorization: Bearer ${token}' --header '[Service-Header]: [value]' --data-binary @file"
+  }
+}
+```
+
+#### Direct URL Pattern (Saves Nodes)
+
+Many cloud services provide direct file URLs. Use them instead of downloading first:
+- Cloud storage: Use direct download URLs when available (e.g., `https://storage.service.com/file/${id}`)
+- Version control: Raw file URLs bypass UI (e.g., raw content links)
+- CDNs: Direct asset links avoid API calls
+- This eliminates intermediate download nodes
+- Works when the next service accepts URLs as input
+
+**Remember**: Choose the simplest tool. HTTP for JSON, shell+curl for binary.
+
 ### 4. DESIGN (5 minutes)
 
 Sketch the data flow before writing JSON.
@@ -217,9 +330,43 @@ Quick confirm - this matches what you need?"
 
 **Output**: User-confirmed plan that matches their intent
 
-### 6. BUILD (10 minutes)
+### 6. BUILD (10 minutes for simple, 30+ for complex)
 
 **After plan is confirmed**, create the workflow JSON step-by-step.
+
+#### For Complex Workflows (15+ nodes): Build in Phases!
+
+**Don't build all 20+ nodes at once. Use phased implementation:**
+
+##### Phase 1: Core Data Flow (Test First!)
+```json
+{
+  "nodes": [
+    {"id": "fetch-source", "type": "[source-type]"},
+    {"id": "extract-data", "type": "shell", "params": {"command": "jq '.path.to.data'"}},
+    {"id": "save-test", "type": "write-file", "params": {"file_path": "test.txt"}}
+  ]
+}
+```
+**Test**: `uv run pflow workflow.json` - Verify extraction works!
+
+##### Phase 2: Add External APIs (One at a Time)
+- Add first API call with `Prefer: wait`
+- Test response structure
+- Add next API call
+- Test again
+
+##### Phase 3: Processing & Transformations
+- Add LLM enhancements
+- Add data transformations
+- Test complete flow
+
+##### Phase 4: Storage & Optional Features
+- Add final file operations
+- Add uploads (cloud storage, S3, etc.)
+- Final testing
+
+**This prevents debugging 20+ nodes simultaneously!**
 
 #### Step 6.1: Declare Workflow Inputs
 
@@ -364,6 +511,33 @@ uv run pflow workflow.json param1=value param2=value
 - Just passing data through: `${fetch.result}` works fine
 - Sending to LLM: LLM handles any structure
 - Output is the final result
+
+#### CRITICAL: MCP Nodes Have Deeply Nested Outputs
+
+**MCP outputs are NEVER simple. Always test with --show-structure first.**
+
+**What docs say:** `result: Any`
+**What you get:** `result.data.tool_response.nested.deeply.url`
+
+**Common patterns:**
+- Tool responses: `${node.result.data.content}` or `${node.result.tool_response.output}`
+- File operations: `${node.result.data.file_url}` or `${node.result.data.download_url}`
+- API results: `${node.result.data.response}` or `${node.result.response.items}`
+- General: Expect 3-5 levels of nesting minimum
+
+**Discovery Strategy:**
+```bash
+# 1. Test with --show-structure
+uv run pflow registry run mcp-service-TOOL param="test" --show-structure
+
+# 2. Document the actual path in your workflow
+# Comment: mcp-google-drive returns result.data.downloaded_file_content.s3url
+```
+
+**Common quirks:**
+- Field typos ("successfull" vs "successful")
+- Inconsistent casing
+- Redundant wrapper levels
 
 #### How to Discover Output Structure
 
@@ -516,22 +690,26 @@ Every specific value they provide is demonstrating what COULD be configured, not
 
 ### Choosing Node Categories
 
-**Critical: Choose the right tool for each job**
+**CRITICAL: Shell+jq First for Structured Data!**
 
-| Need | Best Choice | Why | Avoid |
-|------|------------|-----|-------|
-| **Parse JSON/CSV** | `shell` with jq/awk | Fast, deterministic | LLM (overkill) |
-| **Extract meaning** | `llm` | Understands context | Shell (can't understand) |
-| **Fetch from API** | `http` or MCP tool | Direct access | LLM (can't fetch) |
-| **Transform text** | `llm` | Flexible | Shell (limited) |
-| **Count/filter** | `shell` | Efficient | LLM (wasteful) |
-| **Make decisions** | `llm` | Can reason | Shell (no logic) |
+| Need | ✅ ALWAYS Use | ❌ NEVER Use | Real Example |
+|------|--------------|-------------|--------------|
+| **Extract from JSON/Sheets** | `shell` + `jq` | LLM | `jq -r '.data.field'` # Adapt path to your structure |
+| **Parse CSV/structured data** | `shell` + `awk/cut` | LLM | `cut -d',' -f3` |
+| **Filter/select data** | `shell` + `jq` | LLM | `jq 'select(.status=="active")'` |
+| **Download files** | `shell` + `curl` | MCP/HTTP | `curl -L -o file.jpg "$url"` |
+| **Sanitize filenames** | `shell` + `tr` | LLM | `tr ' ' '-' \| tr -cd '[:alnum:]-_.'` |
+| **Simple text ops** | `shell` + `sed/tr` | LLM | `sed 's/old/new/g'` |
+| **Extract meaning** | `llm` | Shell | "What's the sentiment?" |
+| **Creative writing** | `llm` | Shell | "Enhance this prompt" |
+| **API calls (JSON)** | `http` | Shell | REST endpoints |
+| **Complex decisions** | `llm` | Shell | "Which option is better?" |
 
-**The Right Tool Rule**:
-- **Structured data** → Shell/direct tools
-- **Unstructured text** → LLM
-- **External services** → MCP tools
-- **File operations** → File nodes (not shell)
+**Golden Rules**:
+1. **If data has structure → Use shell+jq** (even if complex!)
+2. **If curl can do it → Use shell+curl** (not HTTP/MCP)
+3. **Only use LLM for understanding/creativity** (not extraction)
+4. **Prefer: wait > polling** (for async APIs)
 
 ---
 
@@ -602,6 +780,47 @@ Everything else?
 
 **Manage**: `uv run pflow settings set-env KEY value`
 **Precedence**: CLI > ENV > settings > defaults
+
+#### CRITICAL: How Workflows Access Credentials
+
+**Settings values are NOT automatically available as templates!**
+
+❌ **WRONG - Settings don't auto-populate:**
+```json
+{
+  "type": "http",
+  "params": {
+    "headers": {"Authorization": "Bearer ${api_token}"}  // This won't work!
+  }
+}
+```
+
+✅ **CORRECT - Declare as workflow input:**
+```json
+{
+  "inputs": {
+    "api_token": {
+      "type": "string",
+      "required": true,
+      "description": "API token for external service"
+    }
+  },
+  "nodes": [{
+    "type": "http",
+    "params": {
+      "headers": {"Authorization": "Bearer ${api_token}"}  // Now it works
+    }
+  }]
+}
+```
+
+**The Complete Authentication Flow:**
+1. Store credential in settings: `uv run pflow settings set-env SERVICE_TOKEN "secret123"`
+2. Declare as workflow input (required field)
+3. Pass at runtime: `uv run pflow workflow.json api_token="$SERVICE_TOKEN"`
+4. Or let it use environment variable with same name automatically
+
+**Key Point**: Settings store secrets securely, but workflows must explicitly declare them as inputs to use them.
 
 ### Workflow Structure Essentials
 
@@ -805,18 +1024,91 @@ uv run pflow registry run mcp-datastore-CREATE_RECORD table="users" data='{"name
 
 ## Testing & Debugging
 
-### Test Individual Nodes
+### Test Individual Nodes (When Needed)
 
-Test nodes in isolation before building workflows:
+**Test unknown nodes. Skip testing for known patterns.**
 
+#### When to Test (Worth the Time)
+
+✅ **Always test:**
+- MCP nodes (deeply nested outputs)
+- External APIs you haven't used
+- Complex shell+jq extractions
+- Anything returning `Any` type that you need to access
+
+❌ **Skip testing for:**
+- Simple shell commands (`curl`, `echo`, `mkdir`)
+- Known patterns you've used before
+- File operations (read/write)
+- Standard HTTP calls with known responses
+
+#### Smart Testing Workflow
+
+**Step 1: Test with --show-structure (ALWAYS)**
 ```bash
-uv run pflow registry run <node-type> param1=value1 param2=value2
+# For MCP nodes - reveals nested structures
+uv run pflow registry run mcp-service-TOOL_NAME \
+  param1="value1" --show-structure
+
+# For HTTP nodes - test actual endpoints
+uv run pflow registry run http \
+  url="https://api.example.com/endpoint" \
+  method="POST" \
+  headers='{"Authorization": "Bearer test"}' \
+  --show-structure
 ```
 
-**Output Modes:**
-- `--output-format json` - For programmatic parsing
-- `--show-structure` - Discover template paths for `Any` types
-- `--verbose` - Show parameters and execution details
+**Step 2: Document the actual structure**
+```bash
+# What documentation says:
+Output: result (Any) - Tool result
+
+# What --show-structure reveals:
+result.data.response.items[0].content.url  # The actual path!
+result.metadata.status
+result.error_details.message
+```
+
+**Step 3: Update your templates accordingly**
+```json
+// ❌ WRONG - Based on documentation
+"params": {"data": "${fetch.result}"}
+
+// ✅ CORRECT - Based on testing
+"params": {"data": "${fetch.result.data.response.items[0].content.url}"}
+```
+
+#### Critical Testing Patterns
+
+**Pattern 1: MCP Tools Always Have Complex Outputs**
+```bash
+# Test reveals:
+result.data.tool_response.nested.deeply.actual_value
+
+# Not just:
+result  # This almost never works
+```
+
+**Pattern 2: External APIs Need Authentication Testing**
+```bash
+# Test with real token to verify:
+- Authentication header format
+- Response structure
+- Error messages
+- Rate limits
+```
+
+**Pattern 3: Binary Data Needs Special Handling**
+```bash
+# Test file downloads/uploads:
+uv run pflow registry run http url="image.jpg" --show-structure
+# Check if response is string, base64, or URL
+```
+
+**Time Investment:**
+- Testing: 30-60 minutes
+- Debugging without testing: 2-4 hours
+- Choice is clear: TEST FIRST
 
 ### Execute Workflow
 
@@ -1008,9 +1300,96 @@ Start simple, build complexity gradually.
 
 See [Complete Example](#complete-example-slack-qa-bot) for a full production workflow.
 
+### Level 5: Real-World Complexity (Reality Check)
+
+**Most real workflows have 15-30 nodes. This is NORMAL.**
+
+#### Example: Multi-Service Integration Workflow
+
+```json
+{
+  "nodes": [
+    {"id": "fetch-data", "type": "..."},        // Node 1
+    {"id": "validate", "type": "..."},          // Node 2
+    {"id": "transform", "type": "..."},         // Node 3
+    {"id": "call-api-1", "type": "..."},        // Node 4
+    {"id": "wait-for-api-1", "type": "..."},    // Node 5
+    {"id": "call-api-2", "type": "..."},        // Node 6
+    {"id": "process-response", "type": "..."},  // Node 7
+    {"id": "generate-file-1", "type": "..."},   // Node 8
+    {"id": "generate-file-2", "type": "..."},   // Node 9
+    {"id": "generate-file-3", "type": "..."},   // Node 10
+    {"id": "save-file-1", "type": "..."},       // Node 11
+    {"id": "save-file-2", "type": "..."},       // Node 12
+    {"id": "save-file-3", "type": "..."},       // Node 13
+    {"id": "upload-results", "type": "..."},    // Node 14
+    {"id": "notify-completion", "type": "..."}  // Node 15+
+    // ... potentially more nodes
+  ],
+  "edges": [
+    // Sequential chain - everything must execute in order
+    {"from": "fetch-data", "to": "validate"},
+    {"from": "validate", "to": "transform"},
+    // ... all connections
+  ]
+}
+```
+
+#### Complexity Reality Checks
+
+**What Makes Workflows Complex:**
+- Each external API call needs 2-3 nodes (call, poll, process)
+- Each file operation needs its own node
+- Data transformations each need nodes
+- NO parallel execution - everything sequential
+
+**Time Expectations:**
+- Simple workflow (3-5 nodes): 10-30 seconds
+- Medium workflow (10-15 nodes): 1-2 minutes
+- Complex workflow (20+ nodes): 3-5 minutes
+- With external APIs: Add 30-60 seconds per API
+
+**This is NOT a bug or poor design:**
+- Sequential execution ensures predictability
+- Each node has single responsibility
+- Easier to debug when things fail
+- Trade-off: simplicity over speed
+
 ---
 
 ## Common Workflow Patterns
+
+### Pattern 0: Extract from Structured Data (CRITICAL PATTERN)
+
+**❌ WRONG - Using LLM for extraction:**
+```json
+{
+  "id": "extract-data",
+  "type": "llm",
+  "params": {
+    "prompt": "Extract the value from the data: ${source.result}"
+  }
+}
+```
+
+**✅ CORRECT - Using shell+jq:**
+```json
+{
+  "id": "extract-value",
+  "type": "shell",
+  "params": {
+    "stdin": "${source.result}",
+    "command": "jq -r '.data[] | select(.field != null) | .desired_field'"  # Adapt to your data structure
+  }
+}
+```
+
+**Why shell+jq is superior:**
+- Deterministic (same input = same output)
+- Free (no LLM tokens)
+- Instant (no API latency)
+- Precise (no hallucination)
+- Can handle complex logic (select, filter, map)
 
 ### Pattern 1: Fetch → Transform → Store
 
@@ -1752,16 +2131,40 @@ uv run pflow slack-qa-bot channel=D456DEF limit=50 sheet_id=xyz789
 
 ---
 
+## Reality vs Documentation Quick Reference
+
+**What the docs suggest vs what actually happens:**
+
+| Documentation Says | Reality | Action Required |
+|-------------------|---------|-----------------|
+| "Test nodes" (helpful) | Test unknown nodes only | Skip testing known patterns |
+| `${result}` | `${result.data.nested.deeply.field}` | Test MCP nodes with `--show-structure` |
+| 3-5 nodes typical | 15-30 nodes typical | Build in phases, test each phase |
+| Use LLM for extraction | Shell+jq ALWAYS better | `jq -r '.data.field'` # Adapt to structure |
+| Async needs polling | `Prefer: wait` eliminates polling | Add header, wait up to 60s |
+| MCP for file operations | Shell+curl simpler | `curl -L -o file.jpg "$url"` |
+| Download then use | Direct URLs work | `https://storage.service.com/file/${id}` |
+| Settings auto-available | Must declare as inputs | Add `api_token` to inputs |
+| "Any" type outputs | Complex nested structures | Test if you need nested access |
+| HTTP node for uploads | Shell+curl more reliable | `curl -X POST --data-binary` |
+| Build entire workflow | Phase it for 15+ nodes | Core → APIs → Processing → Storage |
+| Linear execution (mentioned) | EVERYTHING sequential | No parallelization, ever |
+| Quick execution | 3-5 minutes for complex | Set realistic expectations |
+
+---
+
 ## Key Takeaways
 
-1. **Sequential execution ONLY** - No parallel branches
-2. **Every `${variable}` must be declared** - Either workflow input OR node output
-3. **Check node outputs FIRST** - Before writing templates
-4. **Think before you code** - Pre-build checklist prevents 80% of errors
-5. **Use intelligent discovery** - Let AI find relevant nodes
-6. **Build incrementally** - Validate often
-7. **Focus on happy path** - Let pflow's repair system handle errors
-8. **Users show ONE example** - You build the GENERAL tool
+1. **Choose simplest tool first** - Shell+jq > LLM, curl > MCP, Prefer:wait > polling
+2. **Shell+jq for ALL structured data** - Never use LLM for extraction
+3. **Prefer: wait eliminates polling** - One header saves 2-3 nodes
+4. **Build complex workflows in phases** - Core → APIs → Processing → Storage
+5. **Test only unknown patterns** - Skip testing curl, echo, known APIs
+6. **Direct URLs save nodes** - Use when services provide direct file access
+7. **Settings ≠ Auto-available** - Declare credentials as workflow inputs
+8. **MCP = Deep nesting** - Always test with `--show-structure`
+9. **20+ nodes is NORMAL** - But build in phases to debug easily
+10. **Users show ONE example** - You build the GENERAL tool
 
 ---
 
