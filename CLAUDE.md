@@ -405,6 +405,7 @@ Next version (post-MVP/post-Launch):
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
 - ⏳ Task 73: Implement Checkpoint Persistence for External Agent Repair ans workflow iteration
+- ⏳ Task 81: Expose tools that lets users/agents find and install existing remote mcp servers
 - ⏳ Task 78: Save User Request History in Workflow Metadata
 - ⏳ Task 75: Execution Preview in Validation
 - ⏳ Task 74: Create knowledge base system
