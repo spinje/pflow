@@ -140,7 +140,7 @@ def _format_server_output(name: str, config: dict) -> None:
         config: Server configuration dictionary
     """
     click.echo(f"\n  {name}:")
-    transport = config.get("transport", "stdio")
+    transport = config.get("type", "stdio")
     click.echo(f"    Transport: {transport}")
 
     # Format transport-specific configuration
