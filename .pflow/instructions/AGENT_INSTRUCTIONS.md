@@ -52,10 +52,10 @@ User describes problem/goal → Explore, guide, build
 
 ### Then: Parameter decisions
 ```
-User provides a value?
-├── It's specific (ID, path, number)? → Make it an INPUT
+User specifies a value?
+├── YES → Make it an INPUT (file paths, numbers, topics, IDs, etc.)
 ├── User says "always/only/hardcode"? → Hardcode it
-├── It's a format/pattern? → Hardcode it
+├── System constraint (encoding, protocol, instructions, services, etc.)? → Hardcode it
 └── When unsure? → Make it an INPUT (safer)
 ```
 
@@ -100,7 +100,7 @@ The user shows you ONE example. You build the GENERAL solution using dynamic inp
 Parse the user's request into structured requirements.
 
 **Checklist**:
-- [ ] What are the inputs? (params, files, API data)
+- [ ] What are the inputs? (params, files, API data, topics, subjects, themes)
 - [ ] What are the outputs? (files, messages, database updates)
 - [ ] What transformations happen between input and output?
 - [ ] What external services are involved?
@@ -750,20 +750,37 @@ fetch-data → analyze → visualize
 
 **Core Rule: If the user specified it, it should be an input.**
 
+**Look for these types of values in the user input:**
+- **File paths**: Any file or directory paths mentioned
+- **Numeric values**: Counts, limits, sizes, IDs
+- **States/Filters**: Status values, conditions, filters
+- **Time periods**: Dates, months, periods, durations
+- **Identifiers**: Names, IDs, specific repos
+- **Formats/Types**: Output formats, data types, units
+- **Content descriptors**: Topics, subjects, descriptions
+
+**Quick litmus test:** "Would the user ever run this with a different [value]?"
+- If YES → Make it an input
+- If NO or user said "always" → Hardcode it
+
 **Decision Process:**
 ```
-Is it a specific value (ID, path, number, name)?
-  → YES: Make it an INPUT
+Did user specify this value?
+  → YES: Make it an INPUT (applies to all types above)
 
 Did user say "always", "only", or "hardcode"?
   → YES: Safe to hardcode
 
-Is it a system constraint (date format, encoding)?
+Is it a system constraint (encoding, protocols)?
   → YES: Hardcode it
 
-Everything else?
+When unsure?
   → Make it an INPUT (safer for reusability)
 ```
+
+**Dos and Don'ts**:
+- **DO extract**: Actual values, paths, names, numbers, states
+- **DON'T extract**: Action verbs, commands, prompts, instructions, platform/service names (github, slack, API)
 
 ### Authentication & Credentials
 
@@ -1841,6 +1858,7 @@ Template error?
 | "file.txt" | `input: file_path` | They'll use different files |
 | "channel ABC123" | `input: channel` | Different channels later |
 | "last 10 items" | `input: limit` (default: 10) | Might want 20 tomorrow |
+| "song about cats" | `input: subject` (default: "cats") | Could be dogs, space, friendship, etc. |
 | "always use prod" | Hardcode: "prod" | Explicitly said "always" |
 
 ### Command Cheat Sheet
