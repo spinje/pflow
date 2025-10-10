@@ -770,6 +770,14 @@ class InstrumentedNodeWrapper:
         if not output:
             return None
 
+        # Type guard: API warnings only make sense for dict responses
+        # Binary data, strings, and primitive types cannot have API error fields
+        if not isinstance(output, dict):
+            logger.debug(
+                f"Node {self.node_id} output is not a dict ({type(output).__name__}), skipping API warning check"
+            )
+            return None
+
         # Extract error information
         error_code = self._extract_error_code(output)
         error_msg = self._extract_error_message(output)
@@ -862,6 +870,10 @@ class InstrumentedNodeWrapper:
 
     def _extract_error_code(self, output: dict) -> Optional[str]:
         """Extract error code from various API response formats."""
+        # Defensive type check
+        if not isinstance(output, dict):
+            return None
+
         # Try different common locations for error codes
         candidates = [
             output.get("error_code"),
@@ -886,6 +898,10 @@ class InstrumentedNodeWrapper:
         Returns:
             Error message if found, None otherwise
         """
+        # Defensive type check
+        if not isinstance(output, dict):
+            return None
+
         # Check various boolean error indicators
         if output.get("ok") is False:
             return output.get("error") or "API request failed"
@@ -916,6 +932,10 @@ class InstrumentedNodeWrapper:
         Returns:
             Error message if found, None otherwise
         """
+        # Defensive type check
+        if not isinstance(output, dict):
+            return None
+
         status = str(output.get("status", "")).lower()
         if status in ["error", "failed", "failure"]:
             return output.get("message") or output.get("error") or "API request failed"
@@ -930,6 +950,10 @@ class InstrumentedNodeWrapper:
         Returns:
             Error message if found, None otherwise
         """
+        # Defensive type check
+        if not isinstance(output, dict):
+            return None
+
         if "errors" in output and output.get("errors"):
             errors = output["errors"]
             if isinstance(errors, list) and len(errors) > 0:
@@ -951,6 +975,10 @@ class InstrumentedNodeWrapper:
         Returns:
             Error message if found, None otherwise
         """
+        # Defensive type check
+        if not isinstance(output, dict):
+            return None
+
         # Check boolean error flags
         error_msg = self._check_boolean_error_flags(output)
         if error_msg:
