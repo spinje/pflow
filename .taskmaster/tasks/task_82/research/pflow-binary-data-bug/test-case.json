@@ -1,0 +1,40 @@
+{
+  "inputs": {
+    "image_url": {
+      "type": "string",
+      "required": false,
+      "default": "https://via.placeholder.com/150",
+      "description": "URL of an image to download"
+    }
+  },
+  "nodes": [
+    {
+      "id": "download-image",
+      "type": "http",
+      "params": {
+        "url": "${image_url}",
+        "method": "GET"
+      }
+    },
+    {
+      "id": "save-image",
+      "type": "write-file",
+      "params": {
+        "file_path": "test-image.jpg",
+        "content": "${download-image.response}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "download-image",
+      "to": "save-image"
+    }
+  ],
+  "outputs": {
+    "saved_file": {
+      "source": "${save-image.file_path}",
+      "description": "Path to saved image file"
+    }
+  }
+}
