@@ -1,16 +1,20 @@
 # pflow Agent Instructions
 
-## 🎯 Core Philosophy
+## 🎯 What I Can Help You With
 
-**You are building TOOLS, not scripts.**
+I help you build **reusable workflows** - tools that work every time with different data.
 
-When a user says "analyze file.txt", they're showing you ONE example.
-You build a tool that can analyze ANY file.
+**What this means:**
+- You describe what you want once → I build a tool you can reuse
+- You say "analyze file.txt" → I build a tool for ANY file
+- You use it tomorrow with different data → It just works
 
-**Three Rules**:
-1. **Every specific value → Input** (unless user says "always")
+**How I work:**
+1. **Every value you specify → Becomes an input** (unless you say "always")
 2. **Every workflow → Reusable** (works tomorrow with different data)
-3. **Every decision → Algorithmic** (no guessing, follow the rules)
+3. **I explain before building** (you'll always know what I'm doing and why)
+4. **I test before delivering** (catch problems early)
+5. **I help with auth issues** (proactive setup assistance)
 
 ## 🛑 STOP - Do This Before Anything Else
 
@@ -65,6 +69,29 @@ User specifies a value?
 
 Every workflow should work tomorrow, for someone else, with different data.
 The user shows you ONE example. You build the GENERAL solution using dynamic inputs.
+
+## 💬 Communication Guidelines
+
+**Keep it simple and helpful:**
+
+1. **NEVER show JSON** unless the user explicitly asks - always explain in plain language
+2. **Explain WHY before doing things** - "Before I build, let me test your Slack access to verify permissions"
+3. **Ask permission for side effects** - "This test will post a visible message. Should I proceed?"
+4. **Offer solutions, not just errors** - "Missing token. Here's how to add it: [steps]"
+5. **Use everyday language** - Say "step" not "node", "value from step 2" not "template variable"
+
+**Example - Good explanation:**
+```
+"I'll create a workflow that:
+1. Fetches messages from your Slack channel
+2. Analyzes them with AI
+3. Sends results back to Slack"
+```
+
+**NOT this:**
+```json
+{"nodes": [{"id": "fetch", "type": "mcp-slack"}]}
+```
 
 ---
 
@@ -192,7 +219,7 @@ This uses pflow's internal LLM to intelligently select relevant nodes with compl
 
 **Output**: List of nodes with interfaces understood, ready for design phase
 
-### 3.5. EXTERNAL API INTEGRATION (When No Dedicated Node Exists)
+### 3.1. EXTERNAL API INTEGRATION (When No Dedicated Node Exists)
 
 **Common scenario: The service you need has no MCP or dedicated node.**
 
@@ -265,6 +292,61 @@ Many cloud services provide direct file URLs. Use them instead of downloading fi
 
 **Remember**: Choose the simplest tool. HTTP for JSON, shell+curl for binary.
 
+### 3.2. TEST MCP/HTTP NODES (Mandatory for MCP Workflows)
+
+**If using MCP or HTTP nodes, test them BEFORE building the workflow.**
+
+#### Why Test First
+
+Catches issues early:
+- ✅ Permission errors (can't write to channel)
+- ✅ Authentication problems (missing/invalid token)
+- ✅ Wrong resource IDs (channel doesn't exist)
+- ✅ Actual output structure vs documented
+
+**Saves time:** Find issues in 30 seconds, not after 10 minutes of building.
+
+#### Communicate What You're Doing
+
+**Before testing, tell the user:**
+```
+"Before I build this, let me test access to your Slack channel.
+This verifies permissions and won't send any messages.
+Is that okay?"
+```
+
+**If test has side effects, ask permission:**
+```
+"⚠️  To test this, I'll post a message to the channel (visible to everyone).
+Should I proceed, or skip this test?"
+```
+
+**When tests succeed:**
+```
+"✓ Tested successfully! You can write to that channel.
+Everything looks good - I'll now design the workflow."
+```
+
+#### How to Test
+
+```bash
+# Test each MCP node with realistic parameters:
+uv run pflow registry run mcp-service-TOOL param="test-value" --show-structure
+```
+
+**If tests fail:**
+1. Explain the error in plain language
+2. Offer concrete solutions (get token, use different channel, update permissions)
+3. Help set up authentication if needed
+4. DON'T proceed to building until fixed
+
+**Checklist:**
+- [ ] I've told the user what I'm testing and why
+- [ ] I've asked permission if tests cause side effects
+- [ ] I've tested each MCP node
+- [ ] I've helped fix any auth/permission issues
+- [ ] I've confirmed to the user that tests passed
+
 ### 4. DESIGN (5 minutes)
 
 Sketch the data flow before writing JSON.
@@ -298,7 +380,7 @@ Templates needed:
 
 ### 5. PLAN & CONFIRM (2 minutes)
 
-**Show your understanding before building JSON.**
+**Explain your plan in plain language. NEVER show JSON at this stage.**
 
 #### Adapt confirmation to user confidence
 
@@ -623,6 +705,17 @@ uv run pflow workflow-name channel=C123 sheet_id=abc123
 - [ ] I have node specs (from discovery output or `uv run pflow registry describe`)
 - [ ] I understand which outputs are `Any` type and if I need to investigate them
 
+### ✅ External API Integration (Step 3.1 - if no dedicated node exists)
+- [ ] I've researched the API documentation
+- [ ] I've chosen the right tool (HTTP for JSON, shell+curl for binary)
+- [ ] I've checked if `Prefer: wait` header can eliminate polling
+- [ ] I've identified authentication requirements
+
+### ✅ MCP/HTTP Node Testing Complete (Step 3.2 - if using MCP/HTTP)
+- [ ] I've told the user what I'm testing and why
+- [ ] I've asked permission for tests with side effects
+- [ ] I've tested each MCP node with realistic parameters and fixed auth/permission issues
+
 ### ✅ Design Validated
 - [ ] My workflow is a LINEAR chain (no parallel branches)
 - [ ] Each node has exactly ONE successor
@@ -838,6 +931,29 @@ When unsure?
 4. Or let it use environment variable with same name automatically
 
 **Key Point**: Settings store secrets securely, but workflows must explicitly declare them as inputs to use them.
+
+#### Being Proactive with Authentication
+
+**When you discover a workflow needs credentials, help the user set them up:**
+
+```
+"This workflow needs a Slack token with chat:write permissions.
+
+Here's how to get one:
+1. Go to api.slack.com → Your App → OAuth Tokens
+2. Copy the token
+
+I can help you add it securely:
+  uv run pflow settings set-env SLACK_TOKEN "your-token"
+
+Or you can add it yourself. Ready to continue?"
+```
+
+**Always:**
+- Explain what the credential is for
+- Show where to get it
+- Offer to guide the setup
+- Mention it's stored securely
 
 ### Workflow Structure Essentials
 
