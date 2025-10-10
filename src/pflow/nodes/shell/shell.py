@@ -164,9 +164,29 @@ class ShellNode(Node):
     def _is_safe_non_error(self, command: str, exit_code: int, stdout: str, stderr: str) -> tuple[bool, str]:
         """Check if a non-zero exit code is actually a safe "no results" case.
 
+        Determines if commands like grep, find, or diff returned non-zero because
+        they legitimately found no results, rather than due to an actual error.
+
+        IMPORTANT: Only call this for TEXT output. Binary output should skip this
+        check entirely since safe patterns ("No such file", "not found", "no matches")
+        don't apply to binary data. Calling this on binary output could cause:
+        1. False positives from random bytes matching patterns
+        2. UnicodeDecodeError if binary data interpreted as text
+        3. Incorrect auto-handling of legitimate binary command failures
+
+        Binary detection happens in exec() and is checked in post() before calling
+        this method (see lines 616-622).
+
+        Args:
+            command: The shell command that was executed
+            exit_code: The non-zero exit code returned
+            stdout: Command stdout (must be text, not base64 or binary)
+            stderr: Command stderr (must be text, not base64 or binary)
+
         Returns:
-            Tuple of (is_safe, reason) where is_safe indicates if this should be treated
-            as success, and reason explains why (for logging).
+            Tuple of (is_safe, reason) where:
+            - is_safe: True if this is a safe non-error (e.g., grep no match)
+            - reason: Human-readable explanation of why it's safe (for logging)
         """
         # ls with glob patterns that match no files
         if (
