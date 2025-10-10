@@ -1,5 +1,6 @@
 """HTTP node for making web requests."""
 
+import base64
 import json
 from typing import Any
 
@@ -19,7 +20,8 @@ class HttpNode(Node):
     - Reads: shared["headers"]: dict  # Additional headers (optional)
     - Reads: shared["params"]: dict  # Query parameters (optional)
     - Reads: shared["timeout"]: int  # Request timeout in seconds (optional)
-    - Writes: shared["response"]: dict|str  # Response data (JSON parsed or raw text)
+    - Writes: shared["response"]: dict|str  # Response data (JSON parsed, raw text, or base64-encoded binary)
+    - Writes: shared["response_is_binary"]: bool  # True if response is binary data
     - Writes: shared["status_code"]: int  # HTTP status code
     - Writes: shared["response_headers"]: dict  # Response headers
     - Writes: shared["response_time"]: float  # Request duration in seconds
@@ -124,10 +126,24 @@ class HttpNode(Node):
 
         # Parse response based on Content-Type (handle various JSON content types)
         content_type = response.headers.get("content-type", "").lower()
-        # Check for JSON in content type (includes application/json, application/problem+json, etc.)
-        is_json = "json" in content_type
 
-        if is_json:
+        # Binary detection
+        BINARY_CONTENT_TYPES = [
+            "image/",
+            "video/",
+            "audio/",
+            "application/pdf",
+            "application/octet-stream",
+            "application/zip",
+            "application/gzip",
+            "application/x-tar",
+        ]
+        is_binary = any(ct in content_type for ct in BINARY_CONTENT_TYPES)
+
+        # Parse response (priority: binary > json > text)
+        if is_binary:
+            response_data = response.content  # bytes - DO NOT USE response.text
+        elif "json" in content_type:
             try:
                 response_data = response.json()
             except (ValueError, json.JSONDecodeError):
@@ -142,6 +158,7 @@ class HttpNode(Node):
             "status_code": response.status_code,
             "headers": dict(response.headers),
             "duration": response.elapsed.total_seconds(),
+            "is_binary": is_binary,
         }
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> None:
@@ -167,8 +184,21 @@ class HttpNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results and determine action."""
-        # Always store response data
-        shared["response"] = exec_res["response"]
+        # Handle binary encoding
+        response_data = exec_res["response"]
+        is_binary = exec_res.get("is_binary", False)
+
+        if is_binary:
+            # Encode binary data as base64
+            encoded = base64.b64encode(response_data).decode("ascii")
+            shared["response"] = encoded
+            shared["response_is_binary"] = True
+        else:
+            # Store text/JSON as-is
+            shared["response"] = response_data
+            shared["response_is_binary"] = False
+
+        # Store other metadata
         shared["status_code"] = exec_res["status_code"]
         shared["response_headers"] = exec_res["headers"]
         shared["response_time"] = exec_res.get("duration", 0)

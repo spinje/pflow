@@ -66,13 +66,15 @@ class TestAutoHandlingLsGlob:
             "ls -la *.json",
         ]
 
-        for command in test_patterns:
-            shared = {}
-            action = run_shell_node(shared, command=command)
+        # Run in empty temp directory to ensure no files match
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for command in test_patterns:
+                shared = {}
+                action = run_shell_node(shared, command=command, cwd=tmpdir)
 
-            # All should be auto-handled as success
-            assert action == "default", f"Failed for command: {command}"
-            assert shared["exit_code"] == 1
+                # All should be auto-handled as success
+                assert action == "default", f"Failed for command: {command}"
+                assert shared["exit_code"] == 1
 
 
 class TestAutoHandlingGrep:

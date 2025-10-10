@@ -1,5 +1,6 @@
 """Test WriteFileNode functionality."""
 
+import base64
 import os
 import tempfile
 
@@ -171,3 +172,188 @@ class TestWriteFileNode:
 
             with open(file_path) as f:
                 assert f.read() == "From params"
+
+    # Binary data support tests
+
+    def test_write_binary_with_flag_preserves_data(self):
+        """
+        Guards against: Data corruption from using text mode for binary data.
+
+        Tests that binary data written with content_is_binary=True flag is
+        preserved byte-for-byte. If this test fails, binary data is being
+        corrupted (wrong write mode, encoding issues, etc.).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "binary.png")
+
+            # Known binary data (PNG header)
+            binary_data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+            base64_content = base64.b64encode(binary_data).decode("ascii")
+
+            node = WriteFileNode()
+            shared = {"content": base64_content, "content_is_binary": True, "file_path": file_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+
+            # Verify exact byte-for-byte match
+            with open(file_path, "rb") as f:
+                written_data = f.read()
+
+            assert written_data == binary_data, "Binary data was corrupted during write"
+
+    def test_write_binary_append_mode(self):
+        """
+        Guards against: Wrong append mode ('a' instead of 'ab') for binary data.
+
+        Tests that binary append uses 'ab' mode. If this test fails, append
+        mode is incorrectly using text mode for binary data.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "binary_append.dat")
+
+            # First write
+            chunk1 = b"\x89PNG\r\n"
+            base64_chunk1 = base64.b64encode(chunk1).decode("ascii")
+
+            node = WriteFileNode()
+            shared = {"content": base64_chunk1, "content_is_binary": True, "file_path": file_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            node.post(shared, prep_res, exec_res)
+
+            # Second write (append)
+            chunk2 = b"\x1a\n\x00\x00"
+            base64_chunk2 = base64.b64encode(chunk2).decode("ascii")
+
+            node_append = WriteFileNode()
+            node_append.set_params({"append": True})
+            shared_append = {"content": base64_chunk2, "content_is_binary": True, "file_path": file_path}
+
+            prep_res = node_append.prep(shared_append)
+            exec_res = node_append.exec(prep_res)
+            action = node_append.post(shared_append, prep_res, exec_res)
+
+            assert action == "default"
+            assert "append" in shared_append["written"].lower()
+
+            # Verify both chunks are present
+            with open(file_path, "rb") as f:
+                written_data = f.read()
+
+            assert written_data == chunk1 + chunk2, "Binary append mode corrupted data"
+
+    def test_backward_compat_text_without_flag(self):
+        """
+        Guards against: Breaking existing text workflows.
+
+        Tests that text writing without content_is_binary flag works exactly
+        as before. If this test fails, backward compatibility is broken.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "text.txt")
+
+            node = WriteFileNode()
+            shared = {
+                "content": "Plain text content\nLine 2",
+                "file_path": file_path,
+                # No content_is_binary flag - should default to text mode
+            }
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+
+            # Verify text mode was used
+            with open(file_path) as f:
+                content = f.read()
+
+            assert content == "Plain text content\nLine 2", "Text mode should work without flag"
+
+    def test_invalid_base64_clear_error(self):
+        """
+        Guards against: Unclear error messages for invalid base64.
+
+        Tests that invalid base64 with binary flag gives a clear ValueError.
+        If this test fails, error messages are unclear for AI agents.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "invalid.bin")
+
+            node = WriteFileNode()
+            shared = {"content": "not-valid-base64!@#$%", "content_is_binary": True, "file_path": file_path}
+
+            with pytest.raises(ValueError, match="Invalid base64 content"):
+                node.prep(shared)
+
+    def test_flag_false_writes_base64_as_text(self):
+        """
+        Guards against: Binary flag not being respected when explicitly False.
+
+        Tests that content_is_binary=False writes the base64 STRING as text,
+        not decoded binary. If this test fails, the flag is being ignored.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "base64_text.txt")
+
+            base64_string = base64.b64encode(b"test data").decode("ascii")
+
+            node = WriteFileNode()
+            shared = {
+                "content": base64_string,
+                "content_is_binary": False,  # Explicitly False
+                "file_path": file_path,
+            }
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+
+            # Should write the base64 STRING, not decoded bytes
+            with open(file_path) as f:
+                content = f.read()
+
+            assert content == base64_string, "Explicit False flag should write base64 as text"
+
+    def test_integration_http_output_format(self):
+        """
+        Guards against: Integration issues with HTTP node output format.
+
+        Tests the exact output format from HTTP node (base64 string + flag)
+        to ensure template resolution and integration works. If this test
+        fails, the HTTP→Write-File pipeline is broken.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "downloaded.png")
+
+            # Simulate exact HTTP node output format
+            binary_data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00d"
+            http_response = base64.b64encode(binary_data).decode("ascii")
+            http_flag = True
+
+            node = WriteFileNode()
+            shared = {
+                "content": http_response,  # From ${download.response}
+                "content_is_binary": http_flag,  # From ${download.response_is_binary}
+                "file_path": file_path,
+            }
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+
+            # Verify exact byte match (MD5 would work but overkill for test)
+            with open(file_path, "rb") as f:
+                written_data = f.read()
+
+            assert written_data == binary_data, "HTTP→Write-File integration produced wrong bytes"
