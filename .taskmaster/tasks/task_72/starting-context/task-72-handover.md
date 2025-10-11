@@ -1,264 +1,241 @@
-# Task 71 Handover: The Critical Context You Can't Get From Specs
+# Task 72 Handoff: Critical Knowledge for MCP Server Implementation
 
-*From: The agent who validated Task 70 and designed Task 71*
-*To: The agent implementing Task 71*
+**To the implementing agent**: Read this entire document before starting. This contains hard-won insights that aren't obvious from the specs. Say "I'm ready to implement Task 72" after reading.
 
-**IMPORTANT**: Read this entire document before starting implementation. At the end, confirm you're ready to begin.
+## 🚨 Critical Context: Task 71 vs Task 72 Confusion
 
----
+**YOU MUST UNDERSTAND THIS FIRST**: There's massive confusion in the older documentation. Many docs were written assuming Task 71 was the MCP implementation. Here's the truth:
 
-## The Philosophical Shift You Must Internalize
+- **Task 71** (COMPLETED): CLI extensions for agents (`pflow workflow discover`, etc.)
+- **Task 72** (THIS TASK): MCP server exposing pflow as programmatic tools
 
-The user had a profound realization during our conversation:
+If a document talks about "Task 71 MCP implementation" - it's WRONG. Task 71 is done, it added CLI discovery commands. We're building the MCP server NOW.
 
-> "The chaotic nature of self healing (error and repair) is actually a big part of why we are using an agent in the first place for 'running' pflow."
+## 🎯 The Source of Truth: AGENT_INSTRUCTIONS
 
-This changed EVERYTHING. We're not hiding repair from agents - we're exposing it so they can orchestrate it with their superior context. The agent knows WHY the workflow is being built, WHAT the user wants, and HOW to fix issues conversationally.
+The breakthrough came from analyzing `.pflow/instructions/AGENT_INSTRUCTIONS.md`. A subagent extracted 23 CLI commands that agents ACTUALLY use (not what we theorized). Key insights:
 
-**This means**:
-- `execute()` returns errors with checkpoints, NOT auto-repairs
-- The agent fixes workflows by editing JSON files
-- The chaos becomes visible and orchestratable
+1. **Agents follow this EXACT pattern**:
+   - `workflow discover` first (MANDATORY - "5 seconds vs hours")
+   - `registry discover` for building
+   - `registry run --show-structure` for testing MCP nodes
+   - Execute with `--output-format json --no-repair --trace` (ALL THREE)
+   - `workflow save` to make reusable
 
-## The Journey From 14 Tools to 5 (And Why It Matters)
+2. **MCP nodes are NEVER simple**:
+   - Docs say: `result: Any`
+   - Reality: `result.data.tool_response.nested.deeply.url`
+   - `registry_run` is CRITICAL for revealing actual structure
 
-I started by identifying 14 potential MCP tools. The user stopped me cold:
+3. **Discovery is intelligent, not keyword search**:
+   - Uses LLM for matching
+   - Returns confidence scores
+   - ≥95% = use existing, <80% = build new
 
-> "Couldn't we make it even more simple?"
+## 🔧 Architecture Decisions (Non-Negotiable)
 
-Then came the key insight: The agent already knows how to create and edit JSON files. Why are we rebuilding these capabilities as MCP tools?
+### Why 13 Tools (Not 5, Not 18)
 
-**The revelation**: We only need 5 tools because agents use their native file editing for everything else.
+Based on ACTUAL agent usage from AGENT_INSTRUCTIONS:
+- **6 Priority 1**: Core workflow loop (discover → build → test → save)
+- **5 Priority 2**: Supporting functions
+- **2 Priority 3**: Advanced features
 
-The 5 tools are:
-1. `browse_components` - What building blocks exist?
-2. `list_library` - What workflows are already built?
-3. `describe_workflow` - What does this workflow need?
-4. `execute` - Run it (returns errors for agent to fix)
-5. `save_to_library` - Keep the working one
+We rejected:
+- Natural language execution (too complex, agents use steps)
+- Multiple execution variants (one flexible tool instead)
+- Parameter flags (built-in defaults)
 
-Everything else (creating workflows, fixing errors, modifying) happens through file operations.
-
-## The Stateless Pattern - This Is NON-NEGOTIABLE
-
-During research, I discovered pflow creates fresh instances for EVERY operation:
+### Direct Service Integration (NOT CLI Wrapping)
 
 ```python
-# From execution/workflow_execution.py line 106
-registry = Registry()  # Fresh instance
+# ✅ CORRECT - Direct service use
+from pflow.core.workflow_manager import WorkflowManager
+from pflow.execution.workflow_execution import execute_workflow
 
-# From line 248
-workflow_manager = WorkflowManager()  # Fresh if not provided
+# ❌ WRONG - CLI wrapping
+subprocess.run(["pflow", "execute", ...])
 ```
 
-**YOU MUST FOLLOW THIS PATTERN**. Every MCP request gets fresh instances. No caching. No shared state.
+Why: Performance, structured responses, no text parsing needed.
 
-Why? Because:
-- Registry can change (MCP sync, settings updates)
-- Workflows can be modified outside MCP
-- Thread safety is guaranteed by isolation
-- It matches pflow's existing pattern
+### Stateless Pattern (CRITICAL)
 
-If you're tempted to cache for performance, DON'T. The 10-50ms overhead is nothing compared to the bugs you'll introduce.
-
-## The ComponentBrowsingNode Trap
-
-You'll see ComponentBrowsingNode in `src/pflow/planning/nodes.py` and think "perfect, I'll use this for browse_components!"
-
-**DON'T.**
-
-ComponentBrowsingNode:
-- Requires an LLM to filter components
-- Returns markdown strings, not structured data
-- Is tightly coupled to the planner's workflow
-- Returns only IDs, not full metadata
-
-Instead, use Registry directly:
 ```python
-registry = Registry()
-nodes = registry.load()  # This has FULL interface metadata already!
+# Every request gets FRESH instances
+async def tool_handler():
+    manager = WorkflowManager()  # NEW instance
+    registry = Registry()        # NEW instance
+    # Use and discard
 ```
 
-The interface data is already parsed and stored in the registry at scan time. You don't need to extract it.
+This matches pflow's own pattern. DO NOT cache instances. The 10-50ms overhead is nothing compared to the bugs you'll create with stale state.
 
-## The Hidden Gold in execute_workflow()
+## 🧩 Implementation Patterns You MUST Follow
 
-Task 68 already solved the hard part. The execute_workflow API is PERFECT as-is:
+### 1. Discovery Tools Use Planning Nodes DIRECTLY
 
 ```python
-result = execute_workflow(
-    workflow_ir=workflow_dict,      # Takes dict directly!
-    execution_params=params,        # MCP params map perfectly!
-    enable_repair=False,           # This disables internal repair
-    output=NullOutput()           # Silent execution
+# For workflow_discover
+from pflow.planning.nodes import WorkflowDiscoveryNode
+node = WorkflowDiscoveryNode()
+shared = {
+    "user_input": query,
+    "workflow_manager": WorkflowManager()  # REQUIRED!
+}
+action = node.run(shared)
+```
+
+DO NOT extract the logic. Use the nodes as-is. They're designed for this.
+
+### 2. Agent Mode is BUILT-IN (No Parameters)
+
+All tools automatically:
+- Return JSON (no format parameter)
+- Disable auto-repair (no repair flag)
+- Save traces (no trace flag)
+- Auto-normalize workflows (add ir_version, edges)
+
+The user was explicit: "keep the mcp interface as clean as possible"
+
+### 3. asyncio.to_thread Bridge Pattern
+
+```python
+# MCP is async, pflow is sync
+result = await asyncio.to_thread(
+    execute_workflow,  # Sync function
+    workflow_ir=workflow,
+    execution_params=params,
+    output=NullOutput(),
+    enable_repair=False  # Always False for MCP
 )
 ```
 
-The result contains everything you need:
-- `success`: Did it work?
-- `output_data`: The actual outputs
-- `errors`: Structured error list
-- `shared_after["__execution__"]`: THE CHECKPOINT DATA!
-
-That checkpoint has:
-- `completed_nodes`: What already ran successfully
-- `failed_node`: Where it broke
-- `node_hashes`: MD5s for cache invalidation
-
-When the agent fixes the workflow and re-executes, the checkpoint ensures only broken nodes re-run. This happens AUTOMATICALLY through the caching system.
-
-## The Security Layers You Can't Skip
-
-Path traversal isn't just about "../" - there are subtle attacks:
-
-1. **Absolute paths**: "/etc/passwd"
-2. **Home expansion**: "~/../../etc/passwd"
-3. **Null bytes**: "workflow\x00.json"
-4. **Unicode tricks**: Different encodings of "/"
-
-You need MULTIPLE validation layers:
-- Validate at MCP tool entry
-- Validate in WorkflowManager
-- Use Path.resolve() to check final location
-- Never trust workflow names from agents
-
-Also, REDACT sensitive params in logs:
-```python
-SENSITIVE = {'password', 'token', 'api_key', 'secret'}
-```
-
-## The asyncio.to_thread() Bridge
-
-MCP is async. pflow is sync. The bridge is `asyncio.to_thread()`:
+### 4. Error Response Pattern
 
 ```python
-async def tool_handler():
-    result = await asyncio.to_thread(sync_function, args)
+# Always use isError flag so LLMs see it
+return CallToolResult(
+    isError=True,
+    content=[TextContent(text="Error message")]
+)
 ```
 
-**Why this and not asyncio.run()?** Because MCPNode uses asyncio.run() which creates a NEW event loop each time. That's fine for one-off MCP calls, but the MCP SERVER already has an event loop running. Use to_thread() to run sync code in the thread pool.
+## ⚠️ Hidden Gotchas That Will Break Everything
 
-## The File System Reality
+1. **ComponentBrowsingNode requires workflow_manager**:
+   - Missing it causes "Invalid request format" error
+   - Always add: `"workflow_manager": WorkflowManager()`
 
-Both CLI and MCP share `~/.pflow/workflows/`. This is intentional.
+2. **Template validation needs dummy params**:
+   - Generate placeholders for workflow inputs
+   - Enables structural validation without real values
 
-The workflow is:
-1. Agent creates `~/.pflow/workflows/my-workflow-draft.json` using file editing
-2. Agent calls `execute("my-workflow-draft")`
-3. If it fails, agent edits the file
-4. Agent calls `execute("my-workflow-draft")` again - checkpoint resumes!
-5. Once working, agent calls `save_to_library("my-workflow-draft", "my-workflow", "description")`
+3. **Workflow resolution order matters**:
+   - Check library first (`~/.pflow/workflows/`)
+   - Then check file paths
+   - This encourages reusable workflows
 
-The draft and library are in the SAME folder. Use naming conventions or a drafts/ subdirectory.
+4. **Security validation is CRITICAL**:
+   - No path traversal (`../`, `~/`, absolute paths)
+   - Validate ALL workflow names
+   - Sanitize sensitive params in responses
 
-## The WorkflowManager Gaps
+5. **MCP node testing reveals truth**:
+   - Documentation LIES about output structure
+   - `registry_run` with actual test data is essential
+   - Agents need the real nested paths for templates
 
-WorkflowManager is 90% ready but needs exactly 4 additions:
+## 📁 File References (Your Map)
 
-1. `search(query)` - Filter workflows
-2. `for_drafts()` - Class method for draft directory
-3. `get_workflow_interface()` - Extract inputs/outputs
-4. Duration tracking in execution
+### Implementation Specs
+- **`.taskmaster/tasks/task_72/starting-context/final-implementation-spec.md`** - The TRUTH. 13 tools, clean interface
+- **`.taskmaster/tasks/task_72/starting-context/pflow-commands-extraction.md`** - What agents ACTUALLY use (from AGENT_INSTRUCTIONS)
+- **`.taskmaster/tasks/task_72/starting-context/mcp-implementation-guidance.md`** - Protocol patterns, security, testing
 
-That's it. Everything else already works. Don't over-engineer.
+### Code to Study
+- **`src/pflow/planning/nodes.py`** - WorkflowDiscoveryNode, ComponentBrowsingNode (use directly!)
+- **`src/pflow/execution/workflow_execution.py`** - execute_workflow function
+- **`src/pflow/execution/null_output.py`** - NullOutput for silent execution
+- **`src/pflow/core/workflow_manager.py`** - WorkflowManager (stateless usage)
 
-## The Template Variable Discovery
+### Ignore These (Outdated/Wrong)
+- Any doc mentioning "Task 71 MCP implementation"
+- Recommendations for 18 tools (we chose 13)
+- CLI wrapping approaches (we use direct integration)
 
-Task 21 already added `inputs` and `outputs` to the IR schema. They're right there in the workflow:
+## 🧪 Testing Approach
+
+1. **Start with Priority 1 tools** - Get the core loop working
+2. **Test with AGENT_INSTRUCTIONS examples** - Use real agent workflows
+3. **Validate discovery → execute → save cycle** - The full pattern
+4. **Test MCP node structure revelation** - registry_run MUST show nested outputs
+5. **Performance: Should beat CLI** - Direct integration should be faster
+
+### Specific Test Case
 
 ```python
-workflow["ir"]["inputs"]   # Declared inputs
-workflow["ir"]["outputs"]  # Declared outputs
+# This is the pattern agents follow
+result = await workflow_discover("analyze GitHub PRs")
+# If <95% confidence, build new:
+nodes = await registry_discover("fetch GitHub PR, analyze with AI")
+# Test unknown nodes:
+structure = await registry_run("mcp-github-GET_PULL_REQUEST", {"test": "params"})
+# Validate workflow:
+valid = await workflow_validate(workflow_json)
+# Execute with defaults (JSON, no-repair, trace):
+result = await workflow_execute(workflow_json, params)
+# Save for reuse:
+saved = await workflow_save(workflow_file, name, description)
 ```
 
-But ALSO check for template variables in the workflow using TemplateValidator - these might not be declared.
+## 🚫 Common Pitfalls (Don't Make These Mistakes)
 
-## The Performance Numbers That Matter
+1. **DON'T extract logic from planning nodes** - Use them directly
+2. **DON'T add parameters for agent mode** - Build in the defaults
+3. **DON'T cache service instances** - Fresh every time
+4. **DON'T trust workflow names** - Validate for path traversal
+5. **DON'T skip MCP node testing** - The structure is always nested
+6. **DON'T implement natural language execution** - Too complex
+7. **DON'T wrap CLI commands** - Use services directly
 
-From actual measurements:
-- Registry.load(): 10-50ms (cached in memory after first)
-- execute_workflow: 100-500ms without LLM
-- asyncio.to_thread overhead: 1-5ms
+## 💡 Non-Obvious Insights
 
-Don't optimize prematurely. The bottleneck is workflow execution, not MCP overhead.
+1. **The evolution of thinking**:
+   - Started with 14-18 tools (too many)
+   - Simplified to 5 (too few)
+   - Settled on 13 based on ACTUAL usage
 
-## The Testing Priority
+2. **Discovery-first is ENFORCED**:
+   - Not a suggestion, it's mandatory
+   - Agents waste hours rebuilding existing workflows
+   - Confidence scores guide the decision
 
-Test these in ORDER:
+3. **Token overhead is acceptable**:
+   - 13 tools = ~1,300-6,500 tokens
+   - Well under the 40-tool warning limit
 
-1. **Stateless verification** - Multiple concurrent requests get isolated instances
-2. **Path traversal** - All attack vectors blocked
-3. **Checkpoint resume** - Second execution skips completed nodes
-4. **Error structure** - Agents can parse error responses
-5. **Claude Code discovery** - Tools found without prompting
+4. **Planning nodes already have defaults**:
+   - Model: anthropic/claude-3-5-sonnet
+   - Temperature: 0.0
+   - No need to configure
 
-If #1 fails, nothing else matters.
+## 🎬 Final Critical Notes
 
-## The Patterns From MCPNode to Mirror
+The user's key requirements:
+1. "We should not expose the natural language execution"
+2. "Keep the mcp interface as clean as possible"
+3. "Expose all the pflow cli tools that are described in [AGENT_INSTRUCTIONS]"
 
-Look at `src/pflow/nodes/mcp/node.py`. It shows:
-- How to bridge async/sync
-- How to handle MCP responses
-- How to unwrap nested JSON
-- Error categorization patterns
+Remember: We're exposing what agents ALREADY use via CLI, but with:
+- Structured responses (no parsing)
+- Better performance (no shell spawning)
+- Programmatic access (for systems without shell)
 
-Mirror these patterns but reverse them (we're the server, not client).
-
-## What Task 68 Already Did For You
-
-Task 68 extracted:
-- WorkflowExecutorService (clean execution API)
-- RepairService (you DON'T use this - agents do repair)
-- DisplayManager (you use NullOutput instead)
-- Checkpoint system (already in shared_after)
-
-You're not building new systems. You're wrapping existing ones.
-
-## The Gotchas That Wasted My Time
-
-1. **MCP nodes return "default" on error** - This hides failures. They should return "error".
-2. **Template resolution can return unchanged** - If a template can't resolve, it returns the original string unchanged. Check for this.
-3. **WorkflowManager.load() vs load_ir()** - load() returns metadata wrapper, load_ir() returns just the IR. You usually want load_ir() for execution.
-4. **Registry filtering** - Registry.load() respects settings.json filtering. Use load(include_filtered=True) if you need all nodes.
-
-## The Critical Decision Log
-
-Why these decisions were made:
-
-1. **5 tools not 14**: Cognitive load on agents + file editing handles the rest
-2. **Stateless not cached**: Correctness over 50ms performance
-3. **No internal repair**: Agents have better context for fixing
-4. **stdio not HTTP**: Faster integration, Claude Code uses stdio
-5. **NullOutput not MCPOutput**: Simpler, no need for progress events yet
-
-## The User's Emphasis Points
-
-During our conversation, the user emphasized:
-- "Think hard" - Always dig deeper than surface level
-- "Even more simple" - Radical simplicity over feature completeness
-- "Agent orchestrates repair" - This is the key philosophical shift
-- File editing by agents - Don't rebuild what agents already do well
-
-## Final Critical Warnings
-
-1. **DO NOT** add caching "for performance" - it will break isolation
-2. **DO NOT** use ComponentBrowsingNode - wrong abstraction
-3. **DO NOT** enable internal repair - agents orchestrate repair
-4. **DO NOT** trust workflow names - validate everything
-5. **DO NOT** share instances between requests - stateless only
-
-## Your Starting Point
-
-Begin with `browse_components`. It's stateless, read-only, and proves the pattern. Once that works with Claude Code, the rest follows the same pattern.
-
-The comprehensive research document has all the code snippets ready to copy. The spec has the full requirements. This handover fills the gaps with the "why" and the "watch out."
+The implementation should take 4.5 days following the phases in task-72.md.
 
 ---
 
-**Remember**: This isn't about building complex new systems. It's about exposing existing pflow capabilities through thin MCP wrappers so agents can orchestrate workflow building conversationally.
+**IMPORTANT**: Do not begin implementing until you've read this entire document. The confusion in the older docs will mislead you if you don't understand the Task 71/72 distinction and the insights from AGENT_INSTRUCTIONS.
 
-The magic is in the simplicity.
-
----
-
-**IMPORTANT**: Before you begin implementation, respond with: "I've read and understood the Task 71 handover. I'm ready to begin implementation with the critical context about stateless design, agent-orchestrated repair, and the 5-tool simplicity."
+When you're ready, say "I'm ready to implement Task 72 with full understanding of the context and gotchas."
