@@ -11,7 +11,10 @@ WHAT IT VALIDATES:
 - Path A success depends on metadata quality
 """
 
+import importlib
 from unittest.mock import Mock, patch
+
+import pytest
 
 from pflow.planning.ir_models import WorkflowMetadata
 from pflow.planning.nodes import MetadataGenerationNode
@@ -19,6 +22,17 @@ from pflow.planning.nodes import MetadataGenerationNode
 
 class TestMetadataEnablesPathA:
     """Test that LLM-generated metadata enables Path A workflow reuse."""
+
+    @pytest.fixture(autouse=True)
+    def cleanup_mocks(self):
+        """Clean up mocks and reload modules to prevent test pollution."""
+        yield
+        # Stop all active patches to prevent pollution from parallel tests
+        patch.stopall()
+        # Reload planning modules to clear any cached state
+        import pflow.planning.prompts.loader
+
+        importlib.reload(pflow.planning.prompts.loader)
 
     def test_metadata_enables_discovery_with_alternate_queries(self):
         """Rich metadata allows workflow to be found with different search terms."""

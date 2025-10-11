@@ -63,7 +63,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @dataclass
-class TestCase:
+class PromptTestCase:
     """Test case for component browsing prompt."""
 
     name: str
@@ -75,7 +75,7 @@ class TestCase:
     why_important: str  # Business value of this test
 
 
-def get_test_cases() -> list[TestCase]:
+def get_test_cases() -> list[PromptTestCase]:
     """Define domain-driven test cases reflecting real ComponentBrowsingNode usage patterns.
 
     60% failed discovery (vague domain inputs), 40% explicit creation requests.
@@ -84,7 +84,7 @@ def get_test_cases() -> list[TestCase]:
     return [
         # === GITHUB DOMAIN TESTS (Primary - Complex, 5 tests) ===
         # Failed Discovery → Component Selection
-        TestCase(
+        PromptTestCase(
             "changelog_vague",
             "generate changelog",  # Vague request that failed Path A discovery
             expected_node_types=["github-list-issues", "llm", "write-file", "git-commit", "github-create-pr"],
@@ -94,7 +94,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Tests domain-aware selection from vague failed discovery",
         ),
         # Explicit Creation
-        TestCase(
+        PromptTestCase(
             "changelog_explicit",
             "create changelog from last 20 GitHub issues, write to CHANGELOG.md, commit changes, open PR titled 'Release v1.3'",
             expected_node_types=[
@@ -111,7 +111,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Tests explicit north star changelog workflow component selection",
         ),
         # Failed Discovery → Component Selection
-        TestCase(
+        PromptTestCase(
             "issue_triage_vague",
             "triage issues",  # Failed discovery, needs component selection
             expected_node_types=["github-list-issues", "llm", "write-file"],
@@ -121,7 +121,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Tests medium complexity GitHub workflow domain awareness",
         ),
         # Explicit Creation
-        TestCase(
+        PromptTestCase(
             "issue_analysis_explicit",
             "analyze the last 50 open GitHub issues, categorize by priority and type, write report to triage/report-2025-08-21.md",
             expected_node_types=["github-list-issues", "llm", "write-file"],
@@ -131,7 +131,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Tests explicit medium complexity GitHub workflow",
         ),
         # Explicit Creation - Simple
-        TestCase(
+        PromptTestCase(
             "github_simple",
             "get details for GitHub issue 1234 and summarize it",
             expected_node_types=["github-get-issue", "llm", "write-file"],
@@ -142,7 +142,7 @@ def get_test_cases() -> list[TestCase]:
         ),
         # === DATA PROCESSING DOMAIN TESTS (Secondary - Medium, 4 tests) ===
         # Failed Discovery → Component Selection
-        TestCase(
+        PromptTestCase(
             "data_analysis_vague",
             "analyze data",  # Vague request that failed discovery
             expected_node_types=["read-file", "llm", "write-file"],
@@ -152,7 +152,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Tests vague data processing domain component selection",
         ),
         # Explicit Creation
-        TestCase(
+        PromptTestCase(
             "csv_analysis_explicit",
             "read CSV files from data/ folder, analyze sales trends, generate insights report to reports/sales-analysis.md",
             expected_node_types=["read-file", "llm", "write-file"],
@@ -162,7 +162,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Tests explicit data processing workflow matching north star complexity",
         ),
         # Failed Discovery → Component Selection
-        TestCase(
+        PromptTestCase(
             "file_processing_vague",
             "process files",  # Vague file processing request
             expected_node_types=["read-file", "write-file", "llm"],
@@ -172,7 +172,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Tests broad file processing domain component selection",
         ),
         # Explicit Creation
-        TestCase(
+        PromptTestCase(
             "report_generation_explicit",
             "read log files from logs/ directory, extract error patterns, generate summary report",
             expected_node_types=["read-file", "llm", "write-file"],
@@ -183,7 +183,7 @@ def get_test_cases() -> list[TestCase]:
         ),
         # === EDGE CASES & AMBIGUOUS REQUESTS (Tertiary - Simple, 3 tests) ===
         # Failed Discovery → Very Broad Selection
-        TestCase(
+        PromptTestCase(
             "very_vague_automation",
             "help me automate tasks",  # Extremely vague failed discovery
             expected_node_types=["llm"],  # Minimum - need intelligence to understand automation
@@ -193,7 +193,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Tests extremely vague request handling with minimal but reasonable selection",
         ),
         # Explicit Creation - Cross-domain
-        TestCase(
+        PromptTestCase(
             "mixed_domain_request",
             "analyze GitHub issues and generate local report files",  # Cross-domain workflow
             expected_node_types=["github-list-issues", "llm", "write-file"],
@@ -203,7 +203,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Tests cross-domain component selection (GitHub + data processing)",
         ),
         # Failed Discovery → Ambiguous Domain
-        TestCase(
+        PromptTestCase(
             "unclear_intent",
             "do something with data",  # Very unclear intent, failed discovery
             expected_node_types=["read-file", "llm", "write-file"],  # Assume file-based data processing

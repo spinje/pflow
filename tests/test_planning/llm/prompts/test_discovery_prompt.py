@@ -71,7 +71,7 @@ class Confidence(Enum):
 
 
 @dataclass
-class TestCase:
+class PromptTestCase:
     """Test case for discovery prompt."""
 
     name: str
@@ -83,11 +83,11 @@ class TestCase:
     why_important: str  # Business value of this test
 
 
-def get_test_cases() -> list[TestCase]:
+def get_test_cases() -> list[PromptTestCase]:
     """Define high-quality test cases focusing on distinct scenarios."""
     return [
         # === CORE MATCHES (Must correctly identify) ===
-        TestCase(
+        PromptTestCase(
             "exact_match",
             "read a file",
             should_find=True,
@@ -96,7 +96,7 @@ def get_test_cases() -> list[TestCase]:
             category="core_match",
             why_important="Basic exact match must work",
         ),
-        TestCase(
+        PromptTestCase(
             "semantic_match",
             "triage github issues by priority",
             should_find=True,
@@ -105,7 +105,7 @@ def get_test_cases() -> list[TestCase]:
             category="core_match",
             why_important="Semantic understanding of similar phrases",
         ),
-        TestCase(
+        PromptTestCase(
             "with_parameters",
             "generate changelog for version 2.0",
             should_find=True,
@@ -115,7 +115,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Parameters shouldn't prevent matching",
         ),
         # === CORE REJECTIONS (Must correctly reject) ===
-        TestCase(
+        PromptTestCase(
             "wrong_domain",
             "send an email notification",
             should_find=False,
@@ -124,7 +124,7 @@ def get_test_cases() -> list[TestCase]:
             category="core_reject",
             why_important="No email capability exists",
         ),
-        TestCase(
+        PromptTestCase(
             "missing_capability",
             "generate changelog and send to slack",
             should_find=False,
@@ -133,7 +133,7 @@ def get_test_cases() -> list[TestCase]:
             category="core_reject",
             why_important="Workflow lacks Slack integration",
         ),
-        TestCase(
+        PromptTestCase(
             "vague_request",
             "analyze data",
             should_find=False,
@@ -143,7 +143,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Too ambiguous - could mean CSV, GitHub, or other",
         ),
         # === DATA DISTINCTIONS (Critical for correctness) ===
-        TestCase(
+        PromptTestCase(
             "wrong_source",
             "generate changelog from pull requests",
             should_find=False,
@@ -152,7 +152,7 @@ def get_test_cases() -> list[TestCase]:
             category="data_mismatch",
             why_important="Workflow uses issues, not pull requests",
         ),
-        TestCase(
+        PromptTestCase(
             "wrong_format",
             "analyze JSON files",
             should_find=False,
@@ -161,7 +161,7 @@ def get_test_cases() -> list[TestCase]:
             category="data_mismatch",
             why_important="Only CSV analysis workflow exists",
         ),
-        TestCase(
+        PromptTestCase(
             "different_workflow",
             "summarize issue #123",
             should_find=False,
@@ -171,7 +171,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Single issue summary differs from triage",
         ),
         # === LANGUAGE HANDLING (Natural variations) ===
-        TestCase(
+        PromptTestCase(
             "synonym_bugs",
             "triage bugs",
             should_find=True,
@@ -180,7 +180,7 @@ def get_test_cases() -> list[TestCase]:
             category="synonyms",
             why_important="'bugs' is common synonym for 'issues'",
         ),
-        TestCase(
+        PromptTestCase(
             "single_word",
             "changelog",
             should_find=True,
@@ -190,7 +190,7 @@ def get_test_cases() -> list[TestCase]:
             why_important="Single word should match unambiguous workflow",
         ),
         # === PERFORMANCE CHECK (Representative test) ===
-        TestCase(
+        PromptTestCase(
             "performance_test",
             "generate a changelog from closed issues",
             should_find=True,
