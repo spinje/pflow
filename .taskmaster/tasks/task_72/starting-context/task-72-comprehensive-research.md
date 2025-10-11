@@ -1,9 +1,8 @@
 # Task 72 Comprehensive Research Document
 
-> **Context Note**: This document contains early technical research for Task 72 (MCP Server) from when
-> we initially planned a 5-tool implementation. The specification has since evolved to 13 tools based on
-> AGENT_INSTRUCTIONS analysis. While the strategic design has changed, the technical analysis, code patterns,
-> performance measurements, and security considerations remain valuable and correct.
+> **Context Note**: This document contains technical research for Task 72 (MCP Server). The tool count
+> evolved from 5 to 13 tools based on AGENT_INSTRUCTIONS analysis, but all technical patterns, code examples,
+> performance measurements, and security considerations in this document remain valid and should be followed.
 >
 > See `final-implementation-spec.md` for the current 13-tool specification.
 
@@ -59,9 +58,7 @@ After extensive analysis of pflow's architecture through 6 parallel investigatio
 
 ### 1. Discovery Tools (Updated Understanding)
 
-**Original Note**: "Do NOT use ComponentBrowsingNode - it requires LLM and returns markdown"
-
-**Correction**: We DO use ComponentBrowsingNode for `registry_discover` and WorkflowDiscoveryNode for `workflow_discover`:
+**Research Finding**: We DO use ComponentBrowsingNode for `registry_discover` and WorkflowDiscoveryNode for `workflow_discover`:
 - They provide intelligent LLM-based selection
 - We run them directly via `node.run(shared)`
 - They return structured data we can format for MCP

@@ -56,6 +56,8 @@ Implement an MCP (Model Context Protocol) server that exposes pflow's 13 core wo
 
 **Instructions**: These research files contain the FastMCP patterns you'll implement. Pay special attention to the instance method registration pattern in `tool-implementation.md`.
 
+If you are still unsure or run into problems, you can use subagents to gather information from `full-docs-mcp.md` or letting them search the internet for more information. Do not research internet yourself, let subagents do the research for you.
+
 ## What You're Building
 
 An MCP server exposing **13 tools** organized in three priority tiers:

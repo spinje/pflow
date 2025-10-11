@@ -1,8 +1,8 @@
 # Task 72 Implementation Handover: Critical Technical Knowledge
 
-*Updated version preserving valuable insights with corrected context*
+*Technical deep-dive companion to task-72-handover.md*
 
-**IMPORTANT**: This document contains hard-won technical knowledge essential for implementing the MCP server correctly.
+**PURPOSE**: This document provides deep technical patterns and gotchas. Read task-72-handover.md first for context, then use this for implementation details.
 
 ---
 
