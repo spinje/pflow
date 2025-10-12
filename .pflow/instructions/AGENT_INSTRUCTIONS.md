@@ -1270,10 +1270,10 @@ uv run pflow registry run http url="image.jpg" --show-structure
 ### Execute Workflow
 
 ```bash
-uv run pflow --output-format json --no-repair --trace workflow.json param1=value param2=value
+uv run pflow --no-repair --trace workflow.json param1=value param2=value
 ```
 
-> Using --output-format json --no-repair --trace flags is mandatory when building workflows for AI agents.
+> Using --no-repair --trace flags is mandatory when building workflows for AI agents.
 
 ### Understanding Template Errors
 
@@ -2019,7 +2019,7 @@ uv run pflow workflow.json param=value                         # Run from file
 uv run pflow saved-workflow param=value                        # Run from library
 
 # Required Execution Flags (use together when testing)
-uv run pflow --trace --no-repair --output-format json workflow-name
+uv run pflow --trace --no-repair workflow-name
 ```
 
 ### Template Syntax
@@ -2154,7 +2154,7 @@ uv run pflow --validate-only slack-qa.json
 
 ### Step 8: TEST
 ```bash
-uv run pflow --trace --no-repair --output-format json slack-qa.json channel=C09C16NAU5B limit=15 sheet_id=abc123xyz
+uv run pflow --trace --no-repair slack-qa.json channel=C09C16NAU5B limit=15 sheet_id=abc123xyz
 # ✓ Workflow executed successfully!
 ```
 

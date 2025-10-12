@@ -133,12 +133,15 @@ def _build_llm_kwargs(
         llm_kwargs["temperature"] = _adjust_temperature_for_model(model_name, llm_kwargs["temperature"])
 
     if _is_anthropic_model(model_name):
-        # Anthropic: always pass cache_blocks (contains the context!)
-        # Strip cache_control markers if caching is disabled
-        if cache_planner:
-            llm_kwargs["cache_blocks"] = cache_blocks
-        else:
-            llm_kwargs["cache_blocks"] = _strip_cache_control(cache_blocks) if cache_blocks else None
+        # Anthropic: only set cache_blocks if we have actual blocks (not None or [])
+        # Empty list causes "list index out of range" in cached path
+        if cache_blocks:  # Truthy check excludes both None and []
+            if cache_planner:
+                llm_kwargs["cache_blocks"] = cache_blocks
+            else:
+                # Strip cache_control markers when caching disabled
+                llm_kwargs["cache_blocks"] = _strip_cache_control(cache_blocks)
+        # else: Don't set cache_blocks key at all (avoids passing [] or None)
     else:
         # Non-Anthropic models (OpenAI, Gemini, etc.)
         # Flatten cache_blocks into the prompt since they don't support multi-block caching

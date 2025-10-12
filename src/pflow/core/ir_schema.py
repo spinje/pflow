@@ -416,6 +416,7 @@ def normalize_ir(workflow_ir: dict[str, Any]) -> None:
     Fields added:
     - ir_version: "0.1.0" if missing
     - edges: [] if missing (and no 'flow' field present)
+    - Normalizes node "parameters" to "params" (backward compatibility)
 
     Args:
         workflow_ir: Workflow IR dictionary (modified in-place)
@@ -432,3 +433,10 @@ def normalize_ir(workflow_ir: dict[str, Any]) -> None:
         workflow_ir["ir_version"] = "0.1.0"
     if "edges" not in workflow_ir and "flow" not in workflow_ir:
         workflow_ir["edges"] = []
+
+    # Normalize node parameters: "parameters" → "params"
+    # This provides backward compatibility and reduces friction for agents
+    if "nodes" in workflow_ir:
+        for node in workflow_ir["nodes"]:
+            if "parameters" in node and "params" not in node:
+                node["params"] = node.pop("parameters")

@@ -60,3 +60,35 @@ def get_parameter_validation_error(name: str, param_type: str = "parameter") -> 
 
     # Generic fallback
     return f"Invalid {param_type} name '{name}' - contains invalid characters"
+
+
+def generate_validation_suggestions(errors: list[dict[str, str]]) -> list[str]:
+    """Generate actionable suggestions for fixing validation errors.
+
+    Args:
+        errors: List of error dicts with 'message' and 'type' keys
+
+    Returns:
+        List of unique suggestions for fixing the errors
+
+    Example:
+        >>> errors = [{"message": "Unknown node type: 'foo'", "type": "validation"}]
+        >>> generate_validation_suggestions(errors)
+        ["Use 'registry list' to see available nodes"]
+    """
+    suggestions = []
+
+    for error in errors:
+        message = error.get("message", "").lower()
+
+        if "template" in message or "${" in message:
+            suggestions.append("Check template syntax: ${node.output}")
+        elif "node type" in message or "unknown node" in message:
+            suggestions.append("Use 'registry list' to see available nodes")
+        elif "cycle" in message or "circular" in message:
+            suggestions.append("Remove circular dependencies between nodes")
+        elif "unused" in message and "input" in message:
+            suggestions.append("Remove unused inputs or use them in node parameters")
+
+    # De-duplicate suggestions
+    return list(set(suggestions))

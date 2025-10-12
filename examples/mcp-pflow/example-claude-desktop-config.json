@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "pflow": {
+      "command": "uv",
+      "args": [
+        "run",
+        "pflow",
+        "mcp",
+        "serve"
+      ],
+      "cwd": "/Users/andfal/projects/pflow-feat-mcp-server-pflow"
+    }
+  }
+}

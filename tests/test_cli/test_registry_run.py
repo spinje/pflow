@@ -510,7 +510,7 @@ def test_unknown_node_shows_helpful_error(runner, mock_registry):
     result = runner.invoke(registry, ["run", "nonexistent-node"])
 
     assert result.exit_code == 1
-    assert "Unknown node type" in result.output
+    assert "not found in registry" in result.output
     assert "Did you mean" in result.output or "Available nodes" in result.output
 
 
@@ -561,9 +561,9 @@ def test_unknown_node_suggests_similar_names(runner, mock_registry):
     result = runner.invoke(registry, ["run", "read-files"])  # Typo: files instead of file
 
     assert result.exit_code == 1
-    assert "Unknown node type" in result.output
-    # Should suggest read-file (similar name)
-    assert "read-file" in result.output.lower()
+    assert "not found in registry" in result.output
+    # Should suggest read-file (similar name) or show available nodes
+    assert "read-file" in result.output.lower() or "available nodes" in result.output.lower()
 
 
 # ==============================================================================

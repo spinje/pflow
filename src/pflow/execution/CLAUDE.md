@@ -43,7 +43,16 @@ src/pflow/execution/
 ├── workflow_execution.py       # Unified execution with repair orchestration
 ├── repair_service.py           # LLM-based workflow repair
 ├── null_output.py             # Silent output implementation
-└── workflow_diff.py           # Workflow modification tracking
+├── workflow_diff.py           # Workflow modification tracking
+├── execution_state.py         # Execution state building (shared CLI/MCP)
+└── formatters/                # Shared output formatters (Task 72)
+    ├── error_formatter.py     # Error formatting (CLI/MCP parity)
+    ├── success_formatter.py   # Success formatting
+    ├── node_output_formatter.py
+    ├── validation_formatter.py
+    ├── workflow_save_formatter.py
+    ├── workflow_describe_formatter.py
+    └── ... (10 formatters total)
 ```
 
 ## Public API (via `__init__.py`)
@@ -248,6 +257,8 @@ shared["__cache_hits__"] = ["fetch", "analyze"]  # Nodes that used cache
 - `trace_collector`: Records execution trace
 
 **CliOutput**: Implements OutputInterface using Click for terminal output
+
+**MCP Server**: `mcp_server/services/execution_service.py` calls `execute_workflow()` with NullOutput for silent execution, uses shared formatters for parity
 
 ### 2. Runtime Integration
 
@@ -592,3 +603,18 @@ shared["__cache_hits__"].append(self.node_id)
 2. **Execution Visibility**: Can see exactly what happened (completed/cached/failed)
 3. **Performance Understanding**: Cache metrics show workflow efficiency
 4. **Debugging Support**: Complete state for troubleshooting failed workflows
+
+---
+
+## Shared Formatters
+
+**Location**: `formatters/` directory
+
+**Pattern**: Formatters return strings or dicts, never print. Consumers handle display.
+
+**Key Functions**:
+- `format_execution_errors()` - Error formatting with sanitization (used by CLI JSON, MCP)
+- `format_execution_success()` - Success results with metrics
+- `build_execution_steps()` - Per-node execution state (in `execution_state.py`)
+
+**MCP Usage**: Returns text/structured data matching CLI output modes for parity

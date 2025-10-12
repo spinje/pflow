@@ -331,13 +331,15 @@ class TestCachingIntegration:
                     prep_res = node.prep(shared)
                     node.exec(prep_res)
 
-                    # Verify cache blocks parameter is None when disabled
+                    # Verify cache blocks parameter is NOT passed when disabled
                     mock_model.prompt.assert_called_once()
                     call_args = mock_model.prompt.call_args
 
-                    # cache_blocks should be None when caching is disabled
-                    assert "cache_blocks" in call_args.kwargs
-                    assert call_args.kwargs["cache_blocks"] is None
+                    # cache_blocks should NOT be passed at all when caching is disabled
+                    # (prevents passing empty list [] which causes list index errors)
+                    assert "cache_blocks" not in call_args.kwargs, (
+                        "cache_blocks should not be passed when caching is disabled (was causing list index errors)"
+                    )
 
     @patch("pflow.planning.utils.prompt_cache_helper.load_prompt")  # Patch where it's used
     @patch("llm.get_model")
