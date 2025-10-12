@@ -153,81 +153,133 @@ make check                     # Run all quality checks (lint, type check, etc.)
 ```
 pflow/
 ├── README.md               # Project overview and user guide
-├── pocketflow/             # 100-line framework foundation
-│   ├── __init__.py        # Core framework (Node, Flow, Shared Store)
-│   ├── docs/              # Framework documentation and examples
-│   ├── cookbook/          # Extensive examples (40+ patterns)
-│   └── tests/             # Framework test suite
-├── src/pflow/             # Main pflow CLI implementation
-│   ├── cli/              # CLI module
-│   │   └── main.py       # CLI implementation with click
-│   ├── core/             # Core utilities and schemas
-│   │   ├── ir_schema.py  # Pydantic models for JSON IR validation
-│   │   ├── shell_integration.py  # Shell pipe and stdin/stdout handling
-│   │   ├── workflow_manager.py  # Centralized workflow lifecycle management
-│   │   └── exceptions.py # Core exception definitions
-│   ├── nodes/            # Platform node implementations
-│   │   ├── file/         # File operation nodes
-│   │   ├── git/          # Git operation nodes
-│   │   ├── github/       # GitHub API nodes
-│   │   ├── llm/          # LLM interaction node
-│   │   ├── test/         # Test nodes for development
-│   │   └── test_node*.py # Various test node implementations
-│   ├── planning/         # Natural language planning system
-│   │   ├── context_builder.py  # Build context for LLM planning
-│   │   ├── flow.py       # Flow planning logic
-│   │   ├── nodes.py      # Node planning logic
-│   │   ├── ir_models.py  # IR models for planning
-│   │   ├── debug.py      # Debugging utilities
-│   │   ├── debug_utils.py # Additional debug helpers
-│   │   ├── prompts/      # Extracted prompts as markdown files
-│   │   └── utils/        # Planning utilities
-│   │       ├── llm_helpers.py      # LLM interaction helpers
-│   │       ├── registry_helper.py  # Registry access helpers
-│   │       └── workflow_loader.py  # Workflow loading utilities
-│   ├── registry/         # Node discovery and management
-│   │   ├── registry.py   # Central registry for nodes and metadata
-│   │   ├── scanner.py    # Dynamic node discovery from modules
-│   │   └── metadata_extractor.py  # Extract metadata from node docstrings
-│   └── runtime/          # Workflow execution components
-│       ├── compiler.py   # IR to PocketFlow object compilation
-│       ├── workflow_executor.py  # Workflow execution orchestration
-│       ├── workflow_validator.py # Workflow validation logic
-│       ├── template_resolver.py  # Template variable resolution
-│       ├── template_validator.py # Template validation logic
-│       ├── namespaced_store.py   # Namespaced shared store implementation
-│       ├── namespaced_wrapper.py # Node wrapper for namespacing
-│       └── node_wrapper.py       # General node wrapper utilities
-├── tests/                 # Comprehensive test suite
-│   ├── shared/           # Shared test utilities and fixtures
-│   ├── test_cli/         # CLI interface tests
-│   ├── test_core/        # Core functionality tests
-│   ├── test_docs/        # Documentation validation
-│   ├── test_integration/ # End-to-end integration tests
-│   ├── test_nodes/       # Node implementation tests
-│   │   ├── test_file/    # File node tests
-│   │   ├── test_git/     # Git node tests
-│   │   ├── test_github/  # GitHub node tests
-│   │   └── test_llm/     # LLM node tests
-│   ├── test_planning/    # Planning system tests
-│   │   ├── fixtures/     # Test fixtures for planning
-│   │   ├── integration/  # Planning integration tests
-│   │   ├── llm/          # LLM-specific planning tests
-│   │   │   ├── behavior/ # LLM behavior tests
-│   │   │   ├── integration/ # LLM integration tests
-│   │   │   └── prompts/  # Prompt testing
-│   │   └── unit/         # Unit tests for planning
-│   ├── test_registry/    # Registry and scanner tests
-│   ├── test_runtime/     # Runtime and compiler tests
-│   │   └── test_workflow_executor/ # Workflow executor tests
-│   └── test_shared/      # Tests for shared components
-├── examples/              # Example workflows and usage patterns
-├── docs/                  # User-facing documentation (empty, for mkdocs)
-├── architecture/          # Project architecture and design specifications
-├── .taskmaster/           # Task management and planning
-├── Makefile              # Development automation
-├── pyproject.toml        # Project configuration and dependencies
-└── CLAUDE.md            # This file
+├── Makefile                # Development automation
+├── pyproject.toml          # Project configuration and dependencies
+├── uv.lock                 # Dependency lockfile for uv
+├── docs/                   # User-facing documentation (mkdocs)
+├── architecture/           # Architecture and design specifications
+├── examples/               # Example workflows and usage patterns
+├── scripts/                # Development and debugging scripts
+├── tools/                  # Developer tools and test utilities
+├── pocketflow/             # Embedded PocketFlow framework
+│   ├── __init__.py         # Core PocketFlow classes (Node, Flow, Shared Store)
+│   ├── docs/               # PocketFlow documentation
+│   ├── cookbook/           # PocketFlow example flows and patterns
+│   ├── research/           # PocketFlow research notes
+│   ├── tests/              # PocketFlow test suite
+│   └── PFLOW_MODIFICATIONS.md # Notes on PocketFlow changes for pflow
+├── src/pflow/              # Main pflow implementation
+│   ├── cli/                # CLI entrypoints and subcommands
+│   │   ├── main.py         # Primary CLI (run workflows, I/O handling, validation)
+│   │   ├── main_wrapper.py # Routes first arg to mcp/registry/workflow/settings groups
+│   │   ├── mcp.py          # MCP server/tool management commands
+│   │   ├── registry.py     # Registry commands (list/search/describe/scan/run/discover)
+│   │   ├── registry_run.py # Execute a single node from registry with params
+│   │   ├── discovery_errors.py # Shared error handling for LLM discovery flows
+│   │   ├── rerun_display.py    # Builds safe rerun commands, masking secrets
+│   │   ├── repair_save_handlers.py # Save repaired workflows (saved/file/planner sources)
+│   │   ├── cli_output.py    # Click-based OutputInterface adapter
+│   │   └── commands/        # CLI command groups
+│   │       ├── settings.py  # Settings management (allow/deny, show, reset, check)
+│   │       └── workflow.py  # Manage saved workflows (list/describe)
+│   ├── core/                # Core schemas, settings, validation, and utilities
+│   │   ├── exceptions.py    # Exception types (planner/runtime/validation)
+│   │   ├── ir_schema.py     # Workflow IR schema and validation helpers
+│   │   ├── llm_config.py    # Default LLM detection via llm CLI and env
+│   │   ├── llm_pricing.py   # Centralized pricing and LLM cost calculations
+│   │   ├── metrics.py       # MetricsCollector for durations, tokens, costs
+│   │   ├── output_controller.py # Interactive vs non-interactive output routing
+│   │   ├── settings.py      # PflowSettings manager with allow/deny filters
+│   │   ├── shell_integration.py # Robust stdin handling (text/binary/large)
+│   │   ├── user_errors.py   # User-friendly CLI error types and formatting
+│   │   ├── validation_utils.py # Parameter name validation helpers
+│   │   ├── workflow_data_flow.py # Data-flow validation and execution order
+│   │   ├── workflow_manager.py   # Saved workflow storage and metadata
+│   │   └── workflow_validator.py # Unified workflow validation pipeline
+│   ├── execution/           # Execution UX and reusable services
+│   │   ├── display_manager.py   # UX display coordination via OutputInterface
+│   │   ├── executor_service.py  # Reusable workflow execution service (IR -> run)
+│   │   ├── null_output.py       # No-op OutputInterface implementation
+│   │   ├── output_interface.py  # Output interface/protocol for display backends
+│   │   ├── repair_service.py    # Validation-driven auto-repair flow
+│   │   ├── workflow_diff.py     # Compute diffs between original and repaired IR
+│   │   └── workflow_execution.py # Orchestrates validate/repair/execute cycle
+│   ├── mcp/                 # Model Context Protocol integration
+│   │   ├── auth_utils.py    # Auth/config helpers for MCP servers
+│   │   ├── discovery.py     # Server discovery and config utilities
+│   │   ├── manager.py       # Manage MCP server configurations
+│   │   ├── registrar.py     # Register/sync MCP tools into pflow registry
+│   │   ├── types.py         # Typed structures for MCP configs and tools
+│   │   └── utils.py         # Parsing and utility helpers (server/tool IDs)
+│   ├── nodes/               # Platform node implementations
+│   │   ├── claude/          # Claude Code integration nodes
+│   │   ├── file/            # Local filesystem operations (read/write/copy/move/delete)
+│   │   ├── git/             # Git operations (status/commit/push/checkout/log/tag)
+│   │   ├── github/          # GitHub API nodes (issues/PRs/listing)
+│   │   ├── http/            # HTTP request node
+│   │   ├── llm/             # General-purpose LLM node
+│   │   ├── mcp/             # MCP tool bridge node
+│   │   ├── shell/           # Shell command execution node
+│   │   └── test/            # Internal test/demo nodes
+│   ├── planning/            # Natural language planner system
+│   │   ├── context_blocks.py    # Reusable blocks for planner context strings
+│   │   ├── context_builder.py   # Builds planning context, two-phase discovery
+│   │   ├── flow.py              # Planner meta-workflow orchestration
+│   │   ├── nodes.py             # Planner node orchestration and selection logic
+│   │   ├── ir_models.py         # Pydantic models for planner IR/intermediate outputs
+│   │   ├── debug.py             # Planner debugging helpers and pretty output
+│   │   ├── error_handler.py     # Structured error handling for planner failures
+│   │   ├── utils/               # Helper modules for planner
+│   │   │   ├── anthropic_llm_model.py   # Install/patch Anthropic model for planner/tests
+│   │   │   ├── anthropic_structured_client.py # Client helpers for Anthropic
+│   │   │   ├── llm_helpers.py           # Common LLM call wrappers and schema helpers
+│   │   │   ├── prompt_cache_helper.py   # Prompt caching utilities
+│   │   │   ├── registry_helper.py       # Registry querying and normalization
+│   │   │   └── workflow_loader.py       # Load workflows for planner context
+│   │   └── prompts/         # Prompt definitions (markdown + loaders)
+│   │       └── archive/     # Archived/legacy prompt variants
+│   ├── registry/            # Node registry and scanning
+│   │   ├── metadata_extractor.py # Docstring/interface metadata extraction
+│   │   ├── registry.py      # Central registry load/save/filter/search
+│   │   └── scanner.py       # Discover nodes from modules and folders
+│   └── runtime/             # Runtime compilation, validation, and tracing
+│       ├── compiler.py          # Compile IR to PocketFlow Flow/Nodes
+│       ├── instrumented_wrapper.py # Instrument nodes for metrics/tracing
+│       ├── namespaced_store.py  # Namespaced shared store with collision safety
+│       ├── namespaced_wrapper.py # Namespacing wrapper for nodes
+│       ├── node_wrapper.py      # General node wrapper utilities
+│       ├── output_resolver.py   # Resolve output routing and keys
+│       ├── template_resolver.py # Resolve ${var} with inputs/shared store
+│       ├── template_validator.py # Validate template paths using node interfaces
+│       ├── workflow_executor.py # Workflow execution orchestration
+│       ├── workflow_trace.py    # Structured execution trace and metrics
+│       └── workflow_validator.py # Runtime validation used by compiler/executor
+├── tests/                   # Test suite organized by area
+│   ├── shared/              # Shared test utilities and fixtures
+│   │   ├── README.md        # Usage docs for shared testing utilities
+│   │   ├── llm_mock.py      # LLM-level mock preventing real API calls
+│   │   ├── planner_block.py # Fixture to block planner import for fallback tests
+│   │   └── registry_utils.py # Ensure a test registry from core nodes
+│   ├── test_cli/            # CLI tests
+│   ├── test_core/           # Core modules tests
+│   ├── test_docs/           # Docs/link validation tests
+│   ├── test_execution/      # Execution/repair service tests
+│   ├── test_integration/    # End-to-end workflow tests
+│   ├── test_mcp/            # MCP integration tests
+│   ├── test_nodes/          # Node implementation tests
+│   │   ├── test_claude/     # Claude nodes
+│   │   ├── test_file/       # File nodes
+│   │   ├── test_git/        # Git nodes
+│   │   ├── test_github/     # GitHub nodes
+│   │   ├── test_http/       # HTTP node
+│   │   ├── test_llm/        # LLM node
+│   │   ├── test_mcp/        # MCP node
+│   │   └── test_shell/      # Shell node
+│   ├── test_planning/       # Planner tests (behavior, prompts, integration)
+│   ├── test_registry/       # Registry/scanner tests
+│   └── test_runtime/        # Runtime/compiler/executor tests
+├── .taskmaster/             # Task management and planning
+└── CLAUDE.md                # This guide for agents working in the repo
 ```
 
 ### Claude's Operating Guidelines
