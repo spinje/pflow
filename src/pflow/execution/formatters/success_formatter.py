@@ -165,3 +165,130 @@ def _find_auto_output(shared: dict[str, Any]) -> tuple[Optional[str], Any]:
         return last_key, user_keys[last_key]
 
     return None, None
+
+
+def format_success_as_text(success_dict: dict[str, Any]) -> str:
+    """Convert success dictionary to human-readable text (matches CLI format exactly).
+
+    Args:
+        success_dict: Dictionary from format_execution_success()
+
+    Returns:
+        Formatted text string matching CLI output
+    """
+    lines = []
+
+    # Extract data
+    duration_ms = success_dict.get("duration_ms", 0)
+    duration_sec = duration_ms / 1000 if duration_ms else 0
+    total_cost = success_dict.get("total_cost_usd")
+    workflow_metadata = success_dict.get("workflow", {})
+    workflow_name = workflow_metadata.get("name", "workflow")
+    workflow_action = workflow_metadata.get("action", "executed")
+
+    # Show workflow name and action (matches CLI)
+    if workflow_action == "reused":
+        lines.append(f"{workflow_name} was executed")
+    elif workflow_action == "created":
+        lines.append(f"{workflow_name} was created and executed")
+    # Skip for "unsaved" workflows
+
+    # Success header (matches CLI line 643)
+    lines.append(f"✓ Workflow completed in {duration_sec:.3f}s")
+
+    # Show node execution details (matches CLI lines 646-655)
+    _append_execution_steps(lines, success_dict.get("execution", {}))
+
+    # Show cost if > 0 (matches CLI lines 604-606)
+    if total_cost and total_cost > 0:
+        metrics = success_dict.get("metrics", {})
+        workflow_metrics = metrics.get("workflow", {})
+        total_tokens = workflow_metrics.get("total_tokens", 0)
+
+        if total_tokens > 0:
+            lines.append(f"💰 Cost: ${total_cost:.4f} ({total_tokens:,} tokens)")
+        else:
+            lines.append(f"💰 Cost: ${total_cost:.4f}")
+
+    # Show outputs if present (matches CLI "Workflow output:" section)
+    result = success_dict.get("result", {})
+    if result:
+        lines.append("")
+        lines.append("Workflow output:")
+        lines.append("")
+        _append_outputs(lines, result)
+
+    # Note: Trace path not shown in CLI text mode, only in MCP for debugging
+    # Agents can use trace_path from the dict if needed
+
+    return "\n".join(lines)
+
+
+def _append_outputs(lines: list[str], result: dict[str, Any]) -> None:
+    """Append formatted outputs to lines list (matches CLI behavior).
+
+    CLI outputs the FIRST output's value directly (not key: value format).
+    """
+    if not result:
+        return
+
+    # Get the first output value (matches CLI behavior)
+    first_value = next(iter(result.values()))
+
+    # Output the value directly as string (matches CLI safe_output())
+    if isinstance(first_value, str):
+        lines.append(first_value)
+    else:
+        lines.append(str(first_value))
+
+
+def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None:
+    """Append execution step details to lines list."""
+    if not execution or "steps" not in execution:
+        return
+
+    steps = execution["steps"]
+    nodes_executed = execution.get("nodes_executed", 0)
+
+    lines.append(f"Nodes executed ({nodes_executed}):")
+    for step in steps:
+        formatted_step = _format_execution_step(step)
+        lines.append(formatted_step)
+
+
+def _format_execution_step(step: dict[str, Any]) -> str:
+    """Format a single execution step."""
+    node_id = step.get("node_id", "unknown")
+    status = step.get("status", "unknown")
+    duration = step.get("duration_ms", 0)
+    cached = step.get("cached", False)
+    repaired = step.get("repaired", False)
+
+    # Build status indicator
+    indicator_map = {"completed": "✓", "failed": "❌"}
+    indicator = indicator_map.get(status, "⚠️")
+
+    # Build additional tags
+    tags = []
+    if cached:
+        tags.append("cached")
+    if repaired:
+        tags.append("repaired")
+
+    tag_str = f" [{', '.join(tags)}]" if tags else ""
+    return f"  {indicator} {node_id} ({duration}ms){tag_str}"
+
+
+def _append_footer(lines: list[str], cost: Optional[float], trace_path: Optional[str]) -> None:
+    """Append cost and trace footer to lines list."""
+    if not cost and not trace_path:
+        return
+
+    parts = []
+    if cost:
+        parts.append(f"Cost: ${cost:.4f}")
+    if trace_path:
+        parts.append(f"Trace: {trace_path}")
+
+    lines.append("")
+    lines.append(" | ".join(parts))
