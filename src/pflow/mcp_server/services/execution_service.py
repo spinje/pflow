@@ -213,11 +213,11 @@ class ExecutionService(BaseService):
 
     @classmethod
     @ensure_stateless
-    def execute_workflow(cls, workflow: Any, parameters: dict[str, Any] | None = None) -> dict[str, Any]:
+    def execute_workflow(cls, workflow: Any, parameters: dict[str, Any] | None = None) -> str:
         """Execute a workflow with agent-optimized defaults.
 
         Built-in behaviors (no flags needed):
-        - JSON output format
+        - Text output format (LLMs parse better than JSON)
         - No auto-repair (explicit errors)
         - Trace saved to ~/.pflow/debug/
         - Auto-normalization of workflow IR
@@ -227,12 +227,20 @@ class ExecutionService(BaseService):
             parameters: Execution parameters
 
         Returns:
-            Dictionary with execution results or error details
+            Formatted text output matching CLI (success or error)
+
+        Raises:
+            ValueError: If workflow not found or parameters invalid
+            RuntimeError: If execution fails
         """
         # Resolve and validate workflow
         workflow_ir, error_response, validated_params = _resolve_and_validate_workflow(workflow, parameters)
         if error_response or workflow_ir is None:
-            return error_response or {"success": False, "error": {"type": "unknown", "message": "Unknown error"}}
+            # Extract error message and raise
+            error_msg = (
+                error_response.get("error", {}).get("message", "Unknown error") if error_response else "Unknown error"
+            )
+            raise ValueError(error_msg)
 
         # Setup execution environment
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -258,22 +266,46 @@ class ExecutionService(BaseService):
             )
 
             if result.success:
-                return _format_success_result(
+                # Format success as text (LLMs parse this better)
+                success_dict = _format_success_result(
                     result, workflow_ir, workflow, source, workflow_manager, metrics_collector, trace_path
                 )
-            else:
-                return _format_error_result(result, workflow_ir, metrics_collector, trace_path)
 
+                from pflow.execution.formatters.success_formatter import format_success_as_text
+
+                return format_success_as_text(success_dict)
+            else:
+                # Format error as text and raise
+                error_dict = _format_error_result(result, workflow_ir, metrics_collector, trace_path)
+                error_msg = error_dict.get("error", {}).get("message", "Workflow execution failed")
+
+                # Build detailed error text
+                lines = [f"❌ {error_msg}"]
+
+                # Add error details if available
+                if error_dict.get("errors"):
+                    lines.append("\nError details:")
+                    for err in error_dict["errors"][:3]:  # Show first 3 errors
+                        node_id = err.get("node_id", "unknown")
+                        msg = err.get("message", "Unknown error")
+                        lines.append(f"  • {node_id}: {msg}")
+
+                # Add trace path
+                if trace_path.exists():
+                    lines.append(f"\nTrace: {trace_path}")
+
+                error_text = "\n".join(lines)
+                raise RuntimeError(error_text)
+
+        except RuntimeError:
+            # Re-raise our formatted errors
+            raise
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": {
-                    "type": "exception",
-                    "message": str(e),
-                },
-                "trace_path": str(trace_path) if trace_path.exists() else None,
-            }
+            error_msg = f"❌ Workflow execution failed: {e}"
+            if trace_path.exists():
+                error_msg += f"\nTrace: {trace_path}"
+            raise RuntimeError(error_msg) from e
 
     @classmethod
     @ensure_stateless
@@ -335,7 +367,7 @@ class ExecutionService(BaseService):
     @ensure_stateless
     def save_workflow(
         cls, workflow: Any, name: str, description: str, force: bool = False, generate_metadata: bool = False
-    ) -> dict[str, Any]:
+    ) -> str:
         """Save workflow to global library.
 
         Args:
@@ -346,7 +378,11 @@ class ExecutionService(BaseService):
             generate_metadata: If True, generate rich metadata (keywords, capabilities, use cases) using AI
 
         Returns:
-            Dictionary with save results
+            Formatted success message (text) matching CLI output
+
+        Raises:
+            ValueError: If workflow name is invalid, workflow not found, or validation fails
+            FileExistsError: If workflow exists and force=False
         """
         from pflow.core.exceptions import WorkflowValidationError
         from pflow.core.workflow_save_service import (
@@ -359,36 +395,18 @@ class ExecutionService(BaseService):
         # Validate workflow name
         is_valid, error = validate_workflow_name(name)
         if not is_valid:
-            return {
-                "success": False,
-                "error": {
-                    "type": "validation",
-                    "message": f"Invalid workflow name: {error}",
-                },
-            }
+            raise ValueError(f"Invalid workflow name: {error}")
 
         # Resolve workflow to IR (MCP accepts dict/name/path)
         workflow_ir, error, source = resolve_workflow(workflow)
         if error or workflow_ir is None:
-            return {
-                "success": False,
-                "error": {
-                    "type": "not_found",
-                    "message": error or "Workflow not found",
-                },
-            }
+            raise ValueError(error or "Workflow not found")
 
         # Validate and normalize IR (mypy now knows workflow_ir is not None)
         try:
             workflow_ir = load_and_validate_workflow(workflow_ir, auto_normalize=True)
         except (ValueError, WorkflowValidationError) as e:
-            return {
-                "success": False,
-                "error": {
-                    "type": "validation",
-                    "message": f"Invalid workflow: {e}",
-                },
-            }
+            raise ValueError(f"Invalid workflow: {e}") from e
 
         # Add/update metadata (MCP-specific: embed name/description in IR)
         if "metadata" not in workflow_ir:
@@ -427,39 +445,20 @@ class ExecutionService(BaseService):
                 metadata=metadata_dict,  # Include metadata in success message
             )
 
-            return {
-                "success": True,
-                "message": success_message,  # Includes execution hint + optional params
-                "path": str(saved_path),
-            }
+            # Return text directly (LLMs parse this better than JSON)
+            return success_message
 
-        except FileExistsError:
-            return {
-                "success": False,
-                "error": {
-                    "type": "already_exists",
-                    "message": f"Workflow '{name}' already exists",
-                    "suggestion": "Use force=true to overwrite or choose a different name",
-                },
-            }
+        except FileExistsError as e:
+            # Re-raise with helpful message
+            raise FileExistsError(
+                f"Workflow '{name}' already exists. Use force=true to overwrite or choose a different name."
+            ) from e
         except WorkflowValidationError as e:
             logger.error(f"Failed to save workflow: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": {
-                    "type": "save_error",
-                    "message": str(e),
-                },
-            }
+            raise ValueError(f"Failed to save workflow: {e}") from e
         except Exception as e:
             logger.error(f"Failed to save workflow: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": {
-                    "type": "save_error",
-                    "message": str(e),
-                },
-            }
+            raise ValueError(f"Failed to save workflow: {e}") from e
 
     @classmethod
     @ensure_stateless

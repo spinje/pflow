@@ -20,42 +20,45 @@ logger = logging.getLogger(__name__)
 async def workflow_execute(
     workflow: Annotated[str | dict[str, Any], Field(description="Workflow name, file path, or IR dictionary")],
     parameters: Annotated[dict[str, Any] | None, Field(description="Execution parameters for the workflow")] = None,
-) -> dict[str, Any]:
-    """Execute a workflow with structured output.
+) -> str:
+    """Execute a workflow with natural language output.
 
     Built-in behaviors (no flags needed):
-    - JSON output format
-    - No auto-repair (returns explicit errors)
+    - Text output format (LLMs parse natural language better than JSON)
+    - No auto-repair (returns explicit errors for agent handling)
     - Trace saved to ~/.pflow/debug/
     - Auto-normalization (adds ir_version, edges if missing)
 
-    On failure, returns checkpoint data for recovery.
+    Returns formatted text matching CLI output - easy for LLMs to parse.
 
     Args:
         workflow: Name (from library), path (to file), or IR dict
         parameters: Optional parameters for workflow execution
 
     Returns:
-        Dictionary with outputs, errors, trace path, and checkpoint
+        Formatted text with execution results (same as CLI)
+        Success: "✓ Workflow completed in 0.5s\n\nOutputs:\n  result: ...\n\nNodes executed (3):\n  ✓ node1 (120ms)\n  ✓ node2 (45ms)\n  ✓ node3 (12ms)\n\nCost: $0.0023 | Trace: /Users/user/.pflow/debug/workflow-trace-20251012-143045.json"
+        Error: "❌ Workflow execution failed\n\nError details:\n  • node-id: error message\n\nTrace: /Users/user/.pflow/debug/workflow-trace-20251012-143045.json"
 
     Example:
         workflow="github-pr-analyzer"
         parameters={"repo": "anthropics/pflow", "pr": 123}
-        Returns outputs or error with checkpoint for retry
+        Returns formatted text with outputs or error details (LLM-friendly natural language)
     """
     logger.debug(f"workflow_execute called: workflow type={type(workflow)}")
 
-    def _sync_execute() -> dict[str, Any]:
+    def _sync_execute() -> str:
         """Synchronous execution operation."""
         return ExecutionService.execute_workflow(workflow, parameters)
 
     # Run in thread pool to avoid blocking
     result = await asyncio.to_thread(_sync_execute)
 
-    if result.get("success"):
+    # Log based on result content
+    if result.startswith("✓"):
         logger.info("Workflow execution successful")
     else:
-        logger.warning(f"Workflow execution failed: {result.get('error', {}).get('message')}")
+        logger.warning("Workflow execution failed")
 
     return result
 
@@ -116,7 +119,7 @@ async def workflow_save(
     generate_metadata: bool = Field(
         False, description="Generate rich metadata (keywords, capabilities, use cases) using AI for better discovery"
     ),
-) -> dict[str, Any]:
+) -> str:
     """Save workflow to global library for reuse.
 
     Validates and normalizes the workflow before saving.
@@ -137,7 +140,8 @@ async def workflow_save(
         generate_metadata: Whether to generate AI-powered metadata for better discovery
 
     Returns:
-        Dictionary with save status and path
+        Formatted success message (text) matching CLI output
+        "✓ Saved workflow 'name' to library\n  Location: /path/to/workflow.json\n  ✨ Execute with: pflow name param=<value>"
 
     Example:
         workflow_file="./draft-workflow.json"
@@ -146,12 +150,11 @@ async def workflow_save(
         force=false
         generate_metadata=true  # Improves discovery ranking
 
-        # To overwrite existing:
-        force=true
+        Returns formatted text with save confirmation and execution hint (LLM-friendly)
     """
     logger.debug(f"workflow_save called: name={name}, force={force}, generate_metadata={generate_metadata}")
 
-    def _sync_save() -> dict[str, Any]:
+    def _sync_save() -> str:
         """Synchronous save operation."""
         # Note: workflow_file is the path, we pass it directly
         return ExecutionService.save_workflow(workflow_file, name, description, force, generate_metadata)
@@ -159,10 +162,7 @@ async def workflow_save(
     # Run in thread pool
     result = await asyncio.to_thread(_sync_save)
 
-    if result.get("success"):
-        logger.info(f"Workflow saved as '{name}' (force={force})")
-    else:
-        logger.warning(f"Failed to save workflow: {result.get('error', {}).get('message')}")
+    logger.info(f"Workflow saved as '{name}' (force={force})")
 
     return result
 
