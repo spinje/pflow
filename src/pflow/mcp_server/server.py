@@ -27,8 +27,8 @@ def register_tools() -> None:
         discovery_tools,
         execution_tools,
         registry_tools,
-        settings_tools,
-        test_tools,
+        # settings_tools,  # DISABLED - code kept for future use
+        # test_tools,  # DISABLED - development only
         workflow_tools,
     )
 
@@ -37,8 +37,8 @@ def register_tools() -> None:
         discovery_tools,
         execution_tools,
         registry_tools,
-        settings_tools,
-        test_tools,
+        # settings_tools,  # DISABLED
+        # test_tools,  # DISABLED
         workflow_tools,
     )
 

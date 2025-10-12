@@ -11,7 +11,7 @@ from . import (
     execution_tools,  # Phase 3: Execution tools
     registry_tools,  # Phase 4: Registry tools
     # settings_tools,  # Phase 4: Settings tools (DISABLED - code kept for future use)
-    test_tools,  # Phase 1: Basic test tool
+    # test_tools,  # Phase 1: Test tools (DISABLED - development only)
     workflow_tools,  # Phase 4: Workflow tools
 )
 
@@ -23,6 +23,6 @@ __all__ = [
     "execution_tools",
     "registry_tools",
     # "settings_tools",  # DISABLED
-    "test_tools",
+    # "test_tools",  # DISABLED
     "workflow_tools",
 ]

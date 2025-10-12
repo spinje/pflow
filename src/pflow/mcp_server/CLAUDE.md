@@ -6,11 +6,13 @@ The `src/pflow/mcp_server/` module exposes pflow's workflow building and executi
 
 **Core Innovation**: Three-layer stateless architecture (async tools → sync services → core pflow) with perfect CLI parity via shared formatters.
 
+**Note**: 11 production tools enabled (settings_tools and test_tools disabled by default - code kept for future use).
+
 ## Module Architecture
 
 ```
 ┌─────────────────────────────────────────┐
-│         MCP Tools (18 tools)             │  ← FastMCP decorators, async wrappers
+│         MCP Tools (11 enabled)           │  ← FastMCP decorators, async wrappers
 │         asyncio.to_thread bridge         │
 ├─────────────────────────────────────────┤
 │      Services Layer (6 services)         │  ← Business logic, stateless pattern
@@ -67,9 +69,11 @@ Total: ~2,180 lines
 - `register_tools()`: Imports tool modules to trigger decorator registration
 - Pattern: Import-time registration via `@mcp.tool()`
 
-### 2. Tools Layer (18 MCP Tools)
+### 2. Tools Layer (11 Production Tools)
 
 All tools use async/sync bridge: `await asyncio.to_thread(service_method)`
+
+**Note**: settings_tools (4 tools) and test_tools (3 tools) are disabled by default - code kept for future use.
 
 **discovery_tools.py** (2 tools):
 - `workflow_discover(query)`: Find workflows using LLM matching (WorkflowDiscoveryNode)
@@ -90,13 +94,13 @@ All tools use async/sync bridge: `await asyncio.to_thread(service_method)`
 - `workflow_list(filter_pattern)`: List saved workflows
 - `workflow_describe(name)`: Show workflow interface (inputs/outputs)
 
-**settings_tools.py** (4 tools):
+**settings_tools.py** (4 tools) - **DISABLED**:
 - `settings_get(key)`: Get environment variable
 - `settings_set(key, value)`: Set environment variable
 - `settings_show()`: Show all settings
 - `settings_list_env(show_values)`: List env vars (masked by default)
 
-**test_tools.py** (3 tools):
+**test_tools.py** (3 tools) - **DISABLED**:
 - `ping(echo, error)`: Server health check
 - `test_sync_bridge(delay_seconds)`: Test async/sync bridge
 - `test_stateless_pattern()`: Verify fresh instances
@@ -172,7 +176,7 @@ def execute_workflow(cls, workflow, parameters):
 
 ### 2. Async/Sync Bridge
 
-**Consistent pattern across all 18 tools**:
+**Consistent pattern across all tools**:
 ```python
 @mcp.tool()
 async def tool_name(param: Type):
