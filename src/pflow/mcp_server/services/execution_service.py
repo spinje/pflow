@@ -408,6 +408,36 @@ class ExecutionService(BaseService):
         except (ValueError, WorkflowValidationError) as e:
             raise ValueError(f"Invalid workflow: {e}") from e
 
+        # Run comprehensive validation (same as validate_workflow tool)
+        # This catches: node types, templates, data flow, output sources
+        try:
+            registry = Registry()
+            inputs = workflow_ir.get("inputs", {})
+            dummy_params = generate_dummy_parameters(inputs)
+
+            # Run all 4 validation checks:
+            # 1. Structural validation (IR schema compliance)
+            # 2. Data flow validation (execution order, cycles)
+            # 3. Template validation (${variable} resolution)
+            # 4. Node type validation (registry verification)
+            errors, warnings = WorkflowValidator.validate(
+                workflow_ir=workflow_ir,
+                extracted_params=dummy_params,
+                registry=registry,
+                skip_node_types=False,
+            )
+
+            if errors:
+                error_list = "\n  - ".join(errors)
+                raise ValueError(f"Workflow validation failed:\n  - {error_list}")
+
+        except ValueError:
+            # Re-raise validation errors
+            raise
+        except Exception as e:
+            logger.error(f"Validation failed: {e}", exc_info=True)
+            raise ValueError(f"Validation error: {e}") from e
+
         # Add/update metadata (MCP-specific: embed name/description in IR)
         if "metadata" not in workflow_ir:
             workflow_ir["metadata"] = {}
