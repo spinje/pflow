@@ -2007,6 +2007,7 @@ Template error?
 # Discovery - ALWAYS use AI-powered discovery first
 uv run pflow workflow discover "user's request"                # Find existing workflows
 uv run pflow registry discover "what you need to build"        # Find nodes for building
+uv run pflow workflow list [filter]                            # Browse saved workflows (ALWAYS use filter to avoid context pollution)
 
 # Development
 uv run pflow --validate-only workflow.json                     # Validate structure

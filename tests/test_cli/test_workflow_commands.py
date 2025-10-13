@@ -165,6 +165,62 @@ class TestWorkflowListCommand:
             assert "with-desc-workflow" in result.output
             assert "Has a description" in result.output
 
+    def test_list_workflows_filter_case_insensitive(self) -> None:
+        """Test that filtering is case-insensitive."""
+        mock_workflows = [
+            {
+                "name": "GitHub-Analyzer",
+                "description": "Analyzes repos",
+                "created_at": "2024-01-01T00:00:00Z",
+            },
+            {
+                "name": "slack-bot",
+                "description": "Contains GITHUB token handling",
+                "created_at": "2024-01-02T00:00:00Z",
+            },
+        ]
+
+        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.list_all.return_value = mock_workflows
+
+            # Try lowercase filter
+            result = invoke_cli(["workflow", "list", "github"])
+
+            assert result.exit_code == 0
+            # Both should match despite different cases
+            assert "GitHub-Analyzer" in result.output
+            assert "slack-bot" in result.output
+            assert "Total: 2 workflows" in result.output
+
+    def test_list_workflows_filter_no_matches(self) -> None:
+        """Test filtering with no matching workflows."""
+        mock_workflows = [
+            {
+                "name": "backup-photos",
+                "description": "Backs up photos",
+                "created_at": "2024-01-01T00:00:00Z",
+            },
+            {
+                "name": "daily-report",
+                "description": "Generates reports",
+                "created_at": "2024-01-02T00:00:00Z",
+            },
+        ]
+
+        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.list_all.return_value = mock_workflows
+
+            result = invoke_cli(["workflow", "list", "github"])
+
+            assert result.exit_code == 0
+            # Should show empty state
+            assert "No workflows saved yet" in result.output
+            # Original workflows should not appear
+            assert "backup-photos" not in result.output
+            assert "daily-report" not in result.output
+
 
 class TestWorkflowDescribeCommand:
     """Tests for the 'pflow workflow describe' command."""

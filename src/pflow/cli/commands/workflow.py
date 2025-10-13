@@ -16,11 +16,26 @@ def workflow() -> None:
 
 
 @workflow.command(name="list")
+@click.argument("filter_pattern", required=False)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def list_workflows(output_json: bool) -> None:
-    """List all saved workflows."""
+def list_workflows(filter_pattern: str | None, output_json: bool) -> None:
+    """List all saved workflows.
+
+    Optionally filter by name or description:
+        pflow workflow list github    # Show workflows matching "github"
+        pflow workflow list            # Show all workflows
+    """
     wm = WorkflowManager()
     workflows = wm.list_all()
+
+    # Apply filter if provided
+    if filter_pattern:
+        pattern_lower = filter_pattern.lower()
+        workflows = [
+            w
+            for w in workflows
+            if pattern_lower in w.get("name", "").lower() or pattern_lower in w.get("description", "").lower()
+        ]
 
     if output_json:
         click.echo(json.dumps(workflows, indent=2))
