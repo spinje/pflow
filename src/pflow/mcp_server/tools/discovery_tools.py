@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 
 @mcp.tool()
 async def workflow_discover(
-    query: str = Field(..., description="Natural language description of the desired workflow"),
+    query: str = Field(
+        ...,
+        description="Full, detailed description of what the user wants to accomplish (pass user request as-is or enhance it for clarity)",
+    ),
 ) -> str:
     """Find existing workflows matching a request.
 
@@ -25,18 +28,18 @@ async def workflow_discover(
     workflow already exists. Uses LLM-powered intelligent matching
     to find workflows that match your requirements.
 
-    Returns formatted markdown with workflow details, confidence scores,
-    and reasoning.
+    IMPORTANT: Provide detailed, natural language descriptions similar to how
+    an end user would describe their needs. Don't abbreviate or summarize.
 
-    Args:
-        query: Task description or workflow requirements
+    Examples:
+        # Detailed workflow request (pass user's full description)
+        query="I need to check our GitHub repository for new pull requests every hour, analyze the changes, generate a summary, and post it to our team's Slack channel"
+
+        # Another detailed request (include context and requirements)
+        query="I want to fetch customer data from our REST API, filter out inactive users, format the results into a CSV file, and email it to the marketing team every morning"
 
     Returns:
-        Markdown formatted string with workflow details (same as CLI)
-
-    Example:
-        query="analyze GitHub pull requests and create summary"
-        Returns markdown with workflow details and confidence score
+        Formatted markdown with workflow details, confidence scores, and reasoning
     """
     logger.debug(f"workflow_discover called with query: {query}")
 
@@ -54,7 +57,10 @@ async def workflow_discover(
 
 @mcp.tool()
 async def registry_discover(
-    task: str = Field(..., description="Description of what needs to be built"),
+    task: str = Field(
+        ...,
+        description="Detailed description of the complete workflow or specific capabilities needed (use full user request)",
+    ),
 ) -> str:
     """Find nodes for building workflows using intelligent selection.
 
@@ -62,15 +68,18 @@ async def registry_discover(
     for your task. Returns markdown formatted planning context with complete
     node specifications, interfaces, and everything needed to build a workflow.
 
-    Args:
-        task: Description of the workflow requirements
+    IMPORTANT: Provide detailed descriptions of what needs to be accomplished.
+    Describe the full workflow context, not just a single operation.
+
+    Examples:
+        # Detailed workflow description (describes full context and requirements)
+        task="I need to make an HTTP POST request to an API endpoint with JSON data in the body and custom authentication headers, then parse the response and extract specific fields"
+
+        # Another detailed description (includes data flow and transformations)
+        task="I want to read a JSON configuration file, use those settings to query a database, process the results with some filtering logic, and write the output to a CSV file"
 
     Returns:
-        Markdown formatted string with selected components (same as CLI)
-
-    Example:
-        task="fetch data from API and transform to CSV"
-        Returns markdown with HttpNode and transformation nodes with full specs
+        Formatted markdown with selected node specifications and interfaces
     """
     logger.debug(f"registry_discover called with task: {task}")
 

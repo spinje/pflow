@@ -18,25 +18,22 @@ logger = logging.getLogger(__name__)
 
 @mcp.tool()
 async def registry_describe(
-    nodes: Annotated[list[str], Field(description="List of node IDs to describe")],
+    nodes: Annotated[list[str], Field(description="List of node type identifiers to describe")],
 ) -> str:
     """Get detailed specifications for specific nodes.
 
-    Returns formatted text output with:
-    - Node description
-    - Input parameters
-    - Output keys
+    Returns comprehensive information for each node:
+    - Full description and purpose
+    - Required and optional input parameters
+    - Output keys available for templates
     - Usage examples
 
-    Args:
-        nodes: List of node IDs (e.g., ["read-file", "write-file"])
+    Examples:
+        # Get detailed specs for specific nodes (returns parameters, outputs, and examples)
+        nodes=["node-type-1", "node-type-2"]
 
     Returns:
-        Formatted text description of each node
-
-    Example:
-        nodes=["read-file"]
-        Returns detailed spec with parameters and examples
+        Formatted text description of each node with complete specifications
     """
     logger.debug(f"registry_describe called with {len(nodes)} nodes")
 
@@ -54,23 +51,19 @@ async def registry_describe(
 
 @mcp.tool()
 async def registry_search(
-    pattern: str = Field(..., description="Search pattern (case-insensitive)"),
+    pattern: str = Field(..., description="Search term to match against node IDs and descriptions (case-insensitive)"),
 ) -> str:
-    """Search for nodes by pattern in markdown format (CLI parity).
+    """Search for nodes by pattern.
 
-    Searches in:
-    - Node IDs
-    - Descriptions
+    Use this when you know what type of node you're looking for.
+    Searches across node IDs and descriptions.
 
-    Args:
-        pattern: Search pattern (e.g., "file", "github", "llm")
+    Examples:
+        # Search for nodes (returns matching nodes in table format)
+        pattern="keyword"
 
     Returns:
-        Formatted markdown string with search results table (same as CLI)
-
-    Example:
-        pattern="file"
-        Returns formatted table of file-related nodes
+        Formatted table with matching nodes
     """
     logger.debug(f"registry_search called with pattern: {pattern}")
 
@@ -88,18 +81,20 @@ async def registry_search(
 
 @mcp.tool()
 async def registry_list() -> str:
-    """List all available nodes in markdown format (CLI parity).
+    """List all available nodes grouped by package.
 
-    Returns formatted text with:
-    - All registered nodes
-    - Grouped by package (Core, MCP, User)
-    - Summary counts
+    ⚠️ Use this as a LAST RESORT only. Prefer:
+    - registry_discover: For complex queries and intelligent node selection
+    - registry_search: When you know what type of node you need
+
+    This tool returns ALL nodes which can be overwhelming.
+    Only use ONLY when you need to browse the complete catalog.
 
     Returns:
-        Formatted markdown string with nodes grouped by package (same as CLI)
+        All registered nodes grouped by package (Core, MCP, User) with summary counts
 
     Example:
-        Returns formatted node listing with grouping and summary
+        Returns complete node catalog - use sparingly
     """
     logger.debug("registry_list called")
 

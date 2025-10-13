@@ -16,24 +16,26 @@ logger = logging.getLogger(__name__)
 
 @mcp.tool()
 async def workflow_list(
-    filter_pattern: str | None = Field(None, description="Optional filter pattern"),
+    filter_pattern: str | None = Field(
+        None, description="Optional search term to filter workflows by name or description"
+    ),
 ) -> str:
-    """List saved workflows in markdown format (CLI parity).
+    """List saved workflows.
 
     Returns formatted workflow list showing:
     - Workflow names
     - Descriptions
     - Total count
 
-    Args:
-        filter_pattern: Optional pattern to filter workflows
+    Examples:
+        # List all workflows (returns complete workflow library)
+        filter_pattern=None
+
+        # Filter by pattern (returns only matching workflows)
+        filter_pattern="keyword"
 
     Returns:
-        Formatted markdown string (same as CLI)
-
-    Example:
-        filter_pattern="github"
-        Returns filtered list of GitHub-related workflows
+        Formatted markdown with workflow list
     """
     logger.debug(f"workflow_list called with filter: {filter_pattern}")
 
@@ -51,7 +53,7 @@ async def workflow_list(
 
 @mcp.tool()
 async def workflow_describe(
-    name: str = Field(..., description="Workflow name to describe"),
+    name: str = Field(..., description="Name of the saved workflow from the library"),
 ) -> str:
     """Show detailed workflow interface specification.
 
@@ -64,18 +66,15 @@ async def workflow_describe(
     This is essential for understanding how to execute a workflow
     before calling workflow_execute.
 
-    Args:
-        name: Name of the saved workflow
+    Examples:
+        # Get workflow interface (returns inputs, outputs, and usage info)
+        name="workflow-name"
 
     Returns:
-        Formatted markdown string (same as CLI)
+        Formatted markdown with complete interface specification
 
     Raises:
         ValueError: If workflow not found (includes suggestions)
-
-    Example:
-        name="github-pr-analyzer"
-        Returns complete interface specification showing inputs/outputs
     """
     logger.debug(f"workflow_describe called for: {name}")
 

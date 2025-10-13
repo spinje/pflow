@@ -18,8 +18,14 @@ logger = logging.getLogger(__name__)
 
 @mcp.tool()
 async def workflow_execute(
-    workflow: Annotated[str | dict[str, Any], Field(description="Workflow name, file path, or IR dictionary")],
-    parameters: Annotated[dict[str, Any] | None, Field(description="Execution parameters for the workflow")] = None,
+    workflow: Annotated[
+        str | dict[str, Any],
+        Field(description="Workflow name from library, path to workflow file, or workflow IR object"),
+    ],
+    parameters: Annotated[
+        dict[str, Any] | None,
+        Field(description="Input parameters as key-value pairs matching the workflow's declared inputs"),
+    ] = None,
 ) -> str:
     """Execute a workflow with natural language output.
 
@@ -29,21 +35,28 @@ async def workflow_execute(
     - Trace saved to ~/.pflow/debug/
     - Auto-normalization (adds ir_version, edges if missing)
 
-    Returns formatted text matching CLI output - easy for LLMs to parse.
+    Examples:
+        # Execute saved workflow by name
+        workflow="my-workflow"
+        parameters={"input1": "value1", "input2": 123}
 
-    Args:
-        workflow: Name (from library), path (to file), or IR dict
-        parameters: Optional parameters for workflow execution
+        # Execute workflow from file
+        workflow="./workflows/analysis.json"
+        parameters={...}
+
+        # Execute inline workflow IR (useful for testing or one-off workflows)
+        workflow={
+            "inputs": {...},
+            "nodes": [...],
+            "edges": [...],
+            "outputs": {...}
+        }
+        parameters={...}
 
     Returns:
-        Formatted text with execution results (same as CLI)
-        Success: "✓ Workflow completed in 0.5s\n\nOutputs:\n  result: ...\n\nNodes executed (3):\n  ✓ node1 (120ms)\n  ✓ node2 (45ms)\n  ✓ node3 (12ms)\n\nCost: $0.0023 | Trace: /Users/user/.pflow/debug/workflow-trace-20251012-143045.json"
-        Error: "❌ Workflow execution failed\n\nError details:\n  • node-id: error message\n\nTrace: /Users/user/.pflow/debug/workflow-trace-20251012-143045.json"
-
-    Example:
-        workflow="github-pr-analyzer"
-        parameters={"repo": "anthropics/pflow", "pr": 123}
-        Returns formatted text with outputs or error details (LLM-friendly natural language)
+        Formatted text with execution results
+        Success: "✓ Workflow completed in 0.5s\n\nOutputs:\n  result: ...\n\nNodes executed (3)..."
+        Error: "❌ Workflow execution failed\n\nError details:\n  • node-id: error message..."
     """
     logger.debug(f"workflow_execute called: workflow type={type(workflow)}")
 
@@ -65,7 +78,10 @@ async def workflow_execute(
 
 @mcp.tool()
 async def workflow_validate(
-    workflow: Annotated[str | dict[str, Any], Field(description="Workflow name, file path, or IR dictionary")],
+    workflow: Annotated[
+        str | dict[str, Any],
+        Field(description="Workflow name from library, path to workflow file, or workflow IR object"),
+    ],
 ) -> str:
     """Validate workflow structure without execution.
 
@@ -80,17 +96,25 @@ async def workflow_validate(
     - API credentials
     - File existence
 
-    Args:
-        workflow: Name (from library), path (to file), or IR dict
+    Examples:
+        # Validate saved workflow (returns validation errors if any)
+        workflow="my-workflow"
+
+        # Validate workflow file
+        workflow="./workflow.json"
+
+        # Validate inline workflow IR
+        workflow={
+            "inputs": {...},
+            "nodes": [...],
+            "edges": [...],
+            "outputs": {...}
+        }
 
     Returns:
-        Formatted text with validation results (same as CLI)
+        Formatted text with validation results
         Success: "✓ Workflow is valid"
         Failure: "✗ Static validation failed:\n  • Error 1\n  • Error 2\n\nSuggestions:\n  • Fix 1"
-
-    Example:
-        workflow={"nodes": [...], "edges": [...]}
-        Returns formatted validation message with errors and suggestions
     """
     logger.debug("workflow_validate called")
 
@@ -122,11 +146,12 @@ async def workflow_save(
             )
         ),
     ],
-    name: str = Field(..., description="Workflow name (lowercase-with-hyphens, max 50 chars)"),
-    description: str = Field(..., description="Brief description of what the workflow does"),
-    force: bool = Field(False, description="Overwrite existing workflow if it exists"),
+    name: str = Field(..., description="Unique workflow name (format: lowercase-with-hyphens, max 50 chars)"),
+    description: str = Field(..., description="One-line summary of what the workflow does"),
+    force: bool = Field(False, description="Whether to overwrite existing workflow with same name"),
     generate_metadata: bool = Field(
-        False, description="Generate rich metadata (keywords, capabilities, use cases) using AI for better discovery"
+        False,
+        description="Whether to generate AI-powered metadata for better discovery (adds ~10s latency and LLM cost)",
     ),
 ) -> str:
     """Save workflow to global library for reuse.
@@ -141,25 +166,30 @@ async def workflow_save(
     typical use cases) which improves discovery ranking in workflow_discover.
     This uses an LLM call and adds latency but significantly improves discoverability.
 
-    Args:
-        workflow: Path to workflow JSON file or workflow IR object
-        name: Unique name for the workflow
-        description: What the workflow does
-        force: Whether to overwrite existing workflow
-        generate_metadata: Whether to generate AI-powered metadata for better discovery
+    Examples:
+        # Save workflow from file (minimal options)
+        workflow="./path/to/workflow.json"
+        name="my-workflow"
+        description="Brief description of what workflow does"
+        force=False
+        generate_metadata=False
+
+        # Save inline workflow with all options
+        workflow={
+            "inputs": {...},
+            "nodes": [...],
+            "edges": [...],
+            "outputs": {...}
+        }
+
+        name="workflow-name"
+        description="Detailed description of what this workflow does"
+        force=True
+        generate_metadata=True
 
     Returns:
-        Formatted success message (text) matching CLI output
+        Formatted success message with location and execution hint
         "✓ Saved workflow 'name' to library\n  Location: /path/to/workflow.json\n  ✨ Execute with: pflow name param=<value>"
-
-    Example:
-        workflow={"nodes": [{"id": "fetch", "type": "http", "params": {"url": "${url}"}}], "edges": [], "inputs": {"url": {"type": "string", "required": true}}, "outputs": {"result": {"description": "HTTP response"}}}
-        name="github-pr-analyzer"
-        description="Analyzes GitHub PRs and creates summaries"
-        force=false
-        generate_metadata=true  # Improves discovery ranking
-
-        Returns formatted text with save confirmation and execution hint (LLM-friendly)
     """
     logger.debug(f"workflow_save called: name={name}, force={force}, generate_metadata={generate_metadata}")
 
@@ -177,29 +207,35 @@ async def workflow_save(
 
 @mcp.tool()
 async def registry_run(
-    node_type: Annotated[str, Field(description="Node type to execute (e.g., 'read-file', 'mcp-github-GET_ISSUE')")],
-    parameters: Annotated[dict[str, Any] | None, Field(description="Optional parameters for the node")] = None,
+    node_type: Annotated[str, Field(description="Node type identifier from the registry")],
+    parameters: Annotated[
+        dict[str, Any] | None,
+        Field(description="Node-specific input parameters as key-value pairs"),
+    ] = None,
 ) -> str:
     """Test a node to discover its actual output structure.
 
     Use this BEFORE building workflows to understand what template variables
     (like ${result.data.items[0].title}) are available from a node.
 
-    Critical for MCP nodes where documentation shows "Any" but actual
+    Critical for MCP or HTTP nodes where documentation shows "Any" but actual
     output is deeply nested. Returns formatted text with complete structure
     showing all template paths available for workflow building.
 
-    Args:
-        node_type: Type of node to test
-        parameters: Optional test parameters
+    Examples:
+        # Test core node (shows output structure with available template paths)
+        node_type="node-type"
+        parameters={"param1": "value1"}
+
+        # Test MCP node to discover nested output structure
+        node_type="mcp-server-name-tool-name"
+        parameters={
+            "param1": "value1",
+            "param2": "value2"
+        }
 
     Returns:
-        Formatted text with output structure and template paths (same as CLI)
-
-    Example:
-        node_type="mcp-github-GET_ISSUE"
-        parameters={"issue": 123}
-        Returns text showing all available template paths like ${result.title}
+        Formatted text with output structure and all available template paths
     """
     logger.debug(f"registry_run called: node_type={node_type}")
 
