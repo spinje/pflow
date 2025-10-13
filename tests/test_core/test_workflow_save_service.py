@@ -302,6 +302,63 @@ class TestLoadAndValidateWorkflow:
         with pytest.raises((ValueError, WorkflowValidationError)):
             load_and_validate_workflow(str(file_path))
 
+    def test_reject_invalid_output_sources(self, tmp_path: Path) -> None:
+        """SEMANTIC VALIDATION: Reject workflows with invalid output sources.
+
+        Bug prevented: Workflows with invalid output.source fields pass validation,
+        get saved to library, then fail at runtime with cryptic errors.
+
+        This is an INTEGRATION test ensuring WorkflowValidator.validate() is called
+        during workflow save, not just structural IR validation.
+
+        Critical: This test would have caught the bug where only validate_ir() was
+        called but not WorkflowValidator.validate() in the save service.
+        """
+        invalid_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "test.txt"}}],
+            "edges": [],
+            "outputs": {
+                "content": {"source": "nonexistent_node.output"}  # ← Invalid: node doesn't exist
+            },
+        }
+
+        file_path = tmp_path / "invalid_output.json"
+        file_path.write_text(json.dumps(invalid_ir))
+
+        # Should reject due to output source validation
+        with pytest.raises(WorkflowValidationError, match="nonexistent_node"):
+            load_and_validate_workflow(str(file_path))
+
+    def test_accept_valid_output_sources(self, tmp_path: Path) -> None:
+        """SEMANTIC VALIDATION: Accept workflows with valid output sources.
+
+        Bug prevented: Over-aggressive validation rejecting valid output references.
+
+        This ensures the output source validation doesn't have false positives.
+        """
+        valid_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "reader", "type": "read-file", "params": {"file_path": "test.txt"}},
+                {"id": "processor", "type": "llm", "params": {"prompt": "analyze"}},
+            ],
+            "edges": [{"from": "reader", "to": "processor"}],
+            "outputs": {
+                "content": {"source": "reader.content"},  # Valid: node exists
+                "analysis": {"source": "processor.response"},  # Valid: node exists
+                "raw": {"source": "reader"},  # Valid: node reference without key
+            },
+        }
+
+        file_path = tmp_path / "valid_output.json"
+        file_path.write_text(json.dumps(valid_ir))
+
+        # Should accept without error
+        result = load_and_validate_workflow(str(file_path))
+        assert result is not None
+        assert len(result["outputs"]) == 3
+
 
 class TestSaveWorkflowWithOptions:
     """Test save_workflow_with_options() - save with force overwrite handling.

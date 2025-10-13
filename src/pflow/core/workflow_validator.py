@@ -34,6 +34,7 @@ class WorkflowValidator:
         2. Data flow validation - Execution order and dependencies
         3. Template validation - Variable resolution
         4. Node type validation - Registry verification
+        5. Output source validation - Output node references
 
         Args:
             workflow_ir: Workflow to validate
@@ -73,6 +74,11 @@ class WorkflowValidator:
                 registry = Registry()
             type_errors = WorkflowValidator._validate_node_types(workflow_ir, registry)
             errors.extend(type_errors)
+
+        # 5. Output source validation (ALWAYS run - validate output references)
+        output_errors, output_warnings = WorkflowValidator._validate_output_sources(workflow_ir, registry)
+        errors.extend(output_errors)
+        warnings.extend(output_warnings)
 
         if errors:
             logger.debug(f"Validation found {len(errors)} errors")
@@ -178,3 +184,83 @@ class WorkflowValidator:
             errors.append(f"Registry validation error: {e!s}")
 
         return errors
+
+    @staticmethod
+    def _validate_output_sources(
+        workflow_ir: dict[str, Any], registry: Optional[Registry] = None
+    ) -> tuple[list[str], list[Any]]:
+        """Validate that workflow outputs reference valid nodes and output keys.
+
+        This validation ensures that output source fields (when specified) point to
+        existing nodes in the workflow. The source field can use two formats:
+        - "node_id" - References entire node output
+        - "node_id.output_key" - References specific output key
+
+        Template variables (${...}) are skipped as they cannot be validated statically.
+
+        Args:
+            workflow_ir: Workflow to validate
+            registry: Optional registry for enhanced validation (not used in v1)
+
+        Returns:
+            Tuple of (errors, warnings):
+            - errors: List of validation errors (non-existent node references)
+            - warnings: List of warnings (template variables, etc.)
+        """
+        errors: list[str] = []
+        warnings: list[Any] = []
+
+        # Early return if no outputs defined
+        outputs = workflow_ir.get("outputs", {})
+        if not outputs:
+            return (errors, warnings)
+
+        # Build nodes map for O(1) lookup
+        nodes_map = {node["id"]: node for node in workflow_ir.get("nodes", [])}
+
+        # Validate each output's source field
+        for output_name, output_def in outputs.items():
+            source = output_def.get("source")
+
+            # Skip if no source specified (outputs without source are valid)
+            if source is None:
+                continue
+
+            # Validate source is non-empty string
+            if not isinstance(source, str) or not source.strip():
+                errors.append(
+                    f"Output '{output_name}' has empty source field. Use 'node_id' or 'node_id.output_key' format."
+                )
+                continue
+
+            # Skip template variables (cannot validate statically)
+            if "${" in source:
+                # Optional: Add debug log for template variables
+                logger.debug(f"Output '{output_name}' uses template variable in source - skipping static validation")
+                continue
+
+            # Parse source format: "node_id.output_key" or "node_id"
+            if "." in source:
+                # Split on first dot only (supports nested keys like "node.a.b.c")
+                node_id, _output_key = source.split(".", 1)
+            else:
+                # Reference to entire node output
+                node_id = source
+
+            # Validate node exists
+            if node_id not in nodes_map:
+                # Build helpful error with available nodes
+                available_nodes = sorted(nodes_map.keys())
+                if available_nodes:
+                    suggestion = f" Available nodes: {', '.join(available_nodes)}"
+                else:
+                    suggestion = " Workflow has no nodes."
+
+                errors.append(f"Output '{output_name}' references non-existent node '{node_id}'.{suggestion}")
+                continue
+
+            # Note: Output key validation skipped in v1
+            # We don't have reliable node output metadata at validation time
+            # This could be added in future versions when registry has full interface specs
+
+        return (errors, warnings)

@@ -81,6 +81,10 @@ def validate_workflow_name(name: str) -> tuple[bool, Optional[str]]:
 def _validate_and_normalize_ir(workflow_ir: dict[str, Any], auto_normalize: bool, source_desc: str) -> dict[str, Any]:
     """Validate and optionally normalize workflow IR.
 
+    Performs comprehensive validation:
+    1. IR schema validation (structure, required fields)
+    2. WorkflowValidator validation (data flow, output sources, node types)
+
     Args:
         workflow_ir: Workflow IR to validate
         auto_normalize: Whether to auto-add missing fields
@@ -91,18 +95,45 @@ def _validate_and_normalize_ir(workflow_ir: dict[str, Any], auto_normalize: bool
 
     Raises:
         ValueError: If IR validation fails
-        WorkflowValidationError: If IR validation fails
+        WorkflowValidationError: If comprehensive validation fails
     """
     if auto_normalize:
         normalize_ir(workflow_ir)
 
+    # Step 1: IR schema validation
     try:
         validate_ir(workflow_ir)
-        return workflow_ir
     except Exception as e:
         if "Invalid workflow" in source_desc:
             raise WorkflowValidationError(f"{source_desc}: {e}") from e
         raise ValueError(f"{source_desc}: {e}") from e
+
+    # Step 2: Comprehensive workflow validation (data flow, output sources, node types)
+    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.registry import Registry
+
+    try:
+        registry = Registry()
+        errors, _ = WorkflowValidator.validate(
+            workflow_ir=workflow_ir,
+            extracted_params={},  # No runtime params available at save time
+            registry=registry,
+            skip_node_types=False,  # Validate node types
+        )
+
+        if errors:
+            error_msg = f"{source_desc} - Validation errors:\n"
+            for i, error in enumerate(errors, 1):
+                error_msg += f"  {i}. {error}\n"
+            raise WorkflowValidationError(error_msg.rstrip())
+
+        return workflow_ir
+    except WorkflowValidationError:
+        raise
+    except Exception as e:
+        if "Invalid workflow" in source_desc:
+            raise WorkflowValidationError(f"{source_desc}: Validation failed: {e}") from e
+        raise ValueError(f"{source_desc}: Validation failed: {e}") from e
 
 
 def _load_from_dict(source: dict[str, Any], auto_normalize: bool) -> dict[str, Any]:
