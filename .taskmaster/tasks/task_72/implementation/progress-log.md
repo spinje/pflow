@@ -1513,6 +1513,58 @@ def test_extract_runtime_paths_with_mcp_json_strings(self):
 
 ---
 
+## 2025-10-13 - Server Instructions & Resource Metadata for Agent Guidance
+
+**Context**: Added multi-layer reinforcement to guide agents toward discovery-first workflow and reading instructions before building.
+
+**FastMCP API Discovery**:
+- ✅ `instructions` parameter supported in FastMCP constructor (injected into agent system prompt)
+- ✅ Resource metadata supported: `name`, `title`, `description` parameters in decorator
+- ❌ Resource annotations NOT exposed: `audience` and `priority` not available in FastMCP yet (MCP spec supports, but FastMCP doesn't)
+
+**Implementation - 4-Layer Reinforcement Strategy**:
+
+1. **Server-level instructions** (`server.py`):
+   ```python
+   FastMCP("pflow", instructions="CRITICAL WORKFLOW - ...")
+   ```
+   - ALWAYS run workflow_discover first
+   - If 95%+ match → execute directly (don't rebuild)
+   - If building new → read pflow://instructions FIRST
+   - Likely injected into agent system prompt by MCP clients
+
+2. **Resource metadata** (`instruction_resources.py`):
+   - Title: "Complete Workflow Building Guide (READ FIRST)"
+   - Description: Emphasizes reading before building
+   - Makes intent clear when agents list resources
+
+3. **Tool descriptions** (already present):
+   - workflow_discover says "Run this BEFORE building"
+   - Existing reinforcement maintained
+
+4. **Resource content** (66KB guide):
+   - Complete instructions available when needed
+
+**Critical Clarification** (user-specified):
+- Resource reading is ONLY needed when building NEW workflows
+- NOT needed for workflow_discover or workflow_execute with perfect match
+- Prevents unnecessary reading when just executing existing workflows
+
+**Path Resolution Enhancement** (linter improvement):
+- Checks project root first: `.pflow/instructions/AGENT_INSTRUCTIONS.md` (development)
+- Falls back to user home: `~/.pflow/instructions/AGENT_INSTRUCTIONS.md` (production)
+- Returns helpful fallback if missing
+
+**Reality Check**:
+- Server instructions are NOT enforced (client decides whether to honor)
+- Multi-layer approach ensures graceful degradation
+- Well-behaved clients (Claude Desktop) likely inject instructions into system prompt
+- Follows MCP best practices: reinforce in multiple places
+
+**Impact**: Agents now receive guidance at 4 different touchpoints, maximizing chance of following discovery-first workflow regardless of client behavior.
+
+---
+
 ## 2025-10-13 - Output Validation Enhancement: Agents Learn Format from Errors
 
 **Problem**: AI agents got stuck when validation errors only said "NO" without showing correct format. Agent tried `{"value": "${...}"}`, `"${...}"` (string), `{"from": "..."}` and gave up, never learning correct schema.

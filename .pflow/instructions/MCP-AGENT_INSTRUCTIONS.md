@@ -1,26 +1,26 @@
 # pflow Agent Instructions
 
-## 🎯 What I Can Help You With
+> **Note**: This guide is for AI agents using pflow through MCP tools.
 
-I help you build **reusable workflows** - tools that work every time with different data.
+You help users build **reusable workflows** - tools that work every time with different data.
 
 **What this means:**
-- You describe what you want once → I build a tool you can reuse
-- You say "analyze file.txt" → I build a tool for ANY file
-- You use it tomorrow with different data → It just works
+- Users describe what they want once → You build a tool they can reuse
+- Users say "analyze file.txt" → You build a tool for ANY file
+- Users use it tomorrow with different data → It just works
 
-**How I work:**
+**How You work:**
 1. **Every value you specify → Becomes an input** (unless you say "always")
 2. **Every workflow → Reusable** (works tomorrow with different data)
-3. **I explain before building** (you'll always know what I'm doing and why)
-4. **I test before delivering** (catch problems early)
-5. **I help with auth issues** (proactive setup assistance)
+3. **You explain before building** (you'll always know what you're doing and why)
+4. **You test before delivering** (catch problems early)
+5. **You help with auth issues** (proactive setup assistance)
 
 ## 🛑 STOP - Do This Before Anything Else
 
-**Run this command first. Always. No exceptions:**
-```bash
-uv run pflow workflow discover "user's exact request here"
+**Run this tool first if you have not done so yet. Always. No exceptions:**
+```python
+workflow_discover(query="user's exact request here")
 ```
 - **≥95-100% match** → Skip to execution, you're done
 - **≥80-95% match** → Ask the user to confirm the workflow
@@ -132,11 +132,11 @@ The user shows you ONE example. You build the GENERAL solution using dynamic inp
 
 | Stuck On | Do This | Then Check |
 |----------|---------|------------|
-| `${var}` not found | `--trace` flag → check trace file | [Template Errors](#understanding-template-errors) |
+| `${var}` not found | Check trace file at path in response | [Template Errors](#understanding-template-errors) |
 | 20+ nodes chaos | Delete all after node 5, test, add back slowly | [Build in Phases](#for-complex-workflows-15-nodes-build-in-phases) |
-| Output is `Any` | `registry run NODE --show-structure` | [Test Individual Nodes](#test-individual-nodes-when-needed) |
+| Output is `Any` | `registry_run(node_type="NODE", show_structure=True)` | [Test Individual Nodes](#test-individual-nodes-when-needed) |
 | Unclear request | Ask: "You want to [specific action] with [specific result]?" | Stop guessing |
-| Nothing works | Test ONE node: `registry run NODE params` | [Testing & Debugging](#testing--debugging) |
+| Nothing works | Test ONE node: `registry_run(node_type="NODE", parameters={})` | [Testing & Debugging](#testing--debugging) |
 
 **Rule: When spiraling → Stop adding. Start subtracting. Test smallest piece.**
 
@@ -186,8 +186,8 @@ Your Analysis:
 
 This is MANDATORY - never skip this step. Users often don't know what workflows already exist.
 
-```bash
-uv run pflow workflow discover "user's request in natural language"
+```python
+workflow_discover(query="user's request in natural language")
 ```
 
 **What you get**: Matching workflows with names, descriptions, inputs/outputs, confidence scores, and reasoning.
@@ -225,8 +225,8 @@ uv run pflow workflow discover "user's request in natural language"
 
 If Step 2 determined you need to build a new workflow, discover the relevant nodes:
 
-```bash
-uv run pflow registry discover "I need to fetch Slack messages, analyze with AI, send responses, and log to Google Sheets"
+```python
+registry_discover(query="I need to fetch Slack messages, analyze with AI, send responses, and log to Google Sheets")
 ```
 
 This uses pflow's internal LLM to intelligently select relevant nodes with complete specs in one shot.
@@ -236,10 +236,6 @@ This uses pflow's internal LLM to intelligently select relevant nodes with compl
 - Parameter types and descriptions
 - Output structure
 - Usage requirements
-
-**Only use manual commands if AI discovery is unavailable**:
-- `uv run pflow registry describe node1 node2` - Get specific node specs when you know exact names
-- Avoid `uv run pflow registry list` - pollutes context with hundreds of unnecessary nodes
 
 **Output**: List of nodes with interfaces understood, ready for design phase
 
@@ -259,7 +255,7 @@ This uses pflow's internal LLM to intelligently select relevant nodes with compl
 #### For REST APIs: Use HTTP Node
 
 1. **Research the API**
-```bash
+```python
 WebSearch: "ServiceName API documentation"
 WebFetch: [docs URL] to extract endpoint details
 ```
@@ -353,9 +349,9 @@ Everything looks good - I'll now design the workflow."
 
 #### How to Test
 
-```bash
+```python
 # Test each MCP node with realistic parameters:
-uv run pflow registry run mcp-service-TOOL param="test-value" --show-structure
+registry_run(node_type="mcp-service-TOOL", parameters={"param": "test-value"}, show_structure=True)
 ```
 
 **If tests fail:**
@@ -454,7 +450,7 @@ Quick confirm - this matches what you need?"
   ]
 }
 ```
-**Test**: `uv run pflow workflow.json` - Verify extraction works!
+**Test**: `workflow_execute(workflow=".pflow/workflows/workflow.json", parameters={})` - Verify extraction works!
 
 ##### Phase 2: Add External APIs (One at a Time)
 - Add first API call with `Prefer: wait`
@@ -583,8 +579,12 @@ Quick confirm - this matches what you need?"
 
 Catch structural errors before execution.
 
-```bash
-uv run pflow --validate-only workflow.json
+**Workflow File Location:**
+Write your workflow to `.pflow/workflows/workflow.json` before validating:
+
+```python
+# Write workflow to file first
+workflow_validate(workflow=".pflow/workflows/workflow.json")
 ```
 
 **Process**:
@@ -600,9 +600,13 @@ uv run pflow --validate-only workflow.json
 
 Execute the workflow to verify it works.
 
-```bash
-uv run pflow workflow.json param1=value param2=value
+```python
+workflow_execute(workflow=".pflow/workflows/workflow.json", parameters={"param1": "value", "param2": "value"})
 ```
+
+**Trace Files:**
+Workflow executions save trace files to `~/.pflow/debug/workflow-trace-*.json`.
+Check the response for the `trace_path` field with the exact location.
 
 #### When to Investigate Output Structures
 
@@ -620,7 +624,7 @@ uv run pflow workflow.json param1=value param2=value
 
 #### CRITICAL: MCP Nodes Have Deeply Nested Outputs
 
-**MCP outputs are NEVER simple. Always test with --show-structure first.**
+**MCP outputs are NEVER simple. Always test with show_structure=True first.**
 
 **What docs say:** `result: Any`
 **What you get:** `result.data.tool_response.nested.deeply.url`
@@ -632,9 +636,9 @@ uv run pflow workflow.json param1=value param2=value
 - General: Expect 3-5 levels of nesting minimum
 
 **Discovery Strategy:**
-```bash
-# 1. Test with --show-structure
-uv run pflow registry run mcp-service-TOOL param="test" --show-structure
+```python
+# 1. Test with show_structure=True
+registry_run(node_type="mcp-service-TOOL", parameters={"param": "test"}, show_structure=True)
 
 # 2. Document the actual path in your workflow
 # Comment: mcp-google-drive returns result.data.downloaded_file_content.s3url
@@ -645,11 +649,14 @@ uv run pflow registry run mcp-service-TOOL param="test" --show-structure
 - Inconsistent casing
 - Redundant wrapper levels
 
+**Structure Discovery:**
+Using `show_structure=True` returns the complete output structure directly in the response.
+
 #### How to Discover Output Structure
 
-```bash
-# 1. Run with trace flag
-uv run pflow --trace test-workflow.json
+```python
+# 1. Run workflow
+workflow_execute(workflow=".pflow/workflows/test-workflow.json", parameters={})
 
 # 2. Examine the trace file
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[0].outputs'
@@ -692,17 +699,28 @@ Improve the workflow for production use.
 
 Save to global library for reuse across all projects:
 
-```bash
-uv run pflow workflow save .pflow/workflows/your-draft.json workflow-name "Clear description"
+```python
+workflow_save(workflow=".pflow/workflows/your-draft.json", name="workflow-name", description="Clear description")
 
 # With optional enhancements
-uv run pflow workflow save .pflow/workflows/your-draft.json workflow-name "Description" --generate-metadata --delete-draft
+workflow_save(workflow=".pflow/workflows/your-draft.json", name="workflow-name", description="Description", generate_metadata=True, delete_draft=True)
+```
+
+**Response Structure:**
+Returns structured data:
+```json
+{
+  "success": true,
+  "name": "workflow-name",
+  "path": "~/.pflow/workflows/workflow-name.json",
+  "message": "Run with: workflow-name param1=<type> param2=<type>"
+}
 ```
 
 **Always tell the user how to run their saved workflow**:
-```bash
+```python
 # Show with user's actual values:
-uv run pflow workflow-name channel=C123 sheet_id=abc123
+workflow_execute(workflow="workflow-name", parameters={"channel": "C123", "sheet_id": "abc123"})
 ```
 
 **Output**: Reusable workflow available globally
@@ -720,13 +738,13 @@ uv run pflow workflow-name channel=C123 sheet_id=abc123
 - [ ] I can draw the data flow on paper
 
 ### ✅ Workflow Discovery Complete (Step 2 - MANDATORY)
-- [ ] I've run `uv run pflow workflow discover "user's request"`
+- [ ] I've called `workflow_discover(query="user's request")`
 - [ ] If 70%+ match found: I've shown it to user and confirmed their decision
 - [ ] Decision made: execute existing, modify existing, or build new
 
 ### ✅ Node Discovery Complete (Step 3 - if building new)
-- [ ] I've run `uv run pflow registry discover "specific task description"`
-- [ ] I have node specs (from discovery output or `uv run pflow registry describe`)
+- [ ] I've called `registry_discover(query="specific task description")`
+- [ ] I have node specs (from discovery output or `registry_describe(node_types=["node-type"])`)
 - [ ] I understand which outputs are `Any` type and if I need to investigate them
 
 ### ✅ External API Integration (Step 3.1 - if no dedicated node exists)
@@ -861,7 +879,7 @@ fetch-data → analyze → visualize
 
 **You can only reference outputs that nodes actually produce.**
 
-**Rule**: ALWAYS run `uv run pflow registry describe node-type` before writing templates.
+**Rule**: ALWAYS call `registry_describe(node_types=["node-type"])` before writing templates.
 
 ### The Input Decision Framework
 
@@ -912,8 +930,8 @@ When unsure?
 - Resource IDs: `sheet_id`, `channel`, `repo` (workflow-specific)
 - Data parameters: `limit`, `input_file`, `threshold` (varies by use case)
 
-**Manage**: `uv run pflow settings set-env KEY value`
-**Precedence**: CLI > ENV > settings > defaults
+**Manage**: Users set environment variables directly (e.g., `export GITHUB_TOKEN="ghp_..."`)
+**Precedence**: Explicit parameters > ENV > settings > defaults
 
 #### CRITICAL: How Workflows Access Credentials
 
@@ -949,10 +967,21 @@ When unsure?
 ```
 
 **The Complete Authentication Flow:**
-1. Store credential in settings: `uv run pflow settings set-env SERVICE_TOKEN "secret123"`
-2. Declare as workflow input (required field)
-3. Pass at runtime: `uv run pflow workflow.json api_token="$SERVICE_TOKEN"`
-4. Or let it use environment variable with same name automatically
+1. **User sets environment variable**: `export SERVICE_TOKEN="secret123"`
+2. **Agent declares as workflow input** (required field):
+   ```json
+   {
+     "inputs": {
+       "service_token": {
+         "type": "string",
+         "required": true,
+         "description": "API token for external service"
+       }
+     }
+   }
+   ```
+3. **Workflow automatically reads from env var** with matching name (SERVICE_TOKEN)
+4. **Or pass explicitly**: `workflow_execute(workflow="...", parameters={"service_token": "$SERVICE_TOKEN"})`
 
 **Key Point**: Settings store secrets securely, but workflows must explicitly declare them as inputs to use them.
 
@@ -967,17 +996,18 @@ Here's how to get one:
 1. Go to api.slack.com → Your App → OAuth Tokens
 2. Copy the token
 
-I can help you add it securely:
-  uv run pflow settings set-env SLACK_TOKEN "your-token"
+To use it, set an environment variable:
+  export SLACK_TOKEN="your-token-here"
 
-Or you can add it yourself. Ready to continue?"
+The workflow will automatically read from this environment variable.
+Ready to continue?"
 ```
 
 **Always:**
 - Explain what the credential is for
 - Show where to get it
-- Offer to guide the setup
-- Mention it's stored securely
+- Guide them to set environment variables
+- Explain that workflows read from env vars automatically
 
 ### Workflow Structure Essentials
 
@@ -1145,9 +1175,9 @@ Is this value PROVIDED BY USER when running workflow?
 
 Before testing individual MCP tools, check if the server has helper tools:
 
-```bash
+```python
 # Search for meta-tools
-uv run pflow registry search "servername"
+registry_search(pattern="servername")
 
 # Look for meta-tools that help you understand capabilities:
 # - Tools ending in: LIST, GET_SCHEMA, GET_DOCS, GET_EXAMPLES
@@ -1162,18 +1192,18 @@ uv run pflow registry search "servername"
 - `GET_METADATA` - Returns server capabilities
 
 **Example exploration flow:**
-```bash
+```python
 # 1. Find potential helper tools
-uv run pflow registry search "datastore"
+registry_search(pattern="datastore")
 
 # Found: GET_SCHEMA, LIST_TABLES, CREATE_RECORD, QUERY_RECORDS
 
 # 2. Use helper tools to understand before building
-uv run pflow registry run mcp-datastore-LIST_TABLES database_name="my_database" --show-structure
+registry_run(node_type="mcp-datastore-LIST_TABLES", parameters={"database_name": "my_database"}, show_structure=True)
 # → Now I understand what tables exist and their structure
 
 # 3. Test unclear tools with realistic data
-uv run pflow registry run mcp-datastore-CREATE_RECORD table="users" data='{"name":"test"}' --show-structure
+registry_run(node_type="mcp-datastore-CREATE_RECORD", parameters={"table": "users", "data": {"name": "test"}}, show_structure=True)
 # → Reveals actual output structure and constraints
 ```
 
@@ -1201,26 +1231,33 @@ uv run pflow registry run mcp-datastore-CREATE_RECORD table="users" data='{"name
 
 #### Smart Testing Workflow
 
-**Step 1: Test with --show-structure (ALWAYS)**
-```bash
+**Step 1: Test with show_structure=True (ALWAYS)**
+```python
 # For MCP nodes - reveals nested structures
-uv run pflow registry run mcp-service-TOOL_NAME \
-  param1="value1" --show-structure
+registry_run(
+    node_type="mcp-service-TOOL_NAME",
+    parameters={"param1": "value1"},
+    show_structure=True
+)
 
 # For HTTP nodes - test actual endpoints
-uv run pflow registry run http \
-  url="https://api.example.com/endpoint" \
-  method="POST" \
-  headers='{"Authorization": "Bearer test"}' \
-  --show-structure
+registry_run(
+    node_type="http",
+    parameters={
+        "url": "https://api.example.com/endpoint",
+        "method": "POST",
+        "headers": {"Authorization": "Bearer test"}
+    },
+    show_structure=True
+)
 ```
 
 **Step 2: Document the actual structure**
-```bash
+```python
 # What documentation says:
 Output: result (Any) - Tool result
 
-# What --show-structure reveals:
+# What show_structure=True reveals:
 result.data.response.items[0].content.url  # The actual path!
 result.metadata.status
 result.error_details.message
@@ -1238,7 +1275,7 @@ result.error_details.message
 #### Critical Testing Patterns
 
 **Pattern 1: MCP Tools Always Have Complex Outputs**
-```bash
+```python
 # Test reveals:
 result.data.tool_response.nested.deeply.actual_value
 
@@ -1247,7 +1284,7 @@ result  # This almost never works
 ```
 
 **Pattern 2: External APIs Need Authentication Testing**
-```bash
+```python
 # Test with real token to verify:
 - Authentication header format
 - Response structure
@@ -1256,9 +1293,9 @@ result  # This almost never works
 ```
 
 **Pattern 3: Binary Data Needs Special Handling**
-```bash
+```python
 # Test file downloads/uploads:
-uv run pflow registry run http url="image.jpg" --show-structure
+registry_run(node_type="http", parameters={"url": "image.jpg"}, show_structure=True)
 # Check if response is string, base64, or URL
 ```
 
@@ -1269,11 +1306,18 @@ uv run pflow registry run http url="image.jpg" --show-structure
 
 ### Execute Workflow
 
-```bash
-uv run pflow --no-repair --trace workflow.json param1=value param2=value
+```python
+# Execute workflow from file
+workflow_execute(
+    workflow=".pflow/workflows/workflow.json",
+    parameters={
+        "param1": "value",
+        "param2": "value"
+    }
+)
 ```
 
-> Using --no-repair --trace flags is mandatory when building workflows for AI agents.
+**Note**: Traces are always saved to `~/.pflow/debug/`
 
 ### Understanding Template Errors
 
@@ -1290,11 +1334,11 @@ Available fields in node (showing 5 of 147):
   ... and 15 more (in error details)
 
 📁 Complete field list available in trace file
-   Run with --trace flag to save to ~/.pflow/debug/
+   Traces are automatically saved to ~/.pflow/debug/
 ```
 
 **2. Use the trace file for complete field list**:
-```bash
+```python
 # Find the latest trace
 ls -lt ~/.pflow/debug/workflow-trace-*.json | head -1
 
@@ -1306,11 +1350,11 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.events[] | select(.node_id == "f
 
 | Error | Solution |
 |-------|----------|
-| "Unknown node type 'X'" | Run `uv run pflow registry discover "task that needs X"` |
+| "Unknown node type 'X'" | Call `registry_discover(query="task that needs X")` |
 | "Template variable '${X}' not found" | Add `X` to inputs OR verify node output |
 | "Node 'A' references 'B.output' but B hasn't executed yet" | Reorder edges |
 | "Circular dependency detected" | Check edges for loops |
-| "Missing required parameter 'Y' in node 'Z'" | Check node interface with `uv run pflow registry describe Z` |
+| "Missing required parameter 'Y' in node 'Z'" | Call `registry_describe(node_types=["Z"])` |
 
 ---
 
@@ -1349,7 +1393,13 @@ Start simple, build complexity gradually.
 }
 ```
 
-**Try it**: `uv run pflow level1.json question="What is 2+2?"`
+**Try it**:
+```python
+workflow_execute(
+    workflow=".pflow/workflows/level1.json",
+    parameters={"question": "What is 2+2?"}
+)
+```
 
 ### Level 2: Chain Two Nodes (10 minutes)
 
@@ -1392,7 +1442,13 @@ Start simple, build complexity gradually.
 }
 ```
 
-**Try it**: `uv run pflow level2.json file_path="README.md"`
+**Try it**:
+```python
+workflow_execute(
+    workflow=".pflow/workflows/level2.json",
+    parameters={"file_path": "README.md"}
+)
+```
 
 ### Level 3: Multi-Step Pipeline (20 minutes)
 
@@ -1801,10 +1857,10 @@ See [Complete Example](#complete-example-slack-qa-bot) for a full production wor
 ## Common Mistakes
 
 ### ❌ Mistake 1: Skipping Workflow Discovery
-**Fix**: ALWAYS run `uv run pflow workflow discover` first (Step 2)
+**Fix**: ALWAYS call `workflow_discover(query="...")` first (Step 2)
 
 ### ❌ Mistake 2: Not Checking Node Output Structure
-**Fix**: Run `uv run pflow registry describe node-type` BEFORE writing templates
+**Fix**: Call `registry_describe(node_types=["node-type"])` BEFORE writing templates
 
 ### ❌ Mistake 3: Building Everything at Once
 **Fix**: Build 2 nodes → validate → add 1 more → validate → repeat
@@ -1866,14 +1922,14 @@ Which would you prefer?"
 
 ### Step 1: Check the Error Type
 
-```bash
-# Run with trace to capture full error context
-uv run pflow --trace --no-repair workflow.json
+```python
+# Run workflow to capture error context
+workflow_execute(workflow=".pflow/workflows/workflow.json", parameters={})
 ```
 
 | Error Pattern | Likely Cause | Fix |
 |--------------|-------------|-----|
-| `KeyError: 'result'` | Node output structure different than expected | Use --trace to discover actual structure |
+| `KeyError: 'result'` | Node output structure different than expected | Check trace file for actual structure |
 | `401 Unauthorized` | Missing/invalid credentials | Check settings.json or environment variables |
 | `TypeError: expected string` | Wrong data type in template | Verify node output types with registry describe |
 | `Connection refused` | Service not running | Start required MCP servers |
@@ -1881,9 +1937,9 @@ uv run pflow --trace --no-repair workflow.json
 
 ### Step 2: Isolate the Failing Node
 
-```bash
+```python
 # Test just the failing node
-uv run pflow registry run <node-type> param1=value --show-structure
+registry_run(node_type="<node-type>", parameters={"param1": "value"}, show_structure=True)
 
 # If it works alone, check data flow
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id=="failing-node")'
@@ -1948,10 +2004,10 @@ I need to clarify a few things:
 **Tools often don't work as documented. Here's how to handle it:**
 
 ### Before Building: Test Everything
-```bash
+```python
 # 1. Warn users before making tool calls that might be destructive or make dangerous side effects.
 # 2. Always test with actual data first if not a very simple tool.
-uv run pflow registry run mcp-tool param=value --show-structure
+registry_run(node_type="mcp-tool", parameters={"param": "value"}, show_structure=True)
 
 # 3. Verify that the tool works with the current inputs
 # Debugging each tool call individually reduces complexity and the time to find the issue.
@@ -1964,7 +2020,7 @@ uv run pflow registry run mcp-tool param=value --show-structure
 | "Returns array" | Returns object with array inside | Use `${result.items}` not `${result}` |
 | "Optional parameter" | Actually required | Always provide it |
 | "Accepts string" | Needs specific format | Test formats, document what works |
-| "Any type" | Has hidden structure | Use --show-structure to discover |
+| "Any type" | Has hidden structure | Use `show_structure=True` to discover |
 | "Returns result" | Returns nested response.data.result | Trace actual path |
 
 ### When Documentation is Wrong
@@ -1983,7 +2039,7 @@ Template error?
     └─ No → Execution error?
         ├─ Yes → Use Debugging Playbook
         └─ No → Discovery failed?
-            ├─ Yes → Try manual discovery commands
+            ├─ Yes → Try manual discovery tools
             └─ No → Ask user for clarification
 ```
 
@@ -2001,26 +2057,23 @@ Template error?
 | "song about cats" | `input: subject` (default: "cats") | Could be dogs, space, friendship, etc. |
 | "always use prod" | Hardcode: "prod" | Explicitly said "always" |
 
-### Command Cheat Sheet
+### Tools Cheat Sheet
 
-```bash
+```python
 # Discovery - ALWAYS use AI-powered discovery first
-uv run pflow workflow discover "user's request"                # Find existing workflows
-uv run pflow registry discover "what you need to build"        # Find nodes for building
-uv run pflow workflow list [filter]                            # Browse saved workflows (ALWAYS use filter to avoid context pollution)
+workflow_discover(query="user's request")                # Find existing workflows
+registry_discover(query="what you need to build")        # Find nodes for building
+workflow_list(filter="[filter]")
 
 # Development
-uv run pflow --validate-only workflow.json                     # Validate structure
+workflow_validate(workflow=".pflow/workflows/workflow.json")    # Validate structure
 
 # Saving
-uv run pflow workflow save file name "desc"                    # Save to library
+workflow_save(workflow=".pflow/workflows/workflow.json", name="name", description="desc")  # Save to library
 
 # Execution
-uv run pflow workflow.json param=value                         # Run from file
-uv run pflow saved-workflow param=value                        # Run from library
-
-# Required Execution Flags (use together when testing)
-uv run pflow --trace --no-repair workflow-name
+workflow_execute(workflow=".pflow/workflows/workflow.json", parameters={"param": "value"})  # Run from file
+workflow_execute(workflow="saved-workflow", parameters={"param": "value"})                   # Run from library
 ```
 
 ### Template Syntax
@@ -2050,14 +2103,14 @@ Pattern: Multi-Service Coordination
 ```
 
 ### Step 2: DISCOVER WORKFLOWS
-```bash
-uv run pflow workflow discover "fetch slack messages extract Q&A log to sheets"
+```python
+workflow_discover(query="fetch slack messages extract Q&A log to sheets")
 # Result: No 80%+ matches, building new
 ```
 
 ### Step 3: DISCOVER NODES
-```bash
-uv run pflow registry discover "fetch Slack messages, extract Q&A with AI, append to Google Sheets"
+```python
+registry_discover(query="fetch Slack messages, extract Q&A with AI, append to Google Sheets")
 # Found: mcp-slack-fetch, llm, mcp-sheets-append
 ```
 
@@ -2148,14 +2201,21 @@ Confirm?"
 ```
 
 ### Step 7: VALIDATE
-```bash
-uv run pflow --validate-only slack-qa.json
+```python
+workflow_validate(workflow=".pflow/workflows/slack-qa.json")
 # ✓ All validations passed!
 ```
 
 ### Step 8: TEST
-```bash
-uv run pflow --trace --no-repair slack-qa.json channel=C09C16NAU5B limit=15 sheet_id=abc123xyz
+```python
+workflow_execute(
+    workflow=".pflow/workflows/slack-qa.json",
+    parameters={
+        "channel": "C09C16NAU5B",
+        "limit": 15,
+        "sheet_id": "abc123xyz"
+    }
+)
 # ✓ Workflow executed successfully!
 ```
 
@@ -2165,17 +2225,31 @@ uv run pflow --trace --no-repair slack-qa.json channel=C09C16NAU5B limit=15 shee
 - Enhanced descriptions
 
 ### Step 10: SAVE
-```bash
-uv run pflow workflow save slack-qa.json slack-qa-bot "Extracts Q&A pairs from Slack and logs to Google Sheets"
+```python
+workflow_save(workflow=".pflow/workflows/slack-qa.json", name="slack-qa-bot", description="Extracts Q&A pairs from Slack and logs to Google Sheets")
 ```
 
 ### Final: User can now run
-```bash
+```python
 # With their original values:
-uv run pflow slack-qa-bot channel=C09C16NAU5B limit=15 sheet_id=abc123xyz
+workflow_execute(
+    workflow="slack-qa-bot",
+    parameters={
+        "channel": "C09C16NAU5B",
+        "limit": 15,
+        "sheet_id": "abc123xyz"
+    }
+)
 
 # Or with different values:
-uv run pflow slack-qa-bot channel=D456DEF limit=50 sheet_id=xyz789
+workflow_execute(
+    workflow="slack-qa-bot",
+    parameters={
+        "channel": "D456DEF",
+        "limit": 50,
+        "sheet_id": "xyz789"
+    }
+)
 ```
 
 ---
@@ -2297,7 +2371,7 @@ uv run pflow slack-qa-bot channel=D456DEF limit=50 sheet_id=xyz789
 | Documentation Says | Reality | Action Required |
 |-------------------|---------|-----------------|
 | "Test nodes" (helpful) | Test unknown nodes only | Skip testing known patterns |
-| `${result}` | `${result.data.nested.deeply.field}` | Test MCP nodes with `--show-structure` |
+| `${result}` | `${result.data.nested.deeply.field}` | Test MCP nodes |
 | 3-5 nodes typical | 15-30 nodes typical | Build in phases, test each phase |
 | Use LLM for extraction | Shell+jq ALWAYS better | `jq -r '.data.field'` # Adapt to structure |
 | Async needs polling | `Prefer: wait` eliminates polling | Add header, wait up to 60s |
@@ -2321,9 +2395,8 @@ uv run pflow slack-qa-bot channel=D456DEF limit=50 sheet_id=xyz789
 5. **Test only unknown patterns** - Skip testing curl, echo, known APIs
 6. **Direct URLs save nodes** - Use when services provide direct file access
 7. **Settings ≠ Auto-available** - Declare credentials as workflow inputs
-8. **MCP = Deep nesting** - Always test with `--show-structure`
-9. **20+ nodes is NORMAL** - But build in phases to debug easily
-10. **Users show ONE example** - You build the GENERAL tool
+8. **20+ nodes is NORMAL** - But build in phases to debug easily
+9. **Users show ONE example** - You build the GENERAL tool
 
 ---
 

@@ -29,7 +29,7 @@ The `src/pflow/mcp_server/` module exposes pflow's workflow building and executi
 src/pflow/mcp_server/
 ├── __init__.py                          (9 lines)   - Package exports
 ├── main.py                              (122 lines) - Server startup and signal handling
-├── server.py                            (46 lines)  - FastMCP instance and tool registration
+├── server.py                            (51 lines)  - FastMCP instance and tool/resource registration
 ├── tools/                               (862 lines total)
 │   ├── __init__.py                      (28 lines)
 │   ├── discovery_tools.py               (90 lines)  - workflow_discover, registry_discover
@@ -38,6 +38,9 @@ src/pflow/mcp_server/
 │   ├── workflow_tools.py                (95 lines)  - workflow_list, workflow_describe
 │   ├── settings_tools.py                (173 lines) - settings_get, set, show, list_env
 │   └── test_tools.py                    (146 lines) - ping, test_sync_bridge, test_stateless_pattern
+├── resources/                           (326 lines total)
+│   ├── __init__.py                      (7 lines)
+│   └── instruction_resources.py         (319 lines) - Agent instructions resources (regular + sandbox)
 ├── services/                            (714 lines total)
 │   ├── __init__.py                      (21 lines)
 │   ├── base_service.py                  (76 lines)  - Stateless pattern enforcement
@@ -52,7 +55,7 @@ src/pflow/mcp_server/
     ├── resolver.py                      (104 lines) - Workflow resolution
     └── validation.py                    (147 lines) - Security validation
 
-Total: ~2,180 lines
+Total: ~2,506 lines
 ```
 
 ## Core Components
@@ -64,10 +67,14 @@ Total: ~2,180 lines
 - `configure_logging()`: Routes logs to stderr (stdout reserved for protocol)
 - Signal handling: SIGTERM/SIGINT for graceful shutdown
 
-**server.py** - FastMCP instance
-- `mcp = FastMCP("pflow")`: Single global server instance
-- `register_tools()`: Imports tool modules to trigger decorator registration
-- Pattern: Import-time registration via `@mcp.tool()`
+**server.py** - FastMCP instance with agent guidance
+- `mcp = FastMCP("pflow", instructions="...")`: Single global server instance with server-level instructions
+- **Server Instructions**: Critical workflow guidance injected into agent's system prompt by MCP clients
+  - ALWAYS run `workflow_discover` first
+  - If 95%+ match → execute directly (don't rebuild)
+  - If building new → read `pflow://instructions` resource first
+- `register_tools()`: Imports tool and resource modules to trigger decorator registration
+- Pattern: Import-time registration via `@mcp.tool()` and `@mcp.resource()`
 
 ### 2. Tools Layer (11 Production Tools)
 
@@ -105,7 +112,81 @@ All tools use async/sync bridge: `await asyncio.to_thread(service_method)`
 - `test_sync_bridge(delay_seconds)`: Test async/sync bridge
 - `test_stateless_pattern()`: Verify fresh instances
 
-### 3. Services Layer (6 Services)
+### 3. Resources Layer (2 Resources)
+
+**MCP Resources** provide read-only data that agents can access at any time. Unlike tools (which perform actions), resources expose information.
+
+**instruction_resources.py** (2 resources):
+- `pflow://instructions`: Complete agent instructions for building workflows (full system access)
+- `pflow://instructions/sandbox`: Instructions for sandboxed/isolated environments (restricted access)
+
+**Resource Pattern**:
+```python
+@mcp.resource("pflow://uri")
+def get_resource() -> str:
+    """Docstring visible to agents."""
+    return content  # Return full content
+```
+
+#### Regular Agent Instructions (`pflow://instructions`)
+
+**For agents with FULL system access**:
+- **Path**: `.pflow/instructions/MCP-AGENT_INSTRUCTIONS.md` (checks project root, then `~/.pflow/`)
+- **Size**: ~66KB comprehensive guide
+- **Access Level**: ✅ Full (settings.json, traces, workflow library)
+- **Content**: 10-step development loop, patterns, troubleshooting, examples
+- **Key Capabilities**:
+  - Can use `pflow settings set-env` commands
+  - Can read trace files from `~/.pflow/debug/`
+  - Can save/load workflows from user library
+  - Full CLI command reference
+- **Fallback**: Complete CLI guide including settings and trace commands
+
+#### Sandbox Agent Instructions (`pflow://instructions/sandbox`)
+
+**For agents in ISOLATED environments**:
+- **Path**: `.pflow/instructions/MCP-SANDBOX-AGENT_INSTRUCTIONS.md` (checks project root, then `~/.pflow/`)
+- **Size**: ~50-66KB (estimated, adapted guide)
+- **Access Level**: ❌ Restricted (no settings.json, no traces, limited library)
+- **Content**: Same workflow building process, adapted for sandboxed environments
+- **Key Constraints**:
+  - CANNOT use `pflow settings` commands
+  - CANNOT access trace files
+  - MUST pass credentials as workflow inputs
+  - Limited/isolated workflow library access
+- **Use Cases**: Containers, web-based AI, CI/CD, multi-tenant systems
+- **Fallback**: Sandbox-specific guidance with credentials-as-inputs pattern
+
+#### Key Differences
+
+| Aspect | Regular Agents | Sandbox Agents |
+|--------|---------------|----------------|
+| **Settings access** | ✅ Read/write settings.json | ❌ No settings.json access |
+| **Trace files** | ✅ Read from ~/.pflow/debug/ | ❌ No trace access |
+| **Workflow library** | ✅ Full library access | ⚠️ Limited/isolated |
+| **API key pattern** | Settings or inputs | **Must use inputs only** |
+| **CLI commands** | Full reference | Restricted subset |
+| **Guidance style** | "Store in settings.json" | "Pass as `api_key=VALUE`" |
+
+#### Multi-Layer Guidance Strategy
+
+1. **Server Instructions** (InitializeResult) - Short imperative rules, injected into system prompt
+2. **Resource Metadata** (title/description) - Makes resource purpose clear when listed
+3. **Resource Docstrings** - Clarifies full vs sandbox access (agents see this)
+4. **Tool Descriptions** - Each tool reinforces discovery-first pattern
+5. **Resource Content** - Complete guides with detailed best practices
+
+**Path Resolution** (both resources):
+- Checks project root first: `.pflow/instructions/{filename}` (development)
+- Falls back to user home: `~/.pflow/instructions/{filename}` (production)
+- Returns appropriate fallback if neither exists
+
+**Why Resources vs Tools**:
+- **Resources** = Read-only data (GET-like), always available
+- **Tools** = Actions with side effects (POST-like), invoked on demand
+- Instructions fit resource pattern: agents consult when needed, no execution required
+
+### 4. Services Layer (6 Services)
 
 All inherit from `BaseService`, all methods are `@classmethod` with `@ensure_stateless` decorator.
 
@@ -142,7 +223,7 @@ All inherit from `BaseService`, all methods are `@classmethod` with `@ensure_sta
 - `show_all_settings()`, `list_env_variables()`: Uses SettingsManager API
 - Fresh instances: SettingsManager
 
-### 4. Utilities
+### 5. Utilities
 
 **errors.py** - Error sanitization for LLM safety:
 - `sanitize_error_message()`: Removes paths, tokens, API keys
@@ -231,6 +312,7 @@ async def tool_name(param: Type):
 **Server initialization**:
 - Single instance: `mcp = FastMCP("pflow")`
 - Tool registration: `@mcp.tool()` decorator on async functions
+- Resource registration: `@mcp.resource("uri://path")` decorator on sync/async functions
 - Stdio transport: `mcp.run("stdio")` manages own event loop
 - Type hints: Pydantic Field descriptions generate MCP tool schema
 
@@ -322,6 +404,7 @@ return {
 - `test_tool_registration.py` - Tool registration verification
 - `test_validation_service.py` - Validation logic (8 regression guards)
 - `test_registry_run_errors.py` - Error handling patterns
+- `test_instruction_resources.py` - Instruction resources (22 tests - regular + sandbox + differences)
 
 **Test boundaries**:
 - Mock at service layer: Service methods return predictable results
