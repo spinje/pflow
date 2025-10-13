@@ -214,6 +214,10 @@ class LLMNode(Node):
                 cache_creation = details.get("cache_creation_input_tokens", 0)
                 cache_read = details.get("cache_read_input_tokens", 0)
 
+            # Ensure tokens are integers (handle None values)
+            input_tokens = input_tokens or 0
+            output_tokens = output_tokens or 0
+
             shared["llm_usage"] = {
                 "model": exec_res.get("model", "unknown"),
                 "input_tokens": input_tokens,

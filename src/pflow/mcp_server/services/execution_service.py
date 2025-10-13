@@ -384,11 +384,7 @@ class ExecutionService(BaseService):
             ValueError: If workflow name is invalid, workflow not found, or validation fails
             FileExistsError: If workflow exists and force=False
         """
-        from pflow.core.exceptions import WorkflowValidationError
         from pflow.core.workflow_save_service import (
-            generate_workflow_metadata,
-            load_and_validate_workflow,
-            save_workflow_with_options,
             validate_workflow_name,
         )
 
@@ -396,6 +392,34 @@ class ExecutionService(BaseService):
         is_valid, error = validate_workflow_name(name)
         if not is_valid:
             raise ValueError(f"Invalid workflow name: {error}")
+
+        # Load and validate workflow IR
+        workflow_ir = cls._load_and_validate_workflow_for_save(workflow)
+
+        # Add/update metadata (MCP-specific: embed name/description in IR)
+        cls._update_workflow_metadata(workflow_ir, name, description)
+
+        # Generate rich metadata if requested (same as CLI)
+        metadata_dict = cls._generate_metadata_if_requested(workflow_ir, generate_metadata)
+
+        # Save workflow and return success message
+        return cls._save_and_format_result(name, workflow_ir, description, force, metadata_dict)
+
+    @classmethod
+    def _load_and_validate_workflow_for_save(cls, workflow: Any) -> dict[str, Any]:
+        """Load and validate workflow IR for saving.
+
+        Args:
+            workflow: Workflow path or IR dict
+
+        Returns:
+            Validated workflow IR
+
+        Raises:
+            ValueError: If workflow not found or validation fails
+        """
+        from pflow.core.exceptions import WorkflowValidationError
+        from pflow.core.workflow_save_service import load_and_validate_workflow
 
         # Resolve workflow to IR (MCP accepts dict/name/path)
         workflow_ir, error, source = resolve_workflow(workflow)
@@ -408,37 +432,17 @@ class ExecutionService(BaseService):
         except (ValueError, WorkflowValidationError) as e:
             raise ValueError(f"Invalid workflow: {e}") from e
 
-        # Run comprehensive validation (same as validate_workflow tool)
-        # This catches: node types, templates, data flow, output sources
-        try:
-            registry = Registry()
-            inputs = workflow_ir.get("inputs", {})
-            dummy_params = generate_dummy_parameters(inputs)
+        return workflow_ir
 
-            # Run all 4 validation checks:
-            # 1. Structural validation (IR schema compliance)
-            # 2. Data flow validation (execution order, cycles)
-            # 3. Template validation (${variable} resolution)
-            # 4. Node type validation (registry verification)
-            errors, warnings = WorkflowValidator.validate(
-                workflow_ir=workflow_ir,
-                extracted_params=dummy_params,
-                registry=registry,
-                skip_node_types=False,
-            )
+    @classmethod
+    def _update_workflow_metadata(cls, workflow_ir: dict[str, Any], name: str, description: str) -> None:
+        """Update workflow IR metadata with name, description, and timestamp.
 
-            if errors:
-                error_list = "\n  - ".join(errors)
-                raise ValueError(f"Workflow validation failed:\n  - {error_list}")
-
-        except ValueError:
-            # Re-raise validation errors
-            raise
-        except Exception as e:
-            logger.error(f"Validation failed: {e}", exc_info=True)
-            raise ValueError(f"Validation error: {e}") from e
-
-        # Add/update metadata (MCP-specific: embed name/description in IR)
+        Args:
+            workflow_ir: Workflow IR dictionary to update (modified in-place)
+            name: Workflow name
+            description: Workflow description
+        """
         if "metadata" not in workflow_ir:
             workflow_ir["metadata"] = {}
 
@@ -446,40 +450,78 @@ class ExecutionService(BaseService):
         workflow_ir["metadata"]["description"] = description
         workflow_ir["metadata"]["created_at"] = datetime.now().isoformat()
 
-        # Generate rich metadata if requested (same as CLI)
-        metadata_dict = None
-        if generate_metadata:
-            try:
-                metadata_dict = generate_workflow_metadata(workflow_ir)
-            except Exception as e:
-                logger.warning(f"Failed to generate metadata: {e}")
-                # Continue with save even if metadata generation fails
+    @classmethod
+    def _generate_metadata_if_requested(
+        cls, workflow_ir: dict[str, Any], generate_metadata: bool
+    ) -> dict[str, Any] | None:
+        """Generate rich metadata if requested.
 
-        # Save using service
+        Args:
+            workflow_ir: Workflow IR dictionary
+            generate_metadata: Whether to generate metadata
+
+        Returns:
+            Generated metadata dict or None
+        """
+        from pflow.core.workflow_save_service import generate_workflow_metadata
+
+        if not generate_metadata:
+            return None
+
+        try:
+            return generate_workflow_metadata(workflow_ir)
+        except Exception as e:
+            logger.warning(f"Failed to generate metadata: {e}")
+            return None
+
+    @classmethod
+    def _save_and_format_result(
+        cls,
+        name: str,
+        workflow_ir: dict[str, Any],
+        description: str,
+        force: bool,
+        metadata_dict: dict[str, Any] | None,
+    ) -> str:
+        """Save workflow and format success message.
+
+        Args:
+            name: Workflow name
+            workflow_ir: Workflow IR dictionary
+            description: Workflow description
+            force: Whether to overwrite existing workflow
+            metadata_dict: Optional rich metadata
+
+        Returns:
+            Formatted success message
+
+        Raises:
+            FileExistsError: If workflow exists and force=False
+            ValueError: If save fails
+        """
+        from pflow.core.exceptions import WorkflowValidationError
+        from pflow.core.workflow_save_service import save_workflow_with_options
+        from pflow.execution.formatters.workflow_save_formatter import format_save_success
+
         try:
             saved_path = save_workflow_with_options(
                 name=name,
                 workflow_ir=workflow_ir,
                 description=description,
                 force=force,
-                metadata=metadata_dict,  # Full CLI parity: can be None or rich metadata
+                metadata=metadata_dict,
             )
-
-            # Format success message using shared formatter (CLI's text mode)
-            from pflow.execution.formatters.workflow_save_formatter import format_save_success
 
             success_message = format_save_success(
                 name=name,
                 saved_path=str(saved_path),
                 workflow_ir=workflow_ir,
-                metadata=metadata_dict,  # Include metadata in success message
+                metadata=metadata_dict,
             )
 
-            # Return text directly (LLMs parse this better than JSON)
             return success_message
 
         except FileExistsError as e:
-            # Re-raise with helpful message
             raise FileExistsError(
                 f"Workflow '{name}' already exists. Use force=true to overwrite or choose a different name."
             ) from e
