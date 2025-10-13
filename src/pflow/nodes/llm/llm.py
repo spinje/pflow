@@ -197,16 +197,28 @@ class LLMNode(Node):
         # Store usage metrics matching spec structure exactly
         usage_obj = exec_res.get("usage")
         if usage_obj:
-            # Extract cache metrics from details if available
-            details = getattr(usage_obj, "details", {}) or {}
-            cache_creation = details.get("cache_creation_input_tokens", 0)
-            cache_read = details.get("cache_read_input_tokens", 0)
+            # Handle both object (with .input attribute) and dict (with ["input"] key)
+            if isinstance(usage_obj, dict):
+                # Dict format (some models return this)
+                input_tokens = usage_obj.get("input", usage_obj.get("input_tokens", 0))
+                output_tokens = usage_obj.get("output", usage_obj.get("output_tokens", 0))
+                # Extract cache metrics from dict
+                cache_creation = usage_obj.get("cache_creation_input_tokens", 0)
+                cache_read = usage_obj.get("cache_read_input_tokens", 0)
+            else:
+                # Object format (standard llm library)
+                input_tokens = usage_obj.input
+                output_tokens = usage_obj.output
+                # Extract cache metrics from details if available
+                details = getattr(usage_obj, "details", {}) or {}
+                cache_creation = details.get("cache_creation_input_tokens", 0)
+                cache_read = details.get("cache_read_input_tokens", 0)
 
             shared["llm_usage"] = {
                 "model": exec_res.get("model", "unknown"),
-                "input_tokens": usage_obj.input,
-                "output_tokens": usage_obj.output,
-                "total_tokens": usage_obj.input + usage_obj.output,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
                 "cache_creation_input_tokens": cache_creation,
                 "cache_read_input_tokens": cache_read,
             }

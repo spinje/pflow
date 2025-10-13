@@ -436,7 +436,7 @@ def normalize_ir(workflow_ir: dict[str, Any]) -> None:
 
     # Normalize node parameters: "parameters" → "params"
     # This provides backward compatibility and reduces friction for agents
-    if "nodes" in workflow_ir:
+    if "nodes" in workflow_ir and isinstance(workflow_ir["nodes"], list):
         for node in workflow_ir["nodes"]:
             if "parameters" in node and "params" not in node:
                 node["params"] = node.pop("parameters")

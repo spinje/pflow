@@ -112,7 +112,16 @@ async def workflow_validate(
 
 @mcp.tool()
 async def workflow_save(
-    workflow_file: str = Field(..., description="Path to workflow JSON file to save"),
+    workflow: Annotated[
+        str | dict[str, Any],
+        Field(
+            description=(
+                "Workflow to save. Can be:\n"
+                "  - Path to workflow JSON file: './my-workflow.json'\n"
+                '  - Workflow IR object: {"nodes": [...], "edges": [...], "inputs": {...}, "outputs": {...}}'
+            )
+        ),
+    ],
     name: str = Field(..., description="Workflow name (lowercase-with-hyphens, max 50 chars)"),
     description: str = Field(..., description="Brief description of what the workflow does"),
     force: bool = Field(False, description="Overwrite existing workflow if it exists"),
@@ -133,7 +142,7 @@ async def workflow_save(
     This uses an LLM call and adds latency but significantly improves discoverability.
 
     Args:
-        workflow_file: Path to workflow JSON file
+        workflow: Path to workflow JSON file or workflow IR object
         name: Unique name for the workflow
         description: What the workflow does
         force: Whether to overwrite existing workflow
@@ -144,7 +153,7 @@ async def workflow_save(
         "✓ Saved workflow 'name' to library\n  Location: /path/to/workflow.json\n  ✨ Execute with: pflow name param=<value>"
 
     Example:
-        workflow_file="./draft-workflow.json"
+        workflow={"nodes": [{"id": "fetch", "type": "http", "params": {"url": "${url}"}}], "edges": [], "inputs": {"url": {"type": "string", "required": true}}, "outputs": {"result": {"description": "HTTP response"}}}
         name="github-pr-analyzer"
         description="Analyzes GitHub PRs and creates summaries"
         force=false
@@ -156,8 +165,7 @@ async def workflow_save(
 
     def _sync_save() -> str:
         """Synchronous save operation."""
-        # Note: workflow_file is the path, we pass it directly
-        return ExecutionService.save_workflow(workflow_file, name, description, force, generate_metadata)
+        return ExecutionService.save_workflow(workflow, name, description, force, generate_metadata)
 
     # Run in thread pool
     result = await asyncio.to_thread(_sync_save)
