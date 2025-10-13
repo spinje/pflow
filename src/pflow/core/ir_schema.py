@@ -254,6 +254,66 @@ def _format_path(path: list) -> str:
     return formatted or "root"
 
 
+def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> str:
+    """Get a helpful suggestion for output-specific validation errors.
+
+    Args:
+        error: The jsonschema validation error
+        path_str: The formatted path string for context
+
+    Returns:
+        Suggestion string for fixing the output-related error
+    """
+    # Case 1: Additional properties (wrong field names like 'value', 'from')
+    if error.validator == "additionalProperties":
+        # Extract which field was unexpected
+        unexpected_field = None
+        if hasattr(error, "message"):
+            import re
+
+            match = re.search(r"'([^']+)' was unexpected", error.message)
+            if match:
+                unexpected_field = match.group(1)
+
+        # Build helpful message
+        lines = ["Output definitions can only have: description, type, source (all optional)"]
+
+        # Suggest replacement for common mistakes
+        if unexpected_field == "value":
+            lines.append("\nDid you mean 'source' instead of 'value'?")
+        elif unexpected_field == "from":
+            lines.append("\nDid you mean 'source' instead of 'from'?")
+        elif unexpected_field:
+            lines.append(f"\nUnknown field: '{unexpected_field}'")
+
+        # Show correct example
+        lines.extend([
+            "\nExample:",
+            '  "story": {',
+            '    "description": "The generated story",',
+            '    "type": "string",',
+            '    "source": "${generate_story.response}"',
+            "  }",
+        ])
+
+        return "\n".join(lines)
+
+    # Case 2: Wrong type (string instead of object)
+    if error.validator == "type" and "object" in str(error.validator_value):
+        return (
+            "Each output must be an object, not a string.\n\n"
+            'Wrong: "story": "${generate_story.response}"\n'
+            'Right: "story": {"source": "${generate_story.response}"}'
+        )
+
+    # Case 3: Invalid type enum value
+    if error.validator == "enum" and "type" in path_str:
+        valid_types = ["string", "number", "boolean", "object", "array"]
+        return f"Type must be one of: {', '.join(valid_types)}"
+
+    return ""
+
+
 def _get_suggestion(error: JsonSchemaValidationError) -> str:
     """Get a helpful suggestion based on the validation error.
 
@@ -263,6 +323,14 @@ def _get_suggestion(error: JsonSchemaValidationError) -> str:
     Returns:
         Suggestion string for fixing the error
     """
+    # Get path for context-specific suggestions
+    path_str = str(error.absolute_path)
+
+    # OUTPUT-SPECIFIC ERROR HANDLING
+    if "outputs" in path_str:
+        return _get_output_suggestion(error, path_str)
+
+    # GENERAL ERROR HANDLING (existing cases)
     if error.validator == "required":
         # Extract field name from message like "'field_name' is a required property"
         match = error.message.split("'")
@@ -275,7 +343,7 @@ def _get_suggestion(error: JsonSchemaValidationError) -> str:
         actual = type(error.instance).__name__
         return f"Change type from '{actual}' to '{expected}'"
     elif error.validator == "pattern":
-        if "ir_version" in str(error.absolute_path):
+        if "ir_version" in path_str:
             return "Use semantic versioning format, e.g., '0.1.0'"
     elif error.validator == "additionalProperties":
         return "Remove unknown properties or check field names"

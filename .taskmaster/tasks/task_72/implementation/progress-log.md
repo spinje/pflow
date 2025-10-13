@@ -1513,6 +1513,47 @@ def test_extract_runtime_paths_with_mcp_json_strings(self):
 
 ---
 
+## 2025-10-13 - Output Validation Enhancement: Agents Learn Format from Errors
+
+**Problem**: AI agents got stuck when validation errors only said "NO" without showing correct format. Agent tried `{"value": "${...}"}`, `"${...}"` (string), `{"from": "..."}` and gave up, never learning correct schema.
+
+**Solution**: Two-phase validation with actionable error messages.
+
+### Phase 1: Schema Error Suggestions (ir_schema.py)
+
+Enhanced `_get_suggestion()` to detect output field errors and show:
+- All valid fields (description, type, source)
+- Specific suggestions ("Did you mean 'source' instead of 'value'?")
+- Complete examples with correct syntax
+- Wrong vs Right comparisons for type errors
+
+### Phase 2: Template Validation (workflow_validator.py)
+
+Replaced skip logic with actual validation:
+- `_validate_template_in_source()` - Validates ${node.key} references
+- `_format_template_node_error()` - Enhanced errors with "Did you mean?"
+- Fuzzy matching for typo detection (generate-story → generate_story)
+- Shows available nodes + concrete before/after fixes
+
+### Critical Fixes
+
+1. **`_validate_structure()`** (line 110): Changed from `e.message` to `str(e)` to include suggestions
+2. **`_validate_output_sources()`** (line 220): Added `isinstance(output_def, dict)` check to prevent crashes
+
+### Real CLI Results
+
+**Agent's journey now works**:
+1. `{"value": "${...}"}` → Error: "Did you mean 'source'?"
+2. `"${...}"` → Error: "Must be object. Right: {"source": "${...}"}"
+3. `{"source": "${generate-story...}"}` → Error: "Did you mean generate_story?"
+4. `{"source": "${generate_story...}"}` → ✅ SUCCESS
+
+**Test Results**: 21 tests (10 schema + 11 template), all passing. Zero regressions (369 core tests pass).
+
+**Impact**: Agents learn correct format in 3 errors instead of giving up.
+
+---
+
 ## 2025-10-13 01:45 - CLOUD AGENT SUPPORT: workflow_save Now Accepts JSON Objects
 
 **Context**: Discussion about cloud agents (Claude Desktop, ChatGPT) revealed a critical limitation.
@@ -1622,6 +1663,23 @@ uv run python test_workflow_save_dict.py
 **Architecture Insight**: The service was already designed correctly - `load_and_validate_workflow()` accepts `str | dict`. We just exposed it at the tool level.
 
 **Critical Success**: MCP server is now truly **deployment-agnostic** - works in any environment (local, cloud, sandboxed).
+
+---
+
+## 2025-10-13 11:00 - CLI/MCP Parity: Workflow List Filtering
+
+**Gap Found**: MCP `workflow_list` supported filtering, CLI did not.
+
+**Fix Applied**:
+- Added optional `filter_pattern` argument to CLI `workflow list` command
+- Filters by name or description (case-insensitive substring match)
+- Identical logic in both CLI (`workflow.py` lines 32-38) and MCP (`workflow_service.py` lines 40-46)
+
+**Tests Added**: 7 new tests (5 formatter tests for shared `workflow_list_formatter.py`, 2 CLI filtering tests)
+
+**Agent Instructions**: Updated command cheat sheet with filter warning to prevent context pollution
+
+**Result**: Perfect CLI/MCP parity for workflow listing ✅
 
 ---
 

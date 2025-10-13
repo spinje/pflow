@@ -105,13 +105,9 @@ class WorkflowValidator:
             validate_ir(workflow_ir)
             return []
         except Exception as e:
-            # Handle both ValidationError and other exceptions
-            if hasattr(e, "path") and hasattr(e, "message"):
-                # ValidationError with path
-                error_msg = f"{e.path}: {e.message}" if e.path else str(e.message)
-            else:
-                # Other exceptions or ValidationError without path
-                error_msg = str(e)
+            # Use str(e) to get full error including suggestions
+            # ValidationError.__str__() includes path, message, and suggestions
+            error_msg = str(e)
             return [f"Structure: {error_msg}"]
 
     @staticmethod
@@ -220,6 +216,10 @@ class WorkflowValidator:
 
         # Validate each output's source field
         for output_name, output_def in outputs.items():
+            # Skip if output_def is not a dict (schema validation should catch this)
+            if not isinstance(output_def, dict):
+                continue
+
             source = output_def.get("source")
 
             # Skip if no source specified (outputs without source are valid)
@@ -233,30 +233,24 @@ class WorkflowValidator:
                 )
                 continue
 
-            # Skip template variables (cannot validate statically)
+            # Validate templates instead of skipping
             if "${" in source:
-                # Optional: Add debug log for template variables
-                logger.debug(f"Output '{output_name}' uses template variable in source - skipping static validation")
+                template_errors = WorkflowValidator._validate_template_in_source(output_name, source, nodes_map)
+                errors.extend(template_errors)
                 continue
 
             # Parse source format: "node_id.output_key" or "node_id"
             if "." in source:
                 # Split on first dot only (supports nested keys like "node.a.b.c")
-                node_id, _output_key = source.split(".", 1)
+                node_id, output_key = source.split(".", 1)
             else:
                 # Reference to entire node output
                 node_id = source
 
             # Validate node exists
             if node_id not in nodes_map:
-                # Build helpful error with available nodes
-                available_nodes = sorted(nodes_map.keys())
-                if available_nodes:
-                    suggestion = f" Available nodes: {', '.join(available_nodes)}"
-                else:
-                    suggestion = " Workflow has no nodes."
-
-                errors.append(f"Output '{output_name}' references non-existent node '{node_id}'.{suggestion}")
+                error_msg = WorkflowValidator._format_node_not_found_error(output_name, node_id, nodes_map)
+                errors.append(error_msg)
                 continue
 
             # Note: Output key validation skipped in v1
@@ -264,3 +258,134 @@ class WorkflowValidator:
             # This could be added in future versions when registry has full interface specs
 
         return (errors, warnings)
+
+    @staticmethod
+    def _validate_template_in_source(output_name: str, source: str, nodes_map: dict[str, Any]) -> list[str]:
+        """Validate template variable references in output source.
+
+        Validates that ${node.key} templates reference existing nodes.
+        Provides "Did you mean?" suggestions for typos.
+
+        Args:
+            output_name: Name of output being validated
+            source: Source value with template (e.g., "${node.key}")
+            nodes_map: Map of node IDs to definitions
+
+        Returns:
+            List of error messages (empty if valid)
+        """
+        import re
+
+        errors = []
+
+        # Extract template variables: ${...}
+        template_pattern = r"\$\{([^}]+)\}"
+        matches = re.findall(template_pattern, source)
+
+        if not matches:
+            # Has ${ but malformed
+            errors.append(
+                f"Output '{output_name}' has malformed template: '{source}'\n"
+                f"Use format: ${{variable}} or ${{node.output_key}}"
+            )
+            return errors
+
+        # Validate each template
+        for template_var in matches:
+            # Skip if not a node reference (no dot)
+            if "." not in template_var:
+                continue  # Could be workflow input
+
+            # Parse node.key
+            node_id = template_var.split(".", 1)[0]
+            output_key = template_var.split(".", 1)[1] if "." in template_var else None
+
+            # Validate node exists
+            if node_id not in nodes_map:
+                error_msg = WorkflowValidator._format_template_node_error(
+                    output_name, source, node_id, output_key, nodes_map
+                )
+                errors.append(error_msg)
+
+        return errors
+
+    @staticmethod
+    def _format_node_not_found_error(output_name: str, node_id: str, nodes_map: dict[str, Any]) -> str:
+        """Format error for plain reference to non-existent node."""
+        available = sorted(nodes_map.keys())
+
+        lines = [f"Output '{output_name}' references non-existent node '{node_id}'."]
+
+        if available:
+            lines.append(f"\nAvailable nodes: {', '.join(available)}")
+
+            # Fuzzy match suggestions
+            from pflow.core.suggestion_utils import find_similar_items
+
+            similar = find_similar_items(node_id, available, max_results=3, method="fuzzy")
+
+            if similar:
+                lines.append("\nDid you mean?")
+                for suggestion in similar:
+                    lines.append(f"  - {suggestion}")
+        else:
+            lines.append("\nWorkflow has no nodes.")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_template_node_error(
+        output_name: str,
+        source: str,
+        node_id: str,
+        output_key: str | None,
+        nodes_map: dict[str, Any],
+    ) -> str:
+        """Format enhanced error for template reference (follows template_validator pattern).
+
+        This provides the "gold standard" error format:
+        - Problem statement
+        - Available options
+        - Suggestions with fuzzy matching
+        - Concrete fix
+        """
+        available = sorted(nodes_map.keys())
+
+        # Section 1: Problem
+        lines = [
+            f"Output '{output_name}' source references non-existent node '{node_id}'",
+            f"Template: {source}",
+        ]
+
+        # Section 2: Available nodes
+        if available:
+            lines.append("\nAvailable nodes in workflow:")
+            for node in available[:10]:
+                lines.append(f"  ✓ {node}")
+            if len(available) > 10:
+                lines.append(f"  ... and {len(available) - 10} more")
+        else:
+            lines.append("\nWorkflow has no nodes.")
+            return "\n".join(lines)
+
+        # Section 3: Suggestions (fuzzy match)
+        from pflow.core.suggestion_utils import find_similar_items
+
+        similar = find_similar_items(node_id, available, max_results=3, method="fuzzy")
+
+        if similar:
+            lines.append("\nDid you mean one of these?")
+            for suggestion in similar:
+                # Reconstruct template with correct node
+                corrected = f"${{{suggestion}.{output_key}}}" if output_key else f"${{{suggestion}}}"
+                lines.append(f"  - {corrected}")
+
+            # Section 4: Concrete fix
+            best = similar[0]
+            corrected = f"${{{best}.{output_key}}}" if output_key else f"${{{best}}}"
+
+            lines.append("\nSuggested fix:")
+            lines.append(f'  Change: "{source}"')
+            lines.append(f'  To:     "{corrected}"')
+
+        return "\n".join(lines)
