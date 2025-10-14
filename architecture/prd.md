@@ -27,7 +27,7 @@ pflow's defining promise: a one-line natural-language prompt compiles—through 
 
 | Differentiator | Description | Implementation |
 |---|---|---|
-| **Transparent Execution** | Every node's data, config, and errors are trace-logged and replayable | CLI `--trace`, JSON IR → run log schema, deterministic replay via `.lock.json` |
+| **Transparent Execution** | Every node's data, config, and errors are trace-logged and replayable | CLI trace (auto; disable with `--no-trace`), JSON IR → run log schema, deterministic replay via `.lock.json` |
 | **Shared Store + Natural Interfaces** | Nodes communicate through intuitive key names (`shared["url"]`, `shared["text"]`) with zero coupling | pocketflow framework + natural key conventions (see [Shared Store](./core-concepts/shared-store.md)) |
 | **Proxy-Enabled Marketplace Compatibility** | Same nodes work in different flow schemas through transparent key mapping | `NodeAwareSharedStore` proxy pattern |
 | **Dual-Mode Planning Architecture** | Natural language and CLI pipes use same validation pipeline with different entry points | Planner handles both NL→IR and CLI→IR paths |
@@ -694,7 +694,7 @@ pflow fetch-url --url=${URL} --max-retries=3 --wait=1.0 --use-cache
 
 **Special CLI Flags:**
 
-- `--trace`: Enable detailed execution logging
+- `--no-trace`: Disable detailed execution logging (tracing on by default)
 - `--dry-run`: Validate without execution
 - `--planner-model`: Override LLM model for natural language planning
 - `--no-lock`: Skip lockfile generation

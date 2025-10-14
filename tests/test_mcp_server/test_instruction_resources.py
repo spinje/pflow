@@ -89,7 +89,7 @@ class TestRegularInstructionResource:
 
         # Regular agents should have settings commands
         assert "pflow settings set-env" in fallback
-        assert "pflow --trace" in fallback
+        assert "pflow --no-trace" in fallback
         assert "Store credentials" in fallback.lower() or "settings" in fallback.lower()
 
     @patch("pflow.mcp_server.resources.instruction_resources.MCP_AGENT_INSTRUCTIONS_PATH")

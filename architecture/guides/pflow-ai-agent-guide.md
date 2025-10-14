@@ -5,7 +5,7 @@
 **The planner works but costs money** - Natural language commands trigger the AI planner which makes multiple LLM calls (~$0.02-0.05 per request). Only use it when you need to:
 - Debug/test the planner itself
 - Generate new workflows from natural language
-- Understand planner behavior with --trace
+- Inspect planner behavior via the automatically saved trace
 
 **For regular workflow execution**: Use JSON workflows with --file to avoid LLM costs and get instant execution (<1 second vs 10-30 seconds)
 
@@ -231,7 +231,7 @@ Output: `HELLO WORLD`
 --verbose               # Show detailed execution info (useful for debugging!)
 --output-format json    # Return ALL outputs as JSON (default: text)
 --output-key <key>      # Return specific output key only
---trace                 # Save debug trace (only works with planner, not --file)
+--no-trace              # Opt out of trace saving (traces enabled by default)
 ```
 
 ### Parameter Passing
@@ -285,18 +285,18 @@ uv run pflow --verbose --file ~/.pflow/workflows/test-suite.json test_name="inte
 # Generate a workflow from natural language (~$0.02-0.05, takes 10-30s)
 uv run pflow "create a file called hello.txt with the content 'Hello World'"
 
-# With debugging trace to see what the planner is doing (Always use --trace as an AI agent, there is not reason to not use it)
-uv run pflow --trace "read the README file and summarize it"
-# Creates trace file in ~/.pflow/debug/pflow-trace-*.json
+# Planner runs always save a trace—inspect it to see what the planner is doing
+uv run pflow "read the README file and summarize it"
+# Trace saved to ~/.pflow/debug/workflow-trace-*.json (do not disable tracing during debugging)
 
 # Simple workflow generation (takes 10-30s, costs ~$0.02-0.05)
 uv run pflow "generate a random number between 1 and 100"
 
 # Tip: After planner generates a workflow, copy it from debug traces for reuse
-# Check ~/.pflow/debug/pflow-trace-*.json for the generated workflow JSON
+# Check ~/.pflow/debug/workflow-trace-*.json for the generated workflow JSON
 ```
 
-**Remember**: Each planner invocation costs money and takes 10-30 seconds. Use --file with JSON workflows for free, instant execution.
+**Remember**: Each planner invocation costs money and takes 10-30 seconds. Traces are saved automatically—use `--file` with JSON workflows for free, instant execution (and avoid `--no-trace` while debugging).
 
 ## Testing Workflows
 
@@ -352,7 +352,7 @@ uv run pflow --file /tmp/test_file.json
 ## Workflow Storage
 
 - **Saved workflows location**: `~/.pflow/workflows/`
-- **Debug traces location**: `~/.pflow/debug/` (when using --trace with planner)
+- **Debug traces location**: `~/.pflow/debug/` (saved automatically)
 - **Pre-installed test workflow**: `~/.pflow/workflows/test-suite.json` (safe for testing)
 - **Note**: Execute saved workflows with --file for instant execution without LLM costs
 
@@ -367,7 +367,7 @@ uv run pflow --file /tmp/test_file.json
 ## When to Use vs Avoid the Planner
 
 ### Use the Planner When:
-- Testing planner improvements or debugging with --trace
+- Testing planner improvements or debugging (inspect the automatically saved trace)
 - Generating new workflows from natural language descriptions
 - You explicitly need to test planner behavior
 - Cost is not a concern (research/development)

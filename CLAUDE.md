@@ -619,20 +619,18 @@ More importantly focus on architectural quality and code quality:
 
 
 ```bash
-# Run a workflow from a file (useful for testing without using the planner)
+# Run a workflow from a file (useful for testing and for AI agents iterating on workflows)
 uv run pflow workflow.json
 ```
 
 ```bash
-# Output trace file to ~/.pflow/debug/workflow-trace-*.json for workflow execution
-uv run pflow --trace "do a thing, then do another thing"
+# Workflow traces are saved automatically to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
+uv run pflow my-workflow
 ```
 
 ```bash
 # Output trace file to ~/.pflow/debug/planner-trace-*.json for planner execution
 uv run pflow --trace-planner "do a thing, then do another thing"
 ```
-
-Always use the `--trace and --trace-planner` flags when executing workflows for better debugging capabilities.
 
 

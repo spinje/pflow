@@ -219,7 +219,7 @@ class ExecutionService(BaseService):
         Built-in behaviors (no flags needed):
         - Text output format (LLMs parse better than JSON)
         - No auto-repair (explicit errors)
-        - Trace saved to ~/.pflow/debug/
+        - Trace saved to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
         - Auto-normalization of workflow IR
 
         Args:

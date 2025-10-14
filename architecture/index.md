@@ -401,7 +401,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 **Key Contents**:
 - Real-time progress indicators
 - Trace file structure and analysis
-- CLI flags (--trace, --planner-timeout)
+- CLI flags (--no-trace, --planner-timeout)
 - LLM call capture and inspection
 - Common debugging scenarios
 - Troubleshooting guide

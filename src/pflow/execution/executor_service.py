@@ -288,7 +288,7 @@ class WorkflowExecutorService:
                         error["available_fields_truncated"] = True
                         error["trace_file_hint"] = (
                             f"Showing {MAX_DISPLAYED_FIELDS} of {total_fields} fields. "
-                            "Use --trace flag to save complete field list to ~/.pflow/debug/workflow-trace-*.json"
+                            "Full field list saved automatically to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json"
                         )
 
         return [error]

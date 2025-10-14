@@ -112,7 +112,7 @@ pflow uses a **"Type flags; engine decides"** philosophy:
    - Available to all nodes in the flow
    - Dynamic data for the run
 
-3. **System Flags** (`--verbose`, `--trace`, `--planner-timeout`)
+3. **System Flags** (`--verbose`, `--no-trace`, `--planner-timeout`)
    - Control execution behavior
    - Not passed to nodes
    - Apply to entire execution
@@ -348,13 +348,20 @@ pflow --verbose "analyze data.csv and create a report"
 # Shows planner decisions, node execution, and data flow
 ```
 
-#### Trace Mode (`--trace`)
+#### Trace Behavior (default)
 
-Save detailed execution trace to JSON file:
+Traces are saved automatically to `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json`:
 
 ```bash
-pflow --trace "complex natural language task"
-# Saves to ~/.pflow/debug/pflow-trace-TIMESTAMP.json
+pflow "complex natural language task"
+# Trace saved automatically for later inspection
+```
+
+Opt out when you don't need a trace:
+
+```bash
+pflow --no-trace "quick smoke test"
+# No trace file created
 ```
 
 Trace files capture:
@@ -375,14 +382,15 @@ pflow --planner-timeout 120 "very complex multi-step workflow"
 Automatic trace saving on timeout:
 ```
 ⏰ Operation exceeded 120s timeout
-📝 Debug trace saved: ~/.pflow/debug/pflow-trace-20250114-104500.json
+📝 Debug trace saved: ~/.pflow/debug/workflow-trace-20250114-104500.json
 ```
 
 #### Combining Debug Flags
 
 ```bash
 # Maximum debugging information
-pflow --verbose --trace --planner-timeout 90 "debug this workflow"
+pflow --verbose --planner-timeout 90 "debug this workflow"
+# Add --no-trace only if you explicitly need to skip trace generation
 ```
 
 See [Debugging Guide](../features/debugging.md) for detailed trace file analysis.

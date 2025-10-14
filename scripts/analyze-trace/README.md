@@ -4,7 +4,7 @@ This directory contains tools for analyzing pflow planner trace files to help im
 
 ## Overview
 
-When you run pflow with the `--trace` flag, it creates detailed JSON trace files in `~/.pflow/debug/`. These tools help you:
+Traces are saved automatically when you run pflow. These tools help you:
 
 - 📊 **Analyze token usage** - See how many tokens each prompt/response uses
 - 💰 **Estimate costs** - Understand the cost implications of your prompts
@@ -29,18 +29,16 @@ scripts/analyze-trace/
     │   ├── 02-ComponentBrowsingNode.md   # Each LLM call gets its own file
     │   └── ...
     └── comparison-*.md  # Comparison reports between traces
-```
+First, run pflow to generate a trace file (saved to ~/.pflow/debug/ by default):
 
 ## Usage
 
 ### 1. Generate a Trace
 
-First, run pflow with the `--trace` flag to generate a trace file:
+pflow saves traces automatically (planner and workflow). Run your workflow normally, and only add `--no-trace` if you explicitly want to skip logging.
 
 ```bash
-# Always saves trace on success or failure
-uv run pflow --trace "create a workflow that generates a changelog"
-
+uv run pflow "create a workflow that generates a changelog"
 # Trace files are saved to ~/.pflow/debug/
 # - Planner traces: planner-trace-*.json
 # - Workflow traces: workflow-trace-*.json
@@ -173,13 +171,9 @@ See the sequence of nodes and their resource usage:
 | # | Node | Duration | Tokens | File |
 |---|------|----------|--------|------|
 | 1 | WorkflowDiscovery | 5.3s | 587 | [01-WorkflowDiscoveryNode.md](./01-WorkflowDiscoveryNode.md) |
-| 2 | ComponentBrowsing | 8.1s | 627 | [02-ComponentBrowsingNode.md](./02-ComponentBrowsingNode.md) |
-...
-```
-
 ## Workflow for Prompt Improvement
 
-1. **Baseline** - Run your workflow with `--trace` to establish baseline metrics
+1. **Baseline** - Run your workflow to establish baseline metrics (trace saved automatically)
 2. **Analyze** - Use `latest.sh` to quickly analyze the trace
 3. **Identify Issues** - Look for:
    - High token usage in specific nodes
@@ -187,7 +181,7 @@ See the sequence of nodes and their resource usage:
    - Inefficient response formats
    - Failed validations or retries
 4. **Modify Prompts** - Edit the prompts in `src/pflow/planning/prompts/`
-5. **Test Changes** - Run the same workflow again with `--trace`
+5. **Test Changes** - Run the same workflow again (trace saved automatically)
 6. **Compare** - Use `compare.py` to see the differences
 7. **Iterate** - Repeat until satisfied with token usage and accuracy
 
@@ -221,10 +215,10 @@ Adjust these in `analyze.py` if using different models or pricing tiers.
 ## Troubleshooting
 
 ### No trace files found
-- Make sure you're running pflow with the `--trace` flag
+- Ensure tracing is enabled (do not use `--no-trace`)
 - Check that traces are being saved to `~/.pflow/debug/`
 
-### Large trace files
+- Make sure tracing isn't disabled with `--no-trace`
 - The analyzer handles large traces well
 - Individual node files make it easy to focus on specific parts
 

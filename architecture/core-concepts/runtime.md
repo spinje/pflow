@@ -123,7 +123,7 @@ Until then: **`@flow_safe` is the contract. Everything else is opaque by design.
 
 ### Comprehensive Trace Output
 
-When using `--trace`, pflow captures detailed execution information that provides visibility into workflow behavior:
+When tracing is enabled (default; disable with `--no-trace`), pflow captures detailed execution information that provides visibility into workflow behavior:
 
 ```
 [1] github-get-issue (0.3s)

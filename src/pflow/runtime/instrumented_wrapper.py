@@ -14,7 +14,7 @@ class InstrumentedNodeWrapper:
     """Wrapper that instruments nodes for metrics and optional tracing.
 
     This wrapper serves both lightweight metrics collection (always with JSON output)
-    and detailed tracing (opt-in with --trace flags). It must be the outermost wrapper
+    and detailed tracing (enabled by default; disable via --no-trace). It must be the outermost wrapper
     to capture all operations including namespace and template resolution.
     """
 
