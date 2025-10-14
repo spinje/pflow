@@ -239,13 +239,12 @@ The instruction file could not be loaded from `~/.pflow/instructions/MCP-SANDBOX
 
 ## Key Principles for Sandboxed Environments
 
-1. **Pass credentials as workflow inputs**: NO settings.json access
-   - Add `api_token` to workflow inputs (required: true)
-   - User provides at runtime: `pflow workflow.json api_token=YOUR_KEY`
+1. **Avoid passing credentials as workflow inputs**:
+   - NO `~/.pflow/settings.json access`, ask user to set environment variables instead by using the `pflow settings set-env` cli command or other means
 
-2. **Self-contained workflows**: Minimize external dependencies
-   - Focus on portable workflows that work anywhere
-   - Don't assume access to saved workflow library
+2. **Send workflow IR object instead of file path**
+   - This is applicable for workflow_validate, workflow_execute, workflow_save tools
+   - Don't assume shared access to the user's system where pflow is installed
 
 3. **No trace debugging**: Use workflow outputs for debugging
    - Add explicit output nodes to capture intermediate data
@@ -255,7 +254,7 @@ The instruction file could not be loaded from `~/.pflow/instructions/MCP-SANDBOX
    - Workflows are linear chains of nodes
    - Each node executes once in order
 
-## Example: Credentials as Workflow Inputs
+## Example: Credentials as Workflow Inputs and saving to file
 
 ```json
 {
@@ -263,8 +262,13 @@ The instruction file could not be loaded from `~/.pflow/instructions/MCP-SANDBOX
     "api_token": {
       "type": "string",
       "required": true,
-      "description": "API authentication token (user provides)"
+      "description": "API authentication token"
     },
+    "api_url": {
+      "type": "string",
+      "required": true,
+      "description": "API URL to fetch data from"
+    }
   },
   "nodes": [
     {
@@ -274,17 +278,25 @@ The instruction file could not be loaded from `~/.pflow/instructions/MCP-SANDBOX
       "params": {
         "url": "${api_url}",
         "method": "GET",
-        "headers": {
-          "Authorization": "Bearer ${api_token}"
-        }
+        "auth_token": "${api_token}"
       }
-    }
+    },
+    {
+      "id": "save-to-file",
+      "type": "write-file",
+      "params": {
+        "file_path": "${output_file}",
+        "content": "${call-api.response.data}"
+      }
+    },
   ],
-  "edges": [],
+  "edges": [
+    {"from": "call-api", "to": "save-to-file"}
+  ],
   "outputs": {
-    "result": {
-      "source": "${call-api.response}",
-      "description": "API response"
+    "result-file-path": {
+      "source": "${save-to-file.file-path}",
+      "description": "Path to file where API response data was saved"
     }
   }
 }
@@ -292,15 +304,14 @@ The instruction file could not be loaded from `~/.pflow/instructions/MCP-SANDBOX
 
 **Run with**:
 ```bash
+# Avoid this
 pflow workflow.json api_token=YOUR_KEY_HERE api_url=https://api.example.com/data
+
+# If credentials are set as environment variables, use this (no api_token input required)
+pflow workflow.json api_url=https://api.example.com/data
 ```
 
-## Manual Setup
 
-If the file is missing:
-1. Check if instructions directory is accessible in your environment
-2. Contact your administrator to enable instruction access
-3. Use CLI commands above to work without instructions
 
 ## Troubleshooting
 

@@ -67,11 +67,10 @@ async def registry_list(
 ) -> str:
     """List available nodes, optionally filtered by pattern.
 
-    ⚠️ IMPORTANT:
-    - WITHOUT filter: Returns 100+ nodes grouped by package (overwhelming)
-    - WITH filter: Returns matching nodes sorted by relevance (useful)
-    - PREFER registry_discover: For first-time or "what can I use for X?" queries
-    - USE registry_list: When you know the node name pattern already
+    Use `registry_discover` when: Exploring capabilities ("nodes for JSON processing") or complex queries
+    Use `registry_list` when: Filtering by name ("all github nodes")
+
+    ⚠️ Without filter returns 100+ nodes (overwhelming). Always use filter or prefer `registry_discover`.
 
     Examples:
         # List all nodes (no parameters) ⚠️ Avoid this!!

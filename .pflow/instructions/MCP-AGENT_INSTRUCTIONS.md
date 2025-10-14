@@ -122,7 +122,7 @@ The user shows you ONE example. You build the GENERAL solution using dynamic inp
 ## 📚 Quick Task Index
 
 - **Building from natural language** → Start at [The Agent Development Loop](#the-agent-development-loop)
-- **Have existing workflow to modify** → Load it, then go to [Step 4: DESIGN](#4-design-5-minutes)
+- **Have existing workflow to modify** → See [Modifying Similar Workflows](#modifying-similar-workflows-70-95-match)
 - **Testing MCP tools** → See [MCP Meta-Discovery](#mcp-meta-discovery-do-this-first)
 - **Debugging template errors** → See [Understanding Template Errors](#understanding-template-errors)
 - **Authentication issues** → See [Authentication & Credentials](#authentication--credentials)
@@ -218,6 +218,20 @@ workflow_discover(query="user's request in natural language")
 - **Build new workflow** → Continue to Step 3 (discover nodes)
 
 **Output**: Clear decision on whether to execute existing, modify existing, or build new
+
+#### Modifying Similar Workflows (70-95% Match)
+
+**When you decide to modify an existing workflow:**
+
+# 1. Read the workflow from library
+Read: ~/.pflow/workflows/workflow-name.json
+
+# 2. Copy JSON, modify what's needed (nodes, params, inputs, outputs)
+# 3. Write to project workflows
+Write: .pflow/workflows/new-workflow-name.json
+
+# 4. Continue to Step 7 (validate)
+```
 
 ### 3. DISCOVER NODES (3 minutes)
 
@@ -508,6 +522,7 @@ Quick confirm - this matches what you need?"
     {
       "id": "fetch-messages",
       "type": "mcp-slack-fetch",
+      "purpose": "Fetch recent messages from the Slack channel",
       "params": {
         "channel": "${channel}",
         "limit": "${limit}"
@@ -516,6 +531,7 @@ Quick confirm - this matches what you need?"
     {
       "id": "analyze",
       "type": "llm",
+      "purpose": "Extract Q&A pairs from the messages",
       "params": {
         "prompt": "Extract Q&A pairs from: ${fetch-messages.result}"
       }
@@ -527,6 +543,7 @@ Quick confirm - this matches what you need?"
 **Per-node validation**:
 - [ ] ID is descriptive (not `node1`)
 - [ ] Type exists (verified with `pflow registry describe`)
+- [ ] Purpose clearly explains this node's role (optional but strongly recommended - Always include it)
 - [ ] Required params are set
 - [ ] Every `${variable}` is either input or previous node output
 
@@ -1019,6 +1036,7 @@ Ready to continue?"
     {
       "id": "unique-id",
       "type": "node-type",
+      "purpose": "Clear description of what this node does",
       "params": {
         "param1": "value",
         "param2": "${template}"
@@ -1048,6 +1066,7 @@ Ready to continue?"
 - Use `params` not `inputs` for node configuration
 - ID must be unique within workflow
 - Type must exist in registry
+- Purpose field is optional but strongly recommended for clarity (Always include it)
 
 #### Node Parameter Philosophy
 
@@ -2160,6 +2179,7 @@ Confirm?"
     {
       "id": "fetch-messages",
       "type": "mcp-slack-fetch",
+      "purpose": "Fetch recent messages from the specified Slack channel",
       "params": {
         "channel": "${channel}",
         "limit": "${limit}"
@@ -2168,6 +2188,7 @@ Confirm?"
     {
       "id": "extract-qa",
       "type": "llm",
+      "purpose": "Extract Q&A pairs from the messages using AI",
       "params": {
         "prompt": "Extract Q&A pairs from these Slack messages. Format as:\nQ: [question]\nA: [answer]\n\nMessages:\n${fetch-messages.result}"
       }
@@ -2175,6 +2196,7 @@ Confirm?"
     {
       "id": "log-to-sheets",
       "type": "mcp-sheets-append",
+      "purpose": "Log the extracted Q&A pairs to Google Sheets",
       "params": {
         "sheet_id": "${sheet_id}",
         "values": [

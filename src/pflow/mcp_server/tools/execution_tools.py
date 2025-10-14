@@ -30,7 +30,7 @@ async def workflow_execute(
     """Execute a workflow with natural language output.
 
     Built-in behaviors:
-    - Trace always saved to ~/.pflow/debug/
+    - Trace always saved to ~/.pflow/debug/workflow-trace-{name}-{timestamp}.json
     - Returns explicit errors with suggestions for fixing
 
     Examples:
@@ -161,11 +161,9 @@ async def workflow_save(
     By default, saving fails if a workflow with the same name exists.
     Use force=true to overwrite existing workflows.
 
-    Set generate_metadata=true to create rich metadata (keywords, capabilities,
-    typical use cases) which improves discovery ranking in workflow_discover.
-    This uses an LLM call and adds latency but significantly improves discoverability.
-    Use when: Workflow is likely to be reused
-    Skip when: Test workflow or one-off workflow
+    Set generate_metadata=true for better discoverability (uses LLM, adds latency).
+    Use when: Reusable workflows
+    Skip when: Tests or one-off workflows
 
     Examples:
         # Save workflow from file (minimal options) (Should be used by Non-Sandbox Agents)
@@ -214,24 +212,21 @@ async def registry_run(
         Field(description="Node-specific input parameters as key-value pairs"),
     ] = None,
 ) -> str:
-    """Execute a single node with REAL data and see actual output structure.
+    """Execute a single node with real data to discover its actual output structure.
 
-    ⚠️ WARNING: This EXECUTES the node with real side effects:
-    - shell nodes run actual commands
-    - write-file creates/modifies files
-    - http POST/PUT/DELETE modify remote data
-    - MCP tools may create/modify external resources
+    ⚠️ WARNING: This EXECUTES the node with real side effects.
 
-    Always ask user permission before testing nodes with side effects.
+    Safe to test: HTTP GET, read-file, data transforms
+    Ask user first: shell, write-file, HTTP POST/PUT/DELETE, MCP tools, git operations
 
-    Use registry_describe tool to see node documentation and parameter requirements FIRST before considering using this tool.
+    WHEN TO USE THIS TOOL:
+    - AFTER using registry_describe to understand node parameters
+    - BEFORE building workflows to discover available template variables
+    - Critical for HTTP/MCP nodes where output structure is "Any" in docs (pflow or external)
 
-    Use this BEFORE building workflows to understand what template variables
-    (like `${result.data.items[0].title}`) are available from a node.
-
-    Critical for MCP or HTTP nodes where documentation shows "Any" but actual
-    output is deeply nested. Returns formatted text with complete structure
-    showing all template paths available for workflow building.
+    This tool always shows the complete flattened output structure with all
+    available template paths (like `${result.data.items[0].title}`) for use
+    in workflow building.
 
     Examples:
         # Test HTTP GET (shows response structure for API calls)

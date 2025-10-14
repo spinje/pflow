@@ -14,14 +14,14 @@ mcp = FastMCP(
     instructions="""CRITICAL WORKFLOW - Follow these steps for every workflow request:
 
 1. ALWAYS run workflow_discover first to check if a suitable workflow already exists
-2. If 95%+ confidence match found → execute it directly using the workflow_execute tool (don't rebuild)
-3. If building new workflow → read the pflow://instructions resource FIRST before using other tools (this is not optional)
+2. If 95%+ confidence match found → execute it directly using the `workflow_execute` tool (don't rebuild)
+3. If building new workflow → read the `pflow://instructions` resource FIRST before using other tools (this is not optional)
 4. The instructions resource contains the complete 10-step development loop and best practices (REQUIRED FOR BUILDING OR MODIFYING WORKFLOWS)
 
 Note: If you are a sandboxed agent:
  - No pflow cli installed (check with `pflow --version` if you are unsure)
  - No shared access to the users system
- use the pflow://instructions/sandbox resource instead.
+ use the `pflow://instructions/sandbox` resource instead.
 
 This prevents duplicate workflows and ensures you follow established patterns.""",
 )

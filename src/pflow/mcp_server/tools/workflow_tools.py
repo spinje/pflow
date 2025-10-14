@@ -23,11 +23,11 @@ async def workflow_list(
 ) -> str:
     """List saved workflows, optionally filtered by pattern.
 
-    ⚠️ Avoid using without filter: Returns all saved workflows.
-    With filter: Returns matching workflows (searches name and description).
-    Multiple keywords: Space-separated keywords use AND logic (ALL must match).
+    Use `workflow_discover` when: Semantic search ("workflows that analyze PRs")
+    Use `workflow_list` when: Filtering by name ("workflows with 'github'")
 
-    ⚠️ For first-time discovery or complex queries, prefer workflow_discover (uses LLM for intelligent matching).
+    ⚠️ Without filter returns all workflows. Prefer workflow_discover for discovery, this for filtering.
+    Multiple keywords: Space-separated (AND logic - all must match).
 
     Examples:
         # List all workflows (no parameters)

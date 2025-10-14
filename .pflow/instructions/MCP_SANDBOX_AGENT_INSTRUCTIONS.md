@@ -508,6 +508,7 @@ Quick confirm - this matches what you need?"
     {
       "id": "fetch-messages",
       "type": "mcp-slack-fetch",
+      "purpose": "Fetch recent messages from the Slack channel",
       "params": {
         "channel": "${channel}",
         "limit": "${limit}"
@@ -516,6 +517,7 @@ Quick confirm - this matches what you need?"
     {
       "id": "analyze",
       "type": "llm",
+      "purpose": "Extract Q&A pairs from the messages",
       "params": {
         "prompt": "Extract Q&A pairs from: ${fetch-messages.result}"
       }
@@ -527,6 +529,7 @@ Quick confirm - this matches what you need?"
 **Per-node validation**:
 - [ ] ID is descriptive (not `node1`)
 - [ ] Type exists (verified with `pflow registry describe`)
+- [ ] Purpose clearly explains this node's role (optional but strongly recommended - Always include it)
 - [ ] Required params are set
 - [ ] Every `${variable}` is either input or previous node output
 
@@ -937,9 +940,14 @@ You're in a sandbox environment with limited filesystem access. You cannot set e
 - ❌ Hardcoded: Never hardcode secrets
 
 **User Configuration:**
-Users set environment variables on their own machines (e.g., `export GITHUB_TOKEN="ghp_..."`)
+Since you dont have access to the system where pflow executes, users must set environment variables on their own machines (e.g., `export `)
 
 Optional: Users can also use the `pflow settings set-env` cli command to set environment variables on the user's machine. This will add the key to the `~/.pflow/settings.json` file.
+
+Example to show user:
+```bash
+pflow settings set-env github_token="ghp_..."
+```
 
 **Precedence**: Explicit parameters > ENV > settings > defaults
 
@@ -961,7 +969,7 @@ Optional: Users can also use the `pflow settings set-env` cli command to set env
 ```json
 {
   "inputs": {
-    "api_token": {
+    "api_token": { // Can be set manually as input or automatically from environment variable
       "type": "string",
       "required": true,
       "description": "API token for external service"
@@ -1034,6 +1042,7 @@ Ready to continue?"
     {
       "id": "unique-id",
       "type": "node-type",
+      "purpose": "Clear description of what this node does",
       "params": {
         "param1": "value",
         "param2": "${template}"
@@ -1063,6 +1072,7 @@ Ready to continue?"
 - Use `params` not `inputs` for node configuration
 - ID must be unique within workflow
 - Type must exist in registry
+- Purpose field is optional but strongly recommended for clarity (Always include it)
 
 #### Node Parameter Philosophy
 

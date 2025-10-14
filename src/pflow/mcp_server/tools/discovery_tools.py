@@ -25,19 +25,19 @@ async def workflow_discover(
     """Find existing workflows matching a request.
 
     Run this BEFORE building new workflows to check if a suitable
-    workflow already exists. Uses LLM-powered intelligent matching
+    workflow already exists. Uses LLM-powered intelligent semantic matching
     to find workflows that match your requirements.
+
+    Only returns workflows with ≥70% confidence. Below this threshold, returns
+    "not found".
 
     IMPORTANT: Provide detailed, natural language descriptions similar to how
     an end user would describe their needs. Don't abbreviate or summarize.
 
-    Confidence guidance:
+    Confidence guidance (0-100% scale):
     - 95%+ match: Execute directly, don't rebuild
     - 70-95%: Review workflow, may need minor adjustments (ask user if they want to execute it or modify it)
     - <70%: Build new workflow using registry_discover
-
-    Note: Non-Sandboxed agents can inspect similar workflow in `~/.pflow/workflows/workflow-name.json` (copy json ir object and modify)
-    Sandboxed agents will have to begin building the workflow from scratch.
 
     Examples:
         # Detailed workflow request (pass user's full description)
@@ -47,7 +47,9 @@ async def workflow_discover(
         query="I want to fetch customer data from our REST API, filter out inactive users, format the results into a CSV file, and email it to the marketing team every morning"
 
     Returns:
-        Formatted markdown with workflow details, confidence scores, and reasoning
+        Formatted markdown with workflow name, confidence percentage (0-100%),
+        and match reasoning. If no match ≥70%, returns "not found" with
+        available workflows list and suggestions to build new.
     """
     logger.debug(f"workflow_discover called with query: {query}")
 
@@ -75,6 +77,12 @@ async def registry_discover(
     This tool uses LLM-powered analysis to select the best components
     for your task. Returns markdown formatted planning context with complete
     node specifications, interfaces, and everything needed to build a workflow.
+
+    RECOMMENDED DISCOVERY WORKFLOW:
+    1. Use `registry_discover` to find relevant nodes (this tool)
+    2. Use `registry_describe` to examine detailed node specifications
+    3. Use `registry_run` to test nodes with real data and discover output structure if unknown
+    4. Build workflow using known or discovered template paths (${node.output})
 
     IMPORTANT: Provide detailed descriptions of what needs to be accomplished.
     Describe the full workflow context, not just a single operation.
