@@ -159,7 +159,12 @@ class ExecutionResult:
 
 **Key Innovation**: Single `execute_workflow()` function where repair is just a boolean flag, not a separate code path.
 
-**Execution Flow with Repair Enabled** (default):
+**Default Execution Flow** (without `--auto-repair`):
+1. **Upfront Validation**: Quick validation before execution
+2. **Direct Execution**: Execute workflow immediately after validation
+3. **Fail Fast**: Return error on first failure (no repair attempts)
+
+**Execution Flow with Repair Enabled** (with `--auto-repair` flag):
 1. **Validation Phase**: Validate workflow, repair if needed
 2. **Execution Phase**: Execute workflow with checkpoint tracking
 3. **Repair Loop**: On failure, repair and resume from checkpoint
