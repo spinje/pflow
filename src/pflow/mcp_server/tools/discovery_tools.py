@@ -31,6 +31,14 @@ async def workflow_discover(
     IMPORTANT: Provide detailed, natural language descriptions similar to how
     an end user would describe their needs. Don't abbreviate or summarize.
 
+    Confidence guidance:
+    - 95%+ match: Execute directly, don't rebuild
+    - 70-95%: Review workflow, may need minor adjustments (ask user if they want to execute it or modify it)
+    - <70%: Build new workflow using registry_discover
+
+    Note: Non-Sandboxed agents can inspect similar workflow in `~/.pflow/workflows/workflow-name.json` (copy json ir object and modify)
+    Sandboxed agents will have to begin building the workflow from scratch.
+
     Examples:
         # Detailed workflow request (pass user's full description)
         query="I need to check our GitHub repository for new pull requests every hour, analyze the changes, generate a summary, and post it to our team's Slack channel"

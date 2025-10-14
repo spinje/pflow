@@ -29,11 +29,20 @@ async def registry_describe(
     - Usage examples
 
     Examples:
-        # Get detailed specs for specific nodes (returns parameters, outputs, and examples)
-        nodes=["node-type-1", "node-type-2"]
+        # Describe a single core node
+        nodes=["read-file"]
+
+        # Describe multiple nodes to compare interfaces
+        nodes=["http", "shell", "llm"]
+
+        # Describe MCP tool using full ID
+        nodes=["mcp-slack-mcp-server-SLACK_SEND_MESSAGE"]
 
     Returns:
-        Formatted text description of each node with complete specifications
+        Formatted text description showing for each node:
+        - Input interface (parameters with types, requirements, defaults)
+        - Output interface (keys available for templates like ${result.data})
+        - Usage examples with typical parameter values
     """
     logger.debug(f"registry_describe called with {len(nodes)} nodes")
 
@@ -50,61 +59,58 @@ async def registry_describe(
 
 
 @mcp.tool()
-async def registry_search(
-    pattern: str = Field(..., description="Search term to match against node IDs and descriptions (case-insensitive)"),
+async def registry_list(
+    filter_pattern: str | None = Field(
+        None,
+        description="Optional filter pattern. Single keyword or space-separated keywords (AND logic). Examples: 'github' or 'github api'",
+    ),
 ) -> str:
-    """Search for nodes by pattern.
+    """List available nodes, optionally filtered by pattern.
 
-    Use this when you know what type of node you're looking for.
-    Searches across node IDs and descriptions.
+    ⚠️ IMPORTANT:
+    - WITHOUT filter: Returns 100+ nodes grouped by package (overwhelming)
+    - WITH filter: Returns matching nodes sorted by relevance (useful)
+    - PREFER registry_discover: For first-time or "what can I use for X?" queries
+    - USE registry_list: When you know the node name pattern already
 
     Examples:
-        # Search for nodes (returns matching nodes in table format)
-        pattern="keyword"
+        # List all nodes (no parameters) ⚠️ Avoid this!!
+        <invoke with no parameters>
+
+        # Filter by single keyword (returns matching nodes sorted by relevance)
+        filter_pattern="llm"      # Finds llm node
+        filter_pattern="github"    # Finds github-create-pr, github-list-repos, etc.
+        filter_pattern="slack"     # Finds Slack MCP tools
+
+        # Multi-keyword filter (returns nodes matching ALL keywords via AND logic)
+        filter_pattern="github api"   # Must match BOTH "github" AND "api"
+        filter_pattern="slack send"   # Must match BOTH "slack" AND "send"
 
     Returns:
-        Formatted table with matching nodes
+        Formatted text listing of nodes:
+        - No filter: Grouped by package with counts
+        - With filter: Relevance-sorted list with descriptions
+
+        Example output (filtered):
+        ```
+        Found 3 nodes matching 'github api':
+          github-create-pr          Create pull requests via API
+          github-create-issue       Create issues via API
+          github-get-file           Get file contents using API
+        ```
     """
-    logger.debug(f"registry_search called with pattern: {pattern}")
-
-    def _sync_search() -> str:
-        """Synchronous search operation."""
-        result: str = RegistryService.search_nodes(pattern)
-        return result
-
-    # Run in thread pool
-    result = await asyncio.to_thread(_sync_search)
-
-    logger.info(f"registry_search returned formatted results for: {pattern}")
-    return result
-
-
-@mcp.tool()
-async def registry_list() -> str:
-    """List all available nodes grouped by package.
-
-    ⚠️ Use this as a LAST RESORT only. Prefer:
-    - registry_discover: For complex queries and intelligent node selection
-    - registry_search: When you know what type of node you need
-
-    This tool returns ALL nodes which can be overwhelming.
-    Only use ONLY when you need to browse the complete catalog.
-
-    Returns:
-        All registered nodes grouped by package (Core, MCP, User) with summary counts
-
-    Example:
-        Returns complete node catalog - use sparingly
-    """
-    logger.debug("registry_list called")
+    logger.debug(f"registry_list called with filter: {filter_pattern}")
 
     def _sync_list() -> str:
         """Synchronous list operation."""
-        result: str = RegistryService.list_all_nodes()
+        result: str = RegistryService.list_all_nodes(filter_pattern)
         return result
 
     # Run in thread pool
     result = await asyncio.to_thread(_sync_list)
 
-    logger.info("registry_list returned formatted node listing")
+    if filter_pattern:
+        logger.info(f"registry_list returned filtered results for: {filter_pattern}")
+    else:
+        logger.info("registry_list returned complete node listing")
     return result

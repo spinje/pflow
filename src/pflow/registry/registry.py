@@ -341,45 +341,95 @@ class Registry:
         return nodes
 
     def search(self, query: str) -> list[tuple[str, dict[str, Any], int]]:
-        """Simple substring search with scoring.
+        """Search with multi-keyword support (AND logic).
+
+        Supports single or multiple space-separated keywords. All keywords must match
+        for a node to be included. Scores are averaged across keywords.
+
+        Examples:
+            search("github")      → Single keyword
+            search("github api")  → Both "github" AND "api" must match
 
         Args:
-            query: Search string
+            query: Single keyword or space-separated keywords
 
         Returns:
-            List of (name, metadata, score) tuples, sorted by score descending
+            List of (name, metadata, avg_score) tuples, sorted by score descending
         """
-        if not query:
+        if not query or not query.strip():
             return []
 
-        query_lower = query.lower()
+        # Split into keywords (space-separated)
+        keywords = [k.strip().lower() for k in query.split() if k.strip()]
+        if not keywords:
+            return []
+
         results = []
         nodes = self.load()  # Uses filtered nodes by default
 
         for name, metadata in nodes.items():
-            name_lower = name.lower()
+            # Try to match all keywords against this node
+            keyword_scores = self._score_node_against_keywords(name, metadata, keywords)
 
-            # Get description from interface
-            interface = metadata.get("interface", {})
-            desc_lower = interface.get("description", "").lower()
-
-            # Simple scoring
-            score = 0
-            if name_lower == query_lower:
-                score = 100  # Exact match
-            elif name_lower.startswith(query_lower):
-                score = 90  # Prefix match
-            elif query_lower in name_lower:
-                score = 70  # Name contains
-            elif query_lower in desc_lower:
-                score = 50  # Description contains
-
-            if score > 0:
-                results.append((name, metadata, score))
+            # Only include if ALL keywords matched
+            if len(keyword_scores) == len(keywords):
+                avg_score = sum(keyword_scores) // len(keyword_scores)
+                results.append((name, metadata, avg_score))
 
         # Sort by score desc, then name
         results.sort(key=lambda x: (-x[2], x[0]))
         return results
+
+    def _score_node_against_keywords(self, name: str, metadata: dict[str, Any], keywords: list[str]) -> list[int]:
+        """Score a node against multiple keywords (AND logic).
+
+        Args:
+            name: Node name
+            metadata: Node metadata
+            keywords: List of keywords to match (lowercase)
+
+        Returns:
+            List of scores (one per keyword). If any keyword doesn't match,
+            returns incomplete list (for AND logic check).
+        """
+        name_lower = name.lower()
+
+        # Get description from interface
+        interface = metadata.get("interface", {})
+        desc_lower = interface.get("description", "").lower()
+
+        keyword_scores = []
+        for keyword in keywords:
+            score = self._calculate_keyword_score(keyword, name_lower, desc_lower)
+
+            if score == 0:
+                # This keyword doesn't match - skip node entirely (AND logic)
+                break
+
+            keyword_scores.append(score)
+
+        return keyword_scores
+
+    def _calculate_keyword_score(self, keyword: str, name_lower: str, desc_lower: str) -> int:
+        """Calculate match score for a single keyword.
+
+        Args:
+            keyword: Keyword to match (lowercase)
+            name_lower: Node name (lowercase)
+            desc_lower: Node description (lowercase)
+
+        Returns:
+            Score: 100 (exact), 90 (prefix), 70 (name contains), 50 (desc contains), 0 (no match)
+        """
+        if name_lower == keyword:
+            return 100  # Exact match
+        elif name_lower.startswith(keyword):
+            return 90  # Prefix match
+        elif keyword in name_lower:
+            return 70  # Name contains
+        elif keyword in desc_lower:
+            return 50  # Description contains
+        return 0  # No match
 
     def scan_user_nodes(self, path: Path) -> list[dict[str, Any]]:
         """Scan for user nodes with validation.

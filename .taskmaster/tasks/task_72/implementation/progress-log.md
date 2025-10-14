@@ -1513,6 +1513,65 @@ def test_extract_runtime_paths_with_mcp_json_strings(self):
 
 ---
 
+## 2025-10-13 - API Consolidation: Registry List/Search Unified
+
+**Context**: Agent testing revealed inconsistent patterns - workflow used integrated filtering, registry required separate search command.
+
+**Problem Identified**:
+- `workflow list [FILTER]` - Single command, optional filter ✅
+- `registry list` + `registry search QUERY` - Two commands, confusing ❌
+- Neither supported multi-keyword queries
+
+**Implementation** (178 insertions, 182 deletions = net -4 lines):
+
+1. **Enhanced Registry.search() with multi-keyword support**:
+   - Space-separated keywords use AND logic (all must match)
+   - Score averaging: `(keyword1_score + keyword2_score) / 2`
+   - Backward compatible: single keyword unchanged
+   - Example: `"github api"` requires BOTH terms to match
+
+2. **Consolidated CLI commands**:
+   - Removed `pflow registry search` command (51 lines deleted)
+   - Enhanced `pflow registry list [FILTER]` with optional filter
+   - Filter uses search internally (relevance-sorted results)
+   - No filter = grouped view (backward compatible)
+
+3. **Unified MCP tools**:
+   - Removed `registry_search` tool
+   - Enhanced `registry_list(filter_pattern=None)` tool
+   - Perfect parity with CLI behavior
+
+**Critical Design Choice: Average vs Sum**
+
+```python
+# WHY average scoring works:
+# Node: "github-api-client"
+# Query: "github api"
+# - "github" matches as prefix → 90 points
+# - "api" matches in name → 70 points
+# Average: (90 + 70) / 2 = 80 points
+#
+# If we used sum: 90 + 70 = 160 points
+# Problem: Multi-keyword searches would score higher than single-keyword
+# (breaks comparison across query types)
+```
+
+**Test Coverage**:
+- 3 essential multi-keyword tests in `test_registry_search.py`
+- Updated 6 CLI tests from `search` → `list` with filter
+- All 3000+ tests passing, zero regressions
+
+**Impact**:
+- ✅ Consistent API pattern (workflow and registry both use list+filter)
+- ✅ Multi-keyword support enables complex queries: `"github api"`, `"slack send"`
+- ✅ Reduced tool count (13 tools vs 14)
+- ✅ Simpler mental model for agents (one way to list/filter)
+- ✅ Zero breaking changes (filter=None maintains current behavior)
+
+**MCP Tool Count**: 13 production tools (registry_search removed)
+
+---
+
 ## 2025-10-13 - Server Instructions & Resource Metadata for Agent Guidance
 
 **Context**: Added multi-layer reinforcement to guide agents toward discovery-first workflow and reading instructions before building.

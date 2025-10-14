@@ -29,22 +29,20 @@ async def workflow_execute(
 ) -> str:
     """Execute a workflow with natural language output.
 
-    Built-in behaviors (no flags needed):
-    - Text output format (LLMs parse natural language better than JSON)
-    - No auto-repair (returns explicit errors for agent handling)
-    - Trace saved to ~/.pflow/debug/
-    - Auto-normalization (adds ir_version, edges if missing)
+    Built-in behaviors:
+    - Trace always saved to ~/.pflow/debug/
+    - Returns explicit errors with suggestions for fixing
 
     Examples:
         # Execute saved workflow by name
         workflow="my-workflow"
         parameters={"input1": "value1", "input2": 123}
 
-        # Execute workflow from file
-        workflow="./workflows/analysis.json"
+        # Execute workflow from file (Should be used by Non-Sandbox Agents)
+        workflow="./workflows/my-workflow.json"
         parameters={...}
 
-        # Execute inline workflow IR (useful for testing or one-off workflows)
+        # Execute inline workflow IR (Should be used by Sandbox Agents)
         workflow={
             "inputs": {...},
             "nodes": [...],
@@ -83,7 +81,7 @@ async def workflow_validate(
         Field(description="Workflow name from library, path to workflow file, or workflow IR object"),
     ],
 ) -> str:
-    """Validate workflow structure without execution.
+    """Static validation of workflow structure without execution.
 
     Checks:
     - Schema compliance (JSON structure, required fields)
@@ -95,15 +93,16 @@ async def workflow_validate(
     - Runtime values
     - API credentials
     - File existence
+    - ANY runtime issues
 
     Examples:
         # Validate saved workflow (returns validation errors if any)
         workflow="my-workflow"
 
-        # Validate workflow file
+        # Validate workflow file (Should be used by Non-Sandbox Agents)
         workflow="./workflow.json"
 
-        # Validate inline workflow IR
+        # Validate inline workflow IR (Should be used by Sandbox Agents)
         workflow={
             "inputs": {...},
             "nodes": [...],
@@ -112,7 +111,7 @@ async def workflow_validate(
         }
 
     Returns:
-        Formatted text with validation results
+        Formatted text with validation results and suggestions for fixing
         Success: "✓ Workflow is valid"
         Failure: "✗ Static validation failed:\n  • Error 1\n  • Error 2\n\nSuggestions:\n  • Fix 1"
     """
@@ -141,7 +140,7 @@ async def workflow_save(
         Field(
             description=(
                 "Workflow to save. Can be:\n"
-                "  - Path to workflow JSON file: './my-workflow.json'\n"
+                "  - Path to workflow JSON file: '.pflow/workflows/my-workflow.json'\n"
                 '  - Workflow IR object: {"nodes": [...], "edges": [...], "inputs": {...}, "outputs": {...}}'
             )
         ),
@@ -151,7 +150,7 @@ async def workflow_save(
     force: bool = Field(False, description="Whether to overwrite existing workflow with same name"),
     generate_metadata: bool = Field(
         False,
-        description="Whether to generate AI-powered metadata for better discovery (adds ~10s latency and LLM cost)",
+        description="Whether to generate AI-powered metadata for better discovery",
     ),
 ) -> str:
     """Save workflow to global library for reuse.
@@ -165,16 +164,18 @@ async def workflow_save(
     Set generate_metadata=true to create rich metadata (keywords, capabilities,
     typical use cases) which improves discovery ranking in workflow_discover.
     This uses an LLM call and adds latency but significantly improves discoverability.
+    Use when: Workflow is likely to be reused
+    Skip when: Test workflow or one-off workflow
 
     Examples:
-        # Save workflow from file (minimal options)
+        # Save workflow from file (minimal options) (Should be used by Non-Sandbox Agents)
         workflow="./path/to/workflow.json"
         name="my-workflow"
         description="Brief description of what workflow does"
         force=False
         generate_metadata=False
 
-        # Save inline workflow with all options
+        # Save inline workflow with all options (Should be used by Sandbox Agents)
         workflow={
             "inputs": {...},
             "nodes": [...],
@@ -213,25 +214,45 @@ async def registry_run(
         Field(description="Node-specific input parameters as key-value pairs"),
     ] = None,
 ) -> str:
-    """Test a node to discover its actual output structure.
+    """Execute a single node with REAL data and see actual output structure.
+
+    ⚠️ WARNING: This EXECUTES the node with real side effects:
+    - shell nodes run actual commands
+    - write-file creates/modifies files
+    - http POST/PUT/DELETE modify remote data
+    - MCP tools may create/modify external resources
+
+    Always ask user permission before testing nodes with side effects.
+
+    Use registry_describe tool to see node documentation and parameter requirements FIRST before considering using this tool.
 
     Use this BEFORE building workflows to understand what template variables
-    (like ${result.data.items[0].title}) are available from a node.
+    (like `${result.data.items[0].title}`) are available from a node.
 
     Critical for MCP or HTTP nodes where documentation shows "Any" but actual
     output is deeply nested. Returns formatted text with complete structure
     showing all template paths available for workflow building.
 
     Examples:
-        # Test core node (shows output structure with available template paths)
-        node_type="node-type"
-        parameters={"param1": "value1"}
+        # Test HTTP GET (shows response structure for API calls)
+        node_type="http"
+        parameters={"url": "https://api.github.com/repos/owner/repo",
+            "method": "GET",
+            "headers": {"X-API-Key": "your_api_key", "X-Custom-Header": "value"}
+        }
+
+        # Test HTTP POST with JSON body (shows request/response structure)
+        node_type="http"
+        parameters={"url": "https://api.example.com/endpoint",
+            "method": "POST",
+            "body": {"key": "value", "data": [1, 2, 3]},
+            "auth_token": "your_bearer_token"
+        }
 
         # Test MCP node to discover nested output structure
-        node_type="mcp-server-name-tool-name"
-        parameters={
-            "param1": "value1",
-            "param2": "value2"
+        node_type="mcp-slack-mcp-server-SLACK_SEND_MESSAGE"
+        parameters={"channel": "The channel id",
+            "markdown_text": "Your message here"
         }
 
     Returns:

@@ -17,22 +17,29 @@ logger = logging.getLogger(__name__)
 @mcp.tool()
 async def workflow_list(
     filter_pattern: str | None = Field(
-        None, description="Optional search term to filter workflows by name or description"
+        None,
+        description="Optional filter pattern. Single keyword or space-separated keywords (AND logic). Searches name and description.",
     ),
 ) -> str:
-    """List saved workflows.
+    """List saved workflows, optionally filtered by pattern.
 
-    Returns formatted workflow list showing:
-    - Workflow names
-    - Descriptions
-    - Total count
+    ⚠️ Avoid using without filter: Returns all saved workflows.
+    With filter: Returns matching workflows (searches name and description).
+    Multiple keywords: Space-separated keywords use AND logic (ALL must match).
+
+    ⚠️ For first-time discovery or complex queries, prefer workflow_discover (uses LLM for intelligent matching).
 
     Examples:
-        # List all workflows (returns complete workflow library)
-        filter_pattern=None
+        # List all workflows (no parameters)
+        <invoke with no parameters>
 
-        # Filter by pattern (returns only matching workflows)
-        filter_pattern="keyword"
+        # Filter by single keyword
+        filter_pattern="github"    # Shows github-pr-analyzer, etc.
+        filter_pattern="slack"     # Shows slack-notification, etc.
+
+        # Multi-keyword filter (ALL keywords must match)
+        filter_pattern="github pr"    # Must match BOTH "github" AND "pr"
+        filter_pattern="slack send"   # Must match BOTH "slack" AND "send"
 
     Returns:
         Formatted markdown with workflow list
@@ -63,18 +70,20 @@ async def workflow_describe(
     - Output values (with descriptions)
     - Example usage command
 
-    This is essential for understanding how to execute a workflow
-    before calling workflow_execute.
+    ⚠️ ESSENTIAL: Call this BEFORE workflow_execute to understand what parameters are needed.
 
     Examples:
-        # Get workflow interface (returns inputs, outputs, and usage info)
-        name="workflow-name"
+        # Check what parameters a workflow needs before execution
+        name="github-pr-analyzer"
+        # Returns: inputs, outputs, full description and example usage
+
 
     Returns:
         Formatted markdown with complete interface specification
+        ```
 
     Raises:
-        ValueError: If workflow not found (includes suggestions)
+        ValueError: If workflow not found (includes similar workflow suggestions)
     """
     logger.debug(f"workflow_describe called for: {name}")
 

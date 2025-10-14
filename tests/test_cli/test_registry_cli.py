@@ -183,18 +183,18 @@ def test_describe_missing_node_with_suggestions(runner, mock_registry):
     assert "read-file" in result.output
 
 
-# --- Criteria 5-9: Search functionality ---
+# --- Criteria 5-9: List with filter functionality (formerly search) ---
 def test_search_file_returns_file_nodes(runner, mock_registry):
-    """Test that search 'file' returns read-file and write-file nodes."""
+    """Test that list 'file' returns read-file and write-file nodes."""
     MockRegistry, instance = mock_registry
 
-    # Mock search results
+    # Mock search results (list with filter uses search internally)
     instance.search.return_value = [
         ("read-file", instance.load.return_value["read-file"], 70),
         ("write-file", instance.load.return_value["write-file"], 70),
     ]
 
-    result = runner.invoke(registry, ["search", "file"])
+    result = runner.invoke(registry, ["list", "file"])
 
     assert result.exit_code == 0
     assert "read-file" in result.output
@@ -210,7 +210,7 @@ def test_search_exact_match_scores_100(runner, mock_registry):
         ("read-file", instance.load.return_value["read-file"], 100),
     ]
 
-    result = runner.invoke(registry, ["search", "read-file"])
+    result = runner.invoke(registry, ["list", "read-file"])
 
     assert result.exit_code == 0
     assert "read-file" in result.output
@@ -225,7 +225,7 @@ def test_search_prefix_scores_90(runner, mock_registry):
         ("read-file", instance.load.return_value["read-file"], 90),
     ]
 
-    result = runner.invoke(registry, ["search", "read"])
+    result = runner.invoke(registry, ["list", "read"])
 
     assert result.exit_code == 0
     assert "read-file" in result.output
@@ -240,7 +240,7 @@ def test_search_substring_scores_70(runner, mock_registry):
         ("read-file", instance.load.return_value["read-file"], 70),
     ]
 
-    result = runner.invoke(registry, ["search", "ead"])
+    result = runner.invoke(registry, ["list", "ead"])
 
     assert result.exit_code == 0
     assert "read-file" in result.output
@@ -255,7 +255,7 @@ def test_search_description_scores_50(runner, mock_registry):
         ("write-file", instance.load.return_value["write-file"], 50),
     ]
 
-    result = runner.invoke(registry, ["search", "content"])
+    result = runner.invoke(registry, ["list", "content"])
 
     assert result.exit_code == 0
     assert "write-file" in result.output
@@ -263,7 +263,7 @@ def test_search_description_scores_50(runner, mock_registry):
 
 
 def test_search_json_output(runner, mock_registry):
-    """Test that search --json outputs valid JSON."""
+    """Test that list with filter --json outputs valid JSON."""
     MockRegistry, instance = mock_registry
 
     instance.search.return_value = [
@@ -271,7 +271,7 @@ def test_search_json_output(runner, mock_registry):
         ("write-file", instance.load.return_value["write-file"], 70),
     ]
 
-    result = runner.invoke(registry, ["search", "file", "--json"])
+    result = runner.invoke(registry, ["list", "file", "--json"])
 
     assert result.exit_code == 0
 
@@ -291,12 +291,12 @@ def test_search_json_output(runner, mock_registry):
 
 
 def test_search_no_results(runner, mock_registry):
-    """Test search with no results."""
+    """Test list with filter with no results."""
     MockRegistry, instance = mock_registry
 
     instance.search.return_value = []
 
-    result = runner.invoke(registry, ["search", "xyz123"])
+    result = runner.invoke(registry, ["list", "xyz123"])
 
     assert result.exit_code == 0
     assert "No nodes found matching 'xyz123'" in result.output
@@ -620,15 +620,15 @@ def test_describe_json_output(runner, mock_registry):
 
 
 def test_search_error_handling(runner, mock_registry):
-    """Test search command error handling."""
+    """Test list with filter error handling."""
     MockRegistry, instance = mock_registry
 
     instance.search.side_effect = Exception("Search failed")
 
-    result = runner.invoke(registry, ["search", "test"])
+    result = runner.invoke(registry, ["list", "test"])
 
     assert result.exit_code == 1
-    assert "Error: Failed to search: Search failed" in result.output
+    assert "Error: Failed to list nodes: Search failed" in result.output
 
 
 def test_scan_invalid_nodes(runner, mock_registry):
@@ -1054,7 +1054,7 @@ def test_scan_confirmation_y_adds_nodes(runner, mock_registry):
 
 
 def test_search_truncates_long_results(runner, mock_registry):
-    """Test that search truncates display for many results."""
+    """Test that list with filter truncates display for many results."""
     MockRegistry, instance = mock_registry
 
     # Create many search results
@@ -1065,7 +1065,7 @@ def test_search_truncates_long_results(runner, mock_registry):
 
     instance.search.return_value = results
 
-    result = runner.invoke(registry, ["search", "node"])
+    result = runner.invoke(registry, ["list", "node"])
 
     assert result.exit_code == 0
     assert "node-0" in result.output
@@ -1082,5 +1082,5 @@ def test_registry_cli_group_help(runner):
     assert "Manage the pflow node registry" in result.output
     assert "list" in result.output
     assert "describe" in result.output
-    assert "search" in result.output
     assert "scan" in result.output
+    # Note: "search" command was removed - filtering integrated into list

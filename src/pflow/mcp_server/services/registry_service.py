@@ -62,63 +62,53 @@ class RegistryService(BaseService):
 
     @classmethod
     @ensure_stateless
-    def search_nodes(cls, pattern: str) -> str:
-        """Search for nodes by pattern.
+    def list_all_nodes(cls, filter_pattern: str | None = None) -> str:
+        """List available nodes, optionally filtered by pattern.
 
-        Returns formatted text table (CLI parity) instead of raw JSON.
-        Uses same search algorithm as CLI for consistent ordering and scoring.
+        Without filter: Returns all nodes grouped by package.
+        With filter: Returns matching nodes sorted by relevance.
 
         Args:
-            pattern: Search pattern
+            filter_pattern: Optional filter pattern (space-separated keywords use AND logic)
 
         Returns:
-            Formatted markdown string with search results
+            Formatted markdown string with nodes (grouped or filtered)
         """
         registry = Registry()  # Fresh instance
 
-        # Use Registry's search method (same as CLI) for consistency
-        results = registry.search(pattern)
+        # If filter provided, use search (relevance-sorted)
+        if filter_pattern:
+            results = registry.search(filter_pattern)
 
-        # Transform results for shared formatter
-        # Registry.search returns: list of (name, data, score) tuples
-        matches = []
-        for name, data, score in results:
-            # Determine match type from score (same logic as CLI)
-            if score == 100:
-                match_type = "exact"
-            elif score == 90:
-                match_type = "prefix"
-            elif score >= 70:
-                match_type = "node_id"
-            else:
-                match_type = "description"
+            # Transform results for shared formatter (same as CLI)
+            matches = []
+            for name, data, score in results:
+                # Determine match type from score (same logic as CLI)
+                if score == 100:
+                    match_type = "exact"
+                elif score == 90:
+                    match_type = "prefix"
+                elif score >= 70:
+                    match_type = "node_id"
+                else:
+                    match_type = "description"
 
-            matches.append({
-                "node_id": name,
-                "description": data.get("interface", {}).get("description", ""),
-                "match_type": match_type,
-                "metadata": data,
-            })
+                matches.append({
+                    "node_id": name,
+                    "description": data.get("interface", {}).get("description", ""),
+                    "match_type": match_type,
+                    "metadata": data,
+                })
 
-        # Format using shared formatter (CLI's text mode)
-        from pflow.execution.formatters.registry_search_formatter import format_search_results
+            # Format using shared search formatter
+            from pflow.execution.formatters.registry_search_formatter import format_search_results
 
-        return format_search_results(pattern, matches)
+            return format_search_results(filter_pattern, matches)
+        else:
+            # No filter - show all grouped by package (current behavior)
+            nodes_data = registry.load()
 
-    @classmethod
-    @ensure_stateless
-    def list_all_nodes(cls) -> str:
-        """List all available nodes.
+            # Format using shared list formatter
+            from pflow.execution.formatters.registry_list_formatter import format_registry_list
 
-        Returns formatted markdown text (CLI parity) instead of raw JSON.
-
-        Returns:
-            Formatted markdown string with nodes grouped by package
-        """
-        registry = Registry()  # Fresh instance
-        nodes_data = registry.load()
-
-        # Format using shared formatter (CLI's text mode)
-        from pflow.execution.formatters.registry_list_formatter import format_registry_list
-
-        return format_registry_list(nodes_data)
+            return format_registry_list(nodes_data)

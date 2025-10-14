@@ -200,9 +200,20 @@ def _output_json_nodes(nodes: dict) -> None:
 
 
 @registry.command(name="list")
+@click.argument("filter_pattern", required=False)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def list_nodes(output_json: bool) -> None:
-    """List all registered nodes."""
+def list_nodes(filter_pattern: str | None, output_json: bool) -> None:
+    """List registered nodes, optionally filtered by pattern.
+
+    Without pattern: Shows all nodes grouped by package.
+    With pattern: Shows matching nodes sorted by relevance.
+    Multiple keywords: Space-separated keywords use AND logic.
+
+    Examples:
+        pflow registry list                 # All nodes
+        pflow registry list github          # Nodes matching 'github'
+        pflow registry list github api      # Nodes matching 'github' AND 'api'
+    """
     reg = Registry()
 
     try:
@@ -212,15 +223,50 @@ def list_nodes(output_json: bool) -> None:
         if first_time and not output_json:
             click.echo("[Auto-discovering core nodes...]")
 
-        # Load nodes (filtered by default)
-        nodes = reg.load()
+        # If filter provided, use search (relevance-sorted)
+        if filter_pattern:
+            results = reg.search(filter_pattern)
 
-        if output_json:
-            _output_json_nodes(nodes)
+            if output_json:
+                # Format as JSON with scores
+                output = {
+                    "query": filter_pattern,
+                    "results": [
+                        {
+                            "name": name,
+                            "type": _get_node_type(name, data),
+                            "score": score,
+                            "description": data.get("interface", {}).get("description", ""),
+                        }
+                        for name, data, score in results
+                    ],
+                }
+                click.echo(json.dumps(output, indent=2))
+            else:
+                # Transform for shared formatter
+                matches = [
+                    {
+                        "node_id": name,
+                        "description": data.get("interface", {}).get("description", ""),
+                        "match_type": _get_match_type_from_score(score),
+                        "metadata": data,
+                    }
+                    for name, data, score in results
+                ]
+
+                # Use shared search formatter
+                result = format_search_results(filter_pattern, matches)
+                click.echo(result)
         else:
-            # Use shared formatter for CLI parity with MCP
-            result = format_registry_list(nodes)
-            click.echo(result)
+            # No filter - show all grouped by package (current behavior)
+            nodes = reg.load()
+
+            if output_json:
+                _output_json_nodes(nodes)
+            else:
+                # Use shared formatter for CLI parity with MCP
+                result = format_registry_list(nodes)
+                click.echo(result)
 
     except Exception as e:
         click.echo(f"Error: Failed to list nodes: {e}", err=True)
@@ -485,51 +531,6 @@ def _handle_scan_error(e: Exception, output_json: bool) -> None:
     else:
         click.echo(f"Error: Failed to scan: {e}", err=True)
     sys.exit(1)
-
-
-@registry.command(name="search")
-@click.argument("query")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def search(query: str, output_json: bool) -> None:
-    """Search for nodes by name or description."""
-    reg = Registry()
-
-    try:
-        results = reg.search(query)
-
-        if output_json:
-            output = {
-                "query": query,
-                "results": [
-                    {
-                        "name": name,
-                        "type": _get_node_type(name, data),
-                        "score": score,
-                        "description": data.get("interface", {}).get("description", ""),
-                    }
-                    for name, data, score in results
-                ],
-            }
-            click.echo(json.dumps(output, indent=2))
-        else:
-            # Transform results for shared formatter
-            matches = [
-                {
-                    "node_id": name,
-                    "description": data.get("interface", {}).get("description", ""),
-                    "match_type": _get_match_type_from_score(score),
-                    "metadata": data,
-                }
-                for name, data, score in results
-            ]
-
-            # Format and display using shared formatter
-            result = format_search_results(query, matches)
-            click.echo(result)
-
-    except Exception as e:
-        click.echo(f"Error: Failed to search: {e}", err=True)
-        sys.exit(1)
 
 
 @registry.command(name="scan")
