@@ -2,7 +2,6 @@
 
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
 import click
@@ -17,30 +16,35 @@ def workflow() -> None:
 
 
 @workflow.command(name="list")
+@click.argument("filter_pattern", required=False)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def list_workflows(output_json: bool) -> None:
-    """List all saved workflows."""
+def list_workflows(filter_pattern: str | None, output_json: bool) -> None:
+    """List all saved workflows.
+
+    Optionally filter by name or description:
+        pflow workflow list github    # Show workflows matching "github"
+        pflow workflow list            # Show all workflows
+    """
     wm = WorkflowManager()
     workflows = wm.list_all()
 
-    if not workflows:
-        click.echo("No workflows saved yet.\n")
-        click.echo("To save a workflow:")
-        click.echo('  1. Create one: pflow "your task"')
-        click.echo("  2. Choose to save when prompted")
-        return
+    # Apply filter if provided
+    if filter_pattern:
+        pattern_lower = filter_pattern.lower()
+        workflows = [
+            w
+            for w in workflows
+            if pattern_lower in w.get("name", "").lower() or pattern_lower in w.get("description", "").lower()
+        ]
 
     if output_json:
         click.echo(json.dumps(workflows, indent=2))
     else:
-        click.echo("Saved Workflows:")
-        click.echo("─" * 40)
-        for wf in workflows:
-            name = wf["name"]
-            desc = wf.get("description", "No description")
-            click.echo(f"\n{name}")
-            click.echo(f"  {desc}")
-        click.echo(f"\nTotal: {len(workflows)} workflows")
+        # Use shared formatter (same as MCP)
+        from pflow.execution.formatters.workflow_list_formatter import format_workflow_list
+
+        formatted = format_workflow_list(workflows)
+        click.echo(formatted)
 
 
 def _handle_workflow_not_found(name: str, wm: WorkflowManager) -> None:
@@ -56,54 +60,6 @@ def _handle_workflow_not_found(name: str, wm: WorkflowManager) -> None:
     sys.exit(1)
 
 
-def _display_inputs(ir: dict[str, Any]) -> None:
-    """Display workflow inputs."""
-    if not ir.get("inputs"):
-        click.echo("\nInputs: None")
-        return
-
-    click.echo("\nInputs:")
-    for input_name, config in ir["inputs"].items():
-        required = config.get("required", True)
-        req_text = "required" if required else "optional"
-        desc = config.get("description", "")
-        default = config.get("default")
-
-        click.echo(f"  - {input_name} ({req_text}): {desc}")
-        if default is not None:
-            click.echo(f"    Default: {default}")
-
-
-def _display_outputs(ir: dict[str, Any]) -> None:
-    """Display workflow outputs."""
-    if not ir.get("outputs"):
-        click.echo("\nOutputs: None")
-        return
-
-    click.echo("\nOutputs:")
-    for output_name, config in ir["outputs"].items():
-        desc = config.get("description", "")
-        click.echo(f"  - {output_name}: {desc}")
-
-
-def _display_example_usage(name: str, ir: dict[str, Any]) -> None:
-    """Display example usage for the workflow."""
-    click.echo("\nExample Usage:")
-
-    # Collect required parameters
-    example_params = []
-    if "inputs" in ir:
-        for input_name, config in ir["inputs"].items():
-            if config.get("required", True):
-                example_params.append(f"{input_name}=<value>")
-
-    # Show the example command
-    command = f"  pflow {name}"
-    if example_params:
-        command += f" {' '.join(example_params)}"
-    click.echo(command)
-
-
 @workflow.command(name="describe")
 @click.argument("name")
 def describe_workflow(name: str) -> None:
@@ -116,16 +72,12 @@ def describe_workflow(name: str) -> None:
 
     # Load workflow metadata
     metadata = wm.load(name)
-    ir = metadata["ir"]
 
-    # Display basic info
-    click.echo(f"Workflow: {name}")
-    click.echo(f"Description: {metadata.get('description', 'No description')}")
+    # Format using shared formatter (same as MCP)
+    from pflow.execution.formatters.workflow_describe_formatter import format_workflow_interface
 
-    # Display interface components
-    _display_inputs(ir)
-    _display_outputs(ir)
-    _display_example_usage(name, ir)
+    formatted = format_workflow_interface(name, metadata)
+    click.echo(formatted)
 
 
 def _handle_discovery_error(exception: Exception) -> None:
@@ -144,146 +96,6 @@ def _handle_discovery_error(exception: Exception) -> None:
             ("pflow workflow describe <name>", "Get workflow details"),
         ],
     )
-
-
-def _display_workflow_metadata(workflow: dict) -> None:
-    """Display workflow metadata section.
-
-    Args:
-        workflow: Workflow dict with metadata
-    """
-    if "metadata" in workflow:
-        meta = workflow["metadata"]
-        if isinstance(meta, dict):
-            click.echo(f"**Description**: {meta.get('description', 'No description')}")
-            click.echo(f"**Version**: {meta.get('version', '1.0.0')}")
-
-
-def _display_workflow_flow(ir: dict) -> None:
-    """Display workflow node flow.
-
-    Args:
-        ir: Workflow IR with flow field
-    """
-    if "flow" in ir:
-        flow = ir.get("flow", [])
-        if flow:
-            flow_str = " >> ".join([edge["from"] for edge in flow[:3]])
-            if len(flow) > 3:
-                flow_str += " >> ..."
-            click.echo(f"**Node Flow**: {flow_str}")
-
-
-def _display_workflow_inputs_outputs(ir: dict) -> None:
-    """Display workflow inputs and outputs.
-
-    Args:
-        ir: Workflow IR with inputs and outputs
-    """
-    if inputs := ir.get("inputs"):
-        click.echo("**Inputs**:")
-        for key, spec in inputs.items():
-            req = "(required)" if spec.get("required") else "(optional)"
-            input_type = spec.get("type", "any")
-            desc = spec.get("description", "")
-            click.echo(f"  - {key}: {input_type} {req} - {desc}")
-
-    if outputs := ir.get("outputs"):
-        click.echo("**Outputs**:")
-        for key, spec in outputs.items():
-            output_type = spec.get("type", "any")
-            desc = spec.get("description", "")
-            click.echo(f"  - {key}: {output_type} - {desc}")
-
-
-def _format_execution_hint(name: str, workflow_ir: dict) -> str:
-    """Format execution hint with parameter examples.
-
-    Args:
-        name: Workflow name
-        workflow_ir: Workflow IR with inputs declaration
-
-    Returns:
-        Formatted execution command with parameter hints
-
-    Examples:
-        >>> _format_execution_hint("my-workflow", {"inputs": {}})
-        'pflow my-workflow'
-
-        >>> _format_execution_hint("my-workflow", {
-        ...     "inputs": {
-        ...         "topic": {"required": True, "type": "string"},
-        ...         "style": {"required": False, "type": "string"}
-        ...     }
-        ... })
-        'pflow my-workflow topic=<value> [style=<value>]'
-    """
-    base_command = f"pflow {name}"
-
-    # Get inputs from IR
-    inputs = workflow_ir.get("inputs", {})
-    if not inputs:
-        return base_command
-
-    # Separate required and optional parameters
-    required_params = []
-    optional_params = []
-
-    for param_name, param_spec in inputs.items():
-        is_required = param_spec.get("required", True)
-        param_type = param_spec.get("type", "string")
-
-        # Create hint based on type - use consistent <type> format
-        if param_type == "boolean":
-            type_hint = "<true/false>"
-        elif param_type == "number":
-            type_hint = "<number>"
-        elif param_type == "array":
-            type_hint = "<array>"
-        elif param_type == "object":
-            type_hint = "<object>"
-        else:
-            type_hint = "<value>"
-
-        hint = f"{param_name}={type_hint}"
-
-        if is_required:
-            required_params.append(hint)
-        else:
-            # Add (optional) suffix instead of brackets
-            optional_params.append(f"{hint}")
-
-    # Construct full command
-    all_params = required_params + optional_params
-    if all_params:
-        return f"{base_command} {' '.join(all_params)}"
-    else:
-        return base_command
-
-
-def _format_discovery_result(result: dict, workflow: dict) -> None:
-    """Format and display workflow discovery results.
-
-    Args:
-        result: Discovery result with workflow_name, confidence, reasoning
-        workflow: Workflow IR with metadata, flow, inputs, outputs
-    """
-    workflow_name = result.get("workflow_name", "Unknown")
-    click.echo(f"\n## {workflow_name}")
-
-    _display_workflow_metadata(workflow)
-
-    ir = workflow.get("ir", workflow)
-    _display_workflow_flow(ir)
-    _display_workflow_inputs_outputs(ir)
-
-    # Show confidence
-    confidence = result.get("confidence", 0)
-    click.echo(f"**Confidence**: {confidence:.0%}")
-
-    # Show reasoning
-    if reasoning := result.get("reasoning"):
-        click.echo(f"\n*Match reasoning*: {reasoning}")
 
 
 @workflow.command(name="discover")
@@ -329,10 +141,30 @@ def discover_workflows(query: str) -> None:
         workflow = shared.get("found_workflow")
 
         if workflow and result and isinstance(result, dict) and isinstance(workflow, dict):
-            _format_discovery_result(result, workflow)
+            # Use shared formatter (same as MCP)
+            from pflow.execution.formatters.discovery_formatter import format_discovery_result
+
+            formatted = format_discovery_result(result, workflow)
+            click.echo(formatted)
     else:
-        click.echo("No matching workflows found.")
-        click.echo("\nTip: Try a more specific query or use 'pflow workflow list' to see all workflows.")
+        # No match found - show available workflows as suggestions
+        from pflow.execution.formatters.discovery_formatter import format_no_matches_with_suggestions
+
+        workflow_manager_obj = shared.get("workflow_manager", WorkflowManager())
+        # Type narrowing for mypy
+        if not isinstance(workflow_manager_obj, WorkflowManager):
+            workflow_manager_obj = WorkflowManager()
+        all_workflows = workflow_manager_obj.list_all()
+
+        # Get reasoning from discovery result if available
+        result_obj = shared.get("discovery_result", {})
+        # Type narrowing for mypy
+        if not isinstance(result_obj, dict):
+            result_obj = {}
+        reasoning = result_obj.get("reasoning")
+
+        formatted = format_no_matches_with_suggestions(all_workflows, query, reasoning=reasoning)
+        click.echo(formatted)
 
 
 # Workflow name validation is now handled by WorkflowManager._validate_workflow_name()
@@ -378,32 +210,15 @@ def _load_and_normalize_workflow(file_path: str) -> dict[str, Any]:
     Raises:
         SystemExit: If file can't be loaded or validation fails
     """
-    from pflow.core import normalize_ir, validate_ir
+    from pflow.core.workflow_save_service import load_and_validate_workflow
 
-    # Load workflow
     try:
-        with open(file_path, encoding="utf-8") as f:
-            data: dict[str, Any] = json.load(f)
-    except json.JSONDecodeError as e:
-        click.echo(f"Error: Invalid JSON in {file_path}: {e}", err=True)
+        return load_and_validate_workflow(file_path, auto_normalize=True)
+    except (ValueError, FileNotFoundError) as e:
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"Error reading file: {e}", err=True)
-        sys.exit(1)
-
-    # Extract IR if wrapped
-    workflow_ir: dict[str, Any] = data.get("ir", data)
-
-    # Auto-normalize workflow (same as --validate-only)
-    # Add boilerplate fields if missing to reduce friction for agents
-    normalize_ir(workflow_ir)
-
-    # Validate IR structure
-    try:
-        validate_ir(workflow_ir)  # Returns None, raises on error
-        return workflow_ir
-    except Exception as e:
-        click.echo(f"Error: Invalid workflow: {e}", err=True)
+        click.echo(f"Error loading workflow: {e}", err=True)
         sys.exit(1)
 
 
@@ -422,8 +237,6 @@ def _generate_metadata_if_requested(validated_ir: dict[str, Any], generate_metad
 
     import os
 
-    from pflow.planning.nodes import MetadataGenerationNode
-
     # Install Anthropic monkey patch for LLM calls (required for Anthropic-specific features)
     # Note: Other models (Gemini, OpenAI) work through standard LLM library
     if not os.environ.get("PYTEST_CURRENT_TEST"):
@@ -431,33 +244,26 @@ def _generate_metadata_if_requested(validated_ir: dict[str, Any], generate_metad
 
         install_anthropic_model()
 
+    from pflow.core.workflow_save_service import generate_workflow_metadata
+
     click.echo("Generating rich metadata...")
-    try:
-        node = MetadataGenerationNode()
-        shared: dict[str, Any] = {
-            "generated_workflow": validated_ir,
-            "user_input": "",
-            "cache_planner": False,
-        }
-        node.run(shared)
-        metadata = shared.get("workflow_metadata", {})
-        if metadata and isinstance(metadata, dict):
-            click.echo(f"  Generated {len(metadata.get('keywords', []))} keywords")
-            click.echo(f"  Generated {len(metadata.get('capabilities', []))} capabilities")
-            return metadata  # type: ignore[no-any-return]
-        return None
-    except Exception as e:
-        click.echo(f"Warning: Could not generate metadata: {e}", err=True)
-        return None
+    metadata = generate_workflow_metadata(validated_ir)
+
+    if metadata:
+        click.echo(f"  Generated {len(metadata.get('keywords', []))} keywords")
+        click.echo(f"  Generated {len(metadata.get('capabilities', []))} capabilities")
+    else:
+        click.echo("  Warning: Could not generate metadata", err=True)
+
+    return metadata
 
 
 def _save_with_overwrite_check(
-    wm: WorkflowManager, name: str, validated_ir: dict, description: str, metadata: dict | None, force: bool
+    name: str, validated_ir: dict[str, Any], description: str, metadata: dict[str, Any] | None, force: bool
 ) -> str:
     """Save workflow to library with overwrite handling.
 
     Args:
-        wm: WorkflowManager instance
         name: Workflow name
         validated_ir: Validated workflow IR
         description: Workflow description
@@ -470,22 +276,30 @@ def _save_with_overwrite_check(
     Raises:
         SystemExit: If workflow exists and force=False, or save fails
     """
-    if wm.exists(name):
-        if not force:
-            click.echo(f"Error: Workflow '{name}' already exists.", err=True)
-            click.echo("  Use --force to overwrite.", err=True)
-            sys.exit(1)
-        else:
-            # Delete existing workflow before saving new one
-            try:
-                wm.delete(name)
-                click.echo(f"✓ Deleted existing workflow '{name}'")
-            except Exception as e:
-                click.echo(f"Error deleting existing workflow: {e}", err=True)
-                sys.exit(1)
+    from pflow.core.exceptions import WorkflowValidationError
+    from pflow.core.workflow_save_service import save_workflow_with_options
 
     try:
-        return wm.save(name, validated_ir, description, metadata)
+        saved_path = save_workflow_with_options(
+            name=name,
+            workflow_ir=validated_ir,
+            description=description,
+            force=force,
+            metadata=metadata,
+        )
+
+        if force:
+            click.echo(f"✓ Overwritten existing workflow '{name}'")
+
+        return str(saved_path)
+
+    except FileExistsError as e:
+        click.echo(f"Error: {e}", err=True)
+        click.echo("  Use --force to overwrite.", err=True)
+        sys.exit(1)
+    except WorkflowValidationError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     except Exception as e:
         click.echo(f"Error saving workflow: {e}", err=True)
         sys.exit(1)
@@ -505,32 +319,10 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
     if not delete_draft:
         return
 
-    file_path_obj = Path(file_path).resolve()  # Resolves symlinks
+    from pflow.core.workflow_save_service import delete_draft_safely
 
-    # Define safe base directories for auto-deletion (also resolve them)
-    home_pflow = (Path.home() / ".pflow" / "workflows").resolve()
-    cwd_pflow = (Path.cwd() / ".pflow" / "workflows").resolve()
-
-    # Check if file is within safe directories using is_relative_to()
-    # This prevents path traversal attacks (e.g., ../../etc/passwd)
-    try:
-        is_safe = file_path_obj.is_relative_to(home_pflow) or file_path_obj.is_relative_to(cwd_pflow)
-
-        # Additional security: refuse to delete symlinks (defense in depth)
-        if is_safe and Path(file_path).is_symlink():
-            click.echo(f"Warning: Refusing to delete symlink: {file_path}", err=True)
-            is_safe = False
-
-    except (ValueError, TypeError):
-        # is_relative_to() may raise on invalid paths
-        is_safe = False
-
-    if is_safe:
-        try:
-            file_path_obj.unlink()
-            click.echo(f"✓ Deleted draft: {file_path}")
-        except Exception as e:
-            click.echo(f"Warning: Could not delete draft: {e}", err=True)
+    if delete_draft_safely(file_path):
+        click.echo(f"✓ Deleted draft: {file_path}")
     else:
         click.echo(
             f"Warning: Not deleting {file_path} - only files in .pflow/workflows/ can be auto-deleted",
@@ -557,36 +349,33 @@ def save_workflow(
     Example:
         pflow workflow save .pflow/workflows/draft.json my-analyzer "Analyzes PRs"
     """
-    from pflow.core.exceptions import WorkflowValidationError
+    from pflow.core.workflow_save_service import validate_workflow_name
 
-    validated_ir = _load_and_normalize_workflow(file_path)
-    metadata = _generate_metadata_if_requested(validated_ir, generate_metadata)
-
-    wm = WorkflowManager()
-
-    try:
-        saved_path = _save_with_overwrite_check(wm, name, validated_ir, description, metadata, force)
-    except WorkflowValidationError as e:
-        click.echo(f"Error: {e}", err=True)
+    # Validate workflow name
+    is_valid, error = validate_workflow_name(name)
+    if not is_valid:
+        click.echo(f"Error: {error}", err=True)
         sys.exit(1)
 
+    # Load and validate workflow
+    validated_ir = _load_and_normalize_workflow(file_path)
+
+    # Generate metadata if requested
+    metadata = _generate_metadata_if_requested(validated_ir, generate_metadata)
+
+    # Save workflow
+    saved_path = _save_with_overwrite_check(name, validated_ir, description, metadata, force)
+
+    # Delete draft if requested
     _delete_draft_if_requested(file_path, delete_draft)
 
-    # Success output
-    click.echo(f"✓ Saved workflow '{name}' to library")
-    click.echo(f"  Location: {saved_path}")
+    # Format success message using shared formatter
+    from pflow.execution.formatters.workflow_save_formatter import format_save_success
 
-    # Enhanced execution hint with parameter information
-    execution_hint = _format_execution_hint(name, validated_ir)
-    click.echo(f"  ✨ Execute with: {execution_hint}")
-
-    # Add note about optional parameters if there are any
-    inputs = validated_ir.get("inputs", {})
-    optional_params = [name for name, spec in inputs.items() if not spec.get("required", True)]
-    if optional_params:
-        click.echo(f"  Optional params: {', '.join(optional_params)}")
-
-    if metadata:
-        keywords = metadata.get("keywords", [])
-        if keywords:
-            click.echo(f"  Discoverable by: {', '.join(keywords[:3])}...")
+    success_message = format_save_success(
+        name=name,
+        saved_path=saved_path,
+        workflow_ir=validated_ir,
+        metadata=metadata,
+    )
+    click.echo(success_message)

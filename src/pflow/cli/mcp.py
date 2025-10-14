@@ -16,6 +16,7 @@ from typing import Optional
 
 import click
 
+from pflow.core.suggestion_utils import find_similar_items, format_did_you_mean
 from pflow.mcp import MCPRegistrar, MCPServerManager
 
 logger = logging.getLogger(__name__)
@@ -509,11 +510,14 @@ def _format_outputs(outputs: list[dict]) -> None:
 def _suggest_similar_tools(registrar: MCPRegistrar, tool: str) -> None:
     """Suggest similar tools when a tool is not found."""
     all_tools = registrar.list_registered_tools()
-    similar = [t for t in all_tools if tool.lower() in t.lower()]
-    if similar:
-        click.echo("\nSimilar tools:")
-        for t in similar[:5]:
-            click.echo(f"  - {t}")
+
+    # Find similar tools using shared utility
+    suggestions = find_similar_items(tool, all_tools, max_results=5, method="substring")
+
+    # Format and display message
+    message = format_did_you_mean(tool, suggestions, item_type="tool", fallback_items=all_tools, max_fallback=10)
+
+    click.echo(f"\n{message}")
 
 
 @mcp.command(name="info")
@@ -540,4 +544,57 @@ def info(tool: str) -> None:
 
     except Exception as e:
         click.echo(f"Error: Failed to get tool info: {e}", err=True)
+        sys.exit(1)
+
+
+@mcp.command(name="serve")
+@click.option("--debug", is_flag=True, help="Enable debug logging")
+def serve(debug: bool) -> None:
+    """Run pflow as an MCP server (stdio transport).
+
+    This starts an MCP server that exposes pflow's workflow building and
+    execution capabilities as programmatic tools for AI agents.
+
+    The server uses stdio transport where:
+    - stdin: Receives JSON-RPC requests from clients
+    - stdout: Sends JSON-RPC responses (protocol only)
+    - stderr: All logging output
+
+    Example:
+        # Start the server (usually done by AI agents automatically)
+        pflow mcp serve
+
+        # With debug logging
+        pflow mcp serve --debug
+
+    The server exposes 13 tools for agents to:
+    - Discover existing workflows and nodes
+    - Execute workflows with structured output
+    - Validate workflows before execution
+    - Save workflows to the global library
+    - Configure settings and API keys
+
+    Note: This command is typically invoked by AI agents/clients,
+    not directly by users.
+    """
+    import sys
+
+    try:
+        from pflow.mcp_server.main import main as mcp_server_main
+    except ImportError:
+        click.echo(
+            "Error: MCP server dependencies not installed.\n"
+            "Install with: pip install 'pflow[mcp]' or pip install 'mcp[cli]>=1.17.0'",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Run the MCP server (synchronous - FastMCP manages its own event loop)
+    try:
+        mcp_server_main(debug=debug)
+    except KeyboardInterrupt:
+        # Clean exit on Ctrl+C
+        sys.exit(0)
+    except Exception as e:
+        click.echo(f"Error: MCP server failed: {e}", err=True)
         sys.exit(1)

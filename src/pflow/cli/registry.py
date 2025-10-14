@@ -14,6 +14,8 @@ from typing import Optional
 
 import click
 
+from pflow.execution.formatters.registry_list_formatter import format_registry_list
+from pflow.execution.formatters.registry_search_formatter import format_search_results
 from pflow.registry import Registry
 
 
@@ -198,9 +200,20 @@ def _output_json_nodes(nodes: dict) -> None:
 
 
 @registry.command(name="list")
+@click.argument("filter_pattern", required=False)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def list_nodes(output_json: bool) -> None:
-    """List all registered nodes."""
+def list_nodes(filter_pattern: str | None, output_json: bool) -> None:
+    """List registered nodes, optionally filtered by pattern.
+
+    Without pattern: Shows all nodes grouped by package.
+    With pattern: Shows matching nodes sorted by relevance.
+    Multiple keywords: Space-separated keywords use AND logic.
+
+    Examples:
+        pflow registry list                 # All nodes
+        pflow registry list github          # Nodes matching 'github'
+        pflow registry list github api      # Nodes matching 'github' AND 'api'
+    """
     reg = Registry()
 
     try:
@@ -210,50 +223,50 @@ def list_nodes(output_json: bool) -> None:
         if first_time and not output_json:
             click.echo("[Auto-discovering core nodes...]")
 
-        # Load nodes (filtered by default)
-        nodes = reg.load()
+        # If filter provided, use search (relevance-sorted)
+        if filter_pattern:
+            results = reg.search(filter_pattern)
 
-        if output_json:
-            _output_json_nodes(nodes)
+            if output_json:
+                # Format as JSON with scores
+                output = {
+                    "query": filter_pattern,
+                    "results": [
+                        {
+                            "name": name,
+                            "type": _get_node_type(name, data),
+                            "score": score,
+                            "description": data.get("interface", {}).get("description", ""),
+                        }
+                        for name, data, score in results
+                    ],
+                }
+                click.echo(json.dumps(output, indent=2))
+            else:
+                # Transform for shared formatter
+                matches = [
+                    {
+                        "node_id": name,
+                        "description": data.get("interface", {}).get("description", ""),
+                        "match_type": _get_match_type_from_score(score),
+                        "metadata": data,
+                    }
+                    for name, data, score in results
+                ]
+
+                # Use shared search formatter
+                result = format_search_results(filter_pattern, matches)
+                click.echo(result)
         else:
-            if not nodes:
-                click.echo("No nodes registered.")
-                return
+            # No filter - show all grouped by package (current behavior)
+            nodes = reg.load()
 
-            # Filter out the virtual mcp node before grouping
-            filtered_nodes = {
-                name: metadata for name, metadata in nodes.items() if name != "mcp"
-            }  # Exclude the virtual MCP base node
-
-            # Group nodes by package
-            grouped = _group_nodes_by_package(filtered_nodes)
-
-            # Count totals for summary
-            total_core = sum(len(nodes) for nodes in grouped["core"].values())
-            total_user = sum(len(nodes) for nodes in grouped["user"].values())
-            total_mcp = sum(len(nodes) for nodes in grouped["mcp"].values())
-
-            # Display Core Packages
-            if grouped["core"]:
-                click.echo("\nCore Packages:")
-                click.echo("─" * 13)
-                _display_package_section(grouped["core"], "core")
-
-            # Display MCP Servers
-            if grouped["mcp"]:
-                click.echo("\nMCP Servers:")
-                click.echo("─" * 12)
-                _display_package_section(grouped["mcp"], "mcp")
-
-            # Display User Nodes
-            if grouped["user"]:
-                click.echo("\nUser Nodes:")
-                click.echo("─" * 10)
-                _display_user_nodes(grouped["user"])
-
-            # Display total summary
-            total = total_core + total_user + total_mcp
-            click.echo(f"\nTotal: {total} nodes ({total_core} core, {total_user} user, {total_mcp} mcp)")
+            if output_json:
+                _output_json_nodes(nodes)
+            else:
+                # Use shared formatter for CLI parity with MCP
+                result = format_registry_list(nodes)
+                click.echo(result)
 
     except Exception as e:
         click.echo(f"Error: Failed to list nodes: {e}", err=True)
@@ -520,68 +533,6 @@ def _handle_scan_error(e: Exception, output_json: bool) -> None:
     sys.exit(1)
 
 
-@registry.command(name="search")
-@click.argument("query")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def search(query: str, output_json: bool) -> None:
-    """Search for nodes by name or description."""
-    reg = Registry()
-
-    try:
-        results = reg.search(query)
-
-        if output_json:
-            output = {
-                "query": query,
-                "results": [
-                    {
-                        "name": name,
-                        "type": _get_node_type(name, data),
-                        "score": score,
-                        "description": data.get("interface", {}).get("description", ""),
-                    }
-                    for name, data, score in results
-                ],
-            }
-            click.echo(json.dumps(output, indent=2))
-        else:
-            if not results:
-                click.echo(f"No nodes found matching '{query}'")
-                return
-
-            click.echo(f"Found {len(results)} nodes matching '{query}':\n")
-
-            # Table header
-            click.echo("Name                 Type    Match   Description")
-            click.echo("─" * 60)
-
-            # Show top 10 results
-            for name, data, score in results[:10]:
-                node_type = _get_node_type(name, data)
-                desc = data.get("interface", {}).get("description", "")[:35]
-                if len(data.get("interface", {}).get("description", "")) > 35:
-                    desc = desc[:32] + "..."
-
-                # Match indicator
-                if score == 100:
-                    match = "exact"
-                elif score == 90:
-                    match = "prefix"
-                elif score == 70:
-                    match = "name"
-                else:
-                    match = "desc"
-
-                click.echo(f"{name:20} {node_type:7} {match:7} {desc}")
-
-            if len(results) > 10:
-                click.echo(f"\n... and {len(results) - 10} more results")
-
-    except Exception as e:
-        click.echo(f"Error: Failed to search: {e}", err=True)
-        sys.exit(1)
-
-
 @registry.command(name="scan")
 @click.argument("path", required=False)
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
@@ -641,6 +592,25 @@ def _get_node_type(name: str, metadata: dict) -> str:
 
     # Default to user
     return "user"
+
+
+def _get_match_type_from_score(score: int) -> str:
+    """Convert search score to match_type for formatter.
+
+    Args:
+        score: Registry search score (100=exact, 90=prefix, 70=name, else=description)
+
+    Returns:
+        Match type: "exact", "prefix", "node_id", or "description"
+    """
+    if score == 100:
+        return "exact"
+    elif score == 90:
+        return "prefix"
+    elif score >= 70:
+        return "node_id"
+    else:
+        return "description"
 
 
 @registry.command(name="discover")

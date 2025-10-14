@@ -22,16 +22,20 @@ src/pflow/core/
 ├── __init__.py              # Public API exports - aggregates functionality from all modules
 ├── exceptions.py            # Custom exception hierarchy for structured error handling
 ├── ir_schema.py             # JSON schema definition and validation for workflow IR
+├── llm_config.py            # LLM model configuration
 ├── llm_pricing.py           # Centralized LLM pricing and cost calculations
 ├── metrics.py               # Lightweight metrics collection for workflow execution
 ├── output_controller.py     # Central output control for interactive vs non-interactive modes
+├── security_utils.py        # Sensitive parameter detection and masking
 ├── settings.py              # Settings management with node filtering
 ├── shell_integration.py     # Unix pipe and stdin/stdout handling for CLI integration
+├── suggestion_utils.py      # "Did you mean" suggestions for user input
 ├── user_errors.py           # User-friendly error formatting for CLI
 ├── validation_utils.py      # Shared validation utilities for parameters
-├── workflow_data_flow.py    # Data flow and execution order validation (NEW)
+├── workflow_data_flow.py    # Data flow and execution order validation
 ├── workflow_manager.py      # Workflow lifecycle management with format transformation
-├── workflow_validator.py    # Unified workflow validation orchestrator (NEW)
+├── workflow_save_service.py # Shared workflow save operations (CLI/MCP)
+├── workflow_validator.py    # Unified workflow validation orchestrator
 └── CLAUDE.md               # This file
 ```
 
@@ -419,9 +423,50 @@ Security-aware parameter name validation:
 - **🚨 LLM-extracted parameters NOT validated** - Could suggest dangerous names
 - **🚨 MCP tool parameters NOT validated** - External servers could provide dangerous names
 
-### 13. __init__.py - Public API
+### 13. workflow_save_service.py - Shared Save Operations
+
+Unified workflow save/load/validation for CLI and MCP server:
+
+**Key Functions**:
+- **`validate_workflow_name()`**: Name format validation (lowercase, numbers, hyphens; max 50 chars)
+- **`load_and_validate_workflow()`**: Multi-source loading (file/name/dict) with normalization
+- **`save_workflow_with_options()`**: Save with force overwrite handling
+- **`generate_workflow_metadata()`**: Optional LLM metadata (CLI-only, 10-30s)
+- **`delete_draft_safely()`**: Security-aware deletion (`.pflow/workflows/` only)
+
+**Reserved Names**: Set of 9 (`null`, `undefined`, `none`, `test`, `settings`, `registry`, `workflow`, `mcp`)
+
+**Usage**: CLI (`commands/workflow.py`), MCP server (`services/execution_service.py`)
+
+### 14. suggestion_utils.py - User Input Suggestions
+
+"Did you mean" logic for user-friendly error messages:
+
+**Key Functions**:
+- **`find_similar_items()`**: Find matches using substring or fuzzy (difflib) matching
+- **`format_did_you_mean()`**: Format suggestions as user message
+
+**Usage**: CLI (`mcp.py`), Runtime (`compiler.py`), Formatters (`registry_run_formatter.py`), MCP (`resolver.py`, `workflow_service.py`)
+
+### 15. security_utils.py - Sensitive Parameter Detection
+
+Security utilities for credential masking:
+
+**Key Items**:
+- **`SENSITIVE_KEYS`**: Set of 19 sensitive parameter names (password, token, api_key, secret, etc.)
+- **`is_sensitive_parameter()`**: Check if name indicates sensitive data (case-insensitive)
+- **`mask_sensitive_value()`**: Mask value if parameter is sensitive
+
+**Usage**: MCP errors (`utils/errors.py`), CLI display (`rerun_display.py`)
+
+### 16. __init__.py - Public API
 
 Aggregates and exposes the module's functionality:
+
+**Note**: The following modules are NOT exported (direct imports required):
+- `workflow_save_service` - Used by CLI and MCP server only
+- `suggestion_utils` - Used by CLI, runtime, formatters, MCP
+- `security_utils` - Used by MCP errors and CLI display
 
 **Exported from exceptions.py**:
 - `PflowError`
@@ -579,6 +624,8 @@ Each component has comprehensive test coverage:
 - `tests/test_core/test_output_controller.py` - Interactive mode detection
 - `tests/test_core/test_user_errors.py` - User-friendly error formatting
 - `tests/test_core/test_validation_utils.py` - Parameter validation
+- `tests/test_core/test_workflow_save_service.py` - Workflow save operations
+- `tests/test_core/test_suggestion_utils.py` - Suggestion utilities
 
 ### Running Tests
 ```bash
@@ -615,6 +662,10 @@ The core module is used throughout pflow:
 - **Repair Service** (`execution/repair_service.py`): Uses WorkflowValidator to validate repairs
 - **Tests** (`tests/test_planning/llm/prompts/`): Now use WorkflowValidator for production-consistent validation
 - **Nodes**: Use exceptions for error reporting, MCPError for MCP issues
+- **MCP Server** (`mcp_server/`):
+  - Uses `workflow_save_service` for workflow save operations
+  - Uses `suggestion_utils` for tool/workflow suggestions
+  - Uses `security_utils` for error sanitization
 
 ## Design Decisions
 

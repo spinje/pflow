@@ -1,22 +1,29 @@
-# Task 71 Comprehensive Research Document
+# Task 72 Comprehensive Research Document
 
-*This document consolidates all research, analysis, and findings from Task 70 validation phase*
+> **Context Note**: This document contains technical research for Task 72 (MCP Server). The tool count
+> evolved from 5 to 13 tools based on AGENT_INSTRUCTIONS analysis, but all technical patterns, code examples,
+> performance measurements, and security considerations in this document remain valid and should be followed.
+>
+> See `final-implementation-spec.md` for the current 13-tool specification.
+
+*This document consolidates technical research, architecture analysis, and implementation patterns*
 
 ## Executive Summary
 
 After extensive analysis of pflow's architecture through 6 parallel investigations, **we have complete confidence to proceed with MCP server implementation**. The system is architecturally ready with only minor additions needed.
 
-### Key Findings
+### Key Findings (Still Valid)
 - ✅ **No major architectural changes required** - pflow's separation of concerns is excellent
-- ✅ **Only 4 small WorkflowManager additions needed** (~1.5 hours)
 - ✅ **Execution APIs are perfect as-is** - Task 68 already extracted what we need
 - ✅ **Clear implementation path** using FastMCP + asyncio.to_thread()
-- ✅ **Estimated implementation time**: 10-20 hours total
+- ✅ **Services have no CLI dependencies** - Direct integration possible
 
-### Go/No-Go Decision: **GO**
-All technical feasibility criteria are met. The architecture naturally supports MCP integration.
+### Updated Understanding
+- **Tool Count**: Originally 5, now 13 (see final-implementation-spec.md)
+- **Discovery Pattern**: Now uses LLM via ComponentBrowsingNode and WorkflowDiscoveryNode
+- **Defaults**: All agent-mode behaviors built-in (no parameters needed)
 
-## Architecture Overview
+## Architecture Overview (Remains Accurate)
 
 ### Three-Layer Architecture
 ```
@@ -26,11 +33,10 @@ All technical feasibility criteria are met. The architecture naturally supports 
 │      CLI            │         MCP Server                 │
 │  (click commands)   │     (MCP protocol)                 │
 │                     │                                     │
-│  pflow execute      │   browse_components()              │
-│  pflow plan         │   list_library()                   │
-│  pflow list         │   describe_workflow()              │
-│                     │   execute()                        │
-│                     │   save_to_library()                │
+│  pflow execute      │   workflow_execute()               │
+│  pflow discover     │   registry_discover()              │
+│  pflow validate     │   workflow_validate()              │
+│                     │   [13 tools total]                  │
 ├──────────────────────┴───────────────────────────────────┤
 │                   pflow Core Libraries                   │
 │                                                          │
@@ -40,55 +46,47 @@ All technical feasibility criteria are met. The architecture naturally supports 
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Key Architectural Decisions
+### Key Architectural Decisions (All Still Valid)
 
-1. **MCP Server as Peer to CLI** - Not a wrapper, not embedded, a peer consumer of core libraries
-2. **Stateless Design** - Fresh instances per request (matches pflow pattern)
-3. **Agent-Orchestrated Repair** - No internal repair loop, agent handles via file editing
-4. **5 Tools Instead of 14** - Reduced cognitive load based on MCP best practices
-5. **File-Based Workflow Creation** - Agent uses native file editing capabilities
+1. **MCP Server as Peer to CLI** - Not a wrapper, not embedded, a peer consumer of core libraries ✅
+2. **Stateless Design** - Fresh instances per request (matches pflow pattern) ✅
+3. **Agent-Orchestrated Repair** - No internal repair loop, agent handles errors explicitly ✅
+4. **Clean Interface** - Sensible defaults, no unnecessary parameters ✅
+5. **Direct Service Integration** - Use pflow services directly, not CLI wrapping ✅
 
 ## Detailed Integration Point Analysis
 
-### 1. browse_components Tool
+### 1. Discovery Tools (Updated Understanding)
 
-**Purpose**: Find nodes/tools for building workflows
+**Research Finding**: We DO use ComponentBrowsingNode for `registry_discover` and WorkflowDiscoveryNode for `workflow_discover`:
+- They provide intelligent LLM-based selection
+- We run them directly via `node.run(shared)`
+- They return structured data we can format for MCP
 
-**What We Can Use As-Is**:
+**For Simple Search** (registry_search):
 ```python
 from pflow.registry.registry import Registry
 
 registry = Registry()
 nodes = registry.load()  # Full interface metadata already included!
-results = registry.search("github")  # Simple search works
+results = registry.search("github")  # Simple keyword search
 ```
 
-**Registry Data Structure** (Already Complete):
+**For Intelligent Discovery** (registry_discover):
 ```python
-{
-    "node-name": {
-        "module": "pflow.nodes.file.read_file",
-        "interface": {  # ✅ Already parsed at scan time!
-            "description": "Read file contents",
-            "inputs": [{"key": "path", "type": "str", "description": "..."}],
-            "outputs": [{"key": "content", "type": "str", "description": "..."}],
-            "params": [{"key": "encoding", "type": "str", "description": "..."}]
-        }
-    }
+from pflow.planning.nodes import ComponentBrowsingNode
+from pflow.core.workflow_manager import WorkflowManager
+
+node = ComponentBrowsingNode()
+shared = {
+    "user_input": query,
+    "workflow_manager": WorkflowManager()  # Required!
 }
+await asyncio.to_thread(node.run, shared)
+# Result in shared["planning_context"]
 ```
 
-**What To Build** (~100 lines):
-- Response formatter to structure for MCP
-- Category extraction helper (from module path)
-- MCP tool identification (starts with "mcp-" or module = "pflow.nodes.mcp.node")
-- Simple workflow filtering (WorkflowManager.list_all() + keyword match)
-
-**Critical Note**: Do NOT use ComponentBrowsingNode - it requires LLM and returns markdown, not structured data.
-
-### 2. execute Tool
-
-**Purpose**: Run workflows with structured error responses
+### 2. Execute Tool (Perfect As-Is)
 
 **The API is PERFECT As-Is**:
 ```python
@@ -126,16 +124,25 @@ result = execute_workflow(
 }
 ```
 
-**What To Build** (~50 lines):
-- Workflow resolution (try library, then draft)
-- MCP response formatting
-- Error categorization for MCP
+### 3. Registry Capabilities (Complete)
 
-### 3. Library Management Tools
+**Registry Data Structure** (Already includes interfaces):
+```python
+{
+    "node-name": {
+        "module": "pflow.nodes.file.read_file",
+        "interface": {  # ✅ Already parsed at scan time!
+            "description": "Read file contents",
+            "inputs": [{"key": "path", "type": "str", "description": "..."}],
+            "outputs": [{"key": "content", "type": "str", "description": "..."}],
+            "params": [{"key": "encoding", "type": "str", "description": "..."}]
+        }
+    }
+}
+```
 
-**Purpose**: List, describe, and save workflows
+### 4. WorkflowManager Capabilities (90% Ready)
 
-**WorkflowManager Capabilities** (90% ready):
 ```python
 from pflow.core.workflow_manager import WorkflowManager
 
@@ -165,147 +172,20 @@ manager.update_ir(name, new_ir)  # Atomic update
 }
 ```
 
-**What To Add** (1.5 hours total):
+**Potential Additions** (evaluate if actually needed):
 ```python
-# Add to WorkflowManager:
-def search(self, query=None, has_mcp=None, min_executions=None):
+def search(self, query=None, has_mcp=None):
     """Filter workflows by criteria"""
+    # May not be needed if workflow_list tool handles filtering
 
-@classmethod
 def for_drafts(cls):
     """Create manager for draft workflows"""
-    return cls(workflows_dir=Path.home() / ".pflow/workflows/drafts")
-
-def get_workflow_interface(self, name):
-    """Extract inputs/outputs/templates"""
+    # May not be needed for MCP server
 ```
 
-### 4. MCP Server Infrastructure
+## Critical Implementation Patterns (MUST FOLLOW)
 
-**FastMCP Pattern** (from mcp[cli]>=1.13.1):
-```python
-from mcp.server.fastmcp import FastMCP
-from mcp.server.stdio import stdio_server
-
-mcp = FastMCP("pflow", version="0.1.0")
-
-@mcp.tool()
-async def execute_workflow(name: str, **params) -> dict:
-    """Execute a pflow workflow."""
-    # Implementation here
-    return result
-
-async def run_server():
-    async with stdio_server() as streams:
-        await mcp.run(streams[0], streams[1])
-```
-
-**Async/Sync Bridge** (proven pattern from MCPNode):
-```python
-async def execute_tool(name: str, **params):
-    # Run sync pflow code in thread pool
-    result = await asyncio.to_thread(
-        _execute_workflow_sync,
-        name,
-        params
-    )
-    return format_mcp_response(result)
-
-def _execute_workflow_sync(name: str, params: dict):
-    # Fresh instances (stateless)
-    manager = WorkflowManager()
-    workflow_ir = manager.load_ir(name)
-
-    return execute_workflow(
-        workflow_ir=workflow_ir,
-        execution_params=params,
-        enable_repair=False,
-        output=NullOutput()
-    )
-```
-
-## Required Code Changes
-
-### 1. WorkflowManager Additions (src/pflow/core/workflow_manager.py)
-
-```python
-def search(self, query: str = None, has_mcp: bool = None,
-          min_executions: int = None) -> list[dict]:
-    """Search workflows with filters."""
-    workflows = self.list_all()
-
-    if query:
-        workflows = [
-            w for w in workflows
-            if query.lower() in w["name"].lower()
-            or query.lower() in w.get("description", "").lower()
-        ]
-
-    if has_mcp is not None:
-        workflows = [
-            w for w in workflows
-            if self._has_mcp_nodes(w["ir"]) == has_mcp
-        ]
-
-    return workflows
-
-@classmethod
-def for_library(cls) -> "WorkflowManager":
-    """Create manager for library workflows."""
-    return cls()  # Default is library
-
-@classmethod
-def for_drafts(cls) -> "WorkflowManager":
-    """Create manager for draft workflows."""
-    drafts_dir = Path.home() / ".pflow/workflows/drafts"
-    drafts_dir.mkdir(parents=True, exist_ok=True)
-    return cls(workflows_dir=drafts_dir)
-
-def _has_mcp_nodes(self, ir: dict) -> bool:
-    """Check if workflow uses MCP nodes."""
-    for node in ir.get("nodes", []):
-        if node["type"].startswith("mcp-"):
-            return True
-    return False
-```
-
-### 2. CLI Integration (src/pflow/cli/commands/serve.py)
-
-```python
-import click
-import asyncio
-import sys
-
-@click.group()
-def serve():
-    """Run pflow as a server."""
-    pass
-
-@serve.command()
-def mcp():
-    """Run as MCP server (stdio transport)."""
-    from pflow.mcp_server import PflowMCPServer
-
-    server = PflowMCPServer()
-    try:
-        asyncio.run(server.run())
-    except KeyboardInterrupt:
-        click.echo("\nMCP server stopped.", err=True)
-        sys.exit(130)  # Standard exit code for SIGINT
-```
-
-### 3. Add to main_wrapper.py
-
-```python
-from pflow.cli.commands.serve import serve
-
-# Add serve to the command groups
-cli.add_command(serve)
-```
-
-## Critical Implementation Patterns
-
-### 1. Stateless Pattern (MUST FOLLOW)
+### 1. Stateless Pattern (CRITICAL)
 
 ✅ **CORRECT**:
 ```python
@@ -328,7 +208,7 @@ class PflowMCPServer:
 
 ### 2. Error Handling Pattern
 
-✅ **CORRECT**:
+✅ **CORRECT** (Return structured errors):
 ```python
 if not result.success:
     error = result.errors[0] if result.errors else {}
@@ -356,9 +236,9 @@ class SecurityValidator:
                 raise SecurityError(f"Invalid workflow name: {name}")
 ```
 
-## Performance Characteristics
+## Performance Characteristics (Measured)
 
-### Measured Timings
+### Actual Timings
 | Operation | Time | Notes |
 |-----------|------|-------|
 | Registry.load() | 10-50ms | In-memory after first load |
@@ -375,13 +255,12 @@ class SecurityValidator:
 
 ## Security Considerations
 
-### Path Traversal Prevention
+### Path Traversal Prevention (Multiple Layers)
 ```python
-# Multiple validation layers:
-1. Workflow name validation (no /, \, ..)
-2. Path resolution checks
-3. Sandbox to ~/.pflow directory
-4. Log sanitization for sensitive params
+# Layer 1: Workflow name validation (no /, \, ..)
+# Layer 2: Path resolution checks
+# Layer 3: Sandbox to ~/.pflow directory
+# Layer 4: Log sanitization for sensitive params
 ```
 
 ### Sensitive Parameter Handling
@@ -398,162 +277,106 @@ def sanitize_params_for_logging(params: dict) -> dict:
     }
 ```
 
-## Testing Strategy
+## MCP Server Infrastructure
 
-### Unit Tests (Priority 1)
+### FastMCP Pattern (Proven)
 ```python
-@pytest.mark.asyncio
-async def test_browse_components():
-    result = await browse_components_tool(query="github")
-    assert "nodes" in result
-    assert any("github" in n["type"] for n in result["nodes"])
+from mcp.server.fastmcp import FastMCP
+from mcp.server.stdio import stdio_server
 
-@pytest.mark.asyncio
-async def test_execute_workflow():
-    result = await execute_tool("test-workflow", input="data")
-    assert result["success"] or "checkpoint" in result
+mcp = FastMCP("pflow", version="0.1.0")
+
+@mcp.tool()
+async def workflow_execute(workflow: str | dict, parameters: dict = None) -> dict:
+    """Execute a pflow workflow."""
+    # Built-in defaults: JSON output, no repair, trace enabled
+    result = await asyncio.to_thread(_execute_sync, workflow, parameters)
+    return format_result(result)
+
+async def run_server():
+    async with stdio_server() as streams:
+        await mcp.run(streams[0], streams[1])
 ```
 
-### Integration Tests (Priority 2)
+### Async/Sync Bridge Pattern
 ```python
-async def test_full_cycle():
-    # Browse
-    components = await browse_components_tool("file")
+async def tool_handler(params):
+    # Run sync pflow code in thread pool
+    result = await asyncio.to_thread(
+        sync_function,
+        params
+    )
+    return format_mcp_response(result)
 
-    # Agent creates workflow (mocked)
-    create_draft_workflow("test-draft")
-
-    # Execute
-    result = await execute_tool("test-draft")
-
-    # Save if successful
-    if result["success"]:
-        save_result = await save_to_library_tool(
-            "test-draft", "test-final", "Test workflow"
-        )
-```
-
-### Claude Code Validation (Priority 3)
-1. Configure Claude: `~/.config/claude/claude_desktop_config.json`
-2. Test natural discovery without mentioning pflow
-3. Test complete workflow: browse → create → execute → save
-4. Document any confusion points
-
-## Risk Analysis and Mitigations
-
-| Risk | Probability | Impact | Mitigation |
-|------|------------|--------|------------|
-| MCP protocol changes | Low | High | Abstract transport layer |
-| Thread pool exhaustion | Low | Medium | Configure max_workers |
-| Agent doesn't discover tools | Medium | High | Clear tool descriptions |
-| Path traversal exploit | Low | Critical | Multiple validation layers |
-| Large workflow exceeds message size | Low | Low | Pagination in v2 |
-| Concurrent file conflicts | Low | Low | Atomic operations in WorkflowManager |
-
-## Implementation Checklist
-
-### Phase 1: Foundation (Day 1)
-- [ ] Create `src/pflow/mcp_server/` directory structure
-- [ ] Implement minimal FastMCP server with one test tool
-- [ ] Add `pflow serve mcp` CLI command
-- [ ] Test basic MCP protocol compliance
-
-### Phase 2: Core Tools (Day 2)
-- [ ] Implement browse_components with Registry integration
-- [ ] Implement execute with error handling and checkpoints
-- [ ] Implement list_library with WorkflowManager
-- [ ] Test thread safety with concurrent requests
-
-### Phase 3: Complete Tools (Day 3)
-- [ ] Implement describe_workflow with interface extraction
-- [ ] Implement save_to_library with atomic operations
-- [ ] Add security validation layer
-- [ ] Add logging with parameter sanitization
-
-### Phase 4: WorkflowManager Updates (Day 3.5)
-- [ ] Add search() method
-- [ ] Add for_library() and for_drafts() classmethods
-- [ ] Add duration tracking to execution
-- [ ] Test all additions
-
-### Phase 5: Testing & Validation (Day 4-5)
-- [ ] Unit tests for all 5 tools
-- [ ] Integration tests for full cycle
-- [ ] Security tests for path traversal
-- [ ] Performance tests for concurrent execution
-- [ ] Claude Code natural discovery test
-
-## Code Snippets Ready to Use
-
-### Complete browse_components Implementation
-```python
-async def browse_components_tool(query: str = None, include_workflows: bool = True) -> dict:
-    """Find components for building workflows."""
-    return await asyncio.to_thread(_browse_components_sync, query, include_workflows)
-
-def _browse_components_sync(query: str, include_workflows: bool):
-    from pflow.registry.registry import Registry
-    from pflow.core.workflow_manager import WorkflowManager
-
-    # Fresh instances
+def sync_function(params):
+    # Fresh instances (stateless)
+    manager = WorkflowManager()
     registry = Registry()
-    nodes = registry.load()
 
-    # Filter if query
-    if query:
-        search_results = registry.search(query)
-        filtered_nodes = {name: nodes[name] for name, _, _ in search_results}
-    else:
-        filtered_nodes = nodes
-
-    # Format response
-    result = {
-        "nodes": [
-            {
-                "type": name,
-                "description": meta.get("interface", {}).get("description", ""),
-                "inputs": meta.get("interface", {}).get("inputs", []),
-                "outputs": meta.get("interface", {}).get("outputs", [])
-            }
-            for name, meta in filtered_nodes.items()
-        ]
-    }
-
-    if include_workflows:
-        manager = WorkflowManager()
-        workflows = manager.list_all()
-        if query:
-            workflows = [
-                w for w in workflows
-                if query.lower() in w["name"].lower()
-                or query.lower() in w.get("description", "").lower()
-            ]
-
-        result["workflows"] = [
-            {
-                "name": w["name"],
-                "description": w.get("description", "")
-            }
-            for w in workflows
-        ]
-
-    return result
+    # Use services directly
+    return execute_workflow(...)
 ```
 
-### Complete execute Implementation
+## Ready-to-Use Code Snippets
+
+### Execute Implementation (Adapt for Clean Interface)
 ```python
-async def execute_tool(workflow_name: str, **params) -> dict:
-    """Execute a workflow."""
-    from .security import SecurityValidator
+async def workflow_execute(workflow: str | dict, parameters: dict = None) -> dict:
+    """Execute workflow with agent-optimized defaults."""
+    from pflow.execution.workflow_execution import execute_workflow
+    from pflow.execution.null_output import NullOutput
+    from pflow.core.workflow_manager import WorkflowManager
+    from pathlib import Path
+    import json
 
-    # Validate
-    SecurityValidator.validate_workflow_name(workflow_name)
+    # Resolve workflow (string could be name or path)
+    if isinstance(workflow, str):
+        manager = WorkflowManager()
+        try:
+            workflow_ir = manager.load_ir(workflow)
+            source = "library"
+        except FileNotFoundError:
+            # Try as file path
+            path = Path(workflow)
+            if path.exists():
+                with open(path) as f:
+                    workflow_ir = json.load(f)
+                source = "file"
+            else:
+                return {
+                    "success": False,
+                    "error": {
+                        "type": "not_found",
+                        "message": f"Workflow '{workflow}' not found"
+                    }
+                }
+    else:
+        workflow_ir = workflow  # Already a dict
+        source = "direct"
 
-    # Execute
-    result = await asyncio.to_thread(_execute_workflow_sync, workflow_name, params)
+    # Execute with built-in agent defaults
+    result = await asyncio.to_thread(
+        execute_workflow,
+        workflow_ir=workflow_ir,
+        execution_params=parameters or {},
+        enable_repair=False,     # Always explicit errors
+        output=NullOutput(),     # Always silent
+        # trace automatically saved to ~/.pflow/debug/
+    )
 
-    # Format response
-    if not result.success:
+    # Return structured response
+    if result.success:
+        return {
+            "success": True,
+            "outputs": result.output_data,
+            "trace_path": f"~/.pflow/debug/workflow-trace-{timestamp}.json",
+            "metrics": {
+                "duration": result.duration,
+                "nodes_executed": result.node_count,
+                "cost_usd": result.metrics_summary.get("total_cost_usd", 0)
+            }
+        }
+    else:
         error = result.errors[0] if result.errors else {}
         return {
             "success": False,
@@ -562,62 +385,124 @@ async def execute_tool(workflow_name: str, **params) -> dict:
                 "message": error.get("message", "Unknown error"),
                 "node": error.get("node_id"),
                 "checkpoint": result.shared_after.get("__execution__")
-            }
+            },
+            "trace_path": f"~/.pflow/debug/workflow-trace-{timestamp}.json"
         }
-
-    return {
-        "success": True,
-        "outputs": result.output_data,
-        "metrics": {
-            "duration": result.duration,
-            "nodes_executed": result.node_count,
-            "cost_usd": result.metrics_summary.get("total_cost_usd", 0)
-        }
-    }
-
-def _execute_workflow_sync(workflow_name: str, params: dict):
-    from pflow.execution.workflow_execution import execute_workflow
-    from pflow.execution.null_output import NullOutput
-    from pflow.core.workflow_manager import WorkflowManager
-    from pathlib import Path
-    import json
-
-    # Resolution order is CRITICAL:
-    # 1. Global library (~/.pflow/workflows/)
-    # 2. Local working directory (./.pflow/workflows/)
-
-    # Try global library first
-    manager = WorkflowManager()  # Uses ~/.pflow/workflows/
-    try:
-        workflow_ir = manager.load_ir(workflow_name)
-        source = "library"
-    except FileNotFoundError:
-        # Try local working directory
-        local_path = Path.cwd() / ".pflow/workflows" / f"{workflow_name}.json"
-        if local_path.exists():
-            with open(local_path) as f:
-                workflow_ir = json.load(f)
-            source = "local"
-        else:
-            raise FileNotFoundError(
-                f"Workflow '{workflow_name}' not found in library (~/.pflow/workflows/) "
-                f"or local directory (./.pflow/workflows/)"
-            )
-
-    return execute_workflow(
-        workflow_ir=workflow_ir,
-        execution_params=params,
-        enable_repair=False,  # Deterministic
-        output=NullOutput(),
-        workflow_manager=manager if source == "library" else None,
-        workflow_name=workflow_name if source == "library" else None
-    )
 ```
+
+### Registry Run Implementation (Test Node Outputs)
+```python
+async def registry_run(node_type: str, parameters: dict = None) -> dict:
+    """Execute a single node to reveal output structure."""
+    from pflow.registry.registry import Registry
+    from pocketflow import Node
+    import importlib
+
+    def _run_node_sync(node_type: str, parameters: dict):
+        # Fresh registry
+        registry = Registry()
+        nodes = registry.load()
+
+        if node_type not in nodes:
+            return {
+                "success": False,
+                "error": {
+                    "type": "not_found",
+                    "message": f"Node '{node_type}' not found"
+                }
+            }
+
+        # Import and instantiate node
+        module_path = nodes[node_type]["module"]
+        module_name, class_name = module_path.rsplit(".", 1)
+        module = importlib.import_module(module_name)
+        node_class = getattr(module, class_name)
+
+        # Create and run node
+        node = node_class()
+        if parameters:
+            node.set_params(**parameters)
+
+        # Run with test data
+        shared = {}
+        action = node.run(shared)
+
+        # Return complete structure (always show structure)
+        return {
+            "success": True,
+            "action": action,
+            "output_structure": shared,  # Complete nested structure
+            "output_keys": list(shared.keys())
+        }
+
+    return await asyncio.to_thread(_run_node_sync, node_type, parameters or {})
+```
+
+## Testing Strategy
+
+### Unit Tests
+```python
+@pytest.mark.asyncio
+async def test_workflow_execute():
+    result = await workflow_execute("test-workflow", {"param": "value"})
+    assert "success" in result
+    assert "trace_path" in result
+
+@pytest.mark.asyncio
+async def test_registry_discover():
+    # Uses LLM for intelligent selection
+    result = await registry_discover("fetch GitHub data")
+    assert "nodes" in result
+    assert all("interface" in node for node in result["nodes"])
+```
+
+### Integration Tests
+```python
+async def test_full_agent_workflow():
+    # 1. Discover existing workflows
+    discover_result = await workflow_discover("analyze code")
+
+    if discover_result["matches"][0]["confidence"] < 80:
+        # 2. Build new: discover nodes
+        nodes = await registry_discover("fetch files and analyze")
+
+        # 3. Test unknown nodes
+        for node in nodes:
+            if node["type"].startswith("mcp-"):
+                test_result = await registry_run(node["type"], {})
+                # Use output_structure for templates
+
+        # 4. Validate workflow
+        validation = await workflow_validate(draft_workflow)
+
+        # 5. Execute with built-in defaults
+        result = await workflow_execute(draft_workflow, params)
+
+        # 6. Save if successful
+        if result["success"]:
+            await workflow_save(draft_workflow, "my-analyzer", "desc")
+```
+
+## Risk Analysis and Mitigations
+
+| Risk | Probability | Impact | Mitigation |
+|------|------------|--------|------------|
+| MCP protocol changes | Low | High | Abstract transport layer |
+| Thread pool exhaustion | Low | Medium | Configure max_workers |
+| Agent doesn't discover tools | Low | High | Clear descriptions, test with Claude |
+| Path traversal exploit | Low | Critical | Multiple validation layers |
+| LLM failures in discovery | Medium | Medium | Fallback to simple search |
 
 ## Summary
 
-This research validates that pflow is **architecturally ready** for MCP server implementation. The key insight is that we're not building complex new systems - we're creating thin wrappers around existing, well-designed APIs. The execution system from Task 68, the registry with full metadata, and the WorkflowManager with lifecycle operations provide everything needed.
+This research validates that pflow is **architecturally ready** for MCP server implementation. The key insights:
 
-The implementation should take 10-20 hours following the patterns and code snippets provided here. The main risks are around agent behavior (will they discover tools naturally?) rather than technical challenges.
+1. **Services are perfectly separated** - No CLI dependencies, direct integration possible
+2. **Execution API is complete** - Returns everything needed including checkpoints
+3. **Registry has full metadata** - Interface information already parsed and available
+4. **Stateless pattern is critical** - Fresh instances per request prevent state issues
+5. **Security needs multiple layers** - Path validation, parameter sanitization
 
-**Recommendation**: Proceed with implementation following this guide.
+The evolution from 5 tools to 13 tools doesn't change these fundamentals. The technical patterns, security considerations, and implementation approaches remain valid and should be followed.
+
+**See `final-implementation-spec.md` for the complete 13-tool specification and tool definitions.**

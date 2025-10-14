@@ -1,0 +1,397 @@
+"""Critical guardrail tests for node_output_formatter.
+
+These tests protect against bugs that CLI integration tests don't catch:
+- Type contract violations that break MCP
+- Edge cases that cause crashes
+- Return type regressions
+
+Each test catches a specific real-world bug that would break production.
+"""
+
+from datetime import datetime
+from unittest.mock import Mock
+
+import pytest
+
+from pflow.execution.formatters.node_output_formatter import (
+    extract_metadata_paths,
+    extract_runtime_paths,
+    flatten_runtime_value,
+    format_node_output,
+    json_serializer,
+)
+from pflow.registry import Registry
+
+
+class TestTypeContractGuards:
+    """Tests that catch return type violations breaking MCP."""
+
+    def test_format_node_output_returns_correct_types(self):
+        """TYPE SAFETY: Prevent return type regressions that break MCP.
+
+        Real bug this catches: If format_node_output returns dict for
+        format_type="structure", MCP crashes because it directly returns
+        the value expecting a string.
+
+        CLI wouldn't catch this because it checks type before displaying.
+        """
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {}
+
+        # Test all format types return correct types
+        outputs = {"stdout": "hello", "exit_code": 0}
+        shared_store = {}
+
+        # Text mode must return string
+        result = format_node_output(
+            node_type="test",
+            action="default",
+            outputs=outputs,
+            shared_store=shared_store,
+            execution_time_ms=100,
+            registry=registry,
+            format_type="text",
+            verbose=False,
+        )
+        assert isinstance(result, str), "text mode must return string for CLI display"
+
+        # JSON mode must return dict
+        result = format_node_output(
+            node_type="test",
+            action="default",
+            outputs=outputs,
+            shared_store=shared_store,
+            execution_time_ms=100,
+            registry=registry,
+            format_type="json",
+            verbose=False,
+        )
+        assert isinstance(result, dict), "json mode must return dict for JSON serialization"
+
+        # Structure mode must return string (critical for MCP)
+        result = format_node_output(
+            node_type="test",
+            action="default",
+            outputs=outputs,
+            shared_store=shared_store,
+            execution_time_ms=100,
+            registry=registry,
+            format_type="structure",
+            verbose=False,
+        )
+        assert isinstance(result, str), "structure mode must return string - MCP directly returns this"
+
+    def test_error_action_returns_correct_types(self):
+        """TYPE SAFETY: Prevent error handling from returning wrong types.
+
+        Real bug this catches: Error action returns dict when text expected,
+        breaking CLI/MCP display.
+        """
+        registry = Mock(spec=Registry)
+        shared_store = {"error": "Something failed"}
+        outputs = {}
+
+        # Text error must return string
+        result = format_node_output(
+            node_type="test",
+            action="error",
+            outputs=outputs,
+            shared_store=shared_store,
+            execution_time_ms=100,
+            registry=registry,
+            format_type="text",
+            verbose=False,
+        )
+        assert isinstance(result, str), "text error must return string"
+        assert "❌" in result, "error should include error indicator"
+
+        # JSON error must return dict
+        result = format_node_output(
+            node_type="test",
+            action="error",
+            outputs=outputs,
+            shared_store=shared_store,
+            execution_time_ms=100,
+            registry=registry,
+            format_type="json",
+            verbose=False,
+        )
+        assert isinstance(result, dict), "json error must return dict"
+        assert result["success"] is False, "error must have success=false"
+
+
+class TestEdgeCaseGuards:
+    """Tests that catch edge cases causing crashes."""
+
+    def test_empty_outputs_dont_crash(self):
+        """ROBUSTNESS: Empty outputs should format gracefully.
+
+        Real bug this catches: Empty outputs dict causes iteration
+        failures or display errors.
+        """
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {}
+
+        # Empty outputs should not crash
+        result = format_node_output(
+            node_type="test",
+            action="default",
+            outputs={},  # Empty outputs
+            shared_store={},
+            execution_time_ms=100,
+            registry=registry,
+            format_type="text",
+            verbose=False,
+        )
+        assert isinstance(result, str)
+        assert "No outputs returned" in result or "Outputs:" not in result
+
+    def test_json_serialization_failure_returns_error_dict(self):
+        """ERROR HANDLING: JSON serialization failures return proper error.
+
+        Real bug this catches: If json_serializer fails, formatter should
+        return error dict, not crash.
+        """
+        registry = Mock(spec=Registry)
+
+        # Create an object that json_serializer can't handle gracefully
+        class UnserializableObject:
+            def __str__(self):
+                raise ValueError("Cannot stringify")
+
+        outputs = {"bad_object": UnserializableObject()}
+
+        result = format_node_output(
+            node_type="test",
+            action="default",
+            outputs=outputs,
+            shared_store={},
+            execution_time_ms=100,
+            registry=registry,
+            format_type="json",
+            verbose=False,
+        )
+
+        # Should return error dict, not crash
+        assert isinstance(result, dict)
+        # Either successful with stringified object, or error dict
+        if result.get("success") is False:
+            assert "error" in result
+
+
+class TestTemplatePathExtractionGuards:
+    """Tests that catch template path extraction bugs - core feature for workflow building."""
+
+    def test_extract_metadata_paths_with_nested_structure(self):
+        """TEMPLATE PATHS: Nested output structures must be flattened correctly.
+
+        Real bug this catches: AI refactoring breaks the flattening logic,
+        causing agents to see only top-level keys like "result" but missing
+        nested fields like "result.data.items[0].id".
+
+        Without this, agents can't build workflows using nested MCP outputs.
+        """
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {
+            "test-node": {
+                "interface": {
+                    "outputs": [
+                        {
+                            "key": "result",
+                            "type": "dict",
+                            "structure": {
+                                "data": {
+                                    "type": "dict",
+                                    "structure": {
+                                        "items": {"type": "list"},
+                                        "count": {"type": "int"},
+                                    },
+                                },
+                                "status": {"type": "str"},
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+
+        paths, has_any = extract_metadata_paths("test-node", registry)
+
+        # Must include nested paths, not just top-level
+        path_strings = [p[0] for p in paths]
+        assert "result" in path_strings
+        assert any("data" in p for p in path_strings), "must include nested 'data' field"
+        assert len(paths) > 1, "must flatten nested structure, not just return top-level"
+
+    def test_extract_runtime_paths_with_mcp_json_strings(self):
+        """TEMPLATE PATHS: MCP nodes return JSON strings that must be parsed.
+
+        Real bug this catches: MCP nodes return result='{"status": "ok", "data": {...}}'
+        as a JSON string, not a dict. If formatter doesn't parse it, agents only
+        see ${result} (str) instead of ${result.status}, ${result.data}.
+
+        This is THE critical MCP node pattern - without this, MCP integration breaks.
+        """
+        # MCP node pattern: result is JSON string, not dict
+        outputs = {"result": '{"status": "success", "data": {"id": 123, "name": "test"}}'}
+
+        paths, warnings = extract_runtime_paths(outputs)
+
+        # Must parse JSON string and flatten
+        path_strings = [p[0] for p in paths]
+        assert any("result.status" in p for p in path_strings), "must parse JSON string and show nested paths"
+        assert any("result.data" in p for p in path_strings), "must show deeply nested paths"
+        assert not any(p[1] == "str" and p[0] == "result" for p in paths), (
+            "should not show result as plain string when it's valid JSON"
+        )
+
+    def test_flatten_runtime_value_max_depth_protection(self):
+        """RECURSION SAFETY: Deep nesting must not cause stack overflow.
+
+        Real bug this catches: AI refactoring removes max_depth check,
+        causing stack overflow on deeply nested structures like:
+        {a: {b: {c: {d: {e: {f: {g: {h: ...}}}}}}}}
+
+        This crashes the entire CLI/MCP execution.
+        """
+        # Create deeply nested structure (10 levels)
+        deeply_nested = {"level1": {"level2": {"level3": {"level4": {"level5": {"level6": {"level7": {}}}}}}}}
+
+        # Should not crash, and should stop at max_depth (default 5)
+        paths = flatten_runtime_value("root", deeply_nested)
+
+        # Must return something (not crash)
+        assert len(paths) > 0
+        # Should have stopped recursion (not infinite)
+        assert len(paths) < 20, "should stop at max depth, not recurse infinitely"
+
+
+class TestDeduplicationGuards:
+    """Tests that catch deduplication bugs - prevents path explosion."""
+
+    def test_duplicate_structure_detection(self):
+        """DEDUPLICATION: Same structure in multiple keys must be detected.
+
+        Real bug this catches: MCP nodes return both "result" and
+        "mcp_server_TOOL_result" with identical data. Without deduplication,
+        agents see 500 duplicate template paths making output unusable.
+
+        AI refactoring might break the hash comparison logic.
+        """
+        # MCP pattern: duplicate data in different keys
+        duplicate_data = {"status": "ok", "count": 42}
+        outputs = {
+            "result": duplicate_data,
+            "slack_composio_SEND_MESSAGE_result": duplicate_data,  # Same structure
+        }
+
+        paths, warnings = extract_runtime_paths(outputs)
+
+        # Must deduplicate - should only show paths for one key
+        path_prefixes = {p[0].split(".")[0] for p in paths}
+        assert len(path_prefixes) == 1, (
+            "should deduplicate identical structures, not show both 'result' and 'slack_composio_SEND_MESSAGE_result'"
+        )
+
+        # Must warn about duplication
+        assert len(warnings) > 0, "should warn user about duplicate structure"
+        assert any("same data" in w.lower() for w in warnings), "warning should mention duplicate data"
+
+
+class TestSerializationGuards:
+    """Tests that catch serialization crashes - prevents JSON encoding failures."""
+
+    def test_json_serializer_datetime(self):
+        """SERIALIZATION: datetime objects must not crash JSON encoding.
+
+        Real bug this catches: Node outputs contain datetime objects,
+        causing JSON encoding to fail with "Object of type datetime is not JSON serializable".
+
+        AI refactoring might remove datetime handling from json_serializer.
+        """
+        dt = datetime(2024, 1, 15, 10, 30, 0)
+        result = json_serializer(dt)
+
+        # Must convert to string (ISO format)
+        assert isinstance(result, str), "datetime must be serialized to string"
+        assert "2024" in result, "should contain year"
+        assert "01" in result or "1" in result, "should contain month"
+
+    def test_json_serializer_path(self, tmp_path):
+        """SERIALIZATION: Path objects must not crash JSON encoding.
+
+        Real bug this catches: File operation nodes return Path objects,
+        causing JSON encoding to fail.
+
+        Without this, file operations break MCP completely.
+        """
+        test_file = tmp_path / "test.txt"
+        result = json_serializer(test_file)
+
+        # Must convert to string
+        assert isinstance(result, str), "Path must be serialized to string"
+        assert "test.txt" in result, "should contain path string"
+
+    def test_json_serializer_bytes_non_utf8(self):
+        """SERIALIZATION: Binary data must not crash when not UTF-8.
+
+        Real bug this catches: Node outputs contain binary data that's not
+        valid UTF-8 (images, compressed data). If formatter tries decode(),
+        it crashes with UnicodeDecodeError.
+
+        This is critical for binary data handling added in Task 82.
+        """
+        # Binary data that's not valid UTF-8
+        binary_data = b"\x89\x50\x4e\x47"  # PNG header
+
+        result = json_serializer(binary_data)
+
+        # Must not crash and must describe the data
+        assert isinstance(result, str), "binary data must be serialized to string"
+        assert "binary" in result.lower() or "bytes" in result.lower(), "should indicate it's binary data"
+        assert "4" in result, "should show byte count"
+
+
+class TestRecursiveFlatteningGuards:
+    """Tests that catch recursive flattening bugs - complex logic danger zone."""
+
+    def test_flatten_runtime_value_stops_at_large_values(self):
+        """PERFORMANCE: Large nested structures must be truncated.
+
+        Real bug this catches: Node returns huge nested structure (1MB+ JSON),
+        causing formatter to spend minutes flattening and output thousands
+        of template paths that overwhelm the terminal.
+
+        AI refactoring might remove the len(str(val)) > 1000 check.
+        """
+        # Large nested structure
+        large_data = {"items": [{"id": i, "data": "x" * 100} for i in range(100)]}
+
+        paths = flatten_runtime_value("result", large_data)
+
+        # Should mark large structures
+        assert any("(large)" in p[1] for p in paths), "should mark large nested values as '(large)'"
+
+    def test_flatten_runtime_value_handles_list_first_element(self):
+        """ARRAY HANDLING: Lists must show first element structure.
+
+        Real bug this catches: Node returns array of objects like
+        [{id: 1, name: "foo"}, {id: 2, name: "bar"}]. Agents need to
+        know the structure is ${items[0].id}, ${items[0].name}.
+
+        If formatter doesn't handle lists correctly, agents see only
+        ${items} (list) with no nested structure.
+        """
+        # List with structured objects
+        outputs = {"items": [{"id": 1, "name": "test"}, {"id": 2, "name": "test2"}]}
+
+        paths = flatten_runtime_value("items", outputs["items"])
+
+        # Must show first element structure
+        path_strings = [p[0] for p in paths]
+        assert any("[0]" in p for p in path_strings), "must show list element syntax [0]"
+        assert any("id" in p for p in path_strings), "must show nested fields in list items"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

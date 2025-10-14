@@ -26,12 +26,14 @@ src/pflow/cli/
 ├── __init__.py                 # Module export (cli_main)
 ├── CLAUDE.md                   # This file (AI agent documentation)
 ├── main_wrapper.py             # Entry point router
-├── main.py                     # Core CLI implementation (2929 lines)
+├── main.py                     # Core CLI implementation (3403 lines)
 ├── cli_output.py              # OutputInterface implementation for Click
 ├── repair_save_handlers.py    # Workflow repair save logic
 ├── rerun_display.py           # Display rerun commands
+├── discovery_errors.py        # Discovery error handling
 ├── mcp.py                     # MCP server management commands
 ├── registry.py                # Node registry commands
+├── registry_run.py            # Single node execution (pflow registry execute)
 └── commands/
     ├── settings.py            # Settings management
     └── workflow.py            # Saved workflow commands
@@ -162,6 +164,7 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 - `remove` - Remove server configurations
 - `tools` - List registered MCP tools
 - `info` - Show tool details
+- `serve` - Run pflow as MCP server (stdio transport)
 
 **Smart Auto-Discovery**:
 - Runs at pflow startup on every command
@@ -184,6 +187,7 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 - `search` - Find nodes by keyword
 - `scan` - Force registry rescan
 - `discover` - LLM-powered node selection (NEW in Task 71)
+- `execute` - Execute single node independently (delegates to `registry_run.py`)
 
 **Display Features**:
 - Groups nodes by package
@@ -264,6 +268,12 @@ result = execute_workflow(
 )
 ```
 
+**Shared Formatters**: CLI uses formatters from `execution/formatters/` for output consistency with MCP server
+- `registry_run.py`: Uses `node_output_formatter`, `registry_run_formatter`
+- `registry.py`: Uses `registry_list_formatter`, `registry_search_formatter`
+- `commands/workflow.py`: Uses `workflow_list_formatter`, `workflow_describe_formatter`, `discovery_formatter`, `workflow_save_formatter`
+- `main.py`: Uses `success_formatter`, `error_formatter`, `validation_formatter`
+
 ### 2. Planning Integration
 
 **Via create_planner_flow**:
@@ -279,6 +289,13 @@ planner_flow.run(shared)  # Populates shared["workflow"]
 - Passed via `enhanced_params["__planner_cache_chunks__"]`
 - Used by repair service for context continuity
 - Enables cache reuse reducing LLM costs
+
+**Workflow Save Service**: `commands/workflow.py` uses `core/workflow_save_service.py` for workflow save operations
+- `validate_workflow_name()` - Name format validation
+- `load_and_validate_workflow()` - Load and normalize from file
+- `save_workflow_with_options()` - Save with force/overwrite handling
+- `generate_workflow_metadata()` - Optional LLM metadata generation
+- `delete_draft_safely()` - Security-aware draft deletion
 
 ### 3. Context Management
 
@@ -475,7 +492,9 @@ pflow my-saved-workflow --trace
 ### Subcommand Usage
 ```bash
 pflow mcp add ./github.mcp.json
+pflow mcp serve                    # Run as MCP server (stdio)
 pflow registry list
+pflow registry execute node_type param=value
 pflow workflow describe my-workflow
 pflow settings set test_nodes_enabled true
 ```

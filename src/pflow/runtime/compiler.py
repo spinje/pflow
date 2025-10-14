@@ -14,6 +14,7 @@ import sys
 from typing import Any, Optional, Union, cast
 
 from pflow.core.ir_schema import ValidationError
+from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 from pflow.registry import Registry
 from pocketflow import BaseNode, Flow
@@ -382,9 +383,7 @@ def _create_mcp_error_suggestion(
         )
 
     # MCP tools exist but not this one - suggest alternatives
-    from difflib import get_close_matches
-
-    similar = get_close_matches(node_type, mcp_nodes, n=3, cutoff=0.4)
+    similar = find_similar_items(node_type, mcp_nodes, max_results=3, method="fuzzy", cutoff=0.4)
 
     if similar:
         suggestion_parts = [f"MCP tool '{node_type}' not found.\n\nDid you mean one of these?"]

@@ -8,6 +8,8 @@ from typing import Any
 
 import click
 
+from pflow.core.security_utils import SENSITIVE_KEYS
+
 
 def filter_user_params(params: dict[str, Any] | None) -> dict[str, Any] | None:
     """Filter out internal parameters (those starting with __).
@@ -69,25 +71,6 @@ def format_rerun_command(workflow_name: str, params: dict[str, Any] | None) -> s
     Returns:
         Complete shell command string ready for display
     """
-    # Common secret-like parameter names to mask
-    SENSITIVE_KEYS = {
-        "password",
-        "passwd",
-        "pwd",
-        "token",
-        "api_token",
-        "access_token",
-        "auth_token",
-        "api_key",
-        "apikey",
-        "api-key",
-        "secret",
-        "client_secret",
-        "private_key",
-        "ssh_key",
-        "secret_key",
-    }
-
     # Start with base command (no "run" prefix per spec)
     command_parts = ["pflow", workflow_name]
 

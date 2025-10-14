@@ -100,29 +100,6 @@ def _echo_trace(ctx: click.Context, message: str) -> None:
         click.echo(message, err=True)
 
 
-def _echo_info(ctx: click.Context, message: str) -> None:
-    """Output informational message only in interactive mode.
-
-    Args:
-        ctx: Click context
-        message: Info message to display
-    """
-    output_controller = _get_output_controller(ctx)
-    if output_controller.is_interactive():
-        click.echo(message, err=True)
-
-
-def _echo_error(message: str) -> None:
-    """Output error message always, even in non-interactive mode.
-
-    Errors are critical and should always be visible.
-
-    Args:
-        message: Error message to display
-    """
-    click.echo(message, err=True)
-
-
 def _read_stdin_data() -> tuple[str | None, StdinData | None]:
     """Read stdin data, trying text first then enhanced.
 
@@ -284,20 +261,6 @@ def _inject_stdin_object(shared_storage: dict[str, Any], stdin_data: StdinData, 
             _log_stdin_injection("temp_file", stdin_data.temp_path)
 
 
-def _inject_stdin_data(shared_storage: dict[str, Any], stdin_data: str | StdinData | None, verbose: bool) -> None:
-    """Inject stdin data into shared storage."""
-    if stdin_data is None:
-        return
-
-    if isinstance(stdin_data, str):
-        # Backward compatibility: string data
-        shared_storage["stdin"] = stdin_data
-        if verbose:
-            _log_stdin_injection("text", len(stdin_data))
-    elif isinstance(stdin_data, StdinData):
-        _inject_stdin_object(shared_storage, stdin_data, verbose)
-
-
 def _handle_workflow_output(
     shared_storage: dict[str, Any],
     output_key: str | None,
@@ -330,7 +293,9 @@ def _handle_workflow_output(
             shared_storage, output_key, workflow_ir, verbose, metrics_collector, workflow_metadata, workflow_trace
         )
     else:  # text format (default)
-        return _handle_text_output(shared_storage, output_key, workflow_ir, verbose, print_flag)
+        return _handle_text_output(
+            shared_storage, output_key, workflow_ir, verbose, print_flag, metrics_collector, workflow_metadata
+        )
 
 
 def _is_valid_output_value(value: Any) -> bool:
@@ -414,31 +379,71 @@ def _handle_text_output(
     workflow_ir: dict[str, Any] | None,
     verbose: bool,
     print_flag: bool = False,
+    metrics_collector: Any | None = None,
+    workflow_metadata: dict[str, Any] | None = None,
 ) -> bool:
-    """Handle text formatted output (current behavior).
+    """Handle text formatted output with execution summary.
 
-    Returns the first matching output as plain text.
+    Shows execution summary first, then workflow output.
+
     When print_flag (-p) is True, suppresses all warnings.
+
+    Args:
+        shared_storage: The shared store after execution
+        output_key: User-specified output key (--output-key flag)
+        workflow_ir: The workflow IR (to check declared outputs)
+        verbose: Whether to show verbose output
+        print_flag: Whether -p flag is set (suppress warnings)
+        metrics_collector: Optional MetricsCollector for execution metrics
+        workflow_metadata: Optional workflow metadata
+
+    Returns:
+        True if output was produced, False otherwise.
     """
+    # Display execution summary FIRST (if metrics collector provided)
+    if metrics_collector:
+        from pflow.execution.formatters.success_formatter import format_execution_success
+
+        formatted = format_execution_success(
+            shared_storage=shared_storage,
+            workflow_ir=workflow_ir or {},
+            metrics_collector=metrics_collector,
+            workflow_metadata=workflow_metadata,
+            output_key=output_key,
+            trace_path=None,  # Text mode doesn't include trace_path
+        )
+
+        _display_execution_summary(formatted, verbose)
+
+    # Now show the actual output
+    output_found = False
+
     # User-specified key takes priority
     if output_key:
         if output_key in shared_storage:
-            return safe_output(shared_storage[output_key])
-        # Suppress warnings in -p mode
-        if not print_flag:
-            click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
-        return False
+            click.echo("\nWorkflow output:\n", err=True)
+            safe_output(shared_storage[output_key])
+            output_found = True
+        else:
+            # Suppress warnings in -p mode
+            if not print_flag:
+                click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
 
     # Check workflow-declared outputs
-    if _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag):
-        return True
+    elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
+        click.echo("\nWorkflow output:\n", err=True)
+        if _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag):
+            output_found = True
 
     # Fall back to auto-detect from common keys (using unified function)
-    key_found, value = _find_auto_output(shared_storage)
-    if key_found:
-        return safe_output(value)
+    else:
+        key_found, value = _find_auto_output(shared_storage)
+        if key_found:
+            click.echo("\nWorkflow output:\n", err=True)
+            safe_output(value)
+            output_found = True
 
-    return False
+    return output_found
 
 
 def _emit_declared_output(
@@ -519,6 +524,140 @@ def _warn_missing_declared_outputs(declared_outputs: dict[str, Any], verbose: bo
     )
 
 
+def _get_status_indicator(status: str) -> str:
+    """Get display indicator for node execution status.
+
+    Args:
+        status: Node execution status
+
+    Returns:
+        Single character indicator symbol
+    """
+    indicators = {
+        "completed": "✓",
+        "failed": "✗",
+        "not_executed": "○",
+    }
+    return indicators.get(status, "?")
+
+
+def _format_node_timing(duration_ms: int | float) -> str:
+    """Format node execution timing for display.
+
+    Args:
+        duration_ms: Duration in milliseconds
+
+    Returns:
+        Formatted timing string
+    """
+    return f"({int(duration_ms)}ms)" if duration_ms and duration_ms > 0 else "(<1ms)"
+
+
+def _format_node_status_line(node_id: str, status: str, duration_ms: int | float, cached: bool) -> str:
+    """Format complete node status line for display.
+
+    Args:
+        node_id: Node identifier
+        status: Execution status
+        duration_ms: Duration in milliseconds
+        cached: Whether result was cached
+
+    Returns:
+        Formatted status line
+    """
+    indicator = _get_status_indicator(status)
+    timing = _format_node_timing(duration_ms)
+    return f"  {indicator} {node_id} {timing} cached" if cached else f"  {indicator} {node_id} {timing}"
+
+
+def _display_workflow_action(workflow_name: str, workflow_action: str) -> None:
+    """Display workflow name and action message.
+
+    Args:
+        workflow_name: Name of the workflow
+        workflow_action: Action type (reused, created, unsaved)
+    """
+    click.echo("", err=True)
+    if workflow_action == "reused":
+        click.echo(f"{workflow_name} was executed", err=True)
+    elif workflow_action == "created":
+        click.echo(f"{workflow_name} was created and executed", err=True)
+    # Skip showing workflow line for "unsaved" workflows
+
+
+def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, Any]) -> None:
+    """Display LLM cost and token usage summary.
+
+    Args:
+        total_cost: Total cost in USD
+        formatted_result: Full formatted result containing metrics
+    """
+    if total_cost is None or total_cost <= 0:
+        return
+
+    # Get token count for context
+    metrics = formatted_result.get("metrics", {})
+    workflow_metrics = metrics.get("workflow", {})
+    total_tokens = workflow_metrics.get("total_tokens", 0)
+
+    if total_tokens > 0:
+        click.echo(f"💰 Cost: ${total_cost:.4f} ({total_tokens:,} tokens)", err=True)
+    else:
+        click.echo(f"💰 Cost: ${total_cost:.4f}", err=True)
+
+
+def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) -> None:
+    """Display execution summary with metrics in text mode.
+
+    Always shows:
+    - Workflow name and action
+    - Total execution time
+    - Per-node execution details (timing, cache status)
+    - LLM cost and token usage (if > 0)
+
+    Args:
+        formatted_result: Formatted result from format_execution_success()
+        verbose: Currently unused, kept for compatibility
+    """
+    duration_ms = formatted_result.get("duration_ms")
+    total_cost = formatted_result.get("total_cost_usd")
+
+    # Extract execution details
+    execution = formatted_result.get("execution", {})
+    steps = execution.get("steps", []) if execution else []
+
+    # Extract workflow metadata
+    workflow_metadata = formatted_result.get("workflow", {})
+    workflow_name = workflow_metadata.get("name", "workflow")
+    workflow_action = workflow_metadata.get("action", "executed")
+
+    # Count nodes
+    total_nodes = len(steps)
+
+    # Show workflow name and action (but not for unsaved workflows)
+    _display_workflow_action(workflow_name, workflow_action)
+
+    # Show total execution time
+    if duration_ms is not None:
+        duration_s = duration_ms / 1000.0
+        click.echo(f"✓ Workflow completed in {duration_s:.3f}s", err=True)
+
+    # Show per-node execution details
+    if steps:
+        click.echo(f"Nodes executed ({total_nodes}):", err=True)
+        for step in steps:
+            node_id = step.get("node_id", "unknown")
+            status = step.get("status", "unknown")
+            duration_ms_node = step.get("duration_ms", 0)
+            cached = step.get("cached", False)
+
+            status_line = _format_node_status_line(node_id, status, duration_ms_node, cached)
+            click.echo(status_line, err=True)
+
+    # Show cost if > 0
+    _display_cost_summary(total_cost, formatted_result)
+
+
 def _handle_json_output(
     shared_storage: dict[str, Any],
     output_key: str | None,
@@ -532,51 +671,17 @@ def _handle_json_output(
 
     Returns all declared outputs or specified key as JSON, optionally with metrics.
     """
-    outputs = _collect_json_outputs(shared_storage, output_key, workflow_ir, verbose)
+    # Use shared formatter for consistency with MCP
+    from pflow.execution.formatters.success_formatter import format_execution_success
 
-    # Build unified JSON structure
-    result = {
-        "success": True,
-        "result": outputs,
-    }
-
-    # Always include workflow metadata (default to unsaved if not provided)
-    result["workflow"] = workflow_metadata if workflow_metadata else _get_default_workflow_metadata()
-
-    # Add metrics at top level if available (like before)
-    if metrics_collector:
-        llm_calls = shared_storage.get("__llm_calls__", [])
-        metrics_summary = metrics_collector.get_summary(llm_calls)
-
-        # Add top-level metrics (matching old structure)
-        result["duration_ms"] = metrics_summary.get("duration_ms")
-        result["total_cost_usd"] = metrics_summary.get("total_cost_usd")
-
-        # For nodes_executed, only count workflow nodes (not planner nodes)
-        result["nodes_executed"] = _extract_workflow_node_count(metrics_summary)
-
-        # Also include detailed metrics for compatibility
-        result["metrics"] = metrics_summary.get("metrics", {})
-
-    # Add execution state if workflow IR available
-    if workflow_ir and shared_storage:
-        steps = _build_execution_steps(workflow_ir, shared_storage, metrics_summary)
-        if steps:
-            # Count nodes by status
-            completed_count = sum(1 for s in steps if s["status"] == "completed")
-            nodes_total = len(steps)
-
-            result["execution"] = {
-                "duration_ms": metrics_summary.get("duration_ms") if metrics_summary else None,
-                "nodes_executed": completed_count,
-                "nodes_total": nodes_total,
-                "steps": steps,
-            }
-
-            # Add repaired flag if any nodes were modified
-            modified_nodes = shared_storage.get("__modified_nodes__", [])
-            if modified_nodes:
-                result["repaired"] = True
+    result = format_execution_success(
+        shared_storage=shared_storage,
+        workflow_ir=workflow_ir or {},
+        metrics_collector=metrics_collector,
+        workflow_metadata=workflow_metadata,
+        output_key=output_key,
+        trace_path=None,  # CLI doesn't include trace_path in output
+    )
 
     # Save JSON output to trace if available
     if workflow_trace and hasattr(workflow_trace, "set_json_output"):
@@ -676,68 +781,6 @@ def _extract_workflow_node_count(metrics_summary: dict[str, Any]) -> int:
     workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
     node_count = workflow_metrics.get("nodes_executed", 0)
     return int(node_count)  # Ensure we return an int
-
-
-def _build_execution_steps(
-    workflow_ir: dict[str, Any] | None,
-    shared_storage: dict[str, Any],
-    metrics_summary: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
-    """Build detailed execution steps array for JSON output.
-
-    Args:
-        workflow_ir: The workflow IR with nodes list
-        shared_storage: Shared store after execution
-        metrics_summary: Metrics summary from collector
-
-    Returns:
-        List of step dictionaries with status, timing, cache info
-    """
-    if not workflow_ir or "nodes" not in workflow_ir:
-        return []
-
-    # Get execution state
-    exec_state = shared_storage.get("__execution__", {})
-    completed = exec_state.get("completed_nodes", [])
-    failed = exec_state.get("failed_node")
-    cache_hits = shared_storage.get("__cache_hits__", [])
-    modified_nodes = shared_storage.get("__modified_nodes__", [])
-
-    # Get node timings from metrics
-    node_timings = {}
-    if metrics_summary:
-        workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
-        node_timings = workflow_metrics.get("node_timings", {})
-
-    # Build steps array
-    steps = []
-    for node in workflow_ir["nodes"]:
-        node_id = node["id"]
-
-        # Determine status
-        # Check completed first - if a node failed then was repaired, it's completed
-        if node_id in completed:
-            status = "completed"
-        elif node_id == failed:
-            status = "failed"
-        else:
-            status = "not_executed"
-
-        # Build step dict
-        step = {
-            "node_id": node_id,
-            "status": status,
-            "duration_ms": node_timings.get(node_id),
-            "cached": node_id in cache_hits,
-        }
-
-        # Mark repaired nodes
-        if node_id in modified_nodes:
-            step["repaired"] = True
-
-        steps.append(step)
-
-    return steps
 
 
 def _create_json_error_output(
@@ -1173,84 +1216,6 @@ def _handle_compilation_error(
     ctx.exit(1)
 
 
-def _build_execution_state_from_ir(
-    ir_data: dict[str, Any],
-    shared_storage: dict[str, Any],
-    metrics_summary: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Build execution state using workflow IR for complete step information.
-
-    Args:
-        ir_data: Workflow IR containing node definitions
-        shared_storage: Shared store with execution state
-        metrics_summary: Metrics summary with node timings
-
-    Returns:
-        Execution state dict with steps, or None if no steps
-    """
-    steps = _build_execution_steps(ir_data, shared_storage, metrics_summary)
-    if not steps:
-        return None
-
-    completed_count = sum(1 for s in steps if s["status"] == "completed")
-    return {
-        "duration_ms": metrics_summary.get("duration_ms"),
-        "nodes_executed": completed_count,
-        "nodes_total": len(steps),
-        "steps": steps,
-    }
-
-
-def _build_execution_state_fallback(
-    shared_storage: dict[str, Any],
-    metrics_summary: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Build simplified execution state from shared store only (no IR).
-
-    Args:
-        shared_storage: Shared store with execution state
-        metrics_summary: Metrics summary with node timings
-
-    Returns:
-        Execution state dict with steps, or None if no steps
-    """
-    exec_state = shared_storage["__execution__"]
-    completed = exec_state.get("completed_nodes", [])
-    failed = exec_state.get("failed_node")
-    cache_hits = shared_storage.get("__cache_hits__", [])
-
-    # Get node timings
-    workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
-    node_timings = workflow_metrics.get("node_timings", {})
-
-    # Build steps for completed and failed nodes only
-    steps = []
-    for node_id in completed:
-        steps.append({
-            "node_id": node_id,
-            "status": "completed",
-            "duration_ms": node_timings.get(node_id),
-            "cached": node_id in cache_hits,
-        })
-
-    if failed and failed not in completed:
-        steps.append({
-            "node_id": failed,
-            "status": "failed",
-            "duration_ms": node_timings.get(failed),
-            "cached": False,
-        })
-
-    if not steps:
-        return None
-
-    return {
-        "duration_ms": metrics_summary.get("duration_ms"),
-        "nodes_executed": len(completed),
-        "steps": steps,
-    }
-
-
 def _build_json_error_response(
     result: Any,
     metrics_collector: Any | None,
@@ -1274,32 +1239,30 @@ def _build_json_error_response(
         "is_error": True,
     }
 
-    # Add error details from result
+    # Use shared error formatter (SECURITY FIX: adds sanitization)
     if result and hasattr(result, "errors") and result.errors:
-        error_output["errors"] = result.errors
-        if result.errors:
-            error_output["failed_node"] = result.errors[0].get("node_id")
+        from pflow.execution.formatters.error_formatter import format_execution_errors
 
-    # Add metrics if available
-    if metrics_collector:
-        llm_calls = shared_storage.get("__llm_calls__", [])
-        metrics_summary = metrics_collector.get_summary(llm_calls)
+        formatted = format_execution_errors(
+            result,
+            shared_storage=shared_storage,
+            ir_data=ir_data,
+            metrics_collector=metrics_collector,
+            sanitize=True,  # SECURITY FIX: Sanitize sensitive data in JSON output
+        )
 
-        # Top-level metrics
-        error_output["duration_ms"] = metrics_summary.get("duration_ms")
-        error_output["total_cost_usd"] = metrics_summary.get("total_cost_usd")
-        error_output["nodes_executed"] = _extract_workflow_node_count(metrics_summary)
-        error_output["metrics"] = metrics_summary.get("metrics", {})
+        # Add formatted errors (sanitized)
+        error_output["errors"] = formatted["errors"]
+        if formatted["errors"]:
+            error_output["failed_node"] = formatted["errors"][0].get("node_id")
 
         # Add execution state if available
-        if shared_storage and "__execution__" in shared_storage:
-            if ir_data:
-                exec_state = _build_execution_state_from_ir(ir_data, shared_storage, metrics_summary)
-            else:
-                exec_state = _build_execution_state_fallback(shared_storage, metrics_summary)
+        if formatted.get("execution"):
+            error_output["execution"] = formatted["execution"]
 
-            if exec_state:
-                error_output["execution"] = exec_state
+        # Add metrics if available
+        if formatted.get("metrics"):
+            error_output.update(formatted["metrics"])
 
     return error_output
 
@@ -1364,13 +1327,19 @@ def _display_single_error(
     click.echo(f"  Category: {category}", err=True)
     click.echo(f"  Message: {message}", err=True)
 
-    # Show raw API response if available
+    # Show raw API response if available (SECURITY FIX: Sanitize before display)
     if (raw := error.get("raw_response")) and isinstance(raw, dict):
-        _display_api_error_response(raw)
+        from pflow.mcp_server.utils.errors import sanitize_parameters
 
-    # Show MCP error details
+        sanitized_raw = sanitize_parameters(raw)
+        _display_api_error_response(sanitized_raw)
+
+    # Show MCP error details (SECURITY FIX: Sanitize before display)
     if (mcp := error.get("mcp_error")) and isinstance(mcp, dict):
-        _display_mcp_error_details(mcp)
+        from pflow.mcp_server.utils.errors import sanitize_parameters
+
+        sanitized_mcp = sanitize_parameters(mcp)
+        _display_mcp_error_details(sanitized_mcp)
 
     # Show available fields for template errors
     if category == "template_error" and (available := error.get("available_fields")):
@@ -1743,8 +1712,8 @@ def _setup_execution_context(
     verbose = ctx.obj.get("verbose", False)
     no_repair = ctx.obj.get("no_repair", False)
 
-    # Set up metrics collector if JSON output and not provided
-    if output_format == "json" and not metrics_collector:
+    # Set up metrics collector if not provided (for both text and JSON mode)
+    if not metrics_collector:
         from pflow.core.metrics import MetricsCollector
 
         metrics_collector = MetricsCollector()
@@ -1821,31 +1790,32 @@ def _display_validation_results(
     """
     import sys
 
+    # Use shared formatter for validation display
+    from pflow.execution.formatters.validation_formatter import (
+        format_validation_failure,
+        format_validation_success,
+    )
+
     if not errors:
         if output_format == "json":
             click.echo(json.dumps({"success": True, "message": "Workflow structure is valid"}))
         else:
-            click.echo("✓ Schema validation passed")
-            click.echo("✓ Data flow validation passed")
-            click.echo("✓ Template structure validation passed")
-            click.echo("✓ Node types validation passed")
+            # Use formatter for success display
+            success_text = format_validation_success()
+            click.echo(success_text)
 
-            # Display warnings if present
+            # Display warnings if present (complex, CLI-specific)
             if warnings:
                 _display_validation_warnings(warnings)
-
-            click.echo("\nWorkflow is valid and ready to execute!")
         sys.exit(0)
     else:
         # Display validation errors
         if output_format == "json":
             click.echo(json.dumps({"success": False, "errors": errors}))
         else:
-            click.echo("✗ Static validation failed:", err=True)
-            for error in errors[:10]:  # Show first 10 errors
-                click.echo(f"  - {error}", err=True)
-            if len(errors) > 10:
-                click.echo(f"  ... and {len(errors) - 10} more errors", err=True)
+            # Use formatter for error display (auto-generates suggestions)
+            error_text = format_validation_failure(errors)
+            click.echo(error_text, err=True)
         sys.exit(1)
 
 
@@ -2092,21 +2062,6 @@ def _check_llm_configuration(verbose: bool) -> None:
         if verbose:
             click.echo(f"cli: LLM model check failed: {model_error}", err=True)
         raise ValueError(f"LLM model {model_name} not available") from model_error
-
-
-def _handle_llm_configuration_error(
-    ctx: click.Context,
-    llm_error: Exception,
-    verbose: bool,
-) -> None:
-    """Handle LLM configuration errors with helpful messages."""
-    click.echo("cli: Natural language planner requires LLM configuration", err=True)
-    click.echo("cli: To use the planner, configure the Anthropic API:", err=True)
-    click.echo("cli:   1. Run: llm keys set anthropic", err=True)
-    click.echo("cli:   2. Enter your API key from https://console.anthropic.com/", err=True)
-    if verbose:
-        click.echo(f"cli: Error details: {llm_error}", err=True)
-    ctx.exit(1)
 
 
 def _save_trace_if_needed(trace_collector: Any, trace_planner: bool, success: bool, ctx: click.Context) -> None:
@@ -2738,54 +2693,6 @@ def _auto_discover_mcp_servers(ctx: click.Context, verbose: bool) -> None:
         logger.debug(f"Failed to auto-discover MCP servers: {e}")
 
 
-def _check_mcp_setup(ctx: click.Context) -> None:
-    """Check if MCP tools need to be synced and inform user.
-
-    This provides proactive guidance to users who have MCP servers configured
-    but haven't synced the tools yet.
-    """
-    # Only check if this looks like a command that might use MCP
-    # Skip check if in non-interactive mode to avoid clutter
-    output_controller = _get_output_controller(ctx)
-    if not output_controller.is_interactive():
-        return
-
-    # Only check if workflow text contains keywords suggesting MCP usage
-    workflow_text = ctx.obj.get("workflow_text", "")
-    mcp_keywords = ["slack", "github", "mcp", "message", "issue", "channel"]
-
-    # Check if any keyword is in the workflow text (case-insensitive)
-    if workflow_text and any(keyword in workflow_text.lower() for keyword in mcp_keywords):
-        try:
-            from pflow.registry import Registry
-
-            registry = Registry()
-            all_nodes = registry.list_nodes()
-            mcp_count = len([n for n in all_nodes if n.startswith("mcp-")])
-
-            # If no MCP tools are registered, check if servers are configured
-            if mcp_count == 0:
-                try:
-                    from pflow.mcp import MCPServerManager
-
-                    manager = MCPServerManager()
-                    servers = manager.list_servers()
-
-                    if servers:
-                        # User has configured servers but hasn't synced
-                        click.echo(
-                            "💡 Tip: You have MCP servers configured but no tools synced.\n"
-                            "   This workflow might need MCP tools. Run: pflow mcp sync --all\n",
-                            err=True,
-                        )
-                except Exception as e:
-                    # Log MCP check failure at debug level - this is optional functionality
-                    logger.debug(f"Failed to check MCP server status: {e}")
-        except Exception as e:
-            # Log registry check failure at debug level - this is optional functionality
-            logger.debug(f"Failed to check registry for MCP nodes: {e}")
-
-
 def _initialize_context(
     ctx: click.Context,
     verbose: bool,
@@ -2960,20 +2867,28 @@ def _show_workflow_help(
         workflow_ir: Workflow IR data
         source: Workflow source ("saved", "file", etc.)
     """
-    # Import display helpers
-    from pflow.cli.commands.workflow import _display_example_usage, _display_inputs, _display_outputs
+    # Use shared formatter (same as workflow describe command)
+    from pflow.execution.formatters.workflow_describe_formatter import format_workflow_interface
 
-    # Display workflow information
+    # Build metadata structure expected by formatter
     name = os.path.basename(first_arg) if "/" in first_arg else first_arg
+    metadata = {"ir": workflow_ir}
+
+    # Add description if present
+    if "description" in workflow_ir:
+        metadata["description"] = workflow_ir["description"]
+
+    # Display workflow information header
     click.echo(f"\nWorkflow: {name}")
     if source == "saved":
         click.echo("Source: Saved workflow")
     else:
         click.echo(f"Source: {first_arg}")
+    click.echo()  # Empty line before formatted output
 
-    _display_inputs(workflow_ir)
-    _display_outputs(workflow_ir)
-    _display_example_usage(name, workflow_ir)
+    # Use formatter for consistent display
+    formatted = format_workflow_interface(name, metadata)
+    click.echo(formatted)
 
 
 def _setup_workflow_execution(
@@ -3471,7 +3386,6 @@ def workflow_command(
 
     # Check MCP setup and provide guidance if needed
     # Temporarily disabled for debugging
-    # _check_mcp_setup(ctx)
 
     # Try to handle as named/file workflow first
     if _try_execute_named_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):

@@ -1,130 +1,230 @@
-# Task 72: Implement MCP Server for pflow (Future Work)
+# Task 72: Implement MCP Server for pflow
 
 ## ID
 72
 
 ## Title
-Implement MCP Server for pflow (Future Work)
+Implement MCP Server for pflow
 
 ## Description
-Build an MCP (Model Context Protocol) server that exposes pflow's capabilities as tools for AI agents, but ONLY if the CLI-first approach from Task 71 proves insufficient. This task preserves all the research and planning from the original Task 71 design, ready for implementation if needed.
+Build an MCP (Model Context Protocol) server that exposes pflow's core workflow building and execution capabilities as programmatically accessible tools for AI agents. This enables agents to use pflow without shell access, with structured responses and better performance than CLI spawning.
 
 ## Status
-deferred
+ready
 
 ## Dependencies
-- Task 71: Complete CLI Commands - Must be tested with agents first to determine if MCP is needed
-- Task 68: Refactor RuntimeValidation and Workflow Execution - Provides clean APIs if MCP is built
+- Task 71: CLI extensions for agents (COMPLETED - provides the patterns we're exposing)
+- Task 68: Service layer separation (COMPLETED - provides clean APIs to wrap)
+- Task 43: MCP client support (COMPLETED - shows MCP patterns in pflow)
+- MCP SDK updated to 1.17.0 (from 1.13.1) for latest features and stability
 
 ## Priority
-low (deferred until CLI approach validated)
+high
 
 ## Details
 
-### Why This Task Exists
+### Context and Rationale
 
-During Task 70's validation, we initially designed a comprehensive MCP server implementation. However, we discovered that:
-1. pflow already has ~24 CLI commands with 95% of needed functionality
-2. AI agents already excel at file editing and CLI execution
-3. The simpler approach is to complete the CLI with intelligent discovery
+Task 71 successfully implemented CLI discovery commands that agents use to build workflows. However, some environments require programmatic access without shell execution:
 
-This task preserves all the MCP research and design for future implementation if the CLI approach proves insufficient.
+1. **Performance**: CLI spawning adds overhead for multiple commands
+2. **Structure**: MCP provides JSON responses without text parsing
+3. **Integration**: Some AI systems (Cursor, Continue) prefer MCP over shell
+4. **Session Management**: MCP can maintain context across calls
+5. **Error Handling**: MCP has structured error protocols
 
-### What Task 71 Now Provides
+This task creates an MCP server that mirrors the CLI capabilities agents already use, but with programmatic access.
 
-Task 71 implements intelligent, LLM-powered discovery via CLI:
-- `pflow discover-nodes "query"` - Rich discovery with complete interface details
-- `pflow discover-workflows "query"` - Find workflows with full metadata
-- `pflow workflow save` - Promote drafts to library
-- `pflow workflow describe --json` - Structured workflow details
+### What We're Building
 
-This discovery-first approach means agents describe what they want and receive complete, curated information.
+An MCP server exposing **13 tools** organized in three priority tiers:
 
-### When to Activate This Task
+#### Priority 1: Core Workflow Loop (6 tools)
+These are MANDATORY for agents to build workflows:
 
-Consider implementing the MCP server when:
-- **Performance issues** with spawning multiple CLI commands
-- **Stateful sessions** are needed (CLI is stateless)
-- **Concurrent operations** from multiple agents on same workflow
-- **Authentication/authorization** is required
-- **Programmatic workflow generation** (not just discovery)
-- **Direct integration** without shell access
+1. **`workflow_discover`** - Find existing workflows matching a request
+   - Uses LLM for intelligent matching
+   - Returns confidence scores and reasoning
+   - Enforces discovery-first pattern
 
-Note: The CLI's LLM-powered discovery may eliminate many use cases we originally thought needed MCP.
+2. **`registry_discover`** - Find nodes for building workflows
+   - Uses LLM for intelligent selection
+   - Returns complete interface specifications
+   - Provides everything needed to build
 
-### Preserved Research and Design
+3. **`registry_run`** - Test node execution
+   - Critical for MCP nodes with nested outputs
+   - Returns complete structure, not just values
+   - Reveals actual output paths for templates
 
-All research documents from the original MCP design:
-- `task-72-spec.md` - Original MCP specification
-- `task-72-comprehensive-research.md` - Technical analysis and code snippets
-- `task-72-handover.md` - Critical tacit knowledge about stateless design
-- `mcp-server-architecture.md` - Architectural decisions
-- `mcp-protocol-best-practices.md` - MCP implementation patterns
-- `task-72-implementation-prompt.md` - Implementation instructions
+4. **`workflow_execute`** - Execute workflows
+   - Built-in: JSON output, no auto-repair, trace enabled
+   - Returns structured results with errors
+   - Includes checkpoint for failed executions
 
-### Potential MCP Tools (If Implemented)
+5. **`workflow_validate`** - Validate without execution
+   - Catches template and structural errors
+   - Returns detailed errors with suggestions
+   - No side effects
 
-If MCP is needed, consider these tools based on what CLI cannot provide efficiently:
+6. **`workflow_save`** - Save to global library
+   - Makes workflows reusable
+   - Validates name format
+   - Auto-normalizes workflow structure
 
-1. **discover_components** - Mirror CLI's discover-nodes but with structured response
-2. **discover_workflows** - Mirror CLI's discover-workflows with programmatic access
-3. **execute_workflow** - Run with structured error handling and checkpoints
-4. **generate_workflow** - Programmatically create workflows (beyond discovery)
-5. **manage_session** - Handle stateful workflow editing sessions
+#### Priority 2: Supporting Functions (5 tools)
+Enhanced functionality for complete workflows:
 
-Note: These would likely wrap the CLI's discovery logic but provide:
-- Structured JSON responses without parsing
-- Session management
-- Concurrent access control
-- Performance optimization (no shell spawning)
+7. **`registry_describe`** - Get detailed node specs
+8. **`registry_search`** - Find nodes by pattern
+9. **`workflow_list`** - List saved workflows
+10. **`settings_set`** - Configure API keys
+11. **`settings_get`** - Retrieve settings
 
-### Key Design Principles (Preserved)
+#### Priority 3: Advanced (2 tools)
+Nice to have for power users:
 
-- **Stateless Design**: Fresh instances per request
-- **Agent-Orchestrated Repair**: Return errors with checkpoints, not auto-repair
-- **Minimal Tool Set**: Cognitive load reduction
-- **Leverage CLI Logic**: Reuse discovery and execution from Task 71
-- **asyncio.to_thread()**: Bridge async MCP to sync pflow
+12. **`registry_list`** - Browse all nodes (verbose)
+13. **`trace_read`** - Parse execution traces
 
-### Implementation Estimate
+### Key Design Decisions
 
-If activated:
-- 5-10 hours if wrapping CLI commands
-- 15-20 hours if implementing direct service integration
+1. **Direct Service Integration**: Use WorkflowManager, Registry, execute_workflow directly (not CLI wrapping)
+2. **Clean Interface**: No unnecessary parameters, sensible defaults
+3. **Agent-Optimized Defaults**:
+   - Always return JSON structures
+   - Never auto-repair (explicit errors)
+   - Always save execution traces
+   - Auto-normalize workflow structures
+4. **Stateless Operation**: Fresh instances per request (matches pflow patterns)
+5. **Discovery-First**: Enforce checking for existing workflows before building
 
-The estimate is reduced because Task 71's discovery logic can be reused.
+### Implementation Architecture
 
-### What We Learned
+```
+src/pflow/mcp_server/
+├── __init__.py
+├── server.py          # FastMCP server setup
+├── tools/
+│   ├── discovery.py   # workflow_discover, registry_discover
+│   ├── execution.py   # workflow_execute, workflow_validate
+│   ├── registry.py    # registry_run, describe, search, list
+│   ├── workflow.py    # workflow_save, workflow_list
+│   ├── settings.py    # settings_set, settings_get
+│   └── trace.py      # trace_read
+└── utils/
+    ├── resolver.py    # Workflow resolution logic
+    └── security.py    # Path validation
+```
 
-The evolution of our understanding:
-1. **First**: 14 MCP tools mimicking every CLI command
-2. **Then**: 5 focused tools for core operations
-3. **Finally**: CLI-first with intelligent discovery
-4. **Future**: MCP only if specific limitations emerge
+### Technical Approach
 
-Key insights:
-- Rich discovery eliminates many tool needs
-- LLM-powered selection is more powerful than listing
-- Agents prefer natural language queries over structured browsing
-- Complete information in one shot beats multiple queries
+Using FastMCP pattern with asyncio.to_thread bridge:
 
-## Success Criteria (If Activated)
+```python
+from mcp.server.fastmcp import FastMCP
+import asyncio
 
-✅ MCP tools provide same discovery intelligence as CLI
-✅ Structured responses without text parsing
-✅ Session management for complex workflows
-✅ Performance improvement over CLI spawning
-✅ Concurrent access handled correctly
-✅ Authentication/authorization if needed
+mcp = FastMCP("pflow", version="0.1.0")
+
+@mcp.tool()
+async def workflow_execute(workflow: str | dict, parameters: dict = None) -> dict:
+    """Execute workflow with agent-optimized defaults."""
+    # Direct service integration
+    from pflow.execution.workflow_execution import execute_workflow
+    from pflow.execution.null_output import NullOutput
+
+    result = await asyncio.to_thread(
+        execute_workflow,
+        workflow_ir=workflow,
+        execution_params=parameters or {},
+        output=NullOutput(),     # Silent execution
+        enable_repair=False      # No auto-repair
+    )
+
+    # Return structured response
+    return format_result(result)
+```
+
+### CLI Integration
+
+Add `pflow serve mcp` command:
+
+```python
+# src/pflow/cli/commands/serve.py
+@serve.command()
+def mcp():
+    """Run as MCP server (stdio transport)."""
+    from pflow.mcp_server import run_server
+    asyncio.run(run_server())
+```
+
+### Critical Implementation Notes
+
+1. **Discovery Tools Use LLM**: Unlike simple keyword search, use ComponentBrowsingNode and WorkflowDiscoveryNode directly
+2. **Agent Mode Built-in**: No flags for JSON output or disabling repair - these are defaults
+3. **MCP Node Testing Essential**: registry_run must reveal nested structures (documentation shows "Any" but reality is deeply nested)
+4. **Stateless by Design**: Create fresh Registry/WorkflowManager instances per request
+5. **Security**: Validate all paths, sanitize sensitive parameters in responses
+
+## Implementation Plan
+
+### Phase 1: Core Tools (2 days)
+- Set up FastMCP server structure
+- Implement 6 Priority 1 tools
+- Test discovery → execute loop
+
+### Phase 2: Supporting Tools (1 day)
+- Implement 5 Priority 2 tools
+- Add settings management
+- Test complete workflows
+
+### Phase 3: Testing & Validation (1 day)
+- Test with AGENT_INSTRUCTIONS workflows
+- Validate Claude Code discovery
+- Performance testing
+
+### Phase 4: Advanced Tools (0.5 day)
+- Implement Priority 3 tools if time permits
+- Documentation and examples
+
+## Success Criteria
+
+✅ MCP server exposes 13 tools via stdio transport
+✅ Discovery tools use LLM for intelligent selection
+✅ Execution returns structured JSON with errors and traces
+✅ All tools use agent-optimized defaults (no flags needed)
+✅ Agents can complete full workflow: discover → build → test → save
+✅ Performance better than CLI spawning
+✅ Clean interface without unnecessary parameters
+
+## Testing Strategy
+
+1. **Unit Tests**: Each tool in isolation
+2. **Integration Tests**: Complete workflow cycles
+3. **Agent Testing**: Use actual AGENT_INSTRUCTIONS examples
+4. **Performance Tests**: Compare with CLI execution times
+5. **Security Tests**: Path traversal, sensitive data
+
+## Estimated Timeline
+
+- Phase 1 (Core): 2 days
+- Phase 2 (Supporting): 1 day
+- Phase 3 (Testing): 1 day
+- Phase 4 (Advanced): 0.5 day
+- **Total: 4.5 days**
 
 ## Notes
 
-This task represents the evolution of our thinking:
-- We started with complex MCP infrastructure
-- Discovered the power of LLM-powered discovery
-- Implemented it in CLI first (simpler, faster)
-- Preserved MCP option for specific future needs
+This implementation is based on extensive research documented in:
+- `starting-context/final-implementation-spec.md` - Complete technical specification
+- `starting-context/pflow-commands-extraction.md` - Analysis of CLI commands agents use
+- `starting-context/critical-analysis.md` - Resolution of documentation conflicts
 
-The CLI's discovery-first approach may be sufficient for most use cases. MCP becomes valuable primarily for performance, session management, and programmatic integration scenarios.
+The MCP server provides the same capabilities as CLI but with:
+- Structured responses (no text parsing)
+- Better performance (no shell spawning)
+- Programmatic access (for systems without shell)
+- Clean interface (sensible defaults, no unnecessary flags)
 
-The key insight: "Even more simple" led us to CLI, but MCP remains an option for specific advanced requirements.
+Key insight from research: Agents follow a strict workflow pattern (discover → build → test → save) that the MCP server must support with appropriate defaults and built-in behaviors.

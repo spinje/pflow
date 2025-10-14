@@ -7,7 +7,7 @@
 ### Tool Count Limits
 - **Keep total tools under 40** - Cursor shows warnings beyond this
 - **Ideal: Under 20 tools** - Better for smaller models
-- **pflow: 5 tools** - Well within optimal range
+- **pflow: 13 tools** - Well within optimal range
 
 ### Tool Granularity Pattern
 ```
@@ -182,12 +182,11 @@ request = {
 
 ## pflow-Specific Recommendations
 
-For pflow's 5 tools:
-1. **browse_components** - Keep descriptions brief, let LLM filter
-2. **execute** - Always return checkpoint on failure
-3. **list_library** - Consider pagination for large libraries
-4. **describe_workflow** - Include both declared and discovered inputs
-5. **save_to_library** - Validate names to prevent overwrites
+For pflow's 13 tools (organized in 4 groups):
+1. **Discovery tools** - Use LLM for intelligent selection
+2. **Execution tools** - Always return checkpoint on failure
+3. **Registry tools** - Consider pagination for large results
+4. **Settings/trace tools** - Validate inputs for security
 
 ---
 
