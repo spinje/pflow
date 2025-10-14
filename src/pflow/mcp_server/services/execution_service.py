@@ -565,7 +565,31 @@ class ExecutionService(BaseService):
             # Create node instance
             node_instance = node_class()
 
-            # Set parameters if provided
+            # Check if this is an MCP node and inject special parameters
+            # MCP nodes require __mcp_server__ and __mcp_tool__ to be set
+            # (normally injected by compiler during workflow compilation)
+            if node_type.startswith("mcp-"):
+                # Import the parser function (same logic as compiler uses)
+                from pflow.runtime.compiler import _parse_mcp_node_type
+
+                # Parse node type to extract server and tool names
+                # This will raise CompilationError if format is invalid or server not found
+                server_name, tool_name = _parse_mcp_node_type(node_type)
+
+                # Inject special parameters (same as compiler does)
+                if parameters is None:
+                    parameters = {}
+
+                # These special parameters tell MCPNode which server/tool to execute
+                parameters["__mcp_server__"] = server_name
+                parameters["__mcp_tool__"] = tool_name
+
+                logger.debug(
+                    f"Injected MCP metadata for {node_type}",
+                    extra={"server": server_name, "tool": tool_name},
+                )
+
+            # Set parameters (now includes __mcp_server__ and __mcp_tool__ for MCP nodes)
             if parameters:
                 node_instance.set_params(parameters)
 

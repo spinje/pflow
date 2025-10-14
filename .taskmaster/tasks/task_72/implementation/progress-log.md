@@ -1777,6 +1777,66 @@ uv run python test_workflow_save_dict.py
 
 ---
 
+## 2025-10-14 14:58 - CRITICAL BUG FIX: registry_run MCP Node Support
+
+**Discovery**: Agent testing revealed `registry_run` fails for ALL MCP nodes with "configuration error"
+
+**Root Cause Analysis**:
+- MCP nodes require special compiler-injected parameters: `__mcp_server__` and `__mcp_tool__`
+- The compiler normally injects these during workflow compilation (compiler.py:545-546)
+- `registry_run` bypasses the compiler, creating nodes directly
+- Result: MCPNode.prep() detects missing parameters and raises configuration error
+
+**Impact Before Fix**:
+- ✅ Shell node works via registry_run
+- ❌ All 43 MCP nodes fail via registry_run
+- ❌ Agents cannot discover MCP node output structures
+- ❌ Blocks workflow building with MCP tools
+
+**The Fix** (`execution_service.py` lines 568-590):
+```python
+# Check if this is an MCP node and inject special parameters
+if node_type.startswith("mcp-"):
+    from pflow.runtime.compiler import _parse_mcp_node_type
+
+    # Parse node type to extract server and tool names
+    server_name, tool_name = _parse_mcp_node_type(node_type)
+
+    if parameters is None:
+        parameters = {}
+
+    # Inject special parameters (same as compiler does)
+    parameters["__mcp_server__"] = server_name
+    parameters["__mcp_tool__"] = tool_name
+```
+
+**Verification** (test_registry_run_fix.py):
+- ✅ Shell node still works (backward compatible)
+- ✅ MCP Slack node now works - returned actual conversation data
+- ✅ Parameters correctly injected and verified
+
+**Test Coverage** (`tests/test_mcp_server/test_registry_run_mcp.py`):
+- 4 comprehensive tests covering:
+  1. MCP parameter injection with user params
+  2. MCP parameter injection without user params
+  3. Regular nodes unaffected
+  4. Parsing errors propagate correctly
+- All 43 MCP server tests passing
+
+**Files Modified**:
+1. `src/pflow/mcp_server/services/execution_service.py` - Added MCP parameter injection
+2. `tests/test_mcp_server/test_registry_run_mcp.py` - New test file (4 tests)
+
+**Impact After Fix**:
+- ✅ All 43 MCP nodes now work via registry_run
+- ✅ Agents can discover MCP node output structures
+- ✅ Enables workflow building with MCP tools
+- ✅ Zero breaking changes, full backward compatibility
+
+**Critical Insight**: registry_run is a foundational tool for agents - when it doesn't work for an entire category of nodes (MCP), it completely blocks agent workflow building. This was a silent failure that prevented agents from using any MCP integration.
+
+---
+
 ## 2025-10-13 11:00 - CLI/MCP Parity: Workflow List Filtering
 
 **Gap Found**: MCP `workflow_list` supported filtering, CLI did not.
