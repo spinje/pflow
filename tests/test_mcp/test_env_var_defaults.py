@@ -176,12 +176,12 @@ class TestEnvVarDefaultSyntax:
 class TestEnvVarEdgeCases:
     """Test edge cases and boundary conditions for env var expansion."""
 
-    def test_lowercase_variable_names_not_expanded(self):
-        """Test that lowercase variable names are not expanded per regex."""
+    def test_lowercase_variable_names_expanded(self):
+        """Test that lowercase variable names ARE expanded (supports mixed case)."""
         with patch.dict(os.environ, {"lower_var": "value"}, clear=True):
             result = expand_env_vars_nested("${lower_var:-default}")
-            # Regex only matches uppercase vars, so this should not expand
-            assert result == "${lower_var:-default}"
+            # Regex now matches mixed case vars (updated to match execution_service.py)
+            assert result == "value"
 
     def test_variable_starting_with_number_not_expanded(self):
         """Test that variables starting with numbers are not expanded."""
