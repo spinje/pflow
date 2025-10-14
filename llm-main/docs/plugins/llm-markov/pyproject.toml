@@ -1,6 +1,0 @@
-[project]
-name = "llm-markov"
-version = "0.1"
-
-[project.entry-points.llm]
-markov = "llm_markov"
