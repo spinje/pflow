@@ -26,12 +26,13 @@ def test_version_flag():
 
 
 def test_workflow_arguments():
-    """Test that workflow arguments are collected."""
+    """Test that unquoted multi-word arguments show validation error."""
+    # Updated for planner validation - unquoted multi-word input now errors
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["node1", "=>", "node2"])
 
-    assert result.exit_code == 0
-    assert "Collected workflow from args: node1 => node2" in result.output
+    assert result.exit_code == 1
+    assert "Invalid input" in result.output or "must be quoted" in result.output
 
 
 def test_no_arguments():
@@ -41,4 +42,4 @@ def test_no_arguments():
 
     # With no arguments, it should show an error
     assert result.exit_code != 0
-    assert "cli: No workflow provided" in result.output
+    assert "No workflow" in result.output

@@ -128,25 +128,24 @@ class TestDualModeStdinBehavior:
         assert len(result.output) > 0
 
     def test_json_stdin_with_args_processes_args_as_workflow(self):
-        """Test that args take precedence when both stdin and args are provided."""
+        """Test that unquoted multi-word args show validation error."""
         json_data = '{"data": "some json"}'
 
         runner = CliRunner()
-        # With the new system, args define the workflow, stdin is just data
+        # With planner validation, unquoted multi-word args now error
         result = runner.invoke(main, ["describe", "this", "data"], input=json_data)
 
-        assert result.exit_code == 0
-        # Should process args as workflow request with stdin as data
-        assert "Collected workflow from args: describe this data" in result.output
-        assert "Also collected stdin data:" in result.output
+        assert result.exit_code == 1
+        # Should show validation error for unquoted multi-word input
+        assert "Invalid input" in result.output or "must be quoted" in result.output
 
     def test_no_stdin_uses_args_normally(self):
-        """Test that args work normally when no stdin is provided."""
+        """Test that unquoted multi-word args show validation error."""
         runner = CliRunner()
         result = runner.invoke(main, ["workflow", "from", "args"])
 
-        assert result.exit_code == 0
-        assert "Collected workflow from args: workflow from args" in result.output
+        assert result.exit_code == 1
+        assert "Invalid input" in result.output or "must be quoted" in result.output
 
     def test_empty_stdin_falls_back_to_args(self):
         """Test that empty stdin falls back to args mode.

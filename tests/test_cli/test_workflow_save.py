@@ -92,15 +92,12 @@ class TestWorkflowSaveCLI:
         assert "Save this workflow?" not in result.output
 
     def test_natural_language_workflow_placeholder(self, runner):
-        """Test natural language workflow collection (before Task 17 implementation)."""
-        # For now, workflows from args just show collection message
-        # When Task 17 is implemented, this will process and save workflows
+        """Test that unquoted multi-word input shows validation error."""
+        # With planner validation, unquoted multi-word input now errors
         result = runner.invoke(main, ["create", "a", "backup", "workflow"])
 
-        assert result.exit_code == 0
-        assert "Collected workflow from args: create a backup workflow" in result.output
-        # Save prompt will be added when natural language planner is implemented
-        assert "Save this workflow?" not in result.output
+        assert result.exit_code == 1
+        assert "Invalid input" in result.output or "must be quoted" in result.output
 
     def test_save_prompt_not_shown_after_execution_failure(self, runner, tmp_path):
         """Test that save prompt is not shown after execution failure."""

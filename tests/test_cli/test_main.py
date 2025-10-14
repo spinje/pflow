@@ -22,45 +22,10 @@ def test_main_command_help():
     assert "Workflows can be specified by name, file path, or natural language" in result.output
 
 
-def test_cli_collects_multiple_arguments_as_workflow():
-    """Test that CLI collects multiple arguments into a workflow string."""
-    runner = click.testing.CliRunner()
-    result = runner.invoke(main, ["node1", "node2"])
-
-    assert result.exit_code == 0
-    assert "Collected workflow from args:" in result.output
-    assert "node1 node2" in result.output
-
-
-def test_cli_preserves_workflow_arrow_operators():
-    """Test that workflow arrow operators are preserved in collection."""
-    runner = click.testing.CliRunner()
-    result = runner.invoke(main, ["node1", "=>", "node2"])
-
-    assert result.exit_code == 0
-    assert "Collected workflow from args:" in result.output
-    assert "node1 => node2" in result.output
-
-
-def test_cli_handles_natural_language_with_spaces():
-    """Test that CLI handles natural language commands with spaces."""
-    runner = click.testing.CliRunner()
-    result = runner.invoke(main, ["plan", "a backup strategy"])
-
-    assert result.exit_code == 0
-    assert "Collected workflow from args:" in result.output
-    assert "plan a backup strategy" in result.output
-
-
-def test_with_flags():
-    """Test handling of flags with values."""
-    runner = click.testing.CliRunner()
-    # Using -- to prevent click from parsing the flags
-    result = runner.invoke(main, ["--", "node1", "--flag=value", "=>", "node2"])
-
-    assert result.exit_code == 0
-    assert "Collected workflow from args:" in result.output
-    assert "node1 --flag=value => node2" in result.output
+# REMOVED: Tests for old pre-planner "workflow collection" behavior
+# These tests expected unquoted multi-word input to be collected and echoed back.
+# With planner validation, these inputs now correctly show errors requiring quotes.
+# New tests for this behavior are in test_planner_input_validation.py
 
 
 def test_empty_arguments():
@@ -69,33 +34,8 @@ def test_empty_arguments():
     result = runner.invoke(main, [])
 
     assert result.exit_code != 0
-    assert "cli: No workflow provided" in result.output
-    assert "Use --help to see usage examples" in result.output
-
-
-def test_complex_workflow():
-    """Test a complex workflow with multiple operators and flags."""
-    runner = click.testing.CliRunner()
-    result = runner.invoke(
-        main,
-        [
-            "--",
-            "read-file",
-            "--path=input.txt",
-            "=>",
-            "llm",
-            "--prompt=Summarize this",
-            "=>",
-            "write-file",
-            "--path=output.txt",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert "Collected workflow from args:" in result.output
-    assert "read-file --path=input.txt" in result.output
-    assert "llm --prompt=Summarize this" in result.output
-    assert "write-file --path=output.txt" in result.output
+    # Updated error message from new validation
+    assert "No workflow" in result.output
 
 
 # Tests for stdin input handling
@@ -106,7 +46,7 @@ def test_plain_text_stdin_without_workflow_shows_helpful_error():
     result = runner.invoke(main, [], input="node1 => node2\n")
 
     assert result.exit_code == 1
-    assert "No workflow provided" in result.output
+    assert "No workflow" in result.output
 
 
 def test_complex_stdin_data_without_workflow_shows_helpful_error():
@@ -116,7 +56,7 @@ def test_complex_stdin_data_without_workflow_shows_helpful_error():
     result = runner.invoke(main, [], input=stdin_input)
 
     assert result.exit_code == 1
-    assert "No workflow provided" in result.output
+    assert "No workflow" in result.output
 
 
 def test_whitespace_padded_stdin_data_without_workflow_shows_error():
@@ -125,16 +65,16 @@ def test_whitespace_padded_stdin_data_without_workflow_shows_error():
     result = runner.invoke(main, [], input="\n  node1 => node2  \n\n")
 
     assert result.exit_code == 1
-    assert "No workflow provided" in result.output
+    assert "No workflow" in result.output
 
 
 def test_empty_stdin_falls_back_to_argument_workflow():
     """Test that empty stdin allows arguments to be used as workflow."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["node1"], input="")
-    # With single-token guardrails, this should not invoke planner
+    # With planner validation, single word shows helpful error
     assert result.exit_code != 0
-    assert "Workflow 'node1' not found" in result.output
+    assert "not a known workflow" in result.output
 
 
 def test_json_workflow_via_stdin_requires_workflow_arg():
@@ -145,7 +85,7 @@ def test_json_workflow_via_stdin_requires_workflow_arg():
 
     # With Task 22 changes, stdin alone doesn't work - need workflow args
     assert result.exit_code == 1
-    assert "No workflow provided" in result.output
+    assert "No workflow" in result.output
 
 
 # Tests for file input handling
@@ -391,9 +331,9 @@ def test_stdin_data_with_args():
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["node1"], input="node2 => node3")
 
-    # With single-token guardrails, single word without context is not allowed
+    # With planner validation, single word shows helpful error
     assert result.exit_code != 0
-    assert "Workflow 'node1' not found" in result.output
+    assert "not a known workflow" in result.output
 
 
 def test_stdin_with_file_workflow():
@@ -421,19 +361,20 @@ def test_stdin_with_file_workflow():
 
 # Tests for context storage
 def test_context_storage_verification():
-    """Test that context stores raw input and source correctly."""
-    # Test through standard CLI invocation and verify output format
+    """Test that context handles various input types correctly."""
+    # This test originally verified the old "workflow collection" behavior
+    # With planner validation, unquoted multi-word input now errors
     runner = click.testing.CliRunner()
 
-    # Test args input
+    # Test multi-word unquoted args - should error with quote suggestion
     result = runner.invoke(main, ["test", "workflow"])
-    assert result.exit_code == 0
-    assert "Collected workflow from args: test workflow" in result.output
+    assert result.exit_code == 1
+    assert "Invalid input" in result.output or "must be quoted" in result.output
 
     # Test stdin input - plain text is now treated as data, needs workflow
     result = runner.invoke(main, [], input="stdin workflow")
     assert result.exit_code == 1
-    assert "No workflow provided" in result.output
+    assert "No workflow" in result.output
 
     # Test file input - non-JSON files go through planner
     with runner.isolated_filesystem():
@@ -450,7 +391,7 @@ def test_error_empty_stdin_no_args():
     result = runner.invoke(main, [], input="")
 
     assert result.exit_code != 0
-    assert "cli: No workflow provided" in result.output
+    assert "No workflow" in result.output
 
 
 def test_error_empty_json_file():
@@ -508,10 +449,11 @@ def test_oversized_workflow_input_shows_clear_size_limit_error():
     """Test that workflow input exceeding size limit shows informative error."""
     runner = click.testing.CliRunner()
     # Create a workflow larger than 100KB (current limit)
-    # 25000 * 5 chars ("node ") = ~125KB
-    large_workflow = "node " * 25000
+    # With planner validation, we need a single quoted string WITH SPACES > 100KB
+    # to pass validation and reach the size check
+    large_prompt = "do something " * 10000  # Over 100KB with spaces
 
-    result = runner.invoke(main, large_workflow.split())
+    result = runner.invoke(main, [large_prompt])
 
     assert result.exit_code != 0
     assert "Workflow input too large" in result.output
@@ -524,9 +466,9 @@ def test_signal_handling_exit_code():
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["test"])
 
-    # With single-token guardrails, a lone token is not a valid workflow
+    # With planner validation, a lone token shows helpful error
     assert result.exit_code != 0
-    assert "Workflow 'test' not found" in result.output
+    assert "not a known workflow" in result.output
 
 
 # New tests for Task 22 functionality

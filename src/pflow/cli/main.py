@@ -3184,47 +3184,90 @@ def _try_execute_named_workflow(
     return True  # We handled it by showing an error
 
 
-def _handle_single_token_workflow(
-    ctx: click.Context,
-    workflow: tuple[str, ...],
-    stdin_data: StdinData | str | None,
-    output_key: str | None,
-    output_format: str,
-    verbose: bool,
-) -> bool:
-    """Handle single-token workflow input with guardrails.
+def _is_valid_natural_language_input(workflow: tuple[str, ...]) -> bool:
+    """Check if input is valid for natural language planning.
 
-    Returns True if handled, False if should continue to planner.
+    Valid natural language input must be:
+    - Exactly one argument (quoted string from shell)
+    - Contains spaces (not a single word)
+    - Not a file path or workflow name (already filtered upstream)
+
+    Args:
+        workflow: Tuple of command line arguments
+
+    Returns:
+        True if valid natural language input, False otherwise
     """
-    if not (workflow and len(workflow) == 1 and (" " not in workflow[0])):
+    # Must be exactly one argument
+    if len(workflow) != 1:
         return False
 
-    word = workflow[0]
-    # If it's a saved workflow, execute it directly
-    ir, source = resolve_workflow(word)
-    if ir is not None and _handle_named_workflow(
-        ctx, word, (), stdin_data, output_key, output_format, verbose, ir, source
-    ):
-        return True
-    # Otherwise show targeted hints, or not-found guidance
-    hint = _single_word_hint(word)
-    if hint:
-        click.echo(hint, err=True)
+    text = workflow[0]
+
+    # Must contain spaces (quoted multi-word phrase)
+    if " " not in text:
+        return False
+
+    # Must not look like a file path
+    # (This is defensive - should already be filtered by _try_execute_named_workflow)
+    return not _is_path_like(text)
+
+
+def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...]) -> None:
+    """Show helpful error for invalid planner input.
+
+    Args:
+        ctx: Click context
+        workflow: Invalid workflow tuple
+    """
+    if not workflow:
+        # Should be caught earlier, but defensive
+        click.echo("❌ No workflow specified.", err=True)
+        click.echo("", err=True)
+        click.echo("Usage:", err=True)
+        click.echo('  pflow "natural language prompt"    # Use quotes for planning', err=True)
+        click.echo("  pflow workflow.json                 # Run workflow from file", err=True)
+        click.echo("  pflow my-workflow                   # Run saved workflow", err=True)
+        click.echo("  pflow workflow list                 # List saved workflows", err=True)
         ctx.exit(1)
-    _handle_workflow_not_found(ctx, word, None)
-    return True
+
+    if len(workflow) == 1:
+        # Single word without spaces
+        word = workflow[0]
+        click.echo(f"❌ '{word}' is not a known workflow or command.", err=True)
+        click.echo("", err=True)
+        click.echo("Did you mean:", err=True)
+        click.echo(f'  pflow "{word} <rest of prompt>"    # Use quotes for natural language', err=True)
+        click.echo("  pflow workflow list                 # List saved workflows", err=True)
+        ctx.exit(1)
+
+    # Multiple unquoted arguments
+    joined = " ".join(workflow)
+    click.echo(f"❌ Invalid input: {workflow[0]} {workflow[1]} ...", err=True)
+    click.echo("", err=True)
+    click.echo("Natural language prompts must be quoted:", err=True)
+    click.echo(f'  pflow "{joined}"', err=True)
+    click.echo("", err=True)
+    click.echo("Or use a workflow:", err=True)
+    click.echo("  pflow workflow.json", err=True)
+    click.echo("  pflow my-workflow param=value", err=True)
+    ctx.exit(1)
 
 
 def _validate_and_prepare_natural_language_input(workflow: tuple[str, ...]) -> str:
-    """Validate and prepare input for natural language processing.
+    """Prepare validated natural language input for planning.
 
-    Returns the raw input string.
-    Raises ClickException if input is invalid.
+    Args:
+        workflow: Already validated workflow tuple (single quoted string)
+
+    Returns:
+        The natural language prompt string
+
+    Raises:
+        ClickException: If input is too large
     """
-    raw_input = " ".join(workflow) if workflow else ""
-
-    if not raw_input:
-        raise click.ClickException("cli: No workflow provided. Use --help to see usage examples.")
+    # At this point we know workflow is a single element with spaces
+    raw_input = workflow[0]
 
     # Validate input length (100KB limit)
     if len(raw_input) > 100 * 1024:
@@ -3391,14 +3434,14 @@ def workflow_command(
     if _try_execute_named_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
         return
 
-    # Validate input for natural language processing
+    # Check if this is valid natural language input for planner
+    if not _is_valid_natural_language_input(workflow):
+        # Not valid for planner - show helpful error
+        _handle_invalid_planner_input(ctx, workflow)
+        return  # Never reached (exits in error handler), but explicit
+
+    # Valid natural language input - prepare and execute with planner
     raw_input = _validate_and_prepare_natural_language_input(workflow)
-
-    # Handle single-token workflow with guardrails
-    if _handle_single_token_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
-        return
-
-    # Multi-word or parameterized input: planner by design
     cache_planner = ctx.obj.get("cache_planner", False)
     _execute_with_planner(
         ctx, raw_input, stdin_data, output_key, verbose, "args", trace, planner_timeout, cache_planner

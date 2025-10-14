@@ -573,7 +573,8 @@ class TestEdgeCases:
         result = runner.invoke(main, [""])
 
         assert result.exit_code != 0
-        assert "No workflow provided" in result.output
+        # Empty string shows as single word error
+        assert "not a known workflow" in result.output
 
     def test_workflow_file_not_found(self):
         """Test helpful error when workflow file doesn't exist."""
