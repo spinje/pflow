@@ -175,3 +175,6 @@ node_modules/
 
 # MCP servers
 .mcp-servers/
+
+# External docs
+external-docs/
