@@ -1,14 +1,15 @@
 {
   "mcpServers": {
     "pflow": {
-      "command": "uv",
+      "command": "/opt/homebrew/bin/uv",
       "args": [
         "run",
+        "--directory",
+        "/Users/andfal/projects/pflow",
         "pflow",
         "mcp",
         "serve"
-      ],
-      "cwd": "/Users/andfal/projects/pflow-feat-mcp-server-pflow"
+      ]
     }
   }
 }
