@@ -287,13 +287,13 @@ uv run pflow "create a file called hello.txt with the content 'Hello World'"
 
 # Planner runs always save a trace—inspect it to see what the planner is doing
 uv run pflow "read the README file and summarize it"
-# Trace saved to ~/.pflow/debug/pflow-trace-*.json (do not disable tracing during debugging)
+# Trace saved to ~/.pflow/debug/workflow-trace-*.json (do not disable tracing during debugging)
 
 # Simple workflow generation (takes 10-30s, costs ~$0.02-0.05)
 uv run pflow "generate a random number between 1 and 100"
 
 # Tip: After planner generates a workflow, copy it from debug traces for reuse
-# Check ~/.pflow/debug/pflow-trace-*.json for the generated workflow JSON
+# Check ~/.pflow/debug/workflow-trace-*.json for the generated workflow JSON
 ```
 
 **Remember**: Each planner invocation costs money and takes 10-30 seconds. Traces are saved automatically—use `--file` with JSON workflows for free, instant execution (and avoid `--no-trace` while debugging).

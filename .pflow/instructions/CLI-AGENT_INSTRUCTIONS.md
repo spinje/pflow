@@ -1307,13 +1307,13 @@ Available fields in node (showing 5 of 147):
   ... and 15 more (in error details)
 
 📁 Complete debugging information available in trace file
-   Trace saved to ~/.pflow/debug/workflow-trace-<YYYYMMDD>-<timestamp>.json
+   ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
 ```
 
 **2. Use the trace file for complete field list**:
 ```bash
 # Find the latest trace
-ls -lt ~/.pflow/debug/workflow-trace-*.json | head -1
+ls -t ~/.pflow/debug/workflow-trace-*.json | head -1
 
 # View all available fields from the failed node
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.events[] | select(.node_id == "fetch") | .shared_after.fetch | keys'

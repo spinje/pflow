@@ -373,9 +373,8 @@ $ pflow "analyze code quality metrics"
 ### Trace Files for Deep Debugging
 Capture complete execution details:
 ```bash
-# Humans or AI agents can debug with ease
-pflow my-workflow
-📝 Trace saved: ~/.pflow/debug/pflow-trace-20250114-103000.json
+pflow "complex workflow request"
+📝 Trace saved: ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
 ```
 
 Trace files include:

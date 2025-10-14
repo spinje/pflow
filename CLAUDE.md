@@ -624,7 +624,7 @@ uv run pflow workflow.json
 ```
 
 ```bash
-# Workflow traces are saved automatically to ~/.pflow/debug/workflow-trace-*.json
+# Workflow traces are saved automatically to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
 uv run pflow my-workflow
 ```
 
@@ -632,6 +632,5 @@ uv run pflow my-workflow
 # Output trace file to ~/.pflow/debug/planner-trace-*.json for planner execution
 uv run pflow --trace-planner "do a thing, then do another thing"
 ```
-
 
 

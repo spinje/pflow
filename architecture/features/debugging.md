@@ -52,14 +52,14 @@ pflow --planner-timeout 120 "complex multi-step workflow"
 If timeout is exceeded:
 ```
 ⏰ Operation exceeded 120s timeout
-📝 Debug trace saved: ~/.pflow/debug/pflow-trace-20250114-104500.json
+📝 Debug trace saved: ~/.pflow/debug/workflow-trace-20250114-104500.json
 ```
 
 ## Trace File Location
 
 All trace files are saved to:
 ```
-~/.pflow/debug/pflow-trace-YYYYMMDD-HHMMSS.json
+~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
 ```
 
 ## Understanding Trace Files
@@ -140,7 +140,7 @@ When the planner fails, a trace is automatically saved:
 ```bash
 $ pflow "invalid or ambiguous request"
 ❌ Planner failed: Validation error
-📝 Debug trace saved: ~/.pflow/debug/pflow-trace-20250114-105000.json
+📝 Debug trace saved: ~/.pflow/debug/workflow-trace-20250114-105000.json
 ```
 
 Examine the trace to see:
@@ -154,7 +154,7 @@ Use traces to improve prompts:
 
 ```bash
 $ pflow "your workflow request"
-$ cat ~/.pflow/debug/pflow-trace-*.json | jq '.llm_calls[0].prompt'
+$ cat ~/.pflow/debug/workflow-trace-*.json | jq '.llm_calls[0].prompt'
 ```
 
 Review prompts to:
@@ -167,7 +167,7 @@ Review prompts to:
 Analyze execution times:
 
 ```bash
-$ cat ~/.pflow/debug/pflow-trace-*.json | jq '.node_execution[] | "\(.node): \(.duration_ms)ms"'
+$ cat ~/.pflow/debug/workflow-trace-*.json | jq '.node_execution[] | "\(.node): \(.duration_ms)ms"'
 ```
 
 Output:
@@ -183,7 +183,7 @@ Output:
 Check why the planner chose reuse vs generation:
 
 ```bash
-$ cat ~/.pflow/debug/pflow-trace-*.json | jq '{path: .path_taken, discovery: .llm_calls[0].response}'
+$ cat ~/.pflow/debug/workflow-trace-*.json | jq '{path: .path_taken, discovery: .llm_calls[0].response}'
 ```
 
 ## Troubleshooting

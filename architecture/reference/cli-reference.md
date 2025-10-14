@@ -350,7 +350,7 @@ pflow --verbose "analyze data.csv and create a report"
 
 #### Trace Behavior (default)
 
-Traces are saved automatically to `~/.pflow/debug/pflow-trace-TIMESTAMP.json`:
+Traces are saved automatically to `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json`:
 
 ```bash
 pflow "complex natural language task"
@@ -382,7 +382,7 @@ pflow --planner-timeout 120 "very complex multi-step workflow"
 Automatic trace saving on timeout:
 ```
 ⏰ Operation exceeded 120s timeout
-📝 Debug trace saved: ~/.pflow/debug/pflow-trace-20250114-104500.json
+📝 Debug trace saved: ~/.pflow/debug/workflow-trace-20250114-104500.json
 ```
 
 #### Combining Debug Flags

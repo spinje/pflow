@@ -436,6 +436,39 @@ class TestTraceGeneration:
         finally:
             Path(workflow_file).unlink()
 
+    def test_no_trace_flag_skips_trace_on_failure(self, temp_home, temp_registry):
+        """Even failing workflows should not leave traces when --no-trace is set."""
+        runner = CliRunner()
+
+        failing_workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "invalid", "type": "does-not-exist"}],
+            "edges": [],
+            "start_node": "invalid",
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(failing_workflow, f)
+            workflow_file = f.name
+
+        debug_dir = Path(temp_home) / ".pflow" / "debug"
+
+        try:
+            with patch.dict("os.environ", {"HOME": str(temp_home)}):
+                if debug_dir.exists():
+                    for path in debug_dir.glob("workflow-trace-*.json"):
+                        path.unlink()
+
+                result = runner.invoke(cli, ["--no-trace", workflow_file], env={"HOME": str(temp_home)})
+                assert result.exit_code != 0, "Workflow should fail with invalid node type"
+
+                if debug_dir.exists():
+                    trace_files = list(debug_dir.glob("workflow-trace-*.json"))
+                    assert not trace_files, f"Expected no trace files, found {trace_files}"
+
+        finally:
+            Path(workflow_file).unlink()
+
 
 class TestPlannerIntegration:
     """Test metrics with planner + workflow execution.
@@ -613,8 +646,8 @@ class TestWrapperIntegration:
 class TestCLIFlags:
     """Test CLI flag behavior for metrics and tracing."""
 
-    def test_tracing_enabled_by_default(self, temp_home, temp_registry, simple_workflow):
-        """Trace files should be generated without additional flags."""
+    def test_trace_file_saved_without_flag(self, temp_home, temp_registry, simple_workflow):
+        """Trace files should be generated without specifying tracing flags."""
         runner = CliRunner()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:

@@ -1353,7 +1353,7 @@ def _display_single_error(
         # Show trace file hint if fields were truncated
         if error.get("available_fields_truncated"):
             click.echo("\n  📁 Complete field list available in trace file", err=True)
-            click.echo("     Trace saved automatically to ~/.pflow/debug/ (use --no-trace to disable)", err=True)
+            click.echo("     ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json", err=True)
 
     # Fixable hint
     if error.get("fixable") and not auto_repair:
@@ -3185,43 +3185,20 @@ def _try_execute_named_workflow(
 
 
 def _is_valid_natural_language_input(workflow: tuple[str, ...]) -> bool:
-    """Check if input is valid for natural language planning.
-
-    Valid natural language input must be:
-    - Exactly one argument (quoted string from shell)
-    - Contains spaces (not a single word)
-    - Not a file path or workflow name (already filtered upstream)
-
-    Args:
-        workflow: Tuple of command line arguments
-
-    Returns:
-        True if valid natural language input, False otherwise
-    """
-    # Must be exactly one argument
+    """Determine whether the workflow tuple is suitable for planner execution."""
     if len(workflow) != 1:
         return False
 
     text = workflow[0]
-
-    # Must contain spaces (quoted multi-word phrase)
     if " " not in text:
         return False
 
-    # Must not look like a file path
-    # (This is defensive - should already be filtered by _try_execute_named_workflow)
     return not _is_path_like(text)
 
 
 def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...]) -> None:
-    """Show helpful error for invalid planner input.
-
-    Args:
-        ctx: Click context
-        workflow: Invalid workflow tuple
-    """
+    """Emit user guidance for workflows that cannot be handled by the planner."""
     if not workflow:
-        # Should be caught earlier, but defensive
         click.echo("❌ No workflow specified.", err=True)
         click.echo("", err=True)
         click.echo("Usage:", err=True)
@@ -3232,7 +3209,6 @@ def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...])
         ctx.exit(1)
 
     if len(workflow) == 1:
-        # Single word without spaces
         word = workflow[0]
         click.echo(f"❌ '{word}' is not a known workflow or command.", err=True)
         click.echo("", err=True)
@@ -3241,7 +3217,6 @@ def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...])
         click.echo("  pflow workflow list                 # List saved workflows", err=True)
         ctx.exit(1)
 
-    # Multiple unquoted arguments
     joined = " ".join(workflow)
     click.echo(f"❌ Invalid input: {workflow[0]} {workflow[1]} ...", err=True)
     click.echo("", err=True)
@@ -3254,20 +3229,22 @@ def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...])
     ctx.exit(1)
 
 
-def _validate_and_prepare_natural_language_input(workflow: tuple[str, ...]) -> str:
-    """Prepare validated natural language input for planning.
+def _validate_and_join_workflow_input(workflow: tuple[str, ...]) -> str:
+    """Join workflow tokens and validate constraints for planner execution.
 
     Args:
-        workflow: Already validated workflow tuple (single quoted string)
+        workflow: Raw workflow arguments tuple
 
     Returns:
-        The natural language prompt string
+        Joined workflow string
 
     Raises:
-        ClickException: If input is too large
+        ClickException: If input is empty or exceeds size limits
     """
-    # At this point we know workflow is a single element with spaces
-    raw_input = workflow[0]
+    raw_input = " ".join(workflow) if workflow else ""
+
+    if not raw_input:
+        raise click.ClickException("cli: No workflow provided. Use --help to see usage examples.")
 
     # Validate input length (100KB limit)
     if len(raw_input) > 100 * 1024:
@@ -3439,14 +3416,14 @@ def workflow_command(
     if _try_execute_named_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
         return
 
-    # Check if this is valid natural language input for planner
     if not _is_valid_natural_language_input(workflow):
-        # Not valid for planner - show helpful error
         _handle_invalid_planner_input(ctx, workflow)
-        return  # Never reached (exits in error handler), but explicit
+        return
 
-    # Valid natural language input - prepare and execute with planner
-    raw_input = _validate_and_prepare_natural_language_input(workflow)
+    # Validate input for natural language processing
+    raw_input = _validate_and_join_workflow_input(workflow)
+
+    # Multi-word or parameterized input: planner by design
     cache_planner = ctx.obj.get("cache_planner", False)
     _execute_with_planner(
         ctx, raw_input, stdin_data, output_key, verbose, "args", trace_enabled, planner_timeout, cache_planner
