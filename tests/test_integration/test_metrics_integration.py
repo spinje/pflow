@@ -322,10 +322,10 @@ class TestMetricsCollection:
 
 
 class TestTraceGeneration:
-    """Test trace file generation with --trace flag."""
+    """Test trace file generation and opt-out behavior."""
 
-    def test_trace_file_created(self, temp_home, temp_registry, simple_workflow):
-        """Test that --trace flag creates a trace file."""
+    def test_trace_file_created_by_default(self, temp_home, temp_registry, simple_workflow):
+        """Trace files should be created even without explicit flags."""
         runner = CliRunner()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -337,7 +337,7 @@ class TestTraceGeneration:
 
         try:
             with patch.dict("os.environ", {"HOME": str(temp_home)}):
-                result = runner.invoke(cli, ["--trace", workflow_file], env={"HOME": str(temp_home)})
+                result = runner.invoke(cli, [workflow_file], env={"HOME": str(temp_home)})
 
                 if result.exit_code != 0:
                     print(f"Error output: {result.output}")
@@ -367,7 +367,7 @@ class TestTraceGeneration:
             Path(workflow_file).unlink()
 
     def test_trace_captures_llm_calls(self, temp_home, temp_registry, llm_workflow, mock_llm):
-        """Test that traces capture LLM call details."""
+        """Trace files should capture LLM call details by default."""
         runner = CliRunner()
 
         mock_llm.configure_with_usage(
@@ -386,7 +386,7 @@ class TestTraceGeneration:
 
         try:
             with patch.dict("os.environ", {"HOME": str(temp_home)}), patch("llm.get_model", mock_llm):
-                result = runner.invoke(cli, ["--trace", workflow_file], env={"HOME": str(temp_home)})
+                result = runner.invoke(cli, [workflow_file], env={"HOME": str(temp_home)})
 
                 assert result.exit_code == 0
 
@@ -402,6 +402,36 @@ class TestTraceGeneration:
                     if "llm_call" in event:
                         assert "input_tokens" in event["llm_call"]
                         assert "output_tokens" in event["llm_call"]
+
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_no_trace_flag_disables_tracing(self, temp_home, temp_registry, simple_workflow):
+        """The --no-trace flag should suppress trace file creation."""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(simple_workflow, f)
+            workflow_file = f.name
+
+        debug_dir = Path(temp_home) / ".pflow" / "debug"
+
+        try:
+            with patch.dict("os.environ", {"HOME": str(temp_home)}):
+                # Ensure a clean slate
+                if debug_dir.exists():
+                    for path in debug_dir.glob("workflow-trace-*.json"):
+                        path.unlink()
+
+                result = runner.invoke(cli, ["--no-trace", workflow_file], env={"HOME": str(temp_home)})
+                if result.exit_code != 0:
+                    print(f"Error output (--no-trace): {result.output}")
+                assert result.exit_code == 0
+
+                # Confirm no trace files were created
+                if debug_dir.exists():
+                    trace_files = list(debug_dir.glob("workflow-trace-*.json"))
+                    assert not trace_files, f"Expected no trace files, found {trace_files}"
 
         finally:
             Path(workflow_file).unlink()
@@ -583,13 +613,8 @@ class TestWrapperIntegration:
 class TestCLIFlags:
     """Test CLI flag behavior for metrics and tracing."""
 
-    def test_trace_flag_enables_tracing(self, temp_home, temp_registry, simple_workflow):
-        """Test that --trace flag enables workflow tracing.
-
-        This tests user-visible behavior:
-        - With --trace, output mentions trace file was saved
-        - The trace file contains workflow execution details
-        """
+    def test_tracing_enabled_by_default(self, temp_home, temp_registry, simple_workflow):
+        """Trace files should be generated without additional flags."""
         runner = CliRunner()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -597,19 +622,19 @@ class TestCLIFlags:
             workflow_file = f.name
 
         try:
-            # Test running with --trace flag
+            # Test running with default tracing behavior
             # Use the temp_home fixture which already has the registry
             # Patch Path.home() to return temp_home since WorkflowTraceCollector uses Path.home()
             with (
                 patch.dict("os.environ", {"HOME": str(temp_home)}),
                 patch("pathlib.Path.home", return_value=Path(temp_home)),
             ):
-                result = runner.invoke(cli, ["--trace", workflow_file], env={"HOME": str(temp_home)})
+                result = runner.invoke(cli, [workflow_file], env={"HOME": str(temp_home)})
 
                 # Check the workflow ran successfully
                 if result.exit_code != 0:
-                    print(f"Error with --trace: {result.output}")
-                assert result.exit_code == 0, "Workflow should run successfully with --trace"
+                    print(f"Error during workflow execution: {result.output}")
+                assert result.exit_code == 0, "Workflow should run successfully with default tracing"
 
                 # Test 1: Trace message is suppressed in non-interactive mode (CliRunner)
                 # This is expected behavior after task 55c - trace output fix
@@ -668,7 +693,7 @@ class TestCLIFlags:
                 # This test mainly verifies the flag is accepted
 
     def test_output_format_json_always_includes_metrics(self, temp_home, temp_registry, simple_workflow):
-        """Test that --output-format json always includes metrics, even without --trace."""
+        """JSON output should include metrics without requiring explicit trace flags."""
         runner = CliRunner()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:

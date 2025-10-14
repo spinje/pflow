@@ -30,17 +30,15 @@ Configurable timeout to detect hung operations with automatic trace saving.
 
 ## CLI Flags
 
-### `--trace`
-Save a debug trace file even on successful execution.
+### Tracing behavior
+Trace files are saved automatically for all planner runs (success or failure). Use `--no-trace` only when you explicitly want to skip saving.
 
 ```bash
-# Save trace for successful workflow generation
-pflow --trace "create a workflow that summarizes news articles"
-```
+# Default: trace saved automatically
+pflow "create a workflow that summarizes news articles"
 
-Output:
-```
-📝 Trace saved: ~/.pflow/debug/pflow-trace-20250114-103000.json
+# Opt out of trace generation
+pflow --no-trace "quick smoke test workflow"
 ```
 
 ### `--planner-timeout <seconds>`
@@ -155,7 +153,7 @@ Examine the trace to see:
 Use traces to improve prompts:
 
 ```bash
-$ pflow --trace "your workflow request"
+$ pflow "your workflow request"
 $ cat ~/.pflow/debug/pflow-trace-*.json | jq '.llm_calls[0].prompt'
 ```
 
@@ -192,7 +190,7 @@ $ cat ~/.pflow/debug/pflow-trace-*.json | jq '{path: .path_taken, discovery: .ll
 
 ### No Trace File Created
 
-If no trace file appears with `--trace`:
+If no trace file appears (and you didn't use `--no-trace`):
 1. Check if the command completed (not interrupted)
 2. Verify write permissions to `~/.pflow/debug/`
 3. Look for error messages about file writing

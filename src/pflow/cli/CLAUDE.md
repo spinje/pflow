@@ -74,7 +74,7 @@ else:                      → Route to workflow_command()
 --output-key, -o       # Specific shared store key
 --output-format        # text (default) or json
 --print, -p            # Force non-interactive
---trace                # Save workflow execution trace
+--no-trace            # Disable workflow execution trace (enabled by default)
 --trace-planner        # Save planner trace
 --planner-timeout      # Timeout in seconds (default: 60)
 --save/--no-save       # Save generated workflow (default: save)
@@ -460,7 +460,7 @@ Shared Store → Auto-detection → Format (text/json) → Display
 - Planner: `planner-trace-{YYYYMMDD-HHMMSS}.json`
 
 **Save Conditions**:
-- **Workflow traces**: Always saved when `--trace` present
+- **Workflow traces**: Saved automatically (disable with `--no-trace`)
 - **Planner traces**: Saved when `--trace-planner` OR on failure
 
 **Trace Collectors**:
@@ -486,7 +486,7 @@ pflow ./my-workflow.json --auto-repair
 ### Saved Workflow Execution
 ```bash
 pflow github-analyzer repo=anthropics/pflow
-pflow my-saved-workflow --trace
+pflow my-saved-workflow  # Trace saved automatically
 ```
 
 ### Subcommand Usage

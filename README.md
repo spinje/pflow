@@ -371,16 +371,11 @@ $ pflow "analyze code quality metrics"
 ```
 
 ### Trace Files for Deep Debugging
-Capture complete execution details with `--trace`:
+Capture complete execution details:
 ```bash
-# Save detailed trace even on success
-pflow --trace "complex workflow request"
+# Humans or AI agents can debug with ease
+pflow my-workflow
 📝 Trace saved: ~/.pflow/debug/pflow-trace-20250114-103000.json
-
-# Automatic trace on failures
-pflow "ambiguous request"
-❌ Planner failed: Validation error
-📝 Debug trace saved: ~/.pflow/debug/pflow-trace-20250114-104500.json
 ```
 
 Trace files include:

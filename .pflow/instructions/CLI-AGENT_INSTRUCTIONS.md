@@ -132,7 +132,7 @@ The user shows you ONE example. You build the GENERAL solution using dynamic inp
 
 | Stuck On | Do This | Then Check |
 |----------|---------|------------|
-| `${var}` not found | `--trace` flag → check trace file | [Template Errors](#understanding-template-errors) |
+| `${var}` not found | Open latest trace in ~/.pflow/debug/workflow-trace-<YYYYMMDD>-<timestamp>.json | [Template Errors](#understanding-template-errors) |
 | 20+ nodes chaos | Delete all after node 5, test, add back slowly | [Build in Phases](#for-complex-workflows-15-nodes-build-in-phases) |
 | Output is `Any` | `registry run NODE --show-structure` | [Test Individual Nodes](#test-individual-nodes-when-needed) |
 | Unclear request | Ask: "You want to [specific action] with [specific result]?" | Stop guessing |
@@ -665,8 +665,8 @@ uv run pflow registry run mcp-service-TOOL param="test" --show-structure
 #### How to Discover Output Structure
 
 ```bash
-# 1. Run with trace flag
-uv run pflow --trace test-workflow.json
+# 1. Run the workflow
+uv run pflow test-workflow.json
 
 # 2. Examine the trace file
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[0].outputs'
@@ -1289,10 +1289,8 @@ uv run pflow registry run http url="image.jpg" --show-structure
 ### Execute Workflow
 
 ```bash
-uv run pflow --trace workflow.json param1=value param2=value
+uv run pflow workflow.json param1=value param2=value
 ```
-
-> Using --trace flag is mandatory when building workflows for AI agents.
 
 ### Understanding Template Errors
 
@@ -1308,8 +1306,8 @@ Available fields in node (showing 5 of 147):
   - request_id
   ... and 15 more (in error details)
 
-📁 Complete field list available in trace file
-   Run with --trace flag to save to ~/.pflow/debug/
+📁 Complete debugging information available in trace file
+   Trace saved to ~/.pflow/debug/workflow-trace-<YYYYMMDD>-<timestamp>.json
 ```
 
 **2. Use the trace file for complete field list**:
@@ -1886,13 +1884,13 @@ Which would you prefer?"
 ### Step 1: Check the Error Type
 
 ```bash
-# Run with trace to capture full error context
-uv run pflow --trace workflow.json
+# Run workflow
+uv run pflow workflow.json
 ```
 
 | Error Pattern | Likely Cause | Fix |
 |--------------|-------------|-----|
-| `KeyError: 'result'` | Node output structure different than expected | Use --trace to discover actual structure |
+| `KeyError: 'result'` | Node output structure different than expected | Inspect latest trace in ~/.pflow/debug/ to discover actual structure |
 | `401 Unauthorized` | Missing/invalid credentials | Check settings.json or environment variables |
 | `TypeError: expected string` | Wrong data type in template | Verify node output types with registry describe |
 | `Connection refused` | Service not running | Start required MCP servers |
@@ -2038,8 +2036,6 @@ uv run pflow workflow save file name "desc"                    # Save to library
 uv run pflow workflow.json param=value                         # Run from file
 uv run pflow saved-workflow param=value                        # Run from library
 
-# Required Execution Flag for debugging
-uv run pflow --trace workflow-name
 ```
 
 ### Template Syntax
@@ -2177,7 +2173,7 @@ uv run pflow --validate-only slack-qa.json
 
 ### Step 8: TEST
 ```bash
-uv run pflow --trace slack-qa.json channel=C09C16NAU5B limit=15 sheet_id=abc123xyz
+uv run pflow slack-qa.json channel=C09C16NAU5B limit=15 sheet_id=abc123xyz
 # ✓ Workflow executed successfully!
 ```
 

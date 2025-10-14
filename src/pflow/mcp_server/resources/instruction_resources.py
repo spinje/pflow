@@ -188,9 +188,9 @@ Use these CLI tools to discover what you need:
 - `pflow registry search pattern` - Search for nodes by pattern
 
 ### Execution & Management
-- `pflow workflow.json param=value` - Run a workflow
+- `pflow workflow.json param=value` - Run a workflow (trace saved by default)
+- `pflow --no-trace workflow.json` - Run without saving a trace
 - `pflow --validate-only workflow.json` - Validate before running
-- `pflow --trace workflow.json` - Run with trace output
 - `pflow workflow save file name "description"` - Save to library
 
 ### Settings & Configuration
