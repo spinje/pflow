@@ -170,3 +170,65 @@ class TestRegistryRunMCP:
             assert resolved_params["headers"]["X-Secret"] == "secret456"
             assert resolved_params["body"]["credentials"] == ["key123", "secret456"]
             assert isinstance(result, str)
+
+    def test_template_resolution_from_settings_json(self):
+        """Verify ${var} templates are resolved from settings.json."""
+        with (
+            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_class,
+            patch("pflow.mcp_server.services.execution_service.import_node_class") as mock_import,
+            patch.dict("os.environ", {}, clear=True),
+            patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
+        ):
+            # Configure mocks
+            mock_registry = MagicMock()
+            mock_registry_class.return_value = mock_registry
+            mock_registry.load.return_value = {"http": {"class_name": "HttpNode", "module": "pflow.nodes.http.node"}}
+
+            mock_node_instance = MagicMock()
+            mock_node_class = MagicMock(return_value=mock_node_instance)
+            mock_import.return_value = mock_node_class
+            mock_node_instance.run.return_value = "default"
+
+            # Configure settings
+            mock_settings = MagicMock()
+            mock_settings.list_env.return_value = {"replicate_api_token": "from-settings"}
+            mock_settings_cls.return_value = mock_settings
+
+            # Execute with template that should resolve from settings (case-insensitive)
+            result = ExecutionService.run_registry_node(
+                node_type="http", parameters={"auth_token": "${REPLICATE_API_TOKEN}"}
+            )
+
+            # Verify resolved (case-insensitive match)
+            mock_node_instance.set_params.assert_called_once()
+            resolved_params = mock_node_instance.set_params.call_args[0][0]
+            assert resolved_params["auth_token"] == "from-settings"  # noqa: S105 - Test fixture, not real credential
+            assert isinstance(result, str)
+
+    def test_missing_variable_raises_helpful_error(self):
+        """Verify helpful error message for missing variables."""
+        with (
+            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_class,
+            patch("pflow.mcp_server.services.execution_service.import_node_class") as mock_import,
+            patch.dict("os.environ", {}, clear=True),
+            patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
+        ):
+            mock_registry = MagicMock()
+            mock_registry_class.return_value = mock_registry
+            mock_registry.load.return_value = {"http": {"class_name": "HttpNode", "module": "pflow.nodes.http.node"}}
+
+            mock_node_instance = MagicMock()
+            mock_node_class = MagicMock(return_value=mock_node_instance)
+            mock_import.return_value = mock_node_class
+
+            mock_settings = MagicMock()
+            mock_settings.list_env.return_value = {}
+            mock_settings_cls.return_value = mock_settings
+
+            # Execute with missing variable should fail with helpful error
+            result = ExecutionService.run_registry_node(node_type="http", parameters={"auth_token": "${MISSING_VAR}"})
+
+            # Should return error message (not raise, since registry_run catches)
+            assert "Failed to execute" in result or "Missing environment variable" in result
+            assert "MISSING_VAR" in result
+            assert isinstance(result, str)
