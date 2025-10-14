@@ -419,16 +419,22 @@ class TestSaveWorkflowWithOptions:
 
         Bug prevented: Silent overwrite of existing workflows, data loss risk.
         """
-        from pflow.core.workflow_manager import WorkflowManager
+        # Mock WorkflowManager to simulate existing workflow
+        with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
+            mock_wm = Mock()
+            mock_wm.exists.return_value = True  # Workflow already exists
+            mock_wm_class.return_value = mock_wm
 
-        manager = WorkflowManager(workflows_dir=tmp_path)
+            # Try to save without force - should fail
+            with pytest.raises(FileExistsError, match="already exists"):
+                save_workflow_with_options("existing", sample_ir, "New", force=False)
 
-        # Create existing workflow
-        manager.save("existing", sample_ir, "Old")
-
-        # Try to save without force - should fail
-        with pytest.raises(FileExistsError, match="already exists"):
-            save_workflow_with_options("existing", sample_ir, "New", force=False)
+            # Verify existence was checked
+            mock_wm.exists.assert_called_once_with("existing")
+            # Verify delete was NOT called (no force)
+            mock_wm.delete.assert_not_called()
+            # Verify save was NOT called (rejected before save)
+            mock_wm.save.assert_not_called()
 
     def test_save_with_metadata(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
         """METADATA: Pass metadata to WorkflowManager.save().
