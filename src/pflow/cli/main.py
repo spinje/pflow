@@ -1307,14 +1307,14 @@ def _display_mcp_error_details(mcp_error: dict[str, Any]) -> None:
 def _display_single_error(
     error: dict[str, Any],
     error_number: int,
-    no_repair: bool,
+    auto_repair: bool,
 ) -> None:
     """Display a single workflow error with all details.
 
     Args:
         error: Error dict from ExecutionResult
         error_number: Error number for display (1-indexed)
-        no_repair: Whether repair is disabled
+        auto_repair: Whether auto-repair is enabled
     """
     if error_number == 1:
         click.echo("❌ Workflow execution failed", err=True)
@@ -1356,19 +1356,19 @@ def _display_single_error(
             click.echo("     Run with --trace flag to save to ~/.pflow/debug/", err=True)
 
     # Fixable hint
-    if error.get("fixable") and no_repair:
-        click.echo("\n  💡 Tip: Remove --no-repair flag to attempt automatic fix", err=True)
+    if error.get("fixable") and not auto_repair:
+        click.echo("\n  💡 Tip: Add --auto-repair flag to attempt automatic fix", err=True)
 
 
 def _display_text_error_details(
     result: Any,
-    no_repair: bool,
+    auto_repair: bool,
 ) -> None:
     """Display detailed text error output.
 
     Args:
         result: ExecutionResult with error details
-        no_repair: Whether repair is disabled
+        auto_repair: Whether auto-repair is enabled
     """
     if not result or not hasattr(result, "errors") or not result.errors:
         # Fallback to generic message
@@ -1377,7 +1377,7 @@ def _display_text_error_details(
         return
 
     for i, error in enumerate(result.errors, 1):
-        _display_single_error(error, i, no_repair)
+        _display_single_error(error, i, auto_repair)
 
 
 def _handle_workflow_error(
@@ -1388,7 +1388,7 @@ def _handle_workflow_error(
     metrics_collector: Any | None,
     shared_storage: dict[str, Any],
     verbose: bool,
-    no_repair: bool,
+    auto_repair: bool,
     ir_data: dict[str, Any] | None = None,
 ) -> None:
     """Handle workflow execution error with rich error context."""
@@ -1399,7 +1399,7 @@ def _handle_workflow_error(
         _serialize_json_result(error_output, verbose)
     else:
         # Text mode: Show detailed rich error context
-        _display_text_error_details(result, no_repair)
+        _display_text_error_details(result, auto_repair)
 
     # Save trace even on error
     if workflow_trace:
@@ -1559,7 +1559,7 @@ def _execute_workflow_and_handle_result(
             metrics_collector=metrics_collector,
             shared_storage=shared_storage,
             verbose=verbose,
-            no_repair=ctx.obj.get("no_repair", False),
+            auto_repair=ctx.obj.get("auto_repair", False),
             ir_data=ir_data,
         )
 
@@ -1707,10 +1707,10 @@ def _setup_execution_context(
         metrics_collector: Optional metrics collector
 
     Returns:
-        Tuple of (verbose, no_repair, metrics_collector)
+        Tuple of (verbose, auto_repair, metrics_collector)
     """
     verbose = ctx.obj.get("verbose", False)
-    no_repair = ctx.obj.get("no_repair", False)
+    auto_repair = ctx.obj.get("auto_repair", False)
 
     # Set up metrics collector if not provided (for both text and JSON mode)
     if not metrics_collector:
@@ -1719,10 +1719,10 @@ def _setup_execution_context(
         metrics_collector = MetricsCollector()
 
     # Only validate if repair is disabled (execute_workflow will handle validation when repair is enabled)
-    if no_repair:
+    if not auto_repair:
         _validate_and_handle_workflow_errors(ir_data, ctx, output_format, verbose, metrics_collector)
 
-    return verbose, no_repair, metrics_collector
+    return verbose, auto_repair, metrics_collector
 
 
 def _perform_validation(
@@ -1866,7 +1866,7 @@ def execute_json_workflow(
     from pflow.execution.workflow_execution import execute_workflow
 
     # Setup execution context
-    verbose, no_repair, metrics_collector = _setup_execution_context(ctx, ir_data, output_format, metrics_collector)
+    verbose, auto_repair, metrics_collector = _setup_execution_context(ctx, ir_data, output_format, metrics_collector)
 
     # Suppress logging in JSON mode (except CRITICAL) to keep output clean
     if output_format == "json":
@@ -1907,7 +1907,7 @@ def execute_json_workflow(
         result = execute_workflow(
             workflow_ir=ir_data,
             execution_params=enhanced_params,
-            enable_repair=not no_repair,  # Enable repair by default
+            enable_repair=auto_repair,  # Repair disabled by default, must opt-in
             resume_state=None,  # Fresh execution
             original_request=original_request,
             output=cli_output,
@@ -2705,7 +2705,7 @@ def _initialize_context(
     save: bool,
     cache_planner: bool,
     planner_model: str,
-    no_repair: bool,
+    auto_repair: bool,
     no_update: bool,
     validate_only: bool,
 ) -> None:
@@ -2723,7 +2723,7 @@ def _initialize_context(
         save: Save workflow flag
         cache_planner: Enable cross-session caching for planner
         planner_model: LLM model for planning nodes
-        no_repair: Disable automatic workflow repair on failure
+        auto_repair: Enable automatic workflow repair on failure
         no_update: Save repairs to separate file instead of updating original
         validate_only: Validate workflow without executing
     """
@@ -2741,7 +2741,7 @@ def _initialize_context(
     ctx.obj["cache_planner"] = cache_planner
     # Use smart default if no model specified (will be resolved when needed)
     ctx.obj["planner_model"] = planner_model  # None triggers auto-detection later
-    ctx.obj["no_repair"] = no_repair
+    ctx.obj["auto_repair"] = auto_repair
     ctx.obj["no_update"] = no_update
     ctx.obj["validate_only"] = validate_only
 
@@ -3264,7 +3264,7 @@ def _validate_and_prepare_natural_language_input(workflow: tuple[str, ...]) -> s
     default=None,  # Will auto-detect based on available API keys
     help="LLM model for planning (default: auto-detect). Supports Anthropic, OpenAI, Gemini, etc.",
 )
-@click.option("--no-repair", is_flag=True, help="Disable automatic workflow repair on failure")
+@click.option("--auto-repair", is_flag=True, help="Enable automatic workflow repair on failure")
 @click.option(
     "--no-update", is_flag=True, help="Save repairs to separate .repaired.json file instead of updating original"
 )
@@ -3283,7 +3283,7 @@ def workflow_command(
     save: bool,
     cache_planner: bool,
     planner_model: str,
-    no_repair: bool,
+    auto_repair: bool,
     no_update: bool,
     validate_only: bool,
     workflow: tuple[str, ...],
@@ -3355,7 +3355,7 @@ def workflow_command(
         save,
         cache_planner,
         planner_model,
-        no_repair,
+        auto_repair,
         no_update,
         validate_only,
     )

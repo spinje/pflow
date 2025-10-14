@@ -79,7 +79,7 @@ else:                      → Route to workflow_command()
 --planner-timeout      # Timeout in seconds (default: 60)
 --save/--no-save       # Save generated workflow (default: save)
 --cache-planner        # Use cached planner results
---no-repair            # Disable auto-repair
+--auto-repair            # Enable auto-repair
 --no-update            # Save repairs separately
 --validate-only        # Validate workflow without executing (NEW in Task 71)
 workflow (nargs=-1)    # Catch-all for natural language or file path
@@ -261,7 +261,7 @@ from pflow.execution.workflow_execution import execute_workflow
 result = execute_workflow(
     workflow_ir=ir_data,
     execution_params=enhanced_params,
-    enable_repair=not no_repair,
+    enable_repair=not auto_repair,
     output=cli_output,  # CliOutput instance
     workflow_manager=workflow_manager,
     # ... other params
@@ -303,7 +303,7 @@ planner_flow.run(shared)  # Populates shared["workflow"]
 - `verbose`: Verbose output flag
 - `output_format`: "text" or "json"
 - `print_flag`: Force non-interactive
-- `no_repair`: Disable auto-repair
+- `auto_repair`: Enable auto-repair
 - `no_update`: Save repairs separately
 - `validate_only`: Validate without executing (NEW in Task 71)
 - `output_controller`: OutputController instance
@@ -480,7 +480,7 @@ pflow "analyze this CSV and create a summary" < data.csv
 ### File-based Execution
 ```bash
 pflow workflow.json param1=value1
-pflow ./my-workflow.json --no-repair
+pflow ./my-workflow.json --auto-repair
 ```
 
 ### Saved Workflow Execution

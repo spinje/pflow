@@ -1,6 +1,6 @@
-"""Test the --no-repair CLI flag functionality.
+"""Test the --auto-repair CLI flag functionality.
 
-This test verifies that the --no-repair flag properly disables
+This test verifies that the --auto-repair flag properly enables
 automatic workflow repair when workflows fail.
 """
 
@@ -24,8 +24,8 @@ class FailingNode(BaseNode):
         raise ValueError("Template ${data.missing} not found")
 
 
-class TestNoRepairFlag:
-    """Test the --no-repair CLI flag."""
+class TestAutoRepairFlag:
+    """Test the --auto-repair CLI flag."""
 
     @pytest.fixture
     def failing_workflow(self):
@@ -38,13 +38,13 @@ class TestNoRepairFlag:
         with patch("pflow.registry.Registry") as MockRegistry:
             mock_reg = MagicMock()
             mock_reg.load.return_value = {
-                "failing-node": {"module": "tests.test_cli.test_no_repair_flag", "class_name": "FailingNode"}
+                "failing-node": {"module": "tests.test_cli.test_auto_repair_flag", "class_name": "FailingNode"}
             }
             MockRegistry.return_value = mock_reg
             yield mock_reg
 
-    def test_repair_enabled_by_default(self, failing_workflow, mock_registry):
-        """Test that repair is enabled by default."""
+    def test_repair_disabled_by_default(self, failing_workflow, mock_registry):
+        """Test that repair is disabled by default."""
         runner = click.testing.CliRunner()
 
         # Create workflow file
@@ -65,19 +65,19 @@ class TestNoRepairFlag:
                     repaired_workflow_ir=None,
                 )
 
-                # Run without --no-repair flag
+                # Run without --auto-repair flag
                 runner.invoke(main, [workflow_file])
 
-                # Check that repair was enabled (default)
+                # Check that repair was disabled (default)
                 mock_execute.assert_called_once()
                 args, kwargs = mock_execute.call_args
-                assert kwargs.get("enable_repair") is True
+                assert kwargs.get("enable_repair") is False
 
         finally:
             Path(workflow_file).unlink()
 
-    def test_no_repair_flag_disables_repair(self, failing_workflow, mock_registry):
-        """Test that --no-repair flag disables automatic repair."""
+    def test_auto_repair_flag_enables_repair(self, failing_workflow, mock_registry):
+        """Test that --auto-repair flag enables automatic repair."""
         runner = click.testing.CliRunner()
 
         # Create workflow file
@@ -98,13 +98,13 @@ class TestNoRepairFlag:
                     repaired_workflow_ir=None,
                 )
 
-                # Run WITH --no-repair flag
-                runner.invoke(main, ["--no-repair", workflow_file])
+                # Run WITH --auto-repair flag
+                runner.invoke(main, ["--auto-repair", workflow_file])
 
-                # Check that repair was disabled
+                # Check that repair was enabled
                 mock_execute.assert_called_once()
                 args, kwargs = mock_execute.call_args
-                assert kwargs.get("enable_repair") is False
+                assert kwargs.get("enable_repair") is True
 
         finally:
             Path(workflow_file).unlink()
@@ -132,19 +132,19 @@ class TestNoRepairFlag:
                     success=True, errors=[], shared_after={}, output_data=None, repaired_workflow_ir=None
                 )
 
-                # Run with --no-repair (shouldn't matter for success)
-                result = runner.invoke(main, ["--no-repair", workflow_file])
+                # Run without --auto-repair (shouldn't matter for success)
+                result = runner.invoke(main, [workflow_file])
                 assert result.exit_code == 0
 
-                # Run without --no-repair (should be same result)
-                result = runner.invoke(main, [workflow_file])
+                # Run with --auto-repair (should be same result)
+                result = runner.invoke(main, ["--auto-repair", workflow_file])
                 assert result.exit_code == 0
 
         finally:
             Path(workflow_file).unlink()
 
-    def test_no_repair_flag_with_verbose(self, failing_workflow, mock_registry):
-        """Test that --no-repair works with other flags like --verbose."""
+    def test_auto_repair_flag_with_verbose(self, failing_workflow, mock_registry):
+        """Test that --auto-repair works with other flags like --verbose."""
         runner = click.testing.CliRunner()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -164,19 +164,19 @@ class TestNoRepairFlag:
                     repaired_workflow_ir=None,
                 )
 
-                # Run with both --no-repair and --verbose
-                runner.invoke(main, ["--verbose", "--no-repair", workflow_file])
+                # Run with both --auto-repair and --verbose
+                runner.invoke(main, ["--verbose", "--auto-repair", workflow_file])
 
-                # Repair should still be disabled
+                # Repair should be enabled
                 mock_execute.assert_called_once()
                 args, kwargs = mock_execute.call_args
-                assert kwargs.get("enable_repair") is False
+                assert kwargs.get("enable_repair") is True
 
         finally:
             Path(workflow_file).unlink()
 
-    def test_no_repair_preserves_error_message(self, failing_workflow, mock_registry):
-        """Test that error messages are preserved when repair is disabled."""
+    def test_without_auto_repair_preserves_error_message(self, failing_workflow, mock_registry):
+        """Test that error messages are preserved when repair is disabled (default)."""
         runner = click.testing.CliRunner()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -192,8 +192,8 @@ class TestNoRepairFlag:
                 mock_flow.run.side_effect = ValueError("Template ${data.missing} not found")
                 mock_compile.return_value = mock_flow
 
-                # Run with --no-repair
-                result = runner.invoke(main, ["--no-repair", workflow_file])
+                # Run without --auto-repair (repair disabled by default)
+                result = runner.invoke(main, [workflow_file])
 
                 # Should fail with exit code 1
                 assert result.exit_code == 1
