@@ -6,6 +6,7 @@ and node testing operations.
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -533,6 +534,147 @@ class ExecutionService(BaseService):
             raise ValueError(f"Failed to save workflow: {e}") from e
 
     @classmethod
+    def _load_settings_env(cls) -> dict[str, str]:
+        """Load environment variables from settings.json.
+
+        Returns:
+            Dictionary of environment variables from settings
+        """
+        from pflow.core.settings import SettingsManager
+
+        try:
+            settings = SettingsManager()
+            return settings.list_env(mask_values=False)
+        except Exception as e:
+            logger.warning(f"Failed to load settings env vars: {e}")
+            return {}
+
+    @classmethod
+    def _create_variable_lookup(cls, settings_env: dict[str, str]) -> Callable[[str], str | None]:
+        """Create variable lookup function combining process env and settings.
+
+        Process environment takes precedence over settings.json.
+        Settings lookup is case-insensitive as fallback.
+
+        Args:
+            settings_env: Environment variables from settings.json
+
+        Returns:
+            Lookup function that returns variable value or None
+        """
+        import os
+
+        def get_var(var_name: str) -> str | None:
+            """Get variable from environment or settings (case-insensitive for settings)."""
+            # Check process environment first (case-sensitive)
+            if var_name in os.environ:
+                return os.environ[var_name]
+
+            # Check settings.json (case-insensitive fallback)
+            # This handles both ${REPLICATE_API_TOKEN} and ${replicate_api_token}
+            for key, value in settings_env.items():
+                if key.lower() == var_name.lower():
+                    return value
+
+            return None
+
+        return get_var
+
+    @classmethod
+    def _build_template_resolver(cls, get_var: Callable[[str], str | None]) -> tuple[Callable[[Any], Any], set[str]]:
+        """Build template resolver function and missing vars tracker.
+
+        Args:
+            get_var: Variable lookup function
+
+        Returns:
+            Tuple of (resolver_function, missing_vars_set)
+        """
+        import re
+
+        # Pattern matches ${VAR} or ${VAR:-default}
+        pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+        missing_vars: set[str] = set()
+
+        def resolve_nested(data: Any) -> Any:
+            """Recursively resolve templates in nested structures."""
+            if isinstance(data, dict):
+                return {key: resolve_nested(value) for key, value in data.items()}
+            elif isinstance(data, list):
+                return [resolve_nested(item) for item in data]
+            elif isinstance(data, str):
+                return resolve_string(data)
+            else:
+                return data
+
+        def resolve_string(text: str) -> str:
+            """Resolve ${var} templates in a string."""
+
+            def replacer(match: re.Match[str]) -> str:
+                var_name: str = match.group(1)
+                default_value: str | None = match.group(2)
+
+                value = get_var(var_name)
+
+                if value is not None:
+                    return value
+                elif default_value is not None:
+                    return default_value
+                else:
+                    # Track missing variable for error reporting
+                    missing_vars.add(var_name)
+                    return ""
+
+            result: str = pattern.sub(replacer, text)
+            return result
+
+        return resolve_nested, missing_vars
+
+    @classmethod
+    def _resolve_templates_with_settings(cls, parameters: dict[str, Any]) -> dict[str, Any]:
+        """Resolve ${var} templates from both environment and settings.json.
+
+        This checks:
+        1. Process environment variables (os.environ)
+        2. Settings.json env section (where `pflow settings set-env` stores values)
+
+        Args:
+            parameters: Parameters dict potentially containing ${var} templates
+
+        Returns:
+            Parameters with templates resolved
+        """
+        # Load settings environment variables
+        settings_env = cls._load_settings_env()
+
+        # Create combined lookup (process env takes precedence)
+        get_var = cls._create_variable_lookup(settings_env)
+
+        # Build template resolver
+        resolve_nested, missing_vars = cls._build_template_resolver(get_var)
+
+        # Resolve all templates
+        resolved_result = resolve_nested(parameters)
+
+        # Type narrow for mypy: we know parameters is dict, so result must be dict
+        if not isinstance(resolved_result, dict):
+            raise TypeError(f"Expected dict result, got {type(resolved_result)}")
+        resolved: dict[str, Any] = resolved_result
+
+        # If any variables were missing, raise a helpful error
+        if missing_vars:
+            var_list = ", ".join(sorted(missing_vars))
+            first_var = next(iter(missing_vars))
+            raise ValueError(
+                f"Missing environment variable(s): {var_list}\n\n"
+                f"To set these variables, use one of:\n"
+                f"  • pflow settings set-env {first_var}=your_value\n"
+                f"  • export {first_var}=your_value"
+            )
+
+        return resolved
+
+    @classmethod
     @ensure_stateless
     def run_registry_node(cls, node_type: str, parameters: dict[str, Any] | None = None) -> str:
         """Execute a single node to reveal output structure.
@@ -589,7 +731,19 @@ class ExecutionService(BaseService):
                     extra={"server": server_name, "tool": tool_name},
                 )
 
-            # Set parameters (now includes __mcp_server__ and __mcp_tool__ for MCP nodes)
+            # Resolve ${var} templates from environment and settings.json
+            # This allows agents to use ${API_KEY} without exposing actual tokens
+            # Checks both os.environ and settings.json (where `pflow settings set-env` stores values)
+            if parameters:
+                parameters = cls._resolve_templates_with_settings(parameters)
+
+                logger.debug(
+                    f"Resolved environment variables in parameters for {node_type}",
+                    extra={"param_keys": list(parameters.keys()) if isinstance(parameters, dict) else None},
+                )
+
+            # Set parameters (now includes __mcp_server__ and __mcp_tool__ for MCP nodes,
+            # and all ${var} templates resolved from environment)
             if parameters:
                 node_instance.set_params(parameters)
 
