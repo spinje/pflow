@@ -63,6 +63,119 @@ class TestExpandEnvVarsNested:
         assert result == data
 
 
+class TestExpandEnvVarsNestedEnhanced:
+    """Test enhanced functionality with settings.json and error raising."""
+
+    def test_expand_env_vars_default_behavior(self):
+        """Verify default behavior unchanged (only os.environ, empty string for missing)."""
+        with patch.dict("os.environ", {"TEST_VAR": "value"}, clear=True):
+            result = expand_env_vars_nested("${TEST_VAR}")
+            assert result == "value"
+
+            # Missing variable returns empty string (no error)
+            with patch("pflow.mcp.auth_utils.logger") as mock_logger:
+                result = expand_env_vars_nested("${MISSING}")
+                assert result == ""
+                mock_logger.warning.assert_called_once()
+
+    def test_expand_with_settings_enabled(self):
+        """Verify settings.json is checked when include_settings=True."""
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
+        ):
+            mock_settings = mock_settings_cls.return_value
+            mock_settings.list_env.return_value = {"api_key": "from-settings"}
+
+            result = expand_env_vars_nested("${api_key}", include_settings=True)
+            assert result == "from-settings"
+
+    def test_environment_precedence_over_settings(self):
+        """Verify process environment takes precedence over settings.json."""
+        with (
+            patch.dict("os.environ", {"API_KEY": "from-env"}, clear=True),
+            patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
+        ):
+            mock_settings = mock_settings_cls.return_value
+            mock_settings.list_env.return_value = {"API_KEY": "from-settings"}
+
+            result = expand_env_vars_nested("${API_KEY}", include_settings=True)
+            assert result == "from-env"  # Environment wins
+
+    def test_case_insensitive_settings_fallback(self):
+        """Verify case-insensitive lookup for settings.json."""
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
+        ):
+            mock_settings = mock_settings_cls.return_value
+            mock_settings.list_env.return_value = {"replicate_api_token": "value"}
+
+            # Should match despite case difference
+            result = expand_env_vars_nested("${REPLICATE_API_TOKEN}", include_settings=True)
+            assert result == "value"
+
+    def test_raise_on_missing_variable(self):
+        """Verify helpful error raised when variable missing and raise_on_missing=True."""
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
+        ):
+            mock_settings = mock_settings_cls.return_value
+            mock_settings.list_env.return_value = {}
+
+            with pytest.raises(ValueError, match="Missing environment variable.*MISSING_VAR"):
+                expand_env_vars_nested({"key": "${MISSING_VAR}"}, include_settings=True, raise_on_missing=True)
+
+    def test_multiple_missing_variables_in_error(self):
+        """Verify all missing variables listed in error message."""
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
+        ):
+            mock_settings = mock_settings_cls.return_value
+            mock_settings.list_env.return_value = {}
+
+            with pytest.raises(ValueError) as exc_info:
+                expand_env_vars_nested(
+                    {"key1": "${VAR1}", "key2": "${VAR2}", "nested": {"key3": "${VAR3}"}},
+                    include_settings=True,
+                    raise_on_missing=True,
+                )
+
+            error_msg = str(exc_info.value)
+            assert "VAR1" in error_msg
+            assert "VAR2" in error_msg
+            assert "VAR3" in error_msg
+            assert "pflow settings set-env" in error_msg
+
+    def test_default_value_syntax(self):
+        """Verify ${VAR:-default} syntax works."""
+        with patch.dict("os.environ", {}, clear=True):
+            result = expand_env_vars_nested("${MISSING:-fallback}")
+            assert result == "fallback"
+
+            # With existing var, default ignored
+            with patch.dict("os.environ", {"EXISTS": "actual"}, clear=True):
+                result = expand_env_vars_nested("${EXISTS:-fallback}")
+                assert result == "actual"
+
+    def test_settings_load_error_handled_gracefully(self):
+        """Verify graceful handling when settings.json can't be loaded."""
+        with (
+            patch.dict("os.environ", {"FALLBACK": "value"}, clear=True),
+            patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
+        ):
+            mock_settings_cls.side_effect = Exception("Settings error")
+
+            # Should still work with environment variables
+            with patch("pflow.mcp.auth_utils.logger") as mock_logger:
+                result = expand_env_vars_nested("${FALLBACK}", include_settings=True)
+                assert result == "value"
+                # Verify warning was logged
+                mock_logger.warning.assert_called()
+
+
 class TestBuildAuthHeaders:
     """Test authentication header building."""
 

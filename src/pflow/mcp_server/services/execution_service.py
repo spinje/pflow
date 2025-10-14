@@ -589,7 +589,25 @@ class ExecutionService(BaseService):
                     extra={"server": server_name, "tool": tool_name},
                 )
 
-            # Set parameters (now includes __mcp_server__ and __mcp_tool__ for MCP nodes)
+            # Resolve ${var} templates from environment and settings.json
+            # This allows agents to use ${API_KEY} without exposing actual tokens
+            # Checks both os.environ and settings.json (where `pflow settings set-env` stores values)
+            if parameters:
+                from pflow.mcp.auth_utils import expand_env_vars_nested
+
+                parameters = expand_env_vars_nested(
+                    parameters,
+                    include_settings=True,
+                    raise_on_missing=True,
+                )
+
+                logger.debug(
+                    f"Resolved environment variables in parameters for {node_type}",
+                    extra={"param_keys": list(parameters.keys()) if isinstance(parameters, dict) else None},
+                )
+
+            # Set parameters (now includes __mcp_server__ and __mcp_tool__ for MCP nodes,
+            # and all ${var} templates resolved from environment)
             if parameters:
                 node_instance.set_params(parameters)
 

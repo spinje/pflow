@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 
 # Compile regex pattern once for performance
 # Updated to support ${VAR} and ${VAR:-default} syntax
-ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}")
+# Accepts both uppercase and lowercase variable names
+ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 # Authentication type constants
 AUTH_TYPE_BEARER = "bearer"
@@ -19,43 +20,131 @@ AUTH_TYPE_BASIC = "basic"
 DEFAULT_API_KEY_HEADER = "X-API-Key"
 
 
-def expand_env_vars_nested(data: Any) -> Any:
+def expand_env_vars_nested(  # noqa: C901
+    data: Any,
+    *,
+    include_settings: bool = False,
+    raise_on_missing: bool = False,
+) -> Any:
     """Recursively expand environment variables in nested structures.
+
+    Supports expansion from both process environment (os.environ) and
+    settings.json (where `pflow settings set-env` stores values).
 
     Args:
         data: Any data structure potentially containing ${VAR} references
+        include_settings: If True, check settings.json in addition to os.environ
+        raise_on_missing: If True, raise ValueError instead of returning empty string
+                         for missing variables (only applies when no default is provided)
 
     Returns:
         Data with all environment variables expanded
+
+    Raises:
+        ValueError: If raise_on_missing=True and variables are missing
+
+    Examples:
+        Basic usage (backward compatible):
+        >>> expand_env_vars_nested("${HOME}/path")
+        "/Users/john/path"
+
+        With settings.json support:
+        >>> expand_env_vars_nested(
+        ...     {"token": "${API_KEY}"},
+        ...     include_settings=True
+        ... )
+        {"token": "value-from-settings"}
+
+        With error raising:
+        >>> expand_env_vars_nested(
+        ...     "${MISSING_VAR}",
+        ...     raise_on_missing=True
+        ... )
+        ValueError: Missing environment variable(s): MISSING_VAR
     """
-    if isinstance(data, dict):
-        # Recursively process dictionary values
-        return {key: expand_env_vars_nested(value) for key, value in data.items()}
-    elif isinstance(data, list):
-        # Recursively process list items
-        return [expand_env_vars_nested(item) for item in data]
-    elif isinstance(data, str):
-        # Expand environment variables in strings
-        def replacer(match: Any) -> str:
-            env_var = match.group(1)
-            default_value = match.group(2)  # Will be None if no default specified
+    # Load settings.json if requested (import inside function to avoid circular deps)
+    settings_env: dict[str, str] = {}
+    if include_settings:
+        try:
+            from pflow.core.settings import SettingsManager
 
-            env_value = os.environ.get(env_var)
+            settings = SettingsManager()
+            settings_env = settings.list_env(mask_values=False)
+        except Exception as e:
+            # Log warning but continue with empty settings dict
+            logger.warning(f"Failed to load settings env vars: {e}")
+            settings_env = {}
 
-            if env_value is not None:
-                return env_value
-            elif default_value is not None:
-                # Use the default value if provided
-                return str(default_value)
-            else:
-                # No value and no default - log warning and use empty string
-                logger.warning(f"Environment variable {env_var} not found, using empty string")
-                return ""
+    # Track missing variables for error reporting
+    missing_vars: set[str] = set()
 
-        return ENV_VAR_PATTERN.sub(replacer, data)
-    else:
-        # Return other types unchanged (int, bool, None, etc.)
-        return data
+    def get_variable(var_name: str) -> str | None:
+        """Get variable from environment or settings (case-insensitive for settings)."""
+        # Check process environment first (case-sensitive)
+        if var_name in os.environ:
+            return os.environ[var_name]
+
+        # Check settings.json (case-insensitive fallback)
+        # This handles both ${REPLICATE_API_TOKEN} and ${replicate_api_token}
+        if include_settings:
+            for key, value in settings_env.items():
+                if key.lower() == var_name.lower():
+                    return value
+
+        return None
+
+    def expand_value(value: Any) -> Any:
+        """Recursively expand variables in nested structures."""
+        if isinstance(value, dict):
+            # Recursively process dictionary values
+            return {key: expand_value(val) for key, val in value.items()}
+        elif isinstance(value, list):
+            # Recursively process list items
+            return [expand_value(item) for item in value]
+        elif isinstance(value, str):
+            # Expand environment variables in strings
+            def replacer(match: Any) -> str:
+                var_name = match.group(1)
+                default_value = match.group(2)  # Will be None if no default specified
+
+                var_value = get_variable(var_name)
+
+                if var_value is not None:
+                    return var_value
+                elif default_value is not None:
+                    # Use the default value if provided
+                    return str(default_value)
+                else:
+                    # No value and no default
+                    if raise_on_missing:
+                        # Track for error reporting
+                        missing_vars.add(var_name)
+                        return ""
+                    else:
+                        # Log warning and use empty string (backward compatible)
+                        logger.warning(f"Environment variable {var_name} not found, using empty string")
+                        return ""
+
+            return ENV_VAR_PATTERN.sub(replacer, value)
+        else:
+            # Return other types unchanged (int, bool, None, etc.)
+            return value
+
+    # Expand all variables
+    result = expand_value(data)
+
+    # If any variables were missing and raise_on_missing=True, raise a helpful error
+    if raise_on_missing and missing_vars:
+        var_list = ", ".join(sorted(missing_vars))
+        first_var = next(iter(missing_vars))
+        raise ValueError(
+            f"Missing environment variable(s): {var_list}\n\n"
+            f"To set these variables, use one of:\n"
+            f"  • pflow settings set-env {first_var}=your_value\n"
+            f"  • export {first_var}=your_value"
+        )
+
+    return result
 
 
 def _validate_auth_value(value: str, field_name: str) -> bool:
