@@ -22,11 +22,19 @@ async def registry_describe(
 ) -> str:
     """Get detailed specifications for specific nodes.
 
+    Use this BEFORE `registry_run` to understand what parameters a node accepts and what it returns.
+
     Returns comprehensive information for each node:
     - Full description and purpose
     - Required and optional input parameters
     - Output keys available for templates
     - Usage examples
+
+    Typical pattern:
+    1. `registry_discover` (find nodes)
+    2. `registry_describe` (understand interface) ← YOU ARE HERE
+    3. `registry_run` (test with real data if needed)
+    4. Build workflow
 
     Examples:
         # Describe a single core node
@@ -35,8 +43,10 @@ async def registry_describe(
         # Describe multiple nodes to compare interfaces
         nodes=["http", "shell", "llm"]
 
-        # Describe MCP tool using full ID
+        # Describe MCP tool (use full ID format)
         nodes=["mcp-slack-mcp-server-SLACK_SEND_MESSAGE"]
+
+        # Note: MCP tools use format: mcp-{server-name}-{TOOL_NAME}
 
     Returns:
         Formatted text description showing for each node:
@@ -65,12 +75,18 @@ async def registry_list(
         description="Optional filter pattern. Single keyword or space-separated keywords (AND logic). Examples: 'github' or 'github api'",
     ),
 ) -> str:
-    """List available nodes, optionally filtered by pattern.
+    """List available nodes with name-based filtering.
 
-    Use `registry_discover` when: Exploring capabilities ("nodes for JSON processing") or complex queries
-    Use `registry_list` when: Filtering by name ("all github nodes")
+    Use registry_discover when: Exploring capabilities or semantic search
+      - "What nodes can process JSON and call APIs?"
+      - "Find nodes for data transformation"
 
-    ⚠️ Without filter returns 100+ nodes (overwhelming). Always use filter or prefer `registry_discover`.
+    Use registry_list when: Name-based filtering only
+      - "Show all github nodes"
+      - "List nodes containing 'slack'"
+
+    ⚠️ WARNING: Without filter returns 100+ nodes (overwhelming).
+    → ALWAYS use filter parameter OR prefer registry_discover for exploration.
 
     Examples:
         # List all nodes (no parameters) ⚠️ Avoid this!!

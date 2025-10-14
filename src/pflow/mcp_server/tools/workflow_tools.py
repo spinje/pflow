@@ -21,13 +21,24 @@ async def workflow_list(
         description="Optional filter pattern. Single keyword or space-separated keywords (AND logic). Searches name and description.",
     ),
 ) -> str:
-    """List saved workflows, optionally filtered by pattern.
+    """List saved workflows with name-based filtering.
 
-    Use `workflow_discover` when: Semantic search ("workflows that analyze PRs")
-    Use `workflow_list` when: Filtering by name ("workflows with 'github'")
+    ⚠️ For semantic search use `workflow_discover` instead.
+    This tool only does keyword matching in name/description.
 
-    ⚠️ Without filter returns all workflows. Prefer workflow_discover for discovery, this for filtering.
-    Multiple keywords: Space-separated (AND logic - all must match).
+    Use `workflow_discover` when: Semantic/capability search
+      - "Find workflows that analyze pull requests"
+      - "Show workflows for data processing"
+
+    Use `workflow_list` when: Filtering by keywords in name
+      - "Show workflows with 'github' in the name"
+      - "List workflows containing 'slack'"
+
+    Filter behavior:
+    - No filter: Returns ALL workflows (may be long)
+    - Single keyword: Matches name OR description
+    - Multiple keywords: Space-separated AND logic (all must match)
+      Example: "github pr" matches workflows with both "github" AND "pr"
 
     Examples:
         # List all workflows (no parameters)
@@ -64,13 +75,19 @@ async def workflow_describe(
 ) -> str:
     """Show detailed workflow interface specification.
 
+    ⚠️ ESSENTIAL: Call this BEFORE `workflow_execute` to understand required parameters if not already known.
+    Executing without checking parameters first will likely fail.
+
     Returns workflow interface showing:
     - Workflow name and description
     - Input parameters (required/optional, types, defaults)
     - Output values (with descriptions)
     - Example usage command
 
-    ⚠️ ESSENTIAL: Call this BEFORE workflow_execute to understand what parameters are needed.
+    Typical usage pattern:
+    1. workflow_discover (find workflow)
+    2. workflow_describe (understand interface) ← YOU ARE HERE
+    3. workflow_execute (run with correct parameters)
 
     Examples:
         # Check what parameters a workflow needs before execution

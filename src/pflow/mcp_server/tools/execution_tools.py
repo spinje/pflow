@@ -29,20 +29,32 @@ async def workflow_execute(
 ) -> str:
     """Execute a workflow with natural language output.
 
+    Input Types:
+    1. Workflow name: "my-workflow" (from saved library)
+    2. File path: "./workflow.json" (for agents with filesystem access)
+    3. Inline IR: {...} (for sandboxed agents or programmatic building)
+
     Built-in behaviors:
     - Trace always saved to ~/.pflow/debug/workflow-trace-{name}-{timestamp}.json
     - Returns explicit errors with suggestions for fixing
+
+    Before executing:
+    1. Call workflow_describe to understand required parameters
+    2. Ensure all required inputs are provided
+    3. Validate parameters match expected types
 
     Examples:
         # Execute saved workflow by name
         workflow="my-workflow"
         parameters={"input1": "value1", "input2": 123}
 
-        # Execute workflow from file (Should be used by Non-Sandbox Agents)
+        # Execute workflow from file
+        # ⚠️ Use when you have filesystem access (non-sandbox agents)
         workflow="./workflows/my-workflow.json"
         parameters={...}
 
-        # Execute inline workflow IR (Should be used by Sandbox Agents)
+        # Execute inline workflow IR
+        # ⚠️ Use in sandboxed environments or when building programmatically
         workflow={
             "inputs": {...},
             "nodes": [...],
@@ -81,7 +93,7 @@ async def workflow_validate(
         Field(description="Workflow name from library, path to workflow file, or workflow IR object"),
     ],
 ) -> str:
-    """Static validation of workflow structure without execution.
+    """STATIC validation of workflow structure WITHOUT execution.
 
     Checks:
     - Schema compliance (JSON structure, required fields)
@@ -99,10 +111,12 @@ async def workflow_validate(
         # Validate saved workflow (returns validation errors if any)
         workflow="my-workflow"
 
-        # Validate workflow file (Should be used by Non-Sandbox Agents)
+        # Validate workflow file
+        # ⚠️ Use when you have filesystem access
         workflow="./workflow.json"
 
-        # Validate inline workflow IR (Should be used by Sandbox Agents)
+        # Validate inline workflow IR
+        # ⚠️ Use in sandboxed environments
         workflow={
             "inputs": {...},
             "nodes": [...],
@@ -155,25 +169,31 @@ async def workflow_save(
 ) -> str:
     """Save workflow to global library for reuse.
 
+    Purpose: Make workflows reusable by name. Save ONLY workflows you'll execute multiple times.
+    Don't save: One-off workflows, tests, experiments.
+
     Validates and normalizes the workflow before saving.
     Name must be lowercase letters, numbers, and hyphens only (max 50 chars).
 
     By default, saving fails if a workflow with the same name exists.
     Use force=true to overwrite existing workflows.
 
-    Set generate_metadata=true for better discoverability (uses LLM, adds latency).
-    Use when: Reusable workflows
-    Skip when: Tests or one-off workflows
+    generate_metadata flag:
+    - Set to true for better workflow_discover results (uses LLM, adds 2-5s latency)
+    - Use when: Creating reusable workflows for others
+    - Skip when: Personal workflows, tests, experiments
 
     Examples:
-        # Save workflow from file (minimal options) (Should be used by Non-Sandbox Agents)
+        # Save workflow from file (minimal options)
+        # ⚠️ Use when you have filesystem access
         workflow="./path/to/workflow.json"
         name="my-workflow"
         description="Brief description of what workflow does"
         force=False
         generate_metadata=False
 
-        # Save inline workflow with all options (Should be used by Sandbox Agents)
+        # Save inline workflow with all options
+        # ⚠️ Use when building workflows programmatically
         workflow={
             "inputs": {...},
             "nodes": [...],
@@ -212,21 +232,22 @@ async def registry_run(
         Field(description="Node-specific input parameters as key-value pairs"),
     ] = None,
 ) -> str:
-    """Execute a single node with real data to discover its actual output structure.
+    """Execute a single node with real data to test/discover its output structure and available template variables.
 
     ⚠️ WARNING: This EXECUTES the node with real side effects.
 
     Safe to test: HTTP GET, read-file, data transforms
     Ask user first: shell, write-file, HTTP POST/PUT/DELETE, MCP tools, git operations
 
-    WHEN TO USE THIS TOOL:
+    ⚠️ Critical use case: Use when node output structure is "Any" or unknown - common with HTTP and MCP nodes.
+
+    WHEN TO USE:
     - AFTER using registry_describe to understand node parameters
     - BEFORE building workflows to discover available template variables
-    - Critical for HTTP/MCP nodes where output structure is "Any" in docs (pflow or external)
+    - For any HTTP/MCP/external nodes where output structure is unclear
 
-    This tool always shows the complete flattened output structure with all
-    available template paths (like `${result.data.items[0].title}`) for use
-    in workflow building.
+    Shows complete flattened output structure with all available template paths
+    (like `${result.data.items[0].title}`) for workflow building.
 
     Examples:
         # Test HTTP GET (shows response structure for API calls)
