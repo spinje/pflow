@@ -189,28 +189,43 @@ pflow/
 │   │   ├── llm_pricing.py   # Centralized pricing and LLM cost calculations
 │   │   ├── metrics.py       # MetricsCollector for durations, tokens, costs
 │   │   ├── output_controller.py # Interactive vs non-interactive output routing
+│   │   ├── security_utils.py    # Sensitive parameter detection and masking
 │   │   ├── settings.py      # PflowSettings manager with allow/deny filters
 │   │   ├── shell_integration.py # Robust stdin handling (text/binary/large)
+│   │   ├── suggestion_utils.py  # "Did you mean" suggestions for workflow/node names
 │   │   ├── user_errors.py   # User-friendly CLI error types and formatting
 │   │   ├── validation_utils.py # Parameter name validation helpers
 │   │   ├── workflow_data_flow.py # Data-flow validation and execution order
 │   │   ├── workflow_manager.py   # Saved workflow storage and metadata
+│   │   ├── workflow_save_service.py # Shared workflow save functions (CLI/MCP)
 │   │   └── workflow_validator.py # Unified workflow validation pipeline
 │   ├── execution/           # Execution UX and reusable services
 │   │   ├── display_manager.py   # UX display coordination via OutputInterface
+│   │   ├── execution_state.py   # Per-node execution state building
 │   │   ├── executor_service.py  # Reusable workflow execution service (IR -> run)
 │   │   ├── null_output.py       # No-op OutputInterface implementation
 │   │   ├── output_interface.py  # Output interface/protocol for display backends
 │   │   ├── repair_service.py    # Validation-driven auto-repair flow
 │   │   ├── workflow_diff.py     # Compute diffs between original and repaired IR
-│   │   └── workflow_execution.py # Orchestrates validate/repair/execute cycle
-│   ├── mcp/                 # Model Context Protocol integration
+│   │   ├── workflow_execution.py # Orchestrates validate/repair/execute cycle
+│   │   └── formatters/      # Shared formatters for CLI/MCP parity (return, never print)
+│   ├── mcp/                 # Model Context Protocol integration for MCP nodes in workflows
 │   │   ├── auth_utils.py    # Auth/config helpers for MCP servers
 │   │   ├── discovery.py     # Server discovery and config utilities
 │   │   ├── manager.py       # Manage MCP server configurations
 │   │   ├── registrar.py     # Register/sync MCP tools into pflow registry
 │   │   ├── types.py         # Typed structures for MCP configs and tools
 │   │   └── utils.py         # Parsing and utility helpers (server/tool IDs)
+│   ├── mcp_server/          # MCP server exposing pflow as programmatic tools for AI agents
+│   │   ├── main.py          # Server startup, Anthropic model install, signal handling
+│   │   ├── server.py        # FastMCP instance and tool registration
+│   │   ├── resources/       # MCP resources (prompts, instructions)
+│   │   ├── tools/           # MCP tool implementations (async layer)
+│   │   ├── services/        # Business logic layer (sync, stateless)
+│   │   └── utils/           # MCP-specific utilities
+│   │       ├── errors.py            # Error sanitization for LLM safety
+│   │       ├── resolver.py          # Workflow resolution (dict/name/path)
+│   │       └── validation.py        # Path/parameter security validation
 │   ├── nodes/               # Platform node implementations
 │   │   ├── claude/          # Claude Code integration nodes
 │   │   ├── file/            # Local filesystem operations (read/write/copy/move/delete)
@@ -264,8 +279,10 @@ pflow/
 │   ├── test_core/           # Core modules tests
 │   ├── test_docs/           # Docs/link validation tests
 │   ├── test_execution/      # Execution/repair service tests
+│   │   └── formatters/      # Formatter tests (CLI/MCP parity, security)
 │   ├── test_integration/    # End-to-end workflow tests
-│   ├── test_mcp/            # MCP integration tests
+│   ├── test_mcp/            # MCP integration tests (client-side MCP node/server integration)
+│   ├── test_mcp_server/     # MCP server tests (pflow-as-MCP-server)
 │   ├── test_nodes/          # Node implementation tests
 │   │   ├── test_claude/     # Claude nodes
 │   │   ├── test_file/       # File nodes
@@ -447,9 +464,10 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 76: Implement Registry Execute Command for Independent Node Testing by agents
 - ✅ Task 80: Implement API Key Management via Settings
 - ✅ Task 82: Implement System-Wide Binary Data Support
+- ✅ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
 
 Next up:
-- ⏳ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
+To be decided
 
 Next version (post-MVP/post-Launch):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
