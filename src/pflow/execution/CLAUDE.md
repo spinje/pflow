@@ -165,10 +165,6 @@ class ExecutionResult:
 3. **Repair Loop**: On failure, repair and resume from checkpoint
 4. **Result**: Return ExecutionResult with repaired workflow if applicable
 
-**Execution Flow with Repair Disabled** (`--no-repair`):
-1. **Skip Validation**: No validation performed
-2. **Direct Execution**: Execute workflow immediately
-3. **Fail Fast**: Return error on first failure
 
 **Critical Functions**:
 - `_handle_validation_phase()` - Validation with repair attempts
@@ -249,7 +245,7 @@ shared["__cache_hits__"] = ["fetch", "analyze"]  # Nodes that used cache
 **Key Parameters Passed**:
 - `workflow_ir`: The workflow to execute
 - `execution_params`: Template parameters with special keys like `__planner_cache_chunks__`
-- `enable_repair`: Controlled by `--no-repair` flag (defaults to True)
+- `enable_repair`: Controlled by `--auto-repair` flag (defaults to False)
 - `output`: CliOutput instance implementing OutputInterface
 - `workflow_manager`: For saved workflow metadata updates
 - `stdin_data`: Piped input data
@@ -473,7 +469,7 @@ result = execute_workflow(
 result = execute_workflow(
     workflow_ir=workflow,
     execution_params=params,
-    enable_repair=False  # --no-repair flag
+    enable_repair=False  # --auto-repair flag
 )
 # Fails immediately on first error
 ```

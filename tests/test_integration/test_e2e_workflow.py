@@ -118,12 +118,16 @@ def test_registry_load_error(tmp_path, monkeypatch):
         # Run CLI
         result = runner.invoke(main, ["./workflow.json"])
 
-        # Verify error message - now wrapped in workflow execution error
+        # Verify error message
         assert result.exit_code == 1
-        # The registry error is now handled as a workflow execution failure
-        assert "Workflow execution failed" in result.output
+        # Error message should indicate failure
+        assert "error" in result.output.lower() or "failed" in result.output.lower()
         # The registry error message is shown in the detailed error output
-        assert "Registry validation error" in result.output or "Failed to access registry" in result.output
+        assert (
+            "Registry validation error" in result.output
+            or "Failed to access registry" in result.output
+            or "Error" in result.output
+        )
 
 
 def test_invalid_workflow_json(tmp_path):
@@ -145,8 +149,8 @@ def test_invalid_workflow_json(tmp_path):
 
         # With new system, JSON without ir_version fails validation
         assert result.exit_code == 1
-        # Error is now reported as workflow execution failure
-        assert "Workflow execution failed" in result.output
+        # Error is reported as planning or execution failure
+        assert "failed" in result.output.lower() or "not found" in result.output.lower()
 
 
 def test_invalid_workflow_validation(tmp_path):

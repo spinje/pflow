@@ -45,7 +45,7 @@ class TestEnhancedErrorOutput:
         workflow_path.write_text(json.dumps(workflow))
 
         runner = CliRunner()
-        result = runner.invoke(main, ["--output-format", "json", "--no-repair", str(workflow_path)])
+        result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0
 
@@ -162,7 +162,7 @@ class TestEnhancedErrorOutput:
         workflow_path.write_text(json.dumps(workflow))
 
         runner = CliRunner()
-        result = runner.invoke(main, ["--no-repair", str(workflow_path)])
+        result = runner.invoke(main, [str(workflow_path)])
 
         # If the signature was wrong, we'd get a TypeError
         # The fact that we get a clean exit with error means signature is correct
@@ -184,7 +184,7 @@ class TestEnhancedErrorOutput:
         workflow_path.write_text(json.dumps(workflow))
 
         runner = CliRunner()
-        result = runner.invoke(main, ["--output-format", "json", "--no-repair", str(workflow_path)])
+        result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0
 
@@ -235,7 +235,7 @@ class TestEnhancedErrorOutput:
         workflow_path.write_text(json.dumps(workflow))
 
         runner = CliRunner()
-        result = runner.invoke(main, ["--no-repair", str(workflow_path)])
+        result = runner.invoke(main, [str(workflow_path)])
 
         # Should fail (either in validation or execution)
         assert result.exit_code != 0
@@ -258,7 +258,7 @@ class TestEnhancedErrorOutput:
 
         # Test both text and JSON modes
         for output_format in ["text", "json"]:
-            args = ["--no-repair", str(workflow_path)]
+            args = [str(workflow_path)]
             if output_format == "json":
                 args = ["--output-format", "json", *args]
 
@@ -324,7 +324,7 @@ class TestEnhancedErrorOutput:
         workflow_path.write_text(json.dumps(workflow))
 
         runner = CliRunner()
-        result = runner.invoke(main, ["--output-format", "json", "--no-repair", str(workflow_path)])
+        result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0
         output = json.loads(result.output)
