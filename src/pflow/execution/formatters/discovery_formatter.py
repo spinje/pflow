@@ -17,6 +17,8 @@ Usage:
 
 from typing import Any
 
+from .history_formatter import format_execution_history
+
 
 def format_discovery_result(result: dict[str, Any], workflow: dict[str, Any]) -> str:
     """Format and display workflow discovery results.
@@ -95,6 +97,12 @@ def format_workflow_metadata(workflow: dict[str, Any]) -> list[str]:
         if isinstance(meta, dict):
             lines.append(f"**Description**: {meta.get('description', 'No description')}")
             lines.append(f"**Version**: {meta.get('version', '1.0.0')}")
+
+    # Add execution history if available
+    if "rich_metadata" in workflow:
+        history = format_execution_history(workflow["rich_metadata"], mode="compact")
+        if history:
+            lines.append(f"**Executed**: {history}")
 
     return lines
 

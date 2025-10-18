@@ -6,6 +6,8 @@ used by both CLI and MCP server to ensure output parity.
 
 from typing import Any
 
+from .history_formatter import format_execution_history
+
 
 def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
     """Format workflow interface specification for display.
@@ -51,6 +53,7 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
     """
     ir = metadata.get("ir", {})
     description = metadata.get("description", "No description")
+    rich_metadata = metadata.get("rich_metadata", {})
 
     # Build formatted sections
     lines = []
@@ -58,6 +61,10 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
     # Basic info
     lines.append(f"Workflow: {name}")
     lines.append(f"Description: {description}")
+
+    # Execution history (if available)
+    if execution_history := _format_execution_history_section(rich_metadata):
+        lines.append(execution_history)
 
     # Inputs section
     lines.append(_format_inputs_section(ir))
@@ -67,6 +74,28 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
 
     # Example usage section
     lines.append(_format_example_usage_section(name, ir))
+
+    return "\n".join(lines)
+
+
+def _format_execution_history_section(rich_metadata: dict[str, Any]) -> str:
+    """Format the execution history section.
+
+    Args:
+        rich_metadata: Workflow rich_metadata containing execution history
+
+    Returns:
+        Formatted execution history section or empty string if no history
+    """
+    if not rich_metadata:
+        return ""
+
+    history = format_execution_history(rich_metadata, mode="detailed")
+    if not history:
+        return ""
+
+    lines = ["\nExecution History:"]
+    lines.append(history)
 
     return "\n".join(lines)
 

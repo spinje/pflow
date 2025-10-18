@@ -44,7 +44,7 @@ class TestPrecedenceOrder:
         """Test that CLI parameter overrides settings.env value."""
         provided_params = {"api_key": "cli_api_key", "model": "cli_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
 
         assert errors == []
         # api_key is in provided_params, so shouldn't be in defaults
@@ -56,7 +56,7 @@ class TestPrecedenceOrder:
         """Test that CLI parameter overrides workflow default."""
         provided_params = {"api_key": "cli_api_key", "model": "cli_model", "optional_param": "cli_optional"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, {})
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, {})
 
         assert errors == []
         # All provided via CLI, nothing in defaults
@@ -66,7 +66,7 @@ class TestPrecedenceOrder:
         """Test that settings.env value overrides workflow default."""
         provided_params = {"model": "cli_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
 
         assert errors == []
         # api_key from settings.env
@@ -78,7 +78,7 @@ class TestPrecedenceOrder:
         """Test that workflow default is used when no CLI or settings.env."""
         provided_params = {"api_key": "cli_api_key", "model": "cli_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, {})
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, {})
 
         assert errors == []
         # optional_param uses workflow default
@@ -89,7 +89,7 @@ class TestPrecedenceOrder:
         # All three sources available: CLI, settings.env, workflow default
         provided_params = {"optional_param": "cli_value", "api_key": "cli_key", "model": "cli_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
 
         assert errors == []
         # Everything from CLI, nothing in defaults
@@ -99,7 +99,7 @@ class TestPrecedenceOrder:
         """Test precedence chain where settings.env wins over workflow default."""
         provided_params = {"model": "cli_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
 
         assert errors == []
         # optional_param from settings.env (not workflow default)
@@ -118,7 +118,7 @@ class TestPrecedenceOrder:
         provided_params = {"input_a": "cli_a"}
         settings_env = {"input_b": "env_b"}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["input_b"] == "env_b"  # From settings.env
@@ -129,7 +129,7 @@ class TestPrecedenceOrder:
         provided_params = {}  # No CLI params
         settings_env = {}  # No settings.env
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
 
         # Should have errors for both required inputs
         assert len(errors) == 2
@@ -145,7 +145,7 @@ class TestSettingsEnvPopulation:
         """Test required input provided via settings.env."""
         provided_params = {"model": "cli_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
 
         assert errors == []
         assert defaults["api_key"] == "env_api_key_value"
@@ -154,7 +154,7 @@ class TestSettingsEnvPopulation:
         """Test optional input provided via settings.env overrides default."""
         provided_params = {"api_key": "cli_key", "model": "cli_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
 
         assert errors == []
         # optional_param from settings.env, not workflow default
@@ -164,7 +164,7 @@ class TestSettingsEnvPopulation:
         """Test multiple inputs all from settings.env."""
         provided_params = {"model": "cli_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_with_env)
 
         assert errors == []
         assert defaults["api_key"] == "env_api_key_value"
@@ -175,7 +175,7 @@ class TestSettingsEnvPopulation:
         provided_params = {"api_key": "cli_key"}
         settings_env = {"model": "env_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["model"] == "env_model"
@@ -186,7 +186,7 @@ class TestSettingsEnvPopulation:
         provided_params = {"api_key": "cli_key", "model": "cli_model"}
         settings_env = {}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["optional_param"] == "default_value"
@@ -195,7 +195,7 @@ class TestSettingsEnvPopulation:
         """Test with settings_env parameter as None (backward compatible)."""
         provided_params = {"api_key": "cli_key", "model": "cli_model"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, None)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, None)
 
         assert errors == []
         assert defaults["optional_param"] == "default_value"
@@ -205,7 +205,7 @@ class TestSettingsEnvPopulation:
         provided_params = {"model": "cli_model"}
         settings_env = {"api_key": ""}  # Empty string
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["api_key"] == ""  # Empty string is valid
@@ -219,7 +219,7 @@ class TestBackwardCompatibility:
         provided_params = {"api_key": "cli_key", "model": "cli_model"}
 
         # Call without settings_env parameter (backward compatible)
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params)
 
         assert errors == []
         assert defaults["optional_param"] == "default_value"
@@ -229,7 +229,7 @@ class TestBackwardCompatibility:
         provided_params = {"api_key": "cli_key", "model": "cli_model"}
 
         # No settings.env
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, {})
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, {})
 
         assert errors == []
         assert defaults["optional_param"] == "default_value"
@@ -238,7 +238,7 @@ class TestBackwardCompatibility:
         """Test that missing required inputs still produce errors."""
         provided_params = {}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, {})
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, {})
 
         # Should error for missing required inputs
         assert len(errors) == 2
@@ -253,7 +253,7 @@ class TestBackwardCompatibility:
         }
         provided_params = {"required_input": "value"}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, {})
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, {})
 
         assert errors == []
         assert defaults["optional_input"] == "my_default"
@@ -262,7 +262,7 @@ class TestBackwardCompatibility:
         """Test that when all inputs provided via CLI, no defaults are applied."""
         provided_params = {"api_key": "cli_key", "model": "cli_model", "optional_param": "cli_optional"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, {})
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, {})
 
         assert errors == []
         assert defaults == {}  # Nothing in defaults
@@ -276,7 +276,7 @@ class TestErrorHandling:
         provided_params = {"model": "cli_model"}
         settings_env = {}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
 
         assert len(errors) == 1
         error_msg = errors[0][0]
@@ -288,7 +288,7 @@ class TestErrorHandling:
         provided_params = {"api_key": "cli_key", "model": "cli_model"}
         settings_env = {"extra_key_1": "value1", "extra_key_2": "value2", "optional_param": "env_value"}
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
 
         assert errors == []
         # Only optional_param should be in defaults (extra keys ignored)
@@ -299,7 +299,7 @@ class TestErrorHandling:
         provided_params = {"model": "cli_model"}
         settings_env = {"API_KEY": "env_key"}  # Wrong case
 
-        errors, defaults = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
 
         # Should error because api_key not provided (case-sensitive)
         assert len(errors) == 1
@@ -310,7 +310,7 @@ class TestErrorHandling:
         workflow_ir = {"ir_version": "0.1.0", "nodes": []}
         provided_params = {}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, {})
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, {})
 
         assert errors == []
         assert defaults == {}
@@ -321,7 +321,7 @@ class TestErrorHandling:
         provided_params = {}
         settings_env = {"simple_input": "env_value"}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["simple_input"] == "env_value"
@@ -349,7 +349,7 @@ class TestEndToEndIntegration:
         provided_params = {"prompt": "generate an image"}
         settings_env = manager.load().env
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["replicate_api_token"] == "r8_test_token_xyz"  # noqa: S105 - Test data comparison
@@ -366,7 +366,7 @@ class TestEndToEndIntegration:
         provided_params = {"api_key": "new_key_from_cli"}
         settings_env = manager.load().env
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         # api_key is in provided_params, not in defaults
@@ -392,7 +392,7 @@ class TestEndToEndIntegration:
         provided_params = {"model": "gpt-4"}
         settings_env = manager.load().env
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["openai_api_key"] == "sk-test-key"  # From settings
@@ -414,12 +414,12 @@ class TestEndToEndIntegration:
         settings_env = manager.load().env
 
         # Test workflow 1
-        errors1, defaults1 = prepare_inputs(workflow1_ir, {"title": "Bug report"}, settings_env)
+        errors1, defaults1, env_param_names1 = prepare_inputs(workflow1_ir, {"title": "Bug report"}, settings_env)
         assert errors1 == []
         assert defaults1["github_token"] == "ghp_test_token"  # noqa: S105 - Test data comparison
 
         # Test workflow 2 (reusing same settings)
-        errors2, defaults2 = prepare_inputs(workflow2_ir, {"branch": "feature-branch"}, settings_env)
+        errors2, defaults2, env_param_names2 = prepare_inputs(workflow2_ir, {"branch": "feature-branch"}, settings_env)
         assert errors2 == []
         assert defaults2["github_token"] == "ghp_test_token"  # noqa: S105 - Test data comparison
 
@@ -431,7 +431,7 @@ class TestEndToEndIntegration:
         provided_params = {"api_key": "cli_key"}
         settings_env = {}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         # Works fine without settings file
@@ -450,7 +450,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}  # No CLI params
         settings_env = {}  # No settings.env
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["api_key"] == "shell_value_123"
@@ -464,7 +464,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}
         settings_env = {}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["timeout"] == "30"
@@ -477,7 +477,7 @@ class TestShellEnvironmentVariables:
         provided_params = {"api_key": "cli_value"}  # CLI wins
         settings_env = {}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert "api_key" not in defaults  # Already in provided_params
@@ -492,7 +492,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}
         settings_env = {"api_key": "settings_value"}  # Shell env wins
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["api_key"] == "shell_value"
@@ -506,7 +506,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}
         settings_env = {}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["timeout"] == "60"  # Not 30
@@ -520,7 +520,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}
         settings_env = {"api_key": "settings_value"}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["api_key"] == "settings_value"
@@ -546,7 +546,7 @@ class TestShellEnvironmentVariables:
         provided_params = {"key1": "cli_1"}
         settings_env = {"key2": "settings_2", "key3": "settings_3", "key4": "settings_4"}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         # key1 already in provided_params (CLI)
@@ -571,7 +571,7 @@ class TestShellEnvironmentVariables:
         provided_params = {"repo": "user/repo"}
         settings_env = {"api_key": "settings_api_key", "github_token": "ghp_from_settings"}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["github_token"] == "ghp_from_shell"  # noqa: S105 - Test data comparison
@@ -586,7 +586,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}
         settings_env = {"api_key": "non_empty_value"}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["api_key"] == ""  # Empty string is valid
@@ -600,7 +600,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}
         settings_env = {}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["api_key"] == special_value
@@ -615,7 +615,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}
         settings_env = {}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
         assert defaults["api_key"] == "lowercase"
@@ -629,7 +629,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}
         settings_env = {}
 
-        errors, defaults = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert len(errors) == 1
         assert "api_key" in errors[0][0]

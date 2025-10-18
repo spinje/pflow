@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from pflow.core.workflow_manager import WorkflowManager
+from pflow.mcp_server.utils.errors import sanitize_parameters
 
 from .output_interface import OutputInterface
 
@@ -451,15 +452,22 @@ class WorkflowExecutorService:
         Args:
             success: Whether execution was successful
             workflow_name: Optional workflow name
-            execution_params: Execution parameters
+            execution_params: Execution parameters (may include __env_param_names__)
         """
         if success and self.workflow_manager and workflow_name:
+            # Extract env param names from internal param (if present)
+            env_param_names_list = execution_params.get("__env_param_names__", [])
+            env_param_names = set(env_param_names_list) if env_param_names_list else set()
+
+            # Sanitize params, always redacting env params regardless of name
+            sanitized_params = sanitize_parameters(execution_params, always_redact_keys=env_param_names)
+
             self.workflow_manager.update_metadata(
                 workflow_name,
                 {
                     "last_execution_timestamp": datetime.now().isoformat(),
                     "last_execution_success": True,
-                    "last_execution_params": execution_params,
+                    "last_execution_params": sanitized_params,
                     "execution_count": 1,  # Will be incremented by manager
                 },
             )

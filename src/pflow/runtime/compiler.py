@@ -841,6 +841,35 @@ def _load_settings_env() -> dict[str, str]:
         return {}
 
 
+def _raise_input_validation_errors(errors: list[tuple[str, str, str]]) -> None:
+    """Raise ValidationError with formatted input error messages.
+
+    Args:
+        errors: List of (message, path, suggestion) tuples from prepare_inputs
+
+    Raises:
+        ValidationError: Always raises with formatted error message
+    """
+    if len(errors) == 1:
+        # Single error - keep current behavior for backward compatibility
+        message, path, suggestion = errors[0]
+        raise ValidationError(message, path=path, suggestion=suggestion)
+
+    # Multiple errors - aggregate them for better UX
+    error_lines = []
+    for msg, path, _ in errors:  # Ignore individual suggestions
+        # Extract just the input name from path like "inputs.api_key"
+        input_name = path.split(".")[-1] if "." in path else path
+        error_lines.append(f"  • '{input_name}' - {msg}")
+
+    combined_message = f"Found {len(errors)} input validation errors:\n" + "\n".join(error_lines)
+    raise ValidationError(
+        message=combined_message,
+        path="inputs",
+        suggestion="Fix all validation errors above before compiling the workflow",
+    )
+
+
 def _validate_workflow(
     ir_dict: dict[str, Any], registry: Registry, initial_params: dict[str, Any], validate_templates: bool
 ) -> dict[str, Any]:
@@ -876,27 +905,14 @@ def _validate_workflow(
         settings_env = _load_settings_env()
 
         # Pass settings_env to prepare_inputs
-        errors, defaults = prepare_inputs(ir_dict, initial_params, settings_env=settings_env)
+        errors, defaults, env_param_names = prepare_inputs(ir_dict, initial_params, settings_env=settings_env)
         if errors:
-            if len(errors) == 1:
-                # Single error - keep current behavior for backward compatibility
-                message, path, suggestion = errors[0]
-                raise ValidationError(message, path=path, suggestion=suggestion)
-            else:
-                # Multiple errors - aggregate them for better UX
-                error_lines = []
-                for msg, path, _ in errors:  # Ignore individual suggestions
-                    # Extract just the input name from path like "inputs.api_key"
-                    input_name = path.split(".")[-1] if "." in path else path
-                    error_lines.append(f"  • '{input_name}' - {msg}")
-
-                combined_message = f"Found {len(errors)} input validation errors:\n" + "\n".join(error_lines)
-                raise ValidationError(
-                    message=combined_message,
-                    path="inputs",
-                    suggestion="Fix all validation errors above before compiling the workflow",
-                )
+            _raise_input_validation_errors(errors)
         initial_params.update(defaults)  # Explicit mutation
+
+        # Store env param names as internal param (for sanitization at metadata storage time)
+        if env_param_names:
+            initial_params["__env_param_names__"] = list(env_param_names)
     except ValidationError:
         logger.exception("Input validation failed", extra={"phase": "input_validation"})
         raise

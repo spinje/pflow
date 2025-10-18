@@ -71,7 +71,7 @@ def validate_ir_structure(ir_dict: dict[str, Any]) -> None:
 
 def prepare_inputs(
     workflow_ir: dict[str, Any], provided_params: dict[str, Any], settings_env: dict[str, str] | None = None
-) -> tuple[list[tuple[str, str, str]], dict[str, Any]]:
+) -> tuple[list[tuple[str, str, str]], dict[str, Any], set[str]]:
     """Validate workflow inputs and return defaults to apply.
 
     This function validates that all required inputs are present in provided_params,
@@ -85,9 +85,10 @@ def prepare_inputs(
         settings_env: Environment variables from settings.env (optional)
 
     Returns:
-        tuple: (errors, defaults_to_apply) where:
+        tuple: (errors, defaults_to_apply, env_param_names) where:
             - errors: List of (message, path, suggestion) tuples for ValidationError
             - defaults_to_apply: Dict of default values to apply for missing optional inputs
+            - env_param_names: Set of parameter names that came from settings.env
 
     Precedence order:
         1. provided_params (CLI arguments) - highest priority
@@ -102,6 +103,7 @@ def prepare_inputs(
     """
     errors: list[tuple[str, str, str]] = []
     defaults: dict[str, Any] = {}
+    env_param_names: set[str] = set()
     settings_env = settings_env or {}
 
     # Extract input declarations (backward compatible with workflows without inputs)
@@ -110,7 +112,7 @@ def prepare_inputs(
     # If no inputs declared, nothing to validate
     if not inputs:
         logger.debug("No inputs declared for workflow", extra={"phase": "input_validation"})
-        return errors, defaults
+        return errors, defaults, env_param_names
 
     logger.debug(
         "Validating workflow inputs", extra={"phase": "input_validation", "declared_inputs": list(inputs.keys())}
@@ -145,6 +147,7 @@ def prepare_inputs(
             # Check settings.env (persistent configuration)
             if input_name in settings_env:
                 defaults[input_name] = settings_env[input_name]
+                env_param_names.add(input_name)  # Track that this came from env
                 logger.debug(
                     f"Using value from settings.env for input '{input_name}'",
                     extra={"phase": "input_validation", "input": input_name},
@@ -183,4 +186,4 @@ def prepare_inputs(
         "Input validation complete", extra={"phase": "input_validation", "final_params": list(provided_params.keys())}
     )
 
-    return errors, defaults
+    return errors, defaults, env_param_names

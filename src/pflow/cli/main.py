@@ -2837,7 +2837,7 @@ def _validate_and_prepare_workflow_params(
             logger.warning(f"Failed to load settings.env: {e}")
 
         # Validate with prepare_inputs (including settings.env)
-        errors, defaults = prepare_inputs(workflow_ir, params, settings_env=settings_env)
+        errors, defaults, env_param_names = prepare_inputs(workflow_ir, params, settings_env=settings_env)
         if errors:
             # Show user-friendly errors
             for msg, path, suggestion in errors:
@@ -2851,6 +2851,10 @@ def _validate_and_prepare_workflow_params(
         # Apply defaults
         if defaults:
             params.update(defaults)
+
+        # Store env param names as internal param (for consistency with compiler.py)
+        if env_param_names:
+            params["__env_param_names__"] = list(env_param_names)
 
     return params
 
