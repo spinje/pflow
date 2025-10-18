@@ -86,31 +86,25 @@ def _build_workflow_metadata(
     """Build workflow metadata from execution context.
 
     Args:
-        workflow_ir: Workflow IR dictionary
+        workflow_ir: Workflow IR dictionary (not used, kept for API compatibility)
         workflow: Original workflow parameter
-        source: Workflow source type (file, library, etc.)
+        source: Workflow source type (file, library, direct)
         workflow_manager: Workflow manager instance
 
     Returns:
         Workflow metadata dictionary or None
     """
-    workflow_metadata = None
-    if workflow_ir.get("metadata", {}).get("name"):
-        # Saved workflow - check if it exists in library
-        workflow_name = workflow_ir["metadata"]["name"]
-        if workflow_manager.exists(workflow_name):
-            workflow_metadata = {"action": "reused", "name": workflow_name}
-        else:
-            workflow_metadata = {"action": "unsaved", "name": source if source == "file" else workflow_name}
+    # Determine workflow status based on source
+    # Note: IR should never contain metadata field (violates schema)
+    if source == "library":
+        # Workflow loaded from library - mark as reused
+        return {"action": "reused", "name": str(workflow)}
+    elif source == "file":
+        # Workflow loaded from file - mark as unsaved
+        return {"action": "unsaved", "name": str(workflow)}
     else:
-        # Unsaved workflow
-        workflow_metadata = {"action": "unsaved"}
-        if source == "file":
-            workflow_metadata["name"] = workflow_ir.get("metadata", {}).get("name", str(workflow))
-        elif source == "library":
-            workflow_metadata["name"] = str(workflow)
-
-    return workflow_metadata
+        # Direct IR dict - unsaved
+        return {"action": "unsaved"}
 
 
 def _format_success_result(
@@ -255,13 +249,15 @@ class ExecutionService(BaseService):
             metrics_collector = MetricsCollector()
 
             # Execute with agent defaults (mypy now knows workflow_ir is not None)
+            # Note: workflow_name derived from source, not IR metadata (which violates schema)
+            workflow_name = str(workflow) if source == "library" else None
             result = execute_workflow(
                 workflow_ir=workflow_ir,
                 execution_params=validated_params,
                 enable_repair=False,  # Always False for agents
                 output=NullOutput(),  # Silent execution
                 workflow_manager=workflow_manager,
-                workflow_name=workflow_ir.get("metadata", {}).get("name"),
+                workflow_name=workflow_name,
                 metrics_collector=metrics_collector,
             )
 
@@ -396,10 +392,8 @@ class ExecutionService(BaseService):
         # Load and validate workflow IR
         workflow_ir = cls._load_and_validate_workflow_for_save(workflow)
 
-        # Add/update metadata (MCP-specific: embed name/description in IR)
-        cls._update_workflow_metadata(workflow_ir, name, description)
-
         # Generate rich metadata if requested (same as CLI)
+        # Note: name/description passed directly to save function, NOT embedded in IR
         metadata_dict = cls._generate_metadata_if_requested(workflow_ir, generate_metadata)
 
         # Save workflow and return success message
@@ -433,22 +427,6 @@ class ExecutionService(BaseService):
             raise ValueError(f"Invalid workflow: {e}") from e
 
         return workflow_ir
-
-    @classmethod
-    def _update_workflow_metadata(cls, workflow_ir: dict[str, Any], name: str, description: str) -> None:
-        """Update workflow IR metadata with name, description, and timestamp.
-
-        Args:
-            workflow_ir: Workflow IR dictionary to update (modified in-place)
-            name: Workflow name
-            description: Workflow description
-        """
-        if "metadata" not in workflow_ir:
-            workflow_ir["metadata"] = {}
-
-        workflow_ir["metadata"]["name"] = name
-        workflow_ir["metadata"]["description"] = description
-        workflow_ir["metadata"]["created_at"] = datetime.now().isoformat()
 
     @classmethod
     def _generate_metadata_if_requested(
