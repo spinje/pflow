@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.validation_utils import generate_dummy_parameters  # noqa: F401 - Re-export for compatibility
+
 logger = logging.getLogger(__name__)
 
 # Path traversal patterns to block (always dangerous)
