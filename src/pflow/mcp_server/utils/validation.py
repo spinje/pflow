@@ -2,6 +2,9 @@
 
 This module provides validation functions for security and correctness,
 including path traversal prevention and workflow name validation.
+
+Note: generate_dummy_parameters has been moved to pflow.core.validation_utils
+for reuse across CLI and MCP.
 """
 
 import logging
@@ -75,25 +78,8 @@ def validate_file_path(path_str: str, allow_absolute: bool = False) -> tuple[boo
         return False, f"Invalid path: {e!s}"
 
 
-def generate_dummy_parameters(inputs: dict[str, Any]) -> dict[str, Any]:
-    """Generate dummy parameters for workflow validation.
-
-    Creates placeholder values for all declared inputs to enable
-    structural validation without real values.
-
-    Args:
-        inputs: Declared workflow inputs
-
-    Returns:
-        Dictionary of dummy parameter values
-    """
-    dummy_params = {}
-
-    for key, _input_spec in inputs.items():
-        # Use validation placeholder
-        dummy_params[key] = "__validation_placeholder__"
-
-    return dummy_params
+# generate_dummy_parameters is now imported from pflow.core.validation_utils above
+# (removed duplicate definition)
 
 
 def validate_execution_parameters(params: dict[str, Any]) -> tuple[bool, Optional[str]]:

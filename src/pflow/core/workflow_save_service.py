@@ -109,14 +109,20 @@ def _validate_and_normalize_ir(workflow_ir: dict[str, Any], auto_normalize: bool
         raise ValueError(f"{source_desc}: {e}") from e
 
     # Step 2: Comprehensive workflow validation (data flow, output sources, node types)
+    from pflow.core.validation_utils import generate_dummy_parameters
     from pflow.core.workflow_validator import WorkflowValidator
     from pflow.registry import Registry
 
     try:
+        # Generate dummy parameters for template validation
+        # This enables structural validation without requiring real parameter values
+        inputs = workflow_ir.get("inputs", {})
+        dummy_params = generate_dummy_parameters(inputs)
+
         registry = Registry()
         errors, _ = WorkflowValidator.validate(
             workflow_ir=workflow_ir,
-            extracted_params={},  # No runtime params available at save time
+            extracted_params=dummy_params,  # Use dummy params for template validation
             registry=registry,
             skip_node_types=False,  # Validate node types
         )

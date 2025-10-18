@@ -1,5 +1,33 @@
 """Shared validation utilities for pflow."""
 
+from typing import Any
+
+
+def generate_dummy_parameters(inputs: dict[str, Any]) -> dict[str, Any]:
+    """Generate dummy parameters for workflow validation.
+
+    Creates placeholder values for all declared inputs to enable
+    structural validation without real values.
+
+    Args:
+        inputs: Declared workflow inputs
+
+    Returns:
+        Dictionary of dummy parameter values
+
+    Example:
+        >>> inputs = {"api_key": {"type": "string"}, "repo": {"type": "string"}}
+        >>> generate_dummy_parameters(inputs)
+        {"api_key": "__validation_placeholder__", "repo": "__validation_placeholder__"}
+    """
+    dummy_params = {}
+
+    for key, _input_spec in inputs.items():
+        # Use validation placeholder
+        dummy_params[key] = "__validation_placeholder__"
+
+    return dummy_params
+
 
 def is_valid_parameter_name(name: str) -> bool:
     """Check if a parameter name is valid.
