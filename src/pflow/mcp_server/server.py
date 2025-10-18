@@ -11,19 +11,27 @@ from mcp.server.fastmcp import FastMCP
 # All tools and resources will register with this instance via decorators
 mcp = FastMCP(
     "pflow",
-    instructions="""CRITICAL WORKFLOW - Follow these steps for every workflow request:
+    instructions="""🚨 MANDATORY WORKFLOW PROTOCOL 🚨
 
-1. ALWAYS run workflow_discover first to check if a suitable workflow already exists
-2. If 95%+ confidence match found → execute it directly using the `workflow_execute` tool (don't rebuild)
-3. If building new workflow → read the `pflow://instructions` resource FIRST before using other tools (this is not optional)
-4. The instructions resource contains the complete 10-step development loop and best practices (REQUIRED FOR BUILDING OR MODIFYING WORKFLOWS)
+WHEN TO FOLLOW - Any request where you will create/build a pflow workflow:
+• "Create a workflow that does X"
+• "Help me build/make a workflow"
+• "Automate X with pflow"
+• User describes task → you produce .json workflow file
 
-Note: If you are a sandboxed agent:
- - No pflow cli installed (check with `pflow --version` if you are unsure)
- - No shared access to the users system
- use the `pflow://instructions/sandbox` resource instead.
+REQUIRED SEQUENCE (no exceptions, no skipping):
+1. workflow_discover first → Check if suitable workflow already exists
+   → 95%+ confidence match? Execute with `workflow_execute` tool (don't rebuild)
+2. If building new → Read `pflow://instructions` resource BEFORE using other tools (NON-OPTIONAL)
+   → Contains complete 10-step development loop + best practices
+   → ⛔ DO NOT skip to building unless you have read the FULL `pflow://instructions` mcp resource
+3. Then use registry_discover, registry_describe, etc.
 
-This prevents duplicate workflows and ensures you follow established patterns.""",
+SANDBOXED ENVIRONMENTS:
+If no CLI access (pflow --version fails) or no shared filesystem:
+→ Use `pflow://instructions/sandbox` resource instead
+
+PURPOSE: Prevents duplicate workflows, ensures established patterns.""",
 )
 
 
