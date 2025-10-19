@@ -131,7 +131,7 @@ def get_resource() -> str:
 #### Regular Agent Instructions (`pflow://instructions`)
 
 **For agents with FULL system access**:
-- **Path**: `.pflow/instructions/MCP-AGENT_INSTRUCTIONS.md` (checks project root, then `~/.pflow/`)
+- **Path**: `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md` (package resources, then `~/.pflow/instructions/` for user customization)
 - **Size**: ~66KB comprehensive guide
 - **Access Level**: ✅ Full (settings.json, traces, workflow library)
 - **Content**: 10-step development loop, patterns, troubleshooting, examples
@@ -145,7 +145,7 @@ def get_resource() -> str:
 #### Sandbox Agent Instructions (`pflow://instructions/sandbox`)
 
 **For agents in ISOLATED environments**:
-- **Path**: `.pflow/instructions/MCP-SANDBOX-AGENT_INSTRUCTIONS.md` (checks project root, then `~/.pflow/`)
+- **Path**: `src/pflow/mcp_server/resources/instructions/mcp-sandbox-agent-instructions.md` (package resources, then `~/.pflow/instructions/` for user customization)
 - **Size**: ~50-66KB (estimated, adapted guide)
 - **Access Level**: ❌ Restricted (no settings.json, no traces, limited library)
 - **Content**: Same workflow building process, adapted for sandboxed environments

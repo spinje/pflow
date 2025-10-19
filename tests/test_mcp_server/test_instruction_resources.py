@@ -193,16 +193,18 @@ class TestResourcePath:
     def test_regular_path_structure(self):
         """Verify regular instructions path has correct structure."""
         path_str = str(MCP_AGENT_INSTRUCTIONS_PATH)
-        assert ".pflow" in path_str
+        # Path should be in package resources (src/pflow/mcp_server/resources/instructions/)
+        assert "mcp_server" in path_str or ".pflow" in path_str  # Package or user customization
         assert "instructions" in path_str
-        assert "MCP-AGENT_INSTRUCTIONS.md" in path_str
+        assert "mcp-agent-instructions.md" in path_str
 
     def test_sandbox_path_structure(self):
         """Verify sandbox instructions path has correct structure."""
         path_str = str(SANDBOX_AGENT_INSTRUCTIONS_PATH)
-        assert ".pflow" in path_str
+        # Path should be in package resources (src/pflow/mcp_server/resources/instructions/)
+        assert "mcp_server" in path_str or ".pflow" in path_str  # Package or user customization
         assert "instructions" in path_str
-        assert "MCP-SANDBOX-AGENT_INSTRUCTIONS.md" in path_str
+        assert "mcp-sandbox-agent-instructions.md" in path_str
 
     def test_paths_point_to_different_files(self):
         """Verify regular and sandbox use different files."""

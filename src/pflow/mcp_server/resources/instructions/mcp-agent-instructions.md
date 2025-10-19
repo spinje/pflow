@@ -18,7 +18,7 @@ You help users build **reusable workflows** - tools that work every time with di
 
 ## 🛑 STOP - Do This Before Anything Else
 
-**Run this command first. Always. No exceptions:**
+**Run this tool first if you have not done so yet. Always. No exceptions:**
 ```python
 workflow_discover(query="user's exact request here")
 ```
@@ -122,7 +122,7 @@ The user shows you ONE example. You build the GENERAL solution using dynamic inp
 ## 📚 Quick Task Index
 
 - **Building from natural language** → Start at [The Agent Development Loop](#the-agent-development-loop)
-- **Have existing workflow to modify** → Load it, then go to [Step 4: DESIGN](#4-design-5-minutes)
+- **Have existing workflow to modify** → See [Modifying Similar Workflows](#modifying-similar-workflows-70-95-match)
 - **Testing MCP tools** → See [MCP Meta-Discovery](#mcp-meta-discovery-do-this-first)
 - **Debugging template errors** → See [Understanding Template Errors](#understanding-template-errors)
 - **Authentication issues** → See [Authentication & Credentials](#authentication--credentials)
@@ -132,7 +132,7 @@ The user shows you ONE example. You build the GENERAL solution using dynamic inp
 
 | Stuck On | Do This | Then Check |
 |----------|---------|------------|
-| `${var}` not found | Check error message for available fields | [Template Errors](#understanding-template-errors) |
+| `${var}` not found | Check trace file at path in response | [Template Errors](#understanding-template-errors) |
 | 20+ nodes chaos | Delete all after node 5, test, add back slowly | [Build in Phases](#for-complex-workflows-15-nodes-build-in-phases) |
 | Output is `Any` | `registry_run(node_type="NODE", show_structure=True)` | [Test Individual Nodes](#test-individual-nodes-when-needed) |
 | Unclear request | Ask: "You want to [specific action] with [specific result]?" | Stop guessing |
@@ -218,6 +218,20 @@ workflow_discover(query="user's request in natural language")
 - **Build new workflow** → Continue to Step 3 (discover nodes)
 
 **Output**: Clear decision on whether to execute existing, modify existing, or build new
+
+#### Modifying Similar Workflows (70-95% Match)
+
+**When you decide to modify an existing workflow:**
+
+# 1. Read the workflow from library
+Read: ~/.pflow/workflows/workflow-name.json
+
+# 2. Copy JSON, modify what's needed (nodes, params, inputs, outputs)
+# 3. Write to temporary workflows (workspace when creating new workflows)
+Write: ~/.pflow/temp-workflows/new-workflow-name.json
+
+# 4. Continue to Step 7 (validate)
+```
 
 ### 3. DISCOVER NODES (3 minutes)
 
@@ -450,7 +464,7 @@ Quick confirm - this matches what you need?"
   ]
 }
 ```
-**Test**: `workflow_execute(workflow=workflow_dict, parameters={})` - Verify extraction works!
+**Test**: `workflow_execute(workflow="~/.pflow/temp-workflows/workflow.json", parameters={})` - Verify extraction works!
 
 ##### Phase 2: Add External APIs (One at a Time)
 - Add first API call with `Prefer: wait`
@@ -551,6 +565,8 @@ Quick confirm - this matches what you need?"
 - [ ] Each node has ONE outgoing edge (except last)
 - [ ] No cycles
 
+> Note: Edges are a constraint on execution, not data. You must run nodes in order, but you're not forced to use only the immediate predecessor's data. You can compose from anywhere earlier in the chain.
+
 #### Step 6.4: Declare Workflow Outputs
 
 **Expose final results:**
@@ -582,20 +598,12 @@ Quick confirm - this matches what you need?"
 
 Catch structural errors before execution.
 
-**Sandbox Environment:**
-Work with workflow objects in memory (no file system access):
+**Workflow File Location:**
+Write your workflow to `~/.pflow/temp-workflows/workflow.json` before validating:
 
 ```python
-# Build workflow dict in memory
-workflow_dict = {
-    "nodes": [...],
-    "edges": [...],
-    "inputs": {...},
-    "outputs": {...}
-}
-
-# Validate dict directly
-workflow_validate(workflow=workflow_dict)
+# Write workflow to file first
+workflow_validate(workflow="~/.pflow/temp-workflows/workflow.json")
 ```
 
 **Process**:
@@ -612,12 +620,12 @@ workflow_validate(workflow=workflow_dict)
 Execute the workflow to verify it works.
 
 ```python
-workflow_execute(workflow=workflow_dict, parameters={"param1": "value", "param2": "value"})
+workflow_execute(workflow="~/.pflow/temp-workflows/workflow.json", parameters={"param1": "value", "param2": "value"})
 ```
 
 **Trace Files:**
-Traces are saved by the system but not accessible in your sandbox environment.
-The response will include a `trace_path` field - guide users to check this file on their system if needed for debugging. (this is a temporary solution until we add get trace tool to pflow mcp server)
+Workflow executions save trace files to `~/.pflow/debug/workflow-trace-*.json`.
+Check the response for the `trace_path` field with the exact location.
 
 #### When to Investigate Output Structures
 
@@ -666,10 +674,13 @@ Using `show_structure=True` returns the complete output structure directly in th
 #### How to Discover Output Structure
 
 ```python
-# 1. Test individual nodes with show_structure=True
-registry_run(node_type="mcp-service-TOOL", parameters={"param": "test"}, show_structure=True)
+# 1. Run workflow
+workflow_execute(workflow="~/.pflow/temp-workflows/test-workflow.json", parameters={})
 
-# 2. This reveals the complete output structure:
+# 2. Examine the trace file
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[0].outputs'
+
+# 3. See actual structure like:
 {
   "result": {
     "messages": [
@@ -679,7 +690,7 @@ registry_run(node_type="mcp-service-TOOL", parameters={"param": "test"}, show_st
   }
 }
 
-# 3. Now you can use: ${fetch.result.messages[0].text}
+# 4. Now you can use: ${fetch.result.messages[0].text}
 ```
 
 **Output**: Working workflow that executes successfully
@@ -708,10 +719,10 @@ Improve the workflow for production use.
 Save to global library for reuse across all projects:
 
 ```python
-workflow_save(workflow=workflow_dict, name="workflow-name", description="Clear description")
+workflow_save(workflow="~/.pflow/temp-workflows/your-draft.json", name="workflow-name", description="Clear description")
 
 # With optional enhancements
-workflow_save(workflow=workflow_dict, name="workflow-name", description="Description", generate_metadata=True)
+workflow_save(workflow="~/.pflow/temp-workflows/your-draft.json", name="workflow-name", description="Description", generate_metadata=True, delete_draft=True)
 ```
 
 **Response Structure:**
@@ -927,29 +938,21 @@ When unsure?
 
 ### Authentication & Credentials
 
-**Important Note for Sandbox Environment:**
-You're in a sandbox environment with limited filesystem access. You cannot set environment variables or access settings files on the user's machine. Instead, you guide users to configure their own environment.
+**Settings (`~/.pflow/settings.json`) are ONLY for authentication secrets.**
 
-**Authentication Pattern:**
-- API tokens: `github_token`, `openai_api_key`, `slack_token`, etc.
-- Service credentials used by workflows
-- Must be declared as workflow inputs
+**✅ Settings belong:**
+- API tokens: `replicate_api_token`, `github_token`, `openai_api_key`
+- Service credentials used universally
+- LLM API keys (can also use LLM library)
 
-**What Goes Where:**
-- ✅ Workflow inputs: All API tokens and credentials
-- ❌ Hardcoded: Never hardcode secrets
+**❌ Settings don't belong:**
+- Resource IDs: `sheet_id`, `channel`, `repo` (workflow-specific)
+- Data parameters: `limit`, `input_file`, `threshold` (varies by use case)
 
-**User Configuration:**
-Since you dont have access to the system where pflow executes, users must set environment variables on their own machines (e.g., `export `)
-
-Optional: Users can also use the `pflow settings set-env` cli command to set environment variables on the user's machine. This will add the key to the `~/.pflow/settings.json` file.
-
-Example to show user:
-```bash
-pflow settings set-env github_token="ghp_..."
-```
-
+**Manage**: Users use pflow settings set-env command (e.g., `pflow settings set-env GITHUB_TOKEN "ghp_..."`)
 **Precedence**: Explicit parameters > ENV > settings > defaults
+
+> Note: NEVER set secrets as parameter defaults. Always use inputs or better yet, settings.json (user adds them)
 
 #### CRITICAL: How Workflows Access Credentials
 
@@ -969,7 +972,7 @@ pflow settings set-env github_token="ghp_..."
 ```json
 {
   "inputs": {
-    "api_token": { // Can be set manually as input or automatically from environment variable
+    "api_token": {
       "type": "string",
       "required": true,
       "description": "API token for external service"
@@ -985,7 +988,8 @@ pflow settings set-env github_token="ghp_..."
 ```
 
 **The Complete Authentication Flow:**
-1. **Agent declares credential as workflow input** (required field):
+1. **User sets secrets**: `pflow settings set-env SERVICE_TOKEN "secret123"`
+2. **Agent declares as workflow input** (required field):
    ```json
    {
      "inputs": {
@@ -997,40 +1001,34 @@ pflow settings set-env github_token="ghp_..."
      }
    }
    ```
-2. **Agent guides user to set environment variable**: `export SERVICE_TOKEN="secret123"`
 3. **Workflow automatically reads from env var** with matching name (SERVICE_TOKEN)
-4. **Or user passes explicitly**: `workflow_execute(workflow="...", parameters={"service_token": "$SERVICE_TOKEN"})`
+4. **Or pass explicitly**: `workflow_execute(workflow="...", parameters={"service_token": "$SERVICE_TOKEN"})`
 
-**Key Point**: In a sandbox environment, you guide users to configure their own credentials. You cannot access or set environment variables for them.
+**Key Point**: Settings store secrets securely, but workflows must explicitly declare them as inputs to use them.
 
 #### Being Proactive with Authentication
 
-**When you discover a workflow needs credentials, guide the user:**
+**When you discover a workflow needs credentials, help the user set them up:**
 
-```
-"This workflow needs a Slack token with chat:write permissions.
+**Identify requirements:**
+- Determine what API keys, tokens, or credentials are needed
+- Explain clearly how to obtain them (with specific links/steps)
 
-Here's how to get one:
-1. Go to api.slack.com → Your App → OAuth Tokens
-2. Copy the token
+**Guide setup:**
+- Instruct users to set api keys using the pflow settings set-env command:
+  ```bash
+  pflow settings set-env SLACK_TOKEN "xoxb-your-token-here"
+  pflow settings set-env GITHUB_TOKEN "ghp_your-token-here"
+  ```
+- Explain that the workflow will automatically read from `~/.pflow/settings.json` env variables if:
+  1. The workflow declares them as inputs
+  2. The environment variable name matches (case-sensitive or uppercased)
 
-Since you're in a sandbox environment, I can't set environment variables for you.
-Please set the token in your environment:
-
-Use the `pflow settings set-env` cli command to set the environment variable:
-```bash
-pflow settings set-env SLACK_TOKEN "your-token-here"
-```
-
-Ready to continue?"
-```
-
-**Always:**
-- Explain what the credential is for
-- Show where to get it
-- Remind users you can't set env vars for them
-- Guide them to set environment variables themselves
-- Show how to pass credentials as parameters
+- Instruct users to use Simon Willison's llm tool to help them set the api keys for llm providers:
+  ```bash
+  llm keys set openai
+  llm keys set anthropic
+  ```
 
 ### Workflow Structure Essentials
 
@@ -1332,15 +1330,17 @@ registry_run(node_type="http", parameters={"url": "image.jpg"}, show_structure=T
 ### Execute Workflow
 
 ```python
-# Execute workflow from dict in memory
+# Execute workflow from file
 workflow_execute(
-    workflow=workflow_dict,
+    workflow="~/.pflow/temp-workflows/workflow.json",
     parameters={
         "param1": "value",
         "param2": "value"
     }
 )
 ```
+
+**Note**: Traces are always saved to `~/.pflow/debug/`
 
 ### Understanding Template Errors
 
@@ -1355,18 +1355,19 @@ Available fields in node (showing 5 of 147):
   - timestamp
   - request_id
   ... and 15 more (in error details)
+
+📁 Complete field list available in trace file
+   Traces are automatically saved to ~/.pflow/debug/
 ```
 
-**2. Use show_structure for complete field discovery**:
+**2. Use the trace file for complete field list**:
 ```python
-# Test the node individually to see its output structure
-registry_run(node_type="node-type", parameters={...}, show_structure=True)
+# Find the latest trace
+ls -lt ~/.pflow/debug/workflow-trace-*.json | head -1
 
-# This reveals the complete output structure you can use in templates
+# View all available fields from the failed node
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.events[] | select(.node_id == "fetch") | .shared_after.fetch | keys'
 ```
-
-**Note**: Traces are saved but not accessible in your sandbox environment.
-The error message shows the first 5-15 fields. Use `show_structure=True` to discover complete structures.
 
 ### Common Validation Errors
 
@@ -1418,7 +1419,7 @@ Start simple, build complexity gradually.
 **Try it**:
 ```python
 workflow_execute(
-    workflow=level1_workflow,
+    workflow="~/.pflow/temp-workflows/level1.json",
     parameters={"question": "What is 2+2?"}
 )
 ```
@@ -1467,7 +1468,7 @@ workflow_execute(
 **Try it**:
 ```python
 workflow_execute(
-    workflow=level2_workflow,
+    workflow="~/.pflow/temp-workflows/level2.json",
     parameters={"file_path": "README.md"}
 )
 ```
@@ -1678,6 +1679,7 @@ See [Complete Example](#complete-example-slack-qa-bot) for a full production wor
     }
   }
 }
+```
 
 ### Pattern 2: Multi-Source → Combine → Process
 
@@ -1739,70 +1741,9 @@ See [Complete Example](#complete-example-slack-qa-bot) for a full production wor
     }
   }
 }
-
-### Pattern 3: Multi-Service Coordination
-
-```
-[Service A] → [Transform] → [Service B] → [Service C]
 ```
 
-**Example**: Slack → AI analysis → Slack response → Sheets logging
-
-```json
-{
-  "inputs": {
-    "channel": {
-      "type": "string",
-      "required": true,
-      "description": "Slack channel ID"
-    },
-    "sheet_id": {
-      "type": "string",
-      "required": true,
-      "description": "Google Sheets ID"
-    }
-  },
-  "nodes": [
-    {
-      "id": "fetch",
-      "type": "mcp-slack-fetch",
-      "params": {
-        "channel": "${channel}",
-        "limit": 10
-      }
-    },
-    {
-      "id": "analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "Extract Q&A pairs from these messages:\n\n${fetch.result}"
-      }
-    },
-    {
-      "id": "respond",
-      "type": "mcp-slack-send",
-      "params": {
-        "channel": "${channel}",
-        "text": "Found Q&A pairs:\n${analyze.response}"
-      }
-    },
-    {
-      "id": "log",
-      "type": "mcp-sheets-append",
-      "params": {
-        "sheet_id": "${sheet_id}",
-        "values": [["${analyze.response}"]]
-      }
-    }
-  ],
-  "edges": [
-    {"from": "fetch", "to": "analyze"},
-    {"from": "analyze", "to": "respond"},
-    {"from": "respond", "to": "log"}
-  ]
-}
-
-### Pattern 4: Enrich → Process → Store
+### Pattern 3: Enrich → Process → Store
 
 ```
 [Base Data] → [Enrich with Context] → [Process] → [Store]
@@ -1946,7 +1887,7 @@ Which would you prefer?"
 
 ```python
 # Run workflow to capture error context
-workflow_execute(workflow=workflow_dict, parameters={})
+workflow_execute(workflow="~/.pflow/temp-workflows/workflow.json", parameters={})
 ```
 
 | Error Pattern | Likely Cause | Fix |
@@ -1963,9 +1904,8 @@ workflow_execute(workflow=workflow_dict, parameters={})
 # Test just the failing node
 registry_run(node_type="<node-type>", parameters={"param1": "value"}, show_structure=True)
 
-# If it works alone, the issue is in data flow
-# Guide the user: "Please check the trace file at the path shown in the response for detailed execution flow"
-# Or test each node individually with show_structure=True to verify outputs
+# If it works alone, check data flow
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id=="failing-node")'
 ```
 
 ---
@@ -2048,7 +1988,7 @@ registry_run(node_type="mcp-tool", parameters={"param": "value"}, show_structure
 
 ### When Documentation is Wrong
 
-Since you're in a sandbox environment, you can't write documentation files. Instead, include notes in your workflow descriptions or comments to help users understand what actually works.
+Document what ACTUALLY works in `~/.pflow/temp-workflows/docs/<workflow-name>.md`
 
 ---
 
@@ -2056,13 +1996,13 @@ Since you're in a sandbox environment, you can't write documentation files. Inst
 
 ```
 Template error?
-├─ Yes → Use show_structure=True (Understanding Template Errors)
+├─ Yes → Check trace file (Understanding Template Errors)
 └─ No → Validation error?
     ├─ Yes → See Common Validation Errors
     └─ No → Execution error?
         ├─ Yes → Use Debugging Playbook
         └─ No → Discovery failed?
-            ├─ Yes → Try manual discovery commands
+            ├─ Yes → Try manual discovery tools
             └─ No → Ask user for clarification
 ```
 
@@ -2080,7 +2020,7 @@ Template error?
 | "song about cats" | `input: subject` (default: "cats") | Could be dogs, space, friendship, etc. |
 | "always use prod" | Hardcode: "prod" | Explicitly said "always" |
 
-### Command Cheat Sheet
+### Tools Cheat Sheet
 
 ```python
 # Discovery - ALWAYS use AI-powered discovery first
@@ -2088,15 +2028,15 @@ workflow_discover(query="user's request")                # Find existing workflo
 registry_discover(query="what you need to build")        # Find nodes for building
 workflow_list(filter="[filter]")
 
-# Development (work with dicts in memory)
-workflow_validate(workflow=workflow_dict)                # Validate structure
+# Development
+workflow_validate(workflow="~/.pflow/temp-workflows/workflow.json")    # Validate structure
 
 # Saving
-workflow_save(workflow=workflow_dict, name="name", description="desc")  # Save to library
+workflow_save(workflow="~/.pflow/temp-workflows/workflow.json", name="name", description="desc")  # Save to library
 
 # Execution
-workflow_execute(workflow=workflow_dict, parameters={"param": "value"})  # Run from dict
-workflow_execute(workflow="saved-workflow", parameters={"param": "value"})  # Run from library
+workflow_execute(workflow="~/.pflow/temp-workflows/workflow.json", parameters={"param": "value"})  # Run from file
+workflow_execute(workflow="saved-workflow", parameters={"param": "value"})                   # Run from library
 ```
 
 ### Template Syntax
@@ -2183,6 +2123,7 @@ Confirm?"
     {
       "id": "fetch-messages",
       "type": "mcp-slack-fetch",
+      "purpose": "Fetch recent messages from the specified Slack channel",
       "params": {
         "channel": "${channel}",
         "limit": "${limit}"
@@ -2191,6 +2132,7 @@ Confirm?"
     {
       "id": "extract-qa",
       "type": "llm",
+      "purpose": "Extract Q&A pairs from the messages using AI",
       "params": {
         "prompt": "Extract Q&A pairs from these Slack messages. Format as:\nQ: [question]\nA: [answer]\n\nMessages:\n${fetch-messages.result}"
       }
@@ -2198,6 +2140,7 @@ Confirm?"
     {
       "id": "log-to-sheets",
       "type": "mcp-sheets-append",
+      "purpose": "Log the extracted Q&A pairs to Google Sheets",
       "params": {
         "sheet_id": "${sheet_id}",
         "values": [
@@ -2225,14 +2168,14 @@ Confirm?"
 
 ### Step 7: VALIDATE
 ```python
-workflow_validate(workflow=slack_qa_workflow)
+workflow_validate(workflow="~/.pflow/temp-workflows/slack-qa.json")
 # ✓ All validations passed!
 ```
 
 ### Step 8: TEST
 ```python
 workflow_execute(
-    workflow=slack_qa_workflow,
+    workflow="~/.pflow/temp-workflows/slack-qa.json",
     parameters={
         "channel": "C09C16NAU5B",
         "limit": 15,
@@ -2249,7 +2192,7 @@ workflow_execute(
 
 ### Step 10: SAVE
 ```python
-workflow_save(workflow=slack_qa_workflow, name="slack-qa-bot", description="Extracts Q&A pairs from Slack and logs to Google Sheets")
+workflow_save(workflow="~/.pflow/temp-workflows/slack-qa.json", name="slack-qa-bot", description="Extracts Q&A pairs from Slack and logs to Google Sheets")
 ```
 
 ### Final: User can now run

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Path traversal patterns to block (always dangerous)
 ALWAYS_DANGEROUS_PATTERNS = [
     r"\.\.",  # Parent directory
-    r"^~",  # Home directory expansion
+    # Tilde expansion is safe for local MCP servers (Python's Path.expanduser() handles it)
     r"[\x00]",  # Null bytes
 ]
 

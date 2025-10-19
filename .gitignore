@@ -178,3 +178,6 @@ node_modules/
 
 # External docs
 external-docs/
+
+# User data directory (workflows, settings, traces)
+.pflow/

@@ -20,32 +20,42 @@ logger = logging.getLogger(__name__)
 def _get_instructions_path(filename: str) -> Path:
     """Get path to instructions file, checking multiple locations.
 
+    Priority order:
+    1. Package resources (shipped with pflow)
+    2. User customization directory (optional overrides)
+    3. Dev fallback (old location, for backward compat during migration)
+
     Args:
-        filename: Name of the instruction file (e.g., "MCP-AGENT_INSTRUCTIONS.md")
+        filename: Name of the instruction file (e.g., "mcp-agent-instructions.md")
 
     Returns:
         Path to the instruction file (may not exist)
     """
-    # Try project root first (development mode)
+    # 1. Try package resources (production/installed)
     # From: src/pflow/mcp_server/resources/instruction_resources.py
-    # To:   .pflow/instructions/{filename}
+    # To:   src/pflow/mcp_server/resources/instructions/{filename}
+    resource_path = Path(__file__).parent / "instructions" / filename
+    if resource_path.exists():
+        return resource_path
+
+    # 2. Try user home (for custom instructions)
+    user_path = Path.home() / ".pflow" / "instructions" / filename
+    if user_path.exists():
+        return user_path
+
+    # 3. Dev fallback (old location, for backward compat during migration)
     # Need to go up 5 levels: resources/ -> mcp_server/ -> pflow/ -> src/ -> project_root/
     project_root = Path(__file__).parent.parent.parent.parent.parent
     dev_path = project_root / ".pflow" / "instructions" / filename
     if dev_path.exists():
         return dev_path
 
-    # Fall back to user home (for custom instructions)
-    user_path = Path.home() / ".pflow" / "instructions" / filename
-    if user_path.exists():
-        return user_path
-
-    # Return dev path as default (will trigger fallback message if missing)
-    return dev_path
+    # Return resource path as default (will trigger fallback message if missing)
+    return resource_path
 
 
-MCP_AGENT_INSTRUCTIONS_PATH = _get_instructions_path("MCP-AGENT_INSTRUCTIONS.md")
-SANDBOX_AGENT_INSTRUCTIONS_PATH = _get_instructions_path("MCP-SANDBOX-AGENT_INSTRUCTIONS.md")
+MCP_AGENT_INSTRUCTIONS_PATH = _get_instructions_path("mcp-agent-instructions.md")
+SANDBOX_AGENT_INSTRUCTIONS_PATH = _get_instructions_path("mcp-sandbox-agent-instructions.md")
 
 
 @mcp.resource(
@@ -172,7 +182,7 @@ def _regular_fallback_message() -> str:
     """
     return """# Agent Instructions Not Available
 
-The instruction file could not be loaded from `~/.pflow/instructions/MCP-AGENT_INSTRUCTIONS.md`.
+The instruction file could not be loaded from `~/.pflow/instructions/mcp-agent-instructions.md`.
 
 ## Alternative Resources
 
@@ -222,7 +232,7 @@ If the file is missing:
 ## Troubleshooting
 
 If you're seeing this message but the file should exist:
-- Verify path: `ls -la ~/.pflow/instructions/MCP-AGENT_INSTRUCTIONS.md`
+- Verify path: `ls -la ~/.pflow/instructions/mcp-agent-instructions.md`
 - Check permissions: File should be readable
 - Check pflow installation: `pflow --version`
 """
@@ -235,7 +245,7 @@ def _sandbox_fallback_message() -> str:
     """
     return """# Sandbox Agent Instructions Not Available
 
-The instruction file could not be loaded from `~/.pflow/instructions/MCP-SANDBOX-AGENT_INSTRUCTIONS.md`.
+The instruction file could not be loaded from `~/.pflow/instructions/mcp-sandbox-agent-instructions.md`.
 
 ## Key Principles for Sandboxed Environments
 

@@ -52,7 +52,7 @@ def resolve_workflow(workflow: str | dict[str, Any]) -> tuple[dict[str, Any] | N
             return None, "Failed to load workflow", ""
 
     # Try as file path
-    path = Path(workflow)
+    path = Path(workflow).expanduser()  # Expand ~ to home directory
     if path.exists() and path.is_file():
         # No path validation needed - user is reading their own files on their own machine
         logger.debug(f"Loading workflow from file: {path}")
