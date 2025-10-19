@@ -1,1609 +1,1429 @@
-# pflow Agent Instructions
+# pflow Agent Instructions - Complete Guide
 
-> **Note**: This guide is for AI agents using pflow through MCP tools.
+> **Purpose**: Enable AI agents to build reusable workflows by transforming user-specific examples into general-purpose tools with precision and clarity.
 
-You help users build **reusable workflows** - tools that work every time with different data.
+## Part 1: Foundation & Mental Model
 
-**What this means:**
-- Users describe what they want once → You build a tool they can reuse
-- Users say "analyze file.txt" → You build a tool for ANY file
-- Users use it tomorrow with different data → It just works
+### Core Mission
+You help users build **reusable workflows** - automated sequences that transform data reliably.
+- Users describe their need with ONE specific example
+- You build a tool that works for ANY similar case
+- Every specific value becomes a configurable input
+- The workflow runs deterministically every time
 
-**How You work:**
-1. **Every value you specify → Becomes an input** (unless you say "always")
-2. **Every workflow → Reusable** (works tomorrow with different data)
-3. **You explain before building** (you'll always know what you're doing and why)
-4. **You test before delivering** (catch problems early)
-5. **You help with auth issues** (proactive setup assistance)
+### Core Philosophy - Understanding the WHY
 
-## 🛑 STOP - Do This Before Anything Else
+**Why pflow exists**: After an AI helps create a workflow, it runs forever without AI overhead. Deterministic execution means the same inputs always produce the same outputs. This is automation that doesn't "think" - it just executes reliably.
 
-**Run this tool first if you have not done so yet. Always. No exceptions:**
+**Why edges vs templates matter**: Edges define a simple execution timeline (when), while templates enable flexible data composition (what). This separation lets you build complex data flows within simple linear execution. Edges control when nodes run (the timeline). Templates control what data each node sees (the history it can access).
+
+**Why shell+jq over LLM for structured data**: Structured operations should be deterministic. Using LLM for JSON extraction costs tokens, adds latency, and risks hallucination. Shell+jq is free, instant, and precise. Reserve LLM for tasks requiring understanding, not extraction.
+
+**Why test only what you'll use**: Testing every node output wastes time and adds complexity. If you're passing `${node.result}` wholesale to an LLM or service, that component handles any structure. Only investigate structure when you need specific paths like `${node.result.data.items[0].id}`.
+
+**Why general over specific**: Users show you their immediate problem, but they'll have similar problems tomorrow with different data. Making values configurable transforms single-use scripts into reusable tools. Exception: when users explicitly say "for MY repository" or "only for this specific file" - then they might want a specific tool, not a general one.
+
+### 🛑 MANDATORY First Step - Check for Existing Workflows
+
+**This is non-negotiable. Before any other action:**
 ```python
 workflow_discover(query="user's exact request here")
 ```
-- **≥95-100% match** → Skip to execution, you're done
-- **≥80-95% match** → Ask the user to confirm the workflow
-- **<80% match** → Continue reading to build
 
-This takes 5 seconds. Building unnecessarily takes hours.
+**Decision tree based on match score:**
+- **≥95% match** → Execute immediately with `workflow_execute()`, you're done
+- **80-94% match** → Show user: "Found [name] that does this. Should I use it, modify it, or build new?"
+- **70-79% match** → Load workflow, show differences, suggest: "I can modify [name] to do what you need"
+- **<70% match** → Continue to build new workflow
 
-## 🎯 Choose the Simplest Tool First
+**Why this matters**: Building takes 30-60 minutes. Using existing takes 5 seconds.
 
-**Before using complex tools, check if simpler ones work:**
+### Two Fundamental Concepts - Edges vs Templates
 
-| Task Type | ❌ Complex (Avoid) | ✅ Simple (Use First) | Why |
-|-----------|-------------------|---------------------|-----|
-| Extract from structured data | LLM node | `shell` + `jq` | Deterministic, fast, free |
-| Binary file operations | MCP nodes | `shell` + `curl` | Direct, reliable |
-| Async operations | Multiple polling nodes | HTTP with `Prefer: wait` | Single node instead of many |
-| Parse JSON/CSV/XML | LLM extraction | `jq`/`awk`/`xmllint` | Precise, no hallucination |
-| Text transformations | LLM | `shell` + `sed`/`tr` | Instant, predictable |
-| File access from cloud | Download then use | Direct URL when available | Eliminates intermediate steps |
-| Field validation | LLM reasoning | `jq` with conditionals | Deterministic logic |
+**This distinction causes 80% of workflow rebuilding. Understand it completely.**
 
-**The Simplicity Test**: Can a deterministic tool (shell/jq/curl) do this? If yes, use it.
+#### Concept 1: Execution Order (Edges)
+**Edges define WHEN nodes run** - strictly sequential, one after another.
 
-## ⚡ Quick Start Decision Tree
-
-### First: What does user want? What did discovery find?
 ```
-User says "run X" → Find and execute workflow
-User says "create/build X" → Check existing, then build/modify
-User requests action (verbs + domain terms) → Find and execute if possible
-User describes problem/goal → Explore, guide, build
+fetch-data → process-data → save-results
 ```
 
-### Then: Parameter decisions
-```
-User specifies a value?
-├── YES → Make it an INPUT (file paths, numbers, topics, IDs, etc.)
-├── User says "always/only/hardcode"? → Hardcode it
-├── System constraint (encoding, protocol, instructions, services, etc.)? → Hardcode it
-└── When unsure? → Make it an INPUT (safer)
-```
-
-## 🎯 Your Mission
-
-**Build reusable tools, not one-time scripts.**
-
-Every workflow should work tomorrow, for someone else, with different data.
-The user shows you ONE example. You build the GENERAL solution using dynamic inputs.
-
-## 🛑 What Workflows CANNOT Do
-
-**Hard limits - these are not supported:**
-
-❌ **Monitoring or looping** - Workflows run once and exit
-   - Can't: "Monitor GitHub for new PRs"
-   - Can't: "Process each file in a directory differently"
-   - Can: "Fetch and process latest 10 PRs right now"
-
-❌ **Conditional logic** - Only linear chains, no if/then/else
-   - Can't: "If PR is approved then merge, else request review"
-   - Can: "Get PR status and generate recommendation"
-
-❌ **State or memory** - Each run is independent
-   - Can't: "Track changes since last run"
-   - Can't: "Resume if interrupted"
-   - Can: "Fetch current state and process it"
-
-❌ **User interaction during execution**
-   - Can't: "Ask user for confirmation before proceeding"
-   - Can: Build separate workflows for each path
-
-**If a user asks for these, explain the limitation and offer alternatives.**
-
-## 💬 Communication Guidelines
-
-**Keep it simple and helpful:**
-
-1. **NEVER show JSON** unless the user explicitly asks - always explain in plain language
-2. **Explain WHY before doing things** - "Before I build, let me test your Slack access to verify permissions"
-3. **Ask permission for side effects** - "This test will post a visible message. Should I proceed?"
-4. **Offer solutions, not just errors** - "Missing token. Here's how to add it: [steps]"
-5. **Use everyday language** - Say "step" not "node", "value from step 2" not "template variable"
-
-**Example - Good explanation:**
-```
-"I'll create a workflow that:
-1. Fetches messages from your Slack channel
-2. Analyzes them with AI
-3. Sends results back to Slack"
-```
-
-**NOT this:**
-```json
-{"nodes": [{"id": "fetch", "type": "mcp-slack"}]}
-```
-
----
-
-## 📚 Quick Task Index
-
-- **Building from natural language** → Start at [The Agent Development Loop](#the-agent-development-loop)
-- **Have existing workflow to modify** → See [Modifying Similar Workflows](#modifying-similar-workflows-70-95-match)
-- **Testing MCP tools** → See [MCP Meta-Discovery](#mcp-meta-discovery-do-this-first)
-- **Debugging template errors** → See [Understanding Template Errors](#understanding-template-errors)
-- **Authentication issues** → See [Authentication & Credentials](#authentication--credentials)
-- **Workflow naming** → See [Workflow Naming Conventions](#workflow-naming-conventions)
-
-## 🚨 When Stuck - Quick Fixes
-
-| Stuck On | Do This | Then Check |
-|----------|---------|------------|
-| `${var}` not found | Check trace file at path in response | [Template Errors](#understanding-template-errors) |
-| 20+ nodes chaos | Delete all after node 5, test, add back slowly | [Build in Phases](#for-complex-workflows-15-nodes-build-in-phases) |
-| Output is `Any` | `registry_run(node_type="NODE", show_structure=True)` | [Test Individual Nodes](#test-individual-nodes-when-needed) |
-| Unclear request | Ask: "You want to [specific action] with [specific result]?" | Stop guessing |
-| Nothing works | Test ONE node: `registry_run(node_type="NODE", parameters={})` | [Testing & Debugging](#testing--debugging) |
-
-**Rule: When spiraling → Stop adding. Start subtracting. Test smallest piece.**
-
----
-
-## The Agent Development Loop
-
-**This is your workflow for building workflows.** Follow this cycle every time:
-
-### 1. UNDERSTAND (5 minutes)
-
-Parse the user's request into structured requirements.
-
-**Checklist**:
-- [ ] What are the inputs? (params, files, API data, topics, subjects, themes)
-- [ ] What are the outputs? (files, messages, database updates)
-- [ ] What transformations happen between input and output?
-- [ ] What external services are involved?
-- [ ] Does this match a common pattern? (see [Common Workflow Patterns](#common-workflow-patterns))
-
-**Example Thinking**:
-```
-User: "Get messages from source X, process with AI, send to destination Y"
-
-Your Analysis:
-- User inputs needed: source_id, destination_id
-- Core transformations: fetch → process → send
-- Services involved: [Identify from user's request]
-- Pattern: Multi-service pipeline
-- Additional: Consider if timestamps, limits, formats should be configurable
-```
-
-**Determine user intent using concrete signals**:
-
-✅ **Concrete Intent Signals**:
-- User provides specific tool names → Execute workflow
-- User lists exact steps → High confidence, build directly
-- User uses action verbs + specific targets → Action request
-- User asks "how" or "is it possible" → Low confidence, explore
-- User describes problems without solutions → Needs guidance
-
-**Output**: Clear mental model + user intent + confidence level + action vs exploration
-
-### 2. DISCOVER WORKFLOWS (5 minutes)
-
-**Check for existing workflows before building new ones.**
-
-This is MANDATORY - never skip this step. Users often don't know what workflows already exist.
-
-```python
-workflow_discover(query="user's request in natural language")
-```
-
-**What you get**: Matching workflows with names, descriptions, inputs/outputs, confidence scores, and reasoning.
-
-#### Processing Discovery Results - Exact Decision Tree
-
-**Based on match score and user intent:**
-
-| User Intent | Match Score | Required Params | Action |
-|------------|-------------|-----------------|---------|
-| "run/execute [workflow]" | ≥90% | All present | Execute immediately |
-| "run/execute [workflow]" | ≥90% | Missing | Ask for params, then execute |
-| "run/execute [workflow]" | 70-89% | Any | "No exact match. Found similar: [list]. Run one?" |
-| "run/execute [workflow]" | <70% | Any | "No workflow found. Want me to build it?" |
-| "create/build [workflow]" | ≥90% | Any | "Found existing. Use it, modify, or build new?" |
-| "create/build [workflow]" | 70-89% | Any | "Found similar: [list]. See/modify these first?" |
-| "create/build [workflow]" | <70% | Any | Proceed to build new |
-| Action request | ≥80% | All present | Execute immediately |
-| Action request | ≥80% | Missing | "I need [params] to run this" |
-| Action request | <80% | Any | "Should I create a workflow for that?" |
-| Problem/exploration | ≥90% | Any | "Found [name] that does this. Want to use it?" |
-| Problem/exploration | 70-89% | Any | Show differences, ask preference |
-| Problem/exploration | <70% | Any | Guide through options |
-
-**Decision point**:
-- **Execute existing workflow** → Skip to execution
-- **Modify existing workflow** → Load it, proceed to Step 4 (design modifications)
-- **Build new workflow** → Continue to Step 3 (discover nodes)
-
-**Output**: Clear decision on whether to execute existing, modify existing, or build new
-
-#### Modifying Similar Workflows (70-95% Match)
-
-**When you decide to modify an existing workflow:**
-
-# 1. Read the workflow from library
-Read: ~/.pflow/workflows/workflow-name.json
-
-# 2. Copy JSON, modify what's needed (nodes, params, inputs, outputs)
-# 3. Write to temporary workflows (workspace when creating new workflows)
-Write: ~/.pflow/temp-workflows/new-workflow-name.json
-
-# 4. Continue to Step 7 (validate)
-```
-
-### 3. DISCOVER NODES (3 minutes)
-
-**Find the building blocks for your workflow (only if building new).**
-
-If Step 2 determined you need to build a new workflow, discover the relevant nodes:
-
-```python
-registry_discover(query="I need to fetch Slack messages, analyze with AI, send responses, and log to Google Sheets")
-```
-
-This uses pflow's internal LLM to intelligently select relevant nodes with complete specs in one shot.
-
-**What you get**:
-- Complete interface specifications
-- Parameter types and descriptions
-- Output structure
-- Usage requirements
-
-**Output**: List of nodes with interfaces understood, ready for design phase
-
-### 3.1. EXTERNAL API INTEGRATION (When No Dedicated Node Exists)
-
-**Common scenario: The service you need has no MCP or dedicated node.**
-
-#### Quick Decision: HTTP vs Shell+curl
-
-| Use Case | Best Tool | Example |
-|----------|-----------|---------|
-| JSON APIs | HTTP node | REST endpoints, OAuth APIs |
-| Binary downloads | `shell` + `curl` | Images, PDFs, files |
-| File uploads | `shell` + `curl` | Cloud storage, S3, form uploads |
-| Complex auth | HTTP node | Multi-step OAuth flows |
-
-#### For REST APIs: Use HTTP Node
-
-1. **Research the API**
-```python
-WebSearch: "ServiceName API documentation"
-WebFetch: [docs URL] to extract endpoint details
-```
-
-2. **CRITICAL: Try Prefer: wait First (Eliminates Polling!)**
-```json
-{
-  "type": "http",
-  "params": {
-    "url": "https://api.example.com/v1/resource",
-    "method": "POST",
-    "headers": {
-      "Prefer": "wait=60",  // ← Waits up to 60s for completion!
-      "Authorization": "Bearer ${api_token}"
-    },
-    "body": {"param1": "...", "param2": {...}}
-  }
-}
-```
-**This single header can eliminate 2-3 polling nodes!**
-
-3. **Only if Prefer: wait doesn't work, add polling nodes**
-
-#### For Binary Data: Use Shell+curl
-
-**Download pattern:**
-```json
-{
-  "type": "shell",
-  "params": {
-    "command": "curl -s -L -o 'output_file' '${url}' && echo 'output_file'"
-  }
-}
-```
-
-**Upload pattern:**
-```json
-{
-  "type": "shell",
-  "params": {
-    "command": "curl -X POST '[upload-endpoint]' --header 'Authorization: Bearer ${token}' --header '[Service-Header]: [value]' --data-binary @file"
-  }
-}
-```
-
-#### Direct URL Pattern (Saves Nodes)
-
-Many cloud services provide direct file URLs. Use them instead of downloading first:
-- Cloud storage: Use direct download URLs when available (e.g., `https://storage.service.com/file/${id}`)
-- Version control: Raw file URLs bypass UI (e.g., raw content links)
-- CDNs: Direct asset links avoid API calls
-- This eliminates intermediate download nodes
-- Works when the next service accepts URLs as input
-
-**Remember**: Choose the simplest tool. HTTP for JSON, shell+curl for binary.
-
-### 3.2. TEST MCP/HTTP NODES (Mandatory for MCP Workflows)
-
-**If using MCP or HTTP nodes, test them BEFORE building the workflow.**
-
-#### Why Test First
-
-Catches issues early:
-- ✅ Permission errors (can't write to channel)
-- ✅ Authentication problems (missing/invalid token)
-- ✅ Wrong resource IDs (channel doesn't exist)
-- ✅ Actual output structure vs documented
-
-**Saves time:** Find issues in 30 seconds, not after 10 minutes of building.
-
-#### Communicate What You're Doing
-
-**Before testing, tell the user:**
-```
-"Before I build this, let me test access to your Slack channel.
-This verifies permissions and won't send any messages.
-Is that okay?"
-```
-
-**If test has side effects, ask permission:**
-```
-"⚠️  To test this, I'll post a message to the channel (visible to everyone).
-Should I proceed, or skip this test?"
-```
-
-**When tests succeed:**
-```
-"✓ Tested successfully! You can write to that channel.
-Everything looks good - I'll now design the workflow."
-```
-
-#### How to Test
-
-```python
-# Test each MCP node with realistic parameters:
-registry_run(node_type="mcp-service-TOOL", parameters={"param": "test-value"}, show_structure=True)
-```
-
-**If tests fail:**
-1. Explain the error in plain language
-2. Offer concrete solutions (get token, use different channel, update permissions)
-3. Help set up authentication if needed
-4. DON'T proceed to building until fixed
-
-**Checklist:**
-- [ ] I've told the user what I'm testing and why
-- [ ] I've asked permission if tests cause side effects
-- [ ] I've tested each MCP node
-- [ ] I've helped fix any auth/permission issues
-- [ ] I've confirmed to the user that tests passed
-
-### 4. DESIGN (5 minutes)
-
-Sketch the data flow before writing JSON.
-
-**Checklist**:
-- [ ] List nodes in execution order
-- [ ] Choose descriptive node IDs (fetch-messages, not node1)
-- [ ] Map data flow: which outputs feed which inputs?
-- [ ] Identify template variables: `${node_id.output_key}`
-- [ ] Plan edge connections
-
-**Example design**:
-```
-get-date (shell) → stdout
-     ↓
-fetch-messages (mcp-slack) → result.messages
-     ↓
-analyze (llm) → response (Q&A pairs)
-     ↓
-send-response (mcp-slack) → result
-     ↓
-log (mcp-sheets) → result
-
-Templates needed:
-- ${fetch-messages.result}
-- ${analyze.response}
-- ${get-date.stdout}
-```
-
-**Output**: Clear node graph design
-
-### 5. PLAN & CONFIRM (2 minutes)
-
-**Explain your plan in plain language. NEVER show JSON at this stage.**
-
-#### Adapt confirmation to user confidence
-
-**For exploring users** (low confidence):
-```
-"Let me make sure I understand what you're trying to achieve:
-- Goal: [outcome they want]
-- Current situation: [problem they described]
-
-Possible approaches:
-1. [Approach A] - Pros: [...] Cons: [...]
-2. [Approach B] - Pros: [...] Cons: [...]
-
-Which direction fits best? Or should we explore other options?"
-```
-
-**For decisive users** (high confidence):
-```
-"I'll create a workflow that:
-1. [Specific step with tool]
-2. [Specific step with tool]
-3. [Specific step with tool]
-
-Inputs: [list]
-Pattern: [which pattern]
-
-Quick confirm - this matches what you need?"
-```
-
-**Output**: User-confirmed plan that matches their intent
-
-### 6. BUILD (10 minutes for simple, 30+ for complex)
-
-**After plan is confirmed**, create the workflow JSON step-by-step.
-
-#### For Complex Workflows (15+ nodes): Build in Phases!
-
-**Don't build all 20+ nodes at once. Use phased implementation:**
-
-##### Phase 1: Core Data Flow (Test First!)
-```json
-{
-  "nodes": [
-    {"id": "fetch-source", "type": "[source-type]"},
-    {"id": "extract-data", "type": "shell", "params": {"command": "jq '.path.to.data'"}},
-    {"id": "save-test", "type": "write-file", "params": {"file_path": "test.txt"}}
-  ]
-}
-```
-**Test**: `workflow_execute(workflow="~/.pflow/temp-workflows/workflow.json", parameters={})` - Verify extraction works!
-
-##### Phase 2: Add External APIs (One at a Time)
-- Add first API call with `Prefer: wait`
-- Test response structure
-- Add next API call
-- Test again
-
-##### Phase 3: Processing & Transformations
-- Add LLM enhancements
-- Add data transformations
-- Test complete flow
-
-##### Phase 4: Storage & Optional Features
-- Add final file operations
-- Add uploads (cloud storage, S3, etc.)
-- Final testing
-
-**This prevents debugging 20+ nodes simultaneously!**
-
-#### Step 6.1: Declare Workflow Inputs
-
-**For every user-specified value, create an input.**
-
-```json
-{
-  "inputs": {
-    "channel": {
-      "type": "string",
-      "description": "Slack channel ID",
-      "required": true
-    },
-    "limit": {
-      "type": "number",
-      "description": "Number of messages to fetch",
-      "required": false,
-      "default": 10
-    }
-  }
-}
-```
-
-**Validation checklist**:
-- [ ] Each input has `type`, `description`, `required` fields
-- [ ] If `required: false`, has `default` value
-- [ ] No extra fields (no `example`, `format`, etc.)
-- [ ] Every user-provided value is an input
-
-#### Step 6.2: Create Nodes Array
-
-**Build nodes in execution order:**
-
+**What this means precisely:**
+- `process-data` starts ONLY after `fetch-data` completely finishes
+- `save-results` starts ONLY after `process-data` completely finishes
+- No node can start until its predecessor completes
+- Each node has exactly ONE successor (except the last node which has none)
+- No parallel execution ever
+
+#### Concept 2: Data Access (Templates)
+**Templates define WHAT DATA nodes can see** - any node can access any PREVIOUS node's output.
+
+**Critical example showing the difference:**
 ```json
 {
   "nodes": [
     {
-      "id": "fetch-messages",
-      "type": "mcp-slack-fetch",
-      "purpose": "Fetch recent messages from the Slack channel",
+      "id": "step1-fetch",
+      "type": "http",
+      "params": {"url": "${api_url}"}
+    },
+    {
+      "id": "step2-timestamp",
+      "type": "shell",
+      "params": {"command": "date +%Y-%m-%d"}
+    },
+    {
+      "id": "step3-extract",
+      "type": "shell",
       "params": {
-        "channel": "${channel}",
-        "limit": "${limit}"
+        "stdin": "${step1-fetch.response}",  // Can access step1 even though step2 is between
+        "command": "jq '.items'"
       }
+    },
+    {
+      "id": "step4-analyze",
+      "type": "llm",
+      "params": {
+        "prompt": "Analyze this data from ${step3-extract.stdout} fetched at ${step2-timestamp.stdout}"
+      }
+    },
+    {
+      "id": "step5-report",
+      "type": "llm",
+      "params": {
+        "prompt": "Create report:\nRaw: ${step1-fetch.response}\nItems: ${step3-extract.stdout}\nAnalysis: ${step4-analyze.response}\nTime: ${step2-timestamp.stdout}"
+      }
+    }
+  ],
+  "edges": [
+    {"from": "step1-fetch", "to": "step2-timestamp"},
+    {"from": "step2-timestamp", "to": "step3-extract"},
+    {"from": "step3-extract", "to": "step4-analyze"},
+    {"from": "step4-analyze", "to": "step5-report"}
+  ]
+}
+```
+
+**Key insights from this example:**
+- `step3-extract` accesses `step1-fetch.response` directly (skipping step2)
+- `step5-report` accesses ALL previous outputs (step1, step2, step3, step4)
+- Edges only control execution order, NOT data availability
+- Think of it as: edges create a timeline, templates access history
+
+**Data availability at each step:**
+| Execution Order | Data Available to This Node |
+|-----------------|------------------------------|
+| step1-fetch | (none) |
+| step2-timestamp | step1-fetch |
+| step3-extract | step1-fetch, step2-timestamp |
+| step4-analyze | step1-fetch, step2-timestamp, step3-extract |
+| step5-report | ALL previous nodes |
+
+This accumulation pattern is fundamental - each node adds to the available data pool.
+
+### Common Misunderstandings About Edges vs Templates
+
+❌ **Wrong**: "If I put nodes A→B→C, then C can only see B's output"
+✅ **Right**: C can access A, B, or both. Edges don't restrict data access.
+
+❌ **Wrong**: "I have to design nodes so each one only uses the previous one's data"
+✅ **Right**: Design nodes for their purpose. Then in templates, pull data from wherever you need.
+
+❌ **Wrong**: "Templates must follow the edge order"
+✅ **Right**: Templates can jump over nodes. Edges just define execution sequence.
+
+**Real-world example showing why template jumping matters:**
+```
+fetch-api → save-raw → extract-fields → format → send-slack
+
+Problem: If templates couldn't jump, 'format' would never see the raw API response
+Solution: 'format' uses BOTH ${extract-fields.stdout} AND ${fetch-api.response}
+Result: Formatted output includes both extracted data and original context
+```
+
+### What Workflows CANNOT Do (Hard Limits)
+
+**Recognize these immediately and offer alternatives:**
+
+#### ❌ No Loops or Iteration
+**User wants**: "Process each file in a directory differently based on its type"
+**Why impossible**: Workflows can't create dynamic numbers of operations
+**Alternative**: "I'll create a workflow that processes ALL files in one batch operation, applying the same logic to each"
+
+#### ❌ No Conditional Logic
+**User wants**: "If the API returns error, retry 3 times, else process data"
+**Why impossible**: No if/then/else branching in workflows
+**Alternative**: "I'll create two workflows: one for success path, one for error handling. You choose which to run based on the result"
+
+#### ❌ No State or Memory
+**User wants**: "Track which records we've already processed and skip them"
+**Why impossible**: Each workflow run is completely independent
+**Alternative**: "The workflow will process all current records. You could maintain a processed list externally"
+
+#### ❌ No User Interaction During Execution
+**User wants**: "Ask me to confirm before deleting files"
+**Why impossible**: Workflows run to completion without pausing
+**Alternative**: "I'll create a workflow that lists files to delete, then a separate one that performs deletion after your review"
+
+#### ❌ No Dynamic Node Creation
+**User wants**: "Create one processing node for each item in the response"
+**Why impossible**: Workflow structure is fixed at creation time
+**Alternative**: "I'll process all items in a single node using batch operations"
+
+### One Workflow or Multiple? (Critical Decision)
+
+**This decision shapes the entire implementation:**
+
+#### Build ONE Workflow When:
+- Steps are always done together as a unit
+- Data flows between all steps
+- User wants a single command to run everything
+- The operations are logically coupled
+
+**Example**: "Fetch API data, validate it, transform it, and store it"
+→ ONE workflow (always done as complete sequence)
+
+#### Build MULTIPLE Workflows When:
+- Steps might be run independently
+- Different scheduling/triggers needed
+- Operations serve different purposes
+- User might want partial execution
+
+**Example**: "Monitor GitHub PRs, monitor issues, and monitor commits"
+→ THREE workflows (each monitoring task is independent)
+
+#### The Litmus Test
+Ask yourself: "Would a user ever want to run step X without step Y?"
+- If YES → Separate workflows
+- If NO → Single workflow
+
+**When unsure, ask the user directly**:
+"Should this be one workflow that does everything, or separate workflows you can run independently?"
+
+## Part 2: Node & Tool Selection Principles
+
+### The Primary Selection Rule
+
+**For ANY data processing task, ask this first:**
+"Is the data structured (JSON, CSV, XML) or unstructured (natural language)?"
+
+- **Structured** → Use shell tools (jq, awk, grep)
+- **Unstructured** → Use LLM
+
+This single rule eliminates 90% of tool selection confusion.
+
+### Complete Tool Selection Matrix
+
+| Task Type | ✅ ALWAYS Use | ❌ NEVER Use | Specific Example |
+|-----------|--------------|--------------|------------------|
+| Extract from JSON | `shell` + `jq` | LLM | `jq -r '.data.users[].name'` |
+| Parse CSV columns | `shell` + `awk/cut` | LLM | `cut -d',' -f2,4` or `awk -F',' '{print $2,$4}'` |
+| Filter structured data | `shell` + `jq/grep` | LLM | `jq '.[] \| select(.age > 25)'` |
+| Count/sum/statistics | `shell` + `jq/awk` | LLM | `jq '[.[] .amount] \| add'` |
+| Sort structured data | `shell` + `jq/sort` | LLM | `jq 'sort_by(.timestamp)'` |
+| Download files | `shell` + `curl` | HTTP/MCP | `curl -L -o file.pdf "$url"` |
+| Date/time operations | `shell` + `date` | LLM | `date -d "next Monday" +%Y-%m-%d` |
+| Regex matching | `shell` + `grep/sed` | LLM | Extract IDs: `grep -oP '(?<=id:)\d+'` |
+| Base64 encode/decode | `shell` + `base64` | LLM | `base64 -d input.txt` |
+| File operations | `shell` commands | MCP | `cp`, `mv`, `rm`, `mkdir` |
+| **Extract meaning** | LLM | Shell | "What's the sentiment of this text?" |
+| **Answer questions** | LLM | Shell | "Why did this happen?" |
+| **Generate content** | LLM | Shell | "Write a summary" |
+| **Format for humans** | LLM | Shell | "Make this readable" |
+| **Make decisions** | LLM | Shell | "Which option is better?" |
+| JSON REST APIs | `http` | `shell` + `curl` | Clean request/response |
+| Complex auth flows | `http` | `shell` | OAuth, JWT handling |
+| Binary uploads | `shell` + `curl` | `http` | Multipart forms |
+| Service-specific | MCP nodes | Generic | Built-in authentication |
+
+### Shell+jq Mastery (Critical for Structured Data)
+
+**Rule**: If you can describe the extraction logic precisely, use jq. Only use LLM when you need interpretation.
+
+#### Essential jq Patterns
+
+**Basic extraction:**
+```bash
+# Get single field
+jq -r '.user.name'
+
+# Get nested field with default
+jq -r '.data.value // "not found"'
+
+# Get array element
+jq -r '.items[0]'
+
+# Get all array elements' field
+jq -r '.items[].id'
+```
+
+**Filtering and selection:**
+```bash
+# Filter by condition
+jq '.users[] | select(.age >= 18)'
+
+# Multiple conditions
+jq '.items[] | select(.status == "active" and .priority > 5)'
+
+# Contains check
+jq '.[] | select(.tags | contains(["important"]))'
+
+# Regex match
+jq '.[] | select(.name | test("^prod-"))'
+```
+
+**Transformation:**
+```bash
+# Reshape object
+jq '{name: .fullName, age: .currentAge}'
+
+# Map array
+jq '[.items[] | {id: .id, summary: .title}]'
+
+# Flatten nested structure
+jq '.data | flatten'
+
+# Group by field
+jq 'group_by(.category) | map({category: .[0].category, items: .})'
+```
+
+**Aggregation:**
+```bash
+# Count
+jq '.items | length'
+
+# Sum
+jq '[.items[].amount] | add'
+
+# Min/max
+jq '[.items[].score] | max'
+
+# Statistics
+jq '{total: length, sum: (map(.value) | add), avg: (map(.value) | add/length)}'
+```
+
+**Complex operations:**
+```bash
+# Join data from multiple sources
+jq -s '.[0].users as $users | .[1].orders | map(. + {user: ($users[] | select(.id == .user_id))})'
+
+# Recursive descent
+jq '.. | select(type == "object" and has("target_field"))'
+```
+
+### HTTP vs Shell+curl Decision Tree
+
+```
+Is it a JSON API?
+├─ YES → Is authentication complex (OAuth, rotating tokens)?
+│        ├─ YES → Use HTTP node
+│        └─ NO → Use HTTP node
+└─ NO → Is it binary data?
+         ├─ YES → Use shell + curl
+         └─ NO → Is it streaming or chunked?
+                  ├─ YES → Use shell + curl
+                  └─ NO → Use HTTP node
+```
+
+### Special Patterns That Save Nodes
+
+#### Async Operations - Always Try Prefer:wait First
+```json
+{
+  "type": "http",
+  "params": {
+    "url": "https://api.example.com/long-running-job",
+    "method": "POST",
+    "headers": {
+      "Prefer": "wait=60",  // Wait up to 60 seconds for completion
+      "Authorization": "Bearer ${api_token}"
+    },
+    "body": {"data": "${input_data}"}
+  }
+}
+```
+**Impact**: Eliminates 2-3 polling nodes per async operation
+
+#### Direct URL Pattern (Eliminate Download Steps)
+Instead of: download → process → upload
+Use: direct URL references when services support them
+
+**Examples:**
+- GitHub raw content: `https://raw.githubusercontent.com/owner/repo/main/file.json`
+- Public S3: `https://bucket.s3.amazonaws.com/file.csv`
+- Google Drive direct: `https://drive.google.com/uc?export=download&id=FILE_ID`
+
+## Part 3: The Complete Development Loop
+
+### Step 1: UNDERSTAND - Parse Requirements Precisely
+
+**Create a structured mental model:**
+
+```
+Inputs Assessment:
+- Explicit values user mentioned: _______
+- Implicit inputs they'll need: _______
+- Credentials required: _______
+
+Processing Steps:
+- Data fetching from: _______
+- Transformations needed: _______
+- External services involved: _______
+
+Output Requirements:
+- Format needed: _______
+- Destination: _______
+- Side effects expected: _______
+
+Pattern Match:
+□ Fetch → Transform → Store
+□ Multi-source aggregation
+□ Service chain
+□ Enrichment pipeline
+□ Other: _______
+```
+
+**Intent signals to recognize:**
+| User Says | Intent | Confidence | Action |
+|-----------|--------|------------|--------|
+| "run [specific workflow name]" | Execute | High | Find and run |
+| "do X then Y then Z" | Build | High | Create workflow |
+| "I need to [outcome]" | Explore | Medium | Clarify approach |
+| "how can I [task]" | Learn | Low | Explain options |
+| "automate [process]" | Build | High | Create workflow |
+
+### Step 2: DISCOVER WORKFLOWS - Detailed Matching
+
+```python
+workflow_discover(query="exact user request, including all details")
+```
+
+**Response interpretation guide:**
+
+```
+≥95% match with all params available
+→ Execute immediately
+
+≥95% match but missing params
+→ "I found [name] that does exactly this. I need [param list] to run it."
+
+80-94% match
+→ "Found [name] which is similar. It does [description].
+   Main differences: [list differences]
+   Should I use this, modify it, or build new?"
+
+70-79% match
+→ Show user the workflow details
+→ Highlight what would need changing
+→ "I can modify this to meet your needs. Shall I?"
+
+<70% match
+→ "No close matches found. I'll build this from scratch."
+→ Continue to step 3
+```
+
+**Modifying existing workflows (70-94% match):**
+```python
+# 1. Load the similar workflow
+content = Read("~/.pflow/workflows/similar-workflow.json")
+
+# 2. Understand its structure
+# - What inputs does it have?
+# - What nodes perform which operations?
+# - What outputs does it produce?
+
+# 3. Identify needed changes
+# - New inputs to add
+# - Nodes to replace/modify
+# - Outputs to change
+
+# 4. Create modified version
+Write("~/.pflow/temp-workflows/modified.json", modified_content)
+
+# 5. Jump to validation (Step 9)
+```
+
+### Step 3: DISCOVER NODES - Finding Building Blocks
+
+```python
+registry_discover(task="[complete description of ALL operations needed]")
+```
+
+**Effective task descriptions:**
+```python
+# ❌ Too vague
+registry_discover(task="process data")
+
+# ✅ Complete and specific
+registry_discover(task="fetch JSON from REST API, extract specific fields, validate data completeness, transform to CSV format, upload to S3 bucket")
+```
+
+**Interpreting discovered nodes:**
+- **Parameters with defaults** → Usually optional
+- **Parameters without defaults** → Always required
+- **Output type "Any"** → Need to test for structure
+- **Output type specified** → Can use directly
+
+### Step 4: EXTERNAL API INTEGRATION
+
+**When no dedicated node exists, follow this systematic approach:**
+
+#### Phase 1: Research
+```python
+# Search for API documentation
+WebSearch("ServiceName API documentation")
+
+# Fetch and analyze docs
+WebFetch(url="[docs_url]", prompt="Extract: authentication method, main endpoints, request format, response structure, rate limits")
+```
+
+#### Phase 2: Choose Approach
+| API Type | Tool Choice | Why |
+|----------|------------|-----|
+| REST JSON | `http` node | Clean JSON handling |
+| GraphQL | `http` node | POST with query body |
+| SOAP/XML | `shell` + `curl` | XML processing |
+| Binary endpoints | `shell` + `curl` | File handling |
+| Streaming | `shell` + `curl` | Chunked transfer |
+| Custom protocols | `shell` + `curl` | Full control |
+
+#### Phase 3: Test Authentication
+```python
+# Test with minimal call
+registry_run(
+    node_type="http",
+    parameters={
+        "url": "https://api.service.com/health",
+        "headers": {"Authorization": "Bearer ${token}"}
+    },
+    show_structure=True
+)
+```
+
+### Step 5: TEST MCP/HTTP NODES - Precise Testing Criteria
+
+**Decision tree for testing:**
+```
+Is it an MCP node?
+├─ YES → Will you access specific nested fields (like .data.messages[0].text)?
+│        ├─ YES → Test with show_structure=True
+│        └─ NO → Skip testing (just pass ${node.result} to next node)
+└─ NO → Is it HTTP with unknown response?
+         ├─ YES → Will you extract specific fields?
+         │        ├─ YES → Test with real endpoint
+         │        └─ NO → Skip testing
+         └─ NO → Is it complex shell+jq?
+                  ├─ YES → Test extraction logic
+                  └─ NO → Skip testing
+```
+
+**Key insight**: If you're just passing `${mcp-node.result}` to an LLM or another service, you don't need to know its structure. Only test when you need specific paths like `${mcp-node.result.data.field}`.
+
+**Example - When to test vs skip:**
+```json
+{
+  "nodes": [
+    // Skip testing - passing whole result
+    {
+      "id": "fetch-messages",
+      "type": "mcp-slack-FETCH",
+      "params": {"channel": "${channel}"}
     },
     {
       "id": "analyze",
       "type": "llm",
-      "purpose": "Extract Q&A pairs from the messages",
       "params": {
-        "prompt": "Extract Q&A pairs from: ${fetch-messages.result}"
+        "prompt": "Analyze: ${fetch-messages.result}"  // Using whole result - no test needed
+      }
+    },
+
+    // Need testing - accessing specific fields
+    {
+      "id": "fetch-pr",
+      "type": "mcp-github-GET_PR",
+      "params": {"pr": "${pr_number}"}
+    },
+    {
+      "id": "check-merged",
+      "type": "llm",
+      "params": {
+        "prompt": "PR merged: ${fetch-pr.result.data.merged}"  // Need exact path - test required
       }
     }
   ]
 }
 ```
 
-**Per-node validation**:
-- [ ] ID is descriptive (not `node1`)
-- [ ] Type exists (verified with `pflow registry describe`)
-- [ ] Purpose clearly explains this node's role (optional but strongly recommended - Always include it)
-- [ ] Required params are set
-- [ ] Every `${variable}` is either input or previous node output
+**MCP Testing Protocol:**
+```python
+# 1. Inform user
+print("I need to test access to [service]. This will [describe effect].")
 
-#### Step 6.3: Create Edges Array
+# 2. Ask permission if side effects
+if has_side_effects:
+    print("⚠️ This test will [visible effect]. Should I proceed?")
 
-**Connect nodes linearly:**
+# 3. Test with structure discovery
+result = registry_run(
+    node_type="mcp-service-TOOL_NAME",
+    parameters={
+        "param1": "test_value",
+        "param2": "test_value"
+    },
+    show_structure=True  # MANDATORY for MCP
+)
 
+# 4. Document actual structure
+# MCP typically returns:
+# result.data.tool_response.content.actual_value
+# NOT just: result
+```
+
+**Common MCP Output Patterns:**
+```python
+# Slack patterns
+result.data.messages[].text
+result.data.channel.name
+result.data.response.ok
+
+# GitHub patterns
+result.data.items[].title
+result.data.pull_request.number
+result.data.content.sha
+
+# Google Sheets patterns
+result.data.values[][]
+result.data.spreadsheetId
+result.data.updates.updatedCells
+
+# Generic MCP patterns
+result.tool_response.output
+result.data.success
+result.metadata.execution_time
+```
+
+### Step 6: DESIGN - Data Flow Mapping
+
+**Create a precise execution plan:**
+
+```
+Execution Order (Edges):
+1. fetch-data
+2. validate-data
+3. get-timestamp
+4. transform-data
+5. format-output
+6. deliver-result
+
+Data Dependencies (Templates):
+- validate-data needs: ${fetch-data.response}
+- transform-data needs: ${fetch-data.response}, ${validate-data.result}
+- format-output needs: ${transform-data.output}, ${get-timestamp.stdout}
+- deliver-result needs: ${format-output.result}
+```
+
+### Step 7: PLAN & CONFIRM - User Communication
+
+**For exploring users (low confidence):**
+```
+"Let me clarify what you're trying to achieve:
+
+Current situation:
+- You have: [data/system state]
+- You want: [desired outcome]
+- Challenges: [what's blocking]
+
+I can approach this three ways:
+
+Option A: [Direct approach]
+- How: [steps]
+- Pros: [benefits]
+- Cons: [tradeoffs]
+- Time: [estimate]
+
+Option B: [Alternative approach]
+- How: [steps]
+- Pros: [benefits]
+- Cons: [tradeoffs]
+- Time: [estimate]
+
+Option C: [Hybrid approach]
+- How: [steps]
+- Pros: [benefits]
+- Cons: [tradeoffs]
+- Time: [estimate]
+
+Which approach aligns best with your needs?"
+```
+
+**For decisive users (high confidence):**
+```
+"I'll build a workflow that:
+
+1. Fetches [data] from [source] using [method]
+2. Validates [criteria] and filters [conditions]
+3. Transforms data by [process]
+4. Delivers results to [destination] as [format]
+
+Required inputs:
+- [input1]: [why needed]
+- [input2]: [why needed]
+
+Expected output:
+- [output description]
+
+This will take approximately [time estimate] to run.
+Ready to proceed?"
+```
+
+### Step 8: BUILD - Systematic Construction
+
+#### Phase-Based Building for Complex Workflows
+
+**When to phase (based on complexity, not count):**
+- Multiple external services (even if only 5 nodes)
+- Unknown API responses that need testing
+- Complex data transformations with dependencies
+- First time using certain nodes
+- More than 15 nodes IF they're complex (20 simple shell commands might not need phasing)
+
+**Phase 1: Core Data Path (Test Immediately)**
 ```json
 {
+  "inputs": {
+    "source_url": {"type": "string", "required": true, "description": "Data source"}
+  },
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "params": {"url": "${source_url}"}
+    },
+    {
+      "id": "extract",
+      "type": "shell",
+      "params": {
+        "stdin": "${fetch.response}",
+        "command": "jq '.data'"
+      }
+    },
+    {
+      "id": "test-output",
+      "type": "write-file",
+      "params": {
+        "file_path": "/tmp/test.json",
+        "content": "${extract.stdout}"
+      }
+    }
+  ],
   "edges": [
-    {"from": "fetch-messages", "to": "analyze"},
-    {"from": "analyze", "to": "save-results"}
+    {"from": "fetch", "to": "extract"},
+    {"from": "extract", "to": "test-output"}
   ]
 }
 ```
 
-**Edge validation**:
-- [ ] Forms LINEAR chain (no branches)
-- [ ] Each node has ONE outgoing edge (except last)
-- [ ] No cycles
+**Test before continuing:**
+```python
+workflow_execute(workflow="~/.pflow/temp-workflows/phase1.json", parameters={"source_url": "https://api.example.com/data"})
+# Verify: Did extraction work? Is data structure correct?
+```
 
-> Note: Edges are a constraint on execution, not data. You must run nodes in order, but you're not forced to use only the immediate predecessor's data. You can compose from anywhere earlier in the chain.
-
-#### Step 6.4: Declare Workflow Outputs
-
-**Expose final results:**
-
+**Phase 2: Add Processing (One Service at a Time)**
 ```json
+// Add to existing nodes
+{
+  "id": "process",
+  "type": "llm",
+  "params": {
+    "prompt": "Analyze this data and extract key insights:\n${extract.stdout}"
+  }
+}
+```
+
+**Phase 3: Add External Services**
+```json
+// Add each external service and test
+{
+  "id": "send-notification",
+  "type": "mcp-slack-send",
+  "params": {
+    "channel": "${notification_channel}",
+    "text": "${process.response}"
+  }
+}
+```
+
+**Phase 4: Polish and Outputs**
+```json
+// Add formatting, final outputs
 {
   "outputs": {
-    "qa_pairs": {
-      "source": "${analyze.response}",
-      "description": "Extracted Q&A pairs"
-    }
+    "analysis": {"source": "${process.response}", "description": "Analysis results"}
   }
 }
 ```
 
-**Output validation**:
-- [ ] Only `source` and `description` fields
-- [ ] Most important output first
-- [ ] Skip outputs for automation workflows
+#### Input Declaration - Complete Rules
 
-#### Complete BUILD Checklist
-- [ ] All user values → inputs
-- [ ] Nodes in execution order
-- [ ] All templates resolve
-- [ ] Edges form linear chain
-- [ ] Outputs expose useful data
-
-### 7. VALIDATE (2 minutes per iteration)
-
-Catch structural errors before execution.
-
-**Workflow File Location:**
-Write your workflow to `~/.pflow/temp-workflows/workflow.json` before validating:
-
-```python
-# Write workflow to file first
-workflow_validate(workflow="~/.pflow/temp-workflows/workflow.json")
-```
-
-**Process**:
-1. Run validation
-2. Read error message carefully
-3. Fix ONE error at a time
-4. Re-validate
-5. Repeat until ✓
-
-**Output**: Structurally valid workflow
-
-### 8. TEST (Variable - only when needed)
-
-Execute the workflow to verify it works.
-
-```python
-workflow_execute(workflow="~/.pflow/temp-workflows/workflow.json", parameters={"param1": "value", "param2": "value"})
-```
-
-**Trace Files:**
-Workflow executions save trace files to `~/.pflow/debug/workflow-trace-*.json`.
-Check the response for the `trace_path` field with the exact location.
-
-#### When to Investigate Output Structures
-
-**Many nodes return `result: Any` - investigate ONLY when needed:**
-
-✅ **Investigate when:**
-- Templates need nested data: `${fetch.result.messages[0].text}`
-- Workflow outputs expose nested fields
-- User wants to optimize data flow
-
-❌ **Skip investigation when:**
-- Just passing data through: `${fetch.result}` works fine
-- Sending to LLM: LLM handles any structure
-- Output is the final result
-
-#### CRITICAL: MCP Nodes Have Deeply Nested Outputs
-
-**MCP outputs are NEVER simple. Always test with show_structure=True first.**
-
-**What docs say:** `result: Any`
-**What you get:** `result.data.tool_response.nested.deeply.url`
-
-**Common patterns:**
-- Tool responses: `${node.result.data.content}` or `${node.result.tool_response.output}`
-- File operations: `${node.result.data.file_url}` or `${node.result.data.download_url}`
-- API results: `${node.result.data.response}` or `${node.result.response.items}`
-- General: Expect 3-5 levels of nesting minimum
-
-**Discovery Strategy:**
-```python
-# 1. Test with show_structure=True
-registry_run(node_type="mcp-service-TOOL", parameters={"param": "test"}, show_structure=True)
-
-# 2. Document the actual path in your workflow
-# Comment: mcp-google-drive returns result.data.downloaded_file_content.s3url
-```
-
-**Common quirks:**
-- Field typos ("successfull" vs "successful")
-- Inconsistent casing
-- Redundant wrapper levels
-
-**Structure Discovery:**
-Using `show_structure=True` returns the complete output structure directly in the response.
-
-#### How to Discover Output Structure
-
-```python
-# 1. Run workflow
-workflow_execute(workflow="~/.pflow/temp-workflows/test-workflow.json", parameters={})
-
-# 2. Examine the trace file
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[0].outputs'
-
-# 3. See actual structure like:
-{
-  "result": {
-    "messages": [
-      {"text": "Hello", "user": "U123", "ts": "1234567890"}
-    ],
-    "has_more": false
-  }
-}
-
-# 4. Now you can use: ${fetch.result.messages[0].text}
-```
-
-**Output**: Working workflow that executes successfully
-
-### 9. REFINE (Variable)
-
-Improve the workflow for production use.
-
-**What you CAN refine**:
-- ✅ Improve LLM prompts for better results
-- ✅ Optimize data flow and node ordering
-- ✅ Add better descriptions for reusability
-- ✅ Enhance input/output declarations
-
-**What you CANNOT currently do**:
-- ❌ Add error handling (no branching in IR)
-- ❌ Add conditional flows (if-then-else)
-- ❌ Add retry logic
-
-**Output**: Production-ready workflow
-
-### 10. SAVE (1 minute)
-
-**When to do this**: After your workflow is tested and working correctly.
-
-Save to global library for reuse across all projects:
-
-```python
-workflow_save(workflow="~/.pflow/temp-workflows/your-draft.json", name="workflow-name", description="Clear description")
-
-# With optional enhancements
-workflow_save(workflow="~/.pflow/temp-workflows/your-draft.json", name="workflow-name", description="Description", generate_metadata=True, delete_draft=True)
-```
-
-**Response Structure:**
-Returns structured data:
-```json
-{
-  "success": true,
-  "name": "workflow-name",
-  "path": "~/.pflow/workflows/workflow-name.json",
-  "message": "Run with: workflow-name param1=<type> param2=<type>"
-}
-```
-
-**Always tell the user how to run their saved workflow**:
-```python
-# Show with user's actual values:
-workflow_execute(workflow="workflow-name", parameters={"channel": "C123", "sheet_id": "abc123"})
-```
-
-**Output**: Reusable workflow available globally
-
----
-
-## Pre-Build Checklist
-
-**Before writing any JSON, verify you have:**
-
-### ✅ Complete Understanding
-- [ ] I can explain the workflow in 1-2 sentences
-- [ ] I know what data enters the workflow (inputs)
-- [ ] I know what data exits the workflow (outputs)
-- [ ] I can draw the data flow on paper
-
-### ✅ Workflow Discovery Complete (Step 2 - MANDATORY)
-- [ ] I've called `workflow_discover(query="user's request")`
-- [ ] If 70%+ match found: I've shown it to user and confirmed their decision
-- [ ] Decision made: execute existing, modify existing, or build new
-
-### ✅ Node Discovery Complete (Step 3 - if building new)
-- [ ] I've called `registry_discover(query="specific task description")`
-- [ ] I have node specs (from discovery output or `registry_describe(node_types=["node-type"])`)
-- [ ] I understand which outputs are `Any` type and if I need to investigate them
-
-### ✅ External API Integration (Step 3.1 - if no dedicated node exists)
-- [ ] I've researched the API documentation
-- [ ] I've chosen the right tool (HTTP for JSON, shell+curl for binary)
-- [ ] I've checked if `Prefer: wait` header can eliminate polling
-- [ ] I've identified authentication requirements
-
-### ✅ MCP/HTTP Node Testing Complete (Step 3.2 - if using MCP/HTTP)
-- [ ] I've told the user what I'm testing and why
-- [ ] I've asked permission for tests with side effects
-- [ ] I've tested each MCP node with realistic parameters and fixed auth/permission issues
-
-### ✅ Design Validated
-- [ ] My workflow is a LINEAR chain (no parallel branches)
-- [ ] Each node has exactly ONE successor
-- [ ] I can trace how data flows: `input → node1.output → node2.param → node3.param`
-- [ ] I know which values are user inputs vs. hardcoded vs. node outputs
-
-### ✅ Ready to Build
-- [ ] I have node types written down
-- [ ] I have parameter names for each node
-- [ ] I know which workflow inputs to declare
-- [ ] I know which workflow outputs to expose
-
-**If you can't check all boxes**: Go back to Step 2 (workflows), Step 3 (nodes), or Step 4 (design) as needed.
-
----
-
-## How to Think About Workflows
-
-A workflow is a **reusable data transformation tool**. Users show you one example, but you build for all cases.
-
-### One Workflow or Multiple?
-
-**Critical decision: Should this be one workflow or several?**
-
-#### Build ONE Workflow When:
-- Steps are always done together
-- Data flows between all steps
-- User wants single command to run
-
-**Example**: "Fetch Slack messages, extract Q&A, log to sheets"
-→ ONE workflow (always done as a sequence)
-
-#### Build MULTIPLE Workflows When:
-- Steps are independent
-- User might want to run separately
-- Different schedules/triggers
-
-**Example**: "Monitor GitHub PRs, issues, and commits"
-→ THREE workflows (each monitoring task is independent)
-
-#### The Litmus Test:
-Ask: "Would a user ever want to do just step X without Y?"
-- If YES → Separate workflows
-- If NO → Combined workflow
-
-**When unsure, ask**:
-"Should this be one workflow that does everything, or separate workflows you can run independently?"
-
-### The Mental Model
+**Decision process for EVERY value:**
 
 ```
-[Input Data] → [Transform 1] → [Transform 2] → [Output Data]
+Is this value in the user's request?
+├─ YES → Is it marked with "always" or "only"?
+│        ├─ YES → Hardcode it
+│        └─ NO → Make it an input
+└─ NO → Is it implementation detail (prompt, jq command, script)?
+         ├─ YES → Hardcode it (users don't customize implementation)
+         └─ NO → Is it a system constraint?
+                  ├─ YES → Hardcode it
+                  └─ NO → Would users want to configure this?
+                           ├─ YES → Make it an input with default
+                           └─ NO → Hardcode it
 ```
 
-Every workflow answers three questions:
-1. **What data do I start with?** (inputs, files, APIs)
-2. **What transformations happen?** (fetch, analyze, format, send)
-3. **What data do I produce?** (files, messages, API calls)
+**Key insight**: LLM prompts, jq extraction commands, and shell scripts are HOW the workflow works, not WHAT it processes. These stay hardcoded unless the user specifically asks to customize them.
 
-### 🔴 The Golden Rule
-
-**Users show you ONE example. You build the GENERAL tool.**
-
-Every specific value they provide is demonstrating what COULD be configured, not what MUST be hardcoded.
-
-### Choosing Node Categories
-
-**CRITICAL: Shell+jq First for Structured Data!**
-
-| Need | ✅ ALWAYS Use | ❌ NEVER Use | Real Example |
-|------|--------------|-------------|--------------|
-| **Extract from JSON/Sheets** | `shell` + `jq` | LLM | `jq -r '.data.field'` # Adapt path to your structure |
-| **Parse CSV/structured data** | `shell` + `awk/cut` | LLM | `cut -d',' -f3` |
-| **Filter/select data** | `shell` + `jq` | LLM | `jq 'select(.status=="active")'` |
-| **Download files** | `shell` + `curl` | MCP/HTTP | `curl -L -o file.jpg "$url"` |
-| **Sanitize filenames** | `shell` + `tr` | LLM | `tr ' ' '-' \| tr -cd '[:alnum:]-_.'` |
-| **Simple text ops** | `shell` + `sed/tr` | LLM | `sed 's/old/new/g'` |
-| **Extract meaning** | `llm` | Shell | "What's the sentiment?" |
-| **Creative writing** | `llm` | Shell | "Enhance this prompt" |
-| **API calls (JSON)** | `http` | Shell | REST endpoints |
-| **Complex decisions** | `llm` | Shell | "Which option is better?" |
-
-**Golden Rules**:
-1. **If data has structure → Use shell+jq** (even if complex!)
-2. **If curl can do it → Use shell+curl** (not HTTP/MCP)
-3. **Only use LLM for understanding/creativity** (not extraction)
-4. **Prefer: wait > polling** (for async APIs)
-
----
-
-## Building Workflows
-
-### 🚨 Critical Constraints (READ FIRST)
-
-**These are HARD LIMITATIONS of the workflow system.**
-
-#### 1. Sequential Execution Only
-
-**Workflows execute nodes in a LINEAR chain. NO parallel execution.**
-
-**❌ WRONG - This will NOT work:**
-```
-fetch-data → analyze
-          ↘ visualize
-```
-
-**✅ CORRECT - Sequential chain:**
-```
-fetch-data → analyze → visualize
-```
-
-#### 2. Template Variables Must Resolve
-
-**Every `${variable}` MUST be either:**
-- A declared workflow input: `"inputs": {"variable": {...}}`
-- A node output: `${node_id.output_key}`
-
-#### 3. Node Output References Must Exist
-
-**You can only reference outputs that nodes actually produce.**
-
-**Rule**: ALWAYS call `registry_describe(node_types=["node-type"])` before writing templates.
-
-### The Input Decision Framework
-
-**Core Rule: If the user specified it, it should be an input.**
-
-**Look for these types of values in the user input:**
-- **File paths**: Any file or directory paths mentioned
-- **Numeric values**: Counts, limits, sizes, IDs
-- **States/Filters**: Status values, conditions, filters
-- **Time periods**: Dates, months, periods, durations
-- **Identifiers**: Names, IDs, specific repos
-- **Formats/Types**: Output formats, data types, units
-- **Content descriptors**: Topics, subjects, descriptions
-
-**Quick litmus test:** "Would the user ever run this with a different [value]?"
-- If YES → Make it an input
-- If NO or user said "always" → Hardcode it
-
-**Decision Process:**
-```
-Did user specify this value?
-  → YES: Make it an INPUT (applies to all types above)
-
-Did user say "always", "only", or "hardcode"?
-  → YES: Safe to hardcode
-
-Is it a system constraint (encoding, protocols)?
-  → YES: Hardcode it
-
-When unsure?
-  → Make it an INPUT (safer for reusability)
-```
-
-**Dos and Don'ts**:
-- **DO extract**: Actual values, paths, names, numbers, states
-- **DON'T extract**: Action verbs, commands, prompts, instructions, platform/service names (github, slack, API)
-
-### Authentication & Credentials
-
-**Settings (`~/.pflow/settings.json`) are ONLY for authentication secrets.**
-
-**✅ Settings belong:**
-- API tokens: `replicate_api_token`, `github_token`, `openai_api_key`
-- Service credentials used universally
-- LLM API keys (can also use LLM library)
-
-**❌ Settings don't belong:**
-- Resource IDs: `sheet_id`, `channel`, `repo` (workflow-specific)
-- Data parameters: `limit`, `input_file`, `threshold` (varies by use case)
-
-**Manage**: Users use pflow settings set-env command (e.g., `pflow settings set-env GITHUB_TOKEN "ghp_..."`)
-**Precedence**: Explicit parameters > ENV > settings > defaults
-
-> Note: NEVER set secrets as parameter defaults. Always use inputs or better yet, settings.json (user adds them)
-
-#### CRITICAL: How Workflows Access Credentials
-
-**Settings values are NOT automatically available as templates!**
-
-❌ **WRONG - Settings don't auto-populate:**
-```json
-{
-  "type": "http",
-  "params": {
-    "headers": {"Authorization": "Bearer ${api_token}"}  // This won't work!
-  }
-}
-```
-
-✅ **CORRECT - Declare as workflow input:**
+**Input examples with rationale:**
 ```json
 {
   "inputs": {
-    "api_token": {
+    // User value - becomes input
+    "api_endpoint": {
       "type": "string",
       "required": true,
-      "description": "API token for external service"
+      "description": "API URL to fetch data from"
+    },
+
+    // User mentioned but with default
+    "limit": {
+      "type": "number",
+      "required": false,
+      "default": 10,
+      "description": "Maximum items to process"
+    },
+
+    // Not mentioned but configurable
+    "output_format": {
+      "type": "string",
+      "required": false,
+      "default": "json",
+      "description": "Output format (json, csv, xml)"
+    },
+
+    // Array input example
+    "tags": {
+      "type": "array",
+      "required": false,
+      "default": ["important"],
+      "description": "Tags to filter by"
+    },
+
+    // Object input example
+    "options": {
+      "type": "object",
+      "required": false,
+      "default": {"verbose": false},
+      "description": "Processing options"
     }
-  },
-  "nodes": [{
-    "type": "http",
-    "params": {
-      "headers": {"Authorization": "Bearer ${api_token}"}  // Now it works
-    }
-  }]
+  }
 }
 ```
 
-**The Complete Authentication Flow:**
-1. **User sets secrets**: `pflow settings set-env SERVICE_TOKEN "secret123"`
-2. **Agent declares as workflow input** (required field):
-   ```json
-   {
-     "inputs": {
-       "service_token": {
-         "type": "string",
-         "required": true,
-         "description": "API token for external service"
-       }
-     }
-   }
-   ```
-3. **Workflow automatically reads from env var** with matching name (SERVICE_TOKEN)
-4. **Or pass explicitly**: `workflow_execute(workflow="...", parameters={"service_token": "$SERVICE_TOKEN"})`
+#### Node Creation - Complete Patterns
 
-**Key Point**: Settings store secrets securely, but workflows must explicitly declare them as inputs to use them.
+```json
+{
+  "nodes": [
+    // HTTP node with full options
+    {
+      "id": "fetch-with-auth",
+      "type": "http",
+      "purpose": "Fetch data from protected API",
+      "params": {
+        "url": "${api_url}",
+        "method": "POST",
+        "headers": {
+          "Authorization": "Bearer ${api_token}",
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        "body": {
+          "query": "${search_query}",
+          "limit": "${limit}"
+        }
+      }
+    },
 
-#### Being Proactive with Authentication
+    // Shell node with complex jq
+    {
+      "id": "complex-extraction",
+      "type": "shell",
+      "purpose": "Extract and transform nested data",
+      "params": {
+        "stdin": "${fetch-with-auth.response}",
+        "command": "jq '[.data.items[] | select(.status == \"active\") | {id: .id, name: .name, value: .metrics.value}]'"
+      }
+    },
 
-**When you discover a workflow needs credentials, help the user set them up:**
+    // LLM with structured prompt
+    {
+      "id": "structured-analysis",
+      "type": "llm",
+      "purpose": "Analyze data with specific criteria",
+      "params": {
+        "prompt": "Analyze this data according to these criteria:\n\nData:\n${complex-extraction.stdout}\n\nCriteria:\n1. Identify patterns\n2. Find anomalies\n3. Suggest improvements\n\nFormat your response as:\n- Patterns: ...\n- Anomalies: ...\n- Improvements: ...",
+        "temperature": 0.7,
+        "model": "gpt-4"
+      }
+    },
 
-**Identify requirements:**
-- Determine what API keys, tokens, or credentials are needed
-- Explain clearly how to obtain them (with specific links/steps)
+    // MCP node with nested parameters
+    {
+      "id": "update-service",
+      "type": "mcp-service-UPDATE",
+      "purpose": "Update external service with results",
+      "params": {
+        "resource_id": "${resource_id}",
+        "data": {
+          "status": "completed",
+          "results": "${structured-analysis.response}",
+          "timestamp": "${get-timestamp.stdout}",
+          "metadata": {
+            "source": "${api_url}",
+            "processed_count": "${limit}"
+          }
+        }
+      }
+    }
+  ]
+}
+```
 
-**Guide setup:**
-- Instruct users to set api keys using the pflow settings set-env command:
-  ```bash
-  pflow settings set-env SLACK_TOKEN "xoxb-your-token-here"
-  pflow settings set-env GITHUB_TOKEN "ghp_your-token-here"
-  ```
-- Explain that the workflow will automatically read from `~/.pflow/settings.json` env variables if:
-  1. The workflow declares them as inputs
-  2. The environment variable name matches (case-sensitive or uppercased)
+### Step 9: VALIDATE - Understanding Validation Errors
 
-- Instruct users to use Simon Willison's llm tool to help them set the api keys for llm providers:
-  ```bash
-  llm keys set openai
-  llm keys set anthropic
-  ```
+```python
+workflow_validate(workflow="~/.pflow/temp-workflows/my-workflow.json")
+```
 
-### Workflow Structure Essentials
+**Common validation errors with precise fixes:**
 
-#### Minimal Workflow Structure
+| Error Message | Exact Cause | Precise Fix |
+|---------------|-------------|-------------|
+| `"Unknown node type 'mcp-slack-fetch'"` | Node type doesn't exist | Run `registry_discover(task="fetch Slack messages")` to find correct type |
+| `"Template variable '${channel_id}' not found in inputs or node outputs"` | Missing input declaration | Add to inputs: `"channel_id": {"type": "string", "required": true, "description": "..."}` |
+| `"Node 'process' references '${analyze.result}' but 'analyze' hasn't executed yet"` | Wrong edge order | Fix edges so 'analyze' runs before 'process' |
+| `"Circular dependency detected: A -> B -> C -> A"` | Edge loop | Remove the edge that creates the cycle |
+| `"Missing required parameter 'url' in node 'fetch'"` | Required param not set | Add `"url": "${api_url}"` to node params |
+| `"Invalid input type: expected string, got number"` | Wrong type in template | Check source node output type |
+| `"Node 'x' is unreachable"` | No edge leading to node | Add edge from previous node |
+| `"Multiple edges from node 'x'"` | Violates linear chain | Remove extra edges, keep only one |
+
+### Step 10: TEST - Systematic Testing
+
+```python
+# Always test with minimal parameters first
+workflow_execute(
+    workflow="~/.pflow/temp-workflows/my-workflow.json",
+    parameters={
+        "api_url": "https://api.example.com/test",
+        "limit": 2  # Start small
+    }
+)
+```
+
+**Understanding trace files:**
+```bash
+# Trace location is in response
+"trace_path": "~/.pflow/debug/workflow-trace-20240115-143022.json"
+
+# View execution timeline
+cat [trace_path] | jq '.events[] | {node: .node_id, duration: .duration_ms}'
+
+# View node outputs
+cat [trace_path] | jq '.nodes[] | {id: .id, outputs: .outputs}'
+
+# Debug specific node
+cat [trace_path] | jq '.nodes[] | select(.id == "problem-node")'
+
+# See error details
+cat [trace_path] | jq '.events[] | select(.error != null)'
+```
+
+**When to investigate outputs in detail:**
+- Templates reference nested fields: `${node.data.items[0].id}`
+- Next node needs specific structure
+- Output will be displayed to user
+- Debugging unexpected results
+
+### Step 11: REFINE - Optimization Opportunities
+
+**Safe refinements:**
+```json
+// Better LLM prompts
+"prompt": "Extract ONLY email addresses, one per line, no other text"
+
+// Consolidated operations
+// Instead of: fetch1 → fetch2 → fetch3 → combine
+// Use: fetch-all → extract-relevant
+
+// Clearer descriptions
+"purpose": "Validates that all required fields are present and non-empty"
+
+// Better defaults
+"default": 100  // More reasonable than 1000
+```
+
+### Step 12: SAVE - Making Reusable
+
+```python
+workflow_save(
+    workflow="~/.pflow/temp-workflows/my-workflow.json",
+    name="api-data-processor",  # Descriptive but generic
+    description="Fetches data from API, processes with custom logic, delivers results",
+    generate_metadata=True  # Improves discoverability
+)
+```
+
+**Always show execution examples:**
+```python
+# Original use case
+workflow_execute(
+    workflow="api-data-processor",
+    parameters={
+        "api_url": "https://api.example.com/data",
+        "limit": 100,
+        "output_format": "json"
+    }
+)
+
+# Different use case
+workflow_execute(
+    workflow="api-data-processor",
+    parameters={
+        "api_url": "https://different-api.com/records",
+        "limit": 50,
+        "output_format": "csv"
+    }
+)
+```
+
+## Part 4: Building Workflows - Technical Reference
+
+### Pre-Build Comprehensive Checklist
+
+#### ✅ Understanding Complete
+- [ ] Can explain workflow purpose in one sentence
+- [ ] Listed all data sources
+- [ ] Listed all transformations needed
+- [ ] Listed all outputs required
+- [ ] Identified all external services
+- [ ] Know which operations are structured (use shell) vs semantic (use LLM)
+
+#### ✅ Discovery Complete
+- [ ] Ran `workflow_discover()` with full request
+- [ ] Made decision on existing vs new
+- [ ] If modifying, loaded existing workflow
+- [ ] Ran `registry_discover()` for all operations
+- [ ] Have all node specifications
+- [ ] Identified which outputs are "Any" type
+
+#### ✅ External APIs Mapped
+- [ ] Researched API documentation
+- [ ] Identified authentication method
+- [ ] Know request format
+- [ ] Know response structure
+- [ ] Tested with minimal call
+- [ ] Documented actual response paths
+
+#### ✅ MCP Testing Complete
+- [ ] Listed all MCP nodes needed
+- [ ] Tested each with `show_structure=True`
+- [ ] Documented actual output structure (not assumed)
+- [ ] Fixed authentication issues
+- [ ] Verified permissions work
+
+#### ✅ Design Validated
+- [ ] Drew execution order (edges)
+- [ ] Mapped data dependencies (templates)
+- [ ] Verified linear chain (no branches)
+- [ ] Each node has one successor
+- [ ] All templates can resolve
+- [ ] No forward references
+
+### Authentication - Complete Setup Guide
+
+#### Setting Up Credentials
+
+**For API tokens:**
+```bash
+# User stores in settings
+pflow settings set-env SERVICE_API_TOKEN "sk-abc123..."
+pflow settings set-env GITHUB_TOKEN "ghp_xyz789..."
+
+# Verify storage
+pflow settings show
+```
+
+**For LLM providers (using Simon Willison's llm tool):**
+```bash
+# Interactive setup
+llm keys set anthropic
+llm keys set openai
+
+# Or direct
+llm keys set anthropic --key "sk-ant-..."
+```
+
+#### Declaring in Workflow
+
+**Critical**: Settings are NOT automatically available. You MUST declare as inputs.
+
+```json
+{
+  "inputs": {
+    // Simple API token
+    "github_token": {
+      "type": "string",
+      "required": true,
+      "description": "GitHub API token for authentication"
+    },
+
+    // With environment variable mapping
+    "slack_token": {
+      "type": "string",
+      "required": true,
+      "description": "Slack bot token (set via SLACK_TOKEN env var)"
+    },
+
+    // Optional with fallback
+    "api_key": {
+      "type": "string",
+      "required": false,
+      "default": "${API_KEY}",  // Tries env var
+      "description": "API key for service"
+    }
+  }
+}
+```
+
+#### Using in Nodes
 
 ```json
 {
   "nodes": [
     {
-      "id": "unique-id",
-      "type": "node-type",
-      "purpose": "Clear description of what this node does",
+      "id": "authenticated-fetch",
+      "type": "http",
       "params": {
-        "param1": "value",
-        "param2": "${template}"
+        "url": "https://api.github.com/user/repos",
+        "headers": {
+          "Authorization": "Bearer ${github_token}",
+          "Accept": "application/vnd.github.v3+json"
+        }
+      }
+    }
+  ]
+}
+```
+
+### Workflow Structure Complete Reference
+
+```json
+{
+  "inputs": {
+    "param_name": {
+      "type": "string|number|boolean|array|object",
+      "description": "What this parameter is for",
+      "required": true|false,
+      "default": "value"  // Only if required: false
+    }
+  },
+  "nodes": [
+    {
+      "id": "descriptive-name",
+      "type": "node-type-from-registry",
+      "purpose": "What this step does",  // Optional but recommended
+      "params": {
+        "param1": "static_value",
+        "param2": "${input_name}",
+        "param3": "${other_node.output}"
       }
     }
   ],
   "edges": [
-    {"from": "node1", "to": "node2"}
+    {"from": "node1", "to": "node2"}  // Linear chain only
   ],
-  "inputs": {
-    "input_name": {
-      "type": "string",
-      "required": true,
-      "description": "What this input is for"
-    }
-  },
-  "outputs": {
-    "output_name": {
-      "source": "${node_id.output_key}",
+  "outputs": {  // Optional - skip for automation workflows
+    "result_name": {
+      "source": "${final_node.output}",
       "description": "What this output contains"
     }
   }
 }
 ```
 
-**Key rules**:
-- Use `params` not `inputs` for node configuration
-- ID must be unique within workflow
-- Type must exist in registry
-- Purpose field is optional but strongly recommended for clarity (Always include it)
+**Key insight**: Outputs are optional. Automation workflows (send, post, update) often don't need outputs since success is visible through side effects.
 
-#### Node Parameter Philosophy
+### Template Variable Complete Reference
 
-**Default Rule: Use node defaults whenever possible. Only set parameters the user explicitly requests.**
+#### Resolution Order (This Matters)
+1. Check workflow `inputs` first
+2. Then check previous node outputs (in execution order)
+3. Error if not found
 
-**When to Set Parameters:**
-- ✅ User explicitly requests specific values
-- ✅ Required parameter (no default exists)
-- ✅ Workflow logic requires non-default behavior
-
-**When NOT to Set:**
-- ❌ Parameter has a good default
-- ❌ User didn't mention it
-- ❌ You're guessing what might be better
-
-#### Template Variable Syntax
-
-**Templates (`${...}`) are how data flows through your workflow.**
-
-##### Decision Tree: What Goes Where?
-
-```
-Is this value PROVIDED BY USER when running workflow?
-├─ YES → Declare in "inputs" section
-│        THEN reference as: ${input_name}
-│
-│        Example:
-│        "inputs": {"repo": {...}}
-│        "params": {"repository": "${repo}"}
-│
-└─ NO → Is this value GENERATED BY A NODE?
-    ├─ YES → Reference as: ${node_id.output_key}
-    │        CHECK first: pflow registry describe node-type
-    │
-    │        Example:
-    │        "params": {"content": "${read.content}"}
-    │
-    └─ NO → It's a STATIC VALUE
-            Use literal value (no template)
-
-            Example:
-            "params": {"encoding": "utf-8"}
-```
-
-##### Common Template Patterns
-
+#### All Template Patterns
 ```json
 {
   "params": {
-    "file_path": "${input_file}",           // Workflow input
-    "content": "${read.content}",           // Node output (simple)
-    "nested": "${fetch.result.data}",       // Nested object access
-    "array": "${items.result[0].name}",     // Array indexing
-    "hardcoded": "utf-8"                    // Static value (no template)
+    // Simple references
+    "basic_input": "${username}",
+    "basic_output": "${fetch.response}",
+
+    // Nested object access
+    "nested": "${fetch.data.user.email}",
+
+    // Array access
+    "first_item": "${fetch.items[0]}",
+    "specific_field": "${fetch.items[0].name}",
+    "last_item": "${fetch.items[-1]}",
+
+    // Multiple templates in one string
+    "combined": "User ${username} data: ${fetch.response}",
+
+    // Complex path
+    "deep": "${fetch.result.data.users[0].profile.settings.email}",
+
+    // In JSON structures
+    "body": {
+      "user": "${username}",
+      "data": "${process.output}",
+      "metadata": {
+        "timestamp": "${get-time.stdout}",
+        "source": "${api_url}"
+      }
+    },
+
+    // In shell commands (be careful with escaping)
+    "command": "echo '${data}' | jq '.items[0:${limit}]'",
+
+    // Direct values (no template)
+    "method": "POST",
+    "static_value": 123
   }
 }
 ```
 
-##### Common Mistakes & Fixes
+#### Debugging Template Errors
 
-❌ **WRONG - Template for hardcoded value:**
-```json
-"params": {"format": "${json}"}  // No 'json' input exists
+**Error: `Template variable '${fetch.result.messages}' not found`**
+
+Debug process:
+```bash
+# 1. Check what's actually available
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch") | .outputs | keys'
+
+# Output might be:
+# ["response", "status", "headers"]
+
+# 2. Explore the structure
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch") | .outputs.response'
+
+# 3. Fix template path
+# Wrong: ${fetch.result.messages}
+# Right: ${fetch.response.data.messages}
 ```
-✅ **CORRECT:**
-```json
-"params": {"format": "json"}  // Static value
-```
 
-❌ **WRONG - Missing template syntax:**
-```json
-"params": {"data": "analyze.response"}  // Missing ${}
-```
-✅ **CORRECT:**
-```json
-"params": {"data": "${analyze.response}"}
-```
-
-❌ **WRONG - User value not declared as input:**
-```json
-"params": {"limit": "${10}"}  // '10' is not an input
-```
-✅ **CORRECT:**
-```json
-"inputs": {"limit": {"type": "number", "default": 10, ...}},
-"params": {"limit": "${limit}"}
-
-#### Workflow Inputs
-
-**Each input MUST be an object with these REQUIRED fields:**
+### Parameter Types - Complete Guide
 
 ```json
-"input_name": {
-  "type": "string | number | boolean | array | object",  // REQUIRED
-  "description": "Clear explanation of what this is",     // REQUIRED
-  "required": true | false                                 // REQUIRED
+{
+  "inputs": {
+    // String - most common
+    "text_input": {
+      "type": "string",
+      "required": true,
+      "description": "Any text value"
+    },
+
+    // Number - integers or floats
+    "count": {
+      "type": "number",
+      "required": false,
+      "default": 10,
+      "description": "Numeric value"
+    },
+
+    // Boolean - true/false
+    "verbose": {
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "Enable verbose output"
+    },
+
+    // Array - list of values
+    "tags": {
+      "type": "array",
+      "required": false,
+      "default": ["default-tag"],
+      "description": "List of tags"
+    },
+
+    // Object - complex structure
+    "config": {
+      "type": "object",
+      "required": false,
+      "default": {"key": "value"},
+      "description": "Configuration object"
+    }
+  }
 }
 ```
 
-**Optional field (only when `required: false`):**
-```json
-"default": "value"  // OPTIONAL: Only when required is false
-```
+## Part 5: Testing, Debugging & Validation
 
-#### Workflow Outputs
+### Precise Testing Decision Matrix
 
-**Each output MUST be an object with these REQUIRED fields:**
+| Node Type | Test? | Why | What to Check |
+|-----------|-------|-----|---------------|
+| MCP nodes | **DEPENDS** | See decision tree above | Actual paths if needed |
+| New HTTP API | **DEPENDS** | Only if extracting fields | Response structure |
+| Complex jq | **ALWAYS** | Verify extraction logic | Does filter work? Correct output? |
+| Shell with pipes | **YES** | Chain might fail | Each pipe stage output |
+| Simple shell | **NO** | Predictable output | - |
+| File read/write | **NO** | Known interface | - |
+| LLM | **NO** | Flexible output | - |
+| Known HTTP | **NO** | Structure documented | - |
 
-```json
-"output_name": {
-  "source": "${node_id.output_key}",              // REQUIRED: Template expression
-  "description": "Clear explanation of this data"  // REQUIRED
-}
-```
+### MCP Meta-Discovery Process
 
-**That's it. Only `source` and `description`. No other fields allowed.**
-
-**When to skip outputs entirely**: Automation workflows (send/update/post) where success is visible through side effects.
-
----
-
-## MCP Meta-Discovery (Do This First)
-
-**Critical for understanding MCP tool capabilities.**
-
-Before testing individual MCP tools, check if the server has helper tools:
+**Before testing individual MCP tools, always check for helpers:**
 
 ```python
-# Search for meta-tools
-registry_search(pattern="servername")
+# 1. Find all tools from a service
+registry_search(pattern="slack")
 
-# Look for meta-tools that help you understand capabilities:
-# - Tools ending in: LIST, GET_SCHEMA, GET_DOCS, GET_EXAMPLES
-# - Tools for exploration: SEARCH, QUERY, BROWSE, DESCRIBE
-```
+# Returns something like:
+# mcp-slack-SEND_MESSAGE
+# mcp-slack-FETCH_HISTORY
+# mcp-slack-LIST_CHANNELS
+# mcp-slack-GET_CHANNEL_INFO  ← Meta tool!
 
-**Common helper tool patterns:**
-- `LIST_SCHEMAS` - Shows available data structures
-- `GET_DOCUMENTATION` - Returns detailed tool docs
-- `LIST_EXAMPLES` - Provides usage examples
-- `DESCRIBE_*` - Explains specific resources
-- `GET_METADATA` - Returns server capabilities
-
-**Example exploration flow:**
-```python
-# 1. Find potential helper tools
-registry_search(pattern="datastore")
-
-# Found: GET_SCHEMA, LIST_TABLES, CREATE_RECORD, QUERY_RECORDS
-
-# 2. Use helper tools to understand before building
-registry_run(node_type="mcp-datastore-LIST_TABLES", parameters={"database_name": "my_database"}, show_structure=True)
-# → Now I understand what tables exist and their structure
-
-# 3. Test unclear tools with realistic data
-registry_run(node_type="mcp-datastore-CREATE_RECORD", parameters={"table": "users", "data": {"name": "test"}}, show_structure=True)
-# → Reveals actual output structure and constraints
-```
-
----
-
-## Testing & Debugging
-
-### Test Individual Nodes (When Needed)
-
-**Test unknown nodes. Skip testing for known patterns.**
-
-#### When to Test (Worth the Time)
-
-✅ **Always test:**
-- MCP nodes (deeply nested outputs)
-- External APIs you haven't used
-- Complex shell+jq extractions
-- Anything returning `Any` type that you need to access
-
-❌ **Skip testing for:**
-- Simple shell commands (`curl`, `echo`, `mkdir`)
-- Known patterns you've used before
-- File operations (read/write)
-- Standard HTTP calls with known responses
-
-#### Smart Testing Workflow
-
-**Step 1: Test with show_structure=True (ALWAYS)**
-```python
-# For MCP nodes - reveals nested structures
+# 2. Use meta tools to understand
 registry_run(
-    node_type="mcp-service-TOOL_NAME",
-    parameters={"param1": "value1"},
+    node_type="mcp-slack-GET_CHANNEL_INFO",
+    parameters={"channel": "general"},
     show_structure=True
 )
 
-# For HTTP nodes - test actual endpoints
+# 3. Now you know the actual structure for that service
+```
+
+### Real MCP Output Structures
+
+**What documentation says vs reality:**
+
+```python
+# Documentation says:
+# Output: result (Any)
+
+# Reality - Slack:
+result.data.messages[].text
+result.data.messages[].user
+result.data.messages[].ts
+result.data.channel.name
+result.data.response_metadata.next_cursor
+
+# Reality - GitHub:
+result.data.items[].title
+result.data.items[].number
+result.data.items[].user.login
+result.data.total_count
+result.data.incomplete_results
+
+# Reality - Google Sheets:
+result.data.values[][]  # 2D array
+result.data.range
+result.data.majorDimension
+result.data.spreadsheetId
+
+# Reality - Generic pattern:
+result.tool_response.output.actual_data
+result.metadata.execution_time
+result.metadata.tool_version
+result.status.success
+```
+
+### Systematic Debugging Process
+
+#### Phase 1: Identify Error Type
+
+```python
+workflow_execute(workflow="path", parameters={})
+# Read the error carefully
+```
+
+**Error patterns and solutions:**
+
+| Error | Immediate Cause | First Check | Solution |
+|-------|----------------|-------------|----------|
+| `KeyError: 'messages'` | Wrong path | Trace file for actual structure | Update template path |
+| `401 Unauthorized` | Bad token | Settings and env vars | Fix credentials |
+| `TypeError: expected string` | Type mismatch | Node output type | Convert or fix source |
+| `Connection refused` | Service down | MCP server running? | Start service |
+| `Rate limit exceeded` | Too many calls | API limits | Add delays or batch |
+| `Template variable not found` | Missing input/output | Inputs and node outputs | Add missing declaration |
+| `jq: parse error` | Invalid JSON | Previous node output | Fix JSON or escape properly |
+
+#### Phase 2: Isolate Problem Node
+
+```python
+# Test the specific failing node
 registry_run(
-    node_type="http",
+    node_type="failing-node-type",
     parameters={
-        "url": "https://api.example.com/endpoint",
-        "method": "POST",
-        "headers": {"Authorization": "Bearer test"}
+        "param": "test_value"
     },
     show_structure=True
 )
+
+# Check its output structure
+print(result)
 ```
 
-**Step 2: Document the actual structure**
-```python
-# What documentation says:
-Output: result (Any) - Tool result
+#### Phase 3: Trace Debugging
 
-# What show_structure=True reveals:
-result.data.response.items[0].content.url  # The actual path!
-result.metadata.status
-result.error_details.message
-```
-
-**Step 3: Update your templates accordingly**
-```json
-// ❌ WRONG - Based on documentation
-"params": {"data": "${fetch.result}"}
-
-// ✅ CORRECT - Based on testing
-"params": {"data": "${fetch.result.data.response.items[0].content.url}"}
-```
-
-#### Critical Testing Patterns
-
-**Pattern 1: MCP Tools Always Have Complex Outputs**
-```python
-# Test reveals:
-result.data.tool_response.nested.deeply.actual_value
-
-# Not just:
-result  # This almost never works
-```
-
-**Pattern 2: External APIs Need Authentication Testing**
-```python
-# Test with real token to verify:
-- Authentication header format
-- Response structure
-- Error messages
-- Rate limits
-```
-
-**Pattern 3: Binary Data Needs Special Handling**
-```python
-# Test file downloads/uploads:
-registry_run(node_type="http", parameters={"url": "image.jpg"}, show_structure=True)
-# Check if response is string, base64, or URL
-```
-
-**Time Investment:**
-- Testing: 30-60 minutes
-- Debugging without testing: 2-4 hours
-- Choice is clear: TEST FIRST
-
-### Execute Workflow
-
-```python
-# Execute workflow from file
-workflow_execute(
-    workflow="~/.pflow/temp-workflows/workflow.json",
-    parameters={
-        "param1": "value",
-        "param2": "value"
-    }
-)
-```
-
-**Note**: Traces are always saved to `~/.pflow/debug/`
-
-### Understanding Template Errors
-
-When you get a template error like `${fetch.messages}` not found:
-
-**1. Check the error output**:
-```
-Available fields in node (showing 5 of 147):
-  - result
-  - status
-  - metadata
-  - timestamp
-  - request_id
-  ... and 15 more (in error details)
-
-📁 Complete field list available in trace file
-   Traces are automatically saved to ~/.pflow/debug/
-```
-
-**2. Use the trace file for complete field list**:
-```python
-# Find the latest trace
+```bash
+# Find latest trace
 ls -lt ~/.pflow/debug/workflow-trace-*.json | head -1
 
-# View all available fields from the failed node
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.events[] | select(.node_id == "fetch") | .shared_after.fetch | keys'
+# View timeline
+cat [trace] | jq '.events[] | {node: .node_id, duration: .duration_ms, error: .error}'
+
+# See what data was available at failure point
+cat [trace] | jq '.nodes[] | select(.id == "failing-node") | .available_inputs'
+
+# Check actual output of previous node
+cat [trace] | jq '.nodes[] | select(.id == "previous-node") | .outputs'
 ```
 
-### Common Validation Errors
+## Part 6: Workflow Patterns
 
-| Error | Solution |
-|-------|----------|
-| "Unknown node type 'X'" | Call `registry_discover(query="task that needs X")` |
-| "Template variable '${X}' not found" | Add `X` to inputs OR verify node output |
-| "Node 'A' references 'B.output' but B hasn't executed yet" | Reorder edges |
-| "Circular dependency detected" | Check edges for loops |
-| "Missing required parameter 'Y' in node 'Z'" | Call `registry_describe(node_types=["Z"])` |
+### Critical Pattern: Extract from Structured Data
 
----
+**This is the most important pattern. Master it completely.**
 
-## Progressive Learning Path
+**Rule**: If you can describe the extraction precisely, use shell+jq. Use LLM only for interpretation.
 
-Start simple, build complexity gradually.
-
-### Level 1: Single Node (5 minutes)
-
-**Goal**: Understand basic workflow structure
-
+**❌ WRONG - Using LLM for structured extraction:**
 ```json
 {
-  "inputs": {
-    "question": {
-      "type": "string",
-      "required": true,
-      "description": "Question to answer"
-    }
-  },
-  "nodes": [
-    {
-      "id": "answer",
-      "type": "llm",
-      "params": {
-        "prompt": "Answer concisely: ${question}"
-      }
-    }
-  ],
-  "outputs": {
-    "response": {
-      "source": "${answer.response}",
-      "description": "AI response"
-    }
-  }
-}
-```
-
-**Try it**:
-```python
-workflow_execute(
-    workflow="~/.pflow/temp-workflows/level1.json",
-    parameters={"question": "What is 2+2?"}
-)
-```
-
-### Level 2: Chain Two Nodes (10 minutes)
-
-**Goal**: Understand data flow between nodes
-
-```json
-{
-  "inputs": {
-    "file_path": {
-      "type": "string",
-      "required": true,
-      "description": "File to summarize"
-    }
-  },
-  "nodes": [
-    {
-      "id": "read",
-      "type": "read-file",
-      "params": {
-        "file_path": "${file_path}"
-      }
-    },
-    {
-      "id": "summarize",
-      "type": "llm",
-      "params": {
-        "prompt": "Summarize in 3 points:\n\n${read.content}"
-      }
-    }
-  ],
-  "edges": [
-    {"from": "read", "to": "summarize"}
-  ],
-  "outputs": {
-    "summary": {
-      "source": "${summarize.response}",
-      "description": "File summary"
-    }
-  }
-}
-```
-
-**Try it**:
-```python
-workflow_execute(
-    workflow="~/.pflow/temp-workflows/level2.json",
-    parameters={"file_path": "README.md"}
-)
-```
-
-### Level 3: Multi-Step Pipeline (20 minutes)
-
-**Goal**: Coordinate multiple operations
-
-```json
-{
-  "inputs": {
-    "api_url": {
-      "type": "string",
-      "required": true,
-      "description": "API endpoint"
-    },
-    "output_file": {
-      "type": "string",
-      "required": false,
-      "default": "analysis.md",
-      "description": "Output file path"
-    }
-  },
-  "nodes": [
-    {
-      "id": "fetch",
-      "type": "http",
-      "params": {
-        "url": "${api_url}",
-        "method": "GET"
-      }
-    },
-    {
-      "id": "analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "Extract key insights from:\n\n${fetch.response}"
-      }
-    },
-    {
-      "id": "save",
-      "type": "write-file",
-      "params": {
-        "file_path": "${output_file}",
-        "content": "# API Analysis\n\n${analyze.response}\n\nSource: ${api_url}"
-      }
-    }
-  ],
-  "edges": [
-    {"from": "fetch", "to": "analyze"},
-    {"from": "analyze", "to": "save"}
-  ],
-  "outputs": {
-    "file": {
-      "source": "${save.file_path}",
-      "description": "Analysis file location"
-    }
-  }
-}
-```
-
-**What you learn**: Templates, optional inputs, multi-step flows
-
-### Level 4: Production Workflow (30 minutes)
-
-See [Complete Example](#complete-example-slack-qa-bot) for a full production workflow.
-
-### Level 5: Real-World Complexity (Reality Check)
-
-**Most real workflows have 15-30 nodes. This is NORMAL.**
-
-#### Example: Multi-Service Integration Workflow
-
-```json
-{
-  "nodes": [
-    {"id": "fetch-data", "type": "..."},        // Node 1
-    {"id": "validate", "type": "..."},          // Node 2
-    {"id": "transform", "type": "..."},         // Node 3
-    {"id": "call-api-1", "type": "..."},        // Node 4
-    {"id": "wait-for-api-1", "type": "..."},    // Node 5
-    {"id": "call-api-2", "type": "..."},        // Node 6
-    {"id": "process-response", "type": "..."},  // Node 7
-    {"id": "generate-file-1", "type": "..."},   // Node 8
-    {"id": "generate-file-2", "type": "..."},   // Node 9
-    {"id": "generate-file-3", "type": "..."},   // Node 10
-    {"id": "save-file-1", "type": "..."},       // Node 11
-    {"id": "save-file-2", "type": "..."},       // Node 12
-    {"id": "save-file-3", "type": "..."},       // Node 13
-    {"id": "upload-results", "type": "..."},    // Node 14
-    {"id": "notify-completion", "type": "..."}  // Node 15+
-    // ... potentially more nodes
-  ],
-  "edges": [
-    // Sequential chain - everything must execute in order
-    {"from": "fetch-data", "to": "validate"},
-    {"from": "validate", "to": "transform"},
-    // ... all connections
-  ]
-}
-```
-
-#### Complexity Reality Checks
-
-**What Makes Workflows Complex:**
-- Each external API call needs 2-3 nodes (call, poll, process)
-- Each file operation needs its own node
-- Data transformations each need nodes
-- NO parallel execution - everything sequential
-
-**Time Expectations:**
-- Simple workflow (3-5 nodes): 10-30 seconds
-- Medium workflow (10-15 nodes): 1-2 minutes
-- Complex workflow (20+ nodes): 3-5 minutes
-- With external APIs: Add 30-60 seconds per API
-
-**This is NOT a bug or poor design:**
-- Sequential execution ensures predictability
-- Each node has single responsibility
-- Easier to debug when things fail
-- Trade-off: simplicity over speed
-
----
-
-## Common Workflow Patterns
-
-### Pattern 0: Extract from Structured Data (CRITICAL PATTERN)
-
-**❌ WRONG - Using LLM for extraction:**
-```json
-{
-  "id": "extract-data",
+  "id": "extract-price",
   "type": "llm",
   "params": {
-    "prompt": "Extract the value from the data: ${source.result}"
+    "prompt": "Extract the price from this JSON: ${data}"
   }
 }
 ```
@@ -1611,759 +1431,372 @@ See [Complete Example](#complete-example-slack-qa-bot) for a full production wor
 **✅ CORRECT - Using shell+jq:**
 ```json
 {
-  "id": "extract-value",
+  "id": "extract-price",
   "type": "shell",
   "params": {
-    "stdin": "${source.result}",
-    "command": "jq -r '.data[] | select(.field != null) | .desired_field'"  # Adapt to your data structure
+    "stdin": "${data}",
+    "command": "jq -r '.items[0].pricing.amount'"
   }
 }
 ```
 
-**Why shell+jq is superior:**
-- Deterministic (same input = same output)
-- Free (no LLM tokens)
-- Instant (no API latency)
-- Precise (no hallucination)
-- Can handle complex logic (select, filter, map)
+### Pattern: Multi-Stage Data Pipeline
 
-### Pattern 1: Fetch → Transform → Store
-
-```
-[Data Source] → [LLM/Processing] → [Data Sink]
-```
-
-**Example**: Read file → Analyze → Write summary
+**Use case**: Fetch → Validate → Transform → Enrich → Deliver
 
 ```json
 {
-  "inputs": {
-    "input_file": {
-      "type": "string",
-      "required": true,
-      "description": "File to analyze"
-    }
-  },
   "nodes": [
     {
-      "id": "read",
-      "type": "read-file",
+      "id": "fetch-raw",
+      "type": "http",
+      "purpose": "Get raw data from API",
+      "params": {"url": "${source_url}"}
+    },
+    {
+      "id": "validate-structure",
+      "type": "shell",
+      "purpose": "Ensure data has required fields",
       "params": {
-        "file_path": "${input_file}"
+        "stdin": "${fetch-raw.response}",
+        "command": "jq 'if has(\"items\") and has(\"metadata\") then . else error(\"Invalid structure\") end'"
       }
     },
     {
-      "id": "analyze",
+      "id": "transform-data",
+      "type": "shell",
+      "purpose": "Reshape to our format",
+      "params": {
+        "stdin": "${validate-structure.stdout}",
+        "command": "jq '[.items[] | {id: .id, name: .title, value: .metrics.current}]'"
+      }
+    },
+    {
+      "id": "enrich-with-analysis",
       "type": "llm",
+      "purpose": "Add insights to data",
       "params": {
-        "prompt": "Summarize this content in 3 bullet points:\n\n${read.content}"
+        "prompt": "Analyze these metrics and add insights:\n${transform-data.stdout}\n\nFor each item add: trend, risk_level, recommendation"
       }
     },
     {
-      "id": "save",
+      "id": "format-for-delivery",
+      "type": "llm",
+      "purpose": "Format for final output",
+      "params": {
+        "prompt": "Format this data as a markdown report:\n${enrich-with-analysis.response}\n\nInclude: summary, table, recommendations"
+      }
+    },
+    {
+      "id": "deliver",
       "type": "write-file",
       "params": {
-        "file_path": "summary.md",
-        "content": "# Summary\n\n${analyze.response}"
+        "file_path": "${output_path}",
+        "content": "${format-for-delivery.response}"
       }
     }
-  ],
-  "edges": [
-    {"from": "read", "to": "analyze"},
-    {"from": "analyze", "to": "save"}
-  ],
-  "outputs": {
-    "summary_path": {
-      "source": "${save.file_path}",
-      "description": "Path to saved summary"
-    }
-  }
-}
-```
-
-### Pattern 2: Multi-Source → Combine → Process
-
-```
-[Source A] ──┐
-             ├─→ [LLM Combines] → [Process]
-[Source B] ──┘
-```
-
-**Example**: Fetch GitHub PR + issues → Analyze together → Generate report
-
-```json
-{
-  "inputs": {
-    "repo": {
-      "type": "string",
-      "required": true,
-      "description": "Repository (owner/name)"
-    },
-    "pr_number": {
-      "type": "number",
-      "required": true,
-      "description": "PR number to analyze"
-    }
-  },
-  "nodes": [
-    {
-      "id": "get-pr",
-      "type": "mcp-github-get-pr",
-      "params": {
-        "repo": "${repo}",
-        "number": "${pr_number}"
-      }
-    },
-    {
-      "id": "get-issues",
-      "type": "mcp-github-list-issues",
-      "params": {
-        "repo": "${repo}",
-        "state": "open"
-      }
-    },
-    {
-      "id": "analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "PR:\n${get-pr.result}\n\nOpen Issues:\n${get-issues.result}\n\nIdentify which issues this PR might resolve."
-      }
-    }
-  ],
-  "edges": [
-    {"from": "get-pr", "to": "get-issues"},
-    {"from": "get-issues", "to": "analyze"}
-  ],
-  "outputs": {
-    "analysis": {
-      "source": "${analyze.response}",
-      "description": "PR impact analysis"
-    }
-  }
-}
-```
-
-### Pattern 3: Enrich → Process → Store
-
-```
-[Base Data] → [Enrich with Context] → [Process] → [Store]
-```
-
-**Example**: Get issue → Fetch related PRs → Analyze → Update issue
-
-```json
-{
-  "inputs": {
-    "repo": {
-      "type": "string",
-      "required": true,
-      "description": "Repository (owner/name)"
-    },
-    "issue_number": {
-      "type": "number",
-      "required": true,
-      "description": "Issue to analyze"
-    }
-  },
-  "nodes": [
-    {
-      "id": "get-issue",
-      "type": "mcp-github-get-issue",
-      "params": {
-        "repo": "${repo}",
-        "number": "${issue_number}"
-      }
-    },
-    {
-      "id": "get-prs",
-      "type": "mcp-github-list-prs",
-      "params": {
-        "repo": "${repo}",
-        "state": "open"
-      }
-    },
-    {
-      "id": "analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "Issue:\n${get-issue.result}\n\nOpen PRs:\n${get-prs.result}\n\nWhich PRs might fix this issue?"
-      }
-    },
-    {
-      "id": "update",
-      "type": "mcp-github-comment-issue",
-      "params": {
-        "repo": "${repo}",
-        "number": "${issue_number}",
-        "body": "Analysis:\n${analyze.response}"
-      }
-    }
-  ],
-  "edges": [
-    {"from": "get-issue", "to": "get-prs"},
-    {"from": "get-prs", "to": "analyze"},
-    {"from": "analyze", "to": "update"}
   ]
 }
-
----
-
-## Workflow Naming Conventions
-
-**Format**: verb-noun-target
-- Examples: `analyze-github-prs`, `slack-qa-bot`, `process-invoices`
-- Max 30 characters, lowercase, hyphens only
-- Be specific: `slack-qa-bot` > `message-processor`
-
----
-
-## Common Mistakes
-
-### ❌ Mistake 1: Skipping Workflow Discovery
-**Fix**: ALWAYS call `workflow_discover(query="...")` first (Step 2)
-
-### ❌ Mistake 2: Not Checking Node Output Structure
-**Fix**: Call `registry_describe(node_types=["node-type"])` BEFORE writing templates
-
-### ❌ Mistake 3: Building Everything at Once
-**Fix**: Build 2 nodes → validate → add 1 more → validate → repeat
-
-### ❌ Mistake 4: Using `inputs` Instead of `params`
-**Fix**: Node configuration uses `params`, not `inputs`!
-
-### ❌ Mistake 5: Over-Specifying Node Parameters
-**Fix**: Only set parameters user explicitly requests or workflow logic requires
-
-### ❌ Mistake 6: Too Many Nodes
-**Fix**: LLM nodes can consolidate multiple operations. Each node adds overhead.
-
-### ❌ Mistake 7: Investigating Every `result: Any`
-**Fix**: Only investigate when templates need nested paths!
-
----
-
-## When NOT to Build a Workflow
-
-**🛑 Recognize when pflow is the wrong tool:**
-
-### Requires Conditional Logic
-**User wants**: "If PR is approved, merge it, otherwise request review"
-**Problem**: No branching in pflow
-**Alternative**: Build two workflows or use external automation
-
-### Needs Loops or Iteration
-**User wants**: "Process each file in directory differently"
-**Problem**: No loops in pflow
-**Alternative**: Use shell script or batch processing
-
-### Requires State Persistence
-**User wants**: "Track progress and resume if interrupted"
-**Problem**: Workflows are stateless
-**Alternative**: Use database or file-based state tracking
-
-### Needs User Interaction
-**User wants**: "Ask user for confirmation before proceeding"
-**Problem**: No interactive prompts
-**Alternative**: Split into multiple workflows
-
-### Real-Time Requirements
-**User wants**: "Respond within 100ms"
-**Problem**: LLM nodes add latency
-**Alternative**: Use direct API calls without LLM
-
-**Response Template**:
-"This requires [feature] which pflow doesn't support. I can either:
-1. Build a simplified version that [workaround]
-2. Suggest an alternative approach using [tool]
-Which would you prefer?"
-
----
-
-## Debugging Playbook
-
-**When validation passes but execution fails:**
-
-### Step 1: Check the Error Type
-
-```python
-# Run workflow to capture error context
-workflow_execute(workflow="~/.pflow/temp-workflows/workflow.json", parameters={})
 ```
 
-| Error Pattern | Likely Cause | Fix |
-|--------------|-------------|-----|
-| `KeyError: 'result'` | Node output structure different than expected | Check trace file for actual structure |
-| `401 Unauthorized` | Missing/invalid credentials | Check settings.json or environment variables |
-| `TypeError: expected string` | Wrong data type in template | Verify node output types with registry describe |
-| `Connection refused` | Service not running | Start required MCP servers |
-| `Rate limit exceeded` | Too many API calls | Add delays or reduce batch size |
+### Pattern: Service Orchestration with Formatting
 
-### Step 2: Isolate the Failing Node
-
-```python
-# Test just the failing node
-registry_run(node_type="<node-type>", parameters={"param1": "value"}, show_structure=True)
-
-# If it works alone, check data flow
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id=="failing-node")'
-```
-
----
-
-## Real Request Parsing
-
-**How to handle ambiguous user requests:**
-
-### Ambiguous Quantities
-**User says**: "Get recent messages from Slack"
-```
-❌ DON'T: Guess that "recent" means 10
-✅ DO: Make it an input with sensible default
-"limit": {"default": 10, "description": "Number of recent messages"}
-```
-
-### Unclear Targets
-**User says**: "Send the report"
-```
-❌ DON'T: Hardcode a destination
-✅ DO: Ask for clarification
-"Where should I send the report? (email, Slack, file, etc.)"
-```
-
-### Missing Context
-**User says**: "Analyze the data"
-```
-❌ DON'T: Assume what data
-✅ DO: Identify what's missing
-"What data should I analyze? Please specify the source."
-```
-
-### Conflicting Requirements
-**User says**: "Make it fast but check everything thoroughly"
-```
-✅ DO: Explain the tradeoff
-"I can optimize for speed OR thoroughness. Which is more important?"
-```
-
-### Implicit Expectations
-**User says**: "Process our customer data" (implies security)
-```
-✅ DO: Surface hidden requirements
-"This involves customer data. Should I include any special security measures?"
-```
-
-**The Clarification Template**:
-```
-I need to clarify a few things:
-1. When you say [ambiguous term], do you mean [option A] or [option B]?
-2. For [missing piece], what should I use?
-3. Should I [implicit requirement]?
-```
-
----
-
-## MCP and HTTP Tool Reality Check
-
-**Tools often don't work as documented. Here's how to handle it:**
-
-### Before Building: Test Everything
-```python
-# 1. Warn users before making tool calls that might be destructive or make dangerous side effects.
-# 2. Always test with actual data first if not a very simple tool.
-registry_run(node_type="mcp-tool", parameters={"param": "value"}, show_structure=True)
-
-# 3. Verify that the tool works with the current inputs
-# Debugging each tool call individually reduces complexity and the time to find the issue.
-```
-
-### Common MCP Quirks & Workarounds
-
-| Tool Says | Reality | Workaround |
-|-----------|---------|------------|
-| "Returns array" | Returns object with array inside | Use `${result.items}` not `${result}` |
-| "Optional parameter" | Actually required | Always provide it |
-| "Accepts string" | Needs specific format | Test formats, document what works |
-| "Any type" | Has hidden structure | Use `show_structure=True` to discover |
-| "Returns result" | Returns nested response.data.result | Trace actual path |
-
-### When Documentation is Wrong
-
-Document what ACTUALLY works in `~/.pflow/temp-workflows/docs/<workflow-name>.md`
-
----
-
-## When Stuck (Decision Tree)
-
-```
-Template error?
-├─ Yes → Check trace file (Understanding Template Errors)
-└─ No → Validation error?
-    ├─ Yes → See Common Validation Errors
-    └─ No → Execution error?
-        ├─ Yes → Use Debugging Playbook
-        └─ No → Discovery failed?
-            ├─ Yes → Try manual discovery tools
-            └─ No → Ask user for clarification
-```
-
----
-
-## Quick Reference
-
-### Decision Table: What Becomes an Input?
-
-| User Says | You Create | Why |
-|-----------|------------|-----|
-| "file.txt" | `input: file_path` | They'll use different files |
-| "channel ABC123" | `input: channel` | Different channels later |
-| "last 10 items" | `input: limit` (default: 10) | Might want 20 tomorrow |
-| "song about cats" | `input: subject` (default: "cats") | Could be dogs, space, friendship, etc. |
-| "always use prod" | Hardcode: "prod" | Explicitly said "always" |
-
-### Tools Cheat Sheet
-
-```python
-# Discovery - ALWAYS use AI-powered discovery first
-workflow_discover(query="user's request")                # Find existing workflows
-registry_discover(query="what you need to build")        # Find nodes for building
-workflow_list(filter="[filter]")
-
-# Development
-workflow_validate(workflow="~/.pflow/temp-workflows/workflow.json")    # Validate structure
-
-# Saving
-workflow_save(workflow="~/.pflow/temp-workflows/workflow.json", name="name", description="desc")  # Save to library
-
-# Execution
-workflow_execute(workflow="~/.pflow/temp-workflows/workflow.json", parameters={"param": "value"})  # Run from file
-workflow_execute(workflow="saved-workflow", parameters={"param": "value"})                   # Run from library
-```
-
-### Template Syntax
-
-- `${input_name}` - Workflow input
-- `${node.output}` - Node output
-- `${node.data.field}` - Nested field
-- `${items[0].name}` - Array access
-
----
-
-## Complete Example: Slack Q&A Bot
-
-Let's build a complete workflow from user request to saved, reusable tool.
-
-### User Request
-"I need to fetch the last 15 messages from Slack channel C09C16NAU5B, extract Q&A pairs, and log them to Google Sheets ID abc123xyz"
-
-### Step 1: UNDERSTAND
-```
-Inputs needed:
-- channel: C09C16NAU5B → Make it an input
-- limit: 15 → Make it an input with default
-- sheet_id: abc123xyz → Make it an input
-
-Pattern: Multi-Service Coordination
-```
-
-### Step 2: DISCOVER WORKFLOWS
-```python
-workflow_discover(query="fetch slack messages extract Q&A log to sheets")
-# Result: No 80%+ matches, building new
-```
-
-### Step 3: DISCOVER NODES
-```python
-registry_discover(query="fetch Slack messages, extract Q&A with AI, append to Google Sheets")
-# Found: mcp-slack-fetch, llm, mcp-sheets-append
-```
-
-### Step 4: DESIGN
-```
-fetch-messages (mcp-slack-fetch) → channel, limit
-     ↓
-extract-qa (llm) → prompt with messages
-     ↓
-log-to-sheets (mcp-sheets-append) → sheet_id, values
-```
-
-### Step 5: PLAN & CONFIRM
-"I'll create a workflow that:
-1. Fetches messages from Slack channel
-2. Extracts Q&A pairs using AI
-3. Logs results to Google Sheets
-
-Inputs: channel, limit, sheet_id
-Pattern: Multi-Service Coordination
-
-Confirm?"
-
-### Step 6: BUILD
+**Use case**: Multiple services with human-readable output
 
 ```json
 {
-  "inputs": {
-    "channel": {
-      "type": "string",
-      "required": true,
-      "description": "Slack channel ID to fetch messages from"
-    },
-    "limit": {
-      "type": "number",
-      "required": false,
-      "default": 15,
-      "description": "Number of messages to fetch"
-    },
-    "sheet_id": {
-      "type": "string",
-      "required": true,
-      "description": "Google Sheets ID for logging"
-    }
-  },
   "nodes": [
     {
-      "id": "fetch-messages",
-      "type": "mcp-slack-fetch",
-      "purpose": "Fetch recent messages from the specified Slack channel",
+      "id": "fetch-service1",
+      "type": "mcp-service1-GET_DATA",
+      "params": {"resource": "${resource_id}"}
+    },
+    {
+      "id": "fetch-service2",
+      "type": "mcp-service2-LIST_ITEMS",
+      "params": {"filter": "${filter_criteria}"}
+    },
+    {
+      "id": "combine-data",
+      "type": "llm",
+      "purpose": "Merge data from multiple sources",
+      "params": {
+        "prompt": "Combine this data:\n\nService1: ${fetch-service1.result}\n\nService2: ${fetch-service2.result}\n\nCreate unified dataset with cross-references"
+      }
+    },
+    {
+      "id": "format-for-display",
+      "type": "llm",
+      "purpose": "Create human-readable output",
+      "params": {
+        "prompt": "Format this data for display in Slack:\n${combine-data.response}\n\nUse markdown, emoji, and clear sections"
+      }
+    },
+    {
+      "id": "send-formatted",
+      "type": "mcp-slack-SEND",
       "params": {
         "channel": "${channel}",
-        "limit": "${limit}"
+        "text": "${format-for-display.response}"
       }
+    }
+  ]
+}
+```
+
+### Pattern: Batch Processing with Aggregation
+
+```json
+{
+  "nodes": [
+    {
+      "id": "fetch-batch",
+      "type": "http",
+      "purpose": "Get all items to process",
+      "params": {"url": "${batch_url}"}
     },
     {
-      "id": "extract-qa",
+      "id": "process-all",
       "type": "llm",
-      "purpose": "Extract Q&A pairs from the messages using AI",
+      "purpose": "Process entire batch at once",
       "params": {
-        "prompt": "Extract Q&A pairs from these Slack messages. Format as:\nQ: [question]\nA: [answer]\n\nMessages:\n${fetch-messages.result}"
+        "prompt": "Process each item in this batch:\n${fetch-batch.response}\n\nFor each item:\n1. Validate data\n2. Calculate metrics\n3. Generate summary\n\nReturn as JSON array"
       }
     },
     {
-      "id": "log-to-sheets",
-      "type": "mcp-sheets-append",
-      "purpose": "Log the extracted Q&A pairs to Google Sheets",
+      "id": "aggregate-results",
+      "type": "shell",
+      "purpose": "Calculate batch statistics",
       "params": {
-        "sheet_id": "${sheet_id}",
-        "values": [
-          ["${extract-qa.response}"]
-        ]
+        "stdin": "${process-all.response}",
+        "command": "jq '{total: length, successful: [.[] | select(.status == \"success\")] | length, failed: [.[] | select(.status == \"failed\")] | length, avg_score: [.[].score] | add/length}'"
       }
     }
-  ],
-  "edges": [
-    {"from": "fetch-messages", "to": "extract-qa"},
-    {"from": "extract-qa", "to": "log-to-sheets"}
-  ],
-  "outputs": {
-    "qa_pairs": {
-      "source": "${extract-qa.response}",
-      "description": "Extracted Q&A pairs"
-    },
-    "sheet_update": {
-      "source": "${log-to-sheets.result}",
-      "description": "Sheets update confirmation"
-    }
+  ]
+}
+```
+
+## Part 7: Reality Checks & Troubleshooting
+
+### Common Mistakes - Detailed Solutions
+
+#### 1. Skipping workflow_discover()
+**Impact**: Rebuild existing workflow (30-60 min wasted)
+**Fix**: ALWAYS run first, even if user says "create new"
+**Check**: First line of your response should reference discovery
+
+#### 2. Not testing MCP outputs
+**Impact**: Wrong template paths, failed execution
+**Fix**: ALWAYS use `show_structure=True` for MCP
+**Example**:
+```python
+# Wrong assumption
+"${slack.messages}"  # Doesn't exist
+
+# After testing
+"${slack.result.data.messages}"  # Correct path
+```
+
+#### 3. Building everything at once
+**Impact**: Debug 20+ nodes simultaneously
+**Fix**: Build in phases, test each phase
+**Phases**: Core path → External services → Processing → Output
+
+#### 4. Using wrong parameter name
+**Impact**: Validation errors
+**Fix**: Use `params` not `inputs` for nodes
+```json
+// ❌ Wrong
+{"id": "x", "inputs": {...}}
+
+// ✅ Correct
+{"id": "x", "params": {...}}
+```
+
+#### 5. Over-specifying parameters
+**Impact**: Brittle workflows
+**Fix**: Only set what user specified or is required
+**Example**: Don't set `temperature` unless user mentioned it
+
+#### 6. Wrong tool for task
+**Impact**: Expensive, slow, unreliable
+**Fix**: shell+jq for structure, LLM for meaning
+**Example**: Extract field with jq, interpret with LLM
+
+#### 7. Missing format step
+**Impact**: Raw JSON in user-facing outputs
+**Fix**: Add formatting node before delivery
+```json
+{
+  "id": "format-output",
+  "type": "llm",
+  "params": {
+    "prompt": "Format this data for Slack with markdown:\n${data}"
   }
 }
 ```
 
-### Step 7: VALIDATE
+### Real Request Parsing - Handling Ambiguity
+
+**When user says vague things, make them precise:**
+
+| User Says | Ambiguity | Clarification Approach |
+|-----------|-----------|------------------------|
+| "recent messages" | How many is recent? | Make input with default: `"limit": {"default": 10}` |
+| "process the data" | What data? What processing? | Ask: "What's the data source? What processing do you need?" |
+| "send notification" | Where? To whom? | Ask: "Where should notifications go? (email, Slack, etc.)" |
+| "fast processing" | How fast? At what cost? | Explain tradeoff: "I can optimize for speed or thoroughness" |
+| "handle errors" | How to handle? | Explain: "Workflows can't branch. I can log errors or stop execution" |
+
+**Template for clarification:**
+```
+I need to clarify a few details:
+
+1. When you say "[ambiguous term]", do you mean:
+   □ [Option A with example]
+   □ [Option B with example]
+   □ Something else?
+
+2. For [missing detail], what should I use:
+   □ [Suggested default]
+   □ [Alternative]
+   □ Your specific value?
+
+3. Should the workflow [implicit assumption]:
+   □ Yes, always
+   □ No, never
+   □ Make it configurable?
+```
+
+### MCP/HTTP Reality vs Documentation
+
+**Documentation lies. Testing reveals truth.**
+
+| What Docs Say | What You Get | How to Handle |
+|---------------|--------------|---------------|
+| `result: Any` | `result.data.tool_response.nested.deeply.value` | Always test with show_structure |
+| "Optional parameter" | Actually required or fails | Always provide it |
+| "Returns array" | `{"items": [...], "metadata": {...}}` | Access via `.items` |
+| "String parameter" | Needs specific format | Test with examples |
+| "Async endpoint" | Might support Prefer:wait | Try header first |
+| "Returns immediately" | Actually takes 5-10 seconds | Add timeout handling |
+
+### Workflow Smells (Code Smells for Workflows)
+
+**Red flags indicating poor design:**
+
+| Smell | Problem | Fix |
+|-------|---------|-----|
+| No inputs | Not reusable | Extract all values as inputs |
+| 30+ nodes | Too complex | Break into multiple workflows |
+| Repetitive nodes | Inefficient | Consolidate operations |
+| LLM for extraction | Expensive & unreliable | Use shell+jq |
+| Hardcoded credentials | Security risk | Use inputs + settings |
+| No output formatting | Poor UX | Add format step |
+| Generic names | Hard to discover | Use descriptive names |
+| No purpose fields | Hard to understand | Add purpose to every node |
+
+### Reality vs Documentation Summary
+
+**The harsh truths about workflow building:**
+
+| Topic | Documentation Says | Reality | Action |
+|-------|-------------------|---------|--------|
+| Workflow size | "3-5 nodes typical" | 15-30 nodes common | Build in phases |
+| MCP outputs | "result" | 3-5 levels nested | Always test structure |
+| Execution time | "Quick" | 3-5 min for complex | Set expectations |
+| Template paths | "Simple" | Complex nesting | Test and document |
+| Error handling | "Automatic" | Need explicit checks | Add validation nodes |
+| Settings | "Available" | Must declare as inputs | Always add to inputs |
+| Node discovery | "Finds all" | Might miss some | Try different queries |
+| Async ops | "Need polling" | Prefer:wait often works | Try header first |
+
+## Part 8: Quick Reference
+
+### Command Cheat Sheet
+
 ```python
-workflow_validate(workflow="~/.pflow/temp-workflows/slack-qa.json")
-# ✓ All validations passed!
+# Discovery & Research
+workflow_discover(query="complete user request")     # Find existing workflows
+registry_discover(task="all operations needed")      # Find nodes for building
+registry_describe(nodes=["node1", "node2"])         # Get node specifications
+registry_search(pattern="service")                   # Search by keyword
+registry_list()                                      # List all available nodes
+
+# Testing & Debugging
+registry_run(node_type="node", parameters={}, show_structure=True)  # Test node
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.'   # Inspect trace
+
+# Workflow Operations
+workflow_validate(workflow="path/to/workflow.json")  # Check structure
+workflow_execute(workflow="path", parameters={})     # Run workflow
+workflow_save(workflow="path", name="name", description="desc", generate_metadata=True)
+
+# Settings & Auth
+pflow settings set-env KEY_NAME "value"             # Store credential
+pflow settings show                                 # View settings
+llm keys set provider                               # Set LLM keys
 ```
 
-### Step 8: TEST
-```python
-workflow_execute(
-    workflow="~/.pflow/temp-workflows/slack-qa.json",
-    parameters={
-        "channel": "C09C16NAU5B",
-        "limit": 15,
-        "sheet_id": "abc123xyz"
-    }
-)
-# ✓ Workflow executed successfully!
+### Template Variable Quick Reference
+
+```
+${input_name}                 # Workflow input
+${node_id.output}            # Basic node output
+${node_id.field.subfield}    # Nested object
+${node_id.array[0]}          # Array index
+${node_id.array[0].field}    # Array element field
+${previous.result.data}      # Can skip nodes
+"literal_value"              # No template needed
 ```
 
-### Step 9: REFINE
-- Improved prompt for better Q&A extraction
-- Added timestamp to sheet logging
-- Enhanced descriptions
+### Decision Quick Reference
 
-### Step 10: SAVE
-```python
-workflow_save(workflow="~/.pflow/temp-workflows/slack-qa.json", name="slack-qa-bot", description="Extracts Q&A pairs from Slack and logs to Google Sheets")
+**What becomes an input?**
+```
+User specified it? → YES → Input (unless "always/only")
+System constraint? → YES → Hardcode
+Would users configure? → YES → Input with default
+Otherwise → Hardcode
 ```
 
-### Final: User can now run
-```python
-# With their original values:
-workflow_execute(
-    workflow="slack-qa-bot",
-    parameters={
-        "channel": "C09C16NAU5B",
-        "limit": 15,
-        "sheet_id": "abc123xyz"
-    }
-)
-
-# Or with different values:
-workflow_execute(
-    workflow="slack-qa-bot",
-    parameters={
-        "channel": "D456DEF",
-        "limit": 50,
-        "sheet_id": "xyz789"
-    }
-)
+**When to test?**
 ```
+Need specific nested fields? → Test with show_structure
+Passing whole result? → Skip testing
+Complex extraction? → Test
+Simple operations? → Skip
+```
+
+**Which tool to use?**
+```
+Structured data? → shell+jq
+Need meaning? → LLM
+File download? → shell+curl
+JSON API? → http node
+Service-specific? → MCP node
+```
+
+### Workflow Naming Convention
+
+Format: `verb-noun-qualifier`
+- Examples: `fetch-api-data`, `process-csv-files`, `analyze-github-prs`
+- Max 30 chars, lowercase, hyphens only
+- Specific enough to find, generic enough to reuse
+
+### Key Success Factors
+
+1. **Always run workflow_discover() first** - No exceptions
+2. **Understand edges vs templates** - Execution order vs data access
+3. **Test MCP nodes always** - Output is never simple
+4. **Phase complex workflows** - Build incrementally
+5. **Use shell+jq for structure** - LLM only for meaning
+6. **Every value becomes input** - Unless explicitly "always"
+7. **Format user-facing output** - Never show raw JSON
+8. **Document actual structures** - Not what docs claim
+9. **Handle auth properly** - Inputs + settings
+10. **Build general from specific** - One example → universal tool
 
 ---
 
-## Workflow Smells
-
-**🚩 Red flags that indicate poor workflow design:**
-
-### No Inputs Section
-```json
-// ❌ BAD - Not reusable
-{"nodes": [...], "edges": [...]}
-```
-**Fix**: Extract all user values as inputs
-
-### Hardcoded Values
-```json
-// ❌ BAD - Only works for one channel
-"params": {"channel": "C09C16NAU5B"}
-```
-**Fix**: Make it an input: `"channel": "${channel}"`
-
-### Over-Specific Input Names
-```json
-// ❌ BAD - Too specific
-"inputs": {"slack_channel_C123": {...}}
-```
-**Fix**: Generic name: `"channel": {...}`
-
-### Too Many Required Inputs
-```json
-// ❌ BAD - Everything required
-"required": true, "required": true, "required": true
-```
-**Fix**: Add sensible defaults where possible
-
-### Exposing Raw MCP Results
-```json
-// ❌ BAD - Too verbose
-"outputs": {"data": {"source": "${fetch.result}"}}
-```
-**Fix**: Extract specific fields users need
-
----
-
-## Input Extraction Examples
-
-**Learn to extract inputs from user requests:**
-
-### Example 1: File Operations
-**User says**: "Convert data.csv to JSON format"
-```json
-"inputs": {
-  "input_file": {
-    "type": "string",
-    "required": true,
-    "description": "CSV file to convert"
-  },
-  "output_format": {
-    "type": "string",
-    "required": false,
-    "default": "json",
-    "description": "Output format"
-  }
-}
-```
-**Why**: Tomorrow they'll convert "report.csv" or want XML
-
-### Example 2: API Monitoring
-**User says**: "Alert when response time exceeds 500ms for api.example.com"
-```json
-"inputs": {
-  "api_url": {
-    "type": "string",
-    "required": true,
-    "description": "API endpoint to monitor"
-  },
-  "threshold_ms": {
-    "type": "number",
-    "required": false,
-    "default": 500,
-    "description": "Response time threshold in milliseconds"
-  }
-}
-```
-**Why**: Different APIs, different thresholds
-
-### Example 3: Data Processing
-**User says**: "Process last 30 GitHub issues with priority labels"
-```json
-"inputs": {
-  "repo": {
-    "type": "string",
-    "required": true,
-    "description": "Repository (owner/name format)"
-  },
-  "issue_count": {
-    "type": "number",
-    "required": false,
-    "default": 30,
-    "description": "Number of issues to process"
-  },
-  "labels": {
-    "type": "string",
-    "required": false,
-    "default": "priority",
-    "description": "Label filter"
-  }
-}
-```
-**Why**: Reusable for any repo, count, or label
-
----
-
-## Reality vs Documentation Quick Reference
-
-**What the docs suggest vs what actually happens:**
-
-| Documentation Says | Reality | Action Required |
-|-------------------|---------|-----------------|
-| "Test nodes" (helpful) | Test unknown nodes only | Skip testing known patterns |
-| `${result}` | `${result.data.nested.deeply.field}` | Test MCP nodes |
-| 3-5 nodes typical | 15-30 nodes typical | Build in phases, test each phase |
-| Use LLM for extraction | Shell+jq ALWAYS better | `jq -r '.data.field'` # Adapt to structure |
-| Async needs polling | `Prefer: wait` eliminates polling | Add header, wait up to 60s |
-| MCP for file operations | Shell+curl simpler | `curl -L -o file.jpg "$url"` |
-| Download then use | Direct URLs work | `https://storage.service.com/file/${id}` |
-| Settings auto-available | Must declare as inputs | Add `api_token` to inputs |
-| "Any" type outputs | Complex nested structures | Test if you need nested access |
-| HTTP node for uploads | Shell+curl more reliable | `curl -X POST --data-binary` |
-| Build entire workflow | Phase it for 15+ nodes | Core → APIs → Processing → Storage |
-| Linear execution (mentioned) | EVERYTHING sequential | No parallelization, ever |
-| Quick execution | 3-5 minutes for complex | Set realistic expectations |
-
----
-
-## Key Takeaways
-
-1. **Choose simplest tool first** - Shell+jq > LLM, curl > MCP, Prefer:wait > polling
-2. **Shell+jq for ALL structured data** - Never use LLM for extraction
-3. **Prefer: wait eliminates polling** - One header saves 2-3 nodes
-4. **Build complex workflows in phases** - Core → APIs → Processing → Storage
-5. **Test only unknown patterns** - Skip testing curl, echo, known APIs
-6. **Direct URLs save nodes** - Use when services provide direct file access
-7. **Settings ≠ Auto-available** - Declare credentials as workflow inputs
-8. **20+ nodes is NORMAL** - But build in phases to debug easily
-9. **Users show ONE example** - You build the GENERAL tool
-
----
-
-**You're now ready to build reusable workflows with pflow!** 🚀
+**Final reminder**: Users show you ONE specific example. Your job is to build the GENERAL tool that works for everyone, with every specific value made configurable. When in doubt, make it an input.
