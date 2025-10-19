@@ -410,3 +410,68 @@ def test_permission_error_write(tmp_path):
         else:
             # Skip test on Windows
             pass
+
+
+def test_tilde_path_with_directory_creation(tmp_path, monkeypatch):
+    """
+    Test that write-file correctly handles ~/ path expansion and creates directories.
+
+    This is a regression test for GitHub issue #91 which reported that:
+    1. Paths starting with ~/ were not being expanded
+    2. Parent directories were not being created automatically
+
+    This test verifies the full end-to-end workflow execution path, not just the node itself.
+    """
+    runner = CliRunner()
+
+    # Ensure registry exists
+    ensure_test_registry()
+
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        # Set up a fake home directory for testing
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        # Create workflow with ~/ path and non-existent subdirectory
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "write_story",
+                    "type": "write-file",
+                    "params": {
+                        "file_path": "~/stories/cat_story.md",
+                        "content": "Once upon a time, there was a clever cat...",
+                    },
+                },
+            ],
+        }
+
+        with open("workflow.json", "w") as f:
+            json.dump(workflow, f)
+
+        # Run the workflow
+        result = runner.invoke(main, ["./workflow.json"])
+
+        # Print output for debugging if it fails
+        if result.exit_code != 0:
+            print(f"CLI Output:\n{result.output}")
+            if result.exception:
+                print(f"Exception:\n{result.exception}")
+
+        # Verify success
+        assert result.exit_code == 0, f"Workflow failed: {result.output}"
+        assert "Workflow executed successfully" in result.output
+
+        # Verify the file was created at the expanded path
+        expected_path = fake_home / "stories" / "cat_story.md"
+        assert expected_path.exists(), f"File not created at {expected_path}"
+
+        # Verify the directory was created
+        stories_dir = fake_home / "stories"
+        assert stories_dir.is_dir(), f"Directory not created at {stories_dir}"
+
+        # Verify content
+        content = expected_path.read_text()
+        assert content == "Once upon a time, there was a clever cat..."

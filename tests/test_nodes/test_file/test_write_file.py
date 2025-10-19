@@ -53,6 +53,44 @@ class TestWriteFileNode:
             with open(file_path) as f:
                 assert f.read() == "Nested content"
 
+    def test_tilde_path_expansion_with_directory_creation(self, monkeypatch):
+        """Test ~/ path expansion combined with automatic directory creation.
+
+        This test verifies the scenario from GitHub issue #91:
+        - Paths starting with ~/ should be expanded to the user's home directory
+        - Parent directories should be created automatically
+        """
+        with tempfile.TemporaryDirectory() as fake_home:
+            # Set up a fake home directory
+            monkeypatch.setenv("HOME", fake_home)
+
+            # Use ~/ path with non-existent subdirectory
+            tilde_path = "~/stories/cat_story.md"
+
+            node = WriteFileNode()
+            shared = {"content": "Once upon a time, there was a clever cat...", "file_path": tilde_path}
+
+            # Run the node
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            # Verify success
+            assert action == "default"
+            assert "written" in shared
+
+            # Verify the file was created at the expanded path
+            expected_path = os.path.join(fake_home, "stories", "cat_story.md")
+            assert os.path.exists(expected_path)
+
+            # Verify the directory was created
+            stories_dir = os.path.join(fake_home, "stories")
+            assert os.path.isdir(stories_dir)
+
+            # Verify content
+            with open(expected_path) as f:
+                assert f.read() == "Once upon a time, there was a clever cat..."
+
     def test_append_mode(self):
         """Test appending to existing file."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
