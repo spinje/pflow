@@ -113,6 +113,98 @@ class TestWorkflowListCommand:
             assert '1. Create one: pflow "your task"' in result.output
             assert "2. Choose to save when prompted" in result.output
 
+    def test_list_workflows_with_single_keyword_filter(self) -> None:
+        """Test filtering workflows with single keyword."""
+        mock_workflows = [
+            {
+                "name": "slack-qa-analyzer",
+                "description": "Analyzes QA results and posts to Slack",
+                "created_at": "2024-01-01T00:00:00Z",
+            },
+            {
+                "name": "github-pr-analyzer",
+                "description": "Analyzes GitHub pull requests",
+                "created_at": "2024-01-02T00:00:00Z",
+            },
+            {
+                "name": "slack-notification",
+                "description": "Sends notifications to Slack channels",
+                "created_at": "2024-01-03T00:00:00Z",
+            },
+        ]
+
+        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.list_all.return_value = mock_workflows
+
+            result = invoke_cli(["workflow", "list", "slack"])
+
+            assert result.exit_code == 0
+            # Should match both slack workflows
+            assert "slack-qa-analyzer" in result.output
+            assert "slack-notification" in result.output
+            # Should NOT match github workflow
+            assert "github-pr-analyzer" not in result.output
+            assert "Total: 2 workflows" in result.output
+
+    def test_list_workflows_with_multiple_keywords_and_logic(self) -> None:
+        """Test filtering workflows with multiple keywords (AND logic)."""
+        mock_workflows = [
+            {
+                "name": "slack-qa-analyzer",
+                "description": "Analyzes QA results and posts to Slack",
+                "created_at": "2024-01-01T00:00:00Z",
+            },
+            {
+                "name": "slack-notification",
+                "description": "Sends notifications to Slack channels",
+                "created_at": "2024-01-02T00:00:00Z",
+            },
+        ]
+
+        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.list_all.return_value = mock_workflows
+
+            result = invoke_cli(["workflow", "list", "slack qa"])
+
+            assert result.exit_code == 0
+            # Should match slack-qa-analyzer (has both "slack" and "qa")
+            assert "slack-qa-analyzer" in result.output
+            # Should NOT match slack-notification (has "slack" but not "qa")
+            assert "slack-notification" not in result.output
+            assert "Total: 1 workflow" in result.output
+
+    def test_list_workflows_filter_no_match_shows_helpful_message(self) -> None:
+        """Test that filter with no matches shows helpful message."""
+        mock_workflows = [
+            {
+                "name": "slack-qa-analyzer",
+                "description": "Analyzes QA results",
+                "created_at": "2024-01-01T00:00:00Z",
+            },
+            {
+                "name": "github-pr-analyzer",
+                "description": "Analyzes pull requests",
+                "created_at": "2024-01-02T00:00:00Z",
+            },
+        ]
+
+        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.list_all.return_value = mock_workflows
+
+            result = invoke_cli(["workflow", "list", "slack github"])
+
+            assert result.exit_code == 0
+            # Should show custom message
+            assert "No workflows match filter: 'slack github'" in result.output
+            assert "Found 2 total workflows" in result.output
+            assert "Try:" in result.output
+            assert "Broader keywords" in result.output
+            # Should NOT show the default "No workflows saved yet" message
+            assert "No workflows saved yet" not in result.output
+
     def test_list_workflows_json_format(self) -> None:
         """Test listing workflows with --json flag."""
         mock_workflows = [
@@ -215,8 +307,9 @@ class TestWorkflowListCommand:
             result = invoke_cli(["workflow", "list", "github"])
 
             assert result.exit_code == 0
-            # Should show empty state
-            assert "No workflows saved yet" in result.output
+            # Should show custom message with context (workflows exist but don't match)
+            assert "No workflows match filter: 'github'" in result.output
+            assert "Found 2 total workflows" in result.output
             # Original workflows should not appear
             assert "backup-photos" not in result.output
             assert "daily-report" not in result.output

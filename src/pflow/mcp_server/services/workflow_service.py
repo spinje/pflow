@@ -34,16 +34,36 @@ class WorkflowService(BaseService):
             Formatted markdown string with workflow list
         """
         manager = WorkflowManager()  # Fresh instance
-        workflows = manager.list_all()
+        all_workflows = manager.list_all()
+
+        # Track original count for better messaging
+        total_count = len(all_workflows)
 
         # Apply filter if provided (and if it's a string)
         if filter_pattern and isinstance(filter_pattern, str):
-            pattern_lower = filter_pattern.lower()
+            # Split filter into keywords and check that ALL keywords match (AND logic)
+            keywords = [k.strip().lower() for k in filter_pattern.split() if k.strip()]
             workflows = [
                 w
-                for w in workflows
-                if pattern_lower in w.get("name", "").lower() or pattern_lower in w.get("description", "").lower()
+                for w in all_workflows
+                if all(
+                    keyword in w.get("name", "").lower() or keyword in w.get("description", "").lower()
+                    for keyword in keywords
+                )
             ]
+
+            # Custom message when filter excludes everything but workflows exist
+            if not workflows and total_count > 0:
+                plural = "workflow" if total_count == 1 else "workflows"
+                return f"""No workflows match filter: '{filter_pattern}'
+
+Found {total_count} total {plural}. Try:
+  - Broader keywords: Remove some filter terms
+  - Discovery: Use workflow_discover for intelligent search (Recommended)
+  - List all: Remove filter_pattern parameter
+"""
+        else:
+            workflows = all_workflows
 
         # Format using shared formatter (CLI's text mode)
         from pflow.execution.formatters.workflow_list_formatter import format_workflow_list

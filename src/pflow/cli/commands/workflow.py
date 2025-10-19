@@ -21,21 +21,40 @@ def workflow() -> None:
 def list_workflows(filter_pattern: str | None, output_json: bool) -> None:
     """List all saved workflows.
 
-    Optionally filter by name or description:
-        pflow workflow list github    # Show workflows matching "github"
-        pflow workflow list            # Show all workflows
+    Filter by keywords (space-separated AND logic):
+        pflow workflow list github         # Match "github"
+        pflow workflow list github pr      # Match BOTH "github" AND "pr"
+        pflow workflow list                # Show all workflows
     """
     wm = WorkflowManager()
-    workflows = wm.list_all()
+    all_workflows = wm.list_all()
 
-    # Apply filter if provided
+    # Track original count for better messaging
+    total_count = len(all_workflows)
+
+    # Apply filter if provided (space-separated keywords with AND logic)
     if filter_pattern:
-        pattern_lower = filter_pattern.lower()
+        keywords = [k.strip().lower() for k in filter_pattern.split() if k.strip()]
         workflows = [
             w
-            for w in workflows
-            if pattern_lower in w.get("name", "").lower() or pattern_lower in w.get("description", "").lower()
+            for w in all_workflows
+            if all(
+                keyword in w.get("name", "").lower() or keyword in w.get("description", "").lower()
+                for keyword in keywords
+            )
         ]
+
+        # Custom message when filter excludes everything but workflows exist
+        if not workflows and total_count > 0 and not output_json:
+            plural = "workflow" if total_count == 1 else "workflows"
+            click.echo(f"No workflows match filter: '{filter_pattern}'")
+            click.echo(f"\nFound {total_count} total {plural}. Try:")
+            click.echo("  - Broader keywords: Use fewer or different terms")
+            click.echo("  - List all: pflow workflow list")
+            click.echo('  - Discovery: pflow workflow discover "your task description"')
+            return
+    else:
+        workflows = all_workflows
 
     if output_json:
         click.echo(json.dumps(workflows, indent=2))
