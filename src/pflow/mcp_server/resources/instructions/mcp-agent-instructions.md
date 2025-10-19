@@ -506,8 +506,8 @@ registry_run(
 **Decision tree for testing:**
 ```
 Is it an MCP node?
-├─ YES → Will you access specific nested fields (like .data.messages[0].text)?
-│        ├─ YES → Test with show_structure=True
+├─ YES → Are you unsure what format it accepts OR accessing specific fields?
+│        ├─ YES → Test with show_structure=True AND your actual data format
 │        └─ NO → Skip testing (just pass ${node.result} to next node)
 └─ NO → Is it HTTP with unknown response?
          ├─ YES → Will you extract specific fields?
@@ -518,7 +518,7 @@ Is it an MCP node?
                   └─ NO → Skip testing
 ```
 
-**Key insight**: If you're just passing `${mcp-node.result}` to an LLM or another service, you don't need to know its structure. Only test when you need specific paths like `${mcp-node.result.data.field}`.
+**Key insight**: If you're just passing `${mcp-node.result}` to an LLM or another service, you don't need to know its structure. Only test when you need specific paths like `${mcp-node.result.data.field}` OR when unsure if the node accepts your data format.
 
 **Example - When to test vs skip:**
 ```json
@@ -564,20 +564,19 @@ print("I need to test access to [service]. This will [describe effect].")
 if has_side_effects:
     print("⚠️ This test will [visible effect]. Should I proceed?")
 
-# 3. Test with structure discovery
+# 3. Test with structure discovery AND format compatibility
 result = registry_run(
     node_type="mcp-service-TOOL_NAME",
     parameters={
-        "param1": "test_value",
-        "param2": "test_value"
+        # Use your actual data format to verify compatibility
+        "param1": "your_actual_format_here"
     },
     show_structure=True  # MANDATORY for MCP
 )
 
-# 4. Document actual structure
-# MCP typically returns:
-# result.data.tool_response.content.actual_value
-# NOT just: result
+# 4. Document results
+# - Output structure for template paths
+# - Whether your format was accepted directly
 ```
 
 **Common MCP Output Patterns:**
@@ -1172,6 +1171,92 @@ llm keys set anthropic --key "sk-ant-..."
 1. Check workflow `inputs` first
 2. Then check previous node outputs (in execution order)
 3. Error if not found
+
+#### Critical: Type Conversion During Template Substitution
+
+**Most nodes that expect structured data will automatically parse JSON strings.** This is a fundamental behavior that prevents unnecessary transformation steps.
+
+**What happens when you template `${node.output}`:**
+
+| Source Output | Target Parameter Type | What Actually Happens | Need Transformation? |
+|--------------|----------------------|----------------------|---------------------|
+| JSON string from LLM | `body` (object) in HTTP | Auto-parsed to object | ❌ No |
+| JSON string from LLM | `values` (array) in MCP | Auto-parsed to array | ❌ No |
+| JSON from shell output | `data` (object) in any node | Auto-parsed if valid format | ❌ Usually no |
+| Plain text | `prompt` (string) in LLM | Stays as string | ❌ No |
+| Object from HTTP | `text` (string) in MCP | Converted to string | ❌ No |
+| Malformed/broken JSON | Any structured type | Parse error | ✅ Yes - fix format |
+| JSON with extra text/markers | Any structured type | Parse error | ✅ Yes - extract JSON |
+
+**Note on JSON formats**: Compact JSON (`{"key":"value"}`) parses reliably. Pretty-printed or multiline JSON with embedded newlines may cause issues with strict parsers. When in doubt, test with `registry_run` using your exact format. If using shell to produce JSON, prefer `jq -c` for compact output.
+
+**The Anti-Pattern to Avoid:**
+```json
+// ❌ WRONG - Unnecessary "defensive" extraction
+{
+  "id": "extract-json",
+  "type": "shell",
+  "params": {
+    "stdin": "${llm.response}",
+    "command": "jq '.'"  // Extracting valid JSON for "safety"
+  }
+}
+
+// ✅ RIGHT - Direct pass (nodes handle parsing)
+{
+  "id": "use-data",
+  "type": "http",
+  "params": {
+    "body": "${llm.response}"  // JSON string → auto-parsed
+  }
+}
+```
+
+**When you DO need transformation:**
+- Malformed JSON (extra text, broken structure)
+- Specific field extraction (getting `.items[0]` from larger response)
+- Format conversion (JSON to CSV, etc.)
+
+**How to verify:** Test with your EXACT source output format—including newlines, whitespace, and any formatting quirks. If it works in `registry_run`, it will work in the workflow. Don't add transformations "just in case."
+
+#### Transformation Complexity Checklist
+
+**Before adding any extraction/processing steps (grep, sed, jq, etc.):**
+
+1. **Can the source produce cleaner output?**
+   - LLM: Add "Return ONLY valid JSON, no other text" to prompt
+   - Shell: Use `-r` flag in jq to remove quotes
+   - HTTP: Check if API has a `format=json` parameter
+   - **If yes → Fix at source instead of extracting**
+
+2. **Is each transformation adding risk?**
+   - Valid JSON → grep → sed → BROKEN JSON (common!)
+   - Each pipe is a new failure point, not a safety layer
+   - **Principle: More steps = more risk, not more safety**
+   - **Better**: Single `jq` command vs multiple grep/sed pipes
+
+3. **Have you tested EACH transformation step independently?**
+   - Test what the source node actually outputs
+   - Test what your extraction produces FROM THAT OUTPUT
+   - Not with "cleaned" test data
+   ```python
+   # Step 1: Get actual upstream output
+   registry_run("llm", {...})  # See what LLM produces
+
+   # Step 2: Test your extraction with that EXACT output
+   registry_run("shell", {
+     "stdin": "[actual LLM output here]",
+     "command": "your grep/sed/jq command"
+   })  # See what extraction produces - often broken!
+   ```
+   - **Each step should make data CLEANER, not messier**
+
+4. **Are you solving a real problem or preventing an imaginary one?**
+   - ✅ Real: "Parse error when running" → Add transformation
+   - ❌ Imaginary: "Might fail, better be safe" → Don't add
+   - **Test first. Transform only if test fails.**
+
+**The golden rule:** Every transformation step must solve a verified problem, not prevent a hypothetical one.
 
 #### All Template Patterns
 ```json
