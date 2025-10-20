@@ -86,35 +86,20 @@ function getGitAheadBehind() {
 
 function getMemoryUsage() {
   try {
-    if (process.platform === "darwin") {
-      const vmStat = execSync("vm_stat", { encoding: "utf8" });
-      const pageSize = parseInt(
-        vmStat.match(/page size of (\d+) bytes/)?.[1] || "4096",
-      );
+    if (process.platform !== "darwin") return "";
 
-      const freePages = parseInt(
-        vmStat.match(/Pages free:\s+(\d+)/)?.[1] || "0",
-      );
-      const activePages = parseInt(
-        vmStat.match(/Pages active:\s+(\d+)/)?.[1] || "0",
-      );
-      const inactivePages = parseInt(
-        vmStat.match(/Pages inactive:\s+(\d+)/)?.[1] || "0",
-      );
-      const wiredPages = parseInt(
-        vmStat.match(/Pages wired down:\s+(\d+)/)?.[1] || "0",
-      );
+    const { execFileSync } = require("child_process");
+    const out = execFileSync("/usr/bin/memory_pressure", ["-Q"], {
+      encoding: "utf8"
+    });
 
-      const totalPages = freePages + activePages + inactivePages + wiredPages;
-      const usedPages = totalPages - freePages;
-      const usagePercent = Math.round((usedPages / totalPages) * 100);
+    // Parse: "System-wide memory free percentage: 18%"
+    const freePct = parseInt(out.match(/free percentage:\s+(\d+)%/i)?.[1] || "0", 10);
+    const usedPct = 100 - freePct;
 
-      if (usagePercent >= 75) {
-        const color = usagePercent >= 90 ? "\x1b[31m" : "\x1b[33m";
-        return `${color}󰍛 ${usagePercent}%\x1b[0m`;
-      }
-    }
-    return "";
+    // Color based on usage: green (0-74%), yellow (75-89%), red (90%+)
+    const color = usedPct >= 90 ? "\x1b[31m" : usedPct >= 75 ? "\x1b[33m" : "\x1b[32m";
+    return `${color}󰍛 ${usedPct}%\x1b[0m`;
   } catch {
     return "";
   }
