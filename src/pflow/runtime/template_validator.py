@@ -11,6 +11,12 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from pflow.registry import Registry
+from pflow.runtime.template_resolver import TemplateResolver
+from pflow.runtime.type_checker import (
+    get_parameter_type,
+    infer_template_type,
+    is_type_compatible,
+)
 
 
 @dataclass
@@ -157,6 +163,10 @@ class TemplateValidator:
                     template, available_params, workflow_ir, node_outputs, registry
                 )
                 errors.append(error)
+
+        # NEW: Validate template types match parameter expectations
+        type_errors = TemplateValidator._validate_template_types(workflow_ir, node_outputs, registry)
+        errors.extend(type_errors)
 
         if errors:
             logger.warning(
@@ -996,3 +1006,156 @@ class TemplateValidator:
                 return False
 
         return True
+
+    @staticmethod
+    def _validate_template_types(
+        workflow_ir: dict[str, Any], node_outputs: dict[str, Any], registry: Registry
+    ) -> list[str]:
+        """Validate template variable types match parameter expectations.
+
+        Args:
+            workflow_ir: Workflow IR
+            node_outputs: Node output metadata from registry
+            registry: Registry instance
+
+        Returns:
+            List of type mismatch errors
+        """
+        errors = []
+
+        for node in workflow_ir.get("nodes", []):
+            node_type = node.get("type")
+            node_id = node.get("id")
+            params = node.get("params", {})
+
+            for param_name, param_value in params.items():
+                # Skip non-template parameters
+                if not isinstance(param_value, str) or not TemplateResolver.has_templates(param_value):
+                    continue
+
+                # Get expected type for this parameter
+                expected_type = get_parameter_type(node_type, param_name, registry)
+                if not expected_type or expected_type == "any":
+                    # No type constraint or accepts any type
+                    continue
+
+                # Extract templates from parameter value
+                templates = TemplateResolver.extract_variables(param_value)
+
+                for template in templates:
+                    # Infer template type
+                    inferred_type = infer_template_type(template, workflow_ir, node_outputs)
+
+                    # Skip if cannot infer (will be caught by path validation)
+                    if not inferred_type:
+                        continue
+
+                    # Skip if inferred type is 'any' (runtime validation)
+                    if inferred_type == "any":
+                        continue
+
+                    # Check compatibility
+                    if not is_type_compatible(inferred_type, expected_type):
+                        error_msg = (
+                            f"Type mismatch in node '{node_id}' parameter '{param_name}': "
+                            f"template ${{{template}}} has type '{inferred_type}' "
+                            f"but parameter expects '{expected_type}'"
+                        )
+
+                        # Add helpful suggestions with actual available fields
+                        if inferred_type in ["dict", "list", "object"] and expected_type in ["str", "string"]:
+                            error_msg += TemplateValidator._generate_type_fix_suggestion(
+                                template, node_outputs, expected_type
+                            )
+
+                        errors.append(error_msg)
+
+        return errors
+
+    @staticmethod
+    def _generate_type_fix_suggestion(  # noqa: C901
+        template: str, node_outputs: dict[str, Any], expected_type: str
+    ) -> str:
+        """Generate helpful suggestions for type mismatches with actual available fields.
+
+        Args:
+            template: The template variable that has the wrong type
+            node_outputs: Node output metadata from registry
+            expected_type: The type that was expected
+
+        Returns:
+            Suggestion string with available fields
+        """
+        # For nested templates like node.output.field, we need to traverse to find structure
+        # Find the structure for this template by traversing
+        structure = None
+        for key in node_outputs:
+            if template.startswith(key + ".") or template == key:
+                output_info = node_outputs[key]
+                remaining_path = template[len(key) :].lstrip(".")
+
+                if not remaining_path:
+                    # This IS the base output
+                    structure = output_info.get("structure", {})
+                    break
+                else:
+                    # Need to traverse nested structure
+                    structure = TemplateValidator._traverse_to_structure(
+                        output_info.get("structure", {}), remaining_path
+                    )
+                    if structure:
+                        break
+
+        if not structure:
+            # Generic fallback
+            return f"\n  💡 Suggestion: Access a specific field (e.g., ${{{template}.field}}) or serialize to JSON"
+
+        # Find fields that match the expected type
+        matching_fields = []
+        for field_name, field_info in structure.items():
+            if isinstance(field_info, dict) and "type" in field_info:
+                field_type = field_info["type"]
+                # Check if this field matches the expected type
+                if field_type in [expected_type, "str", "string"] and expected_type in ["str", "string"]:
+                    matching_fields.append(field_name)
+
+        if matching_fields:
+            suggestion = "\n  💡 Available fields with correct type:"
+            for field in matching_fields[:5]:  # Show up to 5
+                suggestion += f"\n     - ${{{template}.{field}}}"
+            if len(matching_fields) > 5:
+                suggestion += f"\n     ... and {len(matching_fields) - 5} more"
+            return suggestion
+        else:
+            return "\n  💡 Suggestion: Access a nested field or serialize to JSON"
+
+    @staticmethod
+    def _traverse_to_structure(structure: dict[str, Any], path: str) -> Optional[dict[str, Any]]:
+        """Traverse nested structure to find the structure at a given path.
+
+        Args:
+            structure: The structure dict to traverse
+            path: Dot-separated path like "author.login"
+
+        Returns:
+            The structure dict at that path, or None if not found
+        """
+        if not path or not structure:
+            return structure
+
+        path_parts = path.split(".")
+        current = structure
+
+        for part in path_parts:
+            if part in current:
+                field_info = current[part]
+                if isinstance(field_info, dict):
+                    current = field_info.get("structure", {})
+                    if not current:
+                        return None
+                else:
+                    return None
+            else:
+                return None
+
+        return current
