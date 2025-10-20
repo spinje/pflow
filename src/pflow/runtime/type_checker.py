@@ -29,10 +29,10 @@ TYPE_COMPATIBILITY_MATRIX = {
     ],  # any is universal
     "str": ["any", "str", "string"],
     "string": ["any", "str", "string"],  # Alias for str
-    "int": ["any", "int", "integer", "float", "number"],  # int can widen to float/number
-    "integer": ["any", "int", "integer", "float", "number"],  # Alias for int
-    "float": ["any", "float", "number"],  # float → float or number, NOT int (no narrowing)
-    "number": ["any", "float", "number", "int", "integer"],  # number (generic numeric) → int or float
+    "int": ["any", "int", "integer", "float", "number", "str", "string"],  # int can widen to float/number/str
+    "integer": ["any", "int", "integer", "float", "number", "str", "string"],  # Alias for int
+    "float": ["any", "float", "number", "str", "string"],  # float can stringify
+    "number": ["any", "float", "number", "int", "integer", "str", "string"],  # number (generic numeric) → int/float/str
     "bool": ["any", "bool", "boolean", "str", "string"],  # bool can stringify
     "boolean": ["any", "bool", "boolean", "str", "string"],  # Alias for bool
     "dict": ["any", "dict", "object"],
