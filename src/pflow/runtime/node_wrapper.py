@@ -24,7 +24,13 @@ class TemplateAwareNodeWrapper:
     This is the runtime proxy that enables "Plan Once, Run Forever".
     """
 
-    def __init__(self, inner_node: Any, node_id: str, initial_params: Optional[dict[str, Any]] = None):
+    def __init__(
+        self,
+        inner_node: Any,
+        node_id: str,
+        initial_params: Optional[dict[str, Any]] = None,
+        template_resolution_mode: str = "strict",
+    ):
         """Initialize the wrapper.
 
         Args:
@@ -32,10 +38,14 @@ class TemplateAwareNodeWrapper:
             node_id: Node identifier from IR (for debugging/tracking)
             initial_params: Parameters extracted by planner from natural language
                           These have higher priority than shared store values
+            template_resolution_mode: Template resolution mode ('strict' or 'permissive')
+                                     strict: fail immediately on unresolved templates (default)
+                                     permissive: warn and continue with unresolved templates
         """
         self.inner_node = inner_node
         self.node_id = node_id  # Node ID for debugging purposes only
         self.initial_params = initial_params or {}  # From planner extraction
+        self.template_resolution_mode = template_resolution_mode  # Resolution behavior
         self.template_params: dict[str, Any] = {}  # Params containing templates
         self.static_params: dict[str, Any] = {}  # Params without templates
 
@@ -73,6 +83,112 @@ class TemplateAwareNodeWrapper:
                 "static_param_count": len(self.static_params),
             },
         )
+
+    def _check_string_unresolved(self, resolved_value: str, original_template: str) -> bool:
+        """Check if a string contains unresolved templates.
+
+        Args:
+            resolved_value: The resolved string
+            original_template: The original template string
+
+        Returns:
+            True if contains unresolved templates, False otherwise
+        """
+        # Case 1: Completely unresolved (no change at all)
+        if resolved_value == original_template:
+            return "${" in resolved_value
+
+        # Case 2: Partially resolved - check if any original variables remain
+        if "${" in resolved_value:
+            # Extract variables from both original and resolved strings
+            original_vars = TemplateResolver.extract_variables(original_template)
+            remaining_vars = TemplateResolver.extract_variables(resolved_value)
+
+            # If any original variable is still present, it's unresolved
+            if original_vars & remaining_vars:  # Set intersection
+                logger.debug(
+                    f"Partial template resolution detected. Original vars: {original_vars}, "
+                    f"Remaining vars: {remaining_vars}",
+                    extra={"node_id": self.node_id},
+                )
+                return True
+
+        return False
+
+    def _check_list_unresolved(self, resolved_value: list, original_template: list) -> bool:
+        """Check if a list contains unresolved templates.
+
+        Args:
+            resolved_value: The resolved list
+            original_template: The original template list
+
+        Returns:
+            True if contains unresolved templates, False otherwise
+        """
+        # If lengths differ, something was resolved
+        if len(resolved_value) != len(original_template):
+            return False
+
+        # Check each item - if any item is unchanged and contains ${...}, it's unresolved
+        for resolved_item, template_item in zip(resolved_value, original_template):
+            if self._contains_unresolved_template(resolved_item, template_item):
+                return True
+        return False
+
+    def _check_dict_unresolved(self, resolved_value: dict, original_template: dict) -> bool:
+        """Check if a dict contains unresolved templates.
+
+        Args:
+            resolved_value: The resolved dict
+            original_template: The original template dict
+
+        Returns:
+            True if contains unresolved templates, False otherwise
+        """
+        # If keys differ, something changed
+        if set(resolved_value.keys()) != set(original_template.keys()):
+            return False
+
+        # Check each value
+        for key in resolved_value:
+            if self._contains_unresolved_template(resolved_value[key], original_template[key]):
+                return True
+        return False
+
+    def _contains_unresolved_template(self, resolved_value: Any, original_template: Any) -> bool:
+        """Check if a resolved value contains unresolved templates.
+
+        This handles the complexity of:
+        1. String templates that didn't resolve
+        2. Lists/dicts with unresolved templates inside
+        3. Avoiding false positives from resolved MCP data containing ${...}
+        4. Partial resolution detection (some variables resolved, others not)
+
+        Args:
+            resolved_value: The value after template resolution
+            original_template: The original template before resolution
+
+        Returns:
+            True if contains unresolved templates, False otherwise
+        """
+        # Strategy: If resolved_value != original_template, then resolution changed something
+        # So even if it contains ${...}, that's from resolved data, not an unresolved template
+        # Only flag as unresolved if the value is UNCHANGED and contains ${...}
+
+        # For strings: Check both complete and partial resolution
+        if isinstance(resolved_value, str) and isinstance(original_template, str):
+            return self._check_string_unresolved(resolved_value, original_template)
+
+        # For lists: Check if unchanged (failed to resolve templates inside)
+        if isinstance(resolved_value, list) and isinstance(original_template, list):
+            return self._check_list_unresolved(resolved_value, original_template)
+
+        # For dicts: Check if unchanged (failed to resolve templates inside)
+        if isinstance(resolved_value, dict) and isinstance(original_template, dict):
+            return self._check_dict_unresolved(resolved_value, original_template)
+
+        # For any other type: If it's not a string/list/dict, it can't contain templates
+        return False
 
     def _build_resolution_context(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Build the context for template resolution.
@@ -168,6 +284,138 @@ class TemplateAwareNodeWrapper:
         # No template variables present, preserve original type
         return template, False
 
+    def _format_template_display(self, template: Any) -> str:
+        """Format template value for display.
+
+        Args:
+            template: Template value to format
+
+        Returns:
+            Formatted string representation
+        """
+        if isinstance(template, list):
+            # For list parameters, show the actual values cleanly
+            return " ".join(str(item) for item in template)
+        elif isinstance(template, dict):
+            # For dict parameters, show as clean JSON
+            import json
+
+            return json.dumps(template, indent=2)
+        else:
+            # For strings and other types, show as-is
+            return str(template)
+
+    def _format_available_keys(self, available_display: list[str], context: dict[str, Any]) -> list[str]:
+        """Format available keys section with type information.
+
+        Args:
+            available_display: List of keys to display (may include "... and N more")
+            context: Resolution context
+
+        Returns:
+            List of formatted key lines
+        """
+        lines = ["Available context keys:"]
+
+        for key in available_display:
+            if key.startswith("... and"):
+                lines.append(f"  {key}")
+            else:
+                value = context.get(key)
+                value_type = type(value).__name__
+                # Show preview for simple types
+                if isinstance(value, (str, int, float, bool)) and not isinstance(value, bool):
+                    preview = str(value)[:50]
+                    if len(str(value)) > 50:
+                        preview += "..."
+                    lines.append(f"  • {key} ({value_type}): {preview}")
+                else:
+                    lines.append(f"  • {key} ({value_type})")
+
+        return lines
+
+    def _generate_suggestions(self, variables: set[str], available_keys: list[str]) -> list[str]:
+        """Generate suggestions for close matches.
+
+        Args:
+            variables: Set of unresolved variable names
+            available_keys: Available context keys
+
+        Returns:
+            List of suggestion strings
+        """
+        suggestions = []
+        for var in variables:
+            var_lower = var.lower()
+            # Simple fuzzy matching
+            for key in available_keys[:20]:
+                if isinstance(key, str):
+                    key_lower = key.lower()
+                    # Check for substring matches or similar names
+                    if (
+                        var_lower in key_lower
+                        or key_lower in var_lower
+                        or var.replace("_", "-") == key.replace("_", "-")
+                    ):
+                        suggestions.append(f"Did you mean '${{{key}}}'? (instead of '${{{var}}}')")
+                        break
+
+        return suggestions[:3]  # Limit to 3 suggestions
+
+    def _build_enhanced_template_error(self, param_key: str, template: str, context: dict[str, Any]) -> str:
+        """Build detailed error message for unresolved template.
+
+        Args:
+            param_key: Parameter name
+            template: Original template string
+            context: Resolution context (shared store + initial params)
+
+        Returns:
+            Formatted error message with context and suggestions
+        """
+        # Extract variable names from template
+        variables = TemplateResolver.extract_variables(str(template))
+
+        # Build available keys section
+        available_keys = [k for k in context if not k.startswith("__")]
+        available_keys.sort()
+
+        # Limit to 20 keys for readability
+        if len(available_keys) > 20:
+            available_display = available_keys[:20]
+            available_display.append(f"... and {len(available_keys) - 20} more")
+        else:
+            available_display = available_keys
+
+        # Format template value for display
+        template_display = self._format_template_display(template)
+
+        # Format error message with sections
+        error_parts = [
+            f"Template in parameter '{param_key}' could not be fully resolved: {template_display}",
+            "",
+            f"Node: {self.node_id}",
+            f"Unresolved variables: {', '.join(f'${{{v}}}' for v in variables)}",
+            "",
+        ]
+
+        # Add available keys section
+        if available_keys:
+            error_parts.extend(self._format_available_keys(available_display, context))
+        else:
+            # No keys available, show "(none)" for clarity
+            error_parts.append("Available context keys: (none)")
+
+        # Add suggestions for close matches
+        suggestions = self._generate_suggestions(variables, available_keys)
+        if suggestions:
+            error_parts.append("")
+            error_parts.append("💡 Suggestions:")
+            for s in suggestions:
+                error_parts.append(f"  {s}")
+
+        return "\n".join(error_parts)
+
     def _run(self, shared: dict[str, Any]) -> Any:
         """Execute with template resolution.
 
@@ -199,21 +447,57 @@ class TemplateAwareNodeWrapper:
             resolved_value, is_simple_template = self._resolve_template_parameter(key, template, context)
             resolved_params[key] = resolved_value
 
-            # Log complex templates and unresolved templates
-            if not is_simple_template:
-                if resolved_value != template:
+            # Check if template was fully resolved (for BOTH simple and complex templates)
+            # We need to check differently for strings vs nested structures:
+            #
+            # For STRINGS: Check if unchanged AND contains ${...}
+            #   - This catches actual unresolved templates
+            #   - Avoids false positives from resolved strings that happen to contain ${...}
+            #
+            # For LISTS/DICTS: Recursively check if any string inside contains ${...}
+            #   - BUT only if the template itself contained ${...}
+            #   - This catches unresolved templates in nested structures
+            #   - Avoids false positives from resolved MCP data containing ${...}
+            is_unresolved = self._contains_unresolved_template(resolved_value, template)
+
+            if is_unresolved:
+                # Template failed to resolve - still contains ${...}
+                # This happens when variable doesn't exist in context
+                # Build enhanced error message with context and suggestions
+                error_msg = self._build_enhanced_template_error(key, template, context)
+
+                if self.template_resolution_mode == "strict":
+                    # Strict mode: Fail immediately
+                    # Use DEBUG level to avoid duplication in CLI output (error will be shown by CLI)
                     logger.debug(
-                        f"Resolved param '{key}': '{template}' -> '{resolved_value}'",
-                        extra={"node_id": self.node_id, "param": key},
-                    )
-                elif "${" in str(template):
-                    error_msg = f"Template in param '{key}' could not be fully resolved: '{template}'"
-                    logger.error(
                         error_msg,
-                        extra={"node_id": self.node_id, "param": key},
+                        extra={"node_id": self.node_id, "param": key, "mode": "strict"},
                     )
                     # Make template errors fatal to trigger repair
                     raise ValueError(error_msg)
+                else:
+                    # Permissive mode: Warn and continue with unresolved template
+                    # Use DEBUG level to avoid showing timestamps/file paths
+                    # The warning is displayed in the summary section at the end
+                    logger.debug(
+                        f"{error_msg}\n(permissive mode: continuing with unresolved template)",
+                        extra={"node_id": self.node_id, "param": key, "mode": "permissive"},
+                    )
+                    # Store error in shared store for workflow status (DEGRADED)
+                    if "__template_errors__" not in shared:
+                        shared["__template_errors__"] = {}
+                    shared["__template_errors__"][self.node_id] = {
+                        "message": error_msg,
+                        "unresolved": [key],
+                        "template": template,
+                    }
+                    # Continue execution with unresolved template (literal ${...} passed to node)
+            elif resolved_value != template:
+                # Successfully resolved - log for debugging
+                logger.debug(
+                    f"Resolved param '{key}': '{template}' -> '{resolved_value}'",
+                    extra={"node_id": self.node_id, "param": key},
+                )
 
         # Temporarily update inner node params with resolved values
         original_params = self.inner_node.params

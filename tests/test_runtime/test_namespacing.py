@@ -231,3 +231,138 @@ def test_namespacing_with_cli_inputs(tmp_path):
 
     finally:
         compiler_module.import_node_class = original_import
+
+
+class TestSpecialKeysBypassNamespacing:
+    """Test that special (__*__) keys bypass namespacing."""
+
+    def test_special_keys_write_to_root(self):
+        """Special (__*__) keys should be written to root, not namespaced."""
+        from pflow.runtime.namespaced_store import NamespacedSharedStore
+
+        shared = {}
+        proxy = NamespacedSharedStore(shared, "test-node")
+
+        # Write a special key
+        proxy["__template_errors__"] = {"test": "error"}
+
+        # Should be at root, NOT in namespace
+        assert "__template_errors__" in shared
+        assert shared["__template_errors__"] == {"test": "error"}
+
+        # Should NOT be in namespace
+        assert "__template_errors__" not in shared["test-node"]
+
+    def test_multiple_special_keys_write_to_root(self):
+        """Multiple special keys should all go to root."""
+        from pflow.runtime.namespaced_store import NamespacedSharedStore
+
+        shared = {}
+        proxy = NamespacedSharedStore(shared, "test-node")
+
+        # Write multiple special keys
+        proxy["__execution__"] = {"completed": []}
+        proxy["__warnings__"] = {"node1": "warning"}
+        proxy["__llm_calls__"] = []
+
+        # All should be at root
+        assert "__execution__" in shared
+        assert "__warnings__" in shared
+        assert "__llm_calls__" in shared
+
+        # None should be in namespace
+        assert "__execution__" not in shared["test-node"]
+        assert "__warnings__" not in shared["test-node"]
+        assert "__llm_calls__" not in shared["test-node"]
+
+    def test_regular_keys_still_namespaced(self):
+        """Regular keys should still be namespaced after special key fix."""
+        from pflow.runtime.namespaced_store import NamespacedSharedStore
+
+        shared = {}
+        proxy = NamespacedSharedStore(shared, "test-node")
+
+        # Write a regular key
+        proxy["output"] = "data"
+        proxy["result"] = {"key": "value"}
+
+        # Should be in namespace
+        assert "output" in shared["test-node"]
+        assert "result" in shared["test-node"]
+        assert shared["test-node"]["output"] == "data"
+        assert shared["test-node"]["result"] == {"key": "value"}
+
+        # Should NOT be at root
+        assert shared.get("output") != "data"
+        assert shared.get("result") != {"key": "value"}
+
+    def test_special_key_read_from_root(self):
+        """Special keys should be read from root."""
+        from pflow.runtime.namespaced_store import NamespacedSharedStore
+
+        shared = {
+            "__execution__": {"root": "value"},
+        }
+        proxy = NamespacedSharedStore(shared, "test-node")
+
+        # Should read from root
+        assert proxy["__execution__"] == {"root": "value"}
+        assert proxy.get("__execution__") == {"root": "value"}
+
+    def test_special_key_contains_check(self):
+        """Contains check should work for special keys at root."""
+        from pflow.runtime.namespaced_store import NamespacedSharedStore
+
+        shared = {
+            "__execution__": {"data": "value"},
+        }
+        proxy = NamespacedSharedStore(shared, "test-node")
+
+        # Should find at root
+        assert "__execution__" in proxy
+
+        # Missing special key
+        assert "__missing__" not in proxy
+
+    def test_special_key_setdefault(self):
+        """setdefault should work with special keys at root."""
+        from pflow.runtime.namespaced_store import NamespacedSharedStore
+
+        shared = {}
+        proxy = NamespacedSharedStore(shared, "test-node")
+
+        # Set default for special key
+        result = proxy.setdefault("__warnings__", {})
+
+        # Should be at root
+        assert "__warnings__" in shared
+        assert shared["__warnings__"] == {}
+        assert result == {}
+
+        # Should NOT be in namespace
+        assert "__warnings__" not in shared["test-node"]
+
+    def test_mixed_special_and_regular_keys(self):
+        """Mix of special and regular keys should work correctly."""
+        from pflow.runtime.namespaced_store import NamespacedSharedStore
+
+        shared = {}
+        proxy = NamespacedSharedStore(shared, "test-node")
+
+        # Write mixed keys
+        proxy["__execution__"] = {"special": "root"}
+        proxy["output"] = {"regular": "namespaced"}
+        proxy["__llm_calls__"] = []
+        proxy["result"] = "data"
+
+        # Special keys at root
+        assert shared["__execution__"] == {"special": "root"}
+        assert shared["__llm_calls__"] == []
+
+        # Regular keys in namespace
+        assert shared["test-node"]["output"] == {"regular": "namespaced"}
+        assert shared["test-node"]["result"] == "data"
+
+        # Special keys NOT in namespace
+        assert "__execution__" not in shared["test-node"]
+        assert "__llm_calls__" not in shared["test-node"]

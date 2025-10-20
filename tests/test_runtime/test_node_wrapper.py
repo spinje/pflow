@@ -191,19 +191,25 @@ class TestTemplateResolution:
         assert "'title': 'Python Tutorial'" in shared["result"]
         assert "'author': 'TechTeacher'" in shared["result"]
 
-    def test_unresolved_templates_remain(self):
-        """Test that unresolved templates remain unchanged."""
+    def test_unresolved_templates_raise_error(self):
+        """Test that unresolved templates raise ValueError (Issue #95 fix).
+
+        This test was updated as part of Task 85 (Runtime Template Resolution Hardening).
+        Previously, unresolved templates were left as-is for "debugging visibility",
+        which caused literal ${...} text to propagate to production (e.g., Slack messages).
+
+        Now, unresolved templates correctly raise ValueError to prevent data corruption.
+        """
         node = WrapperTestNode()
         wrapper = TemplateAwareNodeWrapper(node, "test_node")
 
         wrapper.set_params({"found": "${existing}", "missing": "${undefined}"})
 
         shared = {"existing": "value"}
-        result = wrapper._run(shared)
 
-        assert result == "default"
-        assert "'found': 'value'" in shared["result"]
-        assert "'missing': '${undefined}'" in shared["result"]
+        # Should raise ValueError because ${undefined} cannot be resolved
+        with pytest.raises(ValueError, match="could not be fully resolved"):
+            wrapper._run(shared)
 
     def test_params_restored_after_execution(self):
         """Test that original params are restored after execution."""

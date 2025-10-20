@@ -686,6 +686,8 @@ def test_context_handling(claude_node):
 
 def test_tool_use_logging(claude_node, caplog):
     """Test that tool uses are logged."""
+    import logging
+
     shared = {"task": "test task"}
     claude_node.shared = shared
 
@@ -702,7 +704,8 @@ def test_tool_use_logging(claude_node, caplog):
     with patch("pflow.nodes.claude.claude_code.query") as mock_query:
         mock_query.return_value = mock_response()
 
-        with caplog.at_level("INFO"):
+        # Explicitly set logger level for this test since global config may have changed
+        with caplog.at_level(logging.INFO, logger="pflow.nodes.claude.claude_code"):
             prep_res = claude_node.prep(shared)
             result = claude_node.exec(prep_res)
 

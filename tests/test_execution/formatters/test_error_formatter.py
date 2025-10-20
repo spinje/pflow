@@ -285,8 +285,9 @@ class TestRobustnessGuardrails:
         )
 
         # ROBUSTNESS REQUIREMENT: Must not crash on None metrics
+        # After Nonems fix (Task 85), duration defaults to 0 instead of None
         assert "execution" in formatted
-        assert formatted["execution"]["steps"][0]["duration_ms"] is None
+        assert formatted["execution"]["steps"][0]["duration_ms"] == 0
 
     def test_must_handle_missing_execution_checkpoint(self):
         """ROBUSTNESS: Missing __execution__ key must not crash formatter.

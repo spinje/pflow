@@ -120,21 +120,27 @@ class TestCompilerIntegration:
         assert "${required_param}" in str(exc_info.value)
 
     def test_validation_can_be_skipped(self, mock_registry):
-        """Test that validation can be skipped for testing."""
+        """Test that compile-time validation can be skipped, but runtime still validates.
+
+        Updated as part of Task 85: Even with validate=False at compile time,
+        unresolved templates still raise ValueError at runtime (preventing Issue #95).
+        """
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${missing}"}}], "edges": []}
 
-        # Should not raise with validate=False
+        # Should not raise during compilation with validate=False
         flow = compile_ir_to_flow(ir, mock_registry, initial_params={}, validate=False)
 
-        # Execute and verify template remains unresolved (with namespacing)
+        # But should raise during execution due to runtime template validation
         shared = {}
-        flow.run(shared)
-        assert "node1" in shared
-        assert "result" in shared["node1"]
-        assert "'url': '${missing}'" in shared["node1"]["result"]
+        with pytest.raises(ValueError, match="could not be fully resolved"):
+            flow.run(shared)
 
     def test_shared_store_templates_not_validated(self, mock_registry):
-        """Test that variables from node outputs are properly validated."""
+        """Test that variables from node outputs are properly validated.
+
+        Updated as part of Task 85: If the producer node doesn't actually
+        produce the expected output, runtime validation will catch it.
+        """
         # Add a producer node to the registry
         registry_data = mock_registry.load.return_value
         registry_data["data-producer"] = {
@@ -170,17 +176,14 @@ class TestCompilerIntegration:
         # Only provide the CLI parameter
         initial_params = {"provided_param": "https://example.com"}
 
-        # Should pass validation - shared_store_var comes from producer node
+        # Should pass compile-time validation - shared_store_var declared in interface
         flow = compile_ir_to_flow(ir, mock_registry, initial_params)
 
-        # Execute with initial shared store data
+        # Execute - but MockNode doesn't actually produce shared_store_var!
+        # So runtime validation will catch the unresolved template
         shared = {}
-        flow.run(shared)
-
-        # The result should have the template resolved (with namespacing)
-        # Consumer node should have a result
-        assert "consumer" in shared
-        assert "result" in shared["consumer"]
+        with pytest.raises(ValueError, match="could not be fully resolved"):
+            flow.run(shared)
 
 
 class TestMultiNodeWorkflow:

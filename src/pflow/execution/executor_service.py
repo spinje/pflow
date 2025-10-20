@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow_status import WorkflowStatus
 from pflow.mcp_server.utils.errors import sanitize_parameters
 
 from .output_interface import OutputInterface
@@ -18,9 +19,11 @@ logger = logging.getLogger(__name__)
 class ExecutionResult:
     """Result of workflow execution."""
 
-    success: bool
+    success: bool  # Keep for backward compatibility
+    status: WorkflowStatus = WorkflowStatus.SUCCESS  # NEW: Tri-state status
     shared_after: dict[str, Any] = field(default_factory=dict)
     errors: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[dict[str, Any]] = field(default_factory=list)  # NEW: Warnings list
     action_result: Optional[str] = None
     node_count: int = 0
     duration: float = 0.0
@@ -108,7 +111,7 @@ class WorkflowExecutorService:
             action_result = flow.run(shared_store)
 
             # Process execution results
-            success = self._is_execution_successful(action_result)
+            success, status = self._determine_workflow_status(action_result, shared_store)
             output_data = self._extract_output_data(shared_store, workflow_ir, output_key, success)
             errors = self._build_error_list(success, action_result, shared_store)
 
@@ -116,8 +119,9 @@ class WorkflowExecutorService:
             self._update_workflow_metadata(success, workflow_name, execution_params)
 
         except Exception as e:
-            result = self._handle_execution_exception(e)
+            result = self._handle_execution_exception(e, shared_store)
             success = result["success"]
+            status = WorkflowStatus.FAILED  # Exceptions always mean failure
             errors = result["errors"]
             action_result = result["action_result"]
             output_data = result["output_data"]
@@ -130,6 +134,7 @@ class WorkflowExecutorService:
 
         return self._build_execution_result(
             success=success,
+            status=status,
             shared_store=shared_store,
             errors=errors,
             action_result=action_result,
@@ -181,16 +186,62 @@ class WorkflowExecutorService:
 
         return shared_store
 
-    def _is_execution_successful(self, action_result: Optional[str]) -> bool:
-        """Determine if execution was successful based on action result.
+    def _determine_workflow_status(
+        self,
+        action_result: Optional[str],
+        shared_store: dict[str, Any],
+    ) -> tuple[bool, WorkflowStatus]:
+        """Determine both boolean success and tri-state status.
 
         Args:
             action_result: The action result from flow execution
+            shared_store: The shared store after execution
 
         Returns:
-            True if successful, False otherwise
+            Tuple of (success_boolean, status_enum)
         """
-        return not (action_result and isinstance(action_result, str) and action_result.startswith("error"))
+        # Check for hard failure
+        if action_result and isinstance(action_result, str) and action_result.startswith("error"):
+            return False, WorkflowStatus.FAILED
+
+        # Check for warnings/degradation
+        warnings = shared_store.get("__warnings__", {})
+        template_errors = shared_store.get("__template_errors__", {})
+
+        if warnings or template_errors:
+            # Workflow completed but with issues
+            return True, WorkflowStatus.DEGRADED
+
+        # Full success
+        return True, WorkflowStatus.SUCCESS
+
+    def _extract_warnings(self, shared_store: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract warnings from shared store.
+
+        Args:
+            shared_store: The shared store after execution
+
+        Returns:
+            List of warning dictionaries
+        """
+        warnings = []
+
+        # API warnings
+        api_warnings = shared_store.get("__warnings__", {})
+        for node_id, message in api_warnings.items():
+            warnings.append({"node_id": node_id, "type": "api_warning", "message": message})
+
+        # Template errors (in permissive mode, these become warnings)
+        template_errors = shared_store.get("__template_errors__", {})
+        for node_id, error_data in template_errors.items():
+            warnings.append({
+                "node_id": node_id,
+                "type": "template_resolution",
+                "message": error_data.get("message", "Template resolution failed"),
+                "unresolved_templates": error_data.get("unresolved", []),
+            })
+
+        return warnings
 
     def _extract_output_data(
         self,
@@ -472,11 +523,14 @@ class WorkflowExecutorService:
                 },
             )
 
-    def _handle_execution_exception(self, exception: Exception) -> dict[str, Any]:
+    def _handle_execution_exception(
+        self, exception: Exception, shared_store: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Handle exceptions during workflow execution.
 
         Args:
             exception: The exception that occurred
+            shared_store: The shared store (optional, for getting failed node info)
 
         Returns:
             Dictionary with execution result details
@@ -487,19 +541,42 @@ class WorkflowExecutorService:
         if isinstance(exception, (CompilationError, RuntimeError)):
             raise
 
-        logger.exception("Workflow execution failed with exception")
+        # For expected template errors (ValueError), don't show full traceback
+        # For unexpected errors, show full traceback for debugging
+        # Use DEBUG level to avoid duplication in CLI output (errors will be shown by CLI)
+        if isinstance(exception, ValueError):
+            logger.debug(f"Workflow execution failed: {exception}")
+        else:
+            logger.debug("Workflow execution failed with exception", exc_info=True)
+
+        # Try to get the failed node from execution state
+        failed_node = None
+        if shared_store:
+            exec_state = shared_store.get("__execution__", {})
+            failed_node = exec_state.get("failed_node")
+            # If no failed node recorded but have completed nodes, it's likely the next one
+            if not failed_node:
+                completed = exec_state.get("completed_nodes", [])
+                if completed:
+                    # The failure likely happened right after the last completed node
+                    # This is a best guess - better than "unknown"
+                    logger.debug(f"No failed_node in execution state, completed nodes: {completed}")
+
+        error_dict = {
+            "source": "runtime",
+            "category": "exception",
+            "message": str(exception),
+            "exception_type": type(exception).__name__,
+            "fixable": self._is_fixable_error(exception),
+        }
+
+        # Add node_id if we found it
+        if failed_node:
+            error_dict["node_id"] = failed_node
 
         return {
             "success": False,
-            "errors": [
-                {
-                    "source": "runtime",
-                    "category": "exception",
-                    "message": str(exception),
-                    "exception_type": type(exception).__name__,
-                    "fixable": self._is_fixable_error(exception),
-                }
-            ],
+            "errors": [error_dict],
             "action_result": "error",
             "output_data": None,
         }
@@ -507,6 +584,7 @@ class WorkflowExecutorService:
     def _build_execution_result(
         self,
         success: bool,
+        status: WorkflowStatus,
         shared_store: dict[str, Any],
         errors: list[dict[str, Any]],
         action_result: Optional[str],
@@ -518,7 +596,8 @@ class WorkflowExecutorService:
         """Build the final execution result.
 
         Args:
-            success: Whether execution was successful
+            success: Whether execution was successful (backward compatibility)
+            status: Tri-state workflow status (SUCCESS/DEGRADED/FAILED)
             shared_store: The shared store after execution
             errors: List of errors if any
             action_result: The action result from flow execution
@@ -535,10 +614,14 @@ class WorkflowExecutorService:
             llm_calls = shared_store.get("__llm_calls__", [])
             metrics_summary = metrics_collector.get_summary(llm_calls)
 
+        warnings = self._extract_warnings(shared_store)
+
         return ExecutionResult(
             success=success,
+            status=status,
             shared_after=shared_store,
             errors=errors,
+            warnings=warnings,
             action_result=action_result,
             node_count=len(workflow_ir.get("nodes", [])),
             duration=duration,

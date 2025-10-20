@@ -7,6 +7,8 @@ ensuring CLI and MCP return identical output structures.
 import json
 from typing import Any, Optional
 
+from pflow.core.workflow_status import WorkflowStatus
+
 
 def format_execution_success(
     shared_storage: dict[str, Any],
@@ -15,6 +17,8 @@ def format_execution_success(
     workflow_metadata: Optional[dict[str, Any]] = None,
     output_key: Optional[str] = None,
     trace_path: Optional[str] = None,
+    status: Optional[WorkflowStatus] = None,
+    warnings: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Format successful workflow execution output.
 
@@ -25,6 +29,8 @@ def format_execution_success(
         workflow_metadata: Optional workflow metadata (action, name)
         output_key: Optional specific output key to return
         trace_path: Optional path to execution trace file
+        status: Optional tri-state workflow status (SUCCESS/DEGRADED/FAILED)
+        warnings: Optional list of warning dictionaries
 
     Returns:
         Dictionary with formatted execution results matching CLI structure
@@ -38,8 +44,18 @@ def format_execution_success(
         "result": outputs,
     }
 
+    # Add tri-state status (if provided, otherwise infer from success)
+    if status:
+        result["status"] = status.value
+    else:
+        result["status"] = "success"  # Backward compatibility default
+
     # Add workflow metadata (default to unsaved if not provided)
     result["workflow"] = workflow_metadata if workflow_metadata else {"action": "unsaved"}
+
+    # Add warnings if present
+    if warnings:
+        result["warnings"] = warnings
 
     # Add metrics from collector
     if metrics_collector:
@@ -185,6 +201,7 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:
     workflow_metadata = success_dict.get("workflow", {})
     workflow_name = workflow_metadata.get("name", "workflow")
     workflow_action = workflow_metadata.get("action", "executed")
+    status = success_dict.get("status", "success")
 
     # Show workflow name and action (matches CLI)
     if workflow_action == "reused":
@@ -193,8 +210,13 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:
         lines.append(f"{workflow_name} was created and executed")
     # Skip for "unsaved" workflows
 
-    # Success header (matches CLI line 643)
-    lines.append(f"✓ Workflow completed in {duration_sec:.3f}s")
+    # Success header with tri-state status
+    if status == "degraded":
+        lines.append(f"⚠️ Workflow completed with warnings in {duration_sec:.3f}s")
+    elif status == "failed":
+        lines.append(f"❌ Workflow failed after {duration_sec:.3f}s")
+    else:
+        lines.append(f"✓ Workflow completed in {duration_sec:.3f}s")
 
     # Show node execution details (matches CLI lines 646-655)
     _append_execution_steps(lines, success_dict.get("execution", {}))
@@ -209,6 +231,17 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:
             lines.append(f"💰 Cost: ${total_cost:.4f} ({total_tokens:,} tokens)")
         else:
             lines.append(f"💰 Cost: ${total_cost:.4f}")
+
+    # Show warnings if present
+    warnings = success_dict.get("warnings", [])
+    if warnings:
+        lines.append("")
+        lines.append("⚠️ Warnings:")
+        for warning in warnings:
+            node_id = warning.get("node_id", "unknown")
+            warning_type = warning.get("type", "warning")
+            message = warning.get("message", "No message")
+            lines.append(f"  • {node_id} ({warning_type}): {message}")
 
     # Show outputs if present (matches CLI "Workflow output:" section)
     result = success_dict.get("result", {})
@@ -260,7 +293,7 @@ def _format_execution_step(step: dict[str, Any]) -> str:
     """Format a single execution step."""
     node_id = step.get("node_id", "unknown")
     status = step.get("status", "unknown")
-    duration = step.get("duration_ms", 0)
+    duration = step.get("duration_ms") or 0  # Handle explicit None
     cached = step.get("cached", False)
     repaired = step.get("repaired", False)
 

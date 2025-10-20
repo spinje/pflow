@@ -24,6 +24,10 @@ class NullOutput(OutputInterface):
         """Discard success message."""
         pass  # Silent
 
+    def show_warning(self, message: str) -> None:
+        """Discard warning message."""
+        pass  # Silent
+
     def create_node_callback(self) -> Optional[Callable]:
         """No progress tracking in silent mode."""
         return None
