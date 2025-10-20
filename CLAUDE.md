@@ -465,6 +465,7 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 80: Implement API Key Management via Settings
 - ✅ Task 82: Implement System-Wide Binary Data Support
 - ✅ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
+- ✅ Task 84: Implement Schema-Aware Type Checking for Template Variables
 
 Next up:
 To be decided
