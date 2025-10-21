@@ -22,6 +22,11 @@ class TemplateAwareNodeWrapper:
     wrapped node except for template resolution.
 
     This is the runtime proxy that enables "Plan Once, Run Forever".
+
+    Defensive Measures:
+    - Recursion depth limit (100 levels) prevents theoretical stack overflow
+      from maliciously crafted deeply nested structures. Real workflows
+      never approach this depth, but the limit ensures robustness.
     """
 
     def __init__(
@@ -115,12 +120,13 @@ class TemplateAwareNodeWrapper:
 
         return False
 
-    def _check_list_unresolved(self, resolved_value: list, original_template: list) -> bool:
+    def _check_list_unresolved(self, resolved_value: list, original_template: list, _depth: int = 0) -> bool:
         """Check if a list contains unresolved templates.
 
         Args:
             resolved_value: The resolved list
             original_template: The original template list
+            _depth: Current recursion depth
 
         Returns:
             True if contains unresolved templates, False otherwise
@@ -131,16 +137,17 @@ class TemplateAwareNodeWrapper:
 
         # Check each item - if any item is unchanged and contains ${...}, it's unresolved
         for resolved_item, template_item in zip(resolved_value, original_template):
-            if self._contains_unresolved_template(resolved_item, template_item):
+            if self._contains_unresolved_template(resolved_item, template_item, _depth + 1):
                 return True
         return False
 
-    def _check_dict_unresolved(self, resolved_value: dict, original_template: dict) -> bool:
+    def _check_dict_unresolved(self, resolved_value: dict, original_template: dict, _depth: int = 0) -> bool:
         """Check if a dict contains unresolved templates.
 
         Args:
             resolved_value: The resolved dict
             original_template: The original template dict
+            _depth: Current recursion depth
 
         Returns:
             True if contains unresolved templates, False otherwise
@@ -151,11 +158,11 @@ class TemplateAwareNodeWrapper:
 
         # Check each value
         for key in resolved_value:
-            if self._contains_unresolved_template(resolved_value[key], original_template[key]):
+            if self._contains_unresolved_template(resolved_value[key], original_template[key], _depth + 1):
                 return True
         return False
 
-    def _contains_unresolved_template(self, resolved_value: Any, original_template: Any) -> bool:
+    def _contains_unresolved_template(self, resolved_value: Any, original_template: Any, _depth: int = 0) -> bool:
         """Check if a resolved value contains unresolved templates.
 
         This handles the complexity of:
@@ -167,10 +174,23 @@ class TemplateAwareNodeWrapper:
         Args:
             resolved_value: The value after template resolution
             original_template: The original template before resolution
+            _depth: Current recursion depth (internal parameter for defensive limits)
 
         Returns:
             True if contains unresolved templates, False otherwise
         """
+        # Defensive depth limit to prevent theoretical stack overflow
+        # No real workflow would have 100+ levels of nesting, but this prevents
+        # malicious or corrupted data from causing issues
+        MAX_DEPTH = 100
+        if _depth > MAX_DEPTH:
+            logger.debug(
+                f"Template validation depth limit ({MAX_DEPTH}) reached for node '{self.node_id}'. "
+                "Assuming resolved to prevent stack overflow.",
+                extra={"node_id": self.node_id, "depth": _depth},
+            )
+            return False  # Assume resolved to continue execution
+
         # Strategy: If resolved_value != original_template, then resolution changed something
         # So even if it contains ${...}, that's from resolved data, not an unresolved template
         # Only flag as unresolved if the value is UNCHANGED and contains ${...}
@@ -181,11 +201,11 @@ class TemplateAwareNodeWrapper:
 
         # For lists: Check if unchanged (failed to resolve templates inside)
         if isinstance(resolved_value, list) and isinstance(original_template, list):
-            return self._check_list_unresolved(resolved_value, original_template)
+            return self._check_list_unresolved(resolved_value, original_template, _depth)
 
         # For dicts: Check if unchanged (failed to resolve templates inside)
         if isinstance(resolved_value, dict) and isinstance(original_template, dict):
-            return self._check_dict_unresolved(resolved_value, original_template)
+            return self._check_dict_unresolved(resolved_value, original_template, _depth)
 
         # For any other type: If it's not a string/list/dict, it can't contain templates
         return False

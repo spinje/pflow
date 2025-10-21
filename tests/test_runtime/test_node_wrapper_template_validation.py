@@ -398,6 +398,54 @@ class TestMultipleTemplatesInParameter:
         assert node.params_at_execution["message"] == "User Alice has  items"
 
 
+class TestDepthLimit:
+    """Test recursion depth limit for defensive programming."""
+
+    def test_deep_nesting_does_not_cause_stack_overflow(self):
+        """Deeply nested structures should hit depth limit gracefully, not crash."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+
+        # Create a structure just deep enough to trigger the limit (105 levels)
+        # This is FAST - only as deep as needed to test the limit
+        nested = {"level": "${var}"}
+        current = nested
+        for _ in range(104):  # 105 levels total
+            current["level"] = {"level": "${var}"}
+            current = current["level"]
+
+        wrapper.set_params({"data": nested})
+
+        # Should NOT raise RecursionError - depth limit prevents it
+        # The depth limit assumes "resolved" and continues execution
+        wrapper._run(shared={})  # No error raised due to depth limit
+
+        # The execution should complete (depth limit returns False = resolved)
+        assert "data" in node.params_at_execution
+
+    def test_depth_limit_logs_debug_message(self, caplog):
+        """Depth limit should log when reached."""
+        import logging
+
+        caplog.set_level(logging.DEBUG)
+
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+
+        # Create deep structure
+        nested = {"level": "${var}"}
+        current = nested
+        for _ in range(104):  # 105 levels total
+            current["level"] = {"level": "${var}"}
+            current = current["level"]
+
+        wrapper.set_params({"data": nested})
+        wrapper._run(shared={})
+
+        # Check that depth limit message was logged
+        assert any("depth limit" in record.message.lower() for record in caplog.records)
+
+
 class TestEdgeCases:
     """Test edge cases and special scenarios."""
 
