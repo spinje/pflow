@@ -62,7 +62,7 @@ class TestIssue95Prevention:
         # Verify it failed at the right place (during template resolution, not after)
         assert len(result.errors) > 0
         error = result.errors[0]
-        assert "could not be fully resolved" in error["message"].lower()
+        assert "unresolved variables" in error["message"].lower()
 
         # Verify the external-api-call node was NEVER executed
         # If it executed, we would have sent broken data to "production"
@@ -144,7 +144,7 @@ class TestIssue95Prevention:
         # Verify error is about template resolution
         assert len(result.errors) > 0
         error = result.errors[0]
-        assert "template" in error["message"].lower()
+        assert "unresolved" in error["message"].lower()
         assert "${produces-nothing.nonexistent_field}" in error["message"]
 
     def test_issue_6_json_status_field_not_null_on_failure(self):

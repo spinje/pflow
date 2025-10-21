@@ -286,6 +286,28 @@ from pflow.execution.formatters.workflow_list_formatter import format_workflow_l
 return format_workflow_list(workflows)
 ```
 
+### Pitfall 5: Not Extracting All ExecutionResult Fields
+
+**Problem:** When formatters add parameters, must update both CLI and MCP call sites.
+
+```python
+# ❌ Missing new ExecutionResult fields
+formatted = format_execution_success(
+    shared_storage=result.shared_after,
+    metrics_collector=metrics_collector,
+)
+
+# ✅ Extract ALL fields (Task 85: status, warnings)
+formatted = format_execution_success(
+    shared_storage=result.shared_after,
+    metrics_collector=metrics_collector,
+    status=result.status,      # New field
+    warnings=result.warnings,  # New field
+)
+```
+
+**Fix locations:** CLI `cli/main.py` line ~476, MCP `execution_service.py` line ~143
+
 ## Testing Strategy
 
 **Mock at service layer** (not core components):

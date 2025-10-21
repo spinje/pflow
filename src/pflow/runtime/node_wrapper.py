@@ -407,24 +407,13 @@ class TemplateAwareNodeWrapper:
         else:
             available_display = available_keys
 
-        # Format template value for display
-        template_display = self._format_template_display(template)
+        # Simplified single-line error message (removes redundancy)
+        error_parts = [f"Unresolved variables in parameter '{param_key}': {', '.join(f'${{{v}}}' for v in variables)}"]
 
-        # Format error message with sections
-        error_parts = [
-            f"Template in parameter '{param_key}' could not be fully resolved: {template_display}",
-            "",
-            f"Node: {self.node_id}",
-            f"Unresolved variables: {', '.join(f'${{{v}}}' for v in variables)}",
-            "",
-        ]
-
-        # Add available keys section
+        # Add available keys section (only if there are keys to show)
         if available_keys:
+            error_parts.append("")
             error_parts.extend(self._format_available_keys(available_display, context))
-        else:
-            # No keys available, show "(none)" for clarity
-            error_parts.append("Available context keys: (none)")
 
         # Add suggestions for close matches
         suggestions = self._generate_suggestions(variables, available_keys)

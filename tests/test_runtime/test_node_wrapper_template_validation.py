@@ -49,12 +49,12 @@ class TestSimpleTemplateValidation:
         # Set parameter with unresolvable simple template
         wrapper.set_params({"prompt": "${missing_variable}"})
 
-        # Execute should raise ValueError
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        # Execute should raise ValueError with clear message
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={})
 
     def test_simple_template_missing_variable_error_message(self):
-        """Error message should be clear and actionable with enhanced context."""
+        """Error message should be clear and actionable."""
         node = DummyNode()
         wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
         wrapper.set_params({"prompt": "${missing_variable}"})
@@ -63,12 +63,11 @@ class TestSimpleTemplateValidation:
             wrapper._run(shared={})
 
         error_msg = str(exc_info.value)
-        # Check enhanced error message components
+        # Check essential error message components (simplified format)
         assert "prompt" in error_msg  # Parameter name
-        assert "${missing_variable}" in error_msg  # Template and variable
-        assert "test-node" in error_msg  # Node ID
-        assert "Unresolved variables" in error_msg  # Enhanced section
-        assert "Available context keys" in error_msg  # Shows what's available
+        assert "${missing_variable}" in error_msg  # Variable name
+        assert "Unresolved variables" in error_msg  # Error type is clear
+        # Note: "Node ID" and "Available context keys: (none)" removed as redundant/unclear
 
     def test_simple_template_existing_variable_resolves(self):
         """Simple template with existing variable should resolve correctly."""
@@ -165,7 +164,7 @@ class TestComplexTemplateValidation:
 
         wrapper.set_params({"prompt": "Hello ${missing_variable}!"})
 
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={})
 
     def test_complex_template_existing_variable_resolves(self):
@@ -214,7 +213,7 @@ class TestNestedStructureTemplates:
             }
         })
 
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={})
 
     def test_dict_with_simple_template_resolves(self):
@@ -241,7 +240,7 @@ class TestNestedStructureTemplates:
 
         wrapper.set_params({"args": ["echo", "${message}"]})
 
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={})
 
     def test_list_with_simple_template_resolves(self):
@@ -266,7 +265,7 @@ class TestPathTemplates:
 
         wrapper.set_params({"field": "${data.missing.path}"})
 
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={"data": {"existing": "value"}})
 
     def test_simple_path_template_resolves(self):
@@ -287,7 +286,7 @@ class TestPathTemplates:
 
         wrapper.set_params({"field": "${items[5]}"})
 
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={"items": [1, 2, 3]})
 
     def test_array_index_template_resolves(self):
@@ -323,7 +322,7 @@ class TestMultipleTemplatesInParameter:
 
         wrapper.set_params({"message": "User ${name} has ${missing_count} items"})
 
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={"name": "Alice"})
 
     def test_multiple_templates_all_resolved(self):
@@ -360,7 +359,7 @@ class TestMultipleTemplatesInParameter:
         # Three variables, only two resolve
         wrapper.set_params({"message": "${greeting} ${name}, you have ${count} items"})
 
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={"greeting": "Hello", "name": "Alice"})
 
     def test_similar_variable_names_no_confusion(self):
@@ -371,7 +370,7 @@ class TestMultipleTemplatesInParameter:
         # user resolves, username doesn't - should detect username is missing
         wrapper.set_params({"message": "User: ${user}, Username: ${username}"})
 
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={"user": "Alice"})
 
     def test_partial_resolution_with_paths(self):
@@ -382,7 +381,7 @@ class TestMultipleTemplatesInParameter:
         # One path resolves, another doesn't
         wrapper.set_params({"message": "Name: ${user.name}, Age: ${user.age}"})
 
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared={"user": {"name": "Alice"}})
 
     def test_complete_resolution_with_empty_values(self):

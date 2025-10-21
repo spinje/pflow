@@ -165,6 +165,16 @@ When modifying formatters:
 - [ ] Tests added/updated
 - [ ] Docstring examples accurate
 
+### ⚠️ When Adding Formatter Parameters
+
+**Adding parameters?** Update BOTH call sites or parity breaks:
+1. Formatter signature (add parameter with default)
+2. CLI call site (`cli/main.py` ~line 476)
+3. MCP call site (`mcp_server/services/execution_service.py` ~line 143)
+4. Test both: `pytest tests/test_cli/ tests/test_mcp_server/`
+
+**Task 85 example:** Added `status`/`warnings` to `format_execution_success()`, forgot MCP → CLI showed warnings, MCP didn't.
+
 ---
 
 ## Quick Diagnostics
