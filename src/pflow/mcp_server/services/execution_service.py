@@ -140,6 +140,8 @@ def _format_success_result(
         metrics_collector=metrics_collector,
         workflow_metadata=workflow_metadata,
         trace_path=str(trace_path),
+        status=result.status,  # Task 85: Tri-state status (SUCCESS/DEGRADED/FAILED)
+        warnings=result.warnings,  # Task 85: Warnings for degraded workflows
     )
 
     return formatted
