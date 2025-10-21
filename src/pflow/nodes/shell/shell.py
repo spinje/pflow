@@ -97,7 +97,7 @@ class ShellNode(Node):
     command templates and error with a helpful message guiding you to use stdin instead.
 
     Interface:
-    - Reads: shared["stdin"]: str  # Optional input data for the command
+    - Reads: shared["stdin"]: any  # Optional input data for the command (dict/list auto-serialized to JSON)
     - Writes: shared["stdout"]: str  # Command standard output (text or base64-encoded binary)
     - Writes: shared["stdout_is_binary"]: bool  # True if stdout is binary data
     - Writes: shared["stderr"]: str  # Command error output (text or base64-encoded binary)

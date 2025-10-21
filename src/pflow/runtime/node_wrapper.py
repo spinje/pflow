@@ -35,6 +35,7 @@ class TemplateAwareNodeWrapper:
         node_id: str,
         initial_params: Optional[dict[str, Any]] = None,
         template_resolution_mode: str = "strict",
+        interface_metadata: Optional[dict[str, Any]] = None,
     ):
         """Initialize the wrapper.
 
@@ -46,13 +47,19 @@ class TemplateAwareNodeWrapper:
             template_resolution_mode: Template resolution mode ('strict' or 'permissive')
                                      strict: fail immediately on unresolved templates (default)
                                      permissive: warn and continue with unresolved templates
+            interface_metadata: Node interface metadata from registry (optional)
+                              Contains input/param type information for validation
         """
         self.inner_node = inner_node
         self.node_id = node_id  # Node ID for debugging purposes only
         self.initial_params = initial_params or {}  # From planner extraction
         self.template_resolution_mode = template_resolution_mode  # Resolution behavior
+        self.interface_metadata = interface_metadata  # Type information for validation
         self.template_params: dict[str, Any] = {}  # Params containing templates
         self.static_params: dict[str, Any] = {}  # Params without templates
+
+        # Build type cache for performance (one-time cost)
+        self._expected_types = self._build_type_cache()
 
     def set_params(self, params: dict[str, Any]) -> None:
         """Separate template params from static params.
@@ -88,6 +95,183 @@ class TemplateAwareNodeWrapper:
                 "static_param_count": len(self.static_params),
             },
         )
+
+    def _build_type_cache(self) -> dict[str, str]:
+        """Build param_key -> expected_type mapping for performance.
+
+        This is called once during initialization to avoid repeated
+        lookups during template resolution.
+
+        Returns:
+            Dictionary mapping parameter keys to their expected types.
+            Empty dict if no interface metadata available.
+        """
+        if not self.interface_metadata:
+            return {}
+
+        types = {}
+
+        # Extract types from inputs (defensive: handle both array and dict formats)
+        inputs = self.interface_metadata.get("inputs", [])
+        if isinstance(inputs, list):
+            for input_spec in inputs:
+                if isinstance(input_spec, dict):
+                    key = input_spec.get("key")
+                    type_str = input_spec.get("type")
+                    if key and type_str:
+                        types[key] = type_str
+
+        # Extract types from params (defensive: handle both array and dict formats)
+        params = self.interface_metadata.get("params", [])
+        if isinstance(params, list):
+            for param_spec in params:
+                if isinstance(param_spec, dict):
+                    key = param_spec.get("key")
+                    type_str = param_spec.get("type")
+                    if key and type_str:
+                        types[key] = type_str
+
+        logger.debug(
+            f"Built type cache for node '{self.node_id}'",
+            extra={"node_id": self.node_id, "type_count": len(types), "types": types},
+        )
+
+        return types
+
+    def _build_type_error_message(
+        self,
+        param_key: str,
+        resolved_value: Any,
+        template_str: str,
+        expected_type: str,
+        actual_type: str,
+    ) -> str:
+        """Build detailed, actionable error message for type mismatch.
+
+        Args:
+            param_key: Parameter name
+            resolved_value: The resolved value (wrong type)
+            template_str: Original template string
+            expected_type: Expected type from metadata
+            actual_type: Actual type of resolved value
+
+        Returns:
+            Formatted multi-section error message with fix suggestions
+        """
+        import re
+
+        # Extract variable name from template for suggestions
+        var_match = re.search(r"\$\{([^}]+)\}", template_str)
+        var_name = var_match.group(1) if var_match else "variable"
+
+        # Build base error
+        error_msg = (
+            f"Parameter '{param_key}' expects {expected_type} but received {actual_type}\n\n"
+            f"Template used: {template_str}\n"
+            f"Resolved to: {actual_type} object\n"
+        )
+
+        # Add fix suggestions
+        error_msg += "\n💡 Common fixes:\n"
+
+        # Fix 1: Serialize to JSON (works for dict/list)
+        error_msg += "  1. Serialize to JSON (recommended):\n"
+        error_msg += f'     {param_key}: "{template_str}"\n\n'
+
+        # Fix 2: Access specific field (for dicts) or item (for lists)
+        if isinstance(resolved_value, dict):
+            error_msg += "  2. Access a specific field:\n"
+            error_msg += f"     {param_key}: ${{{var_name}.field_name}}\n\n"
+        elif isinstance(resolved_value, list):
+            error_msg += "  2. Access a specific item:\n"
+            error_msg += f"     {param_key}: ${{{var_name}[0]}}\n\n"
+
+        # Fix 3: Combine with text
+        error_msg += "  3. Combine with text:\n"
+        error_msg += f'     {param_key}: "Summary: {template_str}"\n'
+
+        # Show available fields/items for dicts
+        if isinstance(resolved_value, dict) and resolved_value:
+            keys = list(resolved_value.keys())[:10]  # Limit to 10 keys
+            error_msg += f"\n\nAvailable fields in {var_name}:\n"
+            for key in keys:
+                error_msg += f"  - {key}\n"
+
+            if len(resolved_value) > 10:
+                remaining = len(resolved_value) - 10
+                error_msg += f"  ... and {remaining} more\n"
+
+        # Show item count for lists
+        elif isinstance(resolved_value, list):
+            error_msg += f"\n\n{var_name} contains {len(resolved_value)} items\n"
+            if len(resolved_value) > 0:
+                error_msg += f"Access items with: ${{{var_name}[0]}}, ${{{var_name}[1]}}, etc.\n"
+
+        return error_msg
+
+    def _validate_resolved_type(self, param_key: str, resolved_value: Any, template_str: str) -> None:
+        """Validate that resolved value type matches expected parameter type.
+
+        This prevents type mismatches like passing a dict to a string parameter,
+        which would result in Python repr garbage being sent to external APIs.
+
+        Args:
+            param_key: Parameter name being validated
+            resolved_value: Value after template resolution
+            template_str: Original template string (for error message)
+
+        Raises:
+            ValueError: If type mismatch detected in strict mode
+                       Prefixed with __PERMISSIVE_TYPE_ERROR__: in permissive mode
+        """
+        # Skip if no type information available (graceful degradation)
+        expected_type = self._expected_types.get(param_key)
+        if not expected_type:
+            logger.debug(
+                f"No type info for param '{param_key}' in node '{self.node_id}', skipping validation",
+                extra={"node_id": self.node_id, "param": param_key},
+            )
+            return
+
+        # Skip validation for polymorphic types (accept anything)
+        if expected_type in ("any", "dict", "list"):
+            logger.debug(
+                f"Param '{param_key}' has polymorphic type '{expected_type}', skipping validation",
+                extra={"node_id": self.node_id, "param": param_key, "expected_type": expected_type},
+            )
+            return
+
+        # Only validate string parameters receiving dicts/lists
+        # (other type mismatches can be added later)
+        if expected_type == "str" and isinstance(resolved_value, (dict, list)):
+            actual_type = type(resolved_value).__name__
+
+            # Build enhanced error message with fix suggestions
+            error_msg = self._build_type_error_message(
+                param_key, resolved_value, template_str, expected_type, actual_type
+            )
+
+            logger.error(
+                error_msg,
+                extra={
+                    "node_id": self.node_id,
+                    "param": param_key,
+                    "expected": expected_type,
+                    "actual": actual_type,
+                },
+            )
+
+            # In strict mode: fail immediately
+            # In permissive mode: prefix with special marker for handling in _run()
+            if self.template_resolution_mode == "strict":
+                raise ValueError(error_msg)
+            else:
+                # Raise ValueError with special marker for permissive mode handling
+                logger.warning(
+                    f"Type validation failed in permissive mode (node: {self.node_id}, param: {param_key})",
+                    extra={"node_id": self.node_id, "param": param_key},
+                )
+                raise ValueError(f"__PERMISSIVE_TYPE_ERROR__:{error_msg}")
 
     def _check_string_unresolved(self, resolved_value: str, original_template: str) -> bool:
         """Check if a string contains unresolved templates.
@@ -425,7 +609,7 @@ class TemplateAwareNodeWrapper:
 
         return "\n".join(error_parts)
 
-    def _run(self, shared: dict[str, Any]) -> Any:
+    def _run(self, shared: dict[str, Any]) -> Any:  # noqa: C901
         """Execute with template resolution.
 
         This is the key interception point. We resolve templates just
@@ -454,6 +638,29 @@ class TemplateAwareNodeWrapper:
         resolved_params = {}
         for key, template in self.template_params.items():
             resolved_value, is_simple_template = self._resolve_template_parameter(key, template, context)
+
+            # NEW: Validate type for simple templates (before storing in resolved_params)
+            # Complex templates are already stringified, so no type mismatch possible
+            if is_simple_template:
+                try:
+                    self._validate_resolved_type(key, resolved_value, str(template))
+                except ValueError as e:
+                    # Check if permissive mode error
+                    if str(e).startswith("__PERMISSIVE_TYPE_ERROR__:"):
+                        # Extract actual message and store as warning
+                        actual_msg = str(e).replace("__PERMISSIVE_TYPE_ERROR__:", "")
+                        if "__template_errors__" not in shared:
+                            shared["__template_errors__"] = {}
+                        shared["__template_errors__"][self.node_id] = {
+                            "message": actual_msg,
+                            "type": "type_validation",
+                            "param": key,
+                        }
+                        # Continue execution in permissive mode
+                    else:
+                        # Strict mode or unexpected error - re-raise
+                        raise
+
             resolved_params[key] = resolved_value
 
             # Check if template was fully resolved (for BOTH simple and complex templates)

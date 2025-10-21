@@ -302,6 +302,7 @@ def _apply_template_wrapping(
     params: dict[str, Any],
     initial_params: dict[str, Any],
     template_resolution_mode: str = "strict",
+    interface_metadata: Optional[dict[str, Any]] = None,
 ) -> Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]:
     """Apply template wrapping to a node if it has template parameters.
 
@@ -311,6 +312,8 @@ def _apply_template_wrapping(
         params: The node's parameters
         initial_params: Initial parameters for template resolution
         template_resolution_mode: Template resolution mode ('strict' or 'permissive')
+        interface_metadata: Node interface metadata from registry (optional)
+                          Contains input/param type information for validation
 
     Returns:
         The original node or a wrapped version if templates are detected
@@ -322,9 +325,16 @@ def _apply_template_wrapping(
         # Wrap node for template support (runtime proxy)
         logger.debug(
             f"Wrapping node '{node_id}' for template resolution (mode: {template_resolution_mode})",
-            extra={"phase": "node_instantiation", "node_id": node_id, "mode": template_resolution_mode},
+            extra={
+                "phase": "node_instantiation",
+                "node_id": node_id,
+                "mode": template_resolution_mode,
+                "has_metadata": bool(interface_metadata),
+            },
         )
-        return TemplateAwareNodeWrapper(node_instance, node_id, initial_params, template_resolution_mode)
+        return TemplateAwareNodeWrapper(
+            node_instance, node_id, initial_params, template_resolution_mode, interface_metadata
+        )
 
     return node_instance
 
@@ -602,8 +612,26 @@ def _create_single_node(
     # Use Any type since we'll be wrapping with various wrapper types
     node_instance: Any = node_class()
 
-    # Apply template wrapping if needed
-    node_instance = _apply_template_wrapping(node_instance, node_id, params, initial_params, template_resolution_mode)
+    # NEW: Extract interface metadata from registry for type validation
+    nodes = registry.load()
+    node_metadata = nodes.get(node_type, {})
+    interface_metadata = node_metadata.get("interface")
+
+    logger.debug(
+        f"Extracted interface metadata for node '{node_id}'",
+        extra={
+            "phase": "node_instantiation",
+            "node_id": node_id,
+            "has_metadata": bool(interface_metadata),
+            "input_count": len(interface_metadata.get("inputs", [])) if interface_metadata else 0,
+            "param_count": len(interface_metadata.get("params", [])) if interface_metadata else 0,
+        },
+    )
+
+    # Apply template wrapping if needed (pass metadata for type validation)
+    node_instance = _apply_template_wrapping(
+        node_instance, node_id, params, initial_params, template_resolution_mode, interface_metadata
+    )
 
     # Apply namespace wrapping if enabled
     if enable_namespacing:

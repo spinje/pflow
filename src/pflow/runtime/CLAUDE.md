@@ -38,7 +38,7 @@ src/pflow/runtime/
 ├── __init__.py                  # Module exports (3 public functions)
 ├── compiler.py                  # Main IR→Flow compiler (1042 lines)
 ├── instrumented_wrapper.py      # Metrics, tracing, caching (1168 lines)
-├── node_wrapper.py             # Template resolution wrapper (452 lines)
+├── node_wrapper.py             # Template resolution wrapper (680 lines)
 ├── namespaced_wrapper.py       # Collision prevention wrapper (95 lines)
 ├── namespaced_store.py         # Namespaced store proxy (156 lines)
 ├── template_resolver.py        # Template variable resolution (385 lines)
@@ -135,7 +135,8 @@ shared["__cache_hits__"] = []  # Nodes that hit cache (for JSON output)
 - Preserves type for simple templates
 - Recursive validation detects unresolved templates in strings/lists/dicts
 - Partial resolution detection via set intersection (Task 85)
-- Strict mode (default): Template errors fatal (triggers repair)
+- Type validation prevents dict/list → str mismatches (uses registry metadata, shows fix suggestions)
+- Strict mode (default): Template/type errors fatal (triggers repair)
 - Permissive mode: Warnings only, stores errors in `__template_errors__`
 
 ### 3. Template System
@@ -343,7 +344,7 @@ shared["__non_repairable_error__"] = bool # Skip repair flag
 shared["__warnings__"] = {}               # Node warnings (triggers DEGRADED status)
 shared["__modified_nodes__"] = []         # Repair tracking
 shared["__cache_hits__"] = []             # Cache hit tracking (Task 71)
-shared["__template_errors__"] = {}        # Template errors in permissive mode (Task 85)
+shared["__template_errors__"] = {}        # Template/type errors in permissive mode (Task 85, Issue #100)
 ```
 
 ### Compilation Context

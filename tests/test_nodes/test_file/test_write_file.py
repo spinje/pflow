@@ -395,3 +395,94 @@ class TestWriteFileNode:
                 written_data = f.read()
 
             assert written_data == binary_data, "HTTP→Write-File integration produced wrong bytes"
+
+    def test_write_dict_as_json(self):
+        """
+        Guards against: Dicts being written as Python repr instead of valid JSON.
+
+        Tests that dict content is automatically serialized to valid JSON
+        with double quotes. If this test fails, dict content is using str()
+        instead of json.dumps().
+        """
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "data.json")
+
+            test_dict = {"name": "John", "age": 30, "active": True, "tags": ["dev", "python"]}
+
+            node = WriteFileNode()
+            shared = {"content": test_dict, "file_path": file_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+
+            # Read and verify it's valid JSON
+            with open(file_path) as f:
+                content = f.read()
+
+            # Should be valid JSON (not Python repr)
+            parsed = json.loads(content)
+            assert parsed == test_dict
+
+            # Verify proper JSON format (double quotes)
+            assert '"name"' in content
+            assert "'name'" not in content  # No Python repr single quotes
+
+    def test_write_list_as_json(self):
+        """
+        Guards against: Lists being written as Python repr instead of valid JSON.
+
+        Tests that list content is automatically serialized to valid JSON.
+        """
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "items.json")
+
+            test_list = ["item1", "item2", {"nested": "value"}]
+
+            node = WriteFileNode()
+            shared = {"content": test_list, "file_path": file_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+
+            # Verify valid JSON
+            with open(file_path) as f:
+                content = f.read()
+
+            parsed = json.loads(content)
+            assert parsed == test_list
+
+    def test_write_string_unchanged(self):
+        """
+        Guards against: JSON serialization affecting plain strings.
+
+        Tests that regular string content is written unchanged (backward compat).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "text.txt")
+
+            test_string = "Just a plain string with some text"
+
+            node = WriteFileNode()
+            shared = {"content": test_string, "file_path": file_path}
+
+            prep_res = node.prep(shared)
+            exec_res = node.exec(prep_res)
+            action = node.post(shared, prep_res, exec_res)
+
+            assert action == "default"
+
+            # Verify unchanged
+            with open(file_path) as f:
+                content = f.read()
+
+            assert content == test_string

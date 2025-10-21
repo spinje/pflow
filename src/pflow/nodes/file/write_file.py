@@ -2,6 +2,7 @@
 
 import base64
 import contextlib
+import json
 import logging
 import os
 import shutil
@@ -82,6 +83,15 @@ class WriteFileNode(Node):
             except Exception as e:
                 raise ValueError(f"Invalid base64 content: {str(e)[:100]}") from e
 
+        # Convert content to string if not binary
+        # Use JSON serialization for dicts/lists to produce valid JSON
+        if not is_binary:
+            if isinstance(content, (dict, list)):
+                content = json.dumps(content, ensure_ascii=False, indent=2)
+                logger.debug("Serialized dict/list content to JSON")
+            elif not isinstance(content, str):
+                content = str(content)
+
         logger.debug(
             "Preparing to write file",
             extra={
@@ -93,7 +103,7 @@ class WriteFileNode(Node):
                 "phase": "prep",
             },
         )
-        return (content if is_binary else str(content), str(file_path), encoding, append, is_binary)
+        return (content, str(file_path), encoding, append, is_binary)
 
     def _ensure_parent_directory(self, file_path: str) -> None:
         """Create parent directories if needed."""
