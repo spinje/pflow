@@ -466,11 +466,13 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 82: Implement System-Wide Binary Data Support
 - ✅ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
 - ✅ Task 84: Implement Schema-Aware Type Checking for Template Variables
+- ✅ Task 85: Runtime Template Resolution Hardening
 
 Next up:
 To be decided
 
 Next version (post-MVP/post-Launch):
+- ⏳ Task 83: Pre-Release Security and Code Quality Audit
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 59: Add support for nested workflows
