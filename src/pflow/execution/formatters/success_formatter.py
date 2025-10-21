@@ -183,7 +183,7 @@ def _find_auto_output(shared: dict[str, Any]) -> tuple[Optional[str], Any]:
     return None, None
 
 
-def format_success_as_text(success_dict: dict[str, Any]) -> str:
+def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
     """Convert success dictionary to human-readable text (matches CLI format exactly).
 
     Args:
@@ -232,7 +232,7 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:
         else:
             lines.append(f"💰 Cost: ${total_cost:.4f}")
 
-    # Show warnings if present
+    # Show warnings if present (matches CLI format with proper indentation)
     warnings = success_dict.get("warnings", [])
     if warnings:
         lines.append("")
@@ -241,7 +241,14 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:
             node_id = warning.get("node_id", "unknown")
             warning_type = warning.get("type", "warning")
             message = warning.get("message", "No message")
-            lines.append(f"  • {node_id} ({warning_type}): {message}")
+
+            # Header line (matches CLI)
+            lines.append(f"  • {node_id} ({warning_type}):")
+
+            # Multi-line message with proper indentation (matches CLI)
+            for line in message.split("\n"):
+                if line.strip():  # Skip empty lines
+                    lines.append(f"    {line}")
 
     # Show outputs if present (matches CLI "Workflow output:" section)
     result = success_dict.get("result", {})
@@ -309,7 +316,8 @@ def _format_execution_step(step: dict[str, Any]) -> str:
         tags.append("repaired")
 
     tag_str = f" [{', '.join(tags)}]" if tags else ""
-    return f"  {indicator} {node_id} ({duration}ms){tag_str}"
+    # Round duration to integer for readability (matches CLI format)
+    return f"  {indicator} {node_id} ({int(duration)}ms){tag_str}"
 
 
 def _append_footer(lines: list[str], cost: Optional[float], trace_path: Optional[str]) -> None:
