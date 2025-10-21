@@ -208,7 +208,7 @@ class TestTemplateResolution:
         shared = {"existing": "value"}
 
         # Should raise ValueError because ${undefined} cannot be resolved
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared)
 
     def test_params_restored_after_execution(self):

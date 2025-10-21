@@ -132,7 +132,7 @@ class TestCompilerIntegration:
 
         # But should raise during execution due to runtime template validation
         shared = {}
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             flow.run(shared)
 
     def test_shared_store_templates_not_validated(self, mock_registry):
@@ -182,7 +182,7 @@ class TestCompilerIntegration:
         # Execute - but MockNode doesn't actually produce shared_store_var!
         # So runtime validation will catch the unresolved template
         shared = {}
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             flow.run(shared)
 
 

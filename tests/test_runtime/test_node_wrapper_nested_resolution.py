@@ -189,7 +189,7 @@ class TestNodeWrapperNestedResolution:
 
         # Should raise ValueError for unresolved template
         shared = {}
-        with pytest.raises(ValueError, match="could not be fully resolved"):
+        with pytest.raises(ValueError, match="Unresolved variables"):
             wrapper._run(shared)
 
     def test_real_world_http_scenario(self):
