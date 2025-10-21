@@ -4,6 +4,8 @@ This test verifies that when a wrapped node executes, the nested template
 structures are properly resolved before being passed to the inner node.
 """
 
+import pytest
+
 from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
 from pocketflow import BaseNode
 
@@ -171,7 +173,11 @@ class TestNodeWrapperNestedResolution:
         assert node.exec_params["config"]["active"] is False
 
     def test_handles_missing_template_variables(self):
-        """Test that missing template variables remain unresolved."""
+        """Test that missing template variables raise ValueError (Issue #95 fix).
+
+        Updated as part of Task 85. Previously, missing variables would remain
+        unresolved, now they correctly raise ValueError.
+        """
         node = MockNode()
         wrapper = TemplateAwareNodeWrapper(node, node_id="test_node")
 
@@ -181,14 +187,10 @@ class TestNodeWrapperNestedResolution:
 
         wrapper.set_params(params)
 
-        # Execute
+        # Should raise ValueError for unresolved template
         shared = {}
-        wrapper._run(shared)
-
-        # Existing variable should be resolved
-        assert node.exec_params["headers"]["X-Exists"] == "yes"
-        # Missing variable should remain as template
-        assert node.exec_params["headers"]["X-Missing"] == "${does_not_exist}"
+        with pytest.raises(ValueError, match="could not be fully resolved"):
+            wrapper._run(shared)
 
     def test_real_world_http_scenario(self):
         """Test the exact HTTP scenario that was failing."""

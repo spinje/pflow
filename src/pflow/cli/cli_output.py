@@ -91,6 +91,11 @@ class CliOutput(OutputInterface):
         if self.output_format != "json":
             click.echo(f"✅ {message}")
 
+    def show_warning(self, message: str) -> None:
+        """Display a warning message."""
+        if self.output_format != "json":
+            click.echo(f"⚠️ {message}")
+
     def create_node_callback(self) -> Optional[Callable[[str, str, Optional[float], int], None]]:
         """Create callback for node execution progress."""
         return self.output_controller.create_progress_callback()

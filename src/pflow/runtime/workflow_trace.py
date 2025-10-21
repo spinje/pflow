@@ -21,7 +21,7 @@ TRACE_DICT_MAX_SIZE = int(os.environ.get("PFLOW_TRACE_DICT_MAX", "50000"))  # 50
 TRACE_LLM_CALLS_MAX = int(os.environ.get("PFLOW_TRACE_LLM_CALLS_MAX", "100"))  # Track up to 100 LLM calls
 
 # Trace format version for future compatibility
-TRACE_FORMAT_VERSION = "1.1.0"
+TRACE_FORMAT_VERSION = "1.2.0"  # Updated for tri-state status support
 
 
 class WorkflowTraceCollector:
@@ -443,6 +443,22 @@ class WorkflowTraceCollector:
         """
         self.json_output = json_output
 
+    def _determine_trace_status(self) -> str:
+        """Determine tri-state status from execution events.
+
+        Returns:
+            Status string: "success", "degraded", or "failed"
+        """
+        failed = [e for e in self.events if not e.get("success", True)]
+        if failed:
+            return "failed"
+
+        warned = [e for e in self.events if e.get("warning")]
+        if warned:
+            return "degraded"
+
+        return "success"
+
     def save_to_file(self) -> Path:
         """Save trace to JSON file in ~/.pflow/debug/.
 
@@ -471,9 +487,11 @@ class WorkflowTraceCollector:
         # Calculate total duration
         duration_ms = (datetime.now() - self.start_time).total_seconds() * 1000
 
-        # Determine final status
+        # Determine final status (tri-state: success/degraded/failed)
+        final_status = self._determine_trace_status()
+
+        # Count failed nodes for statistics
         failed_nodes = [e for e in self.events if not e.get("success", True)]
-        final_status = "failed" if failed_nodes else "success"
 
         # Prepare trace data with format version
         trace_data = {

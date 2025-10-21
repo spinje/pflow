@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from pflow.core.workflow_status import WorkflowStatus
+
 from .output_interface import OutputInterface
 
 
@@ -48,18 +50,30 @@ class DisplayManager:
         elif status == "error":
             self.output.show_progress(f"  {node_id}... ✗ Failed", is_error=True)
 
-    def show_execution_result(self, success: bool, data: Optional[str] = None) -> None:
-        """Show final execution result.
+    def show_execution_result(
+        self, success: bool, status: Optional[WorkflowStatus] = None, data: Optional[str] = None
+    ) -> None:
+        """Show final execution result with tri-state status.
 
         Args:
-            success: Whether the execution was successful
+            success: Whether the execution was successful (backward compatibility)
+            status: Optional tri-state workflow status (SUCCESS/DEGRADED/FAILED)
             data: Optional output data to display (unused - handlers display data)
         """
-        if success:
+        # Use status if provided, otherwise fall back to boolean success
+        if status == WorkflowStatus.SUCCESS:
             self.output.show_success("Workflow executed successfully")
-            # Note: data output is handled by CLI handlers, not here
-        else:
+        elif status == WorkflowStatus.DEGRADED:
+            self.output.show_warning("Workflow completed with warnings")
+        elif status == WorkflowStatus.FAILED:
             self.output.show_error("Workflow execution failed")
+        else:
+            # Fallback to boolean success for backward compatibility
+            if success:
+                self.output.show_success("Workflow executed successfully")
+            else:
+                self.output.show_error("Workflow execution failed")
+        # Note: data output is handled by CLI handlers, not here
 
     def show_repair_start(self) -> None:
         """Show repair process starting."""

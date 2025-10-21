@@ -10,7 +10,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import ClassVar, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +29,31 @@ class RegistrySettings(BaseModel):
     include_test_nodes: bool = Field(default=False)  # Can be overridden by env var
 
 
+class RuntimeSettings(BaseModel):
+    """Runtime execution configuration.
+
+    These settings control workflow execution behavior.
+    """
+
+    template_resolution_mode: str = Field(
+        default="strict", description="Default template resolution mode: strict or permissive"
+    )
+
+    @field_validator("template_resolution_mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        """Validate mode is valid."""
+        if v not in ["strict", "permissive"]:
+            raise ValueError(f"Invalid mode: {v}. Must be 'strict' or 'permissive'")
+        return v
+
+
 class PflowSettings(BaseModel):
     """Main settings configuration."""
 
     version: str = Field(default="1.0.0")
     registry: RegistrySettings = Field(default_factory=RegistrySettings)
+    runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     env: dict[str, str] = Field(default_factory=dict)
 
 
@@ -97,6 +117,17 @@ class SettingsManager:
             settings.registry.include_test_nodes = include_test
         # Note: We don't mutate the deny list here - the override is handled
         # at runtime in should_include_node() to keep it ephemeral
+
+        # Check for template resolution mode override
+        env_mode = os.getenv("PFLOW_TEMPLATE_RESOLUTION_MODE")
+        if env_mode is not None:
+            if env_mode.lower() in ("strict", "permissive"):
+                settings.runtime.template_resolution_mode = env_mode.lower()
+            else:
+                logger.warning(
+                    f"Invalid PFLOW_TEMPLATE_RESOLUTION_MODE: {env_mode}. "
+                    f"Using default: {settings.runtime.template_resolution_mode}"
+                )
 
     def should_include_node(self, node_name: str, node_module: Optional[str] = None) -> bool:
         """Check if a node should be included based on settings.

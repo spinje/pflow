@@ -82,7 +82,7 @@ def build_execution_steps(
         step = {
             "node_id": node_id,
             "status": status,
-            "duration_ms": node_timings.get(node_id),
+            "duration_ms": node_timings.get(node_id, 0),  # Default to 0 if not found
             "cached": node_id in cache_hits,
         }
 

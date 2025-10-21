@@ -45,6 +45,14 @@ class OutputInterface(Protocol):
         """
         ...
 
+    def show_warning(self, message: str) -> None:
+        """Display a warning message.
+
+        Args:
+            message: The warning message to display
+        """
+        ...
+
     def create_node_callback(self) -> Optional[Callable]:
         """Create callback for node execution progress.
 

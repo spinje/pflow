@@ -41,22 +41,38 @@ class NamespacedSharedStore:
             parent_store[namespace] = {}
 
     def __setitem__(self, key: str, value: Any) -> None:
-        """Write to the namespaced location.
+        """Write to the namespaced location or root for special keys.
 
-        All writes go to shared[namespace][key] to prevent collisions.
+        Special keys (starting and ending with __) are written to root
+        to enable framework coordination without namespace isolation.
+        Regular writes go to shared[namespace][key] to prevent collisions.
         """
-        self._parent[self._namespace][key] = value
+        # Special keys bypass namespacing and go to root
+        if key.startswith("__") and key.endswith("__"):
+            self._parent[key] = value
+        else:
+            # Regular keys go to namespace
+            self._parent[self._namespace][key] = value
 
     def __getitem__(self, key: str) -> Any:
         """Read with namespace priority, falling back to root.
 
-        Check order:
+        Special keys (__*__) are always checked at root first since they
+        are always written to root.
+
+        For regular keys:
         1. shared[namespace][key] - For self-reading nodes or namespaced data
         2. shared[key] - For CLI inputs, legacy data, or cross-node reads
 
         Raises:
             KeyError: If key not found in namespace or root
         """
+        # Special keys are always at root
+        if key.startswith("__") and key.endswith("__"):
+            if key in self._parent:
+                return self._parent[key]
+            raise KeyError(f"Key '{key}' not found in root")
+
         # Check own namespace first (for self-reading nodes if any)
         if key in self._parent[self._namespace]:
             return self._parent[self._namespace][key]
@@ -86,16 +102,28 @@ class NamespacedSharedStore:
     def __contains__(self, key: str) -> bool:
         """Check if key exists in namespace or root.
 
-        Used by 'in' operator. Checks both namespace and root level.
+        Special keys (__*__) are only checked at root.
+        Regular keys are checked in both namespace and root level.
         """
+        # Special keys are always at root
+        if key.startswith("__") and key.endswith("__"):
+            return key in self._parent
+
+        # Regular keys checked in both locations
         return key in self._parent[self._namespace] or key in self._parent
 
     def setdefault(self, key: str, default: Any = None) -> Any:
         """Set default value if key doesn't exist.
 
-        If key exists in namespace or root, return its value.
-        Otherwise, set it in namespace and return default.
+        Special keys (__*__) are handled at root level.
+        Regular keys: if exists in namespace or root, return value,
+        otherwise set in namespace and return default.
         """
+        # Special keys at root
+        if key.startswith("__") and key.endswith("__"):
+            return self._parent.setdefault(key, default)
+
+        # Regular keys with namespace priority
         if key in self:
             return self[key]
         self[key] = default

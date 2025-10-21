@@ -301,6 +301,7 @@ def _apply_template_wrapping(
     node_id: str,
     params: dict[str, Any],
     initial_params: dict[str, Any],
+    template_resolution_mode: str = "strict",
 ) -> Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]:
     """Apply template wrapping to a node if it has template parameters.
 
@@ -309,6 +310,7 @@ def _apply_template_wrapping(
         node_id: The ID of the node
         params: The node's parameters
         initial_params: Initial parameters for template resolution
+        template_resolution_mode: Template resolution mode ('strict' or 'permissive')
 
     Returns:
         The original node or a wrapped version if templates are detected
@@ -319,10 +321,10 @@ def _apply_template_wrapping(
     if has_templates:
         # Wrap node for template support (runtime proxy)
         logger.debug(
-            f"Wrapping node '{node_id}' for template resolution",
-            extra={"phase": "node_instantiation", "node_id": node_id},
+            f"Wrapping node '{node_id}' for template resolution (mode: {template_resolution_mode})",
+            extra={"phase": "node_instantiation", "node_id": node_id, "mode": template_resolution_mode},
         )
-        return TemplateAwareNodeWrapper(node_instance, node_id, initial_params)
+        return TemplateAwareNodeWrapper(node_instance, node_id, initial_params, template_resolution_mode)
 
     return node_instance
 
@@ -563,6 +565,7 @@ def _create_single_node(
     registry: Registry,
     initial_params: dict[str, Any],
     enable_namespacing: bool,
+    template_resolution_mode: str,
     metrics_collector: Optional[Any] = None,
     trace_collector: Optional[Any] = None,
 ) -> Any:  # Can be any wrapper type
@@ -573,6 +576,7 @@ def _create_single_node(
         registry: Registry instance for node class lookup
         initial_params: Parameters for template resolution
         enable_namespacing: Whether to apply namespace wrapping
+        template_resolution_mode: Template resolution mode ('strict' or 'permissive')
         metrics_collector: Optional MetricsCollector for cost tracking
         trace_collector: Optional WorkflowTraceCollector for debugging
 
@@ -599,7 +603,7 @@ def _create_single_node(
     node_instance: Any = node_class()
 
     # Apply template wrapping if needed
-    node_instance = _apply_template_wrapping(node_instance, node_id, params, initial_params)
+    node_instance = _apply_template_wrapping(node_instance, node_id, params, initial_params, template_resolution_mode)
 
     # Apply namespace wrapping if enabled
     if enable_namespacing:
@@ -678,12 +682,21 @@ def _instantiate_nodes(
     if enable_namespacing:
         logger.debug("Automatic namespacing enabled for workflow", extra={"phase": "node_instantiation"})
 
+    # Get template resolution mode from initial_params (set in _validate_workflow)
+    template_resolution_mode = initial_params.get("__template_resolution_mode__", "strict")
+
     for node_data in ir_dict["nodes"]:
         node_id = node_data["id"]
 
         try:
             node_instance = _create_single_node(
-                node_data, registry, initial_params, enable_namespacing, metrics_collector, trace_collector
+                node_data,
+                registry,
+                initial_params,
+                enable_namespacing,
+                template_resolution_mode,
+                metrics_collector,
+                trace_collector,
             )
             nodes[node_id] = node_instance
 
@@ -870,6 +883,37 @@ def _raise_input_validation_errors(errors: list[tuple[str, str, str]]) -> None:
     )
 
 
+def _get_template_resolution_mode(ir_dict: dict[str, Any]) -> str:
+    """Get and validate template resolution mode from IR or settings.
+
+    Args:
+        ir_dict: The workflow IR dictionary
+
+    Returns:
+        Validated template resolution mode ('strict' or 'permissive')
+
+    Raises:
+        CompilationError: If mode value is invalid
+    """
+    template_resolution_mode = ir_dict.get("template_resolution_mode")
+    if template_resolution_mode is None:
+        # Load from global settings if not specified in workflow
+        from pflow.core.settings import SettingsManager
+
+        settings = SettingsManager().load()
+        template_resolution_mode = settings.runtime.template_resolution_mode
+
+    # Validate mode value
+    if template_resolution_mode not in ["strict", "permissive"]:
+        raise CompilationError(
+            message=f"Invalid template_resolution_mode: {template_resolution_mode}",
+            phase="validation",
+            details={"valid_modes": ["strict", "permissive"], "provided": template_resolution_mode},
+        )
+
+    return template_resolution_mode
+
+
 def _validate_workflow(
     ir_dict: dict[str, Any], registry: Registry, initial_params: dict[str, Any], validate_templates: bool
 ) -> dict[str, Any]:
@@ -898,6 +942,17 @@ def _validate_workflow(
     except CompilationError:
         logger.exception("IR validation failed", extra={"phase": "validation"})
         raise
+
+    # Step 2.5: Get and validate template resolution mode
+    template_resolution_mode = _get_template_resolution_mode(ir_dict)
+
+    # Store in initial_params for access during node creation
+    initial_params["__template_resolution_mode__"] = template_resolution_mode
+
+    logger.debug(
+        f"Template resolution mode: {template_resolution_mode}",
+        extra={"phase": "validation", "mode": template_resolution_mode},
+    )
 
     # Step 3: Validate inputs and apply defaults
     try:

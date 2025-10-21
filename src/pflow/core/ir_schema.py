@@ -228,6 +228,16 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
             "description": "Enable automatic namespacing to prevent output collisions between nodes",
             "default": True,
         },
+        "template_resolution_mode": {
+            "type": "string",
+            "enum": ["strict", "permissive"],
+            "description": (
+                "Template resolution error behavior. "
+                "strict: fail immediately on unresolved templates (recommended for production). "
+                "permissive: warn and continue with unresolved templates (useful for debugging)."
+            ),
+            "default": "strict",
+        },
     },
     "required": ["ir_version", "nodes"],
     "additionalProperties": False,

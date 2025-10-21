@@ -127,6 +127,8 @@ class ExecutionResult:
     output_data: Optional[str]         # Extracted output
     metrics_summary: Optional[dict]    # LLM usage metrics
     repaired_workflow_ir: Optional[dict]  # Repaired workflow if applicable
+    status: str                       # Tri-state: "success"/"degraded"/"failed" (Task 85)
+    warnings: dict[str, str]           # Node warnings for degraded status (Task 85)
 ```
 
 **Error Structure for Repair** (Enhanced in Task 71):
@@ -352,6 +354,7 @@ shared["__cache_hits__"] = ["node1"]           # Nodes that hit cache
 shared["__non_repairable_error__"] = True     # Skip repair for API errors
 shared["__warnings__"] = {"node": "msg"}      # API warning messages
 shared["__modified_nodes__"] = ["node1"]      # Nodes modified by repair
+shared["__template_errors__"] = {"node": {...}} # Template errors in permissive mode (Task 85)
 ```
 
 ### Error Structure for Repair (Enhanced in Task 71)

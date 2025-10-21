@@ -35,6 +35,7 @@ src/pflow/core/
 ├── workflow_data_flow.py    # Data flow and execution order validation
 ├── workflow_manager.py      # Workflow lifecycle management with format transformation
 ├── workflow_save_service.py # Shared workflow save operations (CLI/MCP)
+├── workflow_status.py       # Tri-state workflow execution status enum
 ├── workflow_validator.py    # Unified workflow validation orchestrator
 └── CLAUDE.md               # This file
 ```
@@ -81,13 +82,14 @@ The heart of workflow representation in pflow:
 **Schema Structure**:
 ```python
 {
-    "ir_version": "0.1.0",      # Required - semantic versioning
-    "nodes": [...],             # Required - at least one node
-    "edges": [...],             # Optional - defines connections
-    "start_node": "node-id",    # Optional - defaults to first node
-    "mappings": {...},          # Optional - proxy mappings
-    "inputs": {...},            # Optional - workflow input declarations
-    "outputs": {...}            # Optional - workflow output declarations
+    "ir_version": "0.1.0",                    # Required - semantic versioning
+    "nodes": [...],                          # Required - at least one node
+    "edges": [...],                          # Optional - defines connections
+    "start_node": "node-id",                 # Optional - defaults to first node
+    "mappings": {...},                       # Optional - proxy mappings
+    "inputs": {...},                         # Optional - workflow input declarations
+    "outputs": {...},                        # Optional - workflow output declarations
+    "template_resolution_mode": "strict"     # Optional - "strict" or "permissive", defaults to settings/strict
 }
 ```
 
@@ -295,13 +297,24 @@ Controls output behavior based on execution context:
 - ✓ Success (green), ❌ Error (red), ⚠️ Warning (yellow)
 - ↻ Cached (blue, dimmed), [repaired] Modified (cyan)
 
-### 10. settings.py - Settings Management & API Key Storage
+### 10. workflow_status.py - Tri-State Workflow Status
+
+Defines execution status outcomes for better observability:
+
+**Key Enum**:
+- **`WorkflowStatus`**: SUCCESS/DEGRADED/FAILED tri-state status
+  - `SUCCESS`: All nodes completed without warnings
+  - `DEGRADED`: Completed but with warnings (e.g., unresolved templates in permissive mode)
+  - `FAILED`: Workflow failed due to errors
+
+### 11. settings.py - Settings Management & API Key Storage
 
 Manages settings with environment variable override support and secure API key storage:
 
 **Key Classes**:
 - **`SettingsManager`**: Manages `~/.pflow/settings.json`
 - **`PflowSettings`**: Settings data model with registry and env fields
+- **`RuntimeSettings`**: Runtime configuration including `template_resolution_mode` ("strict"/"permissive")
 
 **Features**:
 - **Node Filtering**: Allow/deny patterns with fnmatch support
@@ -384,7 +397,7 @@ env_vars = manager.list_env(mask_values=False)
 - Permission validation warns on insecure files
 - Plain text storage (industry standard for CLI tools)
 
-### 11. user_errors.py - User-Friendly Error Formatting
+### 12. user_errors.py - User-Friendly Error Formatting
 
 Provides structured, actionable error messages for CLI users:
 
@@ -400,7 +413,7 @@ Provides structured, actionable error messages for CLI users:
 - **`MissingParametersError`**: **⚠️ UNUSED** - Should be used in planning parameter validation
 - **`TemplateVariableError`**: **⚠️ UNUSED** - Should be used in template validator
 
-### 12. validation_utils.py - Parameter Validation Utilities
+### 13. validation_utils.py - Parameter Validation Utilities
 
 Security-aware parameter name validation:
 
@@ -423,7 +436,7 @@ Security-aware parameter name validation:
 - **🚨 LLM-extracted parameters NOT validated** - Could suggest dangerous names
 - **🚨 MCP tool parameters NOT validated** - External servers could provide dangerous names
 
-### 13. workflow_save_service.py - Shared Save Operations
+### 14. workflow_save_service.py - Shared Save Operations
 
 Unified workflow save/load/validation for CLI and MCP server:
 
@@ -438,7 +451,7 @@ Unified workflow save/load/validation for CLI and MCP server:
 
 **Usage**: CLI (`commands/workflow.py`), MCP server (`services/execution_service.py`)
 
-### 14. suggestion_utils.py - User Input Suggestions
+### 15. suggestion_utils.py - User Input Suggestions
 
 "Did you mean" logic for user-friendly error messages:
 
@@ -448,7 +461,7 @@ Unified workflow save/load/validation for CLI and MCP server:
 
 **Usage**: CLI (`mcp.py`), Runtime (`compiler.py`), Formatters (`registry_run_formatter.py`), MCP (`resolver.py`, `workflow_service.py`)
 
-### 15. security_utils.py - Sensitive Parameter Detection
+### 16. security_utils.py - Sensitive Parameter Detection
 
 Security utilities for credential masking:
 
@@ -459,7 +472,7 @@ Security utilities for credential masking:
 
 **Usage**: MCP errors (`utils/errors.py`), CLI display (`rerun_display.py`)
 
-### 16. __init__.py - Public API
+### 17. __init__.py - Public API
 
 Aggregates and exposes the module's functionality:
 

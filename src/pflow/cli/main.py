@@ -34,6 +34,48 @@ from pflow.runtime.compiler import _display_validation_warnings
 logger = logging.getLogger(__name__)
 
 
+def _configure_logging(verbose: bool) -> None:
+    """Configure logging levels based on verbose flag.
+
+    Args:
+        verbose: If True, show INFO logs. If False, show only WARNING and above.
+    """
+    # Skip configuration if running in test environment
+    # Tests should manage their own logging configuration
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+
+    # Only configure if not already configured
+    # This respects existing configurations (e.g., from tests or other tools)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO if verbose else logging.WARNING,
+            format="%(levelname)s: %(message)s",
+        )
+    else:
+        # Just adjust the root level if handlers already exist
+        logging.getLogger().setLevel(logging.INFO if verbose else logging.WARNING)
+
+    # Always silence noisy third-party libraries (even in verbose mode)
+    # These are the actual sources of spam we want to suppress
+    for logger_name in [
+        "httpx",
+        "httpx._client",
+        "httpcore",
+        "httpcore.http11",
+        "urllib3",
+        "composio",
+        "mcp",
+        "streamable_http",
+    ]:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+    if not verbose:
+        # In non-verbose mode, also suppress INFO from pflow
+        # But NOT debug - debug logs should still work when explicitly requested
+        logging.getLogger("pflow").setLevel(logging.WARNING)
+
+
 def handle_sigint(signum: int, frame: object) -> None:
     """Handle Ctrl+C gracefully."""
     click.echo("\ncli: Interrupted by user", err=True)
@@ -271,6 +313,8 @@ def _handle_workflow_output(
     print_flag: bool = False,
     workflow_metadata: dict[str, Any] | None = None,
     workflow_trace: Any | None = None,
+    status: Any = None,
+    warnings: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Handle output from workflow execution.
 
@@ -290,11 +334,27 @@ def _handle_workflow_output(
     """
     if output_format == "json":
         return _handle_json_output(
-            shared_storage, output_key, workflow_ir, verbose, metrics_collector, workflow_metadata, workflow_trace
+            shared_storage,
+            output_key,
+            workflow_ir,
+            verbose,
+            metrics_collector,
+            workflow_metadata,
+            workflow_trace,
+            status=status,
+            warnings=warnings,
         )
     else:  # text format (default)
         return _handle_text_output(
-            shared_storage, output_key, workflow_ir, verbose, print_flag, metrics_collector, workflow_metadata
+            shared_storage,
+            output_key,
+            workflow_ir,
+            verbose,
+            print_flag,
+            metrics_collector,
+            workflow_metadata,
+            status=status,
+            warnings=warnings,
         )
 
 
@@ -381,6 +441,8 @@ def _handle_text_output(
     print_flag: bool = False,
     metrics_collector: Any | None = None,
     workflow_metadata: dict[str, Any] | None = None,
+    status: Any = None,
+    warnings: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Handle text formatted output with execution summary.
 
@@ -411,6 +473,8 @@ def _handle_text_output(
             workflow_metadata=workflow_metadata,
             output_key=output_key,
             trace_path=None,  # Text mode doesn't include trace_path
+            status=status,
+            warnings=warnings,
         )
 
         _display_execution_summary(formatted, verbose)
@@ -637,10 +701,17 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
     # Show workflow name and action (but not for unsaved workflows)
     _display_workflow_action(workflow_name, workflow_action)
 
-    # Show total execution time
+    # Show total execution time with status-aware message
     if duration_ms is not None:
         duration_s = duration_ms / 1000.0
-        click.echo(f"✓ Workflow completed in {duration_s:.3f}s", err=True)
+        status = formatted_result.get("status", "success")
+
+        if status == "degraded":
+            click.echo(f"⚠️ Workflow completed with warnings in {duration_s:.3f}s", err=True)
+        elif status == "failed":
+            click.echo(f"❌ Workflow failed after {duration_s:.3f}s", err=True)
+        else:
+            click.echo(f"✓ Workflow completed in {duration_s:.3f}s", err=True)
 
     # Show per-node execution details
     if steps:
@@ -657,6 +728,22 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
     # Show cost if > 0
     _display_cost_summary(total_cost, formatted_result)
 
+    # Show warnings if present
+    warnings = formatted_result.get("warnings", [])
+    if warnings:
+        click.echo("", err=True)
+        click.echo("⚠️ Warnings:", err=True)
+        for warning in warnings:
+            node_id = warning.get("node_id", "unknown")
+            warning_type = warning.get("type", "warning")
+            message = warning.get("message", "No message")
+
+            # Show the full warning message with proper indentation
+            click.echo(f"  • {node_id} ({warning_type}):", err=True)
+            for line in message.split("\n"):
+                if line.strip():  # Skip empty lines
+                    click.echo(f"    {line}", err=True)
+
 
 def _handle_json_output(
     shared_storage: dict[str, Any],
@@ -666,6 +753,8 @@ def _handle_json_output(
     metrics_collector: Any | None = None,
     workflow_metadata: dict[str, Any] | None = None,
     workflow_trace: Any | None = None,
+    status: Any = None,
+    warnings: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Handle JSON formatted output.
 
@@ -681,6 +770,8 @@ def _handle_json_output(
         workflow_metadata=workflow_metadata,
         output_key=output_key,
         trace_path=None,  # CLI doesn't include trace_path in output
+        status=status,
+        warnings=warnings,
     )
 
     # Save JSON output to trace if available
@@ -1235,6 +1326,7 @@ def _build_json_error_response(
     """
     error_output: dict[str, Any] = {
         "success": False,
+        "status": "failed",  # Add tri-state status for failures
         "error": "Workflow execution failed",
         "is_error": True,
     }
@@ -1411,6 +1503,7 @@ def _handle_workflow_error(
 
 def _handle_workflow_success(
     ctx: click.Context,
+    result: Any,  # ExecutionResult
     workflow_trace: Any | None,
     shared_storage: dict[str, Any],
     output_key: str | None,
@@ -1427,6 +1520,11 @@ def _handle_workflow_success(
     # NOTE: We handle output BEFORE saving trace so the JSON output can be included in the trace
     print_flag = ctx.obj.get("print_flag", False)
     workflow_metadata = ctx.obj.get("workflow_metadata")
+
+    # Extract status and warnings from ExecutionResult (Phase 2-5 integration)
+    status = getattr(result, "status", None)
+    warnings = getattr(result, "warnings", [])
+
     output_produced = _handle_workflow_output(
         shared_storage,
         output_key,
@@ -1437,6 +1535,8 @@ def _handle_workflow_success(
         print_flag=print_flag,
         workflow_metadata=workflow_metadata,
         workflow_trace=workflow_trace,
+        status=status,
+        warnings=warnings,
     )
 
     # Save trace if requested (AFTER handling output so JSON is included)
@@ -1445,8 +1545,19 @@ def _handle_workflow_success(
         _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     # Only show success message if we didn't produce output
+    # Use status from result if available
     if not output_produced:
-        click.echo("Workflow executed successfully")
+        status = getattr(result, "status", None)
+        if status and hasattr(status, "value"):
+            status_str = status.value
+            if status_str == "degraded":
+                click.echo("⚠️ Workflow completed with warnings")
+            elif status_str == "failed":
+                click.echo("❌ Workflow execution failed")
+            else:
+                click.echo("Workflow executed successfully")
+        else:
+            click.echo("Workflow executed successfully")
 
 
 def _format_compilation_error_text(e: Exception, verbose: bool) -> None:
@@ -1542,6 +1653,7 @@ def _execute_workflow_and_handle_result(
     if result.success:
         _handle_workflow_success(
             ctx=ctx,
+            result=result,
             workflow_trace=workflow_trace,
             shared_storage=shared_storage,
             output_key=output_key,
@@ -1629,7 +1741,11 @@ def _handle_workflow_exception(
         shared_storage: Shared storage dictionary
         verbose: Whether to show verbose output
     """
-    logger.error(f"Workflow execution failed: {e}", exc_info=verbose)
+    # Only show traceback if verbose mode enabled
+    if verbose:
+        logger.error(f"Workflow execution failed: {e}", exc_info=True)
+    else:
+        logger.error(f"Workflow execution failed: {e}")
 
     # Clean up LLM interception on error - robust handling
     if workflow_trace:
@@ -3370,68 +3486,92 @@ def workflow_command(
     # Setup signal handlers
     _setup_signals()
 
-    # Initialize context with configuration
-    trace_enabled = not no_trace
-    _initialize_context(
-        ctx,
-        verbose,
-        output_key,
-        output_format,
-        print_flag,
-        trace_enabled,
-        trace_planner,
-        planner_timeout,
-        save,
-        cache_planner,
-        planner_model,
-        auto_repair,
-        no_update,
-        validate_only,
-    )
+    # Configure logging based on verbose flag
+    _configure_logging(verbose)
 
-    # Install Anthropic model wrapper for planning models
-    _install_anthropic_model_if_needed(verbose)
+    # Suppress WARNING logs in JSON mode to prevent stdout contamination
+    # Only ERROR and CRITICAL logs will be shown
+    original_log_levels = {}
+    if output_format == "json":
+        # Save and update root logger level
+        root_logger = logging.getLogger()
+        original_log_levels["root"] = root_logger.level
+        root_logger.setLevel(logging.ERROR)
 
-    # Auto-discover and sync MCP servers
-    # Only show MCP output if verbose AND not in print mode or JSON output
-    print_flag = ctx.obj.get("print_flag", False)
-    output_format = ctx.obj.get("output_format", "text")
-    effective_verbose = verbose and not print_flag and output_format != "json"
-    _auto_discover_mcp_servers(ctx, effective_verbose)
+        # Also update pflow logger level (child loggers inherit from this)
+        pflow_logger = logging.getLogger("pflow")
+        original_log_levels["pflow"] = pflow_logger.level
+        pflow_logger.setLevel(logging.ERROR)
 
-    # Handle stdin data
-    stdin_content, enhanced_stdin = _read_stdin_data()
-    stdin_data = enhanced_stdin if enhanced_stdin else stdin_content
+    try:
+        # Initialize context with configuration
+        trace_enabled = not no_trace
+        _initialize_context(
+            ctx,
+            verbose,
+            output_key,
+            output_format,
+            print_flag,
+            trace_enabled,
+            trace_planner,
+            planner_timeout,
+            save,
+            cache_planner,
+            planner_model,
+            auto_repair,
+            no_update,
+            validate_only,
+        )
 
-    # Validate CLI flags are not misplaced
-    _validate_workflow_flags(workflow, ctx)
+        # Install Anthropic model wrapper for planning models
+        _install_anthropic_model_if_needed(verbose)
 
-    # Preprocess: transparently handle `run` prefix
-    workflow = _preprocess_run_prefix(ctx, workflow)
+        # Auto-discover and sync MCP servers
+        # Only show MCP output if verbose AND not in print mode or JSON output
+        print_flag = ctx.obj.get("print_flag", False)
+        output_format = ctx.obj.get("output_format", "text")
+        effective_verbose = verbose and not print_flag and output_format != "json"
+        _auto_discover_mcp_servers(ctx, effective_verbose)
 
-    # Store workflow text in context for MCP check
-    raw_input = " ".join(workflow) if workflow else ""
-    ctx.obj["workflow_text"] = raw_input
+        # Handle stdin data
+        stdin_content, enhanced_stdin = _read_stdin_data()
+        stdin_data = enhanced_stdin if enhanced_stdin else stdin_content
 
-    # Check MCP setup and provide guidance if needed
-    # Temporarily disabled for debugging
+        # Validate CLI flags are not misplaced
+        _validate_workflow_flags(workflow, ctx)
 
-    # Try to handle as named/file workflow first
-    if _try_execute_named_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
-        return
+        # Preprocess: transparently handle `run` prefix
+        workflow = _preprocess_run_prefix(ctx, workflow)
 
-    if not _is_valid_natural_language_input(workflow):
-        _handle_invalid_planner_input(ctx, workflow)
-        return
+        # Store workflow text in context for MCP check
+        raw_input = " ".join(workflow) if workflow else ""
+        ctx.obj["workflow_text"] = raw_input
 
-    # Validate input for natural language processing
-    raw_input = _validate_and_join_workflow_input(workflow)
+        # Check MCP setup and provide guidance if needed
+        # Temporarily disabled for debugging
 
-    # Multi-word or parameterized input: planner by design
-    cache_planner = ctx.obj.get("cache_planner", False)
-    _execute_with_planner(
-        ctx, raw_input, stdin_data, output_key, verbose, "args", trace_enabled, planner_timeout, cache_planner
-    )
+        # Try to handle as named/file workflow first
+        if _try_execute_named_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
+            return
+
+        if not _is_valid_natural_language_input(workflow):
+            _handle_invalid_planner_input(ctx, workflow)
+            return
+
+        # Validate input for natural language processing
+        raw_input = _validate_and_join_workflow_input(workflow)
+
+        # Multi-word or parameterized input: planner by design
+        cache_planner = ctx.obj.get("cache_planner", False)
+        _execute_with_planner(
+            ctx, raw_input, stdin_data, output_key, verbose, "args", trace_enabled, planner_timeout, cache_planner
+        )
+    finally:
+        # Restore original logging levels if we changed them
+        if "root" in original_log_levels:
+            logging.getLogger().setLevel(original_log_levels["root"])
+        if "pflow" in original_log_levels:
+            logging.getLogger("pflow").setLevel(original_log_levels["pflow"])
 
 
 # Alias for backward compatibility with tests that import main directly
