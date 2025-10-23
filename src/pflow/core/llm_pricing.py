@@ -20,7 +20,9 @@ MODEL_PRICING = {
     "anthropic/claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
     "anthropic/claude-sonnet-4-0": {"input": 3.00, "output": 15.00},
     "anthropic/claude-sonnet-4-5": {"input": 3.00, "output": 15.00},  # Same pricing as 4.0
-    "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
+    "anthropic/claude-opus-4-1-20250805": {"input": 15, "output": 75},
+    "anthropic/claude-haiku-4-5-20251001": {"input": 1, "output": 5},
+    "anthropic/claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
     # OpenAI models
     "gpt-4": {"input": 30.0, "output": 60.0},
     "gpt-4-turbo": {"input": 10.0, "output": 30.0},
@@ -54,11 +56,12 @@ MODEL_ALIASES = {
     "claude-3-sonnet": "anthropic/claude-3-sonnet-20240229",
     "claude-3-haiku": "anthropic/claude-3-haiku-20240307",
     "claude-3.5-sonnet": "anthropic/claude-3-5-sonnet-20241022",
-    "claude-3.5-sonnet-latest": "anthropic/claude-3-5-sonnet-20241022",
-    "anthropic/claude-3-5-sonnet-latest": "anthropic/claude-3-5-sonnet-20241022",
     "claude-3.5-haiku": "anthropic/claude-3-5-haiku-latest",
+    "claude-haiku-4.5": "claude-haiku-4-5-20251001",
     "claude-4-opus": "anthropic/claude-opus-4-0",
     "claude-4-sonnet": "anthropic/claude-sonnet-4-0",
+    "claude-sonnet-4.5": "anthropic/claude-sonnet-4-5",
+    "claude-opus-4.1": "anthropic/claude-opus-4-1-20250805",
     # OpenAI aliases
     "4o": "gpt-4o",
     "4o-mini": "gpt-4o-mini",
