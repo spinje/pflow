@@ -11,7 +11,7 @@ PRICING_VERSION = "2025-01-15"
 
 # Comprehensive model pricing per million tokens
 # Prices are in USD per million tokens for input and output
-MODEL_PRICING = {
+MODEL_PRICING: dict[str, dict[str, float]] = {
     # Anthropic models
     "anthropic/claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
     "anthropic/claude-3-sonnet-20240229": {"input": 3.00, "output": 15.00},
@@ -139,7 +139,7 @@ def calculate_llm_cost(
 
         raise ValueError(error_msg)
 
-    pricing = MODEL_PRICING[canonical_model]
+    pricing: dict[str, float] = MODEL_PRICING[canonical_model]
 
     # Calculate each cost component
     # Note: Anthropic's input_tokens already EXCLUDES cache tokens per API spec
@@ -197,4 +197,5 @@ def get_model_pricing(model: str) -> dict[str, float]:
 
         raise ValueError(error_msg)
 
-    return MODEL_PRICING[canonical_model]
+    pricing_data: dict[str, float] = MODEL_PRICING[canonical_model]
+    return pricing_data
