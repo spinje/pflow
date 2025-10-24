@@ -27,8 +27,8 @@ TYPE_COMPATIBILITY_MATRIX = {
         "list",
         "array",
     ],  # any is universal
-    "str": ["any", "str", "string"],
-    "string": ["any", "str", "string"],  # Alias for str
+    "str": ["any", "str", "string", "dict", "object", "list", "array"],  # str can auto-parse to structured types
+    "string": ["any", "str", "string", "dict", "object", "list", "array"],  # Alias for str
     "int": ["any", "int", "integer", "float", "number", "str", "string"],  # int can widen to float/number/str
     "integer": ["any", "int", "integer", "float", "number", "str", "string"],  # Alias for int
     "float": ["any", "float", "number", "str", "string"],  # float can stringify
