@@ -749,8 +749,17 @@ class TemplateAwareNodeWrapper:
                 expected_type = self._expected_types.get(key)
                 if expected_type in ("dict", "list", "object", "array"):
                     trimmed = resolved_value.strip()  # Handle shell output newlines
+
+                    # Security: Prevent memory exhaustion from maliciously large JSON
+                    MAX_JSON_SIZE = 10 * 1024 * 1024  # 10MB limit
+                    if len(trimmed) > MAX_JSON_SIZE:
+                        logger.warning(
+                            f"JSON string for param '{key}' is {len(trimmed)} bytes, "
+                            f"exceeding {MAX_JSON_SIZE} byte limit. Keeping as string.",
+                            extra={"node_id": self.node_id, "param": key, "size": len(trimmed)},
+                        )
                     # Quick check: does it look like JSON?
-                    if (expected_type in ("dict", "object") and trimmed.startswith("{")) or (
+                    elif (expected_type in ("dict", "object") and trimmed.startswith("{")) or (
                         expected_type in ("list", "array") and trimmed.startswith("[")
                     ):
                         try:

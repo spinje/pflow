@@ -372,3 +372,60 @@ class TestStringParametersNotParsed:
         # str parameter should NOT be parsed (stays as string)
         assert isinstance(result["str_param"], str)
         assert result["str_param"] == '{"key": "value"}'
+
+
+class TestSecurityLimits:
+    """Test security limits for JSON parsing."""
+
+    def test_oversized_json_not_parsed(self, simple_node, interface_metadata):
+        """JSON string exceeding 10MB → NOT parsed (security limit)."""
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            template_resolution_mode="permissive",  # Use permissive mode to avoid validation error
+            interface_metadata=interface_metadata,
+        )
+
+        # Create a JSON string larger than 10MB
+        # A single large string item, repeated to exceed 10MB
+        large_item = "x" * 1024  # 1KB item
+        large_json = "[" + ",".join([f'"{large_item}"'] * 11_000) + "]"  # ~11MB
+        assert len(large_json) > 10 * 1024 * 1024  # Verify it's > 10MB
+
+        wrapper.set_params({"list_param": "${large_json}"})
+        shared = {"large_json": large_json}
+        wrapper._run(shared)
+        result = shared["result"]
+
+        # Should stay as string due to size limit
+        assert isinstance(result["list_param"], str)
+        assert len(result["list_param"]) > 10 * 1024 * 1024
+
+        # Should have warning about oversized JSON in template_errors
+        assert "__template_errors__" in shared
+
+    def test_normal_sized_json_parsed(self, simple_node, interface_metadata):
+        """JSON string under 10MB → parsed normally."""
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Create a reasonably large but valid JSON (~800KB)
+        import json as json_module
+
+        large_array = ["item"] * 100_000
+        json_data = json_module.dumps(large_array)
+        assert len(json_data) < 10 * 1024 * 1024  # Verify it's < 10MB
+
+        wrapper.set_params({"list_param": "${json_data}"})
+        shared = {"json_data": json_data}
+        wrapper._run(shared)
+        result = shared["result"]
+
+        # Should be parsed successfully
+        assert isinstance(result["list_param"], list)
+        assert len(result["list_param"]) == 100_000
