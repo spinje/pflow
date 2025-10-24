@@ -177,7 +177,7 @@ node_modules/
 .mcp-servers/
 
 # External docs
-external-docs/
+.research-and-marketing/
 
 # User data directory (workflows, settings, traces)
 .pflow/
