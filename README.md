@@ -34,11 +34,11 @@ It turns your ideas into your own personal, reusable toolchain that you (or your
 
 This is not just another AI wrapper. `pflow` fundamentally changes the economics and speed of AI-driven automation.
 
-1.  **PLAN (First Run):** You describe a complex workflow. `pflow` uses AI to intelligently select, chain, and map the right tools, creating a deterministic plan. (*This is the only time you pay in time and tokens.*)
+1.  **PLAN (First Run):** You describe a complex workflow. `pflow` uses AI to intelligently select, chain, and map the right tools, creating a deterministic plan. (*This is the only time you pay in time, tokens, and reasoning overhead.*)
 
 2.  **COMPILE (Automatic):** `pflow` saves this plan as a reproducible, version-locked artifact. It is now a permanent part of your toolkit.
 
-3.  **EXECUTE (Every Subsequent Run):** You run your new command by name. It executes instantly with no AI, no planning, and no cost, giving you the exact same result, every time.
+3.  **EXECUTE (Every Subsequent Run):** You run your new command by name. It executes instantly with no AI, no planning, no cost, and no variation—giving you the exact same result, every time.
 
 Workflows adapt to different inputs—analyze last month, this week, or any time period with the same workflow. It extracts and uses all dynamic values from the users input and integrates them into the workflow as resuable parameters.
 
@@ -110,6 +110,23 @@ $ claude --mcp-config ./github.mcp.json ./jira.mcp.json ./slack.mcp.json \
 > Cost: $0.22 per run
 ```
 
+**Here's the problem**: Every time your AI agent needs GitHub, Slack, and JIRA tools, it loads 64k tokens of MCP schemas, reasons through the orchestration, and might choose a different approach than last time. Before thinking about your request, you've consumed 1/3 of your context window. Run this 10x daily? That's $803/year in context costs—plus reasoning overhead, plus non-determinism. These problems compound.
+
+**pflow solves this**: Your agent uses pflow to build the workflow ONCE. It figures out which tools to use and compiles that knowledge into a workflow. After that? The workflow executes those same MCP tools without loading schemas, without reasoning, without variation—0 context, 0 cost, perfectly deterministic. Every avoided token, every skipped reasoning step, every guaranteed result multiplies across every execution.
+
+**"What about MCP tool aggregators like Zapier MCP or Composio?"**
+
+They give your agent access to 8,000+ actions, but solve a different problem:
+
+| | **MCP Tool Aggregators**<br/><sub>Zapier MCP, Composio, Strata</sub> | **pflow** |
+|---|:---:|:---:|
+| **What they provide** | Individual actions<br/><sub>(send Slack message, get Stripe payment)</sub> | Workflow infrastructure<br/><sub>(build, validate, execute, debug)</sub> |
+| **How agents use them** | Orchestrate actions in real-time<br/><sub>Think through steps every execution</sub> | Build workflow once<br/><sub>Execute compiled pattern forever</sub> |
+| **Token cost** | Full reasoning overhead per run<br/><sub>$0.15 × 365 days = $55/year</sub> | One-time compilation<br/><sub>$0.15 once + $0.01 × 364 = $4/year</sub> |
+| **Determinism** | ❌ Agent may change approach<br/><sub>Different results each time</sub> | ✅ Compiled workflow<br/><sub>Same inputs = same outputs</sub> |
+
+**Different layers of the stack**: Tool aggregators expose APIs. pflow compiles how to use them.
+
 **The dirty secret**: Most developers aren't even using MCP servers. They're playing the "training data lottery" instead:
 
 ```bash
@@ -142,6 +159,22 @@ pflow compiles what your agent figures out into something that actually works at
   * You know the negative impact of AI agents context window when using MCPS and wish you could **use them without the performance impact.**
 
 `pflow` is designed to automate the automators.
+
+## What Problems Does pflow Solve?
+
+pflow addresses the **workflow compilation layer** that existing solutions don't. Even with access to thousands of tools, AI agents orchestrate them from scratch every time:
+
+| Problem | MCP Tool Servers<br/><sub>Zapier MCP, Composio, Strata</sub> | Visual Workflow Builders<br/><sub>n8n, Zapier, Make.com</sub> | **pflow** |
+|---------|:-------------------------------------------------------------:|:-------------------------------------------------------------:|:---------:|
+| **Access to tools/APIs** | ✅ Thousands of integrations | ✅ Thousands of integrations | ✅ Any MCP server |
+| **Agent can use tools** | ✅ Direct MCP access | ❌ Manual visual building | ✅ Conversational building |
+| **Workflow compilation**<br/><sub>Build once, run forever</sub> | ❌ Orchestrate every time | ⚠️ Manual configuration | ✅ Automatic compilation |
+| **Token efficiency**<br/><sub>Avoid repeated reasoning</sub> | ❌ Full cost every execution | N/A | ✅ 93% cost reduction |
+| **Deterministic execution**<br/><sub>Same inputs = same outputs</sub> | ❌ Varies by agent mood | ✅ Fixed workflow | ✅ Compiled workflow |
+| **Pattern reuse**<br/><sub>Learn from previous workflows</sub> | ❌ Zero learning | ⚠️ Manual templates | ✅ Automatic discovery |
+| **Natural language interface** | ⚠️ Via agent wrapper | ❌ Visual drag-and-drop | ✅ Native |
+
+**The gap**: Existing MCP servers give agents access to tools but require orchestration every time. Visual builders save workflows but need manual configuration. pflow compiles agent-orchestrated workflows into deterministic, reusable patterns.
 
 ## Why use `pflow`?
 
@@ -239,9 +272,35 @@ graph TD
 pip install pflow
 ```
 
+## How AI Agents Use pflow
+
+Your AI agent (Claude, Cursor, ChatGPT, etc.) can work with pflow in two ways:
+
+**1. Via pflow's MCP server** (recommended for programmatic control)
+
+Add pflow to your Claude Desktop or AI tool:
+```json
+{
+  "mcpServers": {
+    "pflow": {
+      "command": "pflow",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Your agent gets structured tools like `workflow_discover()`, `workflow_execute()`, `workflow_save()` to build and run workflows programmatically.
+
+**2. Via CLI commands** (works anywhere with terminal access)
+
+Your agent can run `pflow` commands directly. Same capabilities, different interface.
+
+**The magic**: Either way, your agent builds workflows that USE MCP tools (GitHub, Stripe, Slack) without loading those MCP servers into context. One-time compilation → infinite free execution.
+
 ## MCP Integration
 
-pflow now supports **Model Context Protocol (MCP)** servers, letting you use any MCP-compatible tool as a workflow node. This opens up a vast ecosystem of AI tools that can be seamlessly integrated into your workflows.
+pflow supports **Model Context Protocol (MCP)** servers, letting you use any MCP-compatible tool as a workflow node. This opens up a vast ecosystem of AI tools that can be seamlessly integrated into your workflows.
 
 ### What is MCP?
 
@@ -297,11 +356,15 @@ pflow "find all open PRs, save summaries to local files"
 
 MCP tools are prefixed with `mcp__<server>__` to avoid naming conflicts. They integrate seamlessly with pflow's planning system—just describe what you want, and pflow will find the right MCP tools.
 
+> MCP servers added to pflow work with any AI agent that connects to pflow—no need to duplicate configurations across tools.
+
 For detailed MCP configuration, see [architecture/features/mcp-integration.md](architecture/features/mcp-integration.md).
 
 ## Extensibility: MCP is the Way
 
 **Every pflow extension is an MCP server. No custom node API to learn.**
+
+> **Note**: This section is about extending pflow's capabilities by adding NEW tools (like a Stripe monitoring server). Your AI agent interacts with pflow *itself* via pflow's MCP server (described above) to build workflows using these tools.
 
 Instead of building pflow-specific nodes, you build standard MCP servers that work everywhere:
 
@@ -333,6 +396,7 @@ We don't have a custom node API because we don't need one. MCP is the extension 
 ```bash
 # Build a tool that does your morning prep in 3 seconds instead of 15 minutes
 pflow "check my PRs, check team's PRs, summarize slack since yesterday, format for standup"
+# Runs identically every morning—same format, same reliability
 ```
 
 ### Production Debugging
@@ -340,6 +404,7 @@ pflow "check my PRs, check team's PRs, summarize slack since yesterday, format f
 ```bash
 # Create a reusable "first response" tool for incidents
 pflow "fetch datadog errors for service 'api', correlate with recent deploys, check related PRs for 'breaking change' labels"
+# Pattern reusable for any service—just change the service name
 ```
 
 ### Multi-System Analysis
@@ -353,7 +418,7 @@ pflow "get stripe failed payments for last month, match with hubspot contacts, d
 
 ```bash
 pflow "analyze last week's API usage, calculate costs, compare to budget, create report"
-# Scheduled in cron, runs in seconds
+# Scheduled in cron, runs in seconds—deterministic results for auditing
 ```
 
 ## Debugging and Troubleshooting
@@ -428,6 +493,24 @@ Agent: `pflow analyze-pr --pr=123`
 ```
 
 This reduces AI costs by 90% for repetitive tasks and lets agents work in parallel. `pflow` provides the stable, structured "API" that free-running agents need.
+
+## The MCP Context Tax
+
+Every MCP server you load consumes precious context:
+- **GitHub MCP**: 46,000 tokens
+- **Slack MCP**: 2,000 tokens
+- **JIRA MCP**: 16,000 tokens
+- **Database schemas**: 50,000+ tokens for complex tables
+
+Load GitHub + Slack + JIRA? **64,050 tokens consumed before your agent even starts thinking.**
+
+Run a workflow 10x daily with these servers? **$803/year** just in context costs (Claude Sonnet pricing).
+
+**pflow's approach**: Pay the context tax once during workflow compilation. Figure out which tools to use and save that decision. Every execution after runs with zero MCP servers loaded, zero context consumed, zero cost.
+
+Same workflow. Same MCP tools. Same results. Just compiled into a deterministic sequence your agent (or you) can execute instantly.
+
+**Read more**: [The MCP Context Tax Nobody Talks About](architecture/vision/mcp-context-problem/the-mcp-context-tax-nobody-talks-about.md)
 
 ## Coming Soon
 

@@ -11,6 +11,22 @@ from pflow.registry.registry import Registry
 
 # Type compatibility matrix
 # source_type -> list of compatible target types
+#
+# Note on str → dict/list compatibility (auto-parse feature):
+#   This allows compile-time validation to pass for patterns like:
+#     ${shell.stdout} (type: str) → values (type: list) parameter
+#
+#   Runtime behavior (see node_wrapper.py:746-780):
+#   - Simple templates (${var}) with JSON strings auto-parse to dict/list
+#   - Complex templates (" ${var}") stay as strings (escape hatch)
+#   - Auto-parsing only happens when:
+#     1. Template is simple (${var}, not "text ${var}")
+#     2. String looks like JSON (starts with { or [)
+#     3. String size ≤ 10MB (security limit)
+#     4. Parsed type matches expected type
+#   - Graceful fallback: invalid JSON stays as string, validation catches it
+#
+#   This enables shell+jq → MCP workflows without requiring LLM steps.
 TYPE_COMPATIBILITY_MATRIX = {
     "any": [
         "any",
@@ -27,8 +43,8 @@ TYPE_COMPATIBILITY_MATRIX = {
         "list",
         "array",
     ],  # any is universal
-    "str": ["any", "str", "string"],
-    "string": ["any", "str", "string"],  # Alias for str
+    "str": ["any", "str", "string", "dict", "object", "list", "array"],  # str can auto-parse to structured types
+    "string": ["any", "str", "string", "dict", "object", "list", "array"],  # Alias for str
     "int": ["any", "int", "integer", "float", "number", "str", "string"],  # int can widen to float/number/str
     "integer": ["any", "int", "integer", "float", "number", "str", "string"],  # Alias for int
     "float": ["any", "float", "number", "str", "string"],  # float can stringify

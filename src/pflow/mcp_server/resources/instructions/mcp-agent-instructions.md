@@ -1172,23 +1172,45 @@ llm keys set anthropic --key "sk-ant-..."
 2. Then check previous node outputs (in execution order)
 3. Error if not found
 
-#### Critical: Type Conversion During Template Substitution
+#### Critical: Automatic JSON Parsing for Simple Templates
 
-**Most nodes that expect structured data will automatically parse JSON strings.** This is a fundamental behavior that prevents unnecessary transformation steps.
+**Simple templates (`${var}`) containing JSON strings are automatically parsed when the target parameter expects structured data (dict/list).** This enables shell+jq workflows without requiring LLM intermediate steps.
 
-**What happens when you template `${node.output}`:**
+**Parsing Rules**:
+- ✅ **Auto-parsed**: Simple templates like `${node.output}` when target expects dict/list
+- ❌ **NOT parsed**: Complex templates like `"text ${var}"` always stay as strings (escape hatch)
+- ✅ **Handles newlines**: Shell output with trailing `\n` is automatically stripped
+- ✅ **Type-safe**: Only uses parsed result if type matches (array→list, object→dict)
+- ✅ **Graceful fallback**: Invalid JSON stays as string (Pydantic validation catches it)
+
+**What happens when you use simple templates:**
 
 | Source Output | Target Parameter Type | What Actually Happens | Need Transformation? |
 |--------------|----------------------|----------------------|---------------------|
-| JSON string from LLM | `body` (object) in HTTP | Auto-parsed to object | ❌ No |
-| JSON string from LLM | `values` (array) in MCP | Auto-parsed to array | ❌ No |
-| JSON from shell output | `data` (object) in any node | Auto-parsed if valid format | ❌ Usually no |
+| JSON string from shell | `body` (object) in HTTP | Auto-parsed to object | ❌ No |
+| JSON string from shell | `values` (array) in MCP | Auto-parsed to array | ❌ No |
+| JSON string from LLM | `data` (object) in any node | Auto-parsed to object | ❌ No |
 | Plain text | `prompt` (string) in LLM | Stays as string | ❌ No |
-| Object from HTTP | `text` (string) in MCP | Converted to string | ❌ No |
-| Malformed/broken JSON | Any structured type | Parse error | ✅ Yes - fix format |
-| JSON with extra text/markers | Any structured type | Parse error | ✅ Yes - extract JSON |
+| Malformed/broken JSON | Any structured type | Keeps as string, validation fails | ✅ Yes - fix format |
 
-**Note on JSON formats**: Compact JSON (`{"key":"value"}`) parses reliably. Pretty-printed or multiline JSON with embedded newlines may cause issues with strict parsers. When in doubt, test with `registry_run` using your exact format. If using shell to produce JSON, prefer `jq -c` for compact output.
+**Escape Hatch** (Force String):
+If you need a JSON string to remain unparsed, use a complex template:
+```json
+// This WILL be auto-parsed:
+{"params": {"data": "${json_var}"}}
+
+// This will NOT be parsed (stays as string):
+{"params": {"data": " ${json_var}"}}  // Leading space makes it complex
+{"params": {"data": "${json_var} "}}  // Trailing space
+{"params": {"data": "'${json_var}'"}}  // Wrapped in quotes
+```
+
+**Shell Output Handling**: Trailing newlines from shell commands are automatically stripped before parsing:
+```json
+// Shell outputs: '[["data"]]\\n'
+// Auto-strips to: '[["data"]]' before parsing
+{"params": {"values": "${shell.stdout}"}}  // Works perfectly!
+```
 
 **The Anti-Pattern to Avoid:**
 ```json

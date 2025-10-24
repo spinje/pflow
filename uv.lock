@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10, <4.0"
 
 [[package]]
@@ -616,15 +616,15 @@ wheels = [
 
 [[package]]
 name = "llm-anthropic"
-version = "0.19"
+version = "0.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
     { name = "llm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/a1/c6a6315706df84b9b90ea742a5cde374e50b76f10843dc7b3bf13f4a3914/llm_anthropic-0.19.tar.gz", hash = "sha256:c51d6446c16a73811b58010df0e0ac9cc8d172b2d1c91e67a69a9d70a2a87777", size = 16206, upload-time = "2025-09-29T17:59:30.2Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c5/78/f9a76cea9b141ad35684cac1892787f4e8fe840800fcffba0513aa1aff5d/llm_anthropic-0.20.tar.gz", hash = "sha256:43a59a6853336a6bd4c8ee1bf73b148d2e7d74d8ad4d2b466b18e4c69680d8af", size = 16248, upload-time = "2025-10-15T18:00:09.364Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/59/d41b69a2bc8af129125c889a33751de7b60bc8941a49c575436265f0562c/llm_anthropic-0.19-py3-none-any.whl", hash = "sha256:45e816183b043f6d8ef9a37aa5effc616d720bde0e7aac92f2d6ff281d5f5cfb", size = 13685, upload-time = "2025-09-29T17:59:27.033Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/52/f69beedd4fe84a97edc69d8e41aa2430046802ecfb134c4a4652efd88a12/llm_anthropic-0.20-py3-none-any.whl", hash = "sha256:546edb43ea03e779e8114a0b6924a517f1c8bc1423a5a6b94fca9abbad6e80de", size = 13723, upload-time = "2025-10-15T18:00:08.245Z" },
 ]
 
 [[package]]
@@ -1031,7 +1031,7 @@ requires-dist = [
     { name = "click" },
     { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "llm", specifier = ">=0.27.1" },
-    { name = "llm-anthropic", specifier = "==0.19" },
+    { name = "llm-anthropic", specifier = "==0.20" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.17.0" },
     { name = "pydantic" },
     { name = "requests", specifier = ">=2.32.5" },

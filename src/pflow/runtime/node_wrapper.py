@@ -5,6 +5,7 @@ template variables in parameters. It's the runtime proxy that enables
 pflow's "Plan Once, Run Forever" philosophy.
 """
 
+import json
 import logging
 from typing import Any, Optional
 
@@ -209,6 +210,72 @@ class TemplateAwareNodeWrapper:
 
         return error_msg
 
+    def _build_json_parse_error_message(
+        self,
+        param_key: str,
+        resolved_value: str,
+        template_str: str,
+        expected_type: str,
+        trimmed: str,
+    ) -> str:
+        """Build detailed error message for failed JSON parsing.
+
+        Args:
+            param_key: Parameter name
+            resolved_value: The malformed JSON string
+            template_str: Original template string
+            expected_type: Expected type (dict/list/object/array)
+            trimmed: Trimmed version of resolved_value
+
+        Returns:
+            Formatted error message with suggestions
+        """
+        # Preview of malformed JSON (limit to 200 chars)
+        preview = trimmed[:200]
+        if len(trimmed) > 200:
+            preview += "..."
+
+        # Detect common JSON issues
+        issues = []
+        if "'" in trimmed:
+            issues.append("Single quotes detected (use double quotes: \"key\" not 'key')")
+        if trimmed.count("{") != trimmed.count("}"):
+            issues.append("Mismatched braces { }")
+        if trimmed.count("[") != trimmed.count("]"):
+            issues.append("Mismatched brackets [ ]")
+        if ",}" in trimmed or ",]" in trimmed:
+            issues.append("Trailing comma before closing brace/bracket")
+
+        error_lines = [
+            f"Parameter '{param_key}' expects {expected_type} but received malformed JSON string.",
+            "",
+            f"Template: {template_str}",
+            f"Value preview: {preview}",
+            "",
+            f"The string starts with '{trimmed[0]}' suggesting JSON, but failed to parse.",
+        ]
+
+        if issues:
+            error_lines.append("")
+            error_lines.append("Detected issues:")
+            for issue in issues:
+                error_lines.append(f"  - {issue}")
+
+        error_lines.extend([
+            "",
+            "Common JSON formatting issues:",
+            "  - Missing closing brace/bracket",
+            "  - Single quotes instead of double quotes",
+            "  - Trailing commas in arrays/objects",
+            "  - Unescaped special characters",
+            "  - Missing quotes around object keys",
+            "",
+            "Fix: Ensure the source outputs valid JSON.",
+            f"Test with: echo '{template_str}' | jq '.'",
+        ])
+
+        return "\n".join(error_lines)
+
     def _validate_resolved_type(self, param_key: str, resolved_value: Any, template_str: str) -> None:
         """Validate that resolved value type matches expected parameter type.
 
@@ -233,11 +300,11 @@ class TemplateAwareNodeWrapper:
             )
             return
 
-        # Skip validation for polymorphic types (accept anything)
-        if expected_type in ("any", "dict", "list"):
+        # Only skip validation for truly polymorphic "any" type
+        if expected_type == "any":
             logger.debug(
-                f"Param '{param_key}' has polymorphic type '{expected_type}', skipping validation",
-                extra={"node_id": self.node_id, "param": param_key, "expected_type": expected_type},
+                f"Param '{param_key}' has polymorphic type 'any', accepting any value",
+                extra={"node_id": self.node_id, "param": param_key},
             )
             return
 
@@ -272,6 +339,43 @@ class TemplateAwareNodeWrapper:
                     extra={"node_id": self.node_id, "param": param_key},
                 )
                 raise ValueError(f"__PERMISSIVE_TYPE_ERROR__:{error_msg}")
+
+        # Positive checks: dict/list parameters receiving correct types → OK
+        if expected_type in ("dict", "object") and isinstance(resolved_value, dict):
+            return  # Correct type match
+
+        if expected_type in ("list", "array") and isinstance(resolved_value, list):
+            return  # Correct type match
+
+        # dict/list parameters receiving strings → likely failed JSON parse
+        if expected_type in ("dict", "list", "object", "array") and isinstance(resolved_value, str):
+            trimmed = resolved_value.strip()
+
+            # Check if it looks like JSON (starts with { or [)
+            if trimmed and trimmed[0] in ("{", "["):
+                # Looks like JSON but is still string → parsing must have failed
+                error_msg = self._build_json_parse_error_message(
+                    param_key, resolved_value, template_str, expected_type, trimmed
+                )
+
+                logger.error(
+                    error_msg,
+                    extra={
+                        "node_id": self.node_id,
+                        "param": param_key,
+                        "expected": expected_type,
+                        "actual": "str (malformed JSON)",
+                    },
+                )
+
+                if self.template_resolution_mode == "strict":
+                    raise ValueError(error_msg)
+                else:
+                    logger.warning(
+                        f"JSON parse validation failed in permissive mode (node: {self.node_id}, param: {param_key})",
+                        extra={"node_id": self.node_id, "param": param_key},
+                    )
+                    raise ValueError(f"__PERMISSIVE_TYPE_ERROR__:{error_msg}")
 
     def _check_string_unresolved(self, resolved_value: str, original_template: str) -> bool:
         """Check if a string contains unresolved templates.
@@ -638,6 +742,43 @@ class TemplateAwareNodeWrapper:
         resolved_params = {}
         for key, template in self.template_params.items():
             resolved_value, is_simple_template = self._resolve_template_parameter(key, template, context)
+
+            # Auto-parse JSON strings for structured parameters (only simple templates)
+            # This enables shell+jq → MCP patterns without requiring LLM intermediate steps
+            if is_simple_template and isinstance(resolved_value, str):
+                expected_type = self._expected_types.get(key)
+                if expected_type in ("dict", "list", "object", "array"):
+                    trimmed = resolved_value.strip()  # Handle shell output newlines
+
+                    # Security: Prevent memory exhaustion from maliciously large JSON
+                    MAX_JSON_SIZE = 10 * 1024 * 1024  # 10MB limit
+                    if len(trimmed) > MAX_JSON_SIZE:
+                        logger.warning(
+                            f"JSON string for param '{key}' is {len(trimmed)} bytes, "
+                            f"exceeding {MAX_JSON_SIZE} byte limit. Keeping as string.",
+                            extra={"node_id": self.node_id, "param": key, "size": len(trimmed)},
+                        )
+                    # Quick check: does it look like JSON?
+                    elif (expected_type in ("dict", "object") and trimmed.startswith("{")) or (
+                        expected_type in ("list", "array") and trimmed.startswith("[")
+                    ):
+                        try:
+                            parsed = json.loads(trimmed)
+                            # Type-safe: only use if parsed type matches expected
+                            if (expected_type in ("dict", "object") and isinstance(parsed, dict)) or (
+                                expected_type in ("list", "array") and isinstance(parsed, list)
+                            ):
+                                resolved_value = parsed
+                                logger.debug(
+                                    f"Auto-parsed JSON string to {type(parsed).__name__} for param '{key}'",
+                                    extra={"node_id": self.node_id, "param": key},
+                                )
+                        except (json.JSONDecodeError, ValueError):
+                            # Keep as string, Pydantic/validation will catch invalid type
+                            logger.debug(
+                                f"Failed to parse JSON string for param '{key}', keeping as string",
+                                extra={"node_id": self.node_id, "param": key},
+                            )
 
             # NEW: Validate type for simple templates (before storing in resolved_params)
             # Complex templates are already stringified, so no type mismatch possible
