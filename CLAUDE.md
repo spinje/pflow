@@ -493,7 +493,7 @@ Later:
 - ⏳ Task 45: Evaluate if wrapping or integrating n8n is worth the effort
 - ⏳ Task 61: Implement Fast Mode for Planner
 - ⏳ Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
-- ⏳ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
+- ⏳ Task 87: Implement sandbox runtime for Shell Node
 - ⏳ Task 64: MCP Orchestration with long running servers
 - ⏳ Task 79: Show tool definitions as structured JSON
 - ⏳ Task 60: Support Gemini models for planner
