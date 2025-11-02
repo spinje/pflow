@@ -474,6 +474,7 @@ To be decided
 Next version (post-MVP/post-Launch):
 - ⏳ Task 83: Pre-Release Security and Code Quality Audit
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
+- ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 - ⏳ Task 86: MCP Server Discovery and Installation Automation
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 59: Add support for nested workflows
