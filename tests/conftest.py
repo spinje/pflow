@@ -81,7 +81,7 @@ def _import_test_modules() -> tuple:
     """Import required and optional modules for test isolation.
 
     Returns:
-        tuple: (Registry, SettingsManager or None, MCPServerManager or None)
+        tuple: (Registry, SettingsManager or None, MCPServerManager or None, WorkflowManager)
     """
     # Registry is required
     try:
@@ -101,7 +101,13 @@ def _import_test_modules() -> tuple:
     except ImportError:
         MCPServerManager = None  # type: ignore[assignment]
 
-    return Registry, SettingsManager, MCPServerManager
+    # WorkflowManager is required
+    try:
+        from pflow.core.workflow_manager import WorkflowManager
+    except ImportError as e:
+        pytest.fail(f"WorkflowManager required for test isolation could not be imported: {e}")
+
+    return Registry, SettingsManager, MCPServerManager, WorkflowManager
 
 
 @pytest.fixture(scope="session")
@@ -231,13 +237,31 @@ def _patch_mcp_server_manager(monkeypatch, MCPServerManager, test_mcp_servers_pa
     monkeypatch.setattr(MCPServerManager, "__init__", patched_mcp_init)
 
 
+def _patch_workflow_manager(monkeypatch, WorkflowManager, test_workflows_path) -> None:
+    """Patch WorkflowManager to use test path.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture
+        WorkflowManager: WorkflowManager class
+        test_workflows_path: Path to use for test workflows
+    """
+    original_init = WorkflowManager.__init__
+
+    def patched_workflow_init(self, *args, **kwargs):
+        if "workflows_dir" not in kwargs and (len(args) < 1 or args[0] is None):
+            kwargs["workflows_dir"] = test_workflows_path
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(WorkflowManager, "__init__", patched_workflow_init)
+
+
 @pytest.fixture(autouse=True, scope="function")
 def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes):
     """Ensure all tests use isolated pflow configuration paths.
 
     This fixture prevents tests from modifying the user's actual ~/.pflow directory
-    by patching the default paths for Registry, SettingsManager, and MCPServerManager
-    to use temporary directories.
+    by patching the default paths for Registry, SettingsManager, MCPServerManager,
+    and WorkflowManager to use temporary directories.
 
     This is applied automatically to ALL tests to ensure complete isolation.
 
@@ -256,18 +280,20 @@ def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes)
     test_registry_path = test_pflow_dir / "registry.json"
     test_settings_path = test_pflow_dir / "settings.json"
     test_mcp_servers_path = test_pflow_dir / "mcp-servers.json"
+    test_workflows_path = test_pflow_dir / "workflows"
 
     # Import required and optional modules
-    Registry, SettingsManager, MCPServerManager = _import_test_modules()
+    Registry, SettingsManager, MCPServerManager, WorkflowManager = _import_test_modules()
 
     # Patch Registry to use temp path by default
     registry_patcher = _create_registry_patcher(test_registry_path, precomputed_core_registry_nodes)
     patched_registry_init = registry_patcher(Registry.__init__)
     monkeypatch.setattr(Registry, "__init__", patched_registry_init)
 
-    # Patch SettingsManager and MCPServerManager if available
+    # Patch SettingsManager, MCPServerManager, and WorkflowManager if available
     _patch_settings_manager(monkeypatch, SettingsManager, test_settings_path)
     _patch_mcp_server_manager(monkeypatch, MCPServerManager, test_mcp_servers_path)
+    _patch_workflow_manager(monkeypatch, WorkflowManager, test_workflows_path)
 
     # Log the paths being used for debugging
     if os.environ.get("DEBUG_TEST_PATHS"):
@@ -275,12 +301,14 @@ def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes)
         print(f"  Registry: {test_registry_path}")
         print(f"  Settings: {test_settings_path}")
         print(f"  MCP Servers: {test_mcp_servers_path}")
+        print(f"  Workflows: {test_workflows_path}")
 
     yield {
         "pflow_dir": test_pflow_dir,
         "registry_path": test_registry_path,
         "settings_path": test_settings_path,
         "mcp_servers_path": test_mcp_servers_path,
+        "workflows_path": test_workflows_path,
     }
 
 

@@ -50,11 +50,16 @@ class TestWorkflowManager:
         # Compare resolved paths to handle symlinks
         assert manager.workflows_dir == workflows_dir.resolve()
 
-    def test_init_default_directory(self):
-        """Test default directory is ~/.pflow/workflows/."""
+    def test_init_default_directory(self, isolate_pflow_config):
+        """Test default directory in test environment is isolated temp path.
+
+        Note: The isolate_pflow_config fixture patches WorkflowManager to use
+        a temporary directory instead of ~/.pflow/workflows/ for test isolation.
+        This is intentional to prevent tests from polluting the real workflows directory.
+        """
         with patch("pathlib.Path.mkdir") as mock_mkdir:
             manager = WorkflowManager()
-            expected_path = Path("~/.pflow/workflows").expanduser().resolve()
+            expected_path = isolate_pflow_config["workflows_path"]
             assert manager.workflows_dir == expected_path
             mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
