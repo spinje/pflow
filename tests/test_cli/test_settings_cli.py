@@ -295,3 +295,208 @@ class TestListEnvCommand:
         """Test that list-env returns exit code 0."""
         result = runner.invoke(settings, ["list-env"])
         assert result.exit_code == 0
+
+
+class TestShowCommand:
+    """Test pflow settings show command."""
+
+    def test_show_masks_sensitive_env_vars(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that sensitive env vars are masked in show output."""
+        # Setup: Add sensitive env vars
+        runner.invoke(settings, ["set-env", "api_key", "secret123456"])
+        runner.invoke(settings, ["set-env", "password", "pass123456"])
+        runner.invoke(settings, ["set-env", "token", "tok123456"])
+
+        # Run show command
+        result = runner.invoke(settings, ["show"])
+
+        # Assert: Full values NOT in output
+        assert "secret123456" not in result.output
+        assert "pass123456" not in result.output
+        assert "tok123456" not in result.output
+
+        # Assert: Masked values ARE in output
+        assert "sec***" in result.output
+        assert "pas***" in result.output
+        assert "tok***" in result.output
+
+    def test_show_does_not_mask_non_sensitive_vars(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that non-sensitive env vars are not masked."""
+        # Setup: Add non-sensitive var
+        runner.invoke(settings, ["set-env", "log_level", "debug"])
+        runner.invoke(settings, ["set-env", "timeout", "30"])
+
+        # Run show command
+        result = runner.invoke(settings, ["show"])
+
+        # Assert: Full values are visible
+        assert '"log_level": "debug"' in result.output
+        assert '"timeout": "30"' in result.output
+
+    def test_show_mixed_sensitive_and_non_sensitive(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test show with both sensitive and non-sensitive vars."""
+        # Setup: Add mix of vars
+        runner.invoke(settings, ["set-env", "api_key", "key123456"])
+        runner.invoke(settings, ["set-env", "debug_mode", "true"])
+        runner.invoke(settings, ["set-env", "password", "pass123456"])
+        runner.invoke(settings, ["set-env", "timeout", "60"])
+
+        # Run show command
+        result = runner.invoke(settings, ["show"])
+
+        # Assert: Sensitive masked
+        assert "key123456" not in result.output
+        assert "pass123456" not in result.output
+        assert "key***" in result.output
+        assert "pas***" in result.output
+
+        # Assert: Non-sensitive visible
+        assert '"debug_mode": "true"' in result.output
+        assert '"timeout": "60"' in result.output
+
+    def test_show_with_empty_env(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test show with no environment variables."""
+        result = runner.invoke(settings, ["show"])
+
+        assert result.exit_code == 0
+        assert '"env": {}' in result.output
+
+    def test_show_masks_short_sensitive_values(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that short sensitive values are fully masked as ***."""
+        # Setup: Add short sensitive values
+        runner.invoke(settings, ["set-env", "api_key", "ab"])
+        runner.invoke(settings, ["set-env", "token", "x"])
+
+        # Run show command
+        result = runner.invoke(settings, ["show"])
+
+        # Assert: Short values fully masked
+        assert '"api_key": "***"' in result.output
+        assert '"token": "***"' in result.output
+
+        # Assert: Original values not visible
+        assert '"ab"' not in result.output
+        assert '"x"' not in result.output
+
+    def test_show_preserves_allow_deny_lists(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that allow and deny lists are not affected by masking."""
+        # Setup: Add filters
+        runner.invoke(settings, ["allow", "test:*"])
+        runner.invoke(settings, ["deny", "dangerous:*"])
+
+        # Run show command
+        result = runner.invoke(settings, ["show"])
+
+        # Assert: Filters shown correctly (JSON format may vary)
+        assert "test:*" in result.output
+        assert "dangerous:*" in result.output
+        assert result.exit_code == 0
+
+    def test_show_exit_code(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that show returns exit code 0."""
+        result = runner.invoke(settings, ["show"])
+        assert result.exit_code == 0
+
+    def test_show_displays_settings_path(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that show displays the settings file path."""
+        result = runner.invoke(settings, ["show"])
+
+        assert result.exit_code == 0
+        assert "Settings file:" in result.output
+        assert str(isolated_settings) in result.output
+
+    def test_show_masks_various_sensitive_keywords(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test masking for various sensitive keyword patterns."""
+        # Setup: Add vars with different sensitive keywords
+        runner.invoke(settings, ["set-env", "access_token", "access123"])
+        runner.invoke(settings, ["set-env", "auth_token", "auth456"])
+        runner.invoke(settings, ["set-env", "client_secret", "secret789"])
+        runner.invoke(settings, ["set-env", "private_key", "key012"])
+
+        # Run show command
+        result = runner.invoke(settings, ["show"])
+
+        # Assert: All masked
+        assert "access123" not in result.output
+        assert "auth456" not in result.output
+        assert "secret789" not in result.output
+        assert "key012" not in result.output
+
+        assert "acc***" in result.output
+        assert "aut***" in result.output
+        assert "sec***" in result.output
+        assert "key***" in result.output
+
+    def test_show_json_structure_valid(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that show outputs valid JSON structure."""
+        import json
+
+        # Setup: Add some env vars
+        runner.invoke(settings, ["set-env", "api_key", "test123"])
+
+        # Run show command
+        result = runner.invoke(settings, ["show"])
+
+        # Extract JSON using brace counting
+        output = result.output
+        json_start = output.find("{")
+        assert json_start != -1, "No JSON found in output"
+
+        # Count braces to find the matching closing brace
+        brace_count = 0
+        json_end = json_start
+        for i in range(json_start, len(output)):
+            if output[i] == "{":
+                brace_count += 1
+            elif output[i] == "}":
+                brace_count -= 1
+                if brace_count == 0:
+                    json_end = i + 1
+                    break
+
+        json_output = output[json_start:json_end]
+
+        # Parse JSON to verify it's valid
+        try:
+            parsed = json.loads(json_output)
+            assert "env" in parsed
+            assert isinstance(parsed["env"], dict)
+        except json.JSONDecodeError as e:
+            pytest.fail(f"Invalid JSON output: {e}")
+
+    def test_show_with_unicode_values(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that show handles unicode in env values correctly."""
+        import json
+
+        # Setup: Add unicode values
+        runner.invoke(settings, ["set-env", "api_key", "你好123"])
+        runner.invoke(settings, ["set-env", "config", "🌍test"])
+
+        # Run show command
+        result = runner.invoke(settings, ["show"])
+
+        # Extract JSON using brace counting
+        output = result.output
+        json_start = output.find("{")
+        assert json_start != -1, "No JSON found in output"
+
+        # Count braces to find the matching closing brace
+        brace_count = 0
+        json_end = json_start
+        for i in range(json_start, len(output)):
+            if output[i] == "{":
+                brace_count += 1
+            elif output[i] == "}":
+                brace_count -= 1
+                if brace_count == 0:
+                    json_end = i + 1
+                    break
+
+        json_output = output[json_start:json_end]
+        parsed = json.loads(json_output)
+
+        # Assert: Sensitive masked (first 3 chars + ***)
+        assert parsed["env"]["api_key"] == "你好1***"
+
+        # Assert: Non-sensitive visible
+        assert parsed["env"]["config"] == "🌍test"

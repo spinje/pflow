@@ -34,15 +34,53 @@ def init() -> None:
     click.echo(json.dumps(default_settings.model_dump(), indent=2))
 
 
+def _mask_sensitive_env(settings_dict: dict) -> dict:
+    """Create a copy of settings dict with sensitive env values masked.
+
+    Args:
+        settings_dict: Raw settings dictionary from settings.model_dump()
+
+    Returns:
+        New dict with sensitive env values masked (first 3 chars + ***)
+    """
+    from pflow.core.security_utils import is_sensitive_parameter
+
+    # Create a copy to avoid mutating original
+    masked = settings_dict.copy()
+
+    # Only mask if env section exists and has values
+    if masked.get("env"):
+        masked_env = {}
+        for key, value in masked["env"].items():
+            if is_sensitive_parameter(key):
+                # Mask sensitive values
+                masked_env[key] = SettingsManager._mask_value(value)
+            else:
+                # Keep non-sensitive values as-is
+                masked_env[key] = value
+        masked["env"] = masked_env
+
+    return masked
+
+
 @settings.command()
 def show() -> None:
-    """Show current settings."""
+    """Show current settings.
+
+    Sensitive environment variable values are masked for security.
+    Use 'pflow settings list-env --show-values' to view full values.
+    """
     manager = SettingsManager()
     settings = manager.load()
 
     click.echo(f"Settings file: {manager.settings_path}")
     click.echo("\nCurrent settings:")
-    click.echo(json.dumps(settings.model_dump(), indent=2))
+
+    # Get masked version of settings
+    settings_dict = settings.model_dump()
+    masked_dict = _mask_sensitive_env(settings_dict)
+
+    click.echo(json.dumps(masked_dict, indent=2))
 
     # Show if environment variable is overriding
     import os
