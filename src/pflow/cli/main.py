@@ -1447,10 +1447,6 @@ def _display_single_error(
             click.echo("\n  📁 Complete field list available in trace file", err=True)
             click.echo("     ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json", err=True)
 
-    # Fixable hint
-    if error.get("fixable") and not auto_repair:
-        click.echo("\n  💡 Tip: Add --auto-repair flag to attempt automatic fix", err=True)
-
 
 def _display_text_error_details(
     result: Any,

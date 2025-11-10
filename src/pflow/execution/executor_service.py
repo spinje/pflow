@@ -727,6 +727,14 @@ class WorkflowExecutorService:
         on the error message content. Infrastructure and auth issues are
         generally not fixable, while template and field errors often are.
 
+        KNOWN LIMITATION: Uses naive keyword matching on error messages.
+        Cannot distinguish between missing INPUT parameters (not fixable)
+        and incorrect template paths (potentially fixable). Both contain
+        "missing" in error message but have different fixability.
+        See: scratchpads/fixable-error-classification/critical-user-decisions/fixable-error-logic.md
+        TODO: If auto-repair is not being deprecated, enhance this with
+        structured data (workflow_ir, context) to properly classify errors.
+
         Args:
             exception: The exception to analyze
 
