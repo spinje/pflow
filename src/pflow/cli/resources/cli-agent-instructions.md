@@ -1451,7 +1451,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch")
 
 ```bash
 # 1. Find all tools from a service
-uv run pflow registry search "slack"
+uv run pflow registry list "slack"
 
 # Returns something like:
 # mcp-slack-SEND_MESSAGE
