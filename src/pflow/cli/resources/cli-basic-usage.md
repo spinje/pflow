@@ -1,0 +1,127 @@
+# pflow - Basic Usage Guide for AI Agents
+
+> **Purpose**: Quick reference for AI agents to understand pflow basics and when to request comprehensive instructions.
+
+## 🛑 MANDATORY First Step - Always Check for Existing Workflows
+
+If the user is asking you to build a new workflow or wants you to do a complex task involving external tools, you MUST run the following command first:
+
+**Before doing ANYTHING else, you MUST run:**
+
+```bash
+pflow workflow discover "user's exact request here"
+```
+
+**Why this is non-negotiable:**
+- Building a workflow takes 5-30 minutes
+- Using an existing workflow takes 5 seconds
+- Users have likely solved similar problems before
+
+**Decision Tree after running the above command:**
+- **≥95% match** → Use it immediately with `pflow workflow-name`
+- **80-94% match** → Ask user if they want to use, modify, or build new
+- **70-79% match** → Suggest modifying the existing workflow
+- **<70% match** → Proceed with building new workflow by first using `pflow instructions create` to understand HOW to build a workflow using the pflow CLI.
+
+> Always make sure to make it clear what the differences are between the existing workflow and the user's request if there are any (<94% matches).
+
+## Essential Commands
+
+### Workflow Discovery Commands (Use These First!)
+
+```bash
+# Find existing workflows if the request is complex
+pflow workflow discover "what I want to do"
+
+# List all saved workflows with a filter keyword if the user is asking for a specific workflow.
+pflow workflow list <filter-keywors> # Example: `pflow workflow list github` or `pflow workflow list "github pr"`
+
+# See workflow details if you are unsure about what parameters are available or what the workflow does.
+pflow workflow describe workflow-name
+```
+
+### Execute workflow by name
+
+```bash
+# Run a saved workflow
+pflow workflow-name param1=value1 param2=value2
+```
+
+### Instructions for building workflows
+
+```bash
+# Only read this if you need to build a new workflow from scratch and user has approved the creation of a new workflow.
+pflow instructions create
+```
+
+**ONLY use `pflow instructions create` when:**
+- Building your first workflow
+- User has approved the creation of a new workflow
+- You are sure no existing workflow matches the user's request
+- Running into errors when running a workflow
+
+## Node Commands (run nodes individually as tools)
+
+Use these commands to find available nodes if the user explicitly asks for a specific capability involving external tools. Like "<do something> using <external-tool-name>".
+The different between a workflow and a node is that a workflow is a collection of nodes that are executed in a specific order, while a node is a single operation that can be executed independently.
+A node can be seen as a tool in this context.
+
+````bash
+# Find available nodes if you need to search for a specific capability and you are not sure about what filter-keywords to use to find the node using the list command.
+pflow registry discover "what capability I need"
+
+# List all available nodes filtered by keywords. This is faster than the registry discover command but less flexible.
+pflow registry list <filter-keywords> # Example: `pflow registry list slack` or `pflow registry list "slack send message"`
+
+# Get node details
+pflow registry describe node-type
+
+# Run a node
+pflow registry run node-type param1=value1 param2=value2
+```
+
+## Quick Decision Tree
+
+```
+User Request Received
+    ↓
+Is it a complex task or workflow request?
+    ↓
+    ├─ YES: Complex task/workflow
+    │   ↓
+    │   Run: pflow workflow discover "user's request"
+    │   ↓
+    │   ├─ Match ≥95% → Run: pflow workflow-name params → DONE ✓
+    │   │
+    │   ├─ Match 80-94% → Show differences → Ask user:
+    │   │                  "Use existing, modify, or build new?"
+    │   │                  ↓
+    │   │                  User decides → Execute or build
+    │   │
+    │   ├─ Match 70-79% → Suggest: "Can modify existing workflow-name"
+    │   │                  ↓
+    │   │                  User approves? → Proceed to build/modify
+    │   │
+    │   └─ Match <70% → No good match found
+    │       ↓
+    │       Ask user: "Should I build new workflow?"
+    │       ↓
+    │       ├─ User approves → pflow instructions create
+    │       │                  ↓
+    │       │                  Read comprehensive guide
+    │       │                  ↓
+    │       │                  Build → Test → Save
+    │       │
+    │       └─ User declines → Suggest alternatives or DONE
+    │
+    └─ NO: Simple request (specific node/tool)
+        ↓
+        Does user mention specific tool/capability?
+        ↓
+        ├─ YES → pflow registry discover "capability"
+        │        or pflow registry list <keywords>
+        │        ↓
+        │        Found node? → pflow registry run node-type params → DONE ✓
+        │
+        └─ NO → Ask for clarification or use workflow discovery
+```

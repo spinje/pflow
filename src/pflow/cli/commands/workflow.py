@@ -22,9 +22,9 @@ def list_workflows(filter_pattern: str | None, output_json: bool) -> None:
     """List all saved workflows.
 
     Filter by keywords (space-separated AND logic):
-        pflow workflow list github         # Match "github"
-        pflow workflow list github pr      # Match BOTH "github" AND "pr"
-        pflow workflow list                # Show all workflows
+        pflow workflow list github           # Match "github"
+        pflow workflow list "github pr"      # Match BOTH "github" AND "pr"
+        pflow workflow list                  # Show all workflows
     """
     wm = WorkflowManager()
     all_workflows = wm.list_all()

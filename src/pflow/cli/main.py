@@ -3441,9 +3441,10 @@ def workflow_command(
 
     \b
     Commands:
-      registry    Manage node registry (list, search, add custom nodes)
-      workflow    Manage saved workflows (list, describe)
-      mcp         Manage MCP server connections
+      registry      Manage node registry (list, search, add custom nodes)
+      workflow      Manage saved workflows (list, describe)
+      mcp           Manage MCP server connections
+      instructions  AI agents: Start here for usage guide and workflow discovery
 
     \b
     Examples:
@@ -3472,6 +3473,7 @@ def workflow_command(
     Notes:
       - Workflows can be specified by name, file path, or natural language
       - Use key=value syntax to pass parameters to workflows
+      - AI agents: Always run 'pflow instructions usage' FIRST for agent-optimized guidance
       - Run 'pflow COMMAND --help' for more information on a command
     """
     # Handle version flag
