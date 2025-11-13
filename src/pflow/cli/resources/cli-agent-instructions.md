@@ -1856,6 +1856,8 @@ I need to clarify a few details:
 
 ### Command Cheat Sheet
 
+> **Note:** pflow commands use positional arguments (order matters, no `--name` style flags). Note the argument order in the examples and do not use flags.
+
 ```bash
 # Discovery & Research
 uv run pflow workflow discover "complete user request"     # Find existing workflows
