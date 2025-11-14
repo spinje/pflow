@@ -469,7 +469,7 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 85: Runtime Template Resolution Hardening
 
 Next up:
-To be decided
+- ⏳ Task 89: Implement Structure-Only Mode and Selective Data Retrieval
 
 Next version (post-MVP/post-Launch):
 - ⏳ Task 83: Pre-Release Security and Code Quality Audit
