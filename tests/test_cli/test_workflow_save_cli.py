@@ -47,7 +47,9 @@ class TestWorkflowSaveCLI:
 
         # Run command
         result = runner.invoke(
-            workflow_cmd, ["save", str(draft), "my-workflow", "Test workflow"], env={"HOME": str(tmp_path)}
+            workflow_cmd,
+            ["save", str(draft), "--name", "my-workflow", "--description", "Test workflow"],
+            env={"HOME": str(tmp_path)},
         )
 
         # Verify
@@ -73,7 +75,11 @@ class TestWorkflowSaveCLI:
         workflow = {"nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}]}
         draft.write_text(json.dumps(workflow))
 
-        result = runner.invoke(workflow_cmd, ["save", str(draft), "test-workflow", "Test"], env={"HOME": str(tmp_path)})
+        result = runner.invoke(
+            workflow_cmd,
+            ["save", str(draft), "--name", "test-workflow", "--description", "Test"],
+            env={"HOME": str(tmp_path)},
+        )
 
         assert result.exit_code == 0, f"Command failed: {result.output}"
 
@@ -97,7 +103,11 @@ class TestWorkflowSaveCLI:
         }
         draft.write_text(json.dumps(workflow))
 
-        result = runner.invoke(workflow_cmd, ["save", str(draft), "bad-workflow", "Test"], env={"HOME": str(tmp_path)})
+        result = runner.invoke(
+            workflow_cmd,
+            ["save", str(draft), "--name", "bad-workflow", "--description", "Test"],
+            env={"HOME": str(tmp_path)},
+        )
 
         # Should fail
         assert result.exit_code != 0, "Should reject invalid workflow"
@@ -131,7 +141,9 @@ class TestWorkflowSaveCLI:
 
         for invalid_name in invalid_names:
             result = runner.invoke(
-                workflow_cmd, ["save", str(draft), invalid_name, "Test"], env={"HOME": str(tmp_path)}
+                workflow_cmd,
+                ["save", str(draft), "--name", invalid_name, "--description", "Test"],
+                env={"HOME": str(tmp_path)},
             )
 
             assert result.exit_code != 0, f"Should reject invalid name: {invalid_name}"
@@ -141,7 +153,9 @@ class TestWorkflowSaveCLI:
         valid_names = ["myworkflow", "my-workflow", "workflow-123", "test1"]
         for valid_name in valid_names:
             result = runner.invoke(
-                workflow_cmd, ["save", str(draft), valid_name, "Test", "--force"], env={"HOME": str(tmp_path)}
+                workflow_cmd,
+                ["save", str(draft), "--name", valid_name, "--description", "Test", "--force"],
+                env={"HOME": str(tmp_path)},
             )
 
             assert result.exit_code == 0, f"Should accept valid name: {valid_name}"
@@ -159,7 +173,11 @@ class TestWorkflowSaveCLI:
         reserved_names = ["null", "undefined", "none", "test", "settings", "registry", "workflow", "mcp"]
 
         for reserved in reserved_names:
-            result = runner.invoke(workflow_cmd, ["save", str(draft), reserved, "Test"], env={"HOME": str(tmp_path)})
+            result = runner.invoke(
+                workflow_cmd,
+                ["save", str(draft), "--name", reserved, "--description", "Test"],
+                env={"HOME": str(tmp_path)},
+            )
 
             assert result.exit_code != 0, f"Should reject reserved name: {reserved}"
             assert "reserved" in result.output.lower()
@@ -181,7 +199,7 @@ class TestWorkflowSaveCLI:
 
         result = runner.invoke(
             workflow_cmd,
-            ["save", str(draft), "saved-workflow", "Test", "--delete-draft"],
+            ["save", str(draft), "--name", "saved-workflow", "--description", "Test", "--delete-draft"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -208,7 +226,7 @@ class TestWorkflowSaveCLI:
 
         result = runner.invoke(
             workflow_cmd,
-            ["save", str(unsafe_draft), "test-workflow", "Test", "--delete-draft"],
+            ["save", str(unsafe_draft), "--name", "test-workflow", "--description", "Test", "--delete-draft"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -251,7 +269,7 @@ class TestWorkflowSaveCLI:
 
         result = runner.invoke(
             workflow_cmd,
-            ["save", str(draft), "my-workflow", "Updated workflow", "--force"],
+            ["save", str(draft), "--name", "my-workflow", "--description", "Updated workflow", "--force"],
             env={"HOME": str(tmp_path)},
         )
 
@@ -284,7 +302,11 @@ class TestWorkflowSaveCLI:
         draft = tmp_path / "draft.json"
         draft.write_text(json.dumps(sample_workflow_ir))
 
-        result = runner.invoke(workflow_cmd, ["save", str(draft), "my-workflow", "New"], env={"HOME": str(tmp_path)})
+        result = runner.invoke(
+            workflow_cmd,
+            ["save", str(draft), "--name", "my-workflow", "--description", "New"],
+            env={"HOME": str(tmp_path)},
+        )
 
         # Should fail
         assert result.exit_code != 0, "Should reject overwrite without --force"
@@ -294,7 +316,9 @@ class TestWorkflowSaveCLI:
     def test_workflow_save_handles_missing_draft(self, runner: click.testing.CliRunner, tmp_path: Any) -> None:
         """Should show helpful error for nonexistent draft file."""
         result = runner.invoke(
-            workflow_cmd, ["save", "/nonexistent/draft.json", "test", "Test"], env={"HOME": str(tmp_path)}
+            workflow_cmd,
+            ["save", "/nonexistent/draft.json", "--name", "test", "--description", "Test"],
+            env={"HOME": str(tmp_path)},
         )
 
         assert result.exit_code != 0
@@ -314,7 +338,11 @@ class TestWorkflowSaveCLI:
         # Name with 51 characters
         long_name = "a" * 51
 
-        result = runner.invoke(workflow_cmd, ["save", str(draft), long_name, "Test"], env={"HOME": str(tmp_path)})
+        result = runner.invoke(
+            workflow_cmd,
+            ["save", str(draft), "--name", long_name, "--description", "Test"],
+            env={"HOME": str(tmp_path)},
+        )
 
         assert result.exit_code != 0, "Should reject names longer than 50 characters"
         assert "50 characters" in result.output.lower()
@@ -329,7 +357,11 @@ class TestWorkflowSaveCLI:
         draft = tmp_path / "draft.json"
         draft.write_text(json.dumps(sample_workflow_ir))
 
-        result = runner.invoke(workflow_cmd, ["save", str(draft), "test-workflow", "Test"], env={"HOME": str(tmp_path)})
+        result = runner.invoke(
+            workflow_cmd,
+            ["save", str(draft), "--name", "test-workflow", "--description", "Test"],
+            env={"HOME": str(tmp_path)},
+        )
 
         assert result.exit_code == 0
         # Should show success message

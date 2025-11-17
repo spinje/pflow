@@ -495,6 +495,12 @@ uv run pflow registry run http \
 
 ### Step 5: TEST MCP/HTTP NODES - Precise Testing Criteria
 
+**Registry run output is pre-optimized for AI agents:**
+- Automatically filtered to show only business-relevant fields (removes noise)
+- Shows structure without data values (600x token efficiency)
+- **Don't grep/filter the output** - what's displayed is what matters
+- Need actual values? Use: `pflow read-fields exec-id field.path1 field.path2`
+
 **Decision tree for testing:**
 ```
 Is it an MCP node?
@@ -1003,8 +1009,8 @@ uv run pflow workflow-name param=value  # ❌ Doesn't work yet
 
 ```bash
 uv run pflow workflow save /path/to/your-workflow.json \
-  workflow-name \
-  "Brief description of what it does"
+  --name workflow-name \
+  --description "Brief description of what it does"
 ```
 
 **What this command does:**
@@ -1016,8 +1022,8 @@ uv run pflow workflow save /path/to/your-workflow.json \
 ```bash
 # Save your tested workflow
 uv run pflow workflow save /tmp/api-processor.json \
-  api-data-processor \
-  "Fetches data from API, processes with custom logic, delivers results"
+  --name api-data-processor \
+  --description "Fetches data from API, processes with custom logic, delivers results"
 
 # Verify it worked
 uv run pflow workflow list | grep api-data-processor
@@ -1852,8 +1858,6 @@ I need to clarify a few details:
 
 ### Command Cheat Sheet
 
-> **Note:** pflow commands use positional arguments (order matters, no `--name` style flags). Note the argument order in the examples and do not use flags.
-
 ```bash
 # Discovery & Research
 uv run pflow workflow discover "complete user request"     # Find existing workflows
@@ -1862,13 +1866,14 @@ uv run pflow registry describe node1 node2                  # Get node specifica
 uv run pflow registry list "keyword1 keyword2"              # List all available nodes
 
 # Testing & Debugging
-uv run pflow registry run node-type param=value # Test node in isolation
+uv run pflow registry run node-type param=value             # Test node (output pre-filtered for agents)
+uv run pflow read-fields exec-id field.path                 # Get actual field values if needed
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.'          # Inspect trace (for debugging)
 
 # Workflow Operations
 uv run pflow --validate-only workflow.json                  # Check if workflow is valid
 uv run pflow workflow.json param1=value1                    # Run workflow from file (while developing)
-uv run pflow workflow save workflow-file.json workflow-name "description"  # Save workflow (when finished developing)
+uv run pflow workflow save workflow-file.json --name workflow-name --description "description"  # Save workflow (when finished developing)
 
 # Settings & Auth
 uv run pflow settings set-env KEY_NAME "value"             # Store credential

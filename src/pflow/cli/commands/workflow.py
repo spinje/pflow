@@ -351,8 +351,8 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
 
 @workflow.command(name="save")
 @click.argument("file_path", type=click.Path(exists=True, readable=True))
-@click.argument("name")
-@click.argument("description")
+@click.option("--name", required=True, help="Workflow name (lowercase-with-hyphens, max 30 chars)")
+@click.option("--description", required=True, help="Brief description of workflow purpose")
 @click.option("--delete-draft", is_flag=True, help="Delete source file after save")
 @click.option("--force", is_flag=True, help="Overwrite existing workflow")
 @click.option("--generate-metadata", is_flag=True, help="Generate rich discovery metadata")
@@ -366,7 +366,7 @@ def save_workflow(
     across all projects.
 
     Example:
-        pflow workflow save .pflow/workflows/draft.json my-analyzer "Analyzes PRs"
+        pflow workflow save .pflow/workflows/draft.json --name my-analyzer --description "Analyzes PRs"
     """
     from pflow.core.workflow_save_service import validate_workflow_name
 
