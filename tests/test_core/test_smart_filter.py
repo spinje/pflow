@@ -7,11 +7,27 @@ This test suite verifies:
 4. Type preservation through filtering
 """
 
-from pflow.core.smart_filter import FilteredFields, smart_filter_fields
+from pflow.core.smart_filter import (
+    SMART_FILTER_THRESHOLD,
+    FilteredFields,
+    smart_filter_fields,
+)
 
 
 class TestSmartFilterThreshold:
     """Test threshold-based filtering decisions."""
+
+    def test_threshold_constant_is_defined(self):
+        """Verify SMART_FILTER_THRESHOLD constant exists and has correct value."""
+        # Constant should be 30 (lowered from original plan of 50)
+        assert SMART_FILTER_THRESHOLD == 30
+
+        # Function should use this constant as default
+        import inspect
+
+        sig = inspect.signature(smart_filter_fields)
+        default_threshold = sig.parameters["threshold"].default
+        assert default_threshold == SMART_FILTER_THRESHOLD
 
     def test_fields_below_threshold_passthrough(self):
         """Fields < threshold should pass through unfiltered."""

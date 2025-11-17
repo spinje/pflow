@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.security_utils import is_sensitive_parameter, mask_sensitive_value
+
 
 class ExecutionCache:
     """Manage cached node execution results for structure-only mode.
@@ -53,26 +55,37 @@ class ExecutionCache:
         params: dict[str, Any],
         outputs: dict[str, Any],
     ) -> None:
-        """Store execution results in cache.
+        """Store execution results in cache with sensitive parameter masking.
 
         Args:
             execution_id: Unique identifier for this execution
             node_type: Node type identifier (e.g., "mcp-github-list-issues")
-            params: Parameters used for node execution
+            params: Parameters used for node execution (sensitive values will be masked)
             outputs: Node execution outputs (will be encoded if binary)
 
         Raises:
             OSError: If cache file cannot be written
+
+        Note:
+            Sensitive parameters (api_key, password, token, etc.) are automatically
+            masked before caching to prevent credential exposure in cache files.
         """
         # Handle binary data encoding
         encoded_outputs = self._encode_binary(outputs)
+
+        # Mask sensitive parameters before caching
+        masked_params = (
+            {k: mask_sensitive_value(k, v) if is_sensitive_parameter(k) else v for k, v in params.items()}
+            if params
+            else {}
+        )
 
         cache_data = {
             "execution_id": execution_id,
             "node_type": node_type,
             "timestamp": time.time(),
             "ttl_hours": 24,  # Stored but not enforced in MVP
-            "params": params,
+            "params": masked_params,
             "outputs": encoded_outputs,
         }
 

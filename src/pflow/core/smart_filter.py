@@ -24,6 +24,13 @@ from pflow.planning.utils.llm_helpers import parse_structured_response
 
 logger = logging.getLogger(__name__)
 
+# Smart filtering threshold - triggers LLM filtering when field count exceeds this value.
+# Originally planned as 50, lowered to 30 based on performance analysis showing:
+# - High accuracy (95-100%) at depth 1-5 for 30+ field APIs
+# - Better UX for moderately complex APIs (30-50 field range)
+# See: .taskmaster/tasks/task_89/implementation/FINAL-SMART-FILTERING-ANALYSIS.md
+SMART_FILTER_THRESHOLD = 30
+
 
 class FilteredFields(BaseModel):
     """Structured output schema for smart field filtering."""
@@ -64,7 +71,7 @@ def _calculate_fingerprint(fields: tuple[tuple[str, str], ...]) -> str:
 
 def smart_filter_fields(
     fields: list[tuple[str, str]],
-    threshold: int = 30,
+    threshold: int = SMART_FILTER_THRESHOLD,
 ) -> list[tuple[str, str]]:
     """Filter template paths using Haiku 4.5 when count exceeds threshold.
 
@@ -205,7 +212,7 @@ Return ONLY the field paths (without type annotations) that the agent needs to s
 
 def smart_filter_fields_cached(
     fields_tuple: tuple[tuple[str, str], ...],
-    threshold: int = 30,
+    threshold: int = SMART_FILTER_THRESHOLD,
 ) -> tuple[tuple[str, str], ...]:
     """Public wrapper that normalizes field order before caching.
 

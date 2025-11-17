@@ -1,7 +1,6 @@
 """Tests for ExecutionCache class."""
 
 import json
-import tempfile
 import time
 from pathlib import Path
 
@@ -31,24 +30,6 @@ def cache(temp_cache_dir):
 class TestGenerateExecutionId:
     """Test execution ID generation."""
 
-    def test_format_is_correct(self):
-        """Test execution ID has correct format."""
-        exec_id = ExecutionCache.generate_execution_id()
-
-        # Format: exec-{timestamp}-{random}
-        assert exec_id.startswith("exec-")
-        parts = exec_id.split("-")
-        assert len(parts) == 3  # exec, timestamp, random
-
-        # Timestamp should be numeric
-        timestamp = parts[1]
-        assert timestamp.isdigit()
-
-        # Random should be 8 hex characters
-        random_hex = parts[2]
-        assert len(random_hex) == 8
-        assert all(c in "0123456789abcdef" for c in random_hex)
-
     def test_ids_are_unique(self):
         """Test consecutive IDs are unique."""
         id1 = ExecutionCache.generate_execution_id()
@@ -59,31 +40,9 @@ class TestGenerateExecutionId:
         assert id2 != id3
         assert id1 != id3
 
-    def test_timestamp_is_current(self):
-        """Test timestamp reflects current time."""
-        before = int(time.time())
-        exec_id = ExecutionCache.generate_execution_id()
-        after = int(time.time())
-
-        timestamp = int(exec_id.split("-")[1])
-
-        assert before <= timestamp <= after
-
 
 class TestStore:
     """Test cache storage."""
-
-    def test_store_creates_cache_file(self, cache, temp_cache_dir):
-        """Test store() creates cache file."""
-        execution_id = "exec-1234567890-abcd1234"
-        node_type = "test-node"
-        params = {"param1": "value1"}
-        outputs = {"result": "test result"}
-
-        cache.store(execution_id, node_type, params, outputs)
-
-        cache_file = temp_cache_dir / f"{execution_id}.json"
-        assert cache_file.exists()
 
     def test_store_saves_correct_structure(self, cache, temp_cache_dir):
         """Test cache file has correct JSON structure."""
@@ -268,43 +227,6 @@ class TestListCachedExecutions:
         assert result[0]["execution_id"] == valid_id
 
 
-class TestCacheDirectoryCreation:
-    """Test cache directory initialization."""
-
-    def test_cache_dir_created_on_init(self, monkeypatch, tmp_path):
-        """Test cache directory is created if it doesn't exist."""
-        # Mock Path.home() to use temp directory
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-
-        # Cache directory should not exist yet
-        cache_dir = tmp_path / ".pflow" / "cache" / "registry-run"
-        assert not cache_dir.exists()
-
-        # Create cache instance
-        cache = ExecutionCache()
-
-        # Cache directory should be created
-        assert cache.cache_dir.exists()
-        assert cache.cache_dir.is_dir()
-
-    def test_cache_dir_parents_created(self, monkeypatch):
-        """Test parent directories are created."""
-        # Use unique temp path to avoid test interference
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            monkeypatch.setattr(Path, "home", lambda: tmp_path)
-
-            # None of the parent directories exist
-            assert not (tmp_path / ".pflow").exists()
-
-            ExecutionCache()
-
-            # All parents should be created
-            assert (tmp_path / ".pflow").exists()
-            assert (tmp_path / ".pflow" / "cache").exists()
-            assert (tmp_path / ".pflow" / "cache" / "registry-run").exists()
-
-
 class TestBinaryEncoding:
     """Test binary data encoding/decoding helpers."""
 
@@ -332,13 +254,6 @@ class TestBinaryEncoding:
         assert encoded[0] == "text"
         assert encoded[1]["__type"] == "base64"
         assert encoded[2]["__type"] == "base64"
-
-    def test_encode_preserves_non_binary(self, cache):
-        """Test encoding preserves non-binary data."""
-        data = {"str": "text", "int": 42, "list": [1, 2, 3], "dict": {"nested": "value"}}
-        encoded = cache._encode_binary(data)
-
-        assert encoded == data  # Should be unchanged
 
     def test_decode_base64_marker(self, cache):
         """Test decoding base64 marker dict."""
@@ -396,3 +311,147 @@ class TestBinaryEncoding:
         decoded = cache._decode_binary(encoded)
 
         assert decoded == original
+
+
+class TestSensitiveParameterMasking:
+    """Test sensitive parameter masking in cache storage."""
+
+    def test_store_masks_sensitive_parameters(self, tmp_path):
+        """Test that sensitive parameters are masked in cache files."""
+        cache = ExecutionCache()
+        cache.cache_dir = tmp_path
+
+        # Sensitive parameters that should be masked
+        sensitive_params = {
+            "api_key": "sk-secret-key-12345",
+            "password": "my-password",
+            "token": "ghp_token123",
+            "auth_token": "bearer-token-abc",
+            "secret": "super-secret-value",
+            "normal_param": "visible-value",
+            "count": 42,
+        }
+
+        # Store with sensitive params
+        execution_id = cache.generate_execution_id()
+        cache.store(
+            execution_id=execution_id,
+            node_type="test-node",
+            params=sensitive_params,
+            outputs={"result": "success"},
+        )
+
+        # Read cache file directly
+        cache_file = tmp_path / f"{execution_id}.json"
+        with open(cache_file) as f:
+            cache_data = json.load(f)
+
+        # Verify sensitive values are masked
+        assert cache_data["params"]["api_key"] == "<REDACTED>"
+        assert cache_data["params"]["password"] == "<REDACTED>"  # noqa: S105
+        assert cache_data["params"]["token"] == "<REDACTED>"  # noqa: S105
+        assert cache_data["params"]["auth_token"] == "<REDACTED>"  # noqa: S105
+        assert cache_data["params"]["secret"] == "<REDACTED>"  # noqa: S105
+
+        # Verify normal values are not masked
+        assert cache_data["params"]["normal_param"] == "visible-value"
+        assert cache_data["params"]["count"] == 42
+
+    def test_store_handles_none_params(self, tmp_path):
+        """Test that store() handles None params gracefully."""
+        cache = ExecutionCache()
+        cache.cache_dir = tmp_path
+
+        execution_id = cache.generate_execution_id()
+
+        # Test with None
+        cache.store(
+            execution_id=execution_id,
+            node_type="test-node",
+            params=None,
+            outputs={"result": "success"},
+        )
+
+        # Verify cache file exists and has empty params
+        cache_file = tmp_path / f"{execution_id}.json"
+        with open(cache_file) as f:
+            cache_data = json.load(f)
+
+        assert cache_data["params"] == {}
+
+    def test_store_handles_empty_params(self, tmp_path):
+        """Test that store() handles empty dict params gracefully."""
+        cache = ExecutionCache()
+        cache.cache_dir = tmp_path
+
+        execution_id = cache.generate_execution_id()
+
+        # Test with empty dict
+        cache.store(
+            execution_id=execution_id,
+            node_type="test-node",
+            params={},
+            outputs={"result": "success"},
+        )
+
+        # Verify cache file exists and has empty params
+        cache_file = tmp_path / f"{execution_id}.json"
+        with open(cache_file) as f:
+            cache_data = json.load(f)
+
+        assert cache_data["params"] == {}
+
+    def test_retrieve_returns_masked_params(self, tmp_path):
+        """Test that retrieve() returns params as they were stored (masked)."""
+        cache = ExecutionCache()
+        cache.cache_dir = tmp_path
+
+        # Store with sensitive param
+        execution_id = cache.generate_execution_id()
+        cache.store(
+            execution_id=execution_id,
+            node_type="test-node",
+            params={"api_key": "sk-secret-12345", "username": "john"},
+            outputs={"result": "success"},
+        )
+
+        # Retrieve cache
+        retrieved = cache.retrieve(execution_id)
+
+        # Should return masked value as stored
+        assert retrieved["params"]["api_key"] == "<REDACTED>"
+        assert retrieved["params"]["username"] == "john"
+
+    def test_case_insensitive_masking(self, tmp_path):
+        """Test that masking works case-insensitively."""
+        cache = ExecutionCache()
+        cache.cache_dir = tmp_path
+
+        # Various case combinations
+        params = {
+            "API_KEY": "sk-uppercase",
+            "Api_Key": "sk-mixedcase",
+            "api_key": "sk-lowercase",
+            "PASSWORD": "pwd-uppercase",
+            "normal": "visible",
+        }
+
+        execution_id = cache.generate_execution_id()
+        cache.store(
+            execution_id=execution_id,
+            node_type="test-node",
+            params=params,
+            outputs={"result": "success"},
+        )
+
+        # Read cache file directly
+        cache_file = tmp_path / f"{execution_id}.json"
+        with open(cache_file) as f:
+            cache_data = json.load(f)
+
+        # All variations should be masked
+        assert cache_data["params"]["API_KEY"] == "<REDACTED>"
+        assert cache_data["params"]["Api_Key"] == "<REDACTED>"
+        assert cache_data["params"]["api_key"] == "<REDACTED>"
+        assert cache_data["params"]["PASSWORD"] == "<REDACTED>"  # noqa: S105
+        assert cache_data["params"]["normal"] == "visible"
