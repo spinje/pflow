@@ -490,8 +490,7 @@ uv run pflow registry discover "fetch JSON from REST API, extract specific field
 # Test with minimal call
 uv run pflow registry run http \
   url="https://api.service.com/health" \
-  headers='{"Authorization": "Bearer TOKEN"}' \
-  --show-structure
+  headers='{"Authorization": "Bearer TOKEN"}'
 ```
 
 ### Step 5: TEST MCP/HTTP NODES - Precise Testing Criteria
@@ -558,8 +557,7 @@ echo "I need to test access to [service]. This will [describe effect]."
 
 # 3. Test with structure discovery AND format compatibility
 uv run pflow registry run mcp-service-TOOL_NAME \
-  param1="your_actual_format_here" \
-  --show-structure
+  param1="your_actual_format_here"
 
 # 4. Document results
 # - Output structure for template paths
@@ -1079,7 +1077,7 @@ This will cause execution errors. Always use `pflow workflow save` to properly r
 
 #### ✅ MCP Testing Complete
 - [ ] Listed all MCP nodes needed
-- [ ] Tested each with `--show-structure`
+- [ ] Tested each
 - [ ] Documented actual output structure (not assumed)
 - [ ] Fixed authentication issues
 - [ ] Verified permissions work
@@ -1461,8 +1459,7 @@ uv run pflow registry list "slack"
 
 # 2. Use meta tools to understand
 uv run pflow registry run mcp-slack-GET_CHANNEL_INFO \
-  channel="general" \
-  --show-structure
+  channel="general"
 
 # 3. Now you know the actual structure for that service
 ```
@@ -1528,8 +1525,7 @@ uv run pflow workflow.json param=value
 ```bash
 # Test the specific failing node
 uv run pflow registry run failing-node-type \
-  param="test_value" \
-  --show-structure
+  param="test_value"
 
 # Check its output structure
 ```
@@ -1728,14 +1724,14 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
 
 #### 2. Not testing MCP outputs
 **Impact**: Wrong template paths, failed execution
-**Fix**: ALWAYS use `--show-structure` for MCP
+**Fix**: ALWAYS use `pflow registry run` for MCP
 **Example**:
 ```bash
 # Wrong assumption
-"${slack.messages}"  # Doesn't exist
+"${data.messages}"  # Doesn't exist
 
 # After testing
-"${slack.result.data.messages}"  # Correct path
+"${result.data.messages}"  # Correct path
 ```
 
 #### 3. Building everything at once
@@ -1866,7 +1862,7 @@ uv run pflow registry describe node1 node2                  # Get node specifica
 uv run pflow registry list "keyword1 keyword2"              # List all available nodes
 
 # Testing & Debugging
-uv run pflow registry run node-type param=value --show-structure  # Test node in isolation
+uv run pflow registry run node-type param=value # Test node in isolation
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.'          # Inspect trace (for debugging)
 
 # Workflow Operations
