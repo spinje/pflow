@@ -21,7 +21,7 @@ Usage:
 """
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 from pflow.registry import Registry
 from pflow.runtime.template_validator import TemplateValidator
@@ -39,6 +39,7 @@ def format_node_output(
     registry: Registry,
     format_type: str = "text",
     verbose: bool = False,
+    execution_id: Optional[str] = None,
 ) -> str | dict[str, Any]:
     """Format node execution results for display.
 
@@ -82,7 +83,9 @@ def format_node_output(
 
     # Handle success cases
     if format_type == "structure":
-        return format_structure_output(node_type, outputs, shared_store, registry, execution_time_ms)
+        return format_structure_output(
+            node_type, outputs, shared_store, registry, execution_time_ms, execution_id=execution_id
+        )
     elif format_type == "json":
         return format_json_output(node_type, outputs, execution_time_ms)
     else:  # text
@@ -183,6 +186,8 @@ def format_structure_output(
     shared_store: dict[str, Any],
     registry: Registry,
     execution_time_ms: int,
+    include_values: bool = False,
+    execution_id: Optional[str] = None,
 ) -> str:
     """Format flattened output structure for template variable discovery.
 
@@ -195,15 +200,23 @@ def format_structure_output(
         shared_store: Complete shared store
         registry: Registry instance
         execution_time_ms: Execution duration
+        include_values: If True, show actual data values before template paths.
+                       If False (default), show only template paths (structure-only mode).
+        execution_id: Optional execution ID to display for later field retrieval.
 
     Returns:
         Formatted text string with template paths
     """
     lines = ["✓ Node executed successfully\n"]
 
-    # Show full output values
-    output_lines = format_output_values(outputs)
-    lines.extend(output_lines)
+    # Show execution ID if provided (for structure-only mode)
+    if execution_id:
+        lines.append(f"Execution ID: {execution_id}\n")
+
+    # Only show full output values if explicitly requested
+    if include_values:
+        output_lines = format_output_values(outputs)
+        lines.extend(output_lines)
 
     # Get metadata and extract template paths
     metadata_paths, has_any_type = extract_metadata_paths(node_type, registry)
@@ -213,19 +226,42 @@ def format_structure_output(
         lines.append(f"\nExecution time: {execution_time_ms}ms")
         return "\n".join(lines)
 
-    # Display paths based on whether we have runtime data or use metadata
+    # Determine which paths to use (runtime vs metadata)
     if has_any_type and outputs:
-        runtime_paths, warnings = extract_runtime_paths(outputs)
-        # Add warnings if any
+        # Extract from actual runtime outputs (more accurate)
+        paths_to_display, warnings = extract_runtime_paths(outputs)
+        source_desc = "from actual output"
         if warnings:
             lines.extend(warnings)
-        path_lines = format_template_paths(runtime_paths, "from actual output")
-        lines.extend(path_lines)
     elif metadata_paths:
-        path_lines = format_template_paths(metadata_paths, None)
-        lines.extend(path_lines)
+        # Use metadata paths from registry
+        paths_to_display = metadata_paths
+        source_desc = None
     else:
         lines.append("No structured outputs defined for this node")
+        lines.append(f"\nExecution time: {execution_time_ms}ms")
+        return "\n".join(lines)
+
+    # Apply smart filtering to reduce large field sets (with caching)
+    from pflow.core.smart_filter import smart_filter_fields_cached
+
+    original_count = len(paths_to_display)
+
+    # Convert to tuple for caching (LRU cache requires hashable args)
+    paths_tuple = tuple(paths_to_display)
+    filtered_tuple = smart_filter_fields_cached(paths_tuple, threshold=30)
+    paths_to_display = list(filtered_tuple)
+
+    # Adjust source description if filtering occurred
+    if len(paths_to_display) < original_count:
+        if source_desc:
+            source_desc = f"{source_desc} ({len(paths_to_display)} of {original_count} shown)"
+        else:
+            source_desc = f"{len(paths_to_display)} of {original_count} shown"
+
+    # Display filtered paths
+    path_lines = format_template_paths(paths_to_display, source_desc)
+    lines.extend(path_lines)
 
     lines.append(f"\nExecution time: {execution_time_ms}ms")
     return "\n".join(lines)
@@ -402,6 +438,105 @@ def get_value_hash(value: Any) -> str:
         return hash(str(value)).__str__()
 
 
+def _try_parse_json_string(prefix: str, value: str, depth: int, max_depth: int) -> list[tuple[str, str]] | None:
+    """Try to parse a string as JSON and flatten if successful.
+
+    Args:
+        prefix: Current path prefix
+        value: String value to try parsing
+        depth: Current recursion depth
+        max_depth: Maximum recursion depth
+
+    Returns:
+        Flattened paths if JSON parse succeeds, None otherwise
+    """
+    if not (isinstance(value, str) and value.strip().startswith(("{", "["))):
+        return None
+
+    try:
+        parsed_value = json.loads(value)
+        # Recursively flatten the parsed JSON
+        return flatten_runtime_value(prefix, parsed_value, depth, max_depth)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _flatten_dict(prefix: str, value: dict[str, Any], depth: int, max_depth: int) -> list[tuple[str, str]]:
+    """Flatten a dictionary value to show available template paths.
+
+    Args:
+        prefix: Current path prefix
+        value: Dictionary to flatten
+        depth: Current recursion depth
+        max_depth: Maximum recursion depth
+
+    Returns:
+        List of (path, type) tuples
+    """
+    paths = [(prefix, "dict")]
+
+    for key, val in value.items():
+        # Skip large nested structures to avoid overwhelming output
+        if isinstance(val, (dict, list)) and len(str(val)) > 1000:
+            # Show count for lists/dicts instead of just "large"
+            if isinstance(val, list):
+                count = len(val)
+                count_str = "empty" if count == 0 else f"{count} item{'s' if count != 1 else ''}"
+                paths.append((f"{prefix}.{key}", f"list, {count_str}"))
+
+                # Extract sample fields from first item for smart filtering context
+                # This allows LLM to see what fields exist in array items
+                if val and isinstance(val[0], dict):
+                    # Limit to first 8 fields to avoid explosion
+                    sample_keys = list(val[0].keys())[:8]
+                    for sample_key in sample_keys:
+                        sample_val = val[0][sample_key]
+                        # Go only 1 level deep for large arrays (no deep recursion)
+                        if isinstance(sample_val, (dict, list)):
+                            # Just show the type, don't recurse further
+                            type_name = "dict" if isinstance(sample_val, dict) else "list"
+                            paths.append((f"{prefix}.{key}[0].{sample_key}", type_name))
+                        else:
+                            paths.append((f"{prefix}.{key}[0].{sample_key}", type(sample_val).__name__))
+            else:
+                paths.append((f"{prefix}.{key}", "dict (large)"))
+        else:
+            paths.extend(flatten_runtime_value(f"{prefix}.{key}", val, depth + 1, max_depth))
+
+    return paths
+
+
+def _flatten_list(prefix: str, value: list[Any], depth: int, max_depth: int) -> list[tuple[str, str]]:
+    """Flatten a list value to show available template paths.
+
+    Args:
+        prefix: Current path prefix
+        value: List to flatten
+        depth: Current recursion depth
+        max_depth: Maximum recursion depth
+
+    Returns:
+        List of (path, type) tuples
+    """
+    paths = []
+
+    # Show item count for lists
+    count = len(value)
+    if count == 0:
+        paths.append((prefix, "list, empty"))
+    elif count == 1:
+        paths.append((prefix, "list, 1 item"))
+    else:
+        paths.append((prefix, f"list, {count} items"))
+
+    if value:  # Show first element structure
+        paths.append((f"{prefix}[0]", type(value[0]).__name__))
+        if isinstance(value[0], (dict, list)):
+            paths.extend(flatten_runtime_value(f"{prefix}[0]", value[0], depth + 1, max_depth))
+
+    return paths
+
+
 def flatten_runtime_value(prefix: str, value: Any, depth: int = 0, max_depth: int = 5) -> list[tuple[str, str]]:
     """Flatten actual runtime values to show available template paths.
 
@@ -417,37 +552,23 @@ def flatten_runtime_value(prefix: str, value: Any, depth: int = 0, max_depth: in
     if depth > max_depth:
         return [(prefix, type(value).__name__)]
 
-    paths = []
-
     # Try to parse JSON strings (common with MCP nodes)
-    if isinstance(value, str) and value.strip().startswith(("{", "[")):
-        try:
-            parsed_value = json.loads(value)
-            # Recursively flatten the parsed JSON
-            return flatten_runtime_value(prefix, parsed_value, depth, max_depth)
-        except (json.JSONDecodeError, ValueError):
-            # Not valid JSON, treat as string
-            paths.append((prefix, "str"))
-            return paths
+    json_result = _try_parse_json_string(prefix, value, depth, max_depth)
+    if json_result is not None:
+        return json_result
 
+    # Handle as regular string if JSON parse failed
+    if isinstance(value, str):
+        return [(prefix, "str")]
+
+    # Dispatch to type-specific handlers
     if isinstance(value, dict):
-        paths.append((prefix, "dict"))
-        for key, val in value.items():
-            # Skip large nested structures to avoid overwhelming output
-            if isinstance(val, (dict, list)) and len(str(val)) > 1000:
-                paths.append((f"{prefix}.{key}", type(val).__name__ + " (large)"))
-            else:
-                paths.extend(flatten_runtime_value(f"{prefix}.{key}", val, depth + 1, max_depth))
+        return _flatten_dict(prefix, value, depth, max_depth)
     elif isinstance(value, list):
-        paths.append((prefix, "list"))
-        if value:  # Show first element structure
-            paths.append((f"{prefix}[0]", type(value[0]).__name__))
-            if isinstance(value[0], (dict, list)):
-                paths.extend(flatten_runtime_value(f"{prefix}[0]", value[0], depth + 1, max_depth))
+        return _flatten_list(prefix, value, depth, max_depth)
     else:
-        paths.append((prefix, type(value).__name__))
-
-    return paths
+        # Primitive types (int, float, bool, None, bytes, etc.)
+        return [(prefix, type(value).__name__)]
 
 
 def format_text_error(node_type: str, error_msg: str, execution_time_ms: int) -> str:

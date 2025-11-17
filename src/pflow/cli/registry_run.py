@@ -8,6 +8,7 @@ from typing import Any
 import click
 
 from pflow.cli.main import parse_workflow_params
+from pflow.core.execution_cache import ExecutionCache
 from pflow.core.user_errors import MCPError
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.registry import Registry
@@ -194,6 +195,10 @@ def _execute_and_display_results(
     # Add execution params to shared (nodes can read from either params or shared)
     shared_store.update(execution_params)
 
+    # Generate execution ID for structure-only mode (Task 89)
+    cache = ExecutionCache()
+    execution_id = cache.generate_execution_id()
+
     # Execute node with timing
     start_time = time.perf_counter()
 
@@ -220,6 +225,18 @@ def _execute_and_display_results(
             # Fallback: collect any non-input keys as outputs (excluding internal keys)
             outputs = {k: v for k, v in shared_store.items() if k not in execution_params and not k.startswith("__")}
 
+        # Cache execution results for structure-only mode (Task 89)
+        # Only cache successful executions
+        if action != "error":
+            try:
+                cache.store(
+                    execution_id=execution_id, node_type=resolved_node, params=execution_params, outputs=outputs
+                )
+            except Exception as cache_error:
+                # Log warning but don't fail execution
+                if verbose:
+                    click.echo(f"⚠️  Failed to cache execution: {cache_error}", err=True)
+
         # Display results based on mode
         _display_results(
             node_type=resolved_node,
@@ -231,6 +248,7 @@ def _execute_and_display_results(
             show_structure=show_structure,
             registry=registry,
             verbose=verbose,
+            execution_id=execution_id,
         )
 
     except MCPError as e:
@@ -253,6 +271,7 @@ def _display_results(
     show_structure: bool,
     registry: Registry,
     verbose: bool,
+    execution_id: str,
 ) -> None:
     """Display execution results based on output format and options."""
     # Use shared formatter for all output formatting
@@ -261,7 +280,7 @@ def _display_results(
     # Determine format type
     format_type = "structure" if show_structure else output_format  # "text" or "json"
 
-    # Format result using shared formatter
+    # Format result using shared formatter (Task 89: pass execution_id)
     result = format_node_output(
         node_type=node_type,
         action=action,
@@ -271,6 +290,7 @@ def _display_results(
         registry=registry,
         format_type=format_type,
         verbose=verbose,
+        execution_id=execution_id if format_type == "structure" else None,
     )
 
     # Display result

@@ -513,6 +513,126 @@ class ExecutionService(BaseService):
             raise ValueError(f"Failed to save workflow: {e}") from e
 
     @classmethod
+    def _configure_node_parameters(
+        cls, node_type: str, node_instance: Any, parameters: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Configure node parameters including MCP metadata and environment variable resolution.
+
+        Args:
+            node_type: Node type identifier
+            node_instance: Node instance to configure
+            parameters: Optional parameters for the node
+
+        Returns:
+            Configured parameters (may be modified for MCP nodes)
+        """
+        # Check if this is an MCP node and inject special parameters
+        # MCP nodes require __mcp_server__ and __mcp_tool__ to be set
+        # (normally injected by compiler during workflow compilation)
+        if node_type.startswith("mcp-"):
+            # Import the parser function (same logic as compiler uses)
+            from pflow.runtime.compiler import _parse_mcp_node_type
+
+            # Parse node type to extract server and tool names
+            # This will raise CompilationError if format is invalid or server not found
+            server_name, tool_name = _parse_mcp_node_type(node_type)
+
+            # Inject special parameters (same as compiler does)
+            if parameters is None:
+                parameters = {}
+
+            # These special parameters tell MCPNode which server/tool to execute
+            parameters["__mcp_server__"] = server_name
+            parameters["__mcp_tool__"] = tool_name
+
+            logger.debug(
+                f"Injected MCP metadata for {node_type}",
+                extra={"server": server_name, "tool": tool_name},
+            )
+
+        # Resolve ${var} templates from environment and settings.json
+        # This allows agents to use ${API_KEY} without exposing actual tokens
+        # Checks both os.environ and settings.json (where `pflow settings set-env` stores values)
+        if parameters:
+            from pflow.mcp.auth_utils import expand_env_vars_nested
+
+            parameters = expand_env_vars_nested(
+                parameters,
+                include_settings=True,
+                raise_on_missing=True,
+            )
+
+            logger.debug(
+                f"Resolved environment variables in parameters for {node_type}",
+                extra={"param_keys": list(parameters.keys()) if isinstance(parameters, dict) else None},
+            )
+
+        # Set parameters (now includes __mcp_server__ and __mcp_tool__ for MCP nodes,
+        # and all ${var} templates resolved from environment)
+        if parameters:
+            node_instance.set_params(parameters)
+
+        return parameters
+
+    @classmethod
+    def _extract_node_outputs(
+        cls, shared: dict[str, Any], node_type: str, parameters: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Extract outputs from shared store after node execution.
+
+        Args:
+            shared: Shared store after node execution
+            node_type: Node type identifier
+            parameters: Parameters used for execution
+
+        Returns:
+            Extracted outputs dictionary
+        """
+        # Extract outputs (same logic as CLI)
+        node_outputs = shared.get(node_type, {})
+
+        # Type narrow for mypy (shared store values can be any type)
+        if isinstance(node_outputs, dict):
+            outputs: dict[str, Any] = node_outputs
+        else:
+            outputs = {}
+
+        if not outputs:
+            # Fallback: collect any non-input keys as outputs
+            param_keys = set(parameters.keys()) if parameters else set()
+            outputs = {k: v for k, v in shared.items() if k not in param_keys and not k.startswith("__")}
+        return outputs
+
+    @classmethod
+    def _cache_execution_result(
+        cls,
+        execution_id: str,
+        node_type: str,
+        parameters: dict[str, Any] | None,
+        outputs: dict[str, Any],
+        action: str | None,
+    ) -> None:
+        """Cache execution results for structure-only mode (Task 89).
+
+        Args:
+            execution_id: Unique execution identifier
+            node_type: Node type identifier
+            parameters: Parameters used for execution
+            outputs: Outputs from execution
+            action: Action result from node execution
+        """
+        # Only cache successful executions
+        if action != "error":
+            from pflow.core.execution_cache import ExecutionCache
+
+            cache = ExecutionCache()
+            try:
+                cache.store(execution_id=execution_id, node_type=node_type, params=parameters or {}, outputs=outputs)
+            except Exception as cache_error:
+                # Log warning but don't fail execution
+                logger.warning(f"Failed to cache execution {execution_id}: {cache_error}")
+
+    @classmethod
     @ensure_stateless
     def run_registry_node(cls, node_type: str, parameters: dict[str, Any] | None = None) -> str:
         """Execute a single node to reveal output structure.
@@ -545,51 +665,14 @@ class ExecutionService(BaseService):
             # Create node instance
             node_instance = node_class()
 
-            # Check if this is an MCP node and inject special parameters
-            # MCP nodes require __mcp_server__ and __mcp_tool__ to be set
-            # (normally injected by compiler during workflow compilation)
-            if node_type.startswith("mcp-"):
-                # Import the parser function (same logic as compiler uses)
-                from pflow.runtime.compiler import _parse_mcp_node_type
+            # Configure node parameters (MCP metadata + env var resolution)
+            parameters = cls._configure_node_parameters(node_type, node_instance, parameters)
 
-                # Parse node type to extract server and tool names
-                # This will raise CompilationError if format is invalid or server not found
-                server_name, tool_name = _parse_mcp_node_type(node_type)
+            # Generate execution ID for structure-only mode (Task 89)
+            from pflow.core.execution_cache import ExecutionCache
 
-                # Inject special parameters (same as compiler does)
-                if parameters is None:
-                    parameters = {}
-
-                # These special parameters tell MCPNode which server/tool to execute
-                parameters["__mcp_server__"] = server_name
-                parameters["__mcp_tool__"] = tool_name
-
-                logger.debug(
-                    f"Injected MCP metadata for {node_type}",
-                    extra={"server": server_name, "tool": tool_name},
-                )
-
-            # Resolve ${var} templates from environment and settings.json
-            # This allows agents to use ${API_KEY} without exposing actual tokens
-            # Checks both os.environ and settings.json (where `pflow settings set-env` stores values)
-            if parameters:
-                from pflow.mcp.auth_utils import expand_env_vars_nested
-
-                parameters = expand_env_vars_nested(
-                    parameters,
-                    include_settings=True,
-                    raise_on_missing=True,
-                )
-
-                logger.debug(
-                    f"Resolved environment variables in parameters for {node_type}",
-                    extra={"param_keys": list(parameters.keys()) if isinstance(parameters, dict) else None},
-                )
-
-            # Set parameters (now includes __mcp_server__ and __mcp_tool__ for MCP nodes,
-            # and all ${var} templates resolved from environment)
-            if parameters:
-                node_instance.set_params(parameters)
+            cache = ExecutionCache()
+            execution_id = cache.generate_execution_id()
 
             # Run node with test shared store and timing
             shared: dict[str, Any] = {}
@@ -597,12 +680,11 @@ class ExecutionService(BaseService):
             action = node_instance.run(shared)
             execution_time_ms = int((time.perf_counter() - start_time) * 1000)
 
-            # Extract outputs (same logic as CLI)
-            outputs = shared.get(node_type, {})
-            if not outputs:
-                # Fallback: collect any non-input keys as outputs
-                param_keys = set(parameters.keys()) if parameters else set()
-                outputs = {k: v for k, v in shared.items() if k not in param_keys and not k.startswith("__")}
+            # Extract outputs from shared store
+            outputs = cls._extract_node_outputs(shared, node_type, parameters)
+
+            # Cache execution results
+            cls._cache_execution_result(execution_id, node_type, parameters, outputs, action)
 
             # Format result using shared formatter (CLI's structure mode)
             from pflow.execution.formatters.node_output_formatter import format_node_output
@@ -616,6 +698,7 @@ class ExecutionService(BaseService):
                 registry=registry,
                 format_type="structure",  # CLI's --show-structure mode
                 verbose=True,
+                execution_id=execution_id,  # Task 89: pass execution_id
             )
 
             # format_node_output with format_type="structure" always returns str

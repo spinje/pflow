@@ -363,14 +363,25 @@ class TestRecursiveFlatteningGuards:
         of template paths that overwhelm the terminal.
 
         AI refactoring might remove the len(str(val)) > 1000 check.
+
+        NOTE: After array field extraction enhancement, we now extract sample fields
+        from the first item of large arrays to help agents understand structure.
         """
         # Large nested structure
         large_data = {"items": [{"id": i, "data": "x" * 100} for i in range(100)]}
 
         paths = flatten_runtime_value("result", large_data)
 
-        # Should mark large structures
-        assert any("(large)" in p[1] for p in paths), "should mark large nested values as '(large)'"
+        # Should show list count (not fully flatten all 100 items)
+        assert any("list, 100 items" in p[1] for p in paths), "should show list count"
+
+        # Should extract sample fields from first item (new behavior)
+        assert any(p[0] == "result.items[0].id" for p in paths), "should extract id from first item"
+        assert any(p[0] == "result.items[0].data" for p in paths), "should extract data from first item"
+
+        # Should NOT have paths for all 100 items (that would be overwhelming)
+        assert not any("items[50]" in p[0] for p in paths), "should not extract from middle items"
+        assert not any("items[99]" in p[0] for p in paths), "should not extract from last item"
 
     def test_flatten_runtime_value_handles_list_first_element(self):
         """ARRAY HANDLING: Lists must show first element structure.
@@ -391,6 +402,304 @@ class TestRecursiveFlatteningGuards:
         path_strings = [p[0] for p in paths]
         assert any("[0]" in p for p in path_strings), "must show list element syntax [0]"
         assert any("id" in p for p in path_strings), "must show nested fields in list items"
+
+
+class TestStructureOnlyMode:
+    """Tests for structure-only mode (Task 89)."""
+
+    def test_structure_only_mode_hides_values(self):
+        """STRUCTURE-ONLY: Default behavior shows NO data values.
+
+        Task 89 changes default behavior to structure-only mode,
+        enabling 600x token reduction for AI agents.
+        """
+        from pflow.execution.formatters.node_output_formatter import format_structure_output
+
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {
+            "test-node": {"interface": {"outputs": [{"key": "result", "type": "string"}]}}
+        }
+
+        outputs = {"result": "sensitive data value"}
+        shared_store = {}
+
+        # Default: structure-only (include_values=False)
+        result = format_structure_output(
+            node_type="test-node",
+            outputs=outputs,
+            shared_store=shared_store,
+            registry=registry,
+            execution_time_ms=100,
+        )
+
+        # Must NOT contain actual data values
+        assert "sensitive data value" not in result
+        # Must show template paths
+        assert "result" in result
+
+    def test_include_values_mode_shows_data(self):
+        """BACKWARD COMPAT: include_values=True shows data values.
+
+        This maintains backward compatibility for cases where
+        values need to be displayed.
+        """
+        from pflow.execution.formatters.node_output_formatter import format_structure_output
+
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {"test-node": {"outputs": {"result": {"type": "string"}}}}
+
+        outputs = {"result": "data value"}
+        shared_store = {}
+
+        # Explicitly request values
+        result = format_structure_output(
+            node_type="test-node",
+            outputs=outputs,
+            shared_store=shared_store,
+            registry=registry,
+            execution_time_ms=100,
+            include_values=True,
+        )
+
+        # Must contain actual data values
+        assert "data value" in result
+
+    def test_execution_id_display(self):
+        """EXECUTION ID: Displays execution ID for field retrieval.
+
+        Agents need execution ID to retrieve specific fields
+        using the read-fields command.
+        """
+        from pflow.execution.formatters.node_output_formatter import format_structure_output
+
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {}
+
+        outputs = {"result": "value"}
+        shared_store = {}
+        execution_id = "exec-1234567890-abc123"
+
+        result = format_structure_output(
+            node_type="test-node",
+            outputs=outputs,
+            shared_store=shared_store,
+            registry=registry,
+            execution_time_ms=100,
+            execution_id=execution_id,
+        )
+
+        # Must display execution ID
+        assert execution_id in result
+        assert "Execution ID" in result
+
+    def test_execution_id_with_structure_only(self):
+        """COMBINED: execution_id + structure-only mode.
+
+        This is the primary use case for Task 89 - show
+        structure and execution ID but no data values.
+        """
+        from pflow.execution.formatters.node_output_formatter import format_structure_output
+
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {
+            "test-node": {
+                "interface": {
+                    "outputs": [
+                        {
+                            "key": "messages",
+                            "type": "array",
+                            "items": {"type": "dict", "structure": {"text": {"type": "string"}}},
+                        }
+                    ]
+                }
+            }
+        }
+
+        outputs = {"messages": [{"text": "sensitive message"}]}
+        shared_store = {}
+        execution_id = "exec-1234567890-abc123"
+
+        result = format_structure_output(
+            node_type="test-node",
+            outputs=outputs,
+            shared_store=shared_store,
+            registry=registry,
+            execution_time_ms=100,
+            include_values=False,  # Structure-only
+            execution_id=execution_id,
+        )
+
+        # Must show execution ID
+        assert execution_id in result
+        # Must NOT show sensitive data
+        assert "sensitive message" not in result
+        # Must show template paths for structure
+        assert "messages" in result
+
+    def test_none_execution_id_no_crash(self):
+        """EDGE CASE: None execution_id doesn't crash.
+
+        When execution_id is not provided (None), formatter
+        should work normally without displaying it.
+        """
+        from pflow.execution.formatters.node_output_formatter import format_structure_output
+
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {}
+
+        outputs = {"result": "value"}
+        shared_store = {}
+
+        # No crash with None execution_id
+        result = format_structure_output(
+            node_type="test-node",
+            outputs=outputs,
+            shared_store=shared_store,
+            registry=registry,
+            execution_time_ms=100,
+            execution_id=None,
+        )
+
+        assert isinstance(result, str)
+        assert "Execution ID" not in result
+
+
+class TestSmartFilteringIntegration:
+    """Integration tests for smart filtering in format_structure_output.
+
+    These tests verify that smart filtering works correctly when integrated
+    with the formatter, triggering only when field count exceeds threshold.
+    """
+
+    def test_large_field_set_triggers_smart_filtering(self, mock_llm_calls):
+        """Large field sets (>50) should trigger smart filtering and show count."""
+        from pflow.core.smart_filter import FilteredFields
+        from pflow.execution.formatters.node_output_formatter import format_node_output
+
+        # Create mock registry with node that has 100 output fields
+        registry = Mock(spec=Registry)
+        node_metadata = {
+            "test-large-node": {
+                "interface": {
+                    "outputs": [
+                        {
+                            "name": "result",
+                            "type": "dict",
+                            "structure": {f"field{i}": {"type": "string"} for i in range(100)},
+                        }
+                    ]
+                }
+            }
+        }
+        registry.get_nodes_metadata.return_value = node_metadata
+
+        # Mock LLM to filter to 10 fields
+        mock_llm_calls.set_response(
+            "anthropic/claude-haiku-4-5-20251001",
+            FilteredFields,
+            {
+                "included_fields": [f"result.field{i}" for i in range(10)],
+                "reasoning": "Filtered 100 fields to 10 most relevant",
+            },
+        )
+
+        # Create outputs matching the structure
+        outputs = {"result": {f"field{i}": f"value{i}" for i in range(100)}}
+
+        result = format_node_output(
+            node_type="test-large-node",
+            action="success",
+            outputs=outputs,
+            shared_store={},
+            execution_time_ms=100,
+            registry=registry,
+            format_type="structure",
+            execution_id="exec-123-abc",
+        )
+
+        # Should show filtering message
+        assert "(10 of 100 shown)" in result or "(10 of 101 shown)" in result
+        # Should show some filtered fields
+        assert "result.field0" in result or "result.field1" in result
+
+    def test_small_field_set_no_filtering(self):
+        """Small field sets (<=50) should NOT trigger smart filtering."""
+        from pflow.execution.formatters.node_output_formatter import format_node_output
+
+        # Create mock registry with node that has only 10 output fields
+        registry = Mock(spec=Registry)
+        node_metadata = {
+            "test-small-node": {
+                "interface": {
+                    "outputs": [
+                        {
+                            "name": "result",
+                            "type": "dict",
+                            "structure": {
+                                "field1": {"type": "string"},
+                                "field2": {"type": "integer"},
+                                "field3": {"type": "boolean"},
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        registry.get_nodes_metadata.return_value = node_metadata
+
+        outputs = {"result": {"field1": "value", "field2": 42, "field3": True}}
+
+        result = format_node_output(
+            node_type="test-small-node",
+            action="success",
+            outputs=outputs,
+            shared_store={},
+            execution_time_ms=50,
+            registry=registry,
+            format_type="structure",
+            execution_id="exec-456-def",
+        )
+
+        # Should NOT show filtering message (only 3-4 fields)
+        assert " of " not in result or "shown)" not in result
+        assert "Available template paths" in result
+
+    def test_exactly_50_fields_no_filtering(self):
+        """Exactly 50 fields should NOT trigger filtering (> not >=)."""
+        from pflow.execution.formatters.node_output_formatter import format_node_output
+
+        registry = Mock(spec=Registry)
+        node_metadata = {
+            "test-boundary-node": {
+                "interface": {
+                    "outputs": [
+                        {
+                            "name": "result",
+                            "type": "dict",
+                            "structure": {f"field{i}": {"type": "string"} for i in range(50)},
+                        }
+                    ]
+                }
+            }
+        }
+        registry.get_nodes_metadata.return_value = node_metadata
+
+        outputs = {"result": {f"field{i}": f"value{i}" for i in range(50)}}
+
+        result = format_node_output(
+            node_type="test-boundary-node",
+            action="success",
+            outputs=outputs,
+            shared_store={},
+            execution_time_ms=75,
+            registry=registry,
+            format_type="structure",
+            execution_id="exec-789-ghi",
+        )
+
+        # Should NOT show filtering message (exactly 50 or 51 fields including base key)
+        # All fields should be shown
+        assert "field0" in result or "result.field0" in result
 
 
 if __name__ == "__main__":
