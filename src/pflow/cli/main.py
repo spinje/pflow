@@ -34,46 +34,9 @@ from pflow.runtime.compiler import _display_validation_warnings
 logger = logging.getLogger(__name__)
 
 
-def _configure_logging(verbose: bool) -> None:
-    """Configure logging levels based on verbose flag.
-
-    Args:
-        verbose: If True, show INFO logs. If False, show only WARNING and above.
-    """
-    # Skip configuration if running in test environment
-    # Tests should manage their own logging configuration
-    if os.getenv("PYTEST_CURRENT_TEST"):
-        return
-
-    # Only configure if not already configured
-    # This respects existing configurations (e.g., from tests or other tools)
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO if verbose else logging.WARNING,
-            format="%(levelname)s: %(message)s",
-        )
-    else:
-        # Just adjust the root level if handlers already exist
-        logging.getLogger().setLevel(logging.INFO if verbose else logging.WARNING)
-
-    # Always silence noisy third-party libraries (even in verbose mode)
-    # These are the actual sources of spam we want to suppress
-    for logger_name in [
-        "httpx",
-        "httpx._client",
-        "httpcore",
-        "httpcore.http11",
-        "urllib3",
-        "composio",
-        "mcp",
-        "streamable_http",
-    ]:
-        logging.getLogger(logger_name).setLevel(logging.WARNING)
-
-    if not verbose:
-        # In non-verbose mode, also suppress INFO from pflow
-        # But NOT debug - debug logs should still work when explicitly requested
-        logging.getLogger("pflow").setLevel(logging.WARNING)
+# NOTE: Logging configuration moved to logging_config.py
+# It's now configured centrally in main_wrapper.py before any command routing.
+# This ensures all command groups (workflow, registry, mcp, etc.) respect the verbose flag.
 
 
 def handle_sigint(signum: int, frame: object) -> None:
@@ -3484,8 +3447,8 @@ def workflow_command(
     # Setup signal handlers
     _setup_signals()
 
-    # Configure logging based on verbose flag
-    _configure_logging(verbose)
+    # NOTE: Logging already configured in main_wrapper.py before routing
+    # No need to configure again here
 
     # Suppress WARNING logs in JSON mode to prevent stdout contamination
     # Only ERROR and CRITICAL logs will be shown

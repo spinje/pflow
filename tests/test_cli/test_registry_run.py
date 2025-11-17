@@ -142,7 +142,10 @@ def test_basic_node_execution_with_temp_file(runner, tmp_path):
 
         assert result.exit_code == 0
         assert "Node executed successfully" in result.output
-        assert "Hello, world!" in result.output
+        # Task 89: Structure-only mode - should NOT see actual data
+        assert "Hello, world!" not in result.output
+        # Should see execution ID and structure instead
+        assert "Execution ID:" in result.output
 
 
 def test_node_execution_returns_exit_code_zero_on_success(runner, tmp_path):
@@ -192,7 +195,7 @@ def test_node_execution_returns_exit_code_one_on_failure(runner):
 
 
 def test_json_output_format_is_valid(runner, tmp_path):
-    """Test JSON output format is valid and parseable."""
+    """Test that structure-only mode overrides JSON output format (Task 89)."""
     test_file = tmp_path / "test.txt"
     test_file.write_text("test content")
 
@@ -211,14 +214,13 @@ def test_json_output_format_is_valid(runner, tmp_path):
 
         assert result.exit_code == 0
 
-        # Parse and validate JSON
-        output = json.loads(result.output)
-        assert "success" in output
-        assert output["success"] is True
-        assert "node_type" in output
-        assert "outputs" in output
-        assert "execution_time_ms" in output
-        assert isinstance(output["execution_time_ms"], int)
+        # Task 89: Structure-only mode overrides --output-format
+        # Should get structure output (text), not JSON with data
+        assert "Execution ID:" in result.output
+        assert "test content" not in result.output  # No actual data
+        # Output should be text (structure), not JSON
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result.output)
 
 
 def test_structure_mode_shows_flattened_paths(runner, mock_registry):
@@ -244,14 +246,15 @@ def test_structure_mode_shows_flattened_paths(runner, mock_registry):
     with patch("pflow.cli.registry_run.import_node_class") as mock_import:
         mock_import.return_value = ComplexOutputNode
 
-        result = runner.invoke(registry, ["run", "read-file", "--show-structure"])
+        # Task 89: Structure mode is now the default (no flag needed)
+        result = runner.invoke(registry, ["run", "read-file"])
 
         assert result.exit_code == 0
         assert "Available template paths" in result.output
 
 
 def test_text_mode_displays_human_readable_output(runner, tmp_path):
-    """Test text mode (default) displays human-readable output."""
+    """Test that default mode displays structure-only output (Task 89)."""
     test_file = tmp_path / "test.txt"
     test_file.write_text("test content")
 
@@ -270,8 +273,11 @@ def test_text_mode_displays_human_readable_output(runner, tmp_path):
 
         assert result.exit_code == 0
         assert "Node executed successfully" in result.output
-        assert "Outputs:" in result.output
+        # Task 89: Structure-only mode - should NOT show full outputs
+        assert "Outputs:" not in result.output or "Execution ID:" in result.output
         assert "Execution time:" in result.output
+        # Should show structure instead
+        assert "test content" not in result.output  # No actual data
 
 
 # ==============================================================================
@@ -596,7 +602,8 @@ def test_structure_mode_parses_json_strings(runner, mock_registry):
     ):
         mock_import.return_value = JsonStringNode
 
-        result = runner.invoke(registry, ["run", "mcp-github-list-repos", "--show-structure"])
+        # Task 89: Structure mode is now the default (no flag needed)
+        result = runner.invoke(registry, ["run", "mcp-github-list-repos"])
 
         assert result.exit_code == 0
         assert "Available template paths" in result.output or "structure" in result.output.lower()
@@ -633,7 +640,8 @@ def test_structure_mode_shows_nested_array_notation(runner, mock_registry):
     ):
         mock_import.return_value = NestedArrayNode
 
-        result = runner.invoke(registry, ["run", "test-node", "--show-structure"])
+        # Task 89: Structure mode is now the default (no flag needed)
+        result = runner.invoke(registry, ["run", "test-node"])
 
         assert result.exit_code == 0
         # Should show paths with array notation [0]
@@ -673,7 +681,8 @@ def test_structure_mode_deduplicates_identical_outputs(runner, mock_registry):
     ):
         mock_import.return_value = DuplicateOutputNode
 
-        result = runner.invoke(registry, ["run", "mcp-node", "--show-structure"])
+        # Task 89: Structure mode is now the default (no flag needed)
+        result = runner.invoke(registry, ["run", "mcp-node"])
 
         assert result.exit_code == 0
         # Should note the duplication

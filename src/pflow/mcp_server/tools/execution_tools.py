@@ -287,8 +287,63 @@ async def registry_run(
     return result
 
 
+@mcp.tool()
+async def read_fields(
+    execution_id: Annotated[
+        str, Field(description="Execution ID from previous registry_run call (format: exec-TIMESTAMP-RANDOM)")
+    ],
+    field_paths: Annotated[
+        list[str], Field(description="Field paths to retrieve like ['result[0].title', 'result[0].id']")
+    ],
+) -> str:
+    """Read specific field values from a cached node execution.
+
+    This tool retrieves only the requested fields from a previous registry_run execution,
+    enabling efficient data access without re-executing the node.
+
+    WHEN TO USE:
+    - AFTER calling registry_run to see structure
+    - When you need actual data values (not just structure)
+    - To selectively retrieve specific fields without fetching everything
+
+    The execution_id comes from the registry_run output (displayed after execution).
+    Field paths use the same syntax shown in registry_run structure output.
+
+    Examples:
+        # Single field retrieval
+        execution_id="exec-1705234567-a1b2c3d4"
+        field_paths=["result[0].title"]
+
+        # Multiple fields at once (more efficient than separate calls)
+        execution_id="exec-1705234567-a1b2c3d4"
+        field_paths=["result[0].title", "result[0].id", "result[0].state"]
+
+        # Nested field access
+        execution_id="exec-1705234567-a1b2c3d4"
+        field_paths=["result.data.items[0].author.login"]
+
+    Returns:
+        Formatted text showing each field path and its value.
+        Fields not found return None.
+    """
+    logger.debug(f"read_fields called: execution_id={execution_id}, field_count={len(field_paths)}")
+
+    def _sync_read_fields() -> str:
+        """Synchronous field reading operation."""
+        from ..services.field_service import FieldService
+
+        return FieldService.read_fields(execution_id, field_paths)
+
+    # Run in thread pool
+    result = await asyncio.to_thread(_sync_read_fields)
+
+    logger.info(f"Retrieved {len(field_paths)} fields from execution {execution_id}")
+    return result
+
+
 # Export all execution tools
 __all__ = [
+    "read_fields",
     "registry_run",
     "workflow_execute",
     "workflow_save",
