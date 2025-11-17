@@ -76,9 +76,13 @@ class SettingsManager:
             self._settings = self._load_from_file()
             # Validate permissions after loading (defense-in-depth)
             self._validate_permissions(self._settings)
-        # Always (re)apply env overrides to handle toggling without restart
-        self._apply_env_overrides(self._settings)
-        return self._settings
+        # Use local reference to prevent TOCTOU race condition
+        # (another thread could set self._settings = None between reads)
+        settings = self._settings
+        if settings is not None:
+            # Always (re)apply env overrides to handle toggling without restart
+            self._apply_env_overrides(settings)
+        return settings
 
     def reload(self) -> PflowSettings:
         """Force reload settings from file."""
