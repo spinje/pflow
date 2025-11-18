@@ -84,7 +84,7 @@ def format_node_output(
     # Handle success cases
     if format_type == "structure":
         return format_structure_output(
-            node_type, outputs, shared_store, registry, execution_time_ms, execution_id=execution_id
+            node_type, outputs, shared_store, registry, execution_time_ms, verbose, execution_id=execution_id
         )
     elif format_type == "json":
         return format_json_output(node_type, outputs, execution_time_ms)
@@ -186,6 +186,7 @@ def format_structure_output(
     shared_store: dict[str, Any],
     registry: Registry,
     execution_time_ms: int,
+    verbose: bool = False,
     include_values: bool = False,
     execution_id: Optional[str] = None,
 ) -> str:
@@ -200,6 +201,7 @@ def format_structure_output(
         shared_store: Complete shared store
         registry: Registry instance
         execution_time_ms: Execution duration
+        verbose: If True, show duplicate structure warnings
         include_values: If True, show actual data values before template paths.
                        If False (default), show only template paths (structure-only mode).
         execution_id: Optional execution ID to display for later field retrieval.
@@ -231,7 +233,7 @@ def format_structure_output(
         # Extract from actual runtime outputs (more accurate)
         paths_to_display, warnings = extract_runtime_paths(outputs)
         source_desc = "from actual output"
-        if warnings:
+        if warnings and verbose:
             lines.extend(warnings)
     elif metadata_paths:
         # Use metadata paths from registry
@@ -249,7 +251,7 @@ def format_structure_output(
 
     # Convert to tuple for caching (LRU cache requires hashable args)
     paths_tuple = tuple(paths_to_display)
-    filtered_tuple = smart_filter_fields_cached(paths_tuple, threshold=30)
+    filtered_tuple = smart_filter_fields_cached(paths_tuple, threshold=25)
     paths_to_display = list(filtered_tuple)
 
     # Adjust source description if filtering occurred
@@ -499,7 +501,10 @@ def _flatten_dict(prefix: str, value: dict[str, Any], depth: int, max_depth: int
                         else:
                             paths.append((f"{prefix}.{key}[0].{sample_key}", type(sample_val).__name__))
             else:
-                paths.append((f"{prefix}.{key}", "dict (large)"))
+                # Show count for large dicts
+                count = len(val)
+                count_str = "empty" if count == 0 else f"{count} field{'s' if count != 1 else ''}"
+                paths.append((f"{prefix}.{key}", f"dict, {count_str}"))
         else:
             paths.extend(flatten_runtime_value(f"{prefix}.{key}", val, depth + 1, max_depth))
 
