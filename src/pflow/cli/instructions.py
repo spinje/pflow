@@ -5,7 +5,7 @@ to learn how to use pflow without pre-configured knowledge.
 
 Commands:
     pflow instructions usage  - Basic usage guide (~500 lines)
-    pflow instructions create - Comprehensive workflow creation guide (~1800 lines)
+    pflow instructions create - Comprehensive workflow creation guide (~1600 lines)
 """
 
 from pathlib import Path
@@ -61,7 +61,7 @@ def usage_instructions() -> None:
 def create_instructions() -> None:
     """Display comprehensive workflow creation instructions for AI agents.
 
-    Returns a ~1800 line comprehensive guide covering:
+    Returns a ~1600 line comprehensive guide covering:
     - Complete IR schema reference
     - All available node types and interfaces
     - Template variable system in depth

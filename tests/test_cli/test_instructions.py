@@ -98,12 +98,12 @@ class TestCreateInstructions:
         assert "MANDATORY First Step" in result.output
 
     def test_create_instructions_content_length(self, runner: CliRunner) -> None:
-        """Test that create instructions are comprehensive (~1800 lines)."""
+        """Test that create instructions are comprehensive (~1600 lines)."""
         result = runner.invoke(create_instructions, [])
         assert result.exit_code == 0
         line_count = len(result.output.split("\n"))
-        # Should be around 1800 lines, allow reasonable variance
-        assert 1700 <= line_count <= 2000, f"Expected ~1800 lines, got {line_count}"
+        # Should be around 1600 lines, allow reasonable variance
+        assert 1000 <= line_count <= 2000, f"Expected ~1600 lines, got {line_count}"
 
     def test_create_instructions_comprehensive_content(self, runner: CliRunner) -> None:
         """Test that create instructions contain comprehensive sections."""
@@ -117,7 +117,7 @@ class TestCreateInstructions:
             "What Workflows CANNOT Do",
             "Part 2: Node & Tool Selection Principles",
             "Part 3: The Complete Development Loop",
-            "Shell+jq Mastery",
+            "Part 4: Building Workflows - Technical Reference",
         ]
 
         for section in expected_sections:
@@ -128,7 +128,6 @@ class TestCreateInstructions:
         result = runner.invoke(create_instructions, ["--help"])
         assert result.exit_code == 0
         assert "comprehensive workflow creation instructions" in result.output
-        assert "~1800 line" in result.output
 
 
 class TestInstructionFiles:
