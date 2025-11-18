@@ -35,9 +35,6 @@ pflow workflow discover "what I want to do"
 
 # List all saved workflows with a filter keyword if the user is asking for a specific workflow.
 pflow workflow list <filter-keywors> # Example: `pflow workflow list github` or `pflow workflow list "github pr"`
-
-# See workflow details if you are unsure about what parameters are available or what the workflow does.
-pflow workflow describe workflow-name
 ```
 
 ### Execute workflow by name
@@ -45,7 +42,21 @@ pflow workflow describe workflow-name
 ```bash
 # Run a saved workflow
 pflow workflow-name param1=value1 param2=value2
+
+# Example output:
+workflow-name was executed
+  ✓ Workflow completed in 2s
+  Nodes executed (2):
+    ✓ get-data (1s)
+    ✓ save-data(1s)
+💰 Cost: $0.0001 # LLM Cost is not always present
+
+Workflow output: # Not all workflows have an output, so this is not always present.
+Data saved successfully # Only first workflow output is presented to the user (this is the only relevant information)
+
+# If workflow was executed successfully, your work is done. Present the information to the user in a VERY CONCISE format. Don't overdo it with to detailed information like individual node execution times.
 ```
+> **Important**: You should never run the workflow again if successful, this information is *more than enough* to present to the user and running it more than once can be disruptive. Do NOT attempt to gather more information about the workflow execution by using --verbose or --debug flags or anything else.
 
 ### Instructions for building workflows
 
