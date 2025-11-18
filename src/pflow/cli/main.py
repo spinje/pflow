@@ -276,6 +276,7 @@ def _handle_workflow_output(
     print_flag: bool = False,
     workflow_metadata: dict[str, Any] | None = None,
     workflow_trace: Any | None = None,
+    output_controller: Any = None,
     status: Any = None,
     warnings: list[dict[str, Any]] | None = None,
 ) -> bool:
@@ -316,9 +317,59 @@ def _handle_workflow_output(
             print_flag,
             metrics_collector,
             workflow_metadata,
+            output_controller=output_controller,
             status=status,
             warnings=warnings,
         )
+
+
+def _output_with_header(value: Any, print_flag: bool, output_controller: Any, description: str | None = None) -> None:
+    """Output value with appropriate header and stream routing based on execution mode.
+
+    Three execution modes with different output strategies:
+
+    1. --print mode (print_flag=True):
+       - Use case: Piping output to other commands
+       - Behavior: ONLY raw output to stdout, no header, no summary
+       - Example: pflow --print my-workflow | jq
+
+    2. Interactive terminal (is_interactive()=True):
+       - Use case: Normal terminal usage with TTY
+       - Behavior: Unix convention - header/summary to stderr, data to stdout
+       - Rationale: Separates progress info from pipeable data
+       - Example: pflow my-workflow (in terminal)
+
+    3. Non-interactive (is_interactive()=False, print_flag=False):
+       - Use case: Claude Code, CI/CD, non-TTY environments
+       - Behavior: Everything to stderr for correct ordering
+       - Rationale: Tools that capture streams separately may show stdout before stderr,
+                    causing output to appear before summary. Keeping everything on stderr
+                    preserves the intended order: summary → header → output
+       - Example: pflow my-workflow (in Claude Code)
+
+    Args:
+        value: The output value to display
+        print_flag: Whether --print flag is set
+        output_controller: OutputController for interactive detection
+        description: Optional description from workflow output declaration
+    """
+    # Build header with optional description
+    header = f"\nWorkflow output ({description}):\n" if description else "\nWorkflow output:\n"
+
+    if print_flag:
+        # Mode 1: --print - raw output only (no header)
+        safe_output(value)
+    elif output_controller and output_controller.is_interactive():
+        # Mode 2: Interactive - Unix convention
+        click.echo(header, err=True)
+        safe_output(value)
+    else:
+        # Mode 3: Non-interactive - everything on stderr
+        click.echo(header, err=True)
+        if isinstance(value, str):
+            click.echo(value, err=True)
+        else:
+            click.echo(str(value), err=True)
 
 
 def _is_valid_output_value(value: Any) -> bool:
@@ -404,6 +455,7 @@ def _handle_text_output(
     print_flag: bool = False,
     metrics_collector: Any | None = None,
     workflow_metadata: dict[str, Any] | None = None,
+    output_controller: Any = None,
     status: Any = None,
     warnings: list[dict[str, Any]] | None = None,
 ) -> bool:
@@ -426,7 +478,8 @@ def _handle_text_output(
         True if output was produced, False otherwise.
     """
     # Display execution summary FIRST (if metrics collector provided)
-    if metrics_collector:
+    # Skip summary entirely in --print mode (user wants ONLY raw output)
+    if metrics_collector and not print_flag:
         from pflow.execution.formatters.success_formatter import format_execution_success
 
         formatted = format_execution_success(
@@ -448,8 +501,7 @@ def _handle_text_output(
     # User-specified key takes priority
     if output_key:
         if output_key in shared_storage:
-            click.echo("\nWorkflow output:\n", err=True)
-            safe_output(shared_storage[output_key])
+            _output_with_header(shared_storage[output_key], print_flag, output_controller)
             output_found = True
         else:
             # Suppress warnings in -p mode
@@ -458,16 +510,16 @@ def _handle_text_output(
 
     # Check workflow-declared outputs
     elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
-        click.echo("\nWorkflow output:\n", err=True)
-        if _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag):
+        if _try_declared_outputs(
+            shared_storage, workflow_ir, verbose and not print_flag, print_flag, output_controller
+        ):
             output_found = True
 
     # Fall back to auto-detect from common keys (using unified function)
     else:
         key_found, value = _find_auto_output(shared_storage)
         if key_found:
-            click.echo("\nWorkflow output:\n", err=True)
-            safe_output(value)
+            _output_with_header(value, print_flag, output_controller)
             output_found = True
 
     return output_found
@@ -477,6 +529,8 @@ def _emit_declared_output(
     shared_storage: dict[str, Any],
     declared_outputs: dict[str, Any],
     verbose: bool,
+    print_flag: bool,
+    output_controller: Any = None,
 ) -> bool:
     """Emit the first available declared output and return True.
 
@@ -486,11 +540,14 @@ def _emit_declared_output(
     for output_name, output_config in declared_outputs.items():
         if output_name in shared_storage:
             value = shared_storage[output_name]
-            if verbose and isinstance(output_config, dict):
-                output_desc = output_config.get("description", "")
-                if output_desc:
-                    click.echo(f"cli: Output '{output_name}': {output_desc}", err=True)
-            return safe_output(value)
+
+            # Extract description from output config
+            description = None
+            if isinstance(output_config, dict):
+                description = output_config.get("description")
+
+            _output_with_header(value, print_flag, output_controller, description)
+            return True
     return False
 
 
@@ -498,6 +555,8 @@ def _try_declared_outputs(
     shared_storage: dict[str, Any],
     workflow_ir: dict[str, Any] | None,
     verbose: bool,
+    print_flag: bool,
+    output_controller: Any = None,
 ) -> bool:
     """Try to output from workflow-declared outputs.
 
@@ -505,6 +564,8 @@ def _try_declared_outputs(
         shared_storage: The shared storage dictionary
         workflow_ir: The workflow IR specification
         verbose: Whether to show verbose output
+        print_flag: Whether in non-interactive/print mode
+        output_controller: OutputController for interactive detection
 
     Returns:
         True if a declared output was found and printed, False otherwise
@@ -515,14 +576,14 @@ def _try_declared_outputs(
     declared_outputs = workflow_ir["outputs"]
 
     # First attempt: use already-populated outputs (preferred path via compiler wrapper)
-    if _emit_declared_output(shared_storage, declared_outputs, verbose):
+    if _emit_declared_output(shared_storage, declared_outputs, verbose, print_flag, output_controller):
         return True
 
     # Populate on-demand if not present
     _populate_declared_outputs_best_effort(shared_storage, workflow_ir)
 
     # Second attempt after population
-    if _emit_declared_output(shared_storage, declared_outputs, verbose):
+    if _emit_declared_output(shared_storage, declared_outputs, verbose, print_flag, output_controller):
         return True
 
     _warn_missing_declared_outputs(declared_outputs, verbose)
@@ -1494,6 +1555,7 @@ def _handle_workflow_success(
         print_flag=print_flag,
         workflow_metadata=workflow_metadata,
         workflow_trace=workflow_trace,
+        output_controller=ctx.obj.get("output_controller"),
         status=status,
         warnings=warnings,
     )

@@ -342,8 +342,8 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--verbose", workflow_file])
 
             assert result.exit_code == 0
-            # Should show the output description in verbose mode
-            assert "Output 'final_result': The final processed result" in result.output
+            # Should show the output description in the header
+            assert "Workflow output (The final processed result):" in result.output
             # And the actual output
             assert "Processing complete" in result.output
         finally:
