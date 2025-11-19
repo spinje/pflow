@@ -978,6 +978,19 @@ If you need a JSON string to remain unparsed, use a complex template:
 
 **The golden rule:** Every transformation step must solve a verified problem, not prevent a hypothetical one.
 
+#### Template Variables vs jq: Decision Rule
+
+**Extraction (getting data) → Templates**
+**Transformation (changing data) → jq**
+
+```
+Need data at specific path? → ${node.result.data.items[0].name}
+Need to compute/transform?  → jq 'map(...)', jq 'length', jq 'select(...)'
+Need to interpret meaning?  → LLM
+```
+
+Common mistake: Using jq for extraction creates unnecessary nodes. Templates handle all path traversal automatically.
+
 #### All Template Patterns
 ```json
 {
@@ -1204,7 +1217,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
 
 **This is the most important pattern. Master it completely.**
 
-**Rule**: If you can describe the extraction precisely, use shell+jq. Use LLM only for interpretation.
+**Rule**: If you can describe the PATH, use template variables. Use jq ONLY for transformation/computation. Use LLM only for interpretation.
 
 **❌ WRONG - Using LLM for structured extraction:**
 ```json
@@ -1217,14 +1230,36 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
 }
 ```
 
-**✅ CORRECT - Using shell+jq:**
+**❌ ALSO WRONG - Using jq for simple path extraction:**
 ```json
 {
   "id": "extract-price",
   "type": "shell",
   "params": {
     "stdin": "${data}",
-    "command": "jq -r '.items[0].pricing.amount'"
+    "command": "jq -r '.items[0].pricing.amount'"  // Unnecessary node!
+  }
+}
+```
+
+**✅ CORRECT - Using template variables:**
+```json
+{
+  "id": "use-price",
+  "params": {
+    "amount": "${data.items[0].pricing.amount}"  // Direct path, no intermediate node
+  }
+}
+```
+
+**When to use jq (transformation, not extraction):**
+```json
+{
+  "id": "calculate-total",
+  "type": "shell",
+  "params": {
+    "stdin": "${data.items}",
+    "command": "jq '[.[].pricing.amount] | add'"  // Computing sum - needs jq
   }
 }
 ```
@@ -1560,7 +1595,8 @@ Simple operations? → Skip
 
 **Which tool to use?**
 ```
-Structured data? → shell+jq
+Extract nested field? → Template variable ${node.path.to.field}
+Transform/compute? → shell+jq
 Need meaning? → LLM
 File download? → shell+curl
 JSON API? → http node
@@ -1593,7 +1629,7 @@ Format: `verb-noun-qualifier`
 2. **Understand edges vs templates** - Execution order vs data access
 3. **Test only when needed** - Skip if passing whole `${node.result}`
 4. **Phase complex workflows** - Build incrementally
-5. **Use shell+jq for structure** - LLM only for meaning
+5. **Use templates for extraction, jq for transformation** - LLM only for meaning
 6. **Every value becomes input** - Unless explicitly "always"
 7. **Format user-facing output** - Never show raw JSON
 8. **Document actual structures** - Not what docs claim
