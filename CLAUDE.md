@@ -501,6 +501,9 @@ Later:
 - ⏳ Task 66: Support structured output for LLM node
 - ⏳ Task 69: Refactor Internal Repair system to use Pocketflow
 
+Cloud Platform:
+- ⏳ Task 90: Expose Individual Workflows as Remote HTTP MCP Servers
+
 *Update this list as you complete tasks.*
 
 > We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
