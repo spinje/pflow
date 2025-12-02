@@ -34,7 +34,7 @@ pflow workflow discover "user's exact request here"
 pflow workflow discover "what I want to do"
 
 # List all saved workflows with a filter keyword if the user is asking for a specific workflow.
-pflow workflow list <filter-keywors> # Example: `pflow workflow list github` or `pflow workflow list "github pr"`
+pflow workflow list "<filter-keywords>" # Example: `pflow workflow list "github pr"`
 ```
 
 ### Execute workflow by name
