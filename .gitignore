@@ -138,6 +138,9 @@ cython_debug/
 # Intellij IDEA
 .idea/
 
+# Cursor IDE config with API keys (keep rules, ignore sensitive config)
+.cursor/mcp.json
+
 .temp/
 # .archive/
 

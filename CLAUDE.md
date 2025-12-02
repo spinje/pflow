@@ -467,12 +467,13 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
 - ✅ Task 84: Implement Schema-Aware Type Checking for Template Variables
 - ✅ Task 85: Runtime Template Resolution Hardening
+- ✅ Task 89: Implement Structure-Only Mode and Selective Data Retrieval
+- ✅ Task 83: Pre-Release Security and Code Quality Audit
 
 Next up:
-- ⏳ Task 89: Implement Structure-Only Mode and Selective Data Retrieval
+To be determined...
 
 Next version (post-MVP/post-Launch):
-- ⏳ Task 83: Pre-Release Security and Code Quality Audit
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 - ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 - ⏳ Task 86: MCP Server Discovery and Installation Automation
