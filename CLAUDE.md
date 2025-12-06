@@ -478,6 +478,7 @@ Next version (post-MVP/post-Launch):
 - ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 - ⏳ Task 86: MCP Server Discovery and Installation Automation
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
+- ⏳ Task 91: Export Workflows as Self-Hosted MCP Server Packages
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
@@ -501,6 +502,7 @@ Later:
 - ⏳ Task 60: Support Gemini models for planner
 - ⏳ Task 66: Support structured output for LLM node
 - ⏳ Task 69: Refactor Internal Repair system to use Pocketflow
+- ⏳ Task 92: Replace Planner with Agent Node + Pflow MCP Tools
 
 Cloud Platform:
 - ⏳ Task 90: Expose Individual Workflows as Remote HTTP MCP Servers

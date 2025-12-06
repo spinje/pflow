@@ -52,6 +52,17 @@ Individual workflows can be "published" as standalone MCP servers with their own
 - Each endpoint dynamically generates MCP tool definitions from the workflow's declared inputs/outputs
 - Authentication and ownership validation at the routing layer
 
+### Relationship to Task 91 (Self-Hosted MCP Export)
+
+Task 90 and Task 91 are **independent implementations** solving different problems:
+
+| Task | Approach | Use Case |
+|------|----------|----------|
+| Task 90 (this) | pflow cloud runs workflows via runtime, exposes dynamically | Convenience, managed hosting |
+| Task 91 | Compiled standalone MCP server package | Portability, zero pflow deps |
+
+Task 90 does **not** depend on Task 91. Instead, pflow cloud leverages the existing pflow runtime and MCP server infrastructure (Task 72) to execute workflows dynamically. This enables instant workflow updates without recompilation and simpler cloud architecture.
+
 ### Scope Considerations
 This is a pflow cloud feature, not a local CLI feature. Implementation details depend on the cloud infrastructure architecture which is not yet defined.
 
