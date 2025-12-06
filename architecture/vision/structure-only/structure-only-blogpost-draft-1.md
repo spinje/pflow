@@ -247,6 +247,6 @@ The code is open source. The pattern is free to copy. Because the real competiti
 
 ---
 
-*pflow is open source and available at [github.com/[org]/pflow](). This blog post describes features currently in development, targeted for release in November 2026.*
+*pflow is open source and available at [github.com/spinje/pflow](https://github.com/spinje/pflow). This blog post describes features currently in development, targeted for release in November 2026.*
 
 *Thanks to [colleagues] for feedback on drafts of this post, and to the teams at Anthropic and Cloudflare for their groundbreaking work on code execution patterns that inspired us to think even more radically about the problem.*

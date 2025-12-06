@@ -328,6 +328,4 @@ The question isn't whether AI agents should see your data. The question is: why 
 
 ---
 
-*pflow is open-source and available at [github.com/pocketflow-ai/pflow](https://github.com/Pocketflow-AI/pflow). Try structure-only discovery today and join us in building the future of secure, efficient AI orchestration.*
-
-*For enterprises interested in deploying pflow with structure-only discovery, contact us at enterprise@pocketflow.ai*
+*pflow is open-source and available at [github.com/spinje/pflow](https://github.com/spinje/pflow). Try structure-only discovery today and join us in building the future of secure, efficient AI orchestration.*

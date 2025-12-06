@@ -180,4 +180,4 @@ We're exploring the second path. We think it's worth exploring. We might be wron
 
 ---
 
-pflow is open source at [github.com/pocketflow-ai/pflow](https://github.com/pocketflow-ai/pflow). If you think declarative IR is the wrong abstraction, we'd like to understand why.
+pflow is open source at [github.com/spinje/pflow](https://github.com/spinje/pflow). If you think declarative IR is the wrong abstraction, we'd like to understand why.

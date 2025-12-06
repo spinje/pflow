@@ -155,4 +155,6 @@ We're exploring the second path. Eight months in, we still think it's worth expl
 
 ---
 
-pflow is open source at [github.com/pocketflow-ai/pflow](https://github.com/pocketflow-ai/pflow). If you think we're wrong about structure vs flexibility, we'd like to understand why.
+pflow is open source at [github.com/spinje/pflow](https://github.com/spinje/pflow). If you think we're wrong about structure vs flexibility, we'd like to understand why.
+
+*d53b1ade-34bf-48e1-a1c6-2d39066a5ca4*

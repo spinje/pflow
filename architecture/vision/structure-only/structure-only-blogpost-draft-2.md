@@ -354,7 +354,7 @@ Open questions we're working on:
 
 4. **Local vs remote execution?** Right now everything runs locally. Should some nodes run in sandboxed environments?
 
-The code's at [github.com/pflow/pflow](https://github.com/pflow/pflow). We push updates daily, usually small improvements to discovery or filtering. Nothing revolutionary, just steady iteration on the orchestration problem.
+The code's at [github.com/spinje/pflow](https://github.com/spinje/pflow). We push updates daily, usually small improvements to discovery or filtering. Nothing revolutionary, just steady iteration on the orchestration problem.
 
 Structure-only discovery wasn't in our original design. For months, we knew token consumption during workflow creation was bad. We just had bigger problems to solve. The eval creation forced our hand—seeing those Slack responses with 60+ fields per message made it impossible to ignore.
 
@@ -366,4 +366,4 @@ Try it. Break it. Tell us what doesn't work. The token efficiency was a nice sur
 
 ---
 
-*pflow is MIT licensed. Built over 5 months of daily iteration. The structure-only approach was an MVP compromise that became a core feature. We're still discovering what pure orchestration is good for.*
+*pflow is FSL licensed. Built over 5 months of daily iteration. The structure-only approach was an MVP compromise that became a core feature. We're still discovering what pure orchestration is good for.*

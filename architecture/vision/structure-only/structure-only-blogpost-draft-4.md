@@ -231,6 +231,6 @@ The best solution might be something none of us have thought of yet.
 
 ---
 
-*pflow is available at [github.com/pocketflow-ai/pflow](https://github.com/pocketflow-ai/pflow). The structure-only discovery feature ships in v0.2.*
+*pflow is available at [github.com/spinje/pflow](https://github.com/spinje/pflow). The structure-only discovery feature ships in v0.2.*
 
-*For technical details and benchmarks, see our [implementation notes](https://github.com/pocketflow-ai/pflow/docs/structure-only.md).*
+*For technical details and benchmarks, see our [implementation notes](https://github.com/spinje/pflow/docs/structure-only.md).*
