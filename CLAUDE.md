@@ -494,15 +494,16 @@ Later:
 - ⏳ Task 51: Refactor CLI main.py
 - ⏳ Task 44: Build caching system
 - ⏳ Task 45: Evaluate if wrapping or integrating n8n is worth the effort
-- ⏳ Task 61: Implement Fast Mode for Planner
+- ⏳ Task 92: Replace Planner with Agent Node + Pflow MCP Tools
 - ⏳ Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
 - ⏳ Task 87: Implement sandbox runtime for Shell Node
 - ⏳ Task 64: MCP Orchestration with long running servers
 - ⏳ Task 79: Show tool definitions as structured JSON
-- ⏳ Task 60: Support Gemini models for planner
 - ⏳ Task 66: Support structured output for LLM node
 - ⏳ Task 69: Refactor Internal Repair system to use Pocketflow
-- ⏳ Task 92: Replace Planner with Agent Node + Pflow MCP Tools
+- ⏳ Task 61: Implement Fast Mode for Planner
+- ⏳ Task 60: Support Gemini models for planner
+
 
 Cloud Platform:
 - ⏳ Task 90: Expose Individual Workflows as Remote HTTP MCP Servers

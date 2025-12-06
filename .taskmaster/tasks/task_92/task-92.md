@@ -72,6 +72,12 @@ The agent:
 | Flexibility | Fixed phases | Agent adapts to situation |
 | Proves MCP works | No | Yes (dogfooding) |
 
+### Tasks Made Obsolete
+
+If this task is implemented, the following planner-specific tasks become obsolete:
+- **Task 60**: Support Gemini models for planner - No longer needed; agent node can use any model
+- **Task 61**: Implement Fast Mode for Planner - No longer relevant; planner is replaced entirely
+
 ### Trade-off: Cost
 
 | Approach | LLM Calls | Token Usage |
