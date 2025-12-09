@@ -407,7 +407,7 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 
 ### Current State of the Project
 
-The codebase is in early development with these tasks completed:
+The codebase is currently feature complete for MVP with these tasks completed:
 - ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
 - ✅ Comprehensive documentation infrastructure in `architecture/`
 - ✅ Development tooling and testing setup
@@ -471,39 +471,50 @@ The codebase is in early development with these tasks completed:
 - ✅ Task 83: Pre-Release Security and Code Quality Audit
 
 Next up:
-To be determined...
+- ⏳ Task 93: Set Up Mintlify Documentation
 
-Next version (post-MVP/post-Launch):
+First version (v0.1.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
+
+Version (v0.2.0):
 - ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
-- ⏳ Task 86: MCP Server Discovery and Installation Automation
-- ⏳ Task 46: Workflow Export to Zero-Dependency Code
-- ⏳ Task 91: Export Workflows as Self-Hosted MCP Server Packages
+- ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
+- ⏳ Task 95: Unify LLM Usage via Simon Willison's llm Library
+
+Version (v0.3.0):
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
-- ⏳ Task 73: Implement Checkpoint Persistence for External Agent Repair ans workflow iteration
+
+Version (v0.4.0):
+- ⏳ Task 46: Workflow Export to Zero-Dependency Code
+- ⏳ Task 91: Export Workflows as Self-Hosted MCP Server Packages
 - ⏳ Task 81: Expose tools that lets users/agents find and install existing remote mcp servers
 - ⏳ Task 78: Save User Request History in Workflow Metadata
 - ⏳ Task 75: Execution Preview in Validation
 - ⏳ Task 74: Create knowledge base system
+
+Version (v1.0.0):
+- ⏳ Task 86: MCP Server Discovery and Installation Automation
+- ⏳ Task 66: Support structured output for LLM node
 - ⏳ Task 77: Improve Agent Instructions
 - ⏳ Task 65: MCP Gateway Integration Support
 
 Later:
 - ⏳ Task 51: Refactor CLI main.py
-- ⏳ Task 44: Build caching system
 - ⏳ Task 45: Evaluate if wrapping or integrating n8n is worth the effort
 - ⏳ Task 92: Replace Planner with Agent Node + Pflow MCP Tools
 - ⏳ Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
 - ⏳ Task 87: Implement sandbox runtime for Shell Node
 - ⏳ Task 64: MCP Orchestration with long running servers
 - ⏳ Task 79: Show tool definitions as structured JSON
-- ⏳ Task 66: Support structured output for LLM node
 - ⏳ Task 69: Refactor Internal Repair system to use Pocketflow
-- ⏳ Task 61: Implement Fast Mode for Planner
-- ⏳ Task 60: Support Gemini models for planner
 
+Deprecated Tasks?:
+- ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair and workflow iteratio
+- ❌ Task 44: Build caching system
+- ❌ Task 61: Implement Fast Mode for Planner
+- ❌ Task 60: Support Gemini models for planner
 
 Cloud Platform:
 - ⏳ Task 90: Expose Individual Workflows as Remote HTTP MCP Servers
