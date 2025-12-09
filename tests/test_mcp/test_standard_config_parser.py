@@ -362,3 +362,59 @@ class TestHTTPAuthConversion:
         servers = manager.parse_standard_mcp_config(config_file)
 
         assert servers["api"]["auth"] == {"type": "custom", "special_field": "value"}
+
+
+class TestAddServersFromConfig:
+    """Test add_servers_from_config for raw JSON input support."""
+
+    def test_add_with_full_mcp_format(self, tmp_path):
+        """Test adding servers using full mcpServers wrapper format."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path)
+
+        config = {"mcpServers": {"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}}
+        added = manager.add_servers_from_config(config)
+
+        assert added == ["github"]
+        saved = manager.load()
+        assert "github" in saved["mcpServers"]
+        assert saved["mcpServers"]["github"]["command"] == "npx"
+
+    def test_add_with_simple_format(self, tmp_path):
+        """Test adding servers using simple name:config format (no mcpServers wrapper)."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path)
+
+        # Simple format - just server name as key
+        config = {"mcpServers": {"slack": {"type": "http", "url": "https://mcp.example.com/slack"}}}
+        added = manager.add_servers_from_config(config)
+
+        assert added == ["slack"]
+        saved = manager.load()
+        assert "slack" in saved["mcpServers"]
+        assert saved["mcpServers"]["slack"]["type"] == "http"
+
+    def test_add_multiple_servers(self, tmp_path):
+        """Test adding multiple servers at once."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path)
+
+        config = {
+            "mcpServers": {
+                "server1": {"command": "cmd1"},
+                "server2": {"type": "http", "url": "https://example.com"},
+            }
+        }
+        added = manager.add_servers_from_config(config)
+
+        assert len(added) == 2
+        assert "server1" in added
+        assert "server2" in added
+
+    def test_missing_mcpservers_key_raises(self, tmp_path):
+        """Test that missing mcpServers key raises ValueError."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path)
+
+        with pytest.raises(ValueError, match="must contain 'mcpServers' key"):
+            manager.add_servers_from_config({"invalid": "config"})

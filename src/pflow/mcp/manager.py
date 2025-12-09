@@ -672,3 +672,47 @@ class MCPServerManager:
         self.save(existing_config)
 
         return added_servers
+
+    def add_servers_from_config(self, config: dict) -> list[str]:
+        """Add servers from a parsed config dictionary.
+
+        Args:
+            config: Dictionary with 'mcpServers' key containing server configs
+
+        Returns:
+            List of server names that were added/updated
+
+        Raises:
+            ValueError: If config format is invalid
+        """
+        if "mcpServers" not in config:
+            raise ValueError("Config must contain 'mcpServers' key")
+
+        new_servers = config["mcpServers"]
+        if not isinstance(new_servers, dict):
+            raise TypeError("'mcpServers' must be a dictionary")
+
+        # Load existing config
+        existing_config = self.load()
+        servers = existing_config.get("mcpServers", {})
+
+        # Add/update each server
+        added_servers = []
+
+        for name, server_config in new_servers.items():
+            # Validate before adding
+            self._validate_standard_config(name, server_config)
+
+            # Add to servers
+            is_update = name in servers
+            servers[name] = server_config
+            added_servers.append(name)
+
+            action = "Updated" if is_update else "Added"
+            logger.info(f"{action} server '{name}' from JSON input")
+
+        # Save the updated configuration
+        existing_config["mcpServers"] = servers
+        self.save(existing_config)
+
+        return added_servers

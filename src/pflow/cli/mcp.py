@@ -28,62 +28,117 @@ def mcp() -> None:
     pass
 
 
+def _is_json_string(value: str) -> bool:
+    """Check if a string looks like JSON (starts with { or [)."""
+    stripped = value.strip()
+    return stripped.startswith("{") or stripped.startswith("[")
+
+
+def _is_server_config(config: dict) -> bool:
+    """Check if a dict looks like a server config (has command/url, not nested servers)."""
+    return "command" in config or "url" in config
+
+
+def _add_from_json_string(manager: MCPServerManager, json_str: str) -> list[str]:
+    """Add servers from a raw JSON string.
+
+    Supports three formats:
+    1. Full MCP format: {"mcpServers": {"name": {...}}}
+    2. Direct server map: {"name": {"command": ...}}
+    3. Single server (name as key): {"github": {"command": "npx", ...}}
+
+    Args:
+        manager: MCPServerManager instance
+        json_str: Raw JSON string with MCP config
+
+    Returns:
+        List of added server names
+
+    Raises:
+        ValueError: If JSON is invalid or missing required fields
+    """
+    try:
+        config = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON: {e}") from e
+
+    # Format 1: Full MCP format with mcpServers wrapper
+    if "mcpServers" in config:
+        return manager.add_servers_from_config(config)
+
+    # Format 2 & 3: Direct server map (one or more servers)
+    # Check if all values are server configs (have command or url)
+    if all(isinstance(v, dict) and _is_server_config(v) for v in config.values()):
+        wrapped = {"mcpServers": config}
+        return manager.add_servers_from_config(wrapped)
+
+    raise ValueError(
+        "Invalid JSON format. Expected one of:\n"
+        '  {"mcpServers": {"name": {...}}}  - Full MCP format\n'
+        '  {"name": {"command": "...", ...}}  - Direct server config'
+    )
+
+
 @mcp.command(name="add")
-@click.argument("config_files", nargs=-1, required=True, type=click.Path(exists=True))
-def add(config_files: tuple) -> None:
-    """Add MCP servers from standard JSON config files.
+@click.argument("config_sources", nargs=-1, required=True)
+def add(config_sources: tuple) -> None:
+    """Add MCP servers from config files or raw JSON.
 
     Examples:
-        # Add single config:
+        # Add from config file:
         pflow mcp add ./github.mcp.json
 
-        # Add multiple configs:
-        pflow mcp add ./github.mcp.json ./jira.mcp.json ./slack.mcp.json
+        # Add from raw JSON (simple format):
+        pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}'
 
-    Config file format (standard MCP format):
-    {
-        "mcpServers": {
-            "github": {
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-github"],
-                "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
-            },
-            "composio": {
-                "type": "http",
-                "url": "https://api.composio.dev/mcp",
-                "headers": {"Authorization": "Bearer ${COMPOSIO_API_KEY}"}
-            }
-        }
-    }
+        # Add HTTP server:
+        pflow mcp add '{"slack": {"type": "http", "url": "https://mcp.example.com/slack"}}'
+
+        # Add from raw JSON (full MCP format, compatible with Claude Desktop):
+        pflow mcp add '{"mcpServers": {"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}}'
+
+    Supported JSON formats:
+        # Simple (recommended for CLI):
+        {"server-name": {"command": "...", "args": [...]}}
+
+        # Full MCP format (compatible with config files):
+        {"mcpServers": {"server-name": {...}}}
     """
     from pathlib import Path
 
     manager = MCPServerManager()
     total_added = []
 
-    for config_file in config_files:
-        config_path = Path(config_file)
-
+    for config_source in config_sources:
         try:
-            # Add servers from this file
-            added_servers = manager.add_servers_from_file(config_path)
+            # Check if it's a JSON string or a file path
+            if _is_json_string(config_source):
+                # Handle raw JSON string
+                added_servers = _add_from_json_string(manager, config_source)
+                source_name = "JSON input"
+            else:
+                # Handle file path
+                config_path = Path(config_source)
+                if not config_path.exists():
+                    click.echo(f"Error: File not found: {config_path}", err=True)
+                    sys.exit(1)
+                added_servers = manager.add_servers_from_file(config_path)
+                source_name = config_path.name
+
             total_added.extend(added_servers)
 
             if added_servers:
-                click.echo(f"✓ Added/updated {len(added_servers)} server(s) from {config_path.name}:")
+                click.echo(f"✓ Added/updated {len(added_servers)} server(s) from {source_name}:")
                 for server_name in added_servers:
                     click.echo(f"  - {server_name}")
             else:
-                click.echo(f"⚠ No servers found in {config_path.name}")
+                click.echo(f"⚠ No servers found in {source_name}")
 
-        except FileNotFoundError:
-            click.echo(f"Error: File not found: {config_path}", err=True)
-            sys.exit(1)
         except ValueError as e:
-            click.echo(f"Error in {config_path.name}: {e}", err=True)
+            click.echo(f"Error: {e}", err=True)
             sys.exit(1)
         except Exception as e:
-            click.echo(f"Error: Failed to add servers from {config_path.name}: {e}", err=True)
+            click.echo(f"Error: Failed to add servers: {e}", err=True)
             sys.exit(1)
 
     if total_added:
