@@ -1,0 +1,140 @@
+# Mintlify
+
+## Docs
+
+- [AI-native](https://mintlify.com/docs/ai-native.md): Learn how AI enhances reading, writing, and discovering your documentation
+- [Agent](https://mintlify.com/docs/ai/agent.md): Automate documentation updates with the agent. Create updates from Slack messages, PRs, or API calls.
+- [Assistant](https://mintlify.com/docs/ai/assistant.md): Add AI-powered chat to your docs that answers questions, cites sources, and generates code examples.
+- [Contextual menu](https://mintlify.com/docs/ai/contextual-menu.md): Add one-click AI integrations to your docs.
+- [llms.txt](https://mintlify.com/docs/ai/llmstxt.md): Optimize your docs for LLMs to read and index.
+- [Markdown export](https://mintlify.com/docs/ai/markdown-export.md): Quickly get Markdown versions of pages for AI tools and integrations.
+- [Model Context Protocol](https://mintlify.com/docs/ai/model-context-protocol.md): Connect your documentation and API endpoints to AI tools with a hosted MCP server.
+- [Add SDK examples](https://mintlify.com/docs/api-playground/adding-sdk-examples.md): Display SDK code samples in your API documentation.
+- [AsyncAPI setup](https://mintlify.com/docs/api-playground/asyncapi-setup.md): Create websocket documentation with AsyncAPI specifications.
+- [Complex data types](https://mintlify.com/docs/api-playground/complex-data-types.md): Describe APIs with flexible schemas, optional properties, and multiple data formats using `oneOf`, `anyOf`, and `allOf` keywords.
+- [Manage page visibility](https://mintlify.com/docs/api-playground/managing-page-visibility.md): Control which API endpoints appear in your documentation navigation.
+- [Create manual API pages](https://mintlify.com/docs/api-playground/mdx-setup.md): Document API endpoints manually with MDX files.
+- [Multiple responses](https://mintlify.com/docs/api-playground/multiple-responses.md): Document multiple response variations for API endpoints.
+- [OpenAPI setup](https://mintlify.com/docs/api-playground/openapi-setup.md): Generate API pages from your OpenAPI specification automatically.
+- [Playground](https://mintlify.com/docs/api-playground/overview.md): Let developers test API endpoints directly in your documentation.
+- [Troubleshooting](https://mintlify.com/docs/api-playground/troubleshooting.md): Resolve common issues with API page configuration.
+- [Create agent job](https://mintlify.com/docs/api/agent/create-agent-job.md): Creates a new agent job that can generate and edit documentation based on provided messages and branch information.
+- [Get agent job by ID](https://mintlify.com/docs/api/agent/get-agent-job.md): Retrieves the details and status of a specific agent job by its ID.
+- [Get all agent jobs](https://mintlify.com/docs/api/agent/get-all-jobs.md): Retrieves all agent jobs for the specified domain, including their status and details.
+- [Assistant message](https://mintlify.com/docs/api/assistant/create-assistant-message.md): Generates a response message from the assistant for the specified domain.
+- [Search documentation](https://mintlify.com/docs/api/assistant/search.md): Perform semantic and keyword searches across your documentation with configurable filtering and pagination.
+- [Introduction](https://mintlify.com/docs/api/introduction.md): Trigger updates, embed AI assistant, and more
+- [Get update status](https://mintlify.com/docs/api/update/status.md): Get the status of an update from the status ID
+- [Trigger update](https://mintlify.com/docs/api/update/trigger.md): Queue a deployment update for your documentation project. Returns a status ID that can be used to track the update progress. The update is triggered from your configured deployment branch.
+- [Accordions](https://mintlify.com/docs/components/accordions.md): Use accordions to show and hide content.
+- [Badge](https://mintlify.com/docs/components/badge.md): Use badges to highlight status, labels, or metadata inline or standalone.
+- [Banner](https://mintlify.com/docs/components/banner.md): Add a banner to display important site-wide announcements and notifications.
+- [Callouts](https://mintlify.com/docs/components/callouts.md): Use callouts to style and emphasize important content.
+- [Cards](https://mintlify.com/docs/components/cards.md): Highlight main points or links with customizable layouts and icons.
+- [Code groups](https://mintlify.com/docs/components/code-groups.md): Display multiple code examples in one component
+- [Color](https://mintlify.com/docs/components/color.md): Display color palettes with click-to-copy functionality.
+- [Columns](https://mintlify.com/docs/components/columns.md): Show elements side by side
+- [Examples](https://mintlify.com/docs/components/examples.md): Display code blocks in the right sidebar on desktop devices
+- [Expandables](https://mintlify.com/docs/components/expandables.md): Toggle to display nested properties
+- [Fields](https://mintlify.com/docs/components/fields.md): Document API request and response parameters with type information.
+- [Frames](https://mintlify.com/docs/components/frames.md): Add visual emphasis with styled frames around images and other components.
+- [Icons](https://mintlify.com/docs/components/icons.md): Use icons from popular libraries, external URLs, or files in your project.
+- [Mermaid](https://mintlify.com/docs/components/mermaid-diagrams.md): Create flowcharts, diagrams, and visualizations with Mermaid syntax.
+- [Panel](https://mintlify.com/docs/components/panel.md): Customize the content of the right side panel on a page.
+- [Response fields](https://mintlify.com/docs/components/responses.md): Display API response values.
+- [Steps](https://mintlify.com/docs/components/steps.md): Create numbered step-by-step procedures.
+- [Tabs](https://mintlify.com/docs/components/tabs.md): Organize content with tabs to show different options or versions.
+- [Tiles](https://mintlify.com/docs/components/tiles.md): Display visual previews with titles and descriptions in a grid layout.
+- [Tooltips](https://mintlify.com/docs/components/tooltips.md): Add contextual help with hover tooltips for terms and concepts.
+- [Update](https://mintlify.com/docs/components/update.md): Display product updates and changelog entries in a timeline format.
+- [View](https://mintlify.com/docs/components/view.md): Create multi-view content for different programming languages or frameworks.
+- [Changelogs](https://mintlify.com/docs/create/changelogs.md): Create product changelogs with RSS feed support for subscribers.
+- [Format code](https://mintlify.com/docs/create/code.md): Display and style inline code and code blocks.
+- [Files](https://mintlify.com/docs/create/files.md): Serve static assets from your documentation.
+- [Images and embeds](https://mintlify.com/docs/create/image-embeds.md): Add images, videos, andiframes.
+- [Lists and tables](https://mintlify.com/docs/create/list-table.md): Format structured data with tables and lists.
+- [Redirects](https://mintlify.com/docs/create/redirects.md): Configure redirects for moved, renamed, or deleted pages.
+- [Reusable snippets](https://mintlify.com/docs/create/reusable-snippets.md): Create reusable snippets to maintain consistency across pages.
+- [Format text](https://mintlify.com/docs/create/text.md): Learn how to format text, create headers, and style content.
+- [Custom 404 page](https://mintlify.com/docs/customize/custom-404-page.md): Customize the title and description of your 404 error page.
+- [Custom domain](https://mintlify.com/docs/customize/custom-domain.md): Host your documentation on a custom domain.
+- [Custom scripts](https://mintlify.com/docs/customize/custom-scripts.md): Add custom JavaScript and CSS to fully customize the look and feel of your documentation.
+- [Fonts](https://mintlify.com/docs/customize/fonts.md): Customize typography with Google Fonts or self-hosted fonts.
+- [React](https://mintlify.com/docs/customize/react-components.md): Build interactive and reusable elements with React components.
+- [Themes](https://mintlify.com/docs/customize/themes.md): Choose the appearance of your documentation.
+- [Editor permissions](https://mintlify.com/docs/dashboard/permissions.md): Allow more members of your team to update your documentation.
+- [Roles](https://mintlify.com/docs/dashboard/roles.md): Assign Owner, Admin, or Editor roles to manage team access and permissions.
+- [Single sign-on (SSO)](https://mintlify.com/docs/dashboard/sso.md): Set up SAML or OIDC with identity providers for team authentication.
+- [Authentication setup](https://mintlify.com/docs/deploy/authentication-setup.md): Control access to your documentation by authenticating users.
+- [CI checks](https://mintlify.com/docs/deploy/ci.md): Automate broken link checks, linting, and grammar validation in CI/CD.
+- [Cloudflare](https://mintlify.com/docs/deploy/cloudflare.md): Host documentation at a subpath on Cloudflare Workers.
+- [Content Security Policy (CSP) configuration](https://mintlify.com/docs/deploy/csp-configuration.md): Configure CSP headers to allow Mintlify resources while maintaining security for reverse proxies, firewalls, and networks that enforce strict security policies.
+- [Deployments](https://mintlify.com/docs/deploy/deployments.md): Manage deployments, view history, and monitor status.
+- [Overview](https://mintlify.com/docs/deploy/docs-subpath.md): Host your documentation at the `/docs` subpath on your domain.
+- [GitHub Enterprise Server](https://mintlify.com/docs/deploy/ghes.md): Set up the GitHub App on your GitHub Enterprise Server installation.
+- [GitHub](https://mintlify.com/docs/deploy/github.md): Connect to a GitHub repository for automated deployments, pull request previews, and continuous synchronization.
+- [GitLab](https://mintlify.com/docs/deploy/gitlab.md): Connect to a GitLab repository for automated deployments and preview builds.
+- [Monorepo setup](https://mintlify.com/docs/deploy/monorepo.md): Configure documentation path and content directory for monorepo projects.
+- [Personalization setup](https://mintlify.com/docs/deploy/personalization-setup.md): Show custom content based on user authentication and profile data.
+- [Preview deployments](https://mintlify.com/docs/deploy/preview-deployments.md): Get unique preview URLs for pull requests to review changes before merging.
+- [Reverse proxy](https://mintlify.com/docs/deploy/reverse-proxy.md): Configure a custom reverse proxy to serve your documentation.
+- [AWS Route 53 and CloudFront](https://mintlify.com/docs/deploy/route53-cloudfront.md): Deploy documentation at a subpath on AWS with Route 53 DNS and CloudFront CDN.
+- [Vercel](https://mintlify.com/docs/deploy/vercel.md): Deploy documentation to a subpath on Vercel.
+- [External proxies with Vercel](https://mintlify.com/docs/deploy/vercel-external-proxies.md): Configure external proxies in front of your Vercel deployment.
+- [Visual editor](https://mintlify.com/docs/editor.md): Create, maintain, and publish documentation in your browser.
+- [Accessibility](https://mintlify.com/docs/guides/accessibility.md): Create documentation that as many people as possible can use with WCAG compliance.
+- [Tutorial: Build an in-app documentation assistant](https://mintlify.com/docs/guides/assistant-embed.md): Embed the assistant in your application to answer questions with information from your documentation.
+- [Tutorial: Auto-update documentation when code is changed](https://mintlify.com/docs/guides/automate-agent.md): Use the agent API to automatically update your documentation.
+- [Working with branches](https://mintlify.com/docs/guides/branches.md): Create branches to preview changes and collaborate before publishing.
+- [Claude Code](https://mintlify.com/docs/guides/claude-code.md): Configure Claude Code to write, review, and update your documentation.
+- [Content types](https://mintlify.com/docs/guides/content-types.md): Choose the right content type for your documentation goals.
+- [Cursor](https://mintlify.com/docs/guides/cursor.md): Configure Cursor to be your writing assistant.
+- [GEO guide: Optimize docs for AI search and answer engines](https://mintlify.com/docs/guides/geo.md): Optimize your documentation for AI search and answer engines.
+- [Git concepts](https://mintlify.com/docs/guides/git-concepts.md): Learn Git fundamentals of version control and collaboration for docs-as-code workflows.
+- [Improve your docs](https://mintlify.com/docs/guides/improving-docs.md): Use data and metrics to improve your documentation.
+- [Guides](https://mintlify.com/docs/guides/index.md): Learn how to create effective documentation with best practices and workflows.
+- [Create a knowledge base](https://mintlify.com/docs/guides/knowledge-base.md): Host your internal knowledge base on Mintlify to consolidate information for your team, improve search, and reduce maintenance burden.
+- [Maintenance](https://mintlify.com/docs/guides/maintenance.md): Keep your documentation accurate and up-to-date over time.
+- [Media](https://mintlify.com/docs/guides/media.md): Use media effectively while managing maintenance burden.
+- [Migrating MDX API pages to OpenAPI navigation](https://mintlify.com/docs/guides/migrating-from-mdx.md): Migrate to automated OpenAPI generation with flexible navigation.
+- [Organize navigation](https://mintlify.com/docs/guides/navigation.md): Design information architecture that aligns with user needs.
+- [SEO](https://mintlify.com/docs/guides/seo.md): Improve SEO to increase documentation discoverability.
+- [Style and tone](https://mintlify.com/docs/guides/style-and-tone.md): Write effective technical documentation with consistent style.
+- [Understand your audience](https://mintlify.com/docs/guides/understand-your-audience.md): Keep user goals at the center of your documentation.
+- [Windsurf](https://mintlify.com/docs/guides/windsurf.md): Configure Windsurf to be your writing assistant.
+- [Introduction](https://mintlify.com/docs/index.md): Meet the next generation of documentation. AI-native, beautiful out-of-the-box, and built for developers.
+- [Feedback](https://mintlify.com/docs/insights/feedback.md): Monitor user satisfaction and feedback on your documentation.
+- [Overview](https://mintlify.com/docs/insights/overview.md): Track documentation analytics and understand content effectiveness with visitor data.
+- [CLI installation](https://mintlify.com/docs/installation.md): Use the CLI to preview docs locally, test changes in real-time, and catch issues before deploying your documentation site.
+- [Amplitude](https://mintlify.com/docs/integrations/analytics/amplitude.md): Track user behavior and documentation analytics with Amplitude.
+- [Clarity](https://mintlify.com/docs/integrations/analytics/clarity.md): Track user sessions with Microsoft Clarity analytics.
+- [Clearbit](https://mintlify.com/docs/integrations/analytics/clearbit.md): Enrich user data with Clearbit intelligence.
+- [Fathom](https://mintlify.com/docs/integrations/analytics/fathom.md): Track documentation analytics with Fathom.
+- [Google Analytics 4](https://mintlify.com/docs/integrations/analytics/google-analytics.md): Track visitor behavior and engagement with Google Analytics.
+- [Google Tag Manager](https://mintlify.com/docs/integrations/analytics/google-tag-manager.md): Manage analytics tags and events with Google Tag Manager.
+- [Heap](https://mintlify.com/docs/integrations/analytics/heap.md): Track user interactions with Heap analytics.
+- [Hightouch](https://mintlify.com/docs/integrations/analytics/hightouch.md): Sync data to Hightouch for audience activation.
+- [HotJar](https://mintlify.com/docs/integrations/analytics/hotjar.md): Capture user feedback and heatmaps with HotJar.
+- [LogRocket](https://mintlify.com/docs/integrations/analytics/logrocket.md): Monitor user sessions and errors with LogRocket.
+- [Mixpanel](https://mintlify.com/docs/integrations/analytics/mixpanel.md): Track product analytics and user behavior with Mixpanel.
+- [Analytics integrations](https://mintlify.com/docs/integrations/analytics/overview.md): Connect to analytics platforms to track user engagement and documentation usage.
+- [Pirsch](https://mintlify.com/docs/integrations/analytics/pirsch.md): Track privacy-focused analytics with Pirsch.
+- [Plausible](https://mintlify.com/docs/integrations/analytics/plausible.md): Track simple, privacy-respecting analytics with Plausible.
+- [PostHog](https://mintlify.com/docs/integrations/analytics/posthog.md): Track product analytics and feature usage with PostHog.
+- [Segment](https://mintlify.com/docs/integrations/analytics/segment.md): Send analytics events to Segment and downstream tools.
+- [Osano](https://mintlify.com/docs/integrations/privacy/osano.md): Manage cookie consent with Osano privacy platform.
+- [Privacy integrations](https://mintlify.com/docs/integrations/privacy/overview.md): Integrate with data privacy platforms for compliance.
+- [Speakeasy](https://mintlify.com/docs/integrations/sdks/speakeasy.md): Automate SDK code samples in your API playground.
+- [Stainless](https://mintlify.com/docs/integrations/sdks/stainless.md): Automate SDK code samples in your API playground.
+- [Front](https://mintlify.com/docs/integrations/support/front.md): Connect Front chat for customer support conversations.
+- [Intercom](https://mintlify.com/docs/integrations/support/intercom.md): Connect Intercom for in-app customer messaging.
+- [Support integrations](https://mintlify.com/docs/integrations/support/overview.md): Integrate with support platforms for customer assistance.
+- [Migrations](https://mintlify.com/docs/migration.md): Learn how to migrate to Mintlify from Docusaurus, ReadMe, or another platform.
+- [PDF exports](https://mintlify.com/docs/optimize/pdf-exports.md): Export your documentation as a single PDF file.
+- [SEO](https://mintlify.com/docs/optimize/seo.md): Optimize SEO with meta tag configuration for better search visibility.
+- [Hidden pages](https://mintlify.com/docs/organize/hidden-pages.md): Hide pages from your navigation while keeping them accessible.
+- [Mintignore](https://mintlify.com/docs/organize/mintignore.md): Exclude specific files and directories from your published documentation.
+- [Navigation](https://mintlify.com/docs/organize/navigation.md): Design information architecture that aligns with user needs.
+- [Pages](https://mintlify.com/docs/organize/pages.md): Configure page metadata, titles, and frontmatter properties.
+- [Global settings](https://mintlify.com/docs/organize/settings.md): Configure site-wide settings in docs.json.
+- [Quickstart](https://mintlify.com/docs/quickstart.md): Deploy your documentation site and make your first changes.
