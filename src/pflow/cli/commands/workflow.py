@@ -57,7 +57,9 @@ def list_workflows(filter_pattern: str | None, output_json: bool) -> None:
         workflows = all_workflows
 
     if output_json:
-        click.echo(json.dumps(workflows, indent=2))
+        # Exclude 'ir' field from JSON output (too verbose for listing)
+        workflows_summary = [{k: v for k, v in w.items() if k != "ir"} for w in workflows]
+        click.echo(json.dumps(workflows_summary, indent=2))
     else:
         # Use shared formatter (same as MCP)
         from pflow.execution.formatters.workflow_list_formatter import format_workflow_list

@@ -206,12 +206,17 @@ class TestWorkflowListCommand:
             assert "No workflows saved yet" not in result.output
 
     def test_list_workflows_json_format(self) -> None:
-        """Test listing workflows with --json flag."""
+        """Test listing workflows with --json flag excludes ir field."""
         mock_workflows = [
             {
                 "name": "test-workflow",
                 "description": "Test workflow for JSON output",
                 "created_at": "2024-01-01T00:00:00Z",
+                "ir": {
+                    "ir_version": "0.1.0",
+                    "nodes": [{"id": "node1", "type": "test-node"}],
+                    "edges": [],
+                },
             }
         ]
 
@@ -229,6 +234,8 @@ class TestWorkflowListCommand:
             assert len(output_data) == 1
             assert output_data[0]["name"] == "test-workflow"
             assert output_data[0]["description"] == "Test workflow for JSON output"
+            # Verify 'ir' field is excluded from JSON output
+            assert "ir" not in output_data[0]
 
     def test_list_workflows_with_missing_description(self) -> None:
         """Test listing workflows when some lack descriptions."""
