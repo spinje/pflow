@@ -1,0 +1,199 @@
+---
+title: "Adding MCP servers"
+description: "Expand pflow capabilities with external tools"
+icon: "plug"
+---
+
+MCP (Model Context Protocol) servers let you add external tools to pflow. Once added, your AI agent can use these tools in workflows - GitHub, Slack, databases, and more.
+
+pflow supports both **local (stdio)** and **remote (HTTP)** MCP servers.
+
+## Adding a server
+
+### From a config file
+
+If you have an MCP config file (JSON format):
+
+```bash
+pflow mcp add ./github.mcp.json
+```
+
+Config file format:
+
+```json
+{
+  "github": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "env": {
+      "GITHUB_PERSONAL_ACCESS_TOKEN": "your-token"
+    }
+  }
+}
+```
+
+### From JSON directly
+
+For quick setup, pass JSON directly:
+
+```bash
+# Local stdio server
+pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}'
+
+# Remote HTTP server
+pflow mcp add '{"slack": {"type": "http", "url": "https://mcp.example.com/slack"}}'
+```
+
+### Multiple servers at once
+
+Add multiple servers from separate files:
+
+```bash
+pflow mcp add ./github.mcp.json ./slack.mcp.json ./notion.mcp.json
+```
+
+## Tools are auto-discovered
+
+You don't need to manually sync after adding a server. When your agent runs a workflow, pflow automatically discovers tools from any new or changed servers.
+
+<Tip>
+If you want to test the connection immediately after adding a server, run `pflow mcp sync <server-name>` to force discovery.
+</Tip>
+
+## Managing servers
+
+### List configured servers
+
+```bash
+pflow mcp list
+```
+
+### View available tools
+
+See all tools from a specific server:
+
+```bash
+pflow mcp tools github
+```
+
+Or list all tools from all servers:
+
+```bash
+pflow mcp tools --all
+```
+
+### Get tool details
+
+See detailed information about a specific tool:
+
+```bash
+pflow mcp info mcp-github-create-issue
+```
+
+### Remove a server
+
+```bash
+pflow mcp remove github
+```
+
+## Server configuration format
+
+### Local (stdio) servers
+
+Local servers run as subprocesses on your machine:
+
+```json
+{
+  "server-name": {
+    "command": "npx",
+    "args": ["-y", "@namespace/mcp-server"],
+    "env": {
+      "API_KEY": "your-key"
+    }
+  }
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `command` | Yes | The command to run (e.g., `npx`, `python`, `node`) |
+| `args` | No | Command arguments |
+| `env` | No | Environment variables passed to the server |
+
+### Remote (HTTP) servers
+
+Remote servers connect over HTTP/SSE:
+
+```json
+{
+  "server-name": {
+    "type": "http",
+    "url": "https://mcp.example.com/server"
+  }
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type` | Yes | Must be `"http"` for remote servers |
+| `url` | Yes | The server URL |
+
+## How tools appear in pflow
+
+MCP tools are registered with the prefix `mcp__<server>__<tool>`. For example:
+
+- `mcp__github__create_issue`
+- `mcp__slack__send_message`
+- `mcp__notion__create_page`
+
+Your agent can discover these tools using:
+
+```bash
+pflow registry discover "create github issues"
+```
+
+## Common MCP servers
+
+Here are some popular MCP servers you can add to pflow:
+
+### GitHub
+
+```bash
+pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "your-token"}}}'
+```
+
+### Filesystem
+
+```bash
+pflow mcp add '{"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/directory"]}}'
+```
+
+### Brave Search
+
+```bash
+pflow mcp add '{"brave-search": {"command": "npx", "args": ["-y", "@anthropic/mcp-server-brave-search"], "env": {"BRAVE_API_KEY": "your-key"}}}'
+```
+
+<Note>
+Find more MCP servers at [mcp.run](https://mcp.run) and [smithery.ai](https://smithery.ai).
+</Note>
+
+## Troubleshooting
+
+<Accordion title="Server not appearing in list">
+  1. Check your JSON syntax is valid
+  2. Make sure the config file path is correct
+  3. Run `pflow mcp list` to see configured servers
+</Accordion>
+
+<Accordion title="Tools not discovered">
+  1. Check the server is running correctly: `pflow mcp sync <server-name>`
+  2. Verify credentials/environment variables are set
+  3. Check the server logs for errors
+</Accordion>
+
+<Accordion title="Tool execution fails">
+  1. Run `pflow mcp info <tool-name>` to see required parameters
+  2. Check that required environment variables are set in the server config
+  3. Verify the server has access to required resources (network, files, etc.)
+</Accordion>

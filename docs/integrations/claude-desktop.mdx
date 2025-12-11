@@ -1,0 +1,85 @@
+---
+title: "Claude Desktop"
+description: "Set up pflow with Claude Desktop"
+icon: "app-window"
+---
+
+<Info>
+**Prerequisites:** [Install pflow](/quickstart) before continuing.
+</Info>
+
+Claude Desktop connects to pflow via MCP server. This gives Claude access to pflow's workflow discovery and execution tools.
+
+<Note>
+pflow is currently verified to work on macOS. Windows and Linux support is coming soon.
+</Note>
+
+## Setup
+
+### 1. Open your MCP config file
+
+The config file is located at:
+
+```
+~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+You can also access it through Claude Desktop: **Settings** → **Developer** → **Edit Config**.
+
+### 2. Add pflow to your config
+
+Add the pflow server to your `mcpServers` object:
+
+```json
+{
+  "mcpServers": {
+    "pflow": {
+      "command": "pflow",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+If you have other MCP servers configured, add pflow alongside them:
+
+```json
+{
+  "mcpServers": {
+    "existing-server": {
+      "command": "...",
+      "args": ["..."]
+    },
+    "pflow": {
+      "command": "pflow",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+### 3. Restart Claude Desktop
+
+Completely quit Claude Desktop and restart it. The app needs to restart to load the new MCP server.
+
+### 4. Verify installation
+
+Start a new conversation and ask Claude to list available pflow workflows:
+
+```
+Use pflow to list available workflows
+```
+
+Claude should be able to access pflow's tools and respond with workflow information.
+
+## Troubleshooting
+
+<Accordion title="Claude doesn't see pflow tools">
+  1. Make sure pflow is installed and in your PATH: `pflow --version`
+  2. Check your JSON syntax is valid (use a JSON validator)
+  3. Completely quit and restart Claude Desktop (not just close the window)
+</Accordion>
+
+<Accordion title="Config file doesn't exist">
+  Open Claude Desktop, go to **Settings** → **Developer** → **Edit Config**. Claude will create the file for you.
+</Accordion>

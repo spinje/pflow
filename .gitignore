@@ -142,7 +142,7 @@ cython_debug/
 .cursor/mcp.json
 
 .temp/
-# .archive/
+.archive/
 
 # Added by Task Master AI
 # Logs

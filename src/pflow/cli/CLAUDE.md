@@ -55,11 +55,12 @@ src/pflow/cli/
 **Routing Logic**:
 ```python
 # Detect first non-option argument
-if first_arg == "mcp":     → Route to mcp()
-elif first_arg == "registry": → Route to registry()
-elif first_arg == "workflow": → Route to workflow()
-elif first_arg == "settings": → Route to settings()
-else:                      → Route to workflow_command()
+if first_arg == "mcp":          → Route to mcp()
+elif first_arg == "registry":   → Route to registry()
+elif first_arg == "workflow":   → Route to workflow()
+elif first_arg == "settings":   → Route to settings()
+elif first_arg == "instructions": → Route to instructions()
+else:                           → Route to workflow_command()
 ```
 
 ### 2. Core CLI (`main.py`)
@@ -79,7 +80,8 @@ else:                      → Route to workflow_command()
 --planner-timeout      # Timeout in seconds (default: 60)
 --save/--no-save       # Save generated workflow (default: save)
 --cache-planner        # Use cached planner results
---auto-repair            # Enable auto-repair
+--planner-model        # LLM model for planning (default: auto-detect)
+--auto-repair          # Enable auto-repair
 --no-update            # Save repairs separately
 --validate-only        # Validate workflow without executing (NEW in Task 71)
 workflow (nargs=-1)    # Catch-all for natural language or file path
@@ -231,7 +233,28 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 - Optional `--force` to overwrite existing workflows
 - Extracted to helper functions for clarity (lines 132-403)
 
-### 8. Settings Commands (`commands/settings.py`)
+### 8. Instructions Commands (`instructions.py`)
+
+**Purpose**: Provide AI agents with optimized guidance for using pflow.
+
+**Subcommands**:
+- `usage` - Basic usage guide for AI agents (~500 lines)
+- `create` - Comprehensive workflow creation guide (~1600 lines)
+
+**Usage Pattern**:
+AI agents should run `pflow instructions usage` when first connecting to pflow to learn the commands and workflow patterns.
+
+```bash
+# Get basic usage instructions
+pflow instructions usage
+
+# Get detailed workflow creation guide
+pflow instructions create
+```
+
+**Output**: Returns plain text instructions optimized for AI agent consumption.
+
+### 9. Settings Commands (`commands/settings.py`)
 
 **Subcommands**:
 - `init` - Create default settings file

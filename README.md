@@ -52,43 +52,56 @@ pflow is licensed under the [Functional Source License (FSL) v1.1](LICENSE) with
 
 ## Quick Start
 
-### 1\. Your First Flow
+### 1. Install pflow
 
 ```bash
-# Install pflow
-pip install pflow
+# Using uv (recommended)
+uv tool install git+https://github.com/spinje/pflow.git
 
-# Just describe what you want:
-pflow "check my github PRs and summarize them for standup"
+# Or using pipx
+pipx install git+https://github.com/spinje/pflow.git
 
-# If it's new, pflow builds it:
-# → Creating workflow: github-list-prs --state=open >> llm --prompt="summarize for standup"
-# Save as 'standup-prep'? [Y/n] y
-
-# If it exists, pflow runs it:
-pflow "summarize my PRs for standup"
-# → Found 'standup-prep'. Running...
+# Verify installation
+pflow --version
 ```
 
-### 2\. Build Complex Workflows
+### 2. Set up your API key
 
 ```bash
-# Chain multiple tools together
-pflow "fetch aws costs, analyze by service, create report, send to slack"
+# Anthropic (recommended)
+export ANTHROPIC_API_KEY="your-api-key"
 
-# See the generated pipeline:
-# → aws-get-costs --period=7d >> llm --prompt="analyze by service" >> write-file --format=markdown >> slack-send --channel=ops
+# Or OpenAI
+export OPENAI_API_KEY="your-api-key"
 ```
 
-### 3\. Integrate Everything
+### 3. Connect to your AI agent
 
+pflow is designed to be used by AI agents. Choose how your agent connects:
+
+**Option A: CLI access (easiest)**
+
+If your agent has terminal access (Claude Code, Cursor, Windsurf), tell it to run:
 ```bash
-# Use existing tools as building blocks
-cat error.log | pflow "extract errors, find related code, suggest fixes" >> fixes.md
-
-# Combine with any CLI tool
-kubectl logs my-pod | pflow "check for errors and notify if critical"
+pflow instructions usage
 ```
+This gives the agent everything it needs to discover existing workflows, run them, or build new ones.
+
+**Option B: MCP server**
+
+Add to your AI tool's MCP config (Claude Desktop, Cursor, etc.):
+```json
+{
+  "mcpServers": {
+    "pflow": {
+      "command": "pflow",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+📖 **[Detailed setup guides for each AI tool →](https://docs.getpflow.com/integrations)**
 
 ## Wait.. my AI agent can already do this and it works great!
 
@@ -268,33 +281,48 @@ graph TD
 ## Installation
 
 ```bash
-# Install via pip
-pip install pflow
+# Using uv (recommended)
+uv tool install git+https://github.com/spinje/pflow.git
+
+# Using pipx
+pipx install git+https://github.com/spinje/pflow.git
+
+# Verify installation
+pflow --version
 ```
 
 ## How AI Agents Use pflow
 
-Your AI agent (Claude, Cursor, ChatGPT, etc.) can work with pflow in two ways:
+Your AI agent (Claude Code, Cursor, Windsurf, etc.) can work with pflow in two ways:
 
-**1. Via pflow's MCP server** (recommended for programmatic control)
+**1. Via CLI commands** (easiest - works anywhere with terminal access)
 
-Add pflow to your Claude Desktop or AI tool:
+Your agent runs `pflow instructions usage` to learn the commands, then uses pflow directly:
+```bash
+# Agent discovers existing workflows
+pflow workflow discover "analyze customer data"
+
+# Agent runs a workflow
+pflow analyze-customers period=30d
+
+# Agent builds new workflows following pflow instructions create
+```
+
+**2. Via pflow's MCP server** (for tools without terminal access)
+
+Add pflow to your AI tool's MCP config:
 ```json
 {
   "mcpServers": {
     "pflow": {
       "command": "pflow",
-      "args": ["mcp"]
+      "args": ["mcp", "serve"]
     }
   }
 }
 ```
 
-Your agent gets structured tools like `workflow_discover()`, `workflow_execute()`, `workflow_save()` to build and run workflows programmatically.
-
-**2. Via CLI commands** (works anywhere with terminal access)
-
-Your agent can run `pflow` commands directly. Same capabilities, different interface.
+Your agent gets structured tools to discover, build, and run workflows programmatically.
 
 **The magic**: Either way, your agent builds workflows that USE MCP tools (GitHub, Stripe, Slack) without loading those MCP servers into context. One-time compilation → infinite free execution.
 
@@ -304,7 +332,7 @@ pflow supports **Model Context Protocol (MCP)** servers, letting you use any MCP
 
 ### What is MCP?
 
-MCP (Model Context Protocol) is Anthropic's open standard for connecting AI assistants to external tools. With pflow's MCP support, you can:
+MCP (Model Context Protocol) is Anthropic's open standard for connecting AI assistants to external tools. pflow supports both **local (stdio)** and **remote (HTTP)** MCP servers. With pflow's MCP support, you can:
 - Use filesystem operations, database queries, web scrapers, and more
 - Access tools from the MCP ecosystem without writing custom nodes
 - Combine MCP tools with native pflow nodes in workflows
@@ -312,15 +340,14 @@ MCP (Model Context Protocol) is Anthropic's open standard for connecting AI assi
 ### Quick Start with MCP
 
 ```bash
-# 1. Add an MCP server (example: filesystem operations)
-pflow mcp add filesystem npx @modelcontextprotocol/server-filesystem /Users/me/data
+# Add an MCP server from a config file
+pflow mcp add ./github.mcp.json
 
-# 2. Sync available tools into pflow
-pflow mcp sync
+# Or add directly with JSON
+pflow mcp add '{"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/data"]}}'
 
-# 3. Use MCP tools in workflows (they appear as regular nodes!)
-pflow "read all CSV files in my data folder and summarize them"
-# → Automatically uses mcp__filesystem__read_file node
+# That's it! Tools are auto-discovered when your agent runs workflows.
+# They appear as nodes like mcp__filesystem__read_file
 ```
 
 ### Managing MCP Servers
@@ -334,24 +361,6 @@ pflow mcp tools filesystem
 
 # Remove a server
 pflow mcp remove filesystem
-
-# Re-sync after server updates
-pflow mcp sync --force
-```
-
-### Example: GitHub + Filesystem Workflow
-
-```bash
-# Add multiple MCP servers
-pflow mcp add github npx @modelcontextprotocol/server-github
-pflow mcp add fs npx @modelcontextprotocol/server-filesystem ~/projects
-
-# Sync all tools
-pflow mcp sync
-
-# Create a workflow combining both
-pflow "find all open PRs, save summaries to local files"
-# Uses: mcp__github__search_pull_requests >> mcp__fs__write_file
 ```
 
 MCP tools are prefixed with `mcp__<server>__` to avoid naming conflicts. They integrate seamlessly with pflow's planning system—just describe what you want, and pflow will find the right MCP tools.
@@ -371,13 +380,12 @@ Instead of building pflow-specific nodes, you build standard MCP servers that wo
 ```bash
 # Need custom functionality? Build an MCP server
 $ claude "Build an MCP server that monitors my Stripe webhooks"
-# Claude generates stripe_monitor.py
+# Claude generates stripe_monitor.py with MCP server code
 
 # Add it to pflow
-$ pflow mcp add stripe-monitor python stripe_monitor.py
+$ pflow mcp add '{"stripe-monitor": {"command": "python", "args": ["stripe_monitor.py"]}}'
 
-# Use it immediately
-$ pflow "alert me when a payment fails"
+# Done! Your agent can now use it in workflows
 ```
 
 ### Why MCP for Extensions?
@@ -466,10 +474,9 @@ See the [Debugging Guide](architecture/features/debugging.md) for detailed trace
 Access any MCP-compatible tool as a native `pflow` node:
 
 ```bash
-# Add MCP servers for your favorite tools
-pflow mcp add github npx @modelcontextprotocol/server-github
-pflow mcp add stripe npx @modelcontextprotocol/server-stripe
-pflow mcp sync
+# Add MCP servers from config files
+pflow mcp add ./github.mcp.json ./stripe.mcp.json
+# Tools are auto-discovered when workflows run
 ```
 
 ### 🤖 Works with `llm`

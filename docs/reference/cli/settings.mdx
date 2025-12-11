@@ -1,0 +1,364 @@
+---
+title: "pflow settings"
+description: "Manage pflow configuration"
+icon: "file-cog"
+---
+
+The `pflow settings` command group manages pflow configuration stored in `~/.pflow/settings.json`. This includes API keys, environment variables, and node filtering.
+
+<Note>
+  **Your commands.** These are setup commands that you run directly - not your agent. API keys and security settings should always be configured by you, never by an AI agent.
+</Note>
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `init` | Initialize settings with defaults |
+| `show` | Display current settings |
+| `set-env` | Set an environment variable |
+| `unset-env` | Remove an environment variable |
+| `list-env` | List all environment variables |
+| `allow` | Add an allow pattern |
+| `deny` | Add a deny pattern |
+| `remove` | Remove a pattern |
+| `check` | Check if a node is allowed |
+| `reset` | Reset to defaults |
+
+## pflow settings init
+
+Initialize settings file with defaults.
+
+```bash
+pflow settings init
+```
+
+Creates `~/.pflow/settings.json` with default configuration. Prompts for confirmation if the file already exists.
+
+**Default settings:**
+
+```json
+{
+  "version": "1.0.0",
+  "registry": {
+    "nodes": {
+      "allow": ["*"],
+      "deny": []
+    }
+  },
+  "env": {}
+}
+```
+
+## pflow settings show
+
+Display current settings with sensitive values masked.
+
+```bash
+pflow settings show
+```
+
+**Output:**
+
+```
+Settings file: ~/.pflow/settings.json
+
+Current settings:
+{
+  "version": "1.0.0",
+  "registry": {
+    "nodes": {
+      "allow": ["*"],
+      "deny": ["test.*"]
+    }
+  },
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-***",
+    "log_level": "debug"
+  }
+}
+```
+
+<Note>
+  Sensitive values (API keys, tokens, secrets) are automatically masked. Use `pflow settings list-env --show-values` to see full values.
+</Note>
+
+## pflow settings set-env
+
+Set an environment variable for pflow workflows.
+
+```bash
+pflow settings set-env <KEY> <VALUE>
+```
+
+**Arguments:**
+- `KEY` - Environment variable name
+- `VALUE` - Environment variable value
+
+**Examples:**
+
+```bash
+# Set Anthropic API key (required for discovery features)
+pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+
+# Set other variables
+pflow settings set-env GITHUB_TOKEN "ghp_..."
+```
+
+**Output:**
+
+```
+✓ Set environment variable: ANTHROPIC_API_KEY
+   Value: sk-***
+```
+
+<Warning>
+  **Security:** Always set API keys yourself - never let AI agents run this command.
+</Warning>
+
+**Alternative:** If you use [Simon Willison's llm](https://llm.datasette.io/), pflow will use those keys automatically. Run `llm keys set anthropic` instead.
+
+## pflow settings unset-env
+
+Remove an environment variable.
+
+```bash
+pflow settings unset-env <KEY>
+```
+
+**Arguments:**
+- `KEY` - Environment variable name to remove
+
+**Example:**
+
+```bash
+pflow settings unset-env GITHUB_TOKEN
+```
+
+## pflow settings list-env
+
+List all configured environment variables.
+
+```bash
+pflow settings list-env [--show-values]
+```
+
+**Options:**
+- `--show-values` - Display full unmasked values (use with caution)
+
+**Examples:**
+
+```bash
+# List with masked values (safe)
+pflow settings list-env
+
+# List with full values (sensitive!)
+pflow settings list-env --show-values
+```
+
+**Output (masked):**
+
+```
+Environment variables:
+  ANTHROPIC_API_KEY: sk-***
+  GITHUB_TOKEN: ghp***
+  LOG_LEVEL: debug
+```
+
+<Warning>
+  Only use `--show-values` in secure environments. Never let agents access unmasked credentials.
+</Warning>
+
+## pflow settings allow
+
+Add an allow pattern for node filtering.
+
+```bash
+pflow settings allow <PATTERN>
+```
+
+**Arguments:**
+- `PATTERN` - Glob-style pattern for nodes to allow
+
+**Examples:**
+
+```bash
+# Allow all file nodes
+pflow settings allow "file.*"
+
+# Allow specific MCP tools
+pflow settings allow "mcp-github-*"
+
+# Allow specific node
+pflow settings allow "llm"
+```
+
+**Pattern syntax:**
+- `*` matches any characters
+- `?` matches single character
+- `[seq]` matches any character in seq
+
+## pflow settings deny
+
+Add a deny pattern for node filtering.
+
+```bash
+pflow settings deny <PATTERN>
+```
+
+**Arguments:**
+- `PATTERN` - Glob-style pattern for nodes to deny
+
+**Examples:**
+
+```bash
+# Block test nodes
+pflow settings deny "test.*"
+
+# Block dangerous operations
+pflow settings deny "shell"
+pflow settings deny "*-delete-*"
+```
+
+<Note>
+  Deny patterns take precedence over allow patterns.
+</Note>
+
+## pflow settings remove
+
+Remove a pattern from allow or deny list.
+
+```bash
+pflow settings remove <PATTERN> [--allow|--deny]
+```
+
+**Arguments:**
+- `PATTERN` - Pattern to remove
+
+**Options:**
+- `--allow` - Remove from allow list (default)
+- `--deny` - Remove from deny list
+
+**Examples:**
+
+```bash
+# Remove from deny list
+pflow settings remove "test.*" --deny
+
+# Remove from allow list
+pflow settings remove "file.*" --allow
+```
+
+## pflow settings check
+
+Check if a node would be included based on current settings.
+
+```bash
+pflow settings check <NODE_NAME>
+```
+
+**Arguments:**
+- `NODE_NAME` - Node name to check
+
+**Example:**
+
+```bash
+pflow settings check read-file
+```
+
+**Output (included):**
+
+```
+✓ Node 'read-file' would be INCLUDED
+
+  Matched allow patterns: file.*, *
+```
+
+**Output (excluded):**
+
+```
+✗ Node 'echo' would be EXCLUDED
+
+  Matched deny patterns: test.*
+```
+
+## pflow settings reset
+
+Reset settings to defaults.
+
+```bash
+pflow settings reset
+```
+
+Prompts for confirmation before resetting. This removes all custom settings including API keys.
+
+<Warning>
+  This deletes ALL custom settings including environment variables and API keys.
+</Warning>
+
+## How node filtering works
+
+Node filtering uses allow and deny patterns evaluated in this order:
+
+1. **Test nodes** - Hidden by default (enable with `PFLOW_INCLUDE_TEST_NODES=true`)
+2. **Deny patterns** - Block matching nodes (highest precedence)
+3. **Allow patterns** - Include matching nodes
+4. **Default** - Include if `*` in allow list
+
+**Example configuration:**
+
+```json
+{
+  "registry": {
+    "nodes": {
+      "allow": ["*"],
+      "deny": ["test.*", "shell"]
+    }
+  }
+}
+```
+
+This allows all nodes except test nodes and the shell node.
+
+## Environment variable precedence
+
+When workflows need parameters, pflow looks in this order:
+
+1. CLI parameters (`key=value` arguments)
+2. Settings environment variables (`pflow settings set-env`)
+3. Workflow defaults
+4. Error if required and not found
+
+**Example:**
+
+```bash
+# Store API key once
+pflow settings set-env OPENAI_API_KEY "sk-..."
+
+# Workflows automatically use it
+pflow my-llm-workflow  # No need to pass --param
+```
+
+## Sensitive parameter detection
+
+These keys are automatically masked in output:
+
+- `password`, `passwd`, `pwd`
+- `token`, `api_token`, `access_token`, `auth_token`
+- `api_key`, `apikey`, `api-key`
+- `secret`, `client_secret`, `secret_key`
+- `private_key`, `ssh_key`
+
+Matching is case-insensitive.
+
+## File locations
+
+| Path | Purpose |
+|------|---------|
+| `~/.pflow/settings.json` | Settings file |
+
+## Related
+
+- [CLI overview](/reference/cli/index) - Main pflow command
+- [Configuration reference](/reference/configuration) - All configuration options
+- [Quickstart](/quickstart) - Initial setup including API keys

@@ -1,0 +1,75 @@
+---
+title: "VS Code / Copilot"
+description: "Set up pflow with Visual Studio Code and GitHub Copilot"
+icon: "code"
+---
+
+<Info>
+**Prerequisites:** [Install pflow](/quickstart) before continuing.
+</Info>
+
+VS Code with GitHub Copilot supports MCP servers for extended AI capabilities. You can add pflow with one-click install or manual setup.
+
+## One-click install
+
+Click the button below to add pflow to VS Code:
+
+<a href="vscode:mcp/install?name=pflow&config=%7B%22type%22%3A%20%22stdio%22%2C%20%22command%22%3A%20%22pflow%22%2C%20%22args%22%3A%20%5B%22mcp%22%2C%20%22serve%22%5D%7D">
+  <img src="https://img.shields.io/badge/VS_Code-Install_pflow-0098FF?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="Install pflow in VS Code" />
+</a>
+
+If the button doesn't work, use the web redirect:
+
+<a href="https://vscode.dev/redirect/mcp/install?name=pflow&config=%7B%22type%22%3A%20%22stdio%22%2C%20%22command%22%3A%20%22pflow%22%2C%20%22args%22%3A%20%5B%22mcp%22%2C%20%22serve%22%5D%7D">
+  Install via vscode.dev
+</a>
+
+## Manual setup
+
+### 1. Open your MCP config file
+
+**User config** (all projects): `~/.vscode/mcp.json`
+
+**Workspace config** (single project): `.vscode/mcp.json`
+
+### 2. Add pflow to your config
+
+```json
+{
+  "mcpServers": {
+    "pflow": {
+      "type": "stdio",
+      "command": "pflow",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+### 3. Reload VS Code
+
+Reload the window or restart VS Code to load the new MCP server.
+
+## Verify installation
+
+Ask Copilot to list pflow workflows:
+
+```
+Use pflow to list available workflows
+```
+
+Copilot should be able to access pflow's tools and respond with workflow information.
+
+## Troubleshooting
+
+<Accordion title="One-click install didn't work">
+  1. Make sure VS Code is installed and the `vscode:` protocol handler is registered
+  2. Try the web redirect link instead
+  3. Fall back to manual setup
+</Accordion>
+
+<Accordion title="Copilot doesn't see pflow tools">
+  1. Make sure pflow is installed and in your PATH: `pflow --version`
+  2. Check your MCP config JSON syntax is valid
+  3. Reload VS Code window
+</Accordion>

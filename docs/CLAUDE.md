@@ -2,11 +2,28 @@
 
 This file provides guidance to AI agents when working on user-facing documentation in this folder.
 
+## Critical: Verify Before Writing
+
+**NEVER write documentation based on assumptions.** Before documenting any CLI command, flag, or behavior:
+
+1. **Verify the command exists** - Run `pflow --help` or check `src/pflow/cli/`
+2. **Verify flags exist** - Check the actual Click decorators in the code
+3. **Test examples** - Every command you document must be runnable
+4. **Check current usage patterns** - Run `pflow instructions usage` to see what we tell agents
+
+If you cannot verify something, ask the user or mark it as "needs verification" - do not guess.
+
+---
+
 ## Overview
 
-This is the Mintlify documentation for pflow. These docs are for **humans** who use pflow directly or set it up for their AI tools.
+This is the Mintlify documentation for pflow. These docs are for **humans** who:
+1. Set up pflow for their AI tools (Claude Code, Cursor, etc.)
+2. Configure and manage pflow (MCP servers, settings, workflows)
 
-**Important**: AI agents are NOT the audience for these docs. AI agents get instructions via `pflow instructions` command or MCP resources.
+**Primary use case**: Users install pflow so their AI agents can use it. The agent runs pflow commands or uses pflow's MCP server. Users rarely run pflow directly for tasks - their agents do.
+
+**Important**: AI agents get instructions via `pflow instructions` command or MCP resources, not these docs.
 
 ---
 

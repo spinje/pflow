@@ -1,0 +1,96 @@
+---
+title: "Using pflow"
+description: "What to expect after setup"
+icon: "book"
+---
+
+Once pflow is installed and connected to your AI tool, you don't need to learn anything else. Your agent has everything it needs to build and run workflows.
+
+## You don't need to learn the schema
+
+pflow workflows are JSON files with a specific structure - but you'll never need to write one manually. Your agent:
+
+- Reads pflow's instructions automatically
+- Knows which nodes are available
+- Understands how to connect them
+- Handles all the technical details
+- Creates, updates and reuses workflows for you
+
+You just describe what you want in natural language. Your agent does the rest.
+
+## Your agent guides you when needed
+
+When pflow needs something from you, your agent will tell you exactly what to do.
+
+**Need an API key?**
+
+> Your agent: "pflow needs an Anthropic API key for intelligent discovery. Run this command: `pflow settings set-env ANTHROPIC_API_KEY 'your-key'`"
+
+**Need to use a new MCP or API?**
+
+> Your agent helps you find and install the required nodes with your permission.
+
+You don't need to memorize *any* commands. Your agent knows them and will prompt you when necessary.
+
+## What happens behind the scenes
+
+When you ask your agent to do something:
+
+1. **Agent checks for existing workflows** - If you've done this task before, pflow finds the saved workflow
+2. **Runs instantly if found** - No re-planning, no LLM costs, same reliable result
+3. **Updates existing workflow if it needs to be modified** - Agent updates it with new functionality or parameters
+4. **Builds new workflow if needed** - Agent creates it once, pflow saves it for next time
+
+Over time, your workflow library grows. Tasks that used to require agent reasoning become instant commands.
+
+## Checking your workflow library
+
+To see what workflows have been saved:
+
+```bash
+pflow workflow list
+```
+
+To see details about a specific workflow:
+
+```bash
+pflow workflow describe my-workflow
+```
+
+See [workflow commands](/reference/cli/workflow) for more options.
+
+## Optional: Running workflows directly
+
+You don't *have to* go through your agent. Saved workflows are CLI commands you can run yourself:
+
+```bash
+# Run a saved workflow
+pflow analyze-logs input=./logs/api.log
+
+# Use in a script
+cat data.csv | pflow --output-format json process-csv > output.json
+
+# Schedule with cron
+0 9 * * * pflow daily-report >> ~/reports/daily.md
+```
+
+This is useful for:
+- **CI/CD pipelines** - Run workflows as build steps
+- **Cron jobs** - Schedule recurring tasks
+- **Scripts** - Chain workflows with other tools
+
+See [CLI overview](/reference/cli/index) for all options.
+
+## Summary
+
+| Task | Who handles it |
+|------|----------------|
+| Learning pflow commands | Your agent |
+| Writing workflow JSON | Your agent |
+| Knowing which nodes exist | Your agent |
+| Configuring API keys | You (agent tells you the command) |
+| Discovering new capabilities | Your agent or you  |
+| Installing new MCP servers | Your agent or you  |
+| Running saved workflows | Your agent or you directly |
+
+pflow is designed to stay out of your way. Your agent handles the complexity - you just describe what you want done. Think of pflow as the system that makes this possible in an efficient and scalable way.

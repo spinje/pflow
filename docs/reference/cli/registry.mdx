@@ -1,0 +1,341 @@
+---
+title: "pflow registry"
+description: "Browse and test available nodes"
+icon: "box"
+---
+
+The `pflow registry` command group manages the node registry - a catalog of all nodes available for building workflows. This includes core nodes, MCP tools, and custom user nodes.
+
+<Note>
+  **Agent commands.** These commands are primarily used by your AI agent to discover and test nodes when building workflows. The `scan` command is the exception - you run that to add custom nodes.
+</Note>
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all registered nodes |
+| `describe` | Show detailed node information |
+| `discover` | Find nodes using natural language |
+| `scan` | Add custom nodes from a directory |
+| `run` | Execute a single node for testing |
+
+## pflow registry list
+
+List all registered nodes, optionally filtered by pattern.
+
+```bash
+pflow registry list [FILTER_PATTERN] [--json]
+```
+
+**Arguments:**
+- `FILTER_PATTERN` - Optional keywords to filter (space-separated, AND logic)
+
+**Options:**
+- `--json` - Output as JSON
+
+**Examples:**
+
+```bash
+# List all nodes grouped by package
+pflow registry list
+
+# Filter by keyword
+pflow registry list github
+
+# Filter by multiple keywords (AND logic)
+pflow registry list "github api"
+
+# JSON output
+pflow registry list --json
+```
+
+**Output:**
+
+Nodes are grouped by package (core, MCP, user):
+
+```
+Core nodes:
+
+  file (5 nodes):
+    - read-file: Read file contents
+    - write-file: Write content to file
+    - copy-file: Copy a file
+    - move-file: Move or rename a file
+    - delete-file: Delete a file
+
+  llm (1 node):
+    - llm: Send prompts to LLM
+
+MCP tools:
+
+  github (15 tools):
+    - mcp-github-create-issue: Create a new GitHub issue
+    - mcp-github-list-issues: List issues from a repository
+    ...
+```
+
+## pflow registry describe
+
+Show detailed information about one or more nodes including parameters, inputs, and outputs.
+
+```bash
+pflow registry describe <NODE>...
+```
+
+**Arguments:**
+- `NODE` - One or more node names/IDs to describe (required)
+
+**Examples:**
+
+```bash
+# Single node
+pflow registry describe llm
+
+# Multiple nodes at once
+pflow registry describe read-file write-file llm
+
+# MCP tool (multiple name formats work)
+pflow registry describe mcp-github-create-issue
+pflow registry describe github-create-issue
+pflow registry describe create-issue
+```
+
+**Output:**
+
+```
+Node: llm
+Type: core
+
+Description: Send prompts to an LLM and get responses
+
+Parameters:
+  - prompt (string, required): The prompt to send
+  - system (string): System prompt for context
+  - model (string): Model to use (default: auto-detect)
+  - temperature (float): Response randomness (0-1)
+
+Inputs:
+  - context (string): Optional context from shared store
+
+Outputs:
+  - response (string): LLM response text
+
+Example usage:
+  pflow registry run llm prompt="Hello world"
+```
+
+<Note>
+  For MCP tools, pflow handles name variations automatically. `create-issue`, `github-create-issue`, and `mcp-github-create-issue` all resolve to the same tool (if unique).
+</Note>
+
+## pflow registry discover
+
+Use AI to find nodes relevant to a natural language task description.
+
+```bash
+pflow registry discover "<QUERY>"
+```
+
+**Arguments:**
+- `QUERY` - Natural language description of what you need (max 500 characters)
+
+**Example:**
+
+```bash
+pflow registry discover "I need to read files and call APIs"
+```
+
+**Output:**
+
+Returns formatted markdown with relevant node specifications:
+
+```
+Based on your task, these nodes are relevant:
+
+read-file
+  Read file contents from the filesystem
+  Parameters: file_path (required), encoding
+
+http
+  Make HTTP requests to APIs
+  Parameters: url (required), method, headers, body
+
+Use 'pflow registry describe <node>' for full details.
+```
+
+<Warning>
+  Requires an Anthropic API key. Set it with `pflow settings set-env ANTHROPIC_API_KEY "your-key"`.
+</Warning>
+
+## pflow registry scan
+
+Scan a directory for custom user nodes and add them to the registry.
+
+```bash
+pflow registry scan [PATH] [--force] [--json]
+```
+
+**Arguments:**
+- `PATH` - Directory to scan (default: `~/.pflow/nodes/`)
+
+**Options:**
+- `--force, -f` - Skip confirmation prompt
+- `--json` - Output as JSON
+
+**Example:**
+
+```bash
+# Scan default location
+pflow registry scan
+
+# Scan custom directory
+pflow registry scan ./my-nodes/
+
+# Skip confirmation
+pflow registry scan --force
+```
+
+**Output:**
+
+```
+Found 3 Python files to scan...
+
+Valid nodes:
+  ✓ my-custom-node: Custom processing logic
+  ✓ data-transformer: Transform data formats
+
+Invalid (skipped):
+  ⚠ broken-node.py: Missing exec() method
+
+Add 2 nodes to registry? [y/N]: y
+
+✓ Added 2 nodes to registry
+```
+
+<Warning>
+  Custom nodes execute with your user privileges. Only add nodes from sources you trust.
+</Warning>
+
+## pflow registry run
+
+Execute a single node independently for testing.
+
+```bash
+pflow registry run <NODE> [PARAMS...] [OPTIONS]
+```
+
+**Arguments:**
+- `NODE` - Node name/ID to execute (required)
+- `PARAMS` - Parameter key=value pairs
+
+**Options:**
+- `--output-format text|json` - Output format (default: text)
+- `--timeout INT` - Execution timeout in seconds (default: 60)
+- `-v, --verbose` - Show detailed execution information
+
+**Examples:**
+
+```bash
+# Test file reading
+pflow registry run read-file file_path=/tmp/test.txt
+
+# Test LLM node
+pflow registry run llm prompt="Hello world"
+
+# Test with JSON output
+pflow registry run read-file file_path=/tmp/test.txt --output-format json
+
+# Test MCP tool
+pflow registry run mcp-github-list-issues repo=owner/repo state=open
+
+# With timeout
+pflow registry run http url="https://api.example.com" --timeout 30
+```
+
+**Parameter type inference:**
+
+```bash
+count=10              # integer
+rate=0.5              # float
+enabled=true          # boolean
+tags='["a","b"]'      # JSON array
+config='{"key":"val"}'# JSON object
+name=example          # string
+```
+
+**Output (default - structure mode):**
+
+Shows output structure without full data:
+
+```
+✓ Node executed successfully
+
+Output structure:
+  $.content (string) - 42 chars
+  $.metadata.size (number)
+  $.metadata.created (string)
+```
+
+**Output (text mode):**
+
+```
+✓ Node executed successfully
+
+content: "Hello world..."
+metadata:
+  size: 123
+  created: "2024-01-15"
+
+Execution time: 45ms
+```
+
+**Output (JSON mode):**
+
+```json
+{
+  "success": true,
+  "outputs": {
+    "content": "Hello world...",
+    "metadata": {"size": 123}
+  },
+  "execution_time_ms": 45
+}
+```
+
+<Tip>
+  Agents use `registry run` to test node parameters before building workflows. It helps discover output structure for nodes with dynamic types.
+</Tip>
+
+## Node types
+
+| Type | Description | Example |
+|------|-------------|---------|
+| Core | Built-in pflow nodes | `read-file`, `llm`, `http` |
+| MCP | Tools from MCP servers | `mcp-github-create-issue` |
+| User | Custom user-defined nodes | Scanned from `~/.pflow/nodes/` |
+
+## MCP tool naming
+
+MCP tools follow the pattern `mcp-{server}-{tool}`. Multiple name formats work:
+
+| Format | Example |
+|--------|---------|
+| Full | `mcp-github-create-issue` |
+| Server-qualified | `github-create-issue` |
+| Short (if unique) | `create-issue` |
+
+pflow automatically resolves the shortest unambiguous name.
+
+## File locations
+
+| Path | Purpose |
+|------|---------|
+| `~/.pflow/registry.json` | Registry data |
+| `~/.pflow/nodes/` | Default custom node location |
+
+## Related
+
+- [CLI overview](/reference/cli/index) - Main pflow command
+- [Workflow commands](/reference/cli/workflow) - Manage saved workflows
+- [Nodes reference](/reference/nodes/index) - Core node documentation

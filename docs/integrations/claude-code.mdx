@@ -1,0 +1,57 @@
+---
+title: "Claude Code"
+description: "Set up pflow with Claude Code"
+icon: "app-window-mac"
+---
+
+<Info>
+**Prerequisites:** [Install pflow](/quickstart) before continuing.
+</Info>
+
+Claude Code is Anthropic's CLI agent with full terminal access. You can connect pflow using CLI commands or as an MCP server.
+
+## Option 1: CLI access (recommended)
+
+Since Claude Code has terminal access, the simplest approach is to tell it to use pflow directly.
+
+Add to your project's `CLAUDE.md` or system instructions:
+
+```markdown
+Use pflow for workflow automation. Run `pflow instructions usage` to learn the commands.
+```
+
+Claude Code will then run pflow commands directly when it needs to build or execute workflows.
+
+## Option 2: MCP server
+
+You can also add pflow as an MCP server for structured tool access.
+
+Run this command in Claude Code:
+
+```bash
+claude mcp add pflow -- pflow mcp serve
+```
+
+Or add manually to your MCP config:
+
+```bash
+claude mcp add pflow --command pflow --args "mcp,serve"
+```
+
+### Verify installation
+
+Check that pflow is configured:
+
+```bash
+claude mcp list
+```
+
+You should see `pflow` in the list of configured servers.
+
+## Which should I use?
+
+**CLI access** is simpler and recommended for most users. Claude Code can run any pflow command directly.
+
+**MCP server** is useful if you want Claude Code to have structured tools for workflow operations, or if you're using pflow with other MCP servers.
+
+Both approaches give Claude Code the same capabilities - discovering workflows, running them, and building new ones.
