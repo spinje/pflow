@@ -749,17 +749,82 @@ This helps users understand why there are two integration options.
 
 ## Current Status
 
-**Complete:** 16 pages
+**Complete:** 23 pages
 - index.mdx, quickstart.mdx
 - guides/using-pflow.mdx, guides/adding-mcp-servers.mdx
 - 6 integration pages
 - 5 CLI reference pages
+- 7 node reference pages (index + 6 nodes)
 - docs.json
 
-**Placeholder:** 8 pages
+**Placeholder:** 2 pages
 - guides/debugging.mdx
-- 6 node reference pages
 - reference/configuration.mdx
+
+---
+
+## 2025-12-11 - Node Reference Pages Complete
+
+Created all 7 node reference pages with comprehensive documentation:
+
+### reference/nodes/index.mdx
+- Overview of node system
+- Card grid linking to all node pages
+- Explanation of parameters vs shared store
+- Node discovery commands
+- MCP extension pattern
+
+### reference/nodes/file.mdx
+- 5 file nodes: read-file, write-file, copy-file, move-file, delete-file
+- Complete parameter and output tables
+- Binary handling (base64 encoding)
+- Line numbering for text files
+- Safety mechanism for delete-file (confirm_delete)
+- Example workflows
+
+### reference/nodes/llm.mdx
+- Integration with Simon Willison's llm library
+- All parameters: prompt, model, system, temperature, max_tokens, images
+- Token usage output structure
+- Model support table (OpenAI, Anthropic, Google, local)
+- Automatic JSON parsing
+- Image support for vision models
+- Temperature guide
+
+### reference/nodes/http.mdx
+- All HTTP methods supported
+- Authentication options (auth_token, api_key - mutually exclusive)
+- Response handling (JSON, binary, text)
+- Method auto-detection
+- Query parameters
+- Binary file download example
+
+### reference/nodes/shell.mdx
+- stdin for data (not command interpolation!)
+- stdin type handling table
+- Security: blocked patterns (rm -rf /, fork bombs, etc.)
+- Security: warning patterns (sudo, shutdown)
+- Smart error handling (grep exit code 1 as success)
+- Environment variables and working directory
+
+### reference/nodes/claude-code.mdx
+- Task and execution parameters
+- Authentication tabs (API key vs CLI)
+- Structured output with output_schema
+- Schema field types
+- Tool permissions (Read, Write, Edit, Bash)
+- Metadata structure (cost, duration, tokens)
+
+### reference/nodes/mcp.mdx
+- How MCP tools become nodes
+- Node naming pattern: mcp-{server}-{tool}
+- Output key structure (result, {server}_{tool}_result, extracted fields)
+- Example workflow with GitHub + Slack
+- Transport types (stdio, http)
+- Authentication configuration
+- Auto-sync behavior
+
+**Research method:** Used 6 parallel pflow-codebase-searcher agents to gather accurate interface information from source code
 
 ---
 

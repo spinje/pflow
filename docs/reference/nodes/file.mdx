@@ -1,7 +1,231 @@
 ---
-title: "file"
-description: "File operations node"
+title: "File operations"
+description: "Read, write, copy, move, and delete files"
 icon: "file"
 ---
 
-Documentation coming soon.
+<Note>
+  **Agent commands.** Your AI agent uses these nodes in workflows. You don't configure them directly.
+</Note>
+
+The file nodes handle local filesystem operations. They support both text and binary files, with automatic encoding detection and safe atomic writes.
+
+## read-file
+
+Reads a file and stores its contents in the shared store.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `file_path` | str | Yes | - | Path to the file to read |
+| `encoding` | str | No | `utf-8` | Text encoding (ignored for binary files) |
+
+### Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `content` | str | File contents (with line numbers for text, base64 for binary) |
+| `content_is_binary` | bool | `true` if content is base64-encoded binary data |
+| `file_path` | str | Normalized absolute path that was read |
+| `error` | str | Error message (only present on failure) |
+
+### Behavior
+
+**Text files** are returned with 1-indexed line numbers:
+```
+1: First line of file
+2: Second line of file
+3: Third line of file
+```
+
+**Binary files** (images, PDFs, executables) are automatically detected and returned as base64-encoded strings. The node detects binary files by:
+- Known extensions: `.png`, `.jpg`, `.pdf`, `.zip`, `.mp3`, `.exe`, `.woff`, etc.
+- Encoding failures: Files that fail UTF-8 decoding fall back to binary mode
+
+**Path handling**: Expands `~` to home directory and converts to absolute path.
+
+---
+
+## write-file
+
+Writes content to a file, creating parent directories as needed.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `file_path` | str | Yes | - | Path where file should be written |
+| `content` | str | Yes | - | Content to write (text, JSON, or base64 for binary) |
+| `encoding` | str | No | `utf-8` | Text encoding |
+| `append` | bool | No | `false` | Append to file instead of overwriting |
+| `content_is_binary` | bool | No | `false` | Set to `true` if content is base64-encoded binary |
+
+### Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `written` | str | Success message with file path |
+| `error` | str | Error message (only present on failure) |
+
+### Behavior
+
+**Atomic writes**: Regular writes use a temp file + rename pattern to prevent partial writes. Append mode writes directly.
+
+**Auto-serialization**: Dict and list content is automatically serialized to pretty-printed JSON.
+
+**Directory creation**: Parent directories are created automatically if they don't exist.
+
+**Disk space check**: Verifies sufficient disk space (2x content size) before writing.
+
+---
+
+## copy-file
+
+Copies a file to a new location, preserving metadata.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `source_path` | str | Yes | - | Source file path |
+| `dest_path` | str | Yes | - | Destination file path |
+| `overwrite` | bool | No | `false` | Overwrite if destination exists |
+
+### Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `copied` | str | Success message with paths |
+| `error` | str | Error message (only present on failure) |
+
+### Behavior
+
+- Preserves file metadata (timestamps, permissions) using `shutil.copy2()`
+- Creates parent directories for destination automatically
+- Checks disk space (1.5x file size) before copying
+- Fails if destination exists and `overwrite` is `false`
+
+---
+
+## move-file
+
+Moves a file to a new location.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `source_path` | str | Yes | - | Source file path |
+| `dest_path` | str | Yes | - | Destination file path |
+| `overwrite` | bool | No | `false` | Overwrite if destination exists |
+
+### Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `moved` | str | Success message with paths |
+| `warning` | str | Warning if source deletion failed after copy (partial success) |
+| `error` | str | Error message (only present on failure) |
+
+### Behavior
+
+- **Same filesystem**: Uses atomic rename
+- **Cross-device**: Falls back to copy + delete, preserving metadata
+- Creates parent directories for destination automatically
+- Handles partial success (copy succeeds, delete fails) with warning
+
+---
+
+## delete-file
+
+Deletes a file with required confirmation.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `file_path` | str | Yes | - | Path to the file to delete |
+| `confirm_delete` | bool | Yes | - | Must be `true` to confirm deletion |
+
+<Warning>
+  The `confirm_delete` parameter must come from the shared store, not node parameters. This safety mechanism prevents accidental deletions from workflow configuration.
+</Warning>
+
+### Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `deleted` | str | Success message (includes note if file didn't exist) |
+| `error` | str | Error message (only present on failure) |
+
+### Behavior
+
+- **Idempotent**: Returns success if file already doesn't exist
+- **Safety**: Requires explicit confirmation via shared store
+- **Files only**: Cannot delete directories (use shell node for `rm -r`)
+
+---
+
+## Common patterns
+
+### Chaining file operations
+
+```json
+{
+  "nodes": [
+    {
+      "id": "read",
+      "type": "read-file",
+      "params": { "file_path": "input.txt" }
+    },
+    {
+      "id": "process",
+      "type": "llm",
+      "params": { "prompt": "Summarize: ${read.content}" }
+    },
+    {
+      "id": "write",
+      "type": "write-file",
+      "params": {
+        "file_path": "summary.txt",
+        "content": "${process.response}"
+      }
+    }
+  ]
+}
+```
+
+### Working with binary files
+
+```json
+{
+  "nodes": [
+    {
+      "id": "read_image",
+      "type": "read-file",
+      "params": { "file_path": "photo.png" }
+    },
+    {
+      "id": "copy_image",
+      "type": "write-file",
+      "params": {
+        "file_path": "backup/photo.png",
+        "content": "${read_image.content}",
+        "content_is_binary": "${read_image.content_is_binary}"
+      }
+    }
+  ]
+}
+```
+
+## Error handling
+
+All file nodes return an `error` action on failure. Common errors:
+
+| Error | Cause |
+|-------|-------|
+| `FileNotFoundError` | File or directory doesn't exist |
+| `PermissionError` | Insufficient permissions |
+| `IsADirectoryError` | Expected file, got directory |
+| `OSError` | Disk full, filesystem issues |

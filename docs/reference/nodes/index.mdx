@@ -1,7 +1,112 @@
 ---
 title: "Nodes overview"
-description: "Available node types"
+description: "Building blocks for pflow workflows"
 icon: "boxes"
 ---
 
-Documentation coming soon.
+<Note>
+  **For reference, not memorization.** Your AI agent knows which nodes to use and how to configure them. This reference is for understanding what's possible.
+</Note>
+
+Nodes are the building blocks of pflow workflows. Each node performs a single operation - reading a file, calling an API, running a shell command - and passes data to the next node through the shared store.
+
+## Core nodes
+
+pflow includes these built-in nodes:
+
+<Columns cols={2}>
+  <Card title="File operations" icon="file" href="/reference/nodes/file">
+    Read, write, copy, move, and delete files
+  </Card>
+  <Card title="LLM" icon="sparkles" href="/reference/nodes/llm">
+    Call AI models with prompts and images
+  </Card>
+  <Card title="HTTP" icon="globe" href="/reference/nodes/http">
+    Make API requests to web services
+  </Card>
+  <Card title="Shell" icon="terminal" href="/reference/nodes/shell">
+    Execute shell commands
+  </Card>
+  <Card title="Claude Code" icon="wand" href="/reference/nodes/claude-code">
+    AI-assisted development tasks
+  </Card>
+  <Card title="MCP tools" icon="plug" href="/reference/nodes/mcp">
+    Use tools from MCP servers
+  </Card>
+</Columns>
+
+## How nodes work
+
+Every node follows the same pattern:
+
+1. **Read inputs** from the shared store or node parameters
+2. **Execute** its operation
+3. **Write outputs** to the shared store
+4. **Return an action** that determines the next node
+
+### Parameters vs shared store
+
+Nodes receive data in two ways:
+
+| Source | When to use | Example |
+|--------|-------------|---------|
+| **Parameters** | Fixed values set when building the workflow | `"model": "gpt-4o-mini"` |
+| **Shared store** | Dynamic values from previous nodes | `"prompt": "${summarize.response}"` |
+
+Template variables like `${node_id.key}` pull data from the shared store at runtime.
+
+### Output keys
+
+Each node writes specific keys to the shared store. For example:
+
+- `read-file` writes `content`, `file_path`, `content_is_binary`
+- `llm` writes `response`, `llm_usage`
+- `http` writes `response`, `status_code`, `response_headers`
+
+Check each node's documentation for its complete interface.
+
+## Discovering nodes
+
+Your agent uses these commands to find the right nodes:
+
+```bash
+# List all available nodes
+pflow registry list
+
+# Search by capability
+pflow registry discover "read a JSON file"
+
+# Get full interface details
+pflow registry describe read-file
+```
+
+## Extending with MCP
+
+Beyond core nodes, you can add capabilities from MCP servers. When you run `pflow mcp sync`, each MCP tool becomes a pflow node:
+
+```bash
+# Add a GitHub MCP server
+pflow mcp add github.mcp.json
+
+# Sync to discover tools
+pflow mcp sync github
+
+# New nodes appear in registry
+pflow registry list --group mcp
+# mcp-github-create-issue
+# mcp-github-list-repos
+# ...
+```
+
+See [MCP tools](/reference/nodes/mcp) for details on how this works.
+
+## Node categories
+
+| Category | Nodes | Purpose |
+|----------|-------|---------|
+| **File** | read-file, write-file, copy-file, move-file, delete-file | Local filesystem operations |
+| **LLM** | llm | AI model calls via any provider |
+| **HTTP** | http | Web API requests |
+| **Shell** | shell | System command execution |
+| **Claude** | claude-code | AI-assisted development |
+| **MCP** | mcp-{server}-{tool} | External tool integration |
