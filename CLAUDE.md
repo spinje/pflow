@@ -488,33 +488,35 @@ Version (v0.3.0):
 
 Version (v0.4.0):
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
-- ⏳ Task 91: Export Workflows as Self-Hosted MCP Server Packages
-- ⏳ Task 81: Expose tools that lets users/agents find and install existing remote mcp servers
 - ⏳ Task 78: Save User Request History in Workflow Metadata
 - ⏳ Task 75: Execution Preview in Validation
-- ⏳ Task 74: Create knowledge base system
+
+Version (v0.5.0):
+- ⏳ Task 66: Support structured output for LLM node
+- ⏳ Task 87: Implement sandbox runtime for Shell Node
+- ⏳ Task 91: Export Workflows as Self-Hosted MCP Server Packages
 
 Version (v1.0.0):
+- ⏳ Task 81: Expose tools that lets users/agents find and install existing remote mcp servers
 - ⏳ Task 86: MCP Server Discovery and Installation Automation
-- ⏳ Task 66: Support structured output for LLM node
 - ⏳ Task 77: Improve Agent Instructions
 - ⏳ Task 65: MCP Gateway Integration Support
 
 Later:
+- ⏳ Task 74: Create knowledge base system
 - ⏳ Task 51: Refactor CLI main.py
 - ⏳ Task 45: Evaluate if wrapping or integrating n8n is worth the effort
 - ⏳ Task 92: Replace Planner with Agent Node + Pflow MCP Tools
 - ⏳ Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
-- ⏳ Task 87: Implement sandbox runtime for Shell Node
 - ⏳ Task 64: MCP Orchestration with long running servers
 - ⏳ Task 79: Show tool definitions as structured JSON
-- ⏳ Task 69: Refactor Internal Repair system to use Pocketflow
 
 Deprecated Tasks?:
 - ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair and workflow iteratio
 - ❌ Task 44: Build caching system
 - ❌ Task 61: Implement Fast Mode for Planner
 - ❌ Task 60: Support Gemini models for planner
+- ❌ Task 69: Refactor Internal Repair system to use Pocketflow
 
 Cloud Platform:
 - ⏳ Task 90: Expose Individual Workflows as Remote HTTP MCP Servers
