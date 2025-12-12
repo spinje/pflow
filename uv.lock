@@ -1000,6 +1000,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "llm" },
     { name = "llm-anthropic" },
+    { name = "llm-gemini" },
     { name = "mcp", extra = ["cli"] },
     { name = "pydantic" },
     { name = "requests" },
@@ -1008,7 +1009,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "deptry" },
-    { name = "llm-gemini" },
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
@@ -1032,6 +1032,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "llm", specifier = ">=0.27.1" },
     { name = "llm-anthropic", specifier = "==0.20" },
+    { name = "llm-gemini", specifier = ">=0.25" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.17.0" },
     { name = "pydantic" },
     { name = "requests", specifier = ">=2.32.5" },
@@ -1040,7 +1041,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "deptry", specifier = ">=0.23.0" },
-    { name = "llm-gemini", specifier = "==0.25" },
     { name = "mkdocs", specifier = ">=1.4.2" },
     { name = "mkdocs-material", specifier = ">=8.5.10" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.26.1" },
