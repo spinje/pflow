@@ -19,7 +19,9 @@ class NodeFilterSettings(BaseModel):
     """Node filtering configuration."""
 
     allow: list[str] = Field(default_factory=lambda: ["*"])  # Default: allow all
-    deny: list[str] = Field(default_factory=list)
+    # Default: deny git/github nodes (require external tools, not universally useful)
+    # Users can enable with: pflow settings allow pflow.nodes.git.* pflow.nodes.github.*
+    deny: list[str] = Field(default_factory=lambda: ["pflow.nodes.git.*", "pflow.nodes.github.*"])
 
 
 class RegistrySettings(BaseModel):
