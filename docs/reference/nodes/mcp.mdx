@@ -22,7 +22,7 @@ MCP (Model Context Protocol) lets you extend pflow with external tools. When you
 pflow mcp add github.mcp.json
 
 # Tools are now available
-pflow registry list --group mcp
+pflow mcp tools github
 # mcp-github-create_issue
 # mcp-github-list_repos
 # mcp-github-search_code
@@ -97,75 +97,11 @@ For dict results, top-level fields are also extracted directly:
 }
 ```
 
-## Adding MCP servers
+## Setup
 
-See [Adding MCP servers](/guides/adding-mcp-servers) for detailed setup instructions.
+To use MCP tools, first add MCP servers to pflow. See [Adding MCP servers](/guides/adding-mcp-servers) for configuration format, authentication, and examples.
 
-Quick examples:
-
-```bash
-# From config file
-pflow mcp add github.mcp.json
-
-# From JSON string
-pflow mcp add '{"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/data"]}}'
-```
-
-## Managing servers
-
-```bash
-# List configured servers
-pflow mcp list
-
-# See available tools
-pflow mcp tools github
-
-# Get tool details
-pflow mcp info github create_issue
-
-# Remove a server
-pflow mcp remove github
-```
-
-## Transport types
-
-MCP servers can run locally or remotely:
-
-| Transport | Use case | Example |
-|-----------|----------|---------|
-| **stdio** | Local subprocess | `npx @modelcontextprotocol/server-filesystem` |
-| **http** | Remote server | `https://mcp.example.com/api` |
-
-Both work the same way once configured. See [Adding MCP servers](/guides/adding-mcp-servers) for configuration details.
-
-## Authentication
-
-MCP servers may require authentication. This is configured when adding the server:
-
-```json
-{
-  "github": {
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-github"],
-    "env": {
-      "GITHUB_TOKEN": "${GITHUB_TOKEN}"
-    }
-  }
-}
-```
-
-For HTTP servers with auth:
-
-```json
-{
-  "my-api": {
-    "url": "https://mcp.example.com/sse",
-    "headers": {
-      "Authorization": "Bearer ${API_TOKEN}"
-    }
-  }
-}
-```
+pflow supports both local (stdio) and remote (HTTP) MCP servers. Both work identically in workflows - same naming, parameters, and output structure.
 
 ## Error handling
 

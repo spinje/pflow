@@ -24,7 +24,7 @@ Config file format:
 {
   "github": {
     "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "args": ["-y", "@github/mcp-server"],
     "env": {
       "GITHUB_PERSONAL_ACCESS_TOKEN": "your-token"
     }
@@ -38,7 +38,7 @@ For quick setup, pass JSON directly:
 
 ```bash
 # Local stdio server
-pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}'
+pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@github/mcp-server"]}}'
 
 # Remote HTTP server
 pflow mcp add '{"slack": {"type": "http", "url": "https://mcp.example.com/slack"}}'
@@ -96,11 +96,21 @@ pflow mcp info mcp-github-create-issue
 pflow mcp remove github
 ```
 
+## Configuration file location
+
+pflow stores MCP server configurations in:
+
+```
+~/.pflow/mcp-servers.json
+```
+
+You can edit this file directly instead of using `pflow mcp add`. The file uses the [standard MCP configuration format](https://modelcontextprotocol.io/docs/develop/connect-local-servers) used by Claude Desktop, VS Code, and other MCP clients.
+
 ## Server configuration format
 
 ### Local (stdio) servers
 
-Local servers run as subprocesses on your machine:
+Local servers run as subprocesses on your machine. The `type` field is optional and defaults to `"stdio"`:
 
 ```json
 {
@@ -122,13 +132,16 @@ Local servers run as subprocesses on your machine:
 
 ### Remote (HTTP) servers
 
-Remote servers connect over HTTP/SSE:
+Remote servers connect over HTTP/SSE. The `type` field is **required** for HTTP servers:
 
 ```json
 {
   "server-name": {
     "type": "http",
-    "url": "https://mcp.example.com/server"
+    "url": "https://mcp.example.com/server",
+    "headers": {
+      "Authorization": "Bearer ${API_TOKEN}"
+    }
   }
 }
 ```
@@ -136,46 +149,110 @@ Remote servers connect over HTTP/SSE:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `type` | Yes | Must be `"http"` for remote servers |
-| `url` | Yes | The server URL |
+| `url` | Yes | The server URL (SSE endpoint) |
+| `headers` | No | HTTP headers for authentication |
 
-## How tools appear in pflow
+### Environment variable expansion
 
-MCP tools are registered with the prefix `mcp__<server>__<tool>`. For example:
+Use `${VAR}` syntax to reference environment variables in your config:
 
-- `mcp__github__create_issue`
-- `mcp__slack__send_message`
-- `mcp__notion__create_page`
+```json
+{
+  "github": {
+    "command": "npx",
+    "args": ["-y", "@github/mcp-server"],
+    "env": {
+      "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+    }
+  }
+}
+```
 
-Your agent can discover these tools using:
+Variables are resolved from two sources (in order of precedence):
+1. **System environment** - `export GITHUB_TOKEN="your-token"`
+2. **pflow settings** - `pflow settings set-env GITHUB_TOKEN "your-token"`
+
+Use `${VAR:-default}` for fallback values:
+
+```json
+{
+  "url": "${API_URL:-https://api.example.com}"
+}
+```
+
+Variables are expanded at runtime when the server starts, not when the config is saved.
+
+## Using MCP tools in workflows
+
+Once added, MCP tools become pflow nodes that your agent can use:
 
 ```bash
+# Discover relevant tools
 pflow registry discover "create github issues"
+
+# See tool parameters
+pflow registry describe mcp-github-create_issue
 ```
+
+See [MCP nodes](/reference/nodes/mcp) for how these nodes work in workflows - naming convention, parameters, output format, and examples.
+
+<Tip>
+If you're repeatedly calling the same API using the [http node](/reference/nodes/http), consider having your agent create an MCP server for it. This turns one-off HTTP requests into reusable, discoverable tools.
+</Tip>
 
 ## Common MCP servers
 
-Here are some popular MCP servers you can add to pflow:
+Here are some popular MCP servers. Save any of these as a `.json` file and add with `pflow mcp add ./filename.json`:
 
 ### GitHub
 
-```bash
-pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "your-token"}}}'
+```json
+{
+  "github": {
+    "command": "npx",
+    "args": ["-y", "@github/mcp-server"],
+    "env": {
+      "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+    }
+  }
+}
 ```
+
+See [github/github-mcp-server](https://github.com/github/github-mcp-server) for full documentation. pflow also has [built-in github nodes](/reference/experimental#built-in-git-and-github-nodes) but they're experimental and disabled by default.
 
 ### Filesystem
 
-```bash
-pflow mcp add '{"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/directory"]}}'
+<Note>
+For basic file operations, pflow includes built-in [file nodes](/reference/nodes/file) - no MCP server needed. The filesystem MCP server is useful for advanced operations or stricter directory sandboxing. If you do use it, consider disabling the built-in file nodes to avoid confusion: `pflow settings deny "pflow.nodes.file.*"`.
+</Note>
+
+```json
+{
+  "filesystem": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/directory"]
+  }
+}
 ```
 
 ### Brave Search
 
-```bash
-pflow mcp add '{"brave-search": {"command": "npx", "args": ["-y", "@anthropic/mcp-server-brave-search"], "env": {"BRAVE_API_KEY": "your-key"}}}'
+```json
+{
+  "brave-search": {
+    "command": "npx",
+    "args": ["-y", "@brave/brave-search-mcp-server"],
+    "env": {
+      "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+    }
+  }
+}
 ```
 
+See [Brave Search API](https://brave.com/search/api/) for API key setup (free tier: 2,000 queries/month).
+
 <Note>
-Find more MCP servers at [mcp.run](https://mcp.run) and [smithery.ai](https://smithery.ai).
+Find more MCP servers at the [Official MCP Registry](https://registry.modelcontextprotocol.io) or the community-curated [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) list.
 </Note>
 
 ## Troubleshooting

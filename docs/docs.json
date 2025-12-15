@@ -19,6 +19,7 @@
     "tabs": [
       {
         "tab": "Documentation",
+        "icon": "book-open",
         "groups": [
           {
             "group": "Getting started",
@@ -50,6 +51,7 @@
       },
       {
         "tab": "Reference",
+        "icon": "file-search",
         "groups": [
           {
             "group": "CLI commands",
@@ -78,6 +80,12 @@
             "pages": [
               "reference/configuration"
             ]
+          },
+          {
+            "group": "Experimental",
+            "pages": [
+              "reference/experimental"
+            ]
           }
         ]
       }
@@ -104,5 +112,12 @@
     "socials": {
       "github": "https://github.com/spinje/pflow"
     }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "chatgpt",
+      "claude"
+    ]
   }
 }

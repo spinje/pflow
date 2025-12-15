@@ -15,7 +15,7 @@ The LLM node calls AI models using [Simon Willison's llm library](https://llm.da
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `prompt` | str | Yes | - | Text prompt to send to the model |
-| `model` | str | No | `gpt-4o-mini` | Model identifier |
+| `model` | str | No | `gpt-5.2` | Model identifier |
 | `system` | str | No | - | System prompt for behavior guidance |
 | `temperature` | float | No | `1.0` | Sampling temperature (0.0-2.0) |
 | `max_tokens` | int | No | - | Maximum response tokens |
@@ -33,7 +33,7 @@ The LLM node calls AI models using [Simon Willison's llm library](https://llm.da
 
 ```json
 {
-  "model": "gpt-4o-mini",
+  "model": "gpt-5.2",
   "input_tokens": 150,
   "output_tokens": 89,
   "total_tokens": 239,
@@ -44,18 +44,93 @@ The LLM node calls AI models using [Simon Willison's llm library](https://llm.da
 
 ## Model support
 
-The LLM node supports any model available through the `llm` library:
+These providers are included with pflow - just set your API key:
 
-| Provider | Example models | Setup |
-|----------|---------------|-------|
-| OpenAI | `gpt-4o`, `gpt-4o-mini`, `gpt-4` | `OPENAI_API_KEY` env var |
-| Anthropic | `claude-sonnet-4-20250514`, `claude-opus-4-0` | `ANTHROPIC_API_KEY` + `llm-anthropic` plugin |
-| Google | `gemini-2.0-flash`, `gemini-pro` | Provider-specific setup |
-| Local | Depends on plugin | `llm-ollama`, `llm-gpt4all` |
+| Provider | Example models |
+|----------|---------------|
+| OpenAI | `gpt-5.2`, `gpt-5.1`, `gpt-4o` |
+| Anthropic | `claude-opus-4-5`, `claude-sonnet-4-5`, `claude-haiku-4-5` |
+| Google | `gemini-3.0-pro`, `gemini-2.5-flash` |
+
+```bash
+# Set API keys (stored in ~/.pflow/settings.json)
+pflow settings set-env OPENAI_API_KEY "sk-..."
+pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+pflow settings set-env GEMINI_API_KEY "..."
+```
 
 <Tip>
   Run `llm models` to see all available models on your system.
 </Tip>
+
+## Extending with plugins
+
+pflow uses [Simon Willison's llm library](https://llm.datasette.io/), which supports plugins for additional providers and local models.
+
+### Installing plugins
+
+If you installed pflow with `uv tool`, include plugins during installation:
+
+```bash
+uv tool install --with llm-openrouter pflow-cli
+```
+
+If you installed with `pipx`, use inject to add plugins:
+
+```bash
+pipx inject pflow-cli llm-openrouter
+```
+
+<Note>
+  Plugins must be installed in pflow's environment. Running `llm install` separately won't work with isolated installations.
+</Note>
+
+### Popular plugins
+
+| Plugin | Install flag | Use case |
+|--------|--------------|----------|
+| `llm-openrouter` | `--with llm-openrouter` | Access Claude, GPT, Llama, Mistral via [OpenRouter](https://openrouter.ai) |
+| `llm-ollama` | `--with llm-ollama` | Run models locally with [Ollama](https://ollama.ai) |
+
+After installing, set up credentials:
+
+```bash
+# OpenRouter - get key from https://openrouter.ai/keys
+llm keys set openrouter
+
+# Ollama - no API key needed
+brew install ollama
+ollama serve
+ollama pull llama3.2
+```
+
+### Using plugin models
+
+OpenRouter models use the `openrouter/provider/model` format:
+
+```json
+{
+  "type": "llm",
+  "params": {
+    "model": "openrouter/anthropic/claude-sonnet-4-5",
+    "prompt": "Summarize this"
+  }
+}
+```
+
+Ollama models use the model name directly:
+
+```json
+{
+  "type": "llm",
+  "params": {
+    "model": "llama3.2",
+    "prompt": "Summarize this"
+  }
+}
+```
+
+See the [llm plugin directory](https://llm.datasette.io/en/stable/plugins/directory.html) for more providers including Mistral, Bedrock, and other local model options.
 
 ## Automatic JSON parsing
 
@@ -84,7 +159,7 @@ For vision-capable models, pass image URLs or local file paths:
   "type": "llm",
   "params": {
     "prompt": "What's in this image?",
-    "model": "gpt-4o",
+    "model": "gpt-5.2",
     "images": ["photo.jpg"]
   }
 }
@@ -162,7 +237,7 @@ The response will be automatically parsed if it's valid JSON.
       "type": "llm",
       "params": {
         "prompt": "Describe the main elements in this image",
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "images": ["${file_path}"]
       }
     }
@@ -179,14 +254,3 @@ The response will be automatically parsed if it's valid JSON.
 | Rate limit | Too many requests | Wait and retry automatically (built-in retry) |
 
 The node retries transient failures automatically (3 attempts, 1 second wait).
-
-## Temperature guide
-
-| Value | Use case |
-|-------|----------|
-| 0.0-0.3 | Factual tasks, code generation, structured output |
-| 0.5-0.7 | Balanced creativity and consistency |
-| 0.8-1.2 | Creative writing, brainstorming |
-| 1.5-2.0 | Maximum randomness (use sparingly) |
-
-Values outside 0.0-2.0 are clamped automatically.

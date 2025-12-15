@@ -73,6 +73,14 @@ The shell node executes commands with full Unix power - pipes, redirects, and al
 
 ## Security
 
+<Warning>
+  Commands run directly on your system without sandboxing. While dangerous patterns are blocked, the shell node has full access to your filesystem and network. Sandboxed execution is planned for a future release.
+</Warning>
+
+<Tip>
+  **You're in control.** Your agent asks before running workflows, and you can inspect the workflow JSON to see exactly what commands will execute. If you need stronger restrictions, you can disable shell entirely with `pflow settings deny shell` - but this significantly limits pflow's capabilities since shell is often used for data processing and filtering.
+</Tip>
+
 ### Blocked patterns
 
 These commands are rejected immediately with an error:
@@ -207,3 +215,20 @@ Some commands return non-zero exit codes for valid "not found" results. The shel
 | -2 | Execution failure |
 
 The node returns `error` action on non-zero exit (unless `ignore_errors` is `true` or it's an auto-handled pattern like grep).
+
+## Recommended tools
+
+pflow's template variables handle most data access - you can use `${api.response.items[0].name}` to access nested fields and array elements directly without shell commands.
+
+Shell is needed when you need to:
+- **Iterate over arrays** - `jq '.items[].name'` (templates can't do wildcards)
+- **Filter or transform** - `jq 'select(.active)'`, `sort`, `uniq`
+- **Compute values** - `wc -l`, arithmetic
+
+Common Unix tools are built into macOS: `grep`, `awk`, `cut`, `sort`, `head`, `tail`, `curl`.
+
+For JSON processing, install [jq](https://jqlang.github.io/jq/):
+
+```bash
+brew install jq
+```

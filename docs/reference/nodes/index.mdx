@@ -27,7 +27,7 @@ pflow includes these built-in nodes:
   <Card title="Shell" icon="terminal" href="/reference/nodes/shell">
     Execute shell commands
   </Card>
-  <Card title="Claude Code" icon="wand" href="/reference/nodes/claude-code">
+  <Card title="Claude Code" icon="bot" href="/reference/nodes/claude-code">
     AI-assisted development tasks
   </Card>
   <Card title="MCP tools" icon="plug" href="/reference/nodes/mcp">
@@ -50,10 +50,14 @@ Nodes receive data in two ways:
 
 | Source | When to use | Example |
 |--------|-------------|---------|
-| **Parameters** | Fixed values set when building the workflow | `"model": "gpt-4o-mini"` |
+| **Parameters** | Fixed values set when building the workflow | `"model": "gpt-5.2"` |
 | **Shared store** | Dynamic values from previous nodes | `"prompt": "${summarize.response}"` |
 
-Template variables like `${node_id.key}` pull data from the shared store at runtime.
+Template variables like `${node_id.key}` pull data from the shared store at runtime. You can access nested fields and array elements directly: `${api.response.items[0].name}`.
+
+### Automatic JSON parsing
+
+When a node outputs a JSON string and the next node expects an object, pflow automatically parses it. This means shell commands that output JSON work seamlessly with other nodes - no extra conversion steps needed.
 
 ### Output keys
 
@@ -91,10 +95,10 @@ pflow mcp add github.mcp.json
 # Sync to discover tools
 pflow mcp sync github
 
-# New nodes appear in registry
-pflow registry list --group mcp
-# mcp-github-create-issue
-# mcp-github-list-repos
+# New nodes appear
+pflow mcp tools github
+# mcp-github-create_issue
+# mcp-github-list_repos
 # ...
 ```
 
@@ -110,3 +114,20 @@ See [MCP tools](/reference/nodes/mcp) for details on how this works.
 | **Shell** | shell | System command execution |
 | **Claude** | claude-code | AI-assisted development |
 | **MCP** | mcp-{server}-{tool} | External tool integration |
+
+## Disabling nodes
+
+You can disable any node (including core nodes) using the settings filter:
+
+```bash
+# Disable shell commands entirely
+pflow settings deny shell
+
+# Disable specific file operations
+pflow settings deny delete-file
+
+# Re-enable a node
+pflow settings remove shell
+```
+
+Disabled nodes won't appear in `pflow registry list` and can't be used in workflows. See [settings commands](/reference/cli/settings) for details.

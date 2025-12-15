@@ -1,7 +1,220 @@
 ---
 title: "Configuration"
-description: "Environment variables and settings"
+description: "Settings file, environment variables, and file locations"
 icon: "cog"
 ---
 
-Documentation coming soon.
+pflow stores configuration in `~/.pflow/`. This page covers the settings file structure, environment variables, node filtering, and file locations.
+
+## Settings file
+
+pflow stores user configuration in `~/.pflow/settings.json`. View current settings with:
+
+```bash
+pflow settings show
+```
+
+### Structure
+
+```json
+{
+  "version": "1.0.0",
+  "registry": {
+    "nodes": {
+      "allow": ["*"],
+      "deny": ["pflow.nodes.git.*", "pflow.nodes.github.*"]
+    },
+    "include_test_nodes": false
+  },
+  "runtime": {
+    "template_resolution_mode": "strict"
+  },
+  "env": {}
+}
+```
+
+### Fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `registry.nodes.allow` | `["*"]` | Patterns for nodes to include |
+| `registry.nodes.deny` | `["pflow.nodes.git.*", "pflow.nodes.github.*"]` | Patterns for nodes to exclude |
+| `registry.include_test_nodes` | `false` | Show internal test nodes |
+| `runtime.template_resolution_mode` | `"strict"` | `"strict"` or `"permissive"` |
+| `env` | `{}` | API keys and environment variables |
+
+### Commands
+
+```bash
+# Initialize settings file
+pflow settings init
+
+# Show current settings
+pflow settings show
+
+# Reset to defaults
+pflow settings reset
+```
+
+## Environment variables
+
+### API keys
+
+Store API keys in the settings file for security (automatically chmod 600):
+
+```bash
+pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+pflow settings set-env OPENAI_API_KEY "sk-proj-..."
+```
+
+<Note>
+API keys stored via `pflow settings set-env` are used automatically for workflow inputs and discovery features. Your agent can't set these for security reasons.
+</Note>
+
+**Precedence order** (highest to lowest):
+1. CLI parameters (`--param key=value`)
+2. Settings file (`~/.pflow/settings.json` → `env`)
+3. System environment variables
+
+### pflow configuration variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PFLOW_INCLUDE_TEST_NODES` | `false` | Show test nodes in registry |
+| `PFLOW_TEMPLATE_RESOLUTION_MODE` | `strict` | `strict` or `permissive` |
+| `PFLOW_SHELL_STRICT` | `false` | Block dangerous shell commands |
+
+### Trace configuration
+
+Control trace file verbosity:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PFLOW_TRACE_PROMPT_MAX` | `50000` | Max prompt length in traces |
+| `PFLOW_TRACE_RESPONSE_MAX` | `20000` | Max response length in traces |
+| `PFLOW_TRACE_STORE_MAX` | `10000` | Max shared store value length |
+| `PFLOW_TRACE_DICT_MAX` | `50000` | Max dict size in traces |
+| `PFLOW_TRACE_LLM_CALLS_MAX` | `100` | Max LLM calls to track |
+
+## Node filtering
+
+Control which nodes are available using allow/deny patterns.
+
+### Pattern syntax
+
+pflow uses glob-style patterns (fnmatch):
+
+| Pattern | Matches |
+|---------|---------|
+| `*` | Everything |
+| `pflow.nodes.file.*` | All file nodes |
+| `mcp-github-*` | All GitHub MCP tools |
+| `shell` | Exact match only |
+
+### Evaluation order
+
+1. **Test nodes** - Filtered first based on `include_test_nodes`
+2. **Deny patterns** - If matched, node is excluded
+3. **Allow patterns** - If matched, node is included
+4. **Default** - Included only if `*` is in allow list
+
+<Warning>
+Deny patterns take precedence over allow patterns. If a node matches both, it's excluded.
+</Warning>
+
+### Commands
+
+```bash
+# Allow a pattern
+pflow settings allow "pflow.nodes.git.*"
+
+# Deny a pattern
+pflow settings deny "shell"
+
+# Remove a pattern
+pflow settings remove "shell" --deny
+
+# Check if a node would be included
+pflow settings check read-file
+
+# Verify filtering took effect
+pflow registry list              # See all available nodes
+pflow registry list github       # Filter to specific nodes
+```
+
+### Examples
+
+**Enable git/github nodes** (denied by default):
+```bash
+pflow settings allow "pflow.nodes.git.*"
+pflow settings allow "pflow.nodes.github.*"
+```
+
+<Note>
+Git and GitHub nodes are [experimental and not feature complete](/reference/experimental#built-in-git-and-github-nodes). They require the `git` and `gh` CLI tools to be installed.
+</Note>
+
+**Block shell access**:
+```bash
+pflow settings deny "shell"
+```
+
+**Allow only specific nodes**:
+```bash
+# First, remove the wildcard
+pflow settings remove "*" --allow
+
+# Then add specific patterns
+pflow settings allow "pflow.nodes.file.*"
+pflow settings allow "llm"
+pflow settings allow "http"
+```
+
+## File locations
+
+pflow stores all data in `~/.pflow/`:
+
+```
+~/.pflow/
+├── settings.json       # User settings + API keys
+├── mcp-servers.json    # MCP server configurations
+├── registry.json       # Node registry cache
+├── workflows/          # Saved workflows
+├── debug/              # Trace files
+└── cache/              # Execution cache
+```
+
+### What's safe to delete
+
+| Path | Safe to Delete | Notes |
+|------|----------------|-------|
+| `registry.json` | Yes | Regenerates on next `pflow registry scan` |
+| `debug/` | Yes | Debug traces only, can grow large |
+| `cache/` | Yes | Execution cache, regenerates |
+| `settings.json` | Caution | Contains API keys, reverts to defaults |
+| `mcp-servers.json` | Caution | Removes MCP server configurations |
+| `workflows/` | No | User-created workflows |
+
+## MCP server configuration
+
+MCP servers are configured in `~/.pflow/mcp-servers.json`. See [Adding MCP servers](/guides/adding-mcp-servers) for details.
+
+The file uses the standard MCP configuration format:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@github/mcp-server"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Environment variables in the config (`${VAR}`) are resolved from:
+1. System environment variables
+2. pflow settings (`pflow settings set-env`)

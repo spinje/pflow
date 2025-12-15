@@ -184,7 +184,7 @@ pflow settings allow <PATTERN>
 
 ```bash
 # Allow all file nodes
-pflow settings allow "file.*"
+pflow settings allow "pflow.nodes.file.*"
 
 # Allow specific MCP tools
 pflow settings allow "mcp-github-*"
@@ -213,7 +213,7 @@ pflow settings deny <PATTERN>
 
 ```bash
 # Block test nodes
-pflow settings deny "test.*"
+pflow settings deny "pflow.nodes.test.*"
 
 # Block dangerous operations
 pflow settings deny "shell"

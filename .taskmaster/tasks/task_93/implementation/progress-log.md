@@ -842,3 +842,241 @@ Don't position `pflow "do something"` as primary usage. The stable path is:
 
 ### CLI and MCP are equivalent
 Both provide same functionality - document this so users understand either works.
+
+---
+
+## 2025-12-12 - Debugging Page & Guides Refinement
+
+### guides/debugging.mdx Created
+
+**Core philosophy:** The debugging page is about **reassurance**, not a tutorial. Users don't debug pflow - their agents do.
+
+**Structure:**
+1. "Your agent handles most debugging" - agent gets structured errors
+2. "What your agent sees" - JSON example with `available_fields`
+3. "Trace files" - automatic, agents read them when stuck
+4. "What only you can fix" - API keys, MCP setup, disk cleanup
+5. Link to experimental features
+
+**Key insight - Agent-first error design:**
+pflow errors include `available_fields`, "Did you mean?" suggestions, and execution state - all designed for agent self-correction. The agent instructions (`pflow instructions create`) already teach agents how to use trace files.
+
+**Trace file access note:** Added clarification that trace file inspection requires local filesystem access (works with Claude Code, Cursor; not with Claude Desktop/ChatGPT Desktop unless filesystem MCP is configured).
+
+### guides/using-pflow.mdx Enhanced
+
+**New sections added:**
+1. **Split API vs MCP guidance:**
+   - "Need to connect to an API?" → Agent uses http node, reads docs
+   - "Need an MCP server?" → Agent helps find and install
+
+2. **"Not everything needs a workflow"** - Documents `pflow registry run` for:
+   - One-off tasks without full workflow
+   - Testing nodes during workflow development
+
+3. **MCP server creation tip:** If calling same API repeatedly, consider having agent create an MCP server for it.
+
+4. **Debugging link:** "Something unexpected happen?" with link to debugging guide
+
+**Closing message refined:** "Think of pflow as the infrastructure that makes this scalable - turning automation into reusable building blocks that are discoverable, composable, and ready for your agent to use again and again."
+
+### guides/adding-mcp-servers.mdx Fixes
+
+**Package name corrections:**
+| Server | Old (Wrong) | New (Correct) |
+|--------|-------------|---------------|
+| GitHub | `@modelcontextprotocol/server-github` | `@github/mcp-server` |
+| Brave | `@anthropic/mcp-server-brave-search` | `@brave/brave-search-mcp-server` |
+| Filesystem | (unchanged) | `@modelcontextprotocol/server-filesystem` |
+
+**Other improvements:**
+- Changed common servers from hard-to-read one-liners to proper JSON config files
+- Added env var expansion pattern (`${GITHUB_TOKEN}`) consistent with docs
+- Filesystem note: Built-in file nodes cover basic operations; MCP server for advanced/sandboxing
+- Added `pflow settings deny "pflow.nodes.file.*"` to disable built-ins if using MCP
+- Added Tip about agents creating MCP servers for repeated API usage
+- Fixed `set-env` syntax to use space (`KEY "value"`) not equals
+
+### reference/experimental.mdx Created
+
+**New page for experimental features:**
+
+1. **Built-in git/github nodes** (disabled by default)
+   - Recommendation: Use `git`/`gh` CLI via shell node (agents know these tools well)
+   - Alternative: GitHub MCP server for complex operations
+   - "If you still want to try" section with enable commands
+
+2. **Natural language planner** - Experimental, external agents recommended
+
+3. **Auto-repair** - Not enabled by default, `--auto-repair` flag
+
+4. **Feedback section** - Links to Discussions (ideas) and Issues (bugs)
+
+**Navigation:** Added "Experimental" group under Reference tab in docs.json
+
+### Settings Pattern Format
+
+**Correct format for node filtering:**
+```bash
+pflow settings deny "pflow.nodes.file.*"
+```
+
+NOT `file-*` or `*-file`. The module path format is used.
+
+---
+
+## Key Insights for Future Work
+
+### Debugging docs = Reassurance, not tutorial
+Users don't need to learn debugging. The message is: "Your agent handles it. Here's the few things only you can fix."
+
+### Trace files are for agents
+Agents read `~/.pflow/debug/workflow-trace-*.json` when stuck. Users don't need to inspect them manually.
+
+### Agent-first error design
+Structured errors with `available_fields` and suggestions enable self-correction. This is documented in the blog insights file for the agent-first design blog post.
+
+### Building blocks philosophy
+The closing message emphasizes: scalability through reusable, discoverable, composable building blocks. This differentiates pflow from one-off scripts.
+
+### git/gh CLI over built-in nodes
+Agents know `git` and `gh` extremely well from training. Shell node + CLI is the recommended path, not built-in git/github nodes.
+
+### Experimental features separated
+Keeps main docs clean. Cross-links from relevant places point to `/reference/experimental`.
+
+---
+
+## Current Status
+
+**Complete:** 25 pages
+- index.mdx, quickstart.mdx
+- guides/using-pflow.mdx, guides/adding-mcp-servers.mdx, guides/debugging.mdx
+- 6 integration pages
+- 5 CLI reference pages
+- 7 node reference pages
+- reference/experimental.mdx
+- docs.json
+
+**Placeholder:** 1 page
+- reference/configuration.mdx
+
+---
+
+## Files Created/Modified This Session
+
+**Created:**
+- `docs/guides/debugging.mdx`
+- `docs/reference/experimental.mdx`
+- `scratchpads/mintlify-docs/agent-first-design-debugging-insights.md` (blog research)
+
+**Modified:**
+- `docs/guides/using-pflow.mdx` - Multiple enhancements
+- `docs/guides/adding-mcp-servers.mdx` - Package fixes, formatting
+- `docs/docs.json` - Added Experimental group
+
+---
+
+## 2025-12-15 - Configuration Page & Final Polish
+
+### reference/configuration.mdx Created
+
+**Complete reference for all pflow configuration:**
+
+1. **Settings file structure** - Full JSON schema with all fields
+2. **Environment variables:**
+   - API keys via `pflow settings set-env`
+   - pflow config vars (`PFLOW_INCLUDE_TEST_NODES`, `PFLOW_TEMPLATE_RESOLUTION_MODE`, `PFLOW_SHELL_STRICT`)
+   - Trace config vars (`PFLOW_TRACE_PROMPT_MAX`, etc.)
+   - Precedence order: CLI params → settings.json → system env
+
+3. **Node filtering:**
+   - Pattern syntax (glob-style: `pflow.nodes.file.*`, `mcp-github-*`)
+   - Evaluation order (test nodes → deny → allow → default)
+   - Commands for allow/deny/remove/check
+   - Verification with `pflow registry list`
+
+4. **File locations:**
+   - Complete `~/.pflow/` inventory
+   - What's safe to delete table
+   - MCP config reference (links to full guide)
+
+### guides/using-pflow.mdx Final Enhancements
+
+- Split "Need to use a new MCP or API?" into two items:
+  - "Need to connect to an API?" → Agent uses http node
+  - "Need an MCP server?" → Agent helps install
+- Added Tip about creating MCP servers for repeated API usage
+- Added http node cross-link
+
+### guides/adding-mcp-servers.mdx Verification
+
+- Verified npm package names via web search:
+  - `@github/mcp-server` (official, GitHub moved it)
+  - `@brave/brave-search-mcp-server` (Brave's official fork)
+  - `@modelcontextprotocol/server-filesystem` (unchanged)
+- Added note about built-in file nodes vs filesystem MCP
+- Corrected `pflow settings deny` pattern format: `"pflow.nodes.file.*"` (module path)
+
+### guides/debugging.mdx Refinements
+
+- Clarified trace file access: works with Claude Code, Cursor; needs filesystem MCP for Claude Desktop
+- Updated auto-repair section: not enabled by default, `--auto-repair` flag
+- Clarified planner traces: experimental because whole planner is experimental
+- Linked git/github nodes to `/reference/experimental#built-in-git-and-github-nodes`
+
+### Decisions Made
+
+1. **template_resolution_mode** - Kept in settings table but don't explain in detail (edge case)
+2. **Cleanup commands removed** - "What's safe to delete" table is enough, users know `rm`
+3. **Verification commands added** - Show `pflow registry list` to verify filtering
+
+---
+
+## Key Insights for Future Work
+
+### Node filtering pattern format
+Use module path format: `pflow.nodes.file.*`, NOT `file-*` or `*-file`
+
+### MCP package names change
+Always verify npm packages before documenting - they move/rename frequently:
+- GitHub server moved from `@modelcontextprotocol` to `@github`
+- Brave Search has official Brave fork now
+
+### Configuration docs = Reference, not tutorial
+Show structure and options. Don't over-explain edge cases like `template_resolution_mode`.
+
+### git/github nodes are experimental
+Link to `/reference/experimental` when mentioning them. Recommend shell + CLI instead.
+
+---
+
+## Current Status
+
+**Complete:** 26 pages (ALL PAGES DONE)
+- index.mdx, quickstart.mdx
+- guides/using-pflow.mdx, guides/adding-mcp-servers.mdx, guides/debugging.mdx
+- 6 integration pages
+- 5 CLI reference pages
+- 7 node reference pages
+- reference/configuration.mdx
+- reference/experimental.mdx
+- docs.json
+
+**Placeholder:** 0 pages
+
+---
+
+## 2025-12-15 - MCP Resources Update
+
+Updated adding-mcp-servers.mdx:
+- Replaced mcp.run/smithery.ai with official MCP registry + awesome-mcp-servers
+- Fixed deprecated npm packages (GitHub, Brave Search)
+- Added filesystem node note about built-in alternatives
+- Future: HTTP MCP services guide (scratchpad created)
+
+---
+
+## Task 93 Complete
+
+All documentation pages have been created and reviewed. Ready for final review and publication.

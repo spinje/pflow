@@ -26,9 +26,21 @@ When pflow needs something from you, your agent will tell you exactly what to do
 
 > Your agent: "pflow needs an Anthropic API key for intelligent discovery. Run this command: `pflow settings set-env ANTHROPIC_API_KEY 'your-key'`"
 
-**Need to use a new MCP or API?**
+**Need to connect to an API?**
 
-> Your agent helps you find and install the required nodes with your permission.
+> Your agent reads the documentation and builds the integration for you using the [http node](/reference/nodes/http).
+
+**Need an MCP server?**
+
+> Your agent helps you find and install it with your permission.
+
+<Tip>
+If you're calling the same API repeatedly, consider having your agent create an MCP server for it - turning one-off requests into reusable tools.
+</Tip>
+
+**Something unexpected happen?**
+
+> Your agent diagnoses the issue using pflow's structured errors and traces. See [How debugging works](/guides/debugging) for details.
 
 You don't need to memorize *any* commands. Your agent knows them and will prompt you when necessary.
 
@@ -42,6 +54,20 @@ When you ask your agent to do something:
 4. **Builds new workflow if needed** - Agent creates it once, pflow saves it for next time
 
 Over time, your workflow library grows. Tasks that used to require agent reasoning become instant commands.
+
+## Not everything needs a workflow
+
+Sometimes you just need to run a single tool - send a Slack message, fetch a file, query an API. Your agent can run individual nodes directly without building a workflow:
+
+```bash
+pflow registry run mcp-slack-SEND_MESSAGE channel="general" text="Done!"
+```
+
+This is useful for:
+- **One-off tasks** - No workflow needed, just run the tool
+- **Testing** - Your agent tests nodes to understand their output before building workflows
+
+Think of nodes as individual building blocks. Your agent can use them standalone or compose them into workflows - whatever fits the task.
 
 ## Checking your workflow library
 
@@ -93,4 +119,4 @@ See [CLI overview](/reference/cli/index) for all options.
 | Installing new MCP servers | Your agent or you  |
 | Running saved workflows | Your agent or you directly |
 
-pflow is designed to stay out of your way. Your agent handles the complexity - you just describe what you want done. Think of pflow as the system that makes this possible in an efficient and scalable way.
+pflow is designed to stay out of your way. Your agent handles the complexity - you just describe what you want done. Think of pflow as the infrastructure that makes this scalable - turning automation into reusable building blocks that are discoverable, composable, and ready for your agent to use again and again.

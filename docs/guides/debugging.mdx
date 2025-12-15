@@ -1,7 +1,110 @@
 ---
-title: "Debugging"
-description: "Traces and troubleshooting"
+title: "How debugging works"
+description: "Understanding pflow's self-healing error system"
 icon: "bug"
 ---
 
-Documentation coming soon.
+When workflows fail, pflow helps your agent fix them. The system is designed for self-correction - your agent receives structured error data, not just error messages, and knows how to use it.
+
+Your role in debugging is minimal. Most of the time, you don't need to do anything.
+
+## Your agent handles most debugging
+
+When a workflow fails, your agent receives detailed information about what went wrong:
+
+- **What failed** - Which node, what error category
+- **What's available** - The fields that DO exist (not just what's missing)
+- **Suggestions** - "Did you mean?" recommendations
+- **Execution state** - Which nodes succeeded before the failure
+
+Your agent uses this to self-correct. When it needs to build or fix workflows, it reads pflow's comprehensive instructions which include a full debugging guide - how to interpret errors, inspect trace files, and resolve common issues.
+
+You don't need to teach your agent how to debug. The guidance is built in.
+
+## What your agent sees
+
+When a workflow fails, errors include the data needed for self-correction:
+
+```json
+{
+  "errors": [{
+    "message": "Node 'fetch' does not output 'msg'",
+    "node_id": "process",
+    "available_fields": ["result", "result.messages", "result.messages[0].text"],
+    "fixable": true
+  }]
+}
+```
+
+Your agent sees that `msg` doesn't exist, but `result.messages` does. It fixes the template and retries. No human intervention needed.
+
+## Trace files
+
+pflow automatically saves detailed execution traces:
+
+- **Location**: `~/.pflow/debug/workflow-trace-*.json`
+- **When**: Every workflow run (success or failure)
+- **Content**: Per-node timing, inputs, outputs, errors
+
+Your agent reads these when it needs more context to diagnose a failure. You don't need to inspect them yourself - they're designed for your agent to parse.
+
+<Note>
+Trace file inspection requires local filesystem access. This works with **Claude Code**, **Cursor**, and similar tools that can read files on your machine. Desktop apps like **Claude Desktop** or **ChatGPT Desktop** don't have filesystem access by default - you'd need to configure an MCP server that provides file reading capabilities.
+</Note>
+
+<Tip>
+Traces are saved automatically. Use `--no-trace` if you want to disable this.
+</Tip>
+
+## What only you can fix
+
+Some things require human action. Your agent will tell you when these come up:
+
+### API key not configured
+
+If pflow's discovery features aren't working:
+
+```bash
+pflow settings set-env ANTHROPIC_API_KEY "your-key"
+```
+
+Your agent can't set API keys for security reasons, but it will tell you exactly what command to run.
+
+### MCP server issues
+
+If your agent reports MCP tools aren't available:
+
+```bash
+# Check what servers are configured
+pflow mcp list
+
+# Force re-sync if needed
+pflow mcp sync --all
+```
+
+See [adding MCP servers](/guides/adding-mcp-servers) for setup details.
+
+### Disk cleanup
+
+Trace files accumulate over time. pflow doesn't auto-delete them. If disk space becomes an issue:
+
+```bash
+# Remove old traces (check contents first if needed)
+rm ~/.pflow/debug/workflow-trace-*.json
+```
+
+<Note>
+pflow also has experimental features like a built-in planner and auto-repair. See [Experimental features](/reference/experimental) for details.
+</Note>
+
+## Summary
+
+| Situation | Who handles it |
+|-----------|----------------|
+| Workflow fails with fixable error | Your agent (self-corrects) |
+| Agent needs more context | Your agent (reads trace files) |
+| API key missing | You (agent tells you the command) |
+| MCP server not connected | You (agent guides you) |
+| Disk space from traces | You (manual cleanup) |
+
+pflow is designed to be self-healing. Your agent has the tools and knowledge to debug most issues. You only step in for setup tasks that require human access.

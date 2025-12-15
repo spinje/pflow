@@ -19,11 +19,11 @@ AI agents are powerful but inefficient for repetitive tasks:
 
 pflow separates planning from execution:
 
-1. **Your agent plans once** - it figures out what nodes to use and how to connect them
-2. **pflow compiles the workflow** - saves it as a deterministic, reusable pipeline
+1. **Your agent plans once** - figures out what nodes to use and how to connect them
+2. **pflow compiles the workflow** - saves it as a reusable pipeline
 3. **Execution is instant** - run the same workflow with different inputs, zero reasoning cost
 
-Your agent uses pflow's intelligent discovery to find only the tools it needs - no loading hundreds of MCP tool schemas into context.
+Nodes are individual tools (call an API, read a file, send a message). Workflows chain them together. Over time, your library grows - tasks become instant commands.
 
 ## Two ways to run workflows
 

@@ -40,7 +40,7 @@ pflow mcp add <CONFIG_SOURCE>...
 pflow mcp add ./github.mcp.json
 
 # Add from raw JSON (simple format)
-pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}'
+pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@github/mcp-server"]}}'
 
 # Add HTTP server
 pflow mcp add '{"slack": {"type": "http", "url": "https://mcp.example.com/slack"}}'
@@ -57,7 +57,7 @@ Simple format (recommended):
 {
   "github": {
     "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "args": ["-y", "@github/mcp-server"],
     "env": {
       "GITHUB_TOKEN": "${GITHUB_TOKEN}"
     }
@@ -72,7 +72,7 @@ Full MCP format (compatible with Claude Desktop):
   "mcpServers": {
     "github": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"]
+      "args": ["-y", "@github/mcp-server"]
     }
   }
 }
@@ -114,7 +114,7 @@ Configured MCP servers:
 
   github:
     Transport: stdio
-    Command: npx -y @modelcontextprotocol/server-github
+    Command: npx -y @github/mcp-server
     Environment: GITHUB_TOKEN=${GITHUB_TOKEN}
 
   slack:
