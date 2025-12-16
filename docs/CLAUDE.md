@@ -32,13 +32,29 @@ This is the Mintlify documentation for pflow. These docs are for **humans** who:
 ```
 docs/
 ├── docs.json                    # Mintlify configuration
-├── index.mdx                    # Homepage
-├── quickstart.mdx               # First workflow
-├── installation.mdx             # Setup
+├── index.mdx                    # Homepage ("Welcome to pflow")
+├── quickstart.mdx               # Installation and setup
+├── changelog.mdx                # Product updates (uses <Update> components)
+├── roadmap.mdx                  # Direction and priorities
 ├── guides/                      # How-to guides
 ├── integrations/                # AI tool setup
 └── reference/                   # CLI, nodes, config
 ```
+
+### Navigation tabs
+
+The docs have three main tabs:
+- **Documentation** - Getting started, guides, integrations
+- **Reference** - CLI commands, nodes, configuration
+- **Changelog & Roadmap** - Product updates and future plans
+
+### External links
+
+| Location | Links |
+|----------|-------|
+| Sidebar anchors | Website (pflow.run), Blog |
+| Navbar (top right) | Blog, GitHub |
+| Footer | GitHub |
 
 See `.taskmaster/tasks/task_93/starting-context/mintlify-docs-spec.md` for complete specification.
 
@@ -99,8 +115,11 @@ Use consistent terms throughout all documentation.
 ---
 title: "Clear, descriptive page title"
 description: "Concise summary for SEO/navigation"
+icon: "icon-name"  # Optional - shows in sidebar
 ---
 ```
+
+For changelog pages, also add `rss: true` to enable RSS feed generation.
 
 ---
 
@@ -145,10 +164,10 @@ Table of all params with types and defaults.
 
 ```bash
 # Good - works if copy-pasted
-pflow "summarize this text" < input.txt
+pflow my-saved-workflow --input "some text"
 
 # Bad - placeholder that won't work
-pflow "your task here" < your-file.txt
+pflow your-workflow --input "your text here"
 ```
 
 Test all commands before publishing.
@@ -186,7 +205,7 @@ Test all commands before publishing.
 <Steps>
   <Step title="Install pflow">
     ```bash
-    pip install pflow-cli
+    uv tool install git+https://github.com/spinje/pflow.git
     ```
   </Step>
   <Step title="Verify installation">
@@ -223,11 +242,11 @@ Test all commands before publishing.
 
 ```mdx
 <CodeGroup>
-  ```bash macOS/Linux
-  pip install pflow-cli
+  ```bash uv (recommended)
+  uv tool install git+https://github.com/spinje/pflow.git
   ```
-  ```powershell Windows
-  pip install pflow-cli
+  ```bash pipx
+  pipx install git+https://github.com/spinje/pflow.git
   ```
 </CodeGroup>
 ```
@@ -272,6 +291,13 @@ We use **Lucide** icons. All icons at https://lucide.dev/icons are available.
 | Code | `code` |
 | Search | `search` |
 | External link | `external-link` |
+| Changelog | `clock` |
+| Roadmap | `map` |
+| History | `history` |
+| GitHub | `github` |
+| Website | `app-window` |
+| Blog/News | `newspaper` |
+| Documentation | `book-open` |
 
 ### Other
 
@@ -279,12 +305,30 @@ We use **Lucide** icons. All icons at https://lucide.dev/icons are available.
 |-----------|-------------|
 | `<Tooltip>` | Term definitions on hover |
 
+### Changelog components
+
+Use `<Update>` for changelog entries. This creates the timeline layout automatically.
+
+```mdx
+<Update label="December 2024" description="v0.1.0" tags={["New releases"]}>
+  ## Feature name
+
+  Description of the feature.
+</Update>
+```
+
+| Property | Purpose |
+|----------|---------|
+| `label` | Date shown in left timeline (e.g., "December 2024") |
+| `description` | Version or subtitle (e.g., "v0.1.0") |
+| `tags` | Filter tags shown in right sidebar |
+
 ### Components NOT needed for pflow
 
 - `<ParamField>`, `<ResponseField>` - API playground (we're CLI-focused)
 - `<RequestExample>`, `<ResponseExample>` - API examples
 - `<Color>`, `<LaTeX>` - specialized use cases
-- `<Badge>`, `<Banner>`, `<Update>` - not needed yet
+- `<Badge>`, `<Banner>` - not needed
 
 ---
 
@@ -323,6 +367,92 @@ When code changes affect user-facing behavior, update docs in the same PR.
 
 ---
 
+## Updating the Changelog
+
+The changelog (`changelog.mdx`) uses Mintlify's `<Update>` component for a timeline layout.
+
+### Adding a new entry
+
+Add a new `<Update>` block at the **top** of the file (newest first):
+
+```mdx
+<Update label="January 2025" description="v0.7.0" tags={["New releases", "Improvements"]}>
+  ## Release title
+
+  Brief intro line.
+
+  **Category 1**
+  - Feature one
+  - Feature two
+
+  **Category 2**
+  - Feature three
+
+  <Accordion title="Quick start">
+    Installation or getting started info.
+  </Accordion>
+
+  <Accordion title="Limitations">
+    Any caveats users should know.
+  </Accordion>
+</Update>
+```
+
+**Structure guidelines:**
+- Show main features directly (not in accordions)
+- Use accordions for supplementary info (quick start, limitations, what's next)
+- Keep feature lists scannable with bullet points
+
+**Tone guidelines:**
+- Keep it factual — changelogs announce what changed, not sell the product
+- No taglines or marketing copy (e.g., "Plan once, run forever" belongs on the website, not here)
+- Describe features by what they do, not why they're great
+
+### Tag conventions
+
+Use consistent tags across entries:
+
+| Tag | When to use |
+|-----|-------------|
+| `New releases` | Major version releases, new features |
+| `Improvements` | Enhancements, performance, UX |
+| `Bug fixes` | Bug fixes |
+| `Breaking changes` | Changes that require user action |
+
+### Features you get automatically
+
+- **Timeline navigation**: Left sidebar shows dates from `label` props
+- **Tag filters**: Right sidebar filters by tags
+- **RSS feed**: Auto-generated at `/changelog/rss.xml` (requires `rss: true` in frontmatter)
+- **"Last updated" hover**: May show on sidebar when deployed (uses Git history)
+
+---
+
+## Updating the Roadmap
+
+The roadmap (`roadmap.mdx`) documents pflow's direction and priorities.
+
+### Structure
+
+The roadmap uses these sections:
+- **Current status** - What's working today
+- **Now** - Current focus
+- **Next** - Coming soon
+- **Later** - Future plans
+- **Vision** - Long-term exploratory ideas
+
+### Guidelines
+
+- Keep sections concise - bullet points, not paragraphs
+- Update "Current status" when major features ship
+- Move items between sections as priorities change
+- Don't add time estimates - just relative priority
+- Link to GitHub Discussions/Issues for community involvement
+
+The docs roadmap (`docs/roadmap.mdx`) is the single source of truth. The README links to it.
+
+---
+
 ## Local Development
 
 ```bash
@@ -343,9 +473,22 @@ mint broken-links
 ## Do Not
 
 - Skip frontmatter on any MDX file
-- Use absolute URLs for internal links
+- Use absolute URLs for internal links (use relative paths like `/quickstart`)
 - Include untested code examples
 - Document planner internals or IR schema
 - Write for AI agents (they use `pflow instructions`)
 - Use emoji or decorative formatting
 - Use title case in headings
+
+---
+
+## Important URLs
+
+| Purpose | URL |
+|---------|-----|
+| Docs (production) | `https://docs.pflow.run` |
+| Website | `https://pflow.run` |
+| Blog | `https://pflow.run/blog` |
+| GitHub | `https://github.com/spinje/pflow` |
+
+**Note**: Sidebar anchors and navbar links require full URLs (not relative paths). Internal page links within docs use relative paths.

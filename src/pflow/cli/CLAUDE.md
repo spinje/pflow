@@ -238,7 +238,7 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 **Purpose**: Provide AI agents with optimized guidance for using pflow.
 
 **Subcommands**:
-- `usage` - Basic usage guide for AI agents (~500 lines)
+- `usage` - Basic usage guide for AI agents (~100 lines)
 - `create` - Comprehensive workflow creation guide (~1600 lines)
 
 **Usage Pattern**:

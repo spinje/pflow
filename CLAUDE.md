@@ -156,7 +156,7 @@ pflow/
 ├── Makefile                # Development automation
 ├── pyproject.toml          # Project configuration and dependencies
 ├── uv.lock                 # Dependency lockfile for uv
-├── docs/                   # User-facing documentation (mkdocs)
+├── docs/                   # User-facing documentation (mintlify)
 ├── architecture/           # Architecture and design specifications
 ├── examples/               # Example workflows and usage patterns
 ├── scripts/                # Development and debugging scripts
@@ -473,30 +473,30 @@ The codebase is currently feature complete for MVP with these tasks completed:
 Next up:
 - ⏳ Task 93: Set Up Mintlify Documentation
 
-First version (v0.1.0 - public release):
+First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 
-Version (v0.2.0):
+Version (v0.7.0):
 - ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 - ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
 - ⏳ Task 95: Unify LLM Usage via Simon Willison's llm Library
 
-Version (v0.3.0):
+Version (v0.8.0):
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 39: Support Parallel Execution in Workflows
 
-Version (v0.4.0):
+Version (v0.9.0):
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 78: Save User Request History in Workflow Metadata
 - ⏳ Task 75: Execution Preview in Validation
 
-Version (v0.5.0):
+Version (v1.0.0):
 - ⏳ Task 66: Support structured output for LLM node
 - ⏳ Task 87: Implement sandbox runtime for Shell Node
 - ⏳ Task 91: Export Workflows as Self-Hosted MCP Server Packages
 
-Version (v1.0.0):
+Version (v1.1.0):
 - ⏳ Task 81: Expose tools that lets users/agents find and install existing remote mcp servers
 - ⏳ Task 86: MCP Server Discovery and Installation Automation
 - ⏳ Task 77: Improve Agent Instructions

@@ -1077,6 +1077,85 @@ Updated adding-mcp-servers.mdx:
 
 ---
 
+## 2025-12-16 - Navigation & Branding Polish
+
+### Navigation Structure Finalized
+
+**Sidebar anchors:**
+- Website (pflow.run) - `app-window` icon
+- Blog (pflow.run/blog) - `newspaper` icon
+
+**Navbar (top right):**
+- Blog, GitHub
+
+**Tabs:**
+- Documentation
+- Reference
+- Changelog & Roadmap (new)
+
+**Key insight:** Sidebar anchors and navbar links require full URLs, not relative paths. Internal page linking uses relative paths.
+
+### Introduction Page Refined
+
+- Title: "Welcome to pflow" (with `sidebarTitle: "Introduction"` for shorter sidebar)
+- Description: "Your agent plans once, pflow handles the rest"
+- Node examples updated: "(call an LLM or API, read a file, or any MCP tool)"
+- Changed "tasks become instant commands" → "complex tasks become instant commands"
+
+### Changelog & Roadmap Tab Created
+
+**changelog.mdx:**
+- Uses `<Update>` component with timeline layout
+- v0.6.0 as initial public release (removed pre-release placeholders)
+- Structure: main features visible, accordions for supplementary info (Quick start, Limitations, What's next)
+- RSS enabled via `rss: true` frontmatter
+
+**roadmap.mdx:**
+- Migrated from ROADMAP.md (now deleted, README links to docs)
+- Orange icons for each section:
+  - `circuit-board` → Current status
+  - `hammer` → Now
+  - `lightbulb` → Next
+  - `layers` → Later
+  - `orbit` → Vision
+- Personal footer with orange heart and founder contact
+
+**Key decisions:**
+- Version 0.6.0 signals maturity without being 1.0
+- "Currently supports macOS" > "Only tested on macOS" (more professional)
+- Accordions for extras only - main content stays visible
+- Personal touches (heart icon, email) add warmth
+
+### docs/CLAUDE.md Updated
+
+- Changelog entry template with accordion pattern
+- Roadmap update guidelines
+- New icons added to reference table (clock, map, history, github, etc.)
+- Important URLs section with full URL note
+
+### Design Patterns Established
+
+**Orange branding:** Use `#f97316` for icons to match pflow brand color
+
+**Changelog entry structure:**
+```mdx
+<Update label="Month Year" description="vX.Y.Z" tags={[...]}>
+  ## Title
+
+  Brief intro.
+
+  **Category**
+  - Feature list (visible)
+
+  <Accordion title="Quick start">...</Accordion>
+  <Accordion title="Limitations">...</Accordion>
+</Update>
+```
+
+**Roadmap section icons:** Use themed icons that tell a story (circuit-board → hammer → lightbulb → layers → orbit)
+
+---
+
 ## Task 93 Complete
 
-All documentation pages have been created and reviewed. Ready for final review and publication.
+All documentation pages created and polished. Ready for deployment.

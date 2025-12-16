@@ -1,7 +1,7 @@
 ---
 title: "Claude Code"
-description: "AI-assisted development tasks"
-icon: "bot"
+description: "Agentic tasks with file and shell access"
+icon: "square-asterisk"
 ---
 
 <Note>
@@ -12,7 +12,7 @@ icon: "bot"
   **Experimental.** This node is not extensively tested and may have unexpected behavior. Use with caution in production workflows.
 </Warning>
 
-The claude-code node runs development tasks using Claude Code's agentic capabilities. It can read files, write code, edit existing files, and execute shell commands - all orchestrated by Claude.
+The claude-code node runs agentic tasks using Claude Code's capabilities. It can read files, write content, execute shell commands, and iterate on complex problems - useful for development, research, analysis, or any task needing file access and multi-step reasoning.
 
 <Info>
   This node requires Claude Code CLI authentication or an Anthropic API key.
@@ -24,7 +24,7 @@ The claude-code node runs development tasks using Claude Code's agentic capabili
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `task` | str | Yes | - | Development task description (max 10,000 chars) |
+| `task` | str | Yes | - | Task description (max 10,000 chars) |
 | `context` | str/dict | No | - | Additional context for the task |
 | `output_schema` | dict | No | - | JSON schema for structured output |
 
@@ -208,7 +208,7 @@ Control what Claude can do with `allowed_tools`:
 | `Edit` | Modify existing files |
 | `Bash` | Execute shell commands |
 
-For read-only analysis, use `["Read"]`. For full development, use all four (default).
+For read-only analysis, use `["Read"]`. For full capability, use all four (default).
 
 ## Limitations
 

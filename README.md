@@ -23,7 +23,7 @@ pflow is a workflow compiler for AI agents. Instead of reasoning through multi-s
 
 Workflows combine MCP servers, HTTP APIs, shell commands, and LLM calls. Your agent (Claude Code, Cursor, Windsurf) discovers existing workflows or creates new ones as needed.
 
-**Status:** Pre-release. Actively developed. See [ROADMAP.md](ROADMAP.md) for direction.
+**Status:** Pre-release. Actively developed. See [Roadmap](https://docs.pflow.run/roadmap) for direction.
 
 ---
 
@@ -181,7 +181,7 @@ Guides, CLI reference, and node documentation:
 
 See where pflow is heading:
 
-📍 **[ROADMAP.md](ROADMAP.md)**
+📍 **[Roadmap](https://docs.pflow.run/roadmap)**
 
 ---
 

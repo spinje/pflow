@@ -138,6 +138,85 @@ Structured output for parsing:
 pflow --output-format json my-workflow | jq '.result'
 ```
 
+<Expandable title="JSON output structure">
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "result": {
+    "summary": "Analysis complete",
+    "count": 42
+  },
+  "duration_ms": 456.78,
+  "total_cost_usd": 0.02,
+  "nodes_executed": 3,
+  "execution": {
+    "duration_ms": 456.78,
+    "nodes_executed": 3,
+    "nodes_total": 3,
+    "steps": [
+      {
+        "node_id": "read-data",
+        "status": "completed",
+        "duration_ms": 50.12,
+        "cached": false
+      }
+    ]
+  },
+  "metrics": {
+    "workflow": {
+      "duration_ms": 456.78,
+      "nodes_executed": 3,
+      "nodes_cached": 0
+    },
+    "total": {
+      "duration_ms": 456.78,
+      "total_cost_usd": 0.02,
+      "total_tokens": 1500,
+      "llm_calls": 1
+    }
+  }
+}
+```
+
+**Error response:**
+
+```json
+{
+  "success": false,
+  "error": "Workflow failed with action: error",
+  "errors": [
+    {
+      "source": "runtime",
+      "category": "api_validation",
+      "message": "Missing required parameter: 'repo'",
+      "node_id": "fetch-issues",
+      "fixable": true,
+      "available_fields": ["user_input", "stdin"]
+    }
+  ],
+  "execution": {
+    "steps": [
+      {"node_id": "fetch-issues", "status": "failed", "duration_ms": 120.5}
+    ]
+  }
+}
+```
+
+**Key fields:**
+
+| Field | Description |
+|-------|-------------|
+| `success` | `true` if workflow completed, `false` if failed |
+| `result` | Workflow output (object, string, or array based on declared outputs) |
+| `duration_ms` | Total execution time in milliseconds |
+| `total_cost_usd` | LLM API cost (0.0 if no LLM calls) |
+| `errors[].available_fields` | Valid fields for template variables - helps agents fix errors |
+
+</Expandable>
+
 ### Print mode
 
 Clean output for piping (no progress indicators):
@@ -176,7 +255,7 @@ pflow instructions <SUBCOMMAND>
 
 | Subcommand | Description |
 |------------|-------------|
-| `usage` | Basic usage guide for AI agents (~500 lines) |
+| `usage` | Basic usage guide for AI agents (~100 lines) |
 | `create` | Comprehensive workflow creation guide (~1600 lines) |
 
 **Example:**

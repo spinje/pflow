@@ -51,7 +51,7 @@
       },
       {
         "tab": "Reference",
-        "icon": "file-search",
+        "icon": "search",
         "groups": [
           {
             "group": "CLI commands",
@@ -88,20 +88,37 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "Changelog & Roadmap",
+        "icon": "history",
+        "pages": [
+          "changelog",
+          "roadmap"
+        ]
       }
     ],
     "global": {
       "anchors": [
         {
-          "anchor": "GitHub",
-          "href": "https://github.com/spinje/pflow",
-          "icon": "github"
+          "anchor": "Website",
+          "href": "https://pflow.run",
+          "icon": "app-window"
+        },
+        {
+          "anchor": "Blog",
+          "href": "https://pflow.run/blog",
+          "icon": "newspaper"
         }
       ]
     }
   },
   "navbar": {
     "links": [
+      {
+        "label": "Blog",
+        "href": "https://pflow.run/blog"
+      },
       {
         "label": "GitHub",
         "href": "https://github.com/spinje/pflow"
