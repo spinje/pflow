@@ -1,0 +1,55 @@
+---
+title: "Welcome to pflow"
+sidebarTitle: "Introduction"
+description: "Your agent plans once, pflow handles the rest"
+icon: "heart-handshake"
+---
+
+pflow is a workflow compiler for AI agents. Your agent reasons through a task once, pflow compiles it into a workflow, and that workflow runs instantly forever after - no re-planning, no repeated costs.
+
+## The problem
+
+AI agents are powerful but inefficient for repetitive tasks:
+
+- **Re-reasoning**: Every time you ask an agent to do the same task, it reasons through it from scratch
+- **Cost**: Each reasoning pass costs tokens - the same tokens, for the same logic, every time
+- **Inconsistency**: Agents might take different paths or skip steps on different runs
+- **Context bloat**: Loading tool schemas (especially MCP servers) consumes tokens before any work begins
+
+## How pflow helps
+
+pflow separates planning from execution:
+
+1. **Your agent plans once** - figures out what nodes to use and how to connect them
+2. **pflow compiles the workflow** - saves it as a reusable pipeline
+3. **Execution is instant** - run the same workflow with different inputs, zero reasoning cost
+
+Nodes are individual tools (call an LLM or API, read a file, or any MCP tool). Workflows chain them together. Over time, your library grows - complex tasks become instant commands.
+
+## Two ways to run workflows
+
+**Agent-driven**: Your AI agent discovers, creates, and runs workflows through pflow. This is the primary flow - your agent handles automation tasks using workflows it has built.
+
+**Direct CLI**: Saved workflows are CLI commands. Run them directly in scripts, CI/CD pipelines, or cron jobs - no agent needed.
+
+```bash
+# Agent builds this once, then anyone can run it
+pflow analyze-logs input=./logs/api.log format=json
+```
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install pflow and connect your AI tool
+  </Card>
+  <Card title="Integrations" icon="plug" href="/integrations/overview">
+    Set up Claude Code, Cursor, VS Code, and more
+  </Card>
+  <Card title="Adding MCP servers" icon="server" href="/guides/adding-mcp-servers">
+    Expand pflow with external tools
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/reference/cli/index">
+    All commands documented
+  </Card>
+</CardGroup>

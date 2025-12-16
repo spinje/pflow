@@ -1,0 +1,140 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "pflow",
+  "theme": "mint",
+  "icons": {
+    "library": "lucide"
+  },
+  "colors": {
+    "primary": "#f97316",
+    "light": "#fb923c",
+    "dark": "#ea580c"
+  },
+  "favicon": "/logo/light.png",
+  "logo": {
+    "light": "/logo/light.png",
+    "dark": "/logo/dark.png"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "icon": "book-open",
+        "groups": [
+          {
+            "group": "Getting started",
+            "pages": [
+              "index",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/using-pflow",
+              "guides/adding-mcp-servers",
+              "guides/debugging"
+            ]
+          },
+          {
+            "group": "AI tool integration",
+            "pages": [
+              "integrations/overview",
+              "integrations/claude-code",
+              "integrations/claude-desktop",
+              "integrations/cursor",
+              "integrations/vscode",
+              "integrations/windsurf"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "icon": "search",
+        "groups": [
+          {
+            "group": "CLI commands",
+            "pages": [
+              "reference/cli/index",
+              "reference/cli/workflow",
+              "reference/cli/registry",
+              "reference/cli/mcp",
+              "reference/cli/settings"
+            ]
+          },
+          {
+            "group": "Nodes",
+            "pages": [
+              "reference/nodes/index",
+              "reference/nodes/file",
+              "reference/nodes/llm",
+              "reference/nodes/http",
+              "reference/nodes/shell",
+              "reference/nodes/claude-code",
+              "reference/nodes/mcp"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "reference/configuration"
+            ]
+          },
+          {
+            "group": "Experimental",
+            "pages": [
+              "reference/experimental"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Changelog & Roadmap",
+        "icon": "history",
+        "pages": [
+          "changelog",
+          "roadmap"
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Website",
+          "href": "https://pflow.run",
+          "icon": "app-window"
+        },
+        {
+          "anchor": "Blog",
+          "href": "https://pflow.run/blog",
+          "icon": "newspaper"
+        }
+      ]
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Blog",
+        "href": "https://pflow.run/blog"
+      },
+      {
+        "label": "GitHub",
+        "href": "https://github.com/spinje/pflow"
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/spinje/pflow"
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "chatgpt",
+      "claude"
+    ]
+  }
+}

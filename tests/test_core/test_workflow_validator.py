@@ -200,18 +200,17 @@ class TestWorkflowValidator:
             "nodes": [
                 {
                     "id": "fetch",
-                    "type": "github-list-issues",
+                    "type": "http",
                     "params": {
-                        "repo_owner": "${repo_owner}",
-                        "repo_name": "${repo_name}",
-                        "limit": 30,
+                        "url": "${api_url}",
+                        "method": "GET",
                     },
                 },
                 {
                     "id": "analyze",
                     "type": "llm",
                     "params": {
-                        "prompt": "Analyze these issues: ${fetch.issues}",
+                        "prompt": "Analyze this response: ${fetch.response}",
                         "model": "gpt-4",
                     },
                 },
@@ -229,8 +228,7 @@ class TestWorkflowValidator:
                 {"from": "analyze", "to": "write"},
             ],
             "inputs": {
-                "repo_owner": {"type": "string", "required": True},
-                "repo_name": {"type": "string", "required": True},
+                "api_url": {"type": "string", "required": True},
                 "output_file": {"type": "string", "required": True},
             },
         }
@@ -238,8 +236,7 @@ class TestWorkflowValidator:
         errors, warnings = WorkflowValidator.validate(
             workflow,
             extracted_params={
-                "repo_owner": "anthropic",
-                "repo_name": "pflow",
+                "api_url": "https://api.example.com/data",
                 "output_file": "report.md",
             },
             registry=registry_with_nodes,

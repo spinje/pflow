@@ -1,0 +1,276 @@
+---
+title: "pflow workflow"
+description: "Manage saved workflows in your library"
+icon: "workflow"
+---
+
+The `pflow workflow` command group manages saved workflows in the global library (`~/.pflow/workflows/`).
+
+<Note>
+  **Agent commands.** These commands are primarily used by your AI agent to find and inspect workflows. The `save` command can be used by either you or your agent to persist workflows.
+</Note>
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all saved workflows |
+| `describe` | Show workflow interface details |
+| `discover` | Find workflows using natural language |
+| `save` | Save a workflow file to the library |
+
+## pflow workflow list
+
+List all saved workflows with optional filtering.
+
+```bash
+pflow workflow list [FILTER_PATTERN] [--json]
+```
+
+**Arguments:**
+- `FILTER_PATTERN` - Optional keywords to filter (space-separated, AND logic)
+
+**Options:**
+- `--json` - Output as JSON
+
+**Examples:**
+
+```bash
+# List all workflows
+pflow workflow list
+
+# Filter by keyword
+pflow workflow list github
+
+# Filter by multiple keywords (AND logic)
+pflow workflow list "github pr"
+
+# JSON output
+pflow workflow list --json
+```
+
+**Output:**
+
+Workflows are grouped by category, showing name and description:
+
+```
+Saved workflows:
+
+  github:
+    - github-pr-review: Review pull requests and suggest improvements
+    - github-issue-triage: Categorize and label GitHub issues
+
+  analysis:
+    - csv-analyzer: Analyze CSV files and generate reports
+
+Total: 3 workflows
+```
+
+## pflow workflow describe
+
+Show detailed information about a workflow including inputs, outputs, and usage.
+
+```bash
+pflow workflow describe <NAME>
+```
+
+**Arguments:**
+- `NAME` - Workflow name (required)
+
+**Example:**
+
+```bash
+pflow workflow describe github-pr-review
+```
+
+**Output:**
+
+```
+Workflow: github-pr-review
+
+Description: Review pull requests and suggest improvements
+
+Inputs:
+  - repo (string, required): Repository in owner/repo format
+  - pr_number (integer, required): Pull request number
+  - focus (string, optional): Areas to focus review on
+
+Outputs:
+  - review: Structured review with suggestions
+  - summary: Brief summary of findings
+
+Example usage:
+  pflow github-pr-review repo=owner/repo pr_number=123
+```
+
+<Note>
+  If the workflow is not found, pflow suggests similar workflow names.
+</Note>
+
+## pflow workflow discover
+
+Use AI to find workflows matching a natural language task description.
+
+```bash
+pflow workflow discover "<QUERY>"
+```
+
+**Arguments:**
+- `QUERY` - Natural language description of what you want to do (max 500 characters)
+
+**Example:**
+
+```bash
+pflow workflow discover "I need to analyze pull requests"
+```
+
+**Output:**
+
+When a match is found:
+
+```
+Found matching workflow: github-pr-review
+
+Match confidence: High
+Reasoning: This workflow analyzes PR content and provides structured feedback.
+
+Description: Review pull requests and suggest improvements
+
+Inputs:
+  - repo (string, required): Repository in owner/repo format
+  - pr_number (integer, required): Pull request number
+
+Example usage:
+  pflow github-pr-review repo=owner/repo pr_number=123
+```
+
+When no match is found, pflow explains why and lists available workflows.
+
+<Warning>
+  Requires an Anthropic API key. Set it with `pflow settings set-env ANTHROPIC_API_KEY "your-key"`.
+</Warning>
+
+## pflow workflow save
+
+Save a workflow file to the global library for reuse.
+
+```bash
+pflow workflow save <FILE> --name <NAME> --description <TEXT> [OPTIONS]
+```
+
+**Arguments:**
+- `FILE` - Path to workflow JSON file
+
+**Required options:**
+- `--name NAME` - Workflow name (lowercase, numbers, hyphens only, max 30 chars)
+- `--description TEXT` - Brief description of what the workflow does
+
+**Optional options:**
+- `--force` - Overwrite existing workflow with same name
+- `--delete-draft` - Delete source file after successful save
+- `--generate-metadata` - Generate discovery metadata using LLM
+
+**Examples:**
+
+```bash
+# Basic save
+pflow workflow save ./workflow.json \
+  --name pr-analyzer \
+  --description "Analyzes PRs and generates reports"
+
+# Save with metadata generation (improves discovery)
+pflow workflow save ./workflow.json \
+  --name pr-analyzer \
+  --description "Analyzes PRs and generates reports" \
+  --generate-metadata
+
+# Overwrite existing workflow
+pflow workflow save ./updated.json \
+  --name pr-analyzer \
+  --description "Updated version" \
+  --force
+
+# Save and delete draft file
+pflow workflow save .pflow/workflows/draft.json \
+  --name finalized-workflow \
+  --description "Ready for production" \
+  --delete-draft
+```
+
+**Name format requirements:**
+- Lowercase letters, numbers, and hyphens only
+- Maximum 30 characters
+- Must be shell-safe and URL-safe
+
+**Output:**
+
+```
+✓ Saved workflow: pr-analyzer
+
+Location: ~/.pflow/workflows/pr-analyzer.json
+
+Inputs:
+  - repo (string, required)
+  - pr_number (integer, required)
+
+Example usage:
+  pflow pr-analyzer repo=owner/repo pr_number=123
+```
+
+<Tip>
+  The `--generate-metadata` flag improves workflow discovery by using AI to generate keywords and capabilities that help agents find the workflow later.
+</Tip>
+
+## Workflow file format
+
+Saved workflows are JSON files with this structure:
+
+```json
+{
+  "ir_version": "0.1.0",
+  "name": "my-workflow",
+  "description": "What this workflow does",
+  "inputs": [
+    {
+      "key": "input_name",
+      "type": "string",
+      "description": "What this input is for",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "key": "result",
+      "type": "string",
+      "description": "What this output contains"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "node-1",
+      "type": "read-file",
+      "params": {
+        "file_path": "${input_name}"
+      }
+    }
+  ],
+  "edges": []
+}
+```
+
+<Note>
+  pflow automatically adds `ir_version` and `edges` if missing, so minimal workflow files work fine.
+</Note>
+
+## File locations
+
+| Path | Purpose |
+|------|---------|
+| `~/.pflow/workflows/` | Saved workflows (global library) |
+| `.pflow/workflows/` | Draft workflows (project-local) |
+
+## Related
+
+- [CLI overview](/reference/cli/index) - Main pflow command
+- [Registry commands](/reference/cli/registry) - Browse available nodes
+- [Debugging guide](/guides/debugging) - Troubleshooting workflows

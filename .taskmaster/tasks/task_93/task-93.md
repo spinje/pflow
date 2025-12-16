@@ -67,6 +67,8 @@ Research folder contains:
 - `llms.txt` (18 KB) - Structured index of Mintlify docs
 - `starter-reference/` - Mintlify starter kit for inspiration (not to be modified)
 
+> Important: Use subagents to gather information, context, do research and verifying assumptions from these documents while you work, do not read them yourself. Use subagents in PARALELL if you need to answer multiple questions at once. Use ONE function call block to deploy all subagents simultaneously.
+
 ### Mintlify Features to Leverage
 - Automatic `llms.txt` and `llms-full.txt` generation for AI agents
 - Git sync for automatic deployments

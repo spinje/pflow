@@ -1,0 +1,228 @@
+---
+title: "Claude Code"
+description: "Agentic tasks with file and shell access"
+icon: "square-asterisk"
+---
+
+<Note>
+  **Agent commands.** Your AI agent uses this node in workflows. You don't configure it directly.
+</Note>
+
+<Warning>
+  **Experimental.** This node is not extensively tested and may have unexpected behavior. Use with caution in production workflows.
+</Warning>
+
+The claude-code node runs agentic tasks using Claude Code's capabilities. It can read files, write content, execute shell commands, and iterate on complex problems - useful for development, research, analysis, or any task needing file access and multi-step reasoning.
+
+<Info>
+  This node requires Claude Code CLI authentication or an Anthropic API key.
+</Info>
+
+## Parameters
+
+### Task parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `task` | str | Yes | - | Task description (max 10,000 chars) |
+| `context` | str/dict | No | - | Additional context for the task |
+| `output_schema` | dict | No | - | JSON schema for structured output |
+
+### Execution parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `working_directory` | str | No | Current dir | Project root directory |
+| `model` | str | No | `claude-sonnet-4-5` | Claude model to use |
+| `allowed_tools` | list | No | `["Read", "Write", "Edit", "Bash"]` | Permitted tools |
+| `max_turns` | int | No | `50` | Maximum conversation turns (1-100) |
+| `max_thinking_tokens` | int | No | `8000` | Reasoning budget (1000-100000) |
+| `system_prompt` | str | No | - | Custom system instructions |
+
+## Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `result` | str/dict | Response text or parsed schema dict |
+| `_claude_metadata` | dict | Execution metadata (cost, duration, turns) |
+| `llm_usage` | dict | Token usage metrics |
+| `_schema_error` | str | JSON parse error (only if schema provided and parsing failed) |
+
+### Metadata structure
+
+```json
+{
+  "total_cost_usd": 0.0234,
+  "duration_ms": 3450,
+  "duration_api_ms": 2800,
+  "num_turns": 2,
+  "session_id": "abc123",
+  "usage": {
+    "input_tokens": 1500,
+    "output_tokens": 450,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  }
+}
+```
+
+## Authentication
+
+<Tabs>
+  <Tab title="CLI authentication (recommended)">
+    Install and authenticate Claude Code CLI:
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    claude auth login
+    ```
+    Uses your Claude Pro/Max subscription with no additional API charges.
+  </Tab>
+  <Tab title="API key">
+    Set the `ANTHROPIC_API_KEY` environment variable:
+    ```bash
+    pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+    ```
+    Bills to your Anthropic Console account. Works in CI/CD and servers.
+  </Tab>
+</Tabs>
+
+## Structured output
+
+Use `output_schema` to get structured JSON responses:
+
+```json
+{
+  "id": "review",
+  "type": "claude-code",
+  "params": {
+    "task": "Review this code for security issues",
+    "context": "${code.content}",
+    "output_schema": {
+      "risk_level": {
+        "type": "str",
+        "description": "high, medium, or low"
+      },
+      "issues": {
+        "type": "list",
+        "description": "List of security issues found"
+      },
+      "score": {
+        "type": "int",
+        "description": "Security score 1-10"
+      }
+    }
+  }
+}
+```
+
+The response is automatically parsed and available as a dict:
+
+```
+${review.result.risk_level}  → "medium"
+${review.result.issues}      → ["SQL injection risk", "Missing input validation"]
+${review.result.score}       → 6
+```
+
+### Schema field types
+
+| Type | Description |
+|------|-------------|
+| `str` | Text string |
+| `int` | Integer number |
+| `bool` | Boolean value |
+| `list` | Array/list |
+| `dict` | Object/dictionary |
+
+## Examples
+
+### Code generation
+
+```json
+{
+  "nodes": [
+    {
+      "id": "generate",
+      "type": "claude-code",
+      "params": {
+        "task": "Write a Python function to calculate Fibonacci numbers",
+        "max_turns": 1
+      }
+    }
+  ]
+}
+```
+
+### Code review with structured output
+
+```json
+{
+  "nodes": [
+    {
+      "id": "read",
+      "type": "read-file",
+      "params": { "file_path": "src/auth.py" }
+    },
+    {
+      "id": "review",
+      "type": "claude-code",
+      "params": {
+        "task": "Review this authentication code",
+        "context": "${read.content}",
+        "output_schema": {
+          "issues": { "type": "list", "description": "Problems found" },
+          "suggestions": { "type": "list", "description": "Improvements" },
+          "approved": { "type": "bool", "description": "Ready for production" }
+        }
+      }
+    }
+  ]
+}
+```
+
+### File modification
+
+```json
+{
+  "nodes": [
+    {
+      "id": "refactor",
+      "type": "claude-code",
+      "params": {
+        "task": "Refactor the User class to use dataclasses",
+        "working_directory": "/path/to/project",
+        "allowed_tools": ["Read", "Write", "Edit"]
+      }
+    }
+  ]
+}
+```
+
+## Tool permissions
+
+Control what Claude can do with `allowed_tools`:
+
+| Tool | Capability |
+|------|------------|
+| `Read` | Read files |
+| `Write` | Create new files |
+| `Edit` | Modify existing files |
+| `Bash` | Execute shell commands |
+
+For read-only analysis, use `["Read"]`. For full capability, use all four (default).
+
+## Limitations
+
+- **Restricted directories**: Cannot use `/`, `/etc`, `/usr`, `/bin`, `/sbin`, `/lib`, `/sys`, `/proc` as working directory
+- **Timeout**: 5 minutes (300 seconds) default
+- **Cost**: More expensive than simple LLM calls - use for tasks that need file access and iteration
+
+## Error handling
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| CLI not found | Claude Code not installed | `npm install -g @anthropic-ai/claude-code` |
+| Connection error | Auth issue | Run `claude auth login` or set API key |
+| Timeout | Task too complex | Increase `max_turns` or simplify task |
+| Rate limit | Too many requests | Wait and retry |
+
+The node retries failures automatically (2 attempts, conservative for expensive API).

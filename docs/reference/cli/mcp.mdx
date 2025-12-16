@@ -1,0 +1,370 @@
+---
+title: "pflow mcp"
+description: "Manage MCP server connections"
+icon: "plug"
+---
+
+The `pflow mcp` command group manages Model Context Protocol (MCP) server connections. MCP servers expose external tools that can be used in pflow workflows.
+
+<Note>
+  **Setup commands.** You run `add`, `remove`, and `sync` to configure MCP servers. Your agent uses `tools` and `info` to discover available tools when building workflows.
+</Note>
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `add` | Add MCP servers from config |
+| `list` | List configured servers |
+| `remove` | Remove a server |
+| `sync` | Discover and register tools |
+| `tools` | List registered MCP tools |
+| `info` | Show tool details |
+| `serve` | Run pflow as an MCP server |
+
+## pflow mcp add
+
+Add MCP servers from config files or JSON.
+
+```bash
+pflow mcp add <CONFIG_SOURCE>...
+```
+
+**Arguments:**
+- `CONFIG_SOURCE` - One or more config file paths or raw JSON strings
+
+**Examples:**
+
+```bash
+# Add from config file
+pflow mcp add ./github.mcp.json
+
+# Add from raw JSON (simple format)
+pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@github/mcp-server"]}}'
+
+# Add HTTP server
+pflow mcp add '{"slack": {"type": "http", "url": "https://mcp.example.com/slack"}}'
+
+# Add multiple servers
+pflow mcp add github.mcp.json slack.mcp.json
+```
+
+**Config formats:**
+
+Simple format (recommended):
+
+```json
+{
+  "github": {
+    "command": "npx",
+    "args": ["-y", "@github/mcp-server"],
+    "env": {
+      "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+    }
+  }
+}
+```
+
+Full MCP format (compatible with Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@github/mcp-server"]
+    }
+  }
+}
+```
+
+HTTP server format:
+
+```json
+{
+  "slack": {
+    "type": "http",
+    "url": "https://mcp.example.com/slack",
+    "headers": {
+      "Authorization": "Bearer ${TOKEN}"
+    }
+  }
+}
+```
+
+<Note>
+  Environment variables in `env` and `headers` support `${VAR}` and `${VAR:-default}` syntax. They expand at runtime.
+</Note>
+
+## pflow mcp list
+
+List all configured MCP servers.
+
+```bash
+pflow mcp list [--json]
+```
+
+**Options:**
+- `--json` - Output as JSON
+
+**Output:**
+
+```
+Configured MCP servers:
+
+  github:
+    Transport: stdio
+    Command: npx -y @github/mcp-server
+    Environment: GITHUB_TOKEN=${GITHUB_TOKEN}
+
+  slack:
+    Transport: http
+    URL: https://mcp.example.com/slack
+```
+
+## pflow mcp remove
+
+Remove an MCP server configuration.
+
+```bash
+pflow mcp remove <NAME> [--force]
+```
+
+**Arguments:**
+- `NAME` - Server name to remove
+
+**Options:**
+- `--force, -f` - Skip confirmation prompt
+
+**Examples:**
+
+```bash
+# Remove with confirmation
+pflow mcp remove github
+
+# Remove without confirmation
+pflow mcp remove github --force
+```
+
+<Note>
+  Removing a server also removes all its tools from the registry.
+</Note>
+
+## pflow mcp sync
+
+Discover and register tools from MCP servers.
+
+```bash
+pflow mcp sync [NAME] [--all]
+```
+
+**Arguments:**
+- `NAME` - Server name to sync (conflicts with `--all`)
+
+**Options:**
+- `--all, -a` - Sync all configured servers
+
+**Examples:**
+
+```bash
+# Sync specific server
+pflow mcp sync github
+
+# Sync all servers
+pflow mcp sync --all
+```
+
+**Output:**
+
+```
+Syncing server 'github'...
+✓ Discovered 15 tools
+✓ Registered 15 tools in pflow registry
+
+Registered tools:
+  - mcp-github-create-issue
+  - mcp-github-list-issues
+  - mcp-github-get-issue
+  ... and 12 more
+```
+
+<Tip>
+  pflow auto-syncs servers when workflows run. Manual sync is useful for immediate testing or troubleshooting.
+</Tip>
+
+## pflow mcp tools
+
+List registered MCP tools.
+
+```bash
+pflow mcp tools [SERVER] [--json]
+```
+
+**Arguments:**
+- `SERVER` - Filter by server name (optional)
+
+**Options:**
+- `--json` - Output as JSON
+
+**Examples:**
+
+```bash
+# List all MCP tools
+pflow mcp tools
+
+# List tools from specific server
+pflow mcp tools github
+
+# JSON output
+pflow mcp tools --json
+```
+
+**Output:**
+
+```
+Registered MCP tools:
+
+  github (15 tools):
+    - mcp-github-create-issue: Create a new issue
+    - mcp-github-list-issues: List repository issues
+    - mcp-github-get-issue: Get issue details
+    ...
+
+  slack (8 tools):
+    - mcp-slack-send-message: Send a message
+    - mcp-slack-list-channels: List channels
+    ...
+```
+
+## pflow mcp info
+
+Show detailed information about an MCP tool.
+
+```bash
+pflow mcp info <TOOL>
+```
+
+**Arguments:**
+- `TOOL` - Tool name to inspect
+
+**Example:**
+
+```bash
+pflow mcp info mcp-github-create-issue
+```
+
+**Output:**
+
+```
+Tool: mcp-github-create-issue
+Server: github
+Description: Create a new issue in a GitHub repository
+
+Parameters:
+  - repo (string, required): Repository in owner/repo format
+  - title (string, required): Issue title
+  - body (string): Issue body/description
+  - labels (array): List of label names
+
+Outputs:
+  - result (object): Created issue details
+```
+
+## pflow mcp serve
+
+Run pflow as an MCP server for AI tools.
+
+```bash
+pflow mcp serve [--debug]
+```
+
+**Options:**
+- `--debug` - Enable debug logging
+
+This command starts pflow as an MCP server using stdio transport. AI tools connect to pflow and can use its workflow capabilities.
+
+<Note>
+  This is typically invoked by AI tools automatically, not run directly. See the [integrations guide](/integrations/overview) for setup instructions.
+</Note>
+
+**Exposed tools:**
+
+The MCP server exposes tools for:
+- Discovering workflows and nodes
+- Executing workflows
+- Validating workflows
+- Saving workflows to the library
+- Managing settings
+
+## Tool naming convention
+
+MCP tools are registered with the pattern `mcp-{server}-{tool}`:
+
+| Format | Example |
+|--------|---------|
+| Full | `mcp-github-create-issue` |
+| Server-qualified | `github-create-issue` |
+| Short (if unique) | `create-issue` |
+
+Agents can use the shortest unambiguous name in workflows.
+
+## Using MCP tools in workflows
+
+After syncing, MCP tools work like any other node:
+
+```json
+{
+  "nodes": [
+    {
+      "id": "create-issue",
+      "type": "mcp-github-create-issue",
+      "params": {
+        "repo": "owner/repo",
+        "title": "Bug report",
+        "body": "Description of the bug"
+      }
+    }
+  ]
+}
+```
+
+## File locations
+
+| Path | Purpose |
+|------|---------|
+| `~/.pflow/mcp-servers.json` | Server configurations |
+| `~/.pflow/registry.json` | Registered tools |
+
+## Common workflows
+
+### Initial setup
+
+```bash
+# Add servers
+pflow mcp add github.mcp.json
+
+# Sync to discover tools
+pflow mcp sync --all
+
+# Verify tools
+pflow mcp tools
+```
+
+### Troubleshooting
+
+```bash
+# Check configured servers
+pflow mcp list
+
+# Resync a server
+pflow mcp sync github
+
+# Get tool details
+pflow mcp info mcp-github-create-issue
+```
+
+## Related
+
+- [Adding MCP servers guide](/guides/adding-mcp-servers) - Detailed setup guide
+- [CLI overview](/reference/cli/index) - Main pflow command
+- [MCP node reference](/reference/nodes/mcp) - Using MCP tools in workflows

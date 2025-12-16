@@ -1,0 +1,101 @@
+---
+title: "Roadmap"
+description: "pflow's direction and priorities"
+icon: "map"
+---
+
+## <Icon icon="circuit-board" size={24} color="#f97316" /> Current status
+
+Where pflow is today:
+
+- **Core workflow engine** built on PocketFlow
+- **Node system** — file, llm, http, shell, claude-code, and MCP bridge
+- **AI agent integration** via CLI and MCP server
+- **Intelligent discovery** — find nodes and workflows by describing what you need
+- **Template variables** — connect node outputs to inputs
+- **Workflow validation** with actionable error messages
+- **Execution traces** for debugging
+- **Settings management** — API keys, node filtering
+
+## <Icon icon="hammer" size={24} color="#f97316" /> Now
+
+**Getting pflow into users' hands**
+
+Current focus is preparing for public release:
+
+- Completing user documentation
+- Publishing to PyPI for easy installation
+- Ensuring a smooth first-run experience
+
+## <Icon icon="lightbulb" size={24} color="#f97316" /> Next
+
+**Unified model support**
+
+Using the `llm` library consistently across pflow:
+
+- Show available models to agents based on configured API keys
+- Use `llm` for internal discovery and structured output (not just LLM nodes)
+- Let users choose their preferred model for pflow's internal operations
+
+**Proving the value**
+
+- Benchmark pflow's efficiency using MCPMark evaluation
+- Quantify token savings and latency improvements
+
+## <Icon icon="layers" size={24} color="#f97316" /> Later
+
+**More powerful workflows**
+
+Expanding what workflows can express:
+
+- Conditional branching — if/else logic in workflows
+- Parallel execution — run independent nodes concurrently
+- Nested workflow support in the planner
+
+**Better output control**
+
+- Structured output from LLM nodes (JSON schemas)
+- Export workflows to standalone Python code
+- Execution preview before running
+
+**Safer execution**
+
+- Sandbox runtime for shell commands
+- Granular permission boundaries
+
+**Workflows as products**
+
+- Export workflows as self-hosted MCP server packages
+- Share automation as installable tools
+
+## <Icon icon="orbit" size={24} color="#f97316" /> Vision
+
+Long-term ideas we're exploring:
+
+- Discover and install MCP servers automatically
+- Community registry for workflows and MCP servers
+- Cloud execution for team use cases
+- Workflows exposed as remote HTTP services
+
+Ideas we're excited to explore. We'll see where they lead.
+
+## Get involved
+
+<CardGroup cols={3}>
+  <Card title="Discussions" icon="github" href="https://github.com/spinje/pflow/discussions">
+    Ideas and feature requests
+  </Card>
+  <Card title="Issues" icon="github" href="https://github.com/spinje/pflow/issues">
+    Bug reports
+  </Card>
+  <Card title="Documentation" icon="book-open" href="/">
+    Guides and reference
+  </Card>
+</CardGroup>
+
+---
+
+<p style={{textAlign: 'center', color: '#888'}}>
+  <Icon icon="heart" size={18} color="#f97316" /> Built by a developer who got tired of watching agents re-think the same tasks.<br/>
+  Questions or ideas? I'd love to hear from you — <a href="mailto:andreas@pflow.run">andreas@pflow.run</a>
+</p>

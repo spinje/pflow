@@ -1,0 +1,80 @@
+---
+title: "AI tool integration"
+description: "Connect pflow to your AI coding assistant"
+icon: "puzzle"
+---
+
+<Info>
+**Prerequisites:** Before you begin, [install pflow](/quickstart) and set up your API key.
+</Info>
+
+pflow works with any AI tool that has terminal access or supports MCP servers. Choose your tool below for setup instructions.
+
+## Choose your AI tool
+
+<CardGroup cols={2}>
+  <Card title="Claude Code" icon="square-asterisk" href="/integrations/claude-code">
+    Anthropic's CLI agent with terminal access
+  </Card>
+  <Card title="Claude Desktop" icon="asterisk" href="/integrations/claude-desktop">
+    Claude's desktop app (macOS)
+  </Card>
+  <Card title="Cursor" icon="mouse-pointer-2" href="/integrations/cursor">
+    AI-powered code editor
+  </Card>
+  <Card title="VS Code / Copilot" icon="code" href="/integrations/vscode">
+    Visual Studio Code with GitHub Copilot
+  </Card>
+  <Card title="Windsurf" icon="wind" href="/integrations/windsurf">
+    Codeium's AI IDE
+  </Card>
+</CardGroup>
+
+## Two ways to connect
+
+### CLI access
+
+If your AI tool has terminal access (Claude Code, Cursor, Windsurf), the simplest approach is CLI access. Your agent runs pflow commands directly:
+
+```bash
+pflow instructions usage
+```
+
+This gives the agent everything it needs to discover workflows, run them, and build new ones.
+
+### MCP server
+
+For tools that support the Model Context Protocol, you can add pflow as an MCP server. This gives your agent structured tools for workflow operations.
+
+The MCP config for pflow is the same across all tools:
+
+```json
+{
+  "mcpServers": {
+    "pflow": {
+      "command": "pflow",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+### Same capabilities, different interface
+
+Both methods give your agent the same functionality - the MCP server mirrors the CLI commands with minor adjustments for structured tool use. Your agent can discover nodes, run workflows, save new ones, and manage settings either way.
+
+Choose based on what your AI tool supports. If it has terminal access, CLI is simpler. If it only supports MCP, use that. If it supports both, either works.
+
+## Comparison
+
+| Tool | CLI access | MCP server | One-click install |
+|------|------------|------------|-------------------|
+| Claude Code | Yes | Yes | - |
+| Claude Desktop | No | Yes | No |
+| Cursor | Yes | Yes | Yes |
+| VS Code / Copilot | Yes | Yes | Yes |
+| Windsurf | Yes | Yes | No |
+
+<Note>
+pflow is currently verified to work on macOS. Windows and Linux support is coming soon.
+</Note>

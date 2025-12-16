@@ -1,0 +1,112 @@
+---
+title: "Experimental features"
+description: "Features that are available but not yet stable"
+icon: "flask-conical"
+---
+
+These features are available in pflow but considered experimental. They may change, have rough edges, or be replaced in future versions. Use them if they solve a problem for you, but be aware of the caveats.
+
+## Built-in Git and GitHub nodes
+
+pflow includes nodes for Git and GitHub operations, but they're **disabled by default**.
+
+### Recommended alternatives
+
+For most use cases, there are better options:
+
+**Git operations** - Use the `git` CLI directly via [shell node](/reference/nodes/shell). Your agent knows Git extremely well from training data and doesn't need special nodes for common operations.
+
+```json
+{
+  "id": "commit-changes",
+  "type": "shell",
+  "params": {
+    "command": "git add . && git commit -m '${commit_message}'"
+  }
+}
+```
+
+**GitHub operations** - Use the `gh` CLI via shell node for simple tasks, or the [GitHub MCP server](/guides/adding-mcp-servers#github) for complex operations that benefit from structured tools.
+
+```json
+{
+  "id": "create-pr",
+  "type": "shell",
+  "params": {
+    "command": "gh pr create --title '${title}' --body '${body}'"
+  }
+}
+```
+
+### If you still want to try the built-in nodes
+
+Enable with:
+
+```bash
+# Enable git nodes
+pflow settings allow "pflow.nodes.git.*"
+
+# Enable github nodes
+pflow settings allow "pflow.nodes.github.*"
+```
+
+Then view available nodes:
+
+```bash
+pflow registry list git
+pflow registry list github
+```
+
+## Natural language planner
+
+pflow has a built-in natural language planner that lets you run commands like:
+
+```bash
+pflow "fetch the latest issues from my repo and summarize them"
+```
+
+This is **experimental**. Using an external agent (Claude Code, Cursor, etc.) is the recommended approach - it's more capable and provides a better experience.
+
+### When to use it
+
+- Quick one-off tasks when you're not in an AI tool
+- Testing or exploring pflow capabilities
+- Environments where external agents aren't available
+
+### Debugging planner issues
+
+If you do use the planner and need to debug:
+
+```bash
+pflow --trace-planner "your request"
+```
+
+This saves the planning process to `~/.pflow/debug/planner-trace-*.json`.
+
+## Auto-repair
+
+pflow can automatically attempt to fix failing workflows using LLM-powered repair. This is **not enabled by default**.
+
+```bash
+pflow my-workflow --auto-repair
+```
+
+When enabled:
+- pflow analyzes the error
+- Attempts to fix the workflow
+- Retries execution (up to 3 attempts)
+
+### Caveats
+
+- Uses LLM calls (costs money)
+- May not fix all issues
+- Can get stuck in repair loops on unfixable problems
+
+Your agent doesn't know about this flag - it's for manual experimentation.
+
+## Feedback
+
+If you use these experimental features and have feedback:
+
+- **Questions or ideas** - Start a [discussion](https://github.com/spinje/pflow/discussions)
+- **Bug reports** - Open an [issue](https://github.com/spinje/pflow/issues)

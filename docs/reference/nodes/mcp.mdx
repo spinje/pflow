@@ -1,0 +1,123 @@
+---
+title: "MCP tools"
+description: "Use tools from MCP servers"
+icon: "plug"
+---
+
+<Note>
+  **Agent commands.** Your AI agent uses MCP nodes in workflows. You manage MCP servers with `pflow mcp` commands.
+</Note>
+
+MCP (Model Context Protocol) lets you extend pflow with external tools. When you add an MCP server, its tools become pflow nodes that your agent can use in workflows.
+
+## How it works
+
+1. **Add an MCP server** with `pflow mcp add`
+2. **Sync tools** with `pflow mcp sync` (or let auto-sync handle it)
+3. **Tools become nodes** named `mcp-{server}-{tool}`
+4. **Agent uses them** like any other node
+
+```bash
+# Add a GitHub MCP server
+pflow mcp add github.mcp.json
+
+# Tools are now available
+pflow mcp tools github
+# mcp-github-create_issue
+# mcp-github-list_repos
+# mcp-github-search_code
+```
+
+## Node naming
+
+MCP tools become nodes with the pattern `mcp-{server}-{tool}`:
+
+| Server | Tool | Node name |
+|--------|------|-----------|
+| github | create_issue | `mcp-github-create_issue` |
+| slack | send_message | `mcp-slack-send_message` |
+| filesystem | read_file | `mcp-filesystem-read_file` |
+
+## Parameters
+
+MCP node parameters come directly from the tool's input schema. Each MCP server defines its own tools with their own parameters.
+
+To see a tool's parameters:
+
+```bash
+pflow registry describe mcp-github-create_issue
+```
+
+## Output
+
+All MCP nodes write to:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `result` | any | Tool execution result |
+| `{server}_{tool}_result` | any | Same result with unique key |
+| `error` | str | Error message (only on failure) |
+
+For dict results, top-level fields are also extracted directly:
+
+```json
+// Tool returns: {"issue_url": "...", "issue_number": 123}
+// Shared store contains:
+{
+  "result": {"issue_url": "...", "issue_number": 123},
+  "github_create_issue_result": {"issue_url": "...", "issue_number": 123},
+  "issue_url": "...",
+  "issue_number": 123
+}
+```
+
+## Example workflow
+
+```json
+{
+  "nodes": [
+    {
+      "id": "create_issue",
+      "type": "mcp-github-create_issue",
+      "params": {
+        "repository": "myorg/myrepo",
+        "title": "Bug: ${error_summary}",
+        "body": "${error_details}"
+      }
+    },
+    {
+      "id": "notify",
+      "type": "mcp-slack-send_message",
+      "params": {
+        "channel": "#alerts",
+        "text": "Created issue: ${create_issue.issue_url}"
+      }
+    }
+  ]
+}
+```
+
+## Setup
+
+To use MCP tools, first add MCP servers to pflow. See [Adding MCP servers](/guides/adding-mcp-servers) for configuration format, authentication, and examples.
+
+pflow supports both local (stdio) and remote (HTTP) MCP servers. Both work identically in workflows - same naming, parameters, and output structure.
+
+## Error handling
+
+MCP nodes return `error` action on:
+
+- **Connection failure**: Server not reachable
+- **Tool error**: Tool reported an error (via `isError` flag)
+- **Timeout**: Request took too long (default 30 seconds)
+
+The node does **not** retry automatically - MCP calls start a server subprocess, and retries would cause resource conflicts.
+
+## Auto-sync
+
+When you run a workflow, pflow automatically syncs MCP tools if the server configuration has changed. You don't need to manually run `pflow mcp sync` after adding servers.
+
+Manual sync is useful for:
+- Testing connection immediately after adding a server
+- Debugging connection issues
+- Forcing re-discovery without running a workflow

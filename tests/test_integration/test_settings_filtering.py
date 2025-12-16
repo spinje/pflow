@@ -63,7 +63,8 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
         assert "echo:" not in context, "echo test node leaked to LLM context"
 
         # Verify allowed nodes ARE present (sanity check)
-        assert "git-status" in context or "git_status" in context, "Allowed nodes should be in context"
+        # Note: git nodes are denied by default, so we check for always-enabled nodes
+        assert "llm" in context or "http" in context, "Allowed nodes should be in context"
 
     finally:
         # Restore original HOME

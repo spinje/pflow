@@ -1,0 +1,183 @@
+---
+title: "HTTP"
+description: "Make API requests to web services"
+icon: "globe"
+---
+
+<Note>
+  **Agent commands.** Your AI agent uses this node in workflows. You don't configure it directly.
+</Note>
+
+The HTTP node makes requests to APIs and web services. It supports all standard HTTP methods, handles JSON and binary responses, and includes authentication options.
+
+## Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `url` | str | Yes | - | API endpoint to call |
+| `method` | str | No | Auto | HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS) |
+| `body` | dict/str | No | - | Request payload (dict for JSON, str for raw) |
+| `headers` | dict | No | `{}` | Additional HTTP headers |
+| `params` | dict | No | - | Query parameters |
+| `timeout` | int | No | `30` | Request timeout in seconds |
+
+### Authentication (mutually exclusive)
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `auth_token` | str | Bearer token for `Authorization: Bearer <token>` header |
+| `api_key` | str | API key for custom header |
+| `api_key_header` | str | Header name for API key (default: `X-API-Key`) |
+
+<Warning>
+  You cannot use both `auth_token` and `api_key` in the same request.
+</Warning>
+
+## Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `response` | any | Response data (JSON parsed to dict, text, or base64 binary) |
+| `response_is_binary` | bool | `true` if response is base64-encoded binary |
+| `status_code` | int | HTTP status code |
+| `response_headers` | dict | Response headers |
+| `response_time` | float | Request duration in seconds |
+| `error` | str | Error description (only for non-2xx responses) |
+
+## Method auto-detection
+
+If `method` is not specified:
+- **POST** if `body` is provided
+- **GET** if no `body`
+
+## Response handling
+
+**JSON responses** are automatically parsed to dict/list.
+
+**Binary responses** (images, PDFs, etc.) are base64-encoded. Detected by Content-Type:
+- `image/*`, `video/*`, `audio/*`
+- `application/pdf`, `application/zip`, `application/octet-stream`
+
+**Text responses** are returned as strings.
+
+## Examples
+
+### GET request
+
+```json
+{
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "params": {
+        "url": "https://api.example.com/users"
+      }
+    }
+  ]
+}
+```
+
+### POST with JSON body
+
+```json
+{
+  "nodes": [
+    {
+      "id": "create",
+      "type": "http",
+      "params": {
+        "url": "https://api.example.com/users",
+        "body": {
+          "name": "John",
+          "email": "john@example.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+### With authentication
+
+```json
+{
+  "nodes": [
+    {
+      "id": "fetch_protected",
+      "type": "http",
+      "params": {
+        "url": "https://api.example.com/private",
+        "auth_token": "${api_token}"
+      }
+    }
+  ]
+}
+```
+
+### With query parameters
+
+```json
+{
+  "nodes": [
+    {
+      "id": "search",
+      "type": "http",
+      "params": {
+        "url": "https://api.example.com/search",
+        "params": {
+          "q": "pflow",
+          "page": 1,
+          "limit": 10
+        }
+      }
+    }
+  ]
+}
+```
+
+Results in: `https://api.example.com/search?q=pflow&page=1&limit=10`
+
+### Download binary file
+
+```json
+{
+  "nodes": [
+    {
+      "id": "download",
+      "type": "http",
+      "params": {
+        "url": "https://example.com/image.png"
+      }
+    },
+    {
+      "id": "save",
+      "type": "write-file",
+      "params": {
+        "file_path": "downloaded.png",
+        "content": "${download.response}",
+        "content_is_binary": "${download.response_is_binary}"
+      }
+    }
+  ]
+}
+```
+
+## Error handling
+
+**HTTP errors** (4xx, 5xx) return the `error` action with details in `error` key. The response body is still available in `response`.
+
+**Network errors** trigger automatic retry (3 attempts, 1 second wait):
+
+| Error | Message |
+|-------|---------|
+| Timeout | "Request timed out after X seconds" |
+| Connection failed | "Could not connect to URL" |
+| Other | "HTTP request failed: {error}" |
+
+## Status codes
+
+| Action | Condition |
+|--------|-----------|
+| `default` | Status 2xx (success) |
+| `error` | Status 4xx/5xx or network failure |

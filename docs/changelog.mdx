@@ -1,0 +1,55 @@
+---
+title: "Changelog"
+description: "Product updates and announcements"
+icon: "clock"
+rss: true
+---
+
+<Update label="December 2024" description="v0.6.0" tags={["New releases"]}>
+  ## Initial release
+
+  pflow v0.6.0 — compile agent reasoning into reusable workflows.
+
+  **Workflow engine**
+  - Natural language → compiled workflows
+  - Save workflows for instant reuse
+  - Type-aware templates with auto-parsing and nested access
+  - Stdin/stdout pipe integration
+  - Validation with suggestions and actionable error messages
+  - Execution traces for debugging
+
+  **Built-in nodes**
+  - File operations (read, write, copy, move, delete)
+  - LLM calls (any model via `llm` library)
+  - HTTP requests (all methods, auth, binary support)
+  - Shell commands (with dangerous pattern blocking)
+  - Claude Code for agentic tasks
+  - MCP bridge — connect any MCP server (stdio and HTTP transports)
+
+  **Agent integration**
+  - MCP server with 11 tools for workflow building
+  - Intelligent discovery of nodes and workflows
+  - Run individual nodes without workflows (`registry run`)
+  - Structure-only mode — AI sees schema types, not data
+  - Instructions system for agent guidance
+  - Works with all MCP-compatible and local agents
+
+  <Accordion title="Quick start">
+    ```bash
+    uv tool install git+https://github.com/spinje/pflow.git
+    pflow settings set-env ANTHROPIC_API_KEY "your-key"
+    ```
+    See [Quickstart](/quickstart) for full setup.
+  </Accordion>
+
+  <Accordion title="Limitations">
+    - Discovery features require an Anthropic API key
+    - Currently supports macOS only
+    - Shell commands run with user privileges (not sandboxed)
+    - No conditional branching or parallel execution yet
+  </Accordion>
+
+  <Accordion title="What's next">
+    See the [Roadmap](/roadmap) — unified model support, conditional branching, parallel execution, and benchmarking coming soon.
+  </Accordion>
+</Update>

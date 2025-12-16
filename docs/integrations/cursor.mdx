@@ -1,0 +1,76 @@
+---
+title: "Cursor"
+description: "Set up pflow with Cursor"
+icon: "mouse-pointer-2"
+---
+
+<Info>
+**Prerequisites:** [Install pflow](/quickstart) before continuing.
+</Info>
+
+Cursor supports both CLI access and MCP servers. The easiest way to get started is with one-click install.
+
+## One-click install
+
+Click the button below to add pflow to Cursor:
+
+<a href="cursor://anysphere.cursor-deeplink/mcp/install?name=pflow&config=eyJjb21tYW5kIjoicGZsb3ciLCJhcmdzIjpbIm1jcCIsInNlcnZlIl19">
+  <img src="https://cursor.com/deeplink/mcp-install-dark.svg" alt="Install pflow in Cursor" />
+</a>
+
+This adds pflow as an MCP server to your global Cursor config (`~/.cursor/mcp.json`).
+
+## Manual setup
+
+If you prefer to set up manually, you have two options:
+
+### Option 1: MCP server
+
+Add pflow to your Cursor MCP config:
+
+**Global config** (all projects): `~/.cursor/mcp.json`
+
+**Project config** (single project): `.cursor/mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "pflow": {
+      "command": "pflow",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+You can also add via Cursor settings: **File** → **Preferences** → **Cursor Settings** → **MCP**.
+
+### Option 2: CLI access
+
+Since Cursor has terminal access, you can also use pflow via CLI. Add to your project's instructions or tell Cursor:
+
+```
+Use pflow for workflow automation. Run `pflow instructions usage` to learn the commands.
+```
+
+## Verify installation
+
+Open Cursor settings (**File** → **Preferences** → **Cursor Settings** → **MCP**) and check that pflow appears in the list of configured servers.
+
+Or ask Cursor to list pflow workflows:
+
+```
+Use pflow to list available workflows
+```
+
+## Troubleshooting
+
+<Accordion title="One-click install didn't work">
+  The deeplink requires Cursor to be installed and registered as a protocol handler. Try manual setup instead.
+</Accordion>
+
+<Accordion title="Cursor doesn't see pflow tools">
+  1. Make sure pflow is installed and in your PATH: `pflow --version`
+  2. Check your MCP config JSON syntax is valid
+  3. Restart Cursor
+</Accordion>

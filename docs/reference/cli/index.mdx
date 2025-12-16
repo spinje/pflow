@@ -1,0 +1,280 @@
+---
+title: "CLI overview"
+description: "Complete reference for pflow command-line interface"
+icon: "terminal"
+---
+
+pflow provides a CLI for running workflows, managing MCP servers, and configuring settings.
+
+<Note>
+  **Who runs these commands?** Most pflow commands are run by your AI agent, not by you directly. You handle setup (installation, API keys, MCP servers), then your agent uses pflow to build and execute workflows. This reference documents all commands so you understand what your agent is doing. See [Using pflow](/guides/using-pflow) for what to expect day-to-day.
+</Note>
+
+## Command structure
+
+```bash
+pflow [command] [options] [arguments]
+```
+
+## Command groups
+
+<Columns cols={2}>
+  <Card title="pflow (default)" icon="circle-play" href="#main-command">
+    Run workflows by name or file
+  </Card>
+  <Card title="pflow workflow" icon="workflow" href="/reference/cli/workflow">
+    List, describe, discover, and save workflows
+  </Card>
+  <Card title="pflow registry" icon="box" href="/reference/cli/registry">
+    Browse and test available nodes
+  </Card>
+  <Card title="pflow mcp" icon="plug" href="/reference/cli/mcp">
+    Manage MCP server connections
+  </Card>
+  <Card title="pflow settings" icon="file-cog" href="/reference/cli/settings">
+    Configure API keys and node filtering
+  </Card>
+  <Card title="pflow instructions" icon="book-open" href="#instructions-command">
+    Get AI agent usage guidance
+  </Card>
+</Columns>
+
+## Main command
+
+The default `pflow` command runs workflows. Your agent runs this to execute saved workflows or workflow files it has created.
+
+### Run a saved workflow
+
+```bash
+pflow my-workflow input=data.txt threshold=0.5
+```
+
+### Run from a file
+
+```bash
+pflow ./workflow.json
+pflow ~/workflows/analysis.json param=value
+```
+
+<Accordion title="Natural language mode (experimental)">
+  pflow can generate workflows from natural language, but this feature is experimental. For production use, we recommend letting your AI agent build workflows directly.
+
+  ```bash
+  pflow "read data.txt and summarize the content"
+  ```
+
+  Natural language requests must be quoted. The planner generates a workflow, which you can save for reuse. Requires an Anthropic API key.
+</Accordion>
+
+## Global options
+
+| Option | Description |
+|--------|-------------|
+| `--version` | Show pflow version |
+| `-v, --verbose` | Show detailed execution output |
+| `-o, --output-key KEY` | Specific shared store key to output |
+| `--output-format text\|json` | Output format (default: text) |
+| `-p, --print` | Force non-interactive output |
+| `--no-trace` | Disable workflow trace saving |
+| `--trace-planner` | Save planner execution trace |
+| `--validate-only` | Validate workflow without executing |
+| `--auto-repair` | Enable automatic workflow repair on failure |
+| `--help` | Show help message |
+
+<Accordion title="Planner options (experimental)">
+  These options apply when using natural language mode to generate workflows:
+
+  | Option | Description |
+  |--------|-------------|
+  | `--planner-timeout INT` | Timeout for planner in seconds (default: 60) |
+  | `--save / --no-save` | Save generated workflow (default: save) |
+  | `--cache-planner` | Enable cross-session LLM caching to reduce costs |
+  | `--planner-model TEXT` | LLM model for planning (default: auto-detect) |
+  | `--no-update` | Save repairs to separate file instead of updating original |
+</Accordion>
+
+## Parameter syntax
+
+Pass parameters to workflows using `key=value` syntax:
+
+```bash
+pflow my-workflow input=data.txt count=10 enabled=true
+```
+
+**Type inference:**
+- `true` / `false` → boolean
+- `10` → integer
+- `3.14` → float
+- `'["a","b"]'` → JSON array
+- `'{"key":"val"}'` → JSON object
+- Everything else → string
+
+## Stdin input
+
+Pipe data into workflows:
+
+```bash
+echo "test content" | pflow my-workflow
+cat data.csv | pflow csv-analyzer
+```
+
+Stdin data is available in the workflow as `${stdin}`.
+
+## Output modes
+
+### Text mode (default)
+
+Human-readable output with progress indicators in interactive terminals:
+
+```bash
+pflow my-workflow
+```
+
+### JSON mode
+
+Structured output for parsing:
+
+```bash
+pflow --output-format json my-workflow | jq '.result'
+```
+
+<Expandable title="JSON output structure">
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "result": {
+    "summary": "Analysis complete",
+    "count": 42
+  },
+  "duration_ms": 456.78,
+  "total_cost_usd": 0.02,
+  "nodes_executed": 3,
+  "execution": {
+    "duration_ms": 456.78,
+    "nodes_executed": 3,
+    "nodes_total": 3,
+    "steps": [
+      {
+        "node_id": "read-data",
+        "status": "completed",
+        "duration_ms": 50.12,
+        "cached": false
+      }
+    ]
+  },
+  "metrics": {
+    "workflow": {
+      "duration_ms": 456.78,
+      "nodes_executed": 3,
+      "nodes_cached": 0
+    },
+    "total": {
+      "duration_ms": 456.78,
+      "total_cost_usd": 0.02,
+      "total_tokens": 1500,
+      "llm_calls": 1
+    }
+  }
+}
+```
+
+**Error response:**
+
+```json
+{
+  "success": false,
+  "error": "Workflow failed with action: error",
+  "errors": [
+    {
+      "source": "runtime",
+      "category": "api_validation",
+      "message": "Missing required parameter: 'repo'",
+      "node_id": "fetch-issues",
+      "fixable": true,
+      "available_fields": ["user_input", "stdin"]
+    }
+  ],
+  "execution": {
+    "steps": [
+      {"node_id": "fetch-issues", "status": "failed", "duration_ms": 120.5}
+    ]
+  }
+}
+```
+
+**Key fields:**
+
+| Field | Description |
+|-------|-------------|
+| `success` | `true` if workflow completed, `false` if failed |
+| `result` | Workflow output (object, string, or array based on declared outputs) |
+| `duration_ms` | Total execution time in milliseconds |
+| `total_cost_usd` | LLM API cost (0.0 if no LLM calls) |
+| `errors[].available_fields` | Valid fields for template variables - helps agents fix errors |
+
+</Expandable>
+
+### Print mode
+
+Clean output for piping (no progress indicators):
+
+```bash
+pflow -p my-workflow > output.txt
+```
+
+## Validation mode
+
+Validate a workflow without executing it:
+
+```bash
+pflow --validate-only workflow.json
+pflow --validate-only my-saved-workflow
+```
+
+Agents use this to check workflows before running them. Exit code 0 means valid.
+
+## Traces
+
+By default, pflow saves execution traces to `~/.pflow/debug/`:
+
+- **Workflow traces**: `workflow-trace-{name}-{timestamp}.json`
+- **Planner traces**: `planner-trace-{timestamp}.json` (with `--trace-planner`)
+
+Disable traces with `--no-trace` for faster execution.
+
+## Instructions command
+
+The `pflow instructions` command provides guidance for AI agents using pflow.
+
+```bash
+pflow instructions <SUBCOMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `usage` | Basic usage guide for AI agents (~100 lines) |
+| `create` | Comprehensive workflow creation guide (~1600 lines) |
+
+**Example:**
+
+```bash
+# Get usage instructions (AI agents should run this first)
+pflow instructions usage
+
+# Get detailed workflow creation guide
+pflow instructions create
+```
+
+<Note>
+  AI agents should run `pflow instructions usage` when first connecting to pflow. This provides optimized guidance for agent-driven workflow building.
+</Note>
+
+## Related
+
+- [Workflow commands](/reference/cli/workflow) - Manage saved workflows
+- [Registry commands](/reference/cli/registry) - Browse available nodes
+- [MCP commands](/reference/cli/mcp) - Manage MCP servers
+- [Settings commands](/reference/cli/settings) - Configure pflow

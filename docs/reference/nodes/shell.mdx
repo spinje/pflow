@@ -1,0 +1,234 @@
+---
+title: "Shell"
+description: "Execute shell commands"
+icon: "terminal"
+---
+
+<Note>
+  **Agent commands.** Your AI agent uses this node in workflows. You don't configure it directly.
+</Note>
+
+The shell node executes commands with full Unix power - pipes, redirects, and all standard shell features. It includes security protections against dangerous patterns.
+
+## Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `command` | str | Yes | - | Shell command to execute |
+| `stdin` | any | No | - | Input data for the command |
+| `cwd` | str | No | Current dir | Working directory |
+| `env` | dict | No | `{}` | Additional environment variables |
+| `timeout` | int | No | `30` | Maximum execution time in seconds |
+| `ignore_errors` | bool | No | `false` | Continue workflow on non-zero exit |
+
+## Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `stdout` | str | Command output (UTF-8 or base64 if binary) |
+| `stdout_is_binary` | bool | `true` if stdout is base64-encoded |
+| `stderr` | str | Error output (UTF-8 or base64 if binary) |
+| `stderr_is_binary` | bool | `true` if stderr is base64-encoded |
+| `exit_code` | int | Exit code (0=success, -1=timeout, -2=execution failure) |
+| `error` | str | Error message (only on timeout/failure) |
+
+## Using stdin for data
+
+<Warning>
+  **Always use `stdin` for data, not command interpolation.** This prevents shell escaping issues and handles any data type safely.
+</Warning>
+
+**Correct** - data via stdin:
+```json
+{
+  "id": "process",
+  "type": "shell",
+  "params": {
+    "stdin": "${api.response}",
+    "command": "jq -r '.data.name'"
+  }
+}
+```
+
+**Wrong** - data in command (will break on special characters):
+```json
+{
+  "id": "process",
+  "type": "shell",
+  "params": {
+    "command": "echo '${api.response}' | jq"
+  }
+}
+```
+
+### stdin type handling
+
+| Input type | Conversion |
+|------------|------------|
+| str | Used as-is |
+| dict/list | Serialized to JSON |
+| int/float | Converted to string |
+| bool | Lowercase string (`true`/`false`) |
+| bytes | Decoded UTF-8 (fallback: latin-1) |
+
+## Security
+
+<Warning>
+  Commands run directly on your system without sandboxing. While dangerous patterns are blocked, the shell node has full access to your filesystem and network. Sandboxed execution is planned for a future release.
+</Warning>
+
+<Tip>
+  **You're in control.** Your agent asks before running workflows, and you can inspect the workflow JSON to see exactly what commands will execute. If you need stronger restrictions, you can disable shell entirely with `pflow settings deny shell` - but this significantly limits pflow's capabilities since shell is often used for data processing and filtering.
+</Tip>
+
+### Blocked patterns
+
+These commands are rejected immediately with an error:
+
+- `rm -rf /` and variants (recursive system deletion)
+- `dd if=/dev/zero of=/dev/sda` (device operations)
+- `:(){:|:&};:` (fork bombs)
+- `chmod -R 777 /` (dangerous permissions)
+- `sudo rm -rf /` (privileged dangerous commands)
+
+### Warning patterns
+
+These trigger warnings but execute unless `PFLOW_SHELL_STRICT=true`:
+
+- `sudo`, `su -`
+- `shutdown`, `reboot`, `halt`
+- `systemctl poweroff`
+
+## Smart error handling
+
+Some commands return non-zero exit codes for valid "not found" results. The shell node treats these as success:
+
+| Pattern | Exit code | Reason |
+|---------|-----------|--------|
+| `ls *.txt` (no matches) | 1 | Empty glob is valid |
+| `grep pattern file` | 1 | Pattern not found is valid |
+| `which nonexistent` | 1 | Command check |
+| `command -v foo` | 1 | Existence check |
+
+## Examples
+
+### Basic command
+
+```json
+{
+  "nodes": [
+    {
+      "id": "list",
+      "type": "shell",
+      "params": {
+        "command": "ls -la /tmp"
+      }
+    }
+  ]
+}
+```
+
+### Process JSON with jq
+
+```json
+{
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "params": { "url": "https://api.example.com/data" }
+    },
+    {
+      "id": "extract",
+      "type": "shell",
+      "params": {
+        "stdin": "${fetch.response}",
+        "command": "jq -r '.items[].name'"
+      }
+    }
+  ]
+}
+```
+
+### With environment variables
+
+```json
+{
+  "nodes": [
+    {
+      "id": "deploy",
+      "type": "shell",
+      "params": {
+        "command": "deploy.sh",
+        "env": {
+          "ENV": "production",
+          "DEBUG": "false"
+        },
+        "timeout": 120
+      }
+    }
+  ]
+}
+```
+
+### Working directory
+
+```json
+{
+  "nodes": [
+    {
+      "id": "build",
+      "type": "shell",
+      "params": {
+        "command": "npm run build",
+        "cwd": "/path/to/project"
+      }
+    }
+  ]
+}
+```
+
+### Ignoring errors
+
+```json
+{
+  "nodes": [
+    {
+      "id": "cleanup",
+      "type": "shell",
+      "params": {
+        "command": "rm -f temp/*.log",
+        "ignore_errors": true
+      }
+    }
+  ]
+}
+```
+
+## Error handling
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Success |
+| 1+ | Command-specific error |
+| -1 | Timeout |
+| -2 | Execution failure |
+
+The node returns `error` action on non-zero exit (unless `ignore_errors` is `true` or it's an auto-handled pattern like grep).
+
+## Recommended tools
+
+pflow's template variables handle most data access - you can use `${api.response.items[0].name}` to access nested fields and array elements directly without shell commands.
+
+Shell is needed when you need to:
+- **Iterate over arrays** - `jq '.items[].name'` (templates can't do wildcards)
+- **Filter or transform** - `jq 'select(.active)'`, `sort`, `uniq`
+- **Compute values** - `wc -l`, arithmetic
+
+Common Unix tools are built into macOS: `grep`, `awk`, `cut`, `sort`, `head`, `tail`, `curl`.
+
+For JSON processing, install [jq](https://jqlang.github.io/jq/):
+
+```bash
+brew install jq
+```

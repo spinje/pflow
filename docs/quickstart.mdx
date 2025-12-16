@@ -1,0 +1,144 @@
+---
+title: "Quickstart"
+description: "Install pflow and set it up for your AI agent"
+icon: "rocket"
+---
+
+pflow is designed to be used by AI agents (Claude Code, Cursor, Windsurf) rather than directly by humans. You install it, configure it, and your AI agent uses it to build and run workflows.
+
+<Info>
+**Prerequisites:** Python 3.10+ and [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/)
+</Info>
+
+## Install pflow
+
+<Tabs>
+  <Tab title="uv (recommended)">
+    ```bash
+    uv tool install git+https://github.com/spinje/pflow.git
+    ```
+  </Tab>
+  <Tab title="pipx">
+    ```bash
+    pipx install git+https://github.com/spinje/pflow.git
+    ```
+  </Tab>
+</Tabs>
+
+Verify installation:
+
+```bash
+pflow --version
+```
+
+## Set up your API key
+
+pflow uses an LLM for **intelligent discovery** - finding the right workflows and nodes without your agent needing to load everything into context. These features currently require an Anthropic API key.
+
+```bash
+pflow settings set-env ANTHROPIC_API_KEY "your-api-key"
+```
+
+<Tip>
+pflow uses [Simon Willison's llm](https://llm.datasette.io/) under the hood. If you already have `llm` installed and configured with Anthropic, pflow will use that key automatically.
+</Tip>
+
+### What the API key is used for
+
+This is **pflow's own API key**, separate from whatever LLM your agent uses:
+
+- **Discovery commands** - `pflow registry discover` and `pflow workflow discover` use LLM to find relevant nodes and workflows
+- **LLM nodes** - workflows that include an LLM node for text processing
+- **Smart filtering** - automatic field selection for large API responses
+
+<Note>
+Your agent creates workflows using its own LLM (Claude Code uses Claude, Cursor uses its models, etc.). pflow's API key is only for pflow's internal features.
+</Note>
+
+### When is it required?
+
+The API key is **strongly recommended** if you're using MCP servers. MCP servers expose many tools, and intelligent discovery is how pflow avoids loading all those tool schemas into your agent's context. Without it, you lose the main benefit.
+
+For basic usage without MCP servers or testing pflow, the API key is optional.
+
+<Tip>
+The cost of pflow's discovery features is minimal compared to running your agent directly. By finding only what's needed, intelligent discovery significantly reduces your agent's token usage, speeds up responses, and improves output quality.
+</Tip>
+
+## Connect pflow to your AI agent
+
+Your AI agent can use pflow in two ways:
+
+### Option 1: CLI access (easiest)
+
+If your agent has terminal access (Claude Code, Cursor, Windsurf), instruct it to run:
+
+```bash
+pflow instructions usage
+```
+
+This gives the agent everything it needs to discover existing workflows, run them, or build new ones.
+
+### Option 2: MCP server
+
+Add pflow to your AI tool's MCP config (Claude Desktop, Cursor, etc.):
+
+```json
+{
+  "mcpServers": {
+    "pflow": {
+      "command": "pflow",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+See [AI tool integration](/integrations/overview) for detailed setup instructions for each tool.
+
+## What your agent can do with pflow
+
+Once connected, your agent can:
+
+- **Discover workflows**: `pflow workflow discover "what I want to do"`
+- **Run workflows**: `pflow my-workflow param1=value1`
+- **List workflows**: `pflow workflow list`
+- **Discover nodes**: `pflow registry discover "capability I need"`
+- **Build new workflows**: Following `pflow instructions create`
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="AI tool integration" icon="bot" href="/integrations/overview">
+    Set up Claude Desktop, Cursor, or other AI tools
+  </Card>
+  <Card title="Add MCP servers" icon="plug" href="/guides/adding-mcp-servers">
+    Expand pflow capabilities with external tools
+  </Card>
+</Columns>
+
+## Troubleshooting
+
+<Accordion title="Command not found: pflow">
+  Make sure the install location is in your PATH:
+
+  ```bash
+  # For uv
+  echo $PATH | grep -q "$HOME/.local/bin" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+
+  # For pipx
+  pipx ensurepath
+  ```
+
+  Then restart your terminal.
+</Accordion>
+
+<Accordion title="Python version error">
+  pflow requires Python 3.10+. Check your version:
+
+  ```bash
+  python --version
+  ```
+
+  If you need to upgrade, use [pyenv](https://github.com/pyenv/pyenv) or your system package manager.
+</Accordion>

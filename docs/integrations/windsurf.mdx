@@ -1,0 +1,75 @@
+---
+title: "Windsurf"
+description: "Set up pflow with Windsurf"
+icon: "wind"
+---
+
+<Info>
+**Prerequisites:** [Install pflow](/quickstart) before continuing.
+</Info>
+
+Windsurf supports both CLI access and MCP servers. Since Windsurf has terminal access, you can use either approach.
+
+## Option 1: CLI access (simplest)
+
+Windsurf has terminal access, so the simplest approach is to use pflow via CLI. Tell Windsurf:
+
+```
+Use pflow for workflow automation. Run `pflow instructions usage` to learn the commands.
+```
+
+Windsurf will then run pflow commands directly when it needs to build or execute workflows.
+
+## Option 2: MCP server
+
+You can also add pflow as an MCP server for structured tool access.
+
+### 1. Open your MCP config file
+
+The config file is located at:
+
+```
+~/.codeium/windsurf/mcp_config.json
+```
+
+Create the file if it doesn't exist.
+
+### 2. Add pflow to your config
+
+```json
+{
+  "mcpServers": {
+    "pflow": {
+      "command": "pflow",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+### 3. Restart Windsurf
+
+Restart Windsurf to load the new MCP server.
+
+## Verify installation
+
+Ask Windsurf to list pflow workflows:
+
+```
+Use pflow to list available workflows
+```
+
+Windsurf should be able to access pflow's tools and respond with workflow information.
+
+## Troubleshooting
+
+<Accordion title="Windsurf doesn't see pflow tools">
+  1. Make sure pflow is installed and in your PATH: `pflow --version`
+  2. Check your MCP config JSON syntax is valid
+  3. Make sure the config file is at `~/.codeium/windsurf/mcp_config.json`
+  4. Restart Windsurf
+</Accordion>
+
+<Accordion title="Config file location on different OS">
+  The config path `~/.codeium/windsurf/mcp_config.json` is for macOS/Linux. On Windows, check Windsurf documentation for the equivalent path.
+</Accordion>

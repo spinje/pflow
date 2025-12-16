@@ -1,33 +1,242 @@
-# Task 93 Handoff Memo: Mintlify Documentation Setup
+# Task 93 Handoff Memo: Mintlify Documentation
 
-## The Single Most Important Thing
-
-**AI agents are NOT the audience for these docs.** The user said this multiple times. AI agents get instructions via `pflow instructions` command or MCP resources. These docs are for **humans** who:
-1. Use pflow directly via CLI
-2. Set up pflow for their AI tools (Claude Desktop, Cursor)
-
-If you find yourself writing content that explains how to build workflows programmatically or how the planner works internally - STOP. That's not what these docs are for.
+**Session Date**: 2025-12-11 (builds on 2025-12-09 session)
 
 ---
 
-## Files That Already Exist (Read These First)
+## The One Thing That Matters Most (NEW)
 
-1. **`docs/CLAUDE.md`** - Writing guidelines are DONE. Contains terminology, components, page structure pattern. This is your style guide.
+**Documentation is for humans, but documents commands that agents run.**
 
-2. **`.taskmaster/tasks/task_93/starting-context/mintlify-docs-spec.md`** - Complete structure decisions, navigation JSON, content sources. This is your blueprint.
+This creates a unique voice challenge. We solved it with a consistent pattern:
 
-3. **`.taskmaster/tasks/task_93/starting-context/task-93-spec.md`** - Executable spec with 30 rules and 34 test criteria. This is your validation checklist.
+| Command Type | Voice | Example |
+|--------------|-------|---------|
+| Human setup commands | "you" | "Set your API key with `pflow settings set-env`" |
+| Agent commands | "Your agent" / "Agents" | "Agents use `registry run` to test nodes" |
+| Shared commands | Either | "Run workflows with `pflow my-workflow`" |
 
-4. **`.taskmaster/tasks/task_93/research/mintlify-docs/`** - Contains:
-   - `llms-full.txt` (920KB) - Complete Mintlify docs as AI context
-   - `llms.txt` (18KB) - Structured index
-   - `starter-reference/` - Cloned Mintlify starter kit with working examples
+Every CLI reference page now has a **Note callout at the top** stating who runs these commands:
+
+| Page | Note |
+|------|------|
+| index.mdx | "Most commands are run by your AI agent, not you directly..." |
+| registry.mdx | "**Agent commands.** ...except `scan` - you run that..." |
+| workflow.mdx | "**Agent commands.** ...`save` can be used by either..." |
+| mcp.mdx | "**Setup commands.** You run `add/remove/sync`, agent uses `tools/info`" |
+| settings.mdx | "**Your commands.** ...never by an AI agent." |
 
 ---
 
-## The User's Mental Model
+## Critical Rule: VERIFY BEFORE WRITING
 
-The user thinks about pflow documentation in layers:
+**Before documenting ANY command:**
+```bash
+uv run pflow <command> --help
+```
+
+This rule is in `docs/CLAUDE.md`. We ran 5 parallel pflow-codebase-searcher agents to verify CLI docs and found real issues:
+
+| Issue | Fix |
+|-------|-----|
+| `registry describe` documented as single node | Changed to `<NODE>...` (accepts multiple) |
+| `registry describe` showed `--json` flag | Removed (doesn't exist in code) |
+| Missing 5 planner options in index.mdx | Added in collapsed Accordion |
+| Missing `pflow instructions` command | Added full documentation |
+
+---
+
+## Critical: Natural Language Mode is Experimental (NEW)
+
+The user explicitly stated: `pflow "do something"` is **not stable**.
+
+**What we did:**
+- Collapsed into `<Accordion title="Natural language mode (experimental)">`
+- Collapsed planner options into `<Accordion title="Planner options (experimental)">`
+- Updated card: "Run workflows by name or file" (removed "or natural language")
+- Changed stdin examples to use saved workflows
+
+**The stable path is:**
+1. Agent builds workflow JSON using registry/workflow commands
+2. Agent runs `pflow workflow.json` or `pflow saved-name`
+
+---
+
+## Security: Never Let Agents Set API Keys (NEW)
+
+Added explicit warnings:
+
+```mdx
+<Warning>
+  **Security:** Always set API keys yourself - never let AI agents run this command.
+</Warning>
+```
+
+This appears on `settings.mdx` at `set-env` and `list-env --show-values`.
+
+---
+
+## Key Technical Decisions (from previous session)
+
+### Installation Method (pre-PyPI)
+```bash
+uv tool install git+https://github.com/spinje/pflow.git
+pipx install git+https://github.com/spinje/pflow.git
+```
+
+### MCP Server Config Format
+```json
+{
+  "mcpServers": {
+    "pflow": {
+      "command": "pflow",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+**Critical**: Args are `["mcp", "serve"]` NOT `["mcp"]`.
+
+### API Key Configuration
+```bash
+pflow settings set-env ANTHROPIC_API_KEY "your-key"
+```
+NOT `export ANTHROPIC_API_KEY=...` (doesn't persist).
+
+Added tip about `llm keys set anthropic` as alternative.
+
+### API Key is Anthropic-Only
+Discovery features use `install_anthropic_model()` - hardcoded to Anthropic.
+
+### MCP Sync is NOT Needed
+Auto-sync happens when workflows run. Don't tell users to run `pflow mcp sync` after adding servers.
+
+---
+
+## What the API Key is Actually For
+
+**pflow's API key is for:**
+- Discovery commands (`pflow registry discover`, `pflow workflow discover`)
+- LLM nodes in workflows
+- Smart filtering (automatic field selection for 31+ fields)
+
+**pflow's API key is NOT for:**
+- Creating workflows - the user's AGENT does this with its own LLM
+
+---
+
+## One-Click Install Deeplinks (Verified)
+
+### Cursor (base64 encoded)
+```
+cursor://anysphere.cursor-deeplink/mcp/install?name=pflow&config=eyJjb21tYW5kIjoicGZsb3ciLCJhcmdzIjpbIm1jcCIsInNlcnZlIl19
+```
+
+### VS Code (URL-encoded)
+```
+vscode:mcp/install?name=pflow&config=%7B%22type%22%3A%20%22stdio%22%2C%20%22command%22%3A%20%22pflow%22%2C%20%22args%22%3A%20%5B%22mcp%22%2C%20%22serve%22%5D%7D
+```
+
+Generation commands:
+```bash
+# Cursor (base64, no trailing newline)
+echo -n '{"command":"pflow","args":["mcp","serve"]}' | base64
+
+# VS Code (URL-encoded)
+python3 -c "import urllib.parse; import json; config = json.dumps({'type':'stdio','command':'pflow','args':['mcp','serve']}); print(urllib.parse.quote(config))"
+```
+
+---
+
+## Config File Locations
+
+| Tool | Location |
+|------|----------|
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Cursor (global) | `~/.cursor/mcp.json` |
+| Cursor (project) | `.cursor/mcp.json` |
+| VS Code | `~/.vscode/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+
+---
+
+## MCP Concepts to Keep Straight
+
+Two different things:
+1. **pflow AS an MCP server** - AI tools connect to pflow via `pflow mcp serve`
+2. **Adding MCP servers TO pflow** - Workflows use external tools via `pflow mcp add`
+
+The integration pages cover #1. The `guides/adding-mcp-servers.mdx` covers #2.
+
+---
+
+## CLI/MCP Equivalence (NEW)
+
+Added section to `integrations/overview.mdx`:
+
+> "Both methods give your agent the same functionality - the MCP server mirrors the CLI commands with minor adjustments for structured tool use."
+
+---
+
+## guides/using-pflow.mdx (NEW)
+
+**The user wrote this page.** It captures the mental model:
+- "You don't need to learn the schema"
+- "Your agent guides you when needed"
+- "What happens behind the scenes" (workflow reuse pattern)
+
+This is the **tone template** for remaining content.
+
+---
+
+## Current Status
+
+**Complete (16 pages):**
+- index.mdx, quickstart.mdx
+- guides/using-pflow.mdx, guides/adding-mcp-servers.mdx
+- 6 integration pages
+- 5 CLI reference pages
+- docs.json
+
+**Placeholder (8 pages):**
+- guides/debugging.mdx
+- reference/nodes/* (6 pages)
+- reference/configuration.mdx
+
+---
+
+## Node Interfaces (For Remaining Node Docs)
+
+| Node | Key Parameters |
+|------|----------------|
+| `file` | `file_path`, `content`, `encoding` |
+| `llm` | `prompt`, `system`, `model`, `temperature` |
+| `http` | `url`, `method`, `body`, `headers`, `auth_token` |
+| `shell` | `command`, `cwd`, `env`, `timeout` |
+| `claude-code` | `task`, `context`, `output_schema`, `allowed_tools` |
+| `mcp` | Virtual nodes created by `pflow mcp sync` |
+
+**Verify these against actual code before documenting.**
+
+---
+
+## Environment Variables (For configuration.mdx)
+
+| Variable | Purpose |
+|----------|---------|
+| `ANTHROPIC_API_KEY` | LLM provider for discovery features |
+| `GITHUB_TOKEN` | For GitHub nodes |
+| `PFLOW_INCLUDE_TEST_NODES` | Show test nodes in registry |
+| `PFLOW_TEMPLATE_RESOLUTION_MODE` | strict/permissive |
+
+**File locations:**
+- Settings: `~/.pflow/settings.json`
+- Workflows: `~/.pflow/workflows/`
+- Traces: `~/.pflow/debug/`
+
+---
+
+## Documentation Layers
 
 | Layer | For Who | Lives Where |
 |-------|---------|-------------|
@@ -40,237 +249,43 @@ The user thinks about pflow documentation in layers:
 
 ---
 
-## Why Monorepo (The Real Reason)
+## Content Guidelines
 
-The user chose monorepo because: "AI agents can update docs atomically with code changes (single PR)". This is the PRIMARY driver. The version sync and simplicity are secondary benefits.
-
-This means: when you implement features in pflow, you update docs in the same PR. The update policy in CLAUDE.md reflects this.
-
----
-
-## The "Base Capabilities" Framing
-
-The user specifically framed the node documentation as "base capabilities" - what pflow can do BEFORE you add any MCP servers:
-
-**Document these:**
-- `file` (read/write/copy/move/delete) - Universal
-- `llm` - Core AI capability
-- `http` - API calls without MCP
-- `shell` - Unix power
-- `claude-code` - Unique differentiator
-- `mcp` - The bridge concept
-
-**Skip these (user explicitly said):**
-- `git` nodes - "not everyone uses git"
-- `github` nodes - "requires GitHub setup"
-- `test`, `echo` - "internal development nodes"
+1. **Non-salesy** - State problems factually, no marketing speak
+2. **No specific numbers** - "94% token reduction" is for landing page
+3. **macOS only** - pflow verified on macOS only
+4. **Natural language is experimental** - Use Accordion, don't position as primary
 
 ---
 
-## Style Gotchas That Are Easy to Forget
+## Don't Forget Checklist
 
-1. **Sentence case headings** - "Getting started" not "Getting Started". This is a Mintlify convention.
-
-2. **Lucide icons** - Not Font Awesome. All icons at lucide.dev. Common ones: `terminal`, `rocket`, `download`, `settings`, `bug`.
-
-3. **No emoji** - The user was explicit about this.
-
-4. **Second-person voice** - "You can run..." not "Users can run..."
-
-5. **Language tags on ALL code blocks** - Even for simple examples.
+1. **Icons in frontmatter** - Every page needs `icon: "..."` in YAML
+2. **Note callout at top** - State who runs these commands
+3. **Accordion for experimental** - Natural language, planner options
+4. **Security warnings** - Anywhere API keys are mentioned
+5. **"Agents use..." not "Use..."** - For agent commands
+6. **Verify before writing** - Run pflow-codebase-searcher agents
 
 ---
 
-## Components to Use vs Skip
+## Key Files to Read
 
-**Use these:**
-- `<Steps>` - For installation, procedures
-- `<Tabs>` - For OS-specific (macOS vs Linux)
-- `<Accordion>` - For troubleshooting, FAQ
-- `<Card>` + `<Columns>` - For navigation grids
-- `<Note>`, `<Warning>`, `<Tip>` - Sparingly
-
-**Skip these (API-focused, not needed):**
-- `<ParamField>`, `<ResponseField>` - API playground
-- `<RequestExample>`, `<ResponseExample>` - API examples
-- `<Color>`, `<LaTeX>` - Specialized
+| File | Why |
+|------|-----|
+| `docs/guides/using-pflow.mdx` | Tone template (user wrote this) |
+| `docs/reference/cli/settings.mdx` | Security warning pattern |
+| `docs/reference/cli/index.mdx` | Voice pattern, Accordion pattern |
+| `docs/CLAUDE.md` | Documentation guidelines |
+| `.taskmaster/tasks/task_93/implementation/progress-log.md` | Full history |
+| `.taskmaster/tasks/task_93/starting-context/mintlify-docs-spec.md` | Original structure spec |
 
 ---
 
-## Content Migration Sources
+## Branch
 
-| Docs Page | Pull Content From |
-|-----------|-------------------|
-| `index.mdx` | README.md hero section (rewrite for doc style) |
-| `quickstart.mdx` | README.md Quick Start |
-| `guides/adding-mcp-servers.mdx` | README.md MCP sections |
-| `integrations/*` | `docs/mcp-server.md` (exists) |
-| `reference/cli/*` | Codebase research results (in spec) |
-| `reference/nodes/*` | Codebase research results (in spec) |
-| `reference/environment.mdx` | Codebase research results (in spec) |
-
-**Don't copy-paste verbatim.** README is marketing-focused. Docs should be usage-focused.
+Work is on branch `task-93-mintlify-docs`.
 
 ---
 
-## The ~22 Page Count
-
-We went through several iterations:
-1. I proposed 30 pages (too many)
-2. User pushed back, I reduced to 12 (too few)
-3. Landed on ~22 as the right balance
-
-This count is:
-- 3 getting started
-- 4 guides
-- 3 integrations
-- 5 CLI reference
-- 7 node reference
-
----
-
-## What I Learned About CLI Structure
-
-From codebase research, the CLI has 6 command groups:
-
-```
-pflow [request]      # Default - natural language / file / saved workflow
-pflow mcp            # 7 subcommands
-pflow registry       # 6 subcommands
-pflow workflow       # 6 subcommands
-pflow settings       # 9 subcommands
-pflow instructions   # 2 subcommands
-```
-
-The reference pages should cover these, but focus on what users actually need. The `pflow instructions` command is NOT for user docs - that's for AI agents.
-
----
-
-## Node Interfaces (From Research)
-
-Key nodes to document with their main params:
-
-**file nodes**: `file_path`, `content`, `encoding`
-**llm**: `prompt`, `system`, `model`, `temperature`
-**http**: `url`, `method`, `body`, `headers`, `auth_token`
-**shell**: `command`, `cwd`, `env`, `timeout`
-**claude-code**: `task`, `context`, `output_schema`, `allowed_tools`
-**mcp**: Virtual nodes created by `pflow mcp sync`
-
----
-
-## Environment Variables (From Research)
-
-Key ones to document in `reference/environment.mdx`:
-
-- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` - LLM providers
-- `GITHUB_TOKEN` - For GitHub nodes
-- `PFLOW_INCLUDE_TEST_NODES` - Show test nodes
-- `PFLOW_TEMPLATE_RESOLUTION_MODE` - strict/permissive
-
-Settings file: `~/.pflow/settings.json`
-Workflows: `~/.pflow/workflows/`
-Traces: `~/.pflow/debug/`
-
----
-
-## The Debugging Guide Context
-
-Traces are automatically saved to `~/.pflow/debug/workflow-trace-*.json`. The `--trace-planner` flag saves planner traces. The `--verbose` flag shows more output.
-
-This is valuable for the debugging guide - users can analyze traces when things go wrong.
-
----
-
-## Questions I Didn't Resolve
-
-1. **Package name**: Assumed `pflow-cli` but not yet published. Verify before writing installation.mdx.
-
-2. **Logo/favicon**: These need to be created. The spec assumes they exist in `docs/logo/` and `docs/favicon.svg`.
-
-3. **Mintlify theme colors**: Used placeholder green values. May need brand colors.
-
-4. **Mintlify dashboard**: Account setup is manual, not part of this task.
-
----
-
-## Local Development Commands
-
-```bash
-npm i -g mint        # Install Mintlify CLI
-cd docs
-mint dev             # Preview at localhost:3000
-mint broken-links    # Check for broken links
-```
-
-Requires Node.js 20.17.0+.
-
----
-
-## Files to Create (Summary)
-
-```
-docs/
-├── docs.json                    # CRITICAL - navigation config
-├── favicon.svg                  # Needs design
-├── logo/light.svg, dark.svg     # Needs design
-├── index.mdx
-├── quickstart.mdx
-├── installation.mdx
-├── guides/
-│   ├── using-pflow.mdx
-│   ├── adding-mcp-servers.mdx
-│   ├── configuration.mdx
-│   └── debugging.mdx
-├── integrations/
-│   ├── overview.mdx
-│   ├── claude-desktop.mdx
-│   └── cursor.mdx
-└── reference/
-    ├── cli/
-    │   ├── index.mdx
-    │   ├── workflows.mdx
-    │   ├── registry.mdx
-    │   ├── mcp.mdx
-    │   └── settings.mdx
-    ├── nodes/
-    │   ├── index.mdx
-    │   ├── file.mdx
-    │   ├── llm.mdx
-    │   ├── http.mdx
-    │   ├── shell.mdx
-    │   ├── claude-code.mdx
-    │   └── mcp.mdx
-    └── environment.mdx
-```
-
-`docs/CLAUDE.md` already exists - don't recreate it.
-
----
-
-## Validation Checklist (Quick Reference)
-
-Before considering done:
-- [ ] `mint dev` runs without errors
-- [ ] `mint broken-links` returns 0 broken links
-- [ ] All MDX files have frontmatter with title + description
-- [ ] All headings use sentence case
-- [ ] All code blocks have language tags
-- [ ] All internal links are relative
-- [ ] No git, github, test, echo nodes documented
-- [ ] No planner internals or IR schema documented
-
----
-
-## Final Note
-
-The user is thoughtful and will push back if something doesn't feel right. They care about:
-1. Not over-engineering (MVP mindset)
-2. Clear separation of concerns (docs vs architecture)
-3. Practical utility (usage-focused, not theory)
-
-When in doubt, ask yourself: "Would a human using pflow for the first time find this helpful?"
-
----
-
-**IMPORTANT**: Do not begin implementing immediately. Read this memo, the spec, and `docs/CLAUDE.md` first. Then confirm you're ready to begin.
+**IMPORTANT**: Do not begin implementing immediately. Read this memo, `docs/guides/using-pflow.mdx` (tone template), and `docs/CLAUDE.md` first. Then confirm you're ready to continue.

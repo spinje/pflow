@@ -27,6 +27,7 @@ dependencies = [
     "mcp[cli]>=1.17.0", # Model Context Protocol for MCP server support
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
     "claude-code-sdk>=0.0.25", # Claude Code SDK for agentic development node
+    "llm-gemini>=0.25", # Google Gemini models (free tier, good for onboarding)
 ]
 
 # Optional dependencies can be added here for future LLM providers
@@ -51,14 +52,10 @@ dev = [
     "deptry>=0.23.0",
     "mypy>=0.991",
     "ruff>=0.11.5",
-    "mkdocs>=1.4.2",
-    "mkdocs-material>=8.5.10",
-    "mkdocstrings[python]>=0.26.1",
     "PyYAML>=6.0.0",
     "types-PyYAML>=6.0.0",
     "types-jsonschema>=4.25.0.20250809",
     "types-requests>=2.32.4.20250809",
-    "llm-gemini==0.25",  # Gemini extension for Simon Willison's LLM library
 ]
 
 [build-system]
@@ -158,5 +155,5 @@ preview = true
 
 [tool.deptry.per_rule_ignores]
 DEP001 = ["pocketflow"]
-DEP002 = ["llm-anthropic"]  # Plugin for llm library, loaded dynamically not imported (used by planner)
+DEP002 = ["llm-anthropic", "llm-gemini"]  # Plugins for llm library, loaded dynamically not imported
 DEP003 = ["pocketflow"]
