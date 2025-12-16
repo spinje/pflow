@@ -14,8 +14,6 @@ check: ## Run code quality tools.
 	@uv run mypy
 	@echo "🚀 Checking for obsolete dependencies: Running deptry"
 	@uv run deptry src
-	@echo "🚀 Checking documentation: Running mkdocs build"
-	@uv run mkdocs build -s --clean
 
 .PHONY: test
 test: ## Test the code with pytest in parallel (excludes LLM tests that require API keys)
@@ -60,14 +58,6 @@ publish: ## Publish a release to PyPI.
 
 .PHONY: build-and-publish
 build-and-publish: build publish ## Build and publish.
-
-.PHONY: docs-test
-docs-test: ## Test if documentation can be built without warnings or errors
-	@uv run mkdocs build -s
-
-.PHONY: docs
-docs: ## Build and serve the documentation
-	@uv run mkdocs serve
 
 .PHONY: help
 help:

@@ -129,7 +129,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - `mypy` - Type checking
 - `ruff` - Linting and formatting
 - `pre-commit` - Git hooks
-- `mkdocs` - Documentation
+- `Mintlify` - Documentation (user-facing, in `docs/`)
 - `make` - Development automation
 
 ### Architecture Components
