@@ -74,10 +74,9 @@ pflow instructions create
 ## Node Commands (run nodes individually as tools)
 
 Use these commands to find available nodes if the user explicitly asks for a specific capability involving external tools. Like "<do something> using <external-tool-name>".
-The different between a workflow and a node is that a workflow is a collection of nodes that are executed in a specific order, while a node is a single operation that can be executed independently.
-A node can be seen as a tool in this context.
+The difference between a workflow and a node is that a workflow is a collection of nodes that are executed in a specific order, while a node is a single operation that can be executed independently.
 
-````bash
+```bash
 # Find available nodes if you need to search for a specific capability and you are not sure about what filter-keywords to use to find the node using the list command.
 pflow registry discover "what capability I need"
 
@@ -85,11 +84,35 @@ pflow registry discover "what capability I need"
 pflow registry list <filter-keywords> # Example: `pflow registry list slack` or `pflow registry list "slack send message"`
 
 # Get node details
-pflow registry describe node-type
+pflow registry describe <node-name>
 
-# Run a node
-pflow registry run node-type param1=value1 param2=value2
+# Run a node (returns metadata, not actual data)
+pflow registry run <node-name> param1=value1 param2=value2
+
+# Example:
+pflow registry run mcp-slack-send-message channel="#general" text="Hello"
+
+# Example output:
+# ✓ Node executed successfully
+# Execution ID: exec-1234567890-abcdef
+# Available template paths (from actual output):
+#   ✓ ${result} (str)
+# Execution time: 2000ms
 ```
+
+> **Note**: `registry run` shows execution metadata and template paths (for use in workflows), **not the actual data**. This is intentional - see below if you need actual values.
+
+### Inspecting Actual Data (Only When Needed)
+
+```bash
+# Use the execution ID from registry run output
+pflow read-fields exec-1234567890-abcdef result
+
+# Access nested fields (path matches template paths shown by registry run)
+pflow read-fields exec-1234567890-abcdef result.data.items
+```
+
+**Only use when:** user explicitly asks to see output data, or debugging requires it. Do NOT read fields by default.
 
 ## Quick Decision Tree
 
@@ -132,7 +155,11 @@ Is it a complex task or workflow request?
         ├─ YES → pflow registry discover "capability"
         │        or pflow registry list <keywords>
         │        ↓
-        │        Found node? → pflow registry run node-type params → DONE ✓
+        │        Found node? → pflow registry run <node-name> params
+        │        ↓
+        │        User needs actual data? → pflow read-fields exec-id result
+        │        ↓
+        │        DONE ✓
         │
         └─ NO → Ask for clarification or use workflow discovery
 ```
