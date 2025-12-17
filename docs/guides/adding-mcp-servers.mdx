@@ -104,7 +104,9 @@ pflow stores MCP server configurations in:
 ~/.pflow/mcp-servers.json
 ```
 
-You can edit this file directly instead of using `pflow mcp add`. The file uses the [standard MCP configuration format](https://modelcontextprotocol.io/docs/develop/connect-local-servers) used by Claude Desktop, VS Code, and other MCP clients.
+You can edit this file directly instead of using `pflow mcp add`. After manual edits, run `pflow mcp sync <server-name>` or `pflow mcp sync --all` to register the changes.
+
+The file uses the [standard MCP configuration format](https://modelcontextprotocol.io/docs/develop/connect-local-servers) used by Claude Desktop, VS Code, and other MCP clients.
 
 ## Server configuration format
 
